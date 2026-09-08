@@ -45,6 +45,17 @@ const SECONDS_PER_HOUR: u64 = 3_600;
 /// Seconds in one minute, for decomposing an uptime.
 const SECONDS_PER_MINUTE: u64 = 60;
 
+/// Render one whole-number component of an uptime as the `f32` the ISO 8601
+/// duration type carries.
+///
+/// `f32` represents every `u16` exactly, and the hour, minute and second
+/// components are bounded by their own moduli. The day count is the only
+/// unbounded one and saturates at 65 535 — over 179 years of continuous
+/// uptime — rather than being rendered with a silent loss of precision.
+fn uptime_component(value: u64) -> f32 {
+    f32::from(u16::try_from(value).unwrap_or(u16::MAX))
+}
+
 /// Render an elapsed duration as the ISO 8601 duration `contextSourceUptime` carries.
 ///
 /// Decomposed into days, hours, minutes and seconds so each component stays a
@@ -57,10 +68,16 @@ pub fn uptime_duration(elapsed: Duration) -> Iso8601Duration {
     let hours = (whole_seconds % SECONDS_PER_DAY) / SECONDS_PER_HOUR;
     let minutes = (whole_seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE;
     let seconds = whole_seconds % SECONDS_PER_MINUTE;
-    let millis = elapsed.subsec_millis();
-    // f32 holds every whole number up to 2^24 exactly, far beyond any component here.
-    let seconds_with_fraction = seconds as f32 + f32::from(u16::try_from(millis).unwrap_or(u16::MAX)) / 1_000.0;
-    Iso8601Duration::new(0.0, 0.0, days as f32, hours as f32, minutes as f32, seconds_with_fraction)
+    let millis = u64::from(elapsed.subsec_millis());
+    let seconds_with_fraction = uptime_component(seconds) + uptime_component(millis) / 1_000.0;
+    Iso8601Duration::new(
+        0.0,
+        0.0,
+        uptime_component(days),
+        uptime_component(hours),
+        uptime_component(minutes),
+        seconds_with_fraction,
+    )
 }
 
 #[cfg(test)]

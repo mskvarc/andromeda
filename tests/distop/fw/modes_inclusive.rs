@@ -106,7 +106,7 @@ async fn distop_entity_inclusive_additive_provision_serviced_locally_and_distrib
         .expect("append attrs");
     assert!(appended.status.is_success(), "the append succeeds: {}", appended.status);
 
-    assert_eq!(mock.get_total_count().await, 1, "the append is distributed to the source");
+    assert_eq!(mock.get_total_count(), 1, "the append is distributed to the source");
     let local = topology
         .broker(BrokerRole::A)
         .client()
@@ -172,12 +172,12 @@ async fn distop_entity_inclusive_multiple_sources_equal_priority() {
     assert!(find_entity(&body, &first_id).is_some(), "the first source contributes its entity: {body}");
     assert!(find_entity(&body, &second_id).is_some(), "the second source contributes its entity: {body}");
     assert_eq!(
-        first_mock.get_count(Method::GET, FORWARDED_ENTITIES).await,
+        first_mock.get_count(Method::GET, FORWARDED_ENTITIES),
         1,
         "the first source is queried exactly once"
     );
     assert_eq!(
-        second_mock.get_count(Method::GET, FORWARDED_ENTITIES).await,
+        second_mock.get_count(Method::GET, FORWARDED_ENTITIES),
         1,
         "the second source is queried exactly once"
     );
@@ -246,11 +246,7 @@ async fn distop_entity_inclusive_is_default_mode_when_unspecified() {
         Some(60),
         "the source data is returned as under inclusive mode"
     );
-    assert_eq!(
-        mock.get_count(Method::GET, FORWARDED_ENTITIES).await,
-        1,
-        "an omitted mode still forwards the query"
-    );
+    assert_eq!(mock.get_count(Method::GET, FORWARDED_ENTITIES), 1, "an omitted mode still forwards the query");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

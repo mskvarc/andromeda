@@ -25,6 +25,12 @@ pub struct JsonLdContextServer {
 
 impl JsonLdContextServer {
     /// Bind a ready JSON-LD context server.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CallbackServerError::Bind`] when the configured bind address cannot be claimed,
+    /// [`CallbackServerError::LocalAddress`] when the address of the bound listener cannot be read, and
+    /// [`CallbackServerError::Endpoint`] when the broker-visible host and the bound port do not form a valid URL.
     pub async fn start(config: MockServerConfig) -> Result<JsonLdContextServer, CallbackServerError> {
         Ok(JsonLdContextServer {
             server: CallbackServer::start(config).await?,
@@ -32,6 +38,11 @@ impl JsonLdContextServer {
     }
 
     /// Serve a context body and caller-selected cache headers at one path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JsonLdContextServerError::ContentType`] when the JSON-LD media type does not encode into an HTTP header value, and
+    /// [`JsonLdContextServerError::Server`] when `path` cannot be joined onto the server endpoint URL.
     pub async fn serve(&self, path: CallbackPath, body: Bytes, mut headers: HeaderMap) -> Result<Url, JsonLdContextServerError> {
         let content_type = HeaderValue::from_str(&APPLICATION_LD_JSON.to_string()).map_err(JsonLdContextServerError::ContentType)?;
         headers.insert(CONTENT_TYPE, content_type);
@@ -45,6 +56,10 @@ impl JsonLdContextServer {
     }
 
     /// Wait for the next context fetch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CallbackServerError::RequestTimeout`] when no request is captured before `timeout` elapses.
     pub async fn next_request(&self, timeout: Duration) -> Result<CapturedRequest, CallbackServerError> {
         self.server.next_request(timeout).await
     }
@@ -56,6 +71,12 @@ impl JsonLdContextServer {
     }
 
     /// Shut down the context listener.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CallbackServerError::ShutdownSignal`] when the server task ended before the signal was delivered,
+    /// [`CallbackServerError::Join`] when the server task panicked or was aborted, and
+    /// [`CallbackServerError::Serve`] when Axum reported a serving failure.
     pub async fn shutdown(self) -> Result<(), CallbackServerError> {
         self.server.shutdown().await
     }

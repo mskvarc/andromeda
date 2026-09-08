@@ -129,7 +129,9 @@ fn claim_statement(worker_id: &str, batch_size: i32, lease_seconds: f64) -> Upda
         .and_where(delivery_claimable_at().lte(Expr::current_timestamp()))
         .order_by_expr(delivery_claimable_at(), Order::Asc)
         .order_by(NotificationDeliveries::Id, Order::Asc)
-        .limit(<i32 as Ord>::max(batch_size, 0) as u64)
+        // A negative batch size is an absent bound, not a narrower one, so it
+        // clamps to zero rather than wrapping into an enormous unsigned width.
+        .limit(u64::try_from(batch_size).unwrap_or(0))
         .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
         .to_owned();
 

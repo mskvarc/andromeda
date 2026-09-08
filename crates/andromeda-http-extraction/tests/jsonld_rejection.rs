@@ -39,9 +39,8 @@ async fn rejection_body(rejection: ExtractorRejection) -> Result<Value, Box<dyn 
 #[tokio::test]
 async fn malformed_json_is_invalid_request_with_the_exact_instance() -> Result<(), Box<dyn Error>> {
     let request = json_request("{")?;
-    let rejection = match JsonLd::<Value>::from_request(request, &()).await {
-        Err(rejection) => rejection,
-        Ok(_) => return Err("malformed JSON was accepted".into()),
+    let Err(rejection) = JsonLd::<Value>::from_request(request, &()).await else {
+        return Err("malformed JSON was accepted".into());
     };
     assert!(matches!(rejection, ExtractorRejection::InvalidRequest { .. }));
     let body = rejection_body(rejection).await?;

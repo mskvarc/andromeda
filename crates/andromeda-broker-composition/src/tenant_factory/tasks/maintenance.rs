@@ -1,14 +1,20 @@
 //! Durable entity side-effect and spatial-maintenance task registration.
 
-use crate::tenant_factory::error::TenantAssemblyError;
-use andromeda_context_commit::context_change_event::ContextChangeEvent;
+use crate::{
+    event::entity_change_sink::BroadcastEntityChangeSink,
+    tenant_factory::{TenantFactoryConfig, error::TenantAssemblyError, storage::TenantStorage, tasks::retention::retention_duration},
+};
+use andromeda_context_commit::{committer::ContextCommitter, context_change_event::ContextChangeEvent};
 use andromeda_entity::{
+    change_sink::EntityChangeSink,
     error::EntityError,
     port::spatial_snapshot::EntitySpatialSnapshotSource,
-    side_effect_drain::EntitySideEffectDrain,
+    side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainConfig},
+    side_effect_queue::SideEffectLeaseOwner,
     spatial_reconciliation::reconcile_location,
     spatial_synchronization::SpatialSynchronizer,
 };
+use andromeda_postgresql_context_store::pending_side_effects::repo::PendingSideEffectsRepository;
 use andromeda_registration::error::RegistrationError;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_subscription::error::SubscriptionError;
@@ -30,8 +36,86 @@ use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::{DateTime, Utc};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;
+use uuid::Uuid;
 
-pub(super) fn register_entity_side_effect_drain(
+/// Compose the tenant's durable side-effect drain and register the workers
+/// that service it.
+///
+/// The drain always runs: `Prefer: respond-async` enqueues a durable job
+/// whenever the request opts in, with or without a configured batch-size
+/// threshold, so an unconditional drain is what keeps every enqueued job from
+/// waiting forever.
+///
+/// # Errors
+///
+/// Returns [`TenantAssemblyError`] when the configured dead-letter age is out
+/// of range or when the supervisor refuses either registration.
+pub(super) fn register_entity_side_effects(
+    supervisor: &TaskSupervisor,
+    config: &TenantFactoryConfig,
+    storage: &TenantStorage,
+    writes: &Arc<dyn ContextCommitter>,
+    changes: &broadcast::Sender<ContextChangeEvent>,
+) -> Result<WakeHandle, TenantAssemblyError> {
+    let entity_config = &config.entity;
+    let change_sink = Arc::new(BroadcastEntityChangeSink::new(changes.clone())) as Arc<dyn EntityChangeSink>; // clone: services and the drain each own a sender handle.
+    let drain = Arc::new(EntitySideEffectDrain::new(
+        Arc::new(PendingSideEffectsRepository::new(&storage.pool)),
+        Arc::clone(writes), // clone: request handling and the drain share one committer.
+        Some(change_sink),
+        EntitySideEffectDrainConfig {
+            lease_seconds: i32::try_from(entity_config.pending_side_effects_lease_secs).unwrap_or(i32::MAX),
+            batch_size: i32::try_from(entity_config.pending_side_effects_batch_size).unwrap_or(i32::MAX),
+            max_attempts: entity_config.pending_side_effects_max_attempts,
+            base_backoff: Duration::from_secs(entity_config.pending_side_effects_base_backoff_secs),
+            lease_owner: SideEffectLeaseOwner::for_tenant(&config.info.source_id, Uuid::new_v4()),
+        },
+    ));
+    let wake = register_entity_side_effect_drain(
+        supervisor,
+        Arc::clone(&drain), // clone: the delivery and reap workers share one drain operation.
+        Duration::from_secs(entity_config.pending_side_effects_poll_secs),
+        Duration::from_secs(entity_config.pending_side_effects_lease_secs),
+    )?;
+    register_entity_side_effect_reap(
+        supervisor,
+        drain,
+        Duration::from_secs(entity_config.pending_side_effects_cleanup_interval_secs),
+        retention_duration(entity_config.pending_side_effects_dead_letter_after_secs, "pending side-effect dead-letter age")?,
+    )?;
+    Ok(wake)
+}
+
+/// Register the spatial index workers: the resident synchronizer that applies
+/// entity changes and the periodic reconciliation that repairs any drift.
+///
+/// # Errors
+///
+/// Returns [`TenantAssemblyError`] when the configured rebuild cadence is
+/// rejected or when the supervisor refuses either registration.
+pub(super) fn register_spatial_workers(
+    supervisor: &TaskSupervisor,
+    config: &TenantFactoryConfig,
+    storage: &TenantStorage,
+    tenant: &TenantRef,
+    changes: broadcast::Sender<ContextChangeEvent>,
+) -> Result<(), TenantAssemblyError> {
+    let synchronizer = Arc::new(SpatialSynchronizer::new(
+        Arc::clone(&storage.spatial_index), // clone: synchronization and reconciliation share one index.
+        Arc::clone(&storage.entity_ports.reader),
+        tenant.clone(), // clone: the synchronizer owns its tenant partition.
+    ));
+    register_spatial_synchronization(supervisor, changes, synchronizer)?;
+    register_spatial_reconciliation(
+        supervisor,
+        Arc::clone(&storage.spatial_index), // clone: synchronization and reconciliation share one index.
+        Arc::clone(&storage.entity_ports.spatial_snapshots),
+        tenant.clone(), // clone: the reconciliation pass owns its tenant partition.
+        Duration::from_secs(config.spatial.rebuild_interval_secs),
+    )
+}
+
+fn register_entity_side_effect_drain(
     supervisor: &TaskSupervisor,
     drain: Arc<EntitySideEffectDrain>,
     fallback_duration: Duration,
@@ -49,7 +133,7 @@ pub(super) fn register_entity_side_effect_drain(
         let drain = Arc::clone(&drain); // clone: each bounded future owns the policy operation while executing.
         async move {
             let now = DateTime::<Utc>::from(execution.cutoff());
-            let outcome = drain.execute(now).await.map_err(classify_entity_expiry_failure)?;
+            let outcome = drain.execute(now).await.map_err(|error| classify_entity_expiry_failure(&error))?;
             if outcome.work_may_remain {
                 Ok(DrainPassOutcome::WorkMayRemain)
             } else {
@@ -67,7 +151,7 @@ pub(super) fn register_entity_side_effect_drain(
 /// A dead job is retained as evidence for `dead_letter_after`; this schedule
 /// removes older ones every `cadence`. It is `Observed` rather than
 /// tenant-degrading: a missed reap costs disk, not correctness.
-pub(super) fn register_entity_side_effect_reap(
+fn register_entity_side_effect_reap(
     supervisor: &TaskSupervisor,
     drain: Arc<EntitySideEffectDrain>,
     cadence: Duration,
@@ -86,7 +170,10 @@ pub(super) fn register_entity_side_effect_reap(
         let drain = Arc::clone(&drain); // clone: each reap execution owns the policy operation while executing.
         async move {
             let now = DateTime::<Utc>::from(execution.cutoff());
-            let purged = drain.purge_dead(now - dead_letter_after).await.map_err(classify_entity_expiry_failure)?;
+            let purged = drain
+                .purge_dead(now - dead_letter_after)
+                .await
+                .map_err(|error| classify_entity_expiry_failure(&error))?;
             tracing::debug!(purged, "pending side-effect dead-letter reap completed");
             Ok(())
         }
@@ -97,7 +184,7 @@ pub(super) fn register_entity_side_effect_reap(
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
 }
 
-pub(super) fn register_spatial_synchronization(
+fn register_spatial_synchronization(
     supervisor: &TaskSupervisor,
     changes: broadcast::Sender<ContextChangeEvent>,
     synchronizer: Arc<SpatialSynchronizer>,
@@ -118,8 +205,8 @@ pub(super) fn register_spatial_synchronization(
             loop {
                 tokio::select! {
                     () = execution.cancellation().cancelled() => return Ok(()),
-                    received = receiver.recv() => {
-                        match received {
+                    delivery = receiver.recv() => {
+                        match delivery {
                             Ok(event) => synchronizer.apply(event).await,
                             Err(broadcast::error::RecvError::Lagged(skipped)) => {
                                 tracing::warn!(skipped, "spatial synchronization lagged; reconciliation will repair drift");
@@ -138,7 +225,7 @@ pub(super) fn register_spatial_synchronization(
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
 }
 
-pub(super) fn register_spatial_reconciliation(
+fn register_spatial_reconciliation(
     supervisor: &TaskSupervisor,
     index: Arc<SpatialEntityIndex>,
     source: Arc<dyn EntitySpatialSnapshotSource>,
@@ -161,7 +248,7 @@ pub(super) fn register_spatial_reconciliation(
         async move {
             let outcome = reconcile_location(&index, source.as_ref(), &tenant)
                 .await
-                .map_err(classify_entity_expiry_failure)?;
+                .map_err(|error| classify_entity_expiry_failure(&error))?;
             tracing::info!(
                 partitions = outcome.partition_count,
                 entries = outcome.total_entries,
@@ -176,7 +263,7 @@ pub(super) fn register_spatial_reconciliation(
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
 }
 
-pub(super) fn classify_subscription_expiry_failure(error: SubscriptionError) -> TaskFailure {
+pub(super) fn classify_subscription_expiry_failure(error: &SubscriptionError) -> TaskFailure {
     let summary = error.to_string();
     match error {
         SubscriptionError::Persistence { .. } => TaskFailure::transient(summary),
@@ -191,7 +278,7 @@ pub(super) fn classify_subscription_expiry_failure(error: SubscriptionError) -> 
     }
 }
 
-pub(super) fn classify_registration_expiry_failure(error: RegistrationError) -> TaskFailure {
+pub(super) fn classify_registration_expiry_failure(error: &RegistrationError) -> TaskFailure {
     let summary = error.to_string();
     match error {
         RegistrationError::Persistence { .. } => TaskFailure::transient(summary),
@@ -208,7 +295,7 @@ pub(super) fn classify_registration_expiry_failure(error: RegistrationError) -> 
 }
 
 /// Classify exhaustive entity-policy failures at the binary composition boundary.
-pub(super) fn classify_entity_expiry_failure(error: EntityError) -> TaskFailure {
+pub(super) fn classify_entity_expiry_failure(error: &EntityError) -> TaskFailure {
     let summary = error.to_string();
     match error {
         EntityError::Commit(_) | EntityError::Persistence { detail: _ } | EntityError::Contention { identifier: _, attempts: _ } => {

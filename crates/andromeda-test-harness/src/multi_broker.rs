@@ -35,6 +35,10 @@ where
     R: Copy + Debug,
 {
     /// Build a broker specification from environment overrides and typed defaults.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MultiBrokerError::Configuration`] when the resolved client URL or database URL is invalid, and [`MultiBrokerError::Endpoint`] when the resolved peer URL does not parse.
     pub fn from_environment(
         role: R,
         identity: R,
@@ -171,6 +175,10 @@ where
     R: Copy + Eq + Debug + Send + Sync,
 {
     /// Build all requested brokers, wait for readiness, and reset each unique store.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MultiBrokerError::Identifier`] when the suite name or the allocated prefix is invalid, [`MultiBrokerError::Client`] when a DNS override cannot be applied, [`MultiBrokerError::Readiness`] when a broker never becomes ready, [`MultiBrokerError::Database`] when a broker pool cannot be opened, and [`MultiBrokerError::Reset`] when resetting an owned store fails.
     pub async fn from_specs(
         suite: &str,
         specs: Vec<BrokerNodeSpec<R>>,
@@ -233,6 +241,10 @@ where
     }
 
     /// Clean every unique store and close all pools, preserving all cleanup errors.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MultiBrokerError::Cleanup`] carrying every per-broker prefix-cleanup failure encountered while draining the topology.
     pub async fn finish(self) -> Result<(), MultiBrokerError> {
         let mut failures = Vec::new();
         let mut cleaned = Vec::new();

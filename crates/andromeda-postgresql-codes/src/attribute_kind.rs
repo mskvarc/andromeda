@@ -10,8 +10,8 @@ compact_code_registry! {
     /// attribute whose type changes does not retroactively change the shape of
     /// what was already recorded. It is present on tombstones too, since
     /// synthesising `urn:ngsi-ld:null` for a deletion requires the member shape
-    /// the family dictates — a value for a Property, an object for a
-    /// Relationship, a language map for a LanguageProperty (clauses 4.5.7 and
+    /// the family dictates — a value for a `Property`, an object for a
+    /// `Relationship`, a language map for a `LanguageProperty` (clauses 4.5.7 and
     /// 4.5.8) — and that shape is unknowable without the family.
     ///
     /// The labels are the specification's own type tokens, which is the casing
@@ -21,21 +21,21 @@ compact_code_registry! {
         frozen_prefix: 8,
         frozen_digest: 0x7bfe_1036_5abf_8069,
         codes: {
-            /// A Property (clause 5.2.5).
+            /// A `Property` (clause 5.2.5).
             Property = 1, "Property";
-            /// A Relationship (clause 5.2.6).
+            /// A `Relationship` (clause 5.2.6).
             Relationship = 2, "Relationship";
-            /// A GeoProperty (clause 5.2.7).
+            /// A `GeoProperty` (clause 5.2.7).
             GeoProperty = 3, "GeoProperty";
-            /// A VocabProperty (clause 5.2.35).
+            /// A `VocabProperty` (clause 5.2.35).
             VocabProperty = 4, "VocabProperty";
-            /// A LanguageProperty (clause 5.2.32).
+            /// A `LanguageProperty` (clause 5.2.32).
             LanguageProperty = 5, "LanguageProperty";
-            /// A JsonProperty (clause 5.2.38).
+            /// A `JsonProperty` (clause 5.2.38).
             JsonProperty = 6, "JsonProperty";
-            /// A ListProperty (clause 5.2.36).
+            /// A `ListProperty` (clause 5.2.36).
             ListProperty = 7, "ListProperty";
-            /// A ListRelationship (clause 5.2.37).
+            /// A `ListRelationship` (clause 5.2.37).
             ListRelationship = 8, "ListRelationship";
         }
     }

@@ -13,8 +13,14 @@ use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 
 /// Parses a type selection expression string into a raw AST.
 ///
-/// Returns a `QueryError` variant describing the invalid production
-/// (empty input, unbalanced parentheses, missing type names).
+/// # Errors
+///
+/// Returns [`QueryError::TypeExprEmpty`] for blank input,
+/// [`QueryError::TypeExprUnexpectedEnd`] and [`QueryError::TypeExprUnbalanced`]
+/// for an expression that ends early or leaves a parenthesis open,
+/// [`QueryError::TypeExprUnexpected`] for a character outside the grammar, and
+/// [`QueryError::TypeExprEmptyName`] or [`QueryError::TypeExprInvalidName`] when
+/// a type-name production yields no valid clause 4.6.2 name.
 pub fn parse(input: &str) -> Result<TypeExprRaw, QueryError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {

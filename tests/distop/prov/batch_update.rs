@@ -149,12 +149,12 @@ async fn batch_update_fallback_per_entity_update_overwrite() {
         .await
         .expect("batch update");
     assert_eq!(
-        mock.get_count(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v1}/attrs")).await,
+        mock.get_count(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v1}/attrs")),
         1,
         "V1 is updated individually"
     );
     assert_eq!(
-        mock.get_count(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v2}/attrs")).await,
+        mock.get_count(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v2}/attrs")),
         1,
         "V2 is updated individually"
     );
@@ -192,12 +192,12 @@ async fn batch_update_fallback_per_entity_append_no_overwrite() {
         .await
         .expect("batch update");
     assert_eq!(
-        mock.get_count(Method::POST, &format!("/ngsi-ld/v1/entities/{v1}/attrs")).await,
+        mock.get_count(Method::POST, &format!("/ngsi-ld/v1/entities/{v1}/attrs")),
         1,
         "V1 attrs are appended individually"
     );
     assert_eq!(
-        mock.get_count(Method::POST, &format!("/ngsi-ld/v1/entities/{v2}/attrs")).await,
+        mock.get_count(Method::POST, &format!("/ngsi-ld/v1/entities/{v2}/attrs")),
         1,
         "V2 attrs are appended individually"
     );
@@ -237,7 +237,7 @@ async fn batch_update_redirect_no_viable_op_conflict_per_entity() {
         .filter(|entry| entry["registrationId"].as_str() == Some(reg_id.as_str()) && entry["error"]["status"].as_u64() == Some(409))
         .count();
     assert_eq!(conflicts, 2, "both owned entities are rejected with a keyed conflict: {body}");
-    assert_eq!(mock.get_total_count().await, 0, "no forward on an unsupported operation");
+    assert_eq!(mock.get_total_count(), 0, "no forward on an unsupported operation");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -283,7 +283,7 @@ async fn batch_update_local_phase_populates_results() {
             .any(|entry| entry["entityId"].as_str() == Some(v2.as_str()) && entry["error"]["status"].as_u64() == Some(404))),
         "the absent entity is reported as 404: {body}"
     );
-    assert_eq!(mock.get_total_count().await, 0, "an auxiliary registration does not forward");
+    assert_eq!(mock.get_total_count(), 0, "an auxiliary registration does not forward");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

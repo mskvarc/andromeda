@@ -45,6 +45,12 @@ pub struct TelemetryRecorder {
 
 impl TelemetryRecorder {
     /// Build the recorder and install it as the process-wide metrics sink.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TelemetryError::Recorder`] when the Prometheus builder rejects
+    /// one of the configured bucket sets, or when another recorder already
+    /// holds the process-wide sink.
     pub fn install() -> Result<TelemetryRecorder, TelemetryError> {
         let handle = builder()?.install_recorder()?;
         Ok(TelemetryRecorder { local: None, handle })
@@ -53,6 +59,12 @@ impl TelemetryRecorder {
     /// Build the recorder without installing it globally.
     ///
     /// Recording reaches it only inside [`TelemetryRecorder::record_locally`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TelemetryError::Recorder`] when the Prometheus builder rejects
+    /// one of the configured bucket sets. Nothing is registered globally, so no
+    /// already-installed recorder can make this fail.
     pub fn detached() -> Result<TelemetryRecorder, TelemetryError> {
         let recorder = builder()?.build_recorder();
         let handle = recorder.handle();

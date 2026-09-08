@@ -204,7 +204,6 @@ dependencies = [
  "toml 1.1.5+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
- "typed-builder",
  "url",
  "uuid",
 ]
@@ -1741,6 +1740,7 @@ dependencies = [
  "axum",
  "bytes",
  "dashmap",
+ "derive_more",
  "http",
  "reqwest",
  "rumqttc",

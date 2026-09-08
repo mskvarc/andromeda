@@ -258,16 +258,8 @@ async fn distop_entity_redirect_multiple_overlapping_fan_out_to_all_sources() {
     let merged = find_entity(&body, &entity_id).expect("the entity is present");
     assert_eq!(merged["speed"]["value"].as_i64(), Some(50), "the first source contributes speed");
     assert_eq!(merged["fuel"]["value"].as_i64(), Some(35), "the second source contributes fuel");
-    assert_eq!(
-        first_mock.get_count(Method::GET, FORWARDED_ENTITIES).await,
-        1,
-        "the first source is queried once"
-    );
-    assert_eq!(
-        second_mock.get_count(Method::GET, FORWARDED_ENTITIES).await,
-        1,
-        "the second source is queried once"
-    );
+    assert_eq!(first_mock.get_count(Method::GET, FORWARDED_ENTITIES), 1, "the first source is queried once");
+    assert_eq!(second_mock.get_count(Method::GET, FORWARDED_ENTITIES), 1, "the second source is queried once");
 
     first_mock.shutdown().await;
     second_mock.shutdown().await;

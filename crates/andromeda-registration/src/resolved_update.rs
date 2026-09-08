@@ -5,7 +5,7 @@
 //! produced [`ResolvedCsrUpdate`](crate::resolved_update::ResolvedCsrUpdate) as
 //! an unconditional UPDATE.
 
-use crate::{error::RegistrationError, store::CsrUpdateFragment};
+use crate::{error::RegistrationError, nullable_member::NullableMember, store::CsrUpdateFragment};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, non_empty_text::NonEmptyText, scope::grammar::ScopeBuf, tenant::TenantName};
 use andromeda_ngsi_ld_model::{
@@ -74,6 +74,23 @@ pub struct ResolvedCsrUpdate {
     pub operation_space: Option<Geometry>,
 }
 
+/// Resolve one nullable geometry member (clause 5.5.8).
+///
+/// An omitted member keeps whatever the stored registration holds, which is
+/// still `GeoJSON` at that point and is decoded on its way into the resolved
+/// value set. `member` names the payload member in the failure message.
+fn resolve_geometry(fragment: &NullableMember<Geometry>, stored: Option<&Value>, member: &str) -> Result<Option<Geometry>, RegistrationError> {
+    match fragment {
+        NullableMember::Absent => stored
+            .map(Geometry::from_geojson_value)
+            .transpose()
+            .map_err(|error| RegistrationError::csr_validation(format!("invalid existing {member} GeoJSON: {error}"))),
+        NullableMember::Cleared => Ok(None),
+        // clone: own fragment side; the fragment is borrowed
+        NullableMember::Set(geometry) => Ok(Some(geometry.clone())),
+    }
+}
+
 /// Apply a partial `CsrUpdateFragment` on top of an existing CSR, producing
 /// a fully-resolved set of column values for a repository UPDATE.
 ///
@@ -83,31 +100,36 @@ pub struct ResolvedCsrUpdate {
 /// [`ResolvedCsrUpdate`] either way. There is no `&`/`Cow` alternative
 /// because the repository takes `&ResolvedCsrUpdate` and the struct fields
 /// are `Option<T>`/`String`/`Value` without lifetime parameters.
+///
+/// # Errors
+///
+/// Returns [`RegistrationError::Validation`] when the stored registration
+/// carries a `location`, `observationSpace` or `operationSpace` the fragment
+/// leaves alone and that value is not decodable `GeoJSON`.
 pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateFragment) -> Result<ResolvedCsrUpdate, RegistrationError> {
-    let registration_name = fragment.registration_name.clone().unwrap_or(existing.registration_name); // clone: own fragment side; existing moves
-    let description = fragment.description.clone().unwrap_or(existing.description); // clone: own fragment side; existing moves
+    let registration_name = fragment.registration_name.resolve(existing.registration_name);
+    let description = fragment.description.resolve(existing.description);
     let information = fragment.information.clone().unwrap_or(existing.coverage.information); // clone: own the borrowed update fragment when it supplied information.
-    let dataset_id = fragment.dataset_id.clone().unwrap_or(existing.coverage.dataset_id); // clone: own fragment side; existing moves
-    let tenant = fragment.tenant.clone().unwrap_or(existing.tenant); // clone: own fragment side; existing moves
-    let observation_interval = fragment.observation_interval.unwrap_or(existing.coverage.observation_interval);
-    let management_interval = fragment.management_interval.unwrap_or(existing.coverage.management_interval);
-    let expires_at = fragment.expires_at.unwrap_or(existing.lifecycle.expires_at);
+    let dataset_id = fragment.dataset_id.resolve(existing.coverage.dataset_id);
+    let tenant = fragment.tenant.resolve(existing.tenant);
+    let observation_interval = fragment.observation_interval.resolve(existing.coverage.observation_interval);
+    let management_interval = fragment.management_interval.resolve(existing.coverage.management_interval);
+    let expires_at = fragment.expires_at.resolve(existing.lifecycle.expires_at);
     let endpoint = fragment.endpoint.clone().unwrap_or(existing.access.endpoint); // clone: own the borrowed update fragment when it supplied the URL.
-    let accept = fragment.accept.clone().unwrap_or(existing.access.accept); // clone: own the borrowed update fragment when it supplied the media type.
+    let accept = fragment.accept.resolve(existing.access.accept);
     let mode = fragment.mode.unwrap_or_else(|| existing.access.mode.unwrap_or_default());
     // Clause 4.20: `federationOps` is the effective set whenever the
     // registration, after the merge, names no explicit subset.
     let operations = fragment
         .operations
-        .clone() // clone: own fragment side; existing path moves the typed operations
-        .unwrap_or(existing.access.operations)
+        .resolve(existing.access.operations)
         .unwrap_or_else(|| vec![CsrOperation::FederationOps]);
-    let scope = fragment.scope.clone().unwrap_or(existing.coverage.scope); // clone: own the borrowed update fragment when it supplied scopes.
-    let refresh_rate = fragment.refresh_rate.unwrap_or(existing.access.refresh_rate);
-    let management = fragment.management.clone().unwrap_or(existing.access.management); // clone: own fragment side
-    let context_source_info = fragment.context_source_info.clone().unwrap_or(existing.access.context_source_info); // clone: own fragment side
-    let jsonld_context = fragment.jsonld_context.clone().unwrap_or(existing.access.jsonld_context); // clone: own the borrowed update fragment when it supplied the URL.
-    let context_source_alias = fragment.context_source_alias.clone().unwrap_or(existing.access.context_source_alias); // clone: own fragment side
+    let scope = fragment.scope.resolve(existing.coverage.scope);
+    let refresh_rate = fragment.refresh_rate.resolve(existing.access.refresh_rate);
+    let management = fragment.management.resolve(existing.access.management);
+    let context_source_info = fragment.context_source_info.resolve(existing.access.context_source_info);
+    let jsonld_context = fragment.jsonld_context.resolve(existing.access.jsonld_context);
+    let context_source_alias = fragment.context_source_alias.resolve(existing.access.context_source_alias);
 
     let additional_properties = match (existing.additional_properties, &fragment.additional_properties) {
         (Some(existing_val), Some(new_val)) => {
@@ -124,36 +146,9 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
         (None, None) => None,
     };
 
-    let location = match fragment.location.as_ref() {
-        Some(frag) => frag.clone(), // clone: own fragment side; fragment is borrowed
-        None => existing
-            .coverage
-            .location
-            .as_ref()
-            .map(Geometry::from_geojson_value)
-            .transpose()
-            .map_err(|error| RegistrationError::csr_validation(format!("invalid existing location GeoJSON: {error}")))?,
-    };
-    let observation_space = match fragment.observation_space.as_ref() {
-        Some(frag) => frag.clone(), // clone: own fragment side; fragment is borrowed
-        None => existing
-            .coverage
-            .observation_space
-            .as_ref()
-            .map(Geometry::from_geojson_value)
-            .transpose()
-            .map_err(|error| RegistrationError::csr_validation(format!("invalid existing observationSpace GeoJSON: {error}")))?,
-    };
-    let operation_space = match fragment.operation_space.as_ref() {
-        Some(frag) => frag.clone(), // clone: own fragment side; fragment is borrowed
-        None => existing
-            .coverage
-            .operation_space
-            .as_ref()
-            .map(Geometry::from_geojson_value)
-            .transpose()
-            .map_err(|error| RegistrationError::csr_validation(format!("invalid existing operationSpace GeoJSON: {error}")))?,
-    };
+    let location = resolve_geometry(&fragment.location, existing.coverage.location.as_ref(), "location")?;
+    let observation_space = resolve_geometry(&fragment.observation_space, existing.coverage.observation_space.as_ref(), "observationSpace")?;
+    let operation_space = resolve_geometry(&fragment.operation_space, existing.coverage.operation_space.as_ref(), "operationSpace")?;
 
     Ok(ResolvedCsrUpdate {
         registration_name,

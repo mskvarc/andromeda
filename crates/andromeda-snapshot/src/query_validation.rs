@@ -7,6 +7,12 @@ use crate::error::SnapshotError;
 use andromeda_ngsi_ld_model::query::body::Query;
 
 /// Reject requests that omit both collections and queries placed in the wrong collection.
+///
+/// # Errors
+///
+/// Returns [`SnapshotError::Validation`] when both collections are absent, when
+/// a member of `snapshot_queries` carries a `temporalQ`, or when a member of
+/// `snapshot_temporal_queries` omits its `temporalQ`.
 pub fn validate_snapshot_query_shapes(snapshot_queries: Option<&[Query]>, snapshot_temporal_queries: Option<&[Query]>) -> Result<(), SnapshotError> {
     if snapshot_queries.is_none() && snapshot_temporal_queries.is_none() {
         return Err(SnapshotError::validation("At least one snapshot query collection is required"));

@@ -67,7 +67,7 @@ async fn distop_entity_exclusive_registered_attrs_served_only_from_source_none_l
         .await
         .expect("provision");
     assert!(created.status.is_success(), "the exclusive provision succeeds: {}", created.status);
-    assert!(mock.get_total_count().await >= 1, "the provision is forwarded to the source");
+    assert!(mock.get_total_count() >= 1, "the provision is forwarded to the source");
 
     let retrieved = topology
         .broker(BrokerRole::A)
@@ -339,7 +339,7 @@ async fn distop_entity_exclusive_relevance_inferred_without_entity_map() {
     assert_status(&response, 200);
     assert!(entity_map_header(&response).is_none(), "no entity map is returned when none was requested");
     assert!(
-        mock.get_count(Method::GET, FORWARDED_ENTITIES).await >= 1,
+        mock.get_count(Method::GET, FORWARDED_ENTITIES) >= 1,
         "the source is contacted by inferred relevance"
     );
     let body = json_body(&response);

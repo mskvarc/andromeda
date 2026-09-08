@@ -103,7 +103,7 @@ pub struct DeliveryConfig {
     /// delivery is retained specifically as evidence of a notification that
     /// never arrived, so it earns a longer look than a delivery that already
     /// succeeded.
-    #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_DEAD_LETTER_AFTER_SECS", default = 604800)]
+    #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_DEAD_LETTER_AFTER_SECS", default = 604_800)]
     pub dead_letter_after_secs: u64,
     /// Age after which an event with zero referencing deliveries is removed.
     #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_ORPHAN_EVENT_AFTER_SECS", default = 86400)]
@@ -112,6 +112,15 @@ pub struct DeliveryConfig {
 
 impl DeliveryConfig {
     /// Validate notification delivery, retention and diagnostic limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`DeliveryConfigError`] naming the first setting that is out
+    /// of range: a non-positive attempt ceiling or batch size, a zero retry
+    /// backoff, poll interval, cleanup retention, cleanup interval,
+    /// dead-letter retention or orphan-event retention, or a claim lease term,
+    /// stored-diagnostic bound or in-flight delivery bound its own newtype
+    /// rejects.
     pub const fn validate(&self) -> Result<(), DeliveryConfigError> {
         match self.attempt_ceiling() {
             Ok(_) => (),
@@ -153,21 +162,41 @@ impl DeliveryConfig {
     }
 
     /// The configured in-flight delivery bound.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeliveryConcurrencyError`] when the configured concurrency is
+    /// zero or above [`DeliveryConcurrency::MAXIMUM`].
     pub const fn delivery_concurrency(&self) -> Result<DeliveryConcurrency, DeliveryConcurrencyError> {
         DeliveryConcurrency::from_count(self.concurrency)
     }
 
     /// The configured attempt ceiling.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeliveryAttemptCeilingError::NonPositiveAttempts`] when the
+    /// configured attempt ceiling is zero or negative.
     pub const fn attempt_ceiling(&self) -> Result<DeliveryAttemptCeiling, DeliveryAttemptCeilingError> {
         DeliveryAttemptCeiling::from_attempts(self.max_attempts)
     }
 
     /// The configured claim lease term.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LeaseTermError`] when the configured lease term is zero
+    /// seconds or above the longest accepted term.
     pub const fn lease_term(&self) -> Result<LeaseTerm, LeaseTermError> {
         LeaseTerm::from_seconds(self.lease_secs)
     }
 
     /// The configured bound on a stored failure diagnostic.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeliveryErrorBoundError`] when the configured bound is zero
+    /// characters or above [`DeliveryErrorBound::SCHEMA_MAXIMUM_CHARACTERS`].
     pub const fn error_bound(&self) -> Result<DeliveryErrorBound, DeliveryErrorBoundError> {
         DeliveryErrorBound::from_characters(self.error_max_chars)
     }

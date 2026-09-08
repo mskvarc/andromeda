@@ -67,7 +67,7 @@ fn entity_with_instants(entity_id: &str, observed_at: &str, value: &str) -> Valu
 /// The instant a stored timestamp holds, as an RFC 3339 string.
 fn stored_instant(instant: Option<DateTime<Utc>>) -> String {
     instant
-        .unwrap_or_else(|| unreachable!("the axis the fixture declared must be stored"))
+        .unwrap_or_else(|| panic!("the axis the fixture declared must be stored"))
         .to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
 }
 

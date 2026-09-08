@@ -7,31 +7,62 @@ use serde_json::Value;
 
 impl TestClient {
     /// Create a batch of entities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn batch_create(&self, body: &Value) -> Result<TestResponse, RequestError> {
         self.send_batch("entityOperations/create", Method::POST, body, None, None).await
     }
 
     /// Upsert a batch of entities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn batch_upsert(&self, body: &Value) -> Result<TestResponse, RequestError> {
         self.send_batch("entityOperations/upsert", Method::POST, body, None, None).await
     }
 
     /// Update a batch of entities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn batch_update(&self, body: &Value) -> Result<TestResponse, RequestError> {
         self.send_batch("entityOperations/update", Method::POST, body, None, None).await
     }
 
     /// Merge a batch of entities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn batch_merge(&self, body: &Value) -> Result<TestResponse, RequestError> {
         self.send_batch("entityOperations/merge", Method::POST, body, None, None).await
     }
 
     /// Delete a batch of entities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn batch_delete(&self, body: &Value) -> Result<TestResponse, RequestError> {
         self.send_batch("entityOperations/delete", Method::POST, body, None, None).await
     }
 
     /// Query a batch of entities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint,
+    /// [`RequestError::Header`] when `context` is not a valid IRI reference or cannot be encoded as a `Link` header, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn batch_query(&self, body: &Value, accept: &str, context: Option<&str>) -> Result<TestResponse, RequestError> {
         self.send_batch("entityOperations/query", Method::POST, body, Some(accept), context).await
     }

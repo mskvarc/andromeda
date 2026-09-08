@@ -128,8 +128,8 @@ async fn batch_delete_fallback_per_entity_delete() {
 
     client.batch_delete(&json!([v1, v2])).await.expect("batch delete");
 
-    assert_eq!(mock.get_count(Method::DELETE, &v1_path).await, 1, "v1 is deleted per id");
-    assert_eq!(mock.get_count(Method::DELETE, &v2_path).await, 1, "v2 is deleted per id");
+    assert_eq!(mock.get_count(Method::DELETE, &v1_path), 1, "v1 is deleted per id");
+    assert_eq!(mock.get_count(Method::DELETE, &v2_path), 1, "v2 is deleted per id");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -175,7 +175,7 @@ async fn batch_delete_redirect_neither_op_conflict_per_entity() {
         .filter(|entry| entry["error"]["status"] == json!(409) && entry["registrationId"] == json!(reg_id))
         .count();
     assert_eq!(conflicts, 2, "each id surfaces a keyed conflict: {body}");
-    assert_eq!(mock.get_total_count().await, 0, "no forwarding on an unsupported operation");
+    assert_eq!(mock.get_total_count(), 0, "no forwarding on an unsupported operation");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -229,11 +229,7 @@ async fn batch_delete_local_phase_removes_ids() {
         let local = client.get_entity(id, "local=true", "application/ld+json", None).await.expect("local read-back");
         assert_status(&local, 404);
     }
-    assert_eq!(
-        mock.get_total_count().await,
-        0,
-        "the auxiliary registration does not forward provision operations"
-    );
+    assert_eq!(mock.get_total_count(), 0, "the auxiliary registration does not forward provision operations");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

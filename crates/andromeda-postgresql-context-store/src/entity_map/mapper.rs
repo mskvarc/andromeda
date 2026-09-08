@@ -11,7 +11,7 @@ use indexmap::IndexMap;
 /// Assemble a map from its control record and the child rows read for it.
 pub(crate) fn rows_to_entity_map(
     id: Uri,
-    control: MapControlRecord,
+    control: &MapControlRecord,
     entries: Vec<(String, String)>,
     links: Vec<(String, String)>,
 ) -> Result<EntityMap, ContextStoreError> {
@@ -73,7 +73,7 @@ mod tests {
         let fingerprint = RequestFingerprint::new(MapRequestKind::QueryEntities, [9; 32]);
         let map = rows_to_entity_map(
             "urn:ngsi-ld:EntityMap:1".parse().expect("valid URI"),
-            control(Some(fingerprint.to_string())),
+            &control(Some(fingerprint.to_string())),
             vec![
                 ("urn:ngsi-ld:Vehicle:2".to_string(), "@none".to_string()),
                 ("urn:ngsi-ld:Vehicle:1".to_string(), "@none".to_string()),
@@ -82,7 +82,7 @@ mod tests {
             vec![("urn:ngsi-ld:csr:b".to_string(), "urn:ngsi-ld:EntityMap:b".to_string())],
         )
         .expect("maps");
-        let ids: Vec<&str> = map.entity_ids().map(andromeda_ngsi_ld_lexicon::uri::Uri::as_str).collect();
+        let ids: Vec<&str> = map.entity_ids().map(Uri::as_str).collect();
         pretty_assertions::assert_eq!(ids, vec!["urn:ngsi-ld:Vehicle:2", "urn:ngsi-ld:Vehicle:1"]);
         pretty_assertions::assert_eq!(
             map.entity_map.get(&"urn:ngsi-ld:Vehicle:2".parse::<Uri>().expect("valid URI")),
@@ -97,12 +97,12 @@ mod tests {
 
     #[test]
     fn a_map_recorded_without_a_fingerprint_reads_back_without_one_and_a_corrupt_one_is_internal() {
-        let map = rows_to_entity_map("urn:ngsi-ld:EntityMap:1".parse().expect("valid URI"), control(None), Vec::new(), Vec::new()).expect("maps");
+        let map = rows_to_entity_map("urn:ngsi-ld:EntityMap:1".parse().expect("valid URI"), &control(None), Vec::new(), Vec::new()).expect("maps");
         assert!(map.request_fingerprint.is_none());
         assert!(
             rows_to_entity_map(
                 "urn:ngsi-ld:EntityMap:1".parse().expect("valid URI"),
-                control(Some("garbage".to_string())),
+                &control(Some("garbage".to_string())),
                 Vec::new(),
                 Vec::new()
             )
@@ -115,7 +115,7 @@ mod tests {
         assert!(
             rows_to_entity_map(
                 "urn:ngsi-ld:EntityMap:1".parse().expect("valid URI"),
-                control(None),
+                &control(None),
                 vec![("urn:ngsi-ld:Vehicle:1".to_string(), "not a uri".to_string())],
                 Vec::new(),
             )

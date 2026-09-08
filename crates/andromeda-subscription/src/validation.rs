@@ -10,7 +10,10 @@ use andromeda_ngsi_ld_geometry::{geometry::Geometry, geometry_type::GeometryType
 use andromeda_ngsi_ld_query::{
     filter::{expansion::expand_q_expr, expression::Expr, parser, predicate::Predicate, serialize},
     projection::term::ProjectionTerm,
-    type_selection::{expansion::expand_type_expression, grammar::TypeExprRaw},
+    type_selection::{
+        expansion::expand_type_expression,
+        grammar::{TypeExpr, TypeExprRaw},
+    },
 };
 use chrono::Utc;
 use serde_json::Value;
@@ -267,7 +270,7 @@ async fn expand_name_list(
 /// handled here — the entity-subscription service adds that on top.
 pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &mut Value, context: &ContextSpec) -> Result<(), SubscriptionError> {
     let prepared_context = engine.prepare_term_context(context);
-    let expander = ContextualExpander::new(engine, &prepared_context);
+    let term_expander = ContextualExpander::new(engine, &prepared_context);
     // Expand entities[].type
     if let Some(entities) = payload.get_mut("entities")
         && let Some(arr) = entities.as_array_mut()
@@ -275,7 +278,7 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
         for entity_sel in arr.iter_mut() {
             if let Some(type_val) = entity_sel.get("type").and_then(|v| v.as_str()) {
                 let raw = type_val.parse::<TypeExprRaw>()?;
-                match expand_type_expression(&raw, &expander).await.and_then(andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr::into_raw) {
+                match expand_type_expression(&raw, &term_expander).await.and_then(TypeExpr::into_raw) {
                     Ok(expanded) => {
                         if let Some(obj) = entity_sel.as_object_mut() {
                             obj.insert("type".to_string(), Value::String(expanded.to_string()));
@@ -308,7 +311,7 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
     // Expand q expression attribute terms
     if let Some(q_str) = payload.get("q").and_then(|v| v.as_str()).map(String::from)
         && let Ok(expr) = parser::parse(&q_str)
-        && let Ok(expanded) = expand_q_expr(expr, &expander).await
+        && let Ok(expanded) = expand_q_expr(expr, &term_expander).await
     {
         let expanded_str = serialize::serialize(&expanded);
         if let Some(obj) = payload.as_object_mut() {
@@ -322,7 +325,7 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
     // 5.11.2.4) has to name them by IRI too.
     if let Some(csf_str) = payload.get("csf").and_then(|v| v.as_str()).map(String::from)
         && let Ok(expr) = parser::parse(&csf_str)
-        && let Ok(expanded) = expand_q_expr(expr, &expander).await
+        && let Ok(expanded) = expand_q_expr(expr, &term_expander).await
     {
         let expanded_str = serialize::serialize(&expanded);
         if let Some(obj) = payload.as_object_mut() {

@@ -157,6 +157,13 @@ impl EntityRepository {
     ///
     /// `expected_modified_at` is positionally aligned with `entities`; a `None`
     /// entry overwrites unconditionally.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the expectation slice is not the same
+    /// length as `entities`, when an entity carries no type, when the update
+    /// statement cannot be built, when the statement fails, or when a returned
+    /// surrogate key or identifier is not a valid written entity.
     pub async fn save_batch_in_tx(
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,
@@ -194,7 +201,7 @@ impl EntityRepository {
             .fetch_all(&mut **tx);
         let rows: Vec<(i64, String)> = observe_statement(ENTITY_UPDATE, rows).await.map_err(entity_write_failure)?;
 
-        rows.into_iter().map(|(key, id)| stored_written_entity(key, id)).collect()
+        rows.iter().map(|(key, id)| stored_written_entity(*key, id)).collect()
     }
 }
 

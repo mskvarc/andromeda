@@ -452,6 +452,6 @@ async fn distop_entity_csi_content_type_ld_json_constrains_forwarded_content_typ
 fn json_body_from_bytes(body: &[u8]) -> serde_json::Value {
     match serde_json::from_slice(body) {
         Ok(value) => value,
-        Err(error) => unreachable!("forwarded body is not JSON ({error}); raw: {}", String::from_utf8_lossy(body)),
+        Err(error) => panic!("forwarded body is not JSON ({error}); raw: {}", String::from_utf8_lossy(body)),
     }
 }

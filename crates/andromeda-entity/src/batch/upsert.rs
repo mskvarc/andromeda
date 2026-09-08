@@ -40,6 +40,10 @@ use std::{
 /// One chunk's per-entity upsert results.
 type UpsertOutcome = (BatchResult, Vec<Uri>);
 
+/// One chunk's per-entity upsert results, the failures it collected while
+/// preparing them, and the identifiers it created.
+pub(super) type UpsertChunkOutcome = (BatchResult, Vec<(Uri, EntityError)>, Vec<Uri>);
+
 impl EntityService {
     /// Keep only the last appearance of each identifier, which is the one a
     /// later write would have left behind anyway.
@@ -194,7 +198,7 @@ impl EntityService {
                 existing,
                 Arc::new(merged),
                 Arc::new(entity.expanded),
-                groups,
+                &groups,
                 Some(existing),
                 Precondition::MustExist,
             ));
@@ -236,7 +240,7 @@ impl EntityService {
             previous,
             Arc::clone(payload),
             Arc::clone(payload),
-            groups,
+            &groups,
             Some(previous),
             Precondition::UnchangedSince(modified_at),
         )

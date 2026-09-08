@@ -84,7 +84,7 @@ impl headers::Header for PreferenceApplied {
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        let s: String = self.0.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(", ");
+        let s: String = self.0.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
         match HeaderValue::from_str(&s) {
             Ok(val) => values.extend(iter::once(val)),
             Err(err) => tracing::warn!(error = %err, "failed to encode Preference-Applied header"),

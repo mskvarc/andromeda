@@ -51,12 +51,21 @@ impl BrokerDnsOverride {
 
 impl BrokerEndpoint {
     /// Read and validate the broker endpoint from the process environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EndpointError::InvalidUrl`] when the value of [`BROKER_ENDPOINT_ENV`], or the built-in default used in its
+    /// absence, is not a parsable absolute URL.
     pub fn from_environment() -> Result<BrokerEndpoint, EndpointError> {
         let value = env::var(BROKER_ENDPOINT_ENV).unwrap_or_else(|_| default_broker_endpoint().to_owned());
         BrokerEndpoint::parse(value)
     }
 
     /// Validate a broker endpoint and normalize it to a trailing slash.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EndpointError::InvalidUrl`] when `value` is not a parsable absolute URL.
     pub fn parse(value: impl AsRef<str>) -> Result<BrokerEndpoint, EndpointError> {
         let mut url = Url::parse(value.as_ref()).map_err(EndpointError::InvalidUrl)?;
         if !url.path().ends_with('/') {
@@ -74,11 +83,19 @@ impl BrokerEndpoint {
     }
 
     /// Resolve a relative endpoint path against the NGSI-LD v1 endpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EndpointError::InvalidUrl`] when `path` cannot be resolved against the endpoint URL.
     pub fn join(&self, path: &str) -> Result<Url, EndpointError> {
         self.url.join(path).map_err(EndpointError::InvalidUrl)
     }
 
     /// Resolve a path rooted at the broker origin rather than under NGSI-LD v1.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EndpointError::InvalidUrl`] when `path` cannot be resolved against the endpoint URL.
     pub fn origin_join(&self, path: &str) -> Result<Url, EndpointError> {
         self.url.join(path).map_err(EndpointError::InvalidUrl)
     }
@@ -90,8 +107,8 @@ mod tests {
 
     #[test]
     fn endpoint_normalizes_trailing_slash_and_joins_relative_paths() {
-        let endpoint = BrokerEndpoint::parse("http://127.0.0.1:1056/ngsi-ld/v1").unwrap_or_else(|error| unreachable!("static URL is valid: {error}"));
-        let joined = endpoint.join("entities").unwrap_or_else(|error| unreachable!("static path is valid: {error}"));
+        let endpoint = BrokerEndpoint::parse("http://127.0.0.1:1056/ngsi-ld/v1").unwrap_or_else(|error| panic!("static URL is valid: {error}"));
+        let joined = endpoint.join("entities").unwrap_or_else(|error| panic!("static path is valid: {error}"));
 
         assert_eq!(joined.as_str(), "http://127.0.0.1:1056/ngsi-ld/v1/entities");
     }

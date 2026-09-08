@@ -18,7 +18,10 @@ use crate::{
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, temporal_format::TemporalFormat, uri::Uri};
-use andromeda_ngsi_ld_model::{entity_info::EntityTypeSelection, registration::ContextSourceRegistration};
+use andromeda_ngsi_ld_model::{
+    entity_info::EntityTypeSelection,
+    registration::{ContextSourceRegistration, RegistrationInfo},
+};
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, geo::input::GeoQueryInput, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::{
@@ -427,7 +430,7 @@ fn covered_attrs(attrs: &[AttributeName], registration: &ContextSourceRegistrati
         .coverage
         .information
         .iter()
-        .flat_map(andromeda_ngsi_ld_model::registration::RegistrationInfo::attribute_names)
+        .flat_map(RegistrationInfo::attribute_names)
         .collect::<Vec<_>>();
     if declared.is_empty() {
         return Some(attrs.to_vec()); // clone: the forwarded query owns the names it writes
@@ -459,7 +462,7 @@ mod tests {
     };
     use serde_json::{Value, json};
 
-    fn registration(information: Value) -> ContextSourceRegistration {
+    fn registration(information: &Value) -> ContextSourceRegistration {
         serde_json::from_value(json!({
             "id": "urn:ngsi-ld:csr:1",
             "type": "ContextSourceRegistration",
@@ -492,12 +495,12 @@ mod tests {
     /// attributes the same way.
     #[test]
     fn the_forwarded_query_is_narrowed_to_the_registered_types_ids_and_attributes() {
-        let by_type = registration(json!([{"entities": [{"type": VEHICLE}]}]));
+        let by_type = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         let query = entity_query("type=Vehicle,Device");
         let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&query), &by_type, SplitEntities::Complete).expect("covered");
         pretty_assertions::assert_eq!(forwarded.value_of(ForwardedParameter::Type), Some("Vehicle"));
 
-        let by_id = registration(json!([{"entities": [{"id": "urn:ngsi-ld:Vehicle:A1", "type": VEHICLE}], "propertyNames": [SPEED]}]));
+        let by_id = registration(&json!([{"entities": [{"id": "urn:ngsi-ld:Vehicle:A1", "type": VEHICLE}], "propertyNames": [SPEED]}]));
         let query = entity_query("type=Vehicle&id=urn:ngsi-ld:Vehicle:A1,urn:ngsi-ld:Vehicle:A2&attrs=speed,fuel");
         let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&query), &by_id, SplitEntities::Complete).expect("covered");
         pretty_assertions::assert_eq!(forwarded.value_of(ForwardedParameter::Id), Some("urn:ngsi-ld:Vehicle:A1"));
@@ -512,13 +515,13 @@ mod tests {
     /// has nothing to answer and is not written a query at all.
     #[test]
     fn a_registration_covering_nothing_requested_yields_no_query() {
-        let by_type = registration(json!([{"entities": [{"type": VEHICLE}]}]));
+        let by_type = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         assert!(ForwardedQuery::for_registration(ClientQuery::EntityQuery(&entity_query("type=Device")), &by_type, SplitEntities::Complete).is_none());
 
-        let by_attr = registration(json!([{"propertyNames": [SPEED]}]));
+        let by_attr = registration(&json!([{"propertyNames": [SPEED]}]));
         assert!(ForwardedQuery::for_registration(ClientQuery::EntityRetrieve(&retrieve("attrs=fuel")), &by_attr, SplitEntities::Complete).is_none());
 
-        let by_id = registration(json!([{"entities": [{"id": "urn:ngsi-ld:Vehicle:A1", "type": VEHICLE}]}]));
+        let by_id = registration(&json!([{"entities": [{"id": "urn:ngsi-ld:Vehicle:A1", "type": VEHICLE}]}]));
         let query = entity_query("type=Vehicle&id=urn:ngsi-ld:Vehicle:A2");
         assert!(ForwardedQuery::for_registration(ClientQuery::EntityQuery(&query), &by_id, SplitEntities::Complete).is_none());
     }
@@ -527,7 +530,7 @@ mod tests {
     /// client's selection as written, including an `idPattern`.
     #[test]
     fn an_unrestricted_registration_forwards_the_selection_unchanged() {
-        let unrestricted = registration(json!([{"propertyNames": [SPEED]}, {"entities": [{"type": VEHICLE}]}]));
+        let unrestricted = registration(&json!([{"propertyNames": [SPEED]}, {"entities": [{"type": VEHICLE}]}]));
         let query = entity_query("type=Vehicle,Device&id=urn:ngsi-ld:Vehicle:A1&idPattern=.*A.*&attrs=speed");
         let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&query), &unrestricted, SplitEntities::Complete).expect("covered");
         pretty_assertions::assert_eq!(forwarded.value_of(ForwardedParameter::Type), Some("Vehicle,Device"));
@@ -540,7 +543,7 @@ mod tests {
     /// `datasetId` still travel.
     #[test]
     fn split_entities_strip_the_attribute_reading_filters_before_forwarding() {
-        let unrestricted = registration(json!([{"entities": [{"type": VEHICLE}]}]));
+        let unrestricted = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         let query = entity_query(
             "type=Vehicle&q=speed%3E50&georel=near%3BmaxDistance%3D%3D1000&geometry=Point&coordinates=%5B8.0%2C44.0%5D&scopeQ=%2FMadrid&attrs=speed&csf=mode%3D%3Dinclusive&datasetId=%40none",
         );
@@ -560,7 +563,7 @@ mod tests {
     /// the geo-query spelled back as its four clause 4.10 members.
     #[test]
     fn complete_entities_forward_the_value_geo_scope_and_source_filters() {
-        let unrestricted = registration(json!([{"entities": [{"type": VEHICLE}]}]));
+        let unrestricted = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         let query = entity_query(
             "type=Vehicle&q=speed%3E50&georel=near%3BmaxDistance%3D%3D1000&geometry=Point&coordinates=%5B8.0%2C44.0%5D&geoproperty=location&scopeQ=%2FMadrid&attrs=speed&csf=mode%3D%3Dinclusive&lang=en&options=sysAttrs",
         );
@@ -582,7 +585,7 @@ mod tests {
     /// forwarded; only the system-attribute request is.
     #[test]
     fn a_representation_choice_is_never_forwarded() {
-        let unrestricted = registration(json!([{"entities": [{"type": VEHICLE}]}]));
+        let unrestricted = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         let query = entity_query("type=Vehicle&format=keyValues&options=concise");
         let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&query), &unrestricted, SplitEntities::Complete).expect("covered");
         pretty_assertions::assert_eq!(forwarded.to_query_string(), "type=Vehicle&limit=1000");
@@ -590,7 +593,7 @@ mod tests {
 
     #[test]
     fn an_explicit_source_page_replaces_the_post_merge_window() {
-        let unrestricted = registration(json!([{"entities": [{"type": VEHICLE}]}]));
+        let unrestricted = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         let query = entity_query("type=Vehicle&limit=20&offset=10");
         let forwarded = ForwardedQuery::for_registration_on_page(
             ClientQuery::EntityQuery(&query),
@@ -607,7 +610,7 @@ mod tests {
     /// members the local history is rendered with.
     #[test]
     fn a_temporal_query_keeps_its_window_under_split_and_everything_else_when_complete() {
-        let unrestricted = registration(json!([{"entities": [{"type": VEHICLE}]}]));
+        let unrestricted = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         let query = temporal_query(
             "type=Vehicle&timerel=between&timeAt=2024-01-01T00:00:00Z&endTimeAt=2024-02-01T00:00:00Z&timeproperty=modifiedAt&lastN=2&q=speed%3E50&scopeQ=%2FMadrid&attrs=speed&options=aggregatedValues,sysAttrs&aggrMethods=avg,max&aggrPeriodDuration=PT1H&csf=tier%3D%3D%22gold%22",
         );
@@ -637,7 +640,7 @@ mod tests {
     /// continuation and nothing the registration does not cover.
     #[test]
     fn a_retrieval_forwards_its_traversal_continuation_and_narrowed_attributes() {
-        let by_attr = registration(json!([{"propertyNames": [SPEED]}]));
+        let by_attr = registration(&json!([{"propertyNames": [SPEED]}]));
         let params = retrieve("attrs=speed,fuel&join=flat&joinLevel=2&containedBy=urn:ngsi-ld:Building:1,urn:ngsi-ld:Building:2&datasetId=urn:ngsi-ld:ds:1");
         let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityRetrieve(&params), &by_attr, SplitEntities::Complete).expect("covered");
         pretty_assertions::assert_eq!(
@@ -653,7 +656,7 @@ mod tests {
     /// they are forwarded whole; an alternation is narrowed to its covered names.
     #[test]
     fn only_a_flat_alternation_of_types_is_narrowed() {
-        let by_type = registration(json!([{"entities": [{"type": VEHICLE}]}, {"entities": [{"type": "https://example.org/Car"}]}]));
+        let by_type = registration(&json!([{"entities": [{"type": VEHICLE}]}, {"entities": [{"type": "https://example.org/Car"}]}]));
         let conjunction = entity_query("type=Vehicle%3BDevice");
         let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&conjunction), &by_type, SplitEntities::Complete).expect("covered");
         pretty_assertions::assert_eq!(forwarded.value_of(ForwardedParameter::Type), Some("(Vehicle;Device)"));

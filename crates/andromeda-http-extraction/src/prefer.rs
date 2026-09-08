@@ -6,9 +6,15 @@
 use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, prefer::Prefer, preference::RespondMode};
 use andromeda_http_response::render::RenderingPreferences;
 use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
-use axum::{extract::FromRequestParts, http::request::Parts};
+use axum::{
+    extract::FromRequestParts,
+    http::{HeaderMap, request::Parts},
+};
 use headers::HeaderMapExt;
-use std::convert::Infallible;
+use std::{
+    convert::Infallible,
+    future::{Future, ready},
+};
 
 /// Parsed Prefer request header per RFC 7240 and NGSI-LD clause 6.3.6.
 ///
@@ -26,19 +32,26 @@ pub struct PreferHeader {
     pub respond_mode: Option<RespondMode>,
 }
 
+/// The tokens a handler acts on, read off the request's `Prefer` header.
+///
+/// An absent or unparsable header leaves every token at its default, which is
+/// what RFC 7240 section 2 asks of a server that does not honour a preference.
+fn preferences(headers: &HeaderMap) -> PreferHeader {
+    headers.typed_get::<Prefer>().map_or_else(PreferHeader::default, |prefer| PreferHeader {
+        geo_json_body: prefer.geo_json_body(),
+        requested_version: prefer.requested_version(),
+        respond_mode: prefer.respond_mode(),
+    })
+}
+
 impl<S> FromRequestParts<S> for PreferHeader
 where
     S: Send + Sync,
 {
     type Rejection = Infallible;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let prefer = parts.headers.typed_get::<Prefer>().map_or_else(PreferHeader::default, |p| PreferHeader {
-            geo_json_body: p.geo_json_body(),
-            requested_version: p.requested_version(),
-            respond_mode: p.respond_mode(),
-        });
-        Ok(prefer)
+    fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> {
+        ready(Ok(preferences(&parts.headers)))
     }
 }
 
@@ -64,12 +77,8 @@ mod tests {
             builder = builder.header("Prefer", v);
         }
         let req = builder.body(()).expect("valid request");
-        let (parts, _) = req.into_parts();
-        parts.headers.typed_get::<Prefer>().map_or_else(PreferHeader::default, |p| PreferHeader {
-            geo_json_body: p.geo_json_body(),
-            requested_version: p.requested_version(),
-            respond_mode: p.respond_mode(),
-        })
+        let (parts, ()) = req.into_parts();
+        preferences(&parts.headers)
     }
 
     #[test]

@@ -49,6 +49,13 @@ impl EntityExpirySweep {
     }
 
     /// Reconcile entity and attribute-instance expiry at one explicit UTC cutoff.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::Persistence`] when the expiry source cannot be
+    /// read or the sweep's writes cannot be committed, and
+    /// [`EntityError::Validation`] when a due entity's stored payload cannot be
+    /// reduced to its unexpired instances.
     pub async fn execute(&self, cutoff: DateTime<Utc>) -> Result<EntityExpiryOutcome, EntityError> {
         if self.entity_policy.batch_activity.is_within_cooldown() {
             return Ok(EntityExpiryOutcome::DeferredForBatchActivity);
@@ -175,7 +182,9 @@ impl EntityService {
         for ((_, events), outcome) in pending.into_iter().zip(&outcomes) {
             if outcome.is_updated() {
                 landed += 1;
-                events.into_iter().for_each(|event| self.emit_change(target, event));
+                for event in events {
+                    self.emit_change(target, event);
+                }
             }
         }
         Ok(landed)
@@ -280,7 +289,7 @@ mod tests {
     #[test]
     fn vanished_and_superseded_entities_are_not_reported() -> Result<(), UriParseError> {
         let outcomes = vec![WriteOutcome::NotFound, WriteOutcome::Superseded];
-        assert_eq!(landed_ids(identifiers(&["urn:ngsi-ld:A", "urn:ngsi-ld:B"])?, &outcomes), [] as [andromeda_ngsi_ld_lexicon::uri::Uri; 0]);
+        assert!(landed_ids(identifiers(&["urn:ngsi-ld:A", "urn:ngsi-ld:B"])?, &outcomes).is_empty());
         Ok(())
     }
 

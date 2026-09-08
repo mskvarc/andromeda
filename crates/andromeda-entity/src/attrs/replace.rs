@@ -25,6 +25,18 @@ impl EntityService {
     /// The replacement is computed from a payload read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
     /// recomputed against a fresh read if a concurrent writer got in first.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::Validation`] when `attr_name` is a JSON-LD
+    /// keyword or names `scope`, or when `fragment` carries a malformed
+    /// attribute instance, [`EntityError::JsonLd`] when `attr_name` or
+    /// `fragment` cannot be expanded against `context`,
+    /// [`EntityError::NotFound`] when no entity carries `id`,
+    /// [`EntityError::MemberNotFound`] when the entity carries neither the
+    /// attribute nor the selected instance, [`EntityError::Contention`] when
+    /// concurrent writers superseded the computed write on every attempt, and
+    /// [`EntityError::Persistence`] when the store could not apply it.
     pub async fn replace_attr(
         &self,
         target: &ContextTarget,
@@ -68,7 +80,9 @@ impl EntityService {
             })
             .await?;
 
-        events.into_iter().for_each(|event| self.emit_change(target, event));
+        for event in events {
+            self.emit_change(target, event);
+        }
 
         Ok(())
     }

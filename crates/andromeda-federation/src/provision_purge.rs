@@ -90,6 +90,14 @@ fn reported_ids(csr: &ContextSourceRegistration, local_ids: &[Uri]) -> Vec<Uri> 
 
 impl FederationService {
     /// Forward a purge to every matching registration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FederationError::JsonLd`] when the query's entity type
+    /// cannot be expanded against the request's context, and
+    /// [`FederationError::Registration`] when the matching registrations
+    /// cannot be read. A registration that refuses the purge does not fail
+    /// the call: its refusal is reported as a [`ForwardedPurgeResult`].
     pub async fn forward_purge(&self, target: &ContextTarget, request: ForwardPurgeRequest<'_>) -> Result<Vec<ForwardedPurgeResult>, FederationError> {
         if !target.permits_federation() {
             return Ok(Vec::new());
@@ -155,13 +163,13 @@ mod tests {
     use crate::provision_purge::{forwarded_query_string, reported_ids};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     fn uri(raw: &str) -> Uri {
         raw.parse().expect("valid URI")
     }
 
-    fn registration(information: serde_json::Value) -> ContextSourceRegistration {
+    fn registration(information: &Value) -> ContextSourceRegistration {
         serde_json::from_value(json!({
             "id": "urn:ngsi-ld:csr:1",
             "type": "ContextSourceRegistration",
@@ -184,11 +192,11 @@ mod tests {
 
     #[test]
     fn a_failure_is_reported_against_the_covered_local_ids_then_the_declared_ids_then_the_registration() {
-        let by_id = registration(json!({"entities": [{"id": "urn:ngsi-ld:Vehicle:1", "type": "https://example.org/Vehicle"}]}));
+        let by_id = registration(&json!({"entities": [{"id": "urn:ngsi-ld:Vehicle:1", "type": "https://example.org/Vehicle"}]}));
         let local = [uri("urn:ngsi-ld:Vehicle:1"), uri("urn:ngsi-ld:Vehicle:2")];
         pretty_assertions::assert_eq!(reported_ids(&by_id, &local), vec![uri("urn:ngsi-ld:Vehicle:1")]);
         pretty_assertions::assert_eq!(reported_ids(&by_id, &[]), vec![uri("urn:ngsi-ld:Vehicle:1")]);
-        let by_type = registration(json!({"entities": [{"type": "https://example.org/Vehicle"}]}));
+        let by_type = registration(&json!({"entities": [{"type": "https://example.org/Vehicle"}]}));
         pretty_assertions::assert_eq!(reported_ids(&by_type, &[]), vec![uri("urn:ngsi-ld:csr:1")]);
         pretty_assertions::assert_eq!(reported_ids(&by_type, &local), local.to_vec());
     }

@@ -76,7 +76,9 @@ fn paged_where(statement: &mut SelectStatement, kind: Option<&str>, after: Optio
     if let Some(after) = after {
         statement.and_where(Expr::col(JsonldContexts::Id).gt(after));
     }
-    statement.order_by(JsonldContexts::Id, Order::Asc).limit(<i64 as Ord>::max(limit, 0) as u64);
+    // A negative page size is an absent bound, not a narrower one, so it
+    // clamps to zero rather than wrapping into an enormous unsigned width.
+    statement.order_by(JsonldContexts::Id, Order::Asc).limit(u64::try_from(limit).unwrap_or(0));
 }
 
 /// The full-metadata page of stored Contexts.
@@ -154,6 +156,11 @@ pub fn replace_payload_update(local_id: &str, payload: Value) -> UpdateStatement
 }
 
 /// Insert a hosted or implicitly-created Context under an exact kind.
+///
+/// # Errors
+///
+/// Returns [`SeaQueryError`] when the bound value list stops matching the
+/// seven-wide column list, which the fixed shapes here make unreachable.
 pub fn hosted_insert(local_id: &str, serving_url: Option<&str>, kind_label: &str, payload: Value) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement

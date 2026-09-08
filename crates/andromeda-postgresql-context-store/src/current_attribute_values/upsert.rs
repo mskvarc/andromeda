@@ -27,6 +27,7 @@ use sea_query::{
     Order,
     PostgresQueryBuilder,
     Query,
+    SelectStatement,
     SimpleExpr,
     WithClause,
 };
@@ -237,33 +238,21 @@ where
     stored.distinct_from(proposed)
 }
 
-/// Build the projection upsert statement for one batch.
+/// The `input` common table expression: the batch, deduplicated to the clause
+/// 4.5.5 grain and with its geometries validated.
 ///
-/// `DISTINCT ON` collapses repeats of the clause 4.5.5 grain before the insert
-/// sees them. Without it a batch naming one instance twice would abort with
-/// "cannot affect row a second time", since `ON CONFLICT DO UPDATE` refuses to
-/// touch a row twice in one statement. The ordinality the `UNNEST` carries is
-/// the tie-break: the last position in the batch wins, which is the order the
-/// caller's operations were applied to the entity payload in.
-///
-/// `matched` uses NULL-safe equality for `datasetId` because absent dataset IDs
-/// identify the single default attribute instance. It locks every existing
-/// grain before `updated` changes differing rows by their physical tuple ID.
-/// The final insert excludes all matched input IDs, including value-identical
-/// rows, and retains the natural-grain conflict action for concurrent inserts.
+/// `DISTINCT ON` collapses repeats of the grain before the insert sees them.
+/// Without it a batch naming one instance twice would abort with "cannot affect
+/// row a second time", since `ON CONFLICT DO UPDATE` refuses to touch a row
+/// twice in one statement. The ordinality the `UNNEST` carries is the tie-break:
+/// the last position in the batch wins, which is the order the caller's
+/// operations were applied to the entity payload in.
 ///
 /// The `value_geo` column is wrapped as
 /// `CASE WHEN d.value_geo IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.value_geo)) ELSE NULL END`:
 /// the EWKB already carries its SRID, so no re-SRID is applied, and a NULL EWKB
 /// projects to a NULL geometry rather than a call on a NULL argument.
-///
-/// # Errors
-///
-/// Returns [`ContextStoreError::Internal`] if the projection's expression count
-/// ever stops matching the insert's thirteen-wide column list, which the fixed
-/// shapes here make unreachable.
-fn projection_upsert_sql() -> Result<String, ContextStoreError> {
-    let columns = staging_columns();
+fn input_cte(columns: &[UnnestColumn]) -> CommonTableExpression {
     let call = unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(index + 1))));
 
     let geometry: SimpleExpr = CaseStatement::new()
@@ -303,16 +292,24 @@ fn projection_upsert_sql() -> Result<String, ContextStoreError> {
         .order_by((Staging, Ordinality), Order::Desc);
     let select = select;
 
-    let input = CommonTableExpression::new()
+    CommonTableExpression::new()
         .table_name(Input)
         .columns(PROJECTION_COLUMNS)
         .column(InputId)
         .query(select)
         .materialized(true)
-        .to_owned();
+        .to_owned()
+}
 
-    let mut matched_select = Query::select();
-    matched_select
+/// The `matched` common table expression: input rows whose grain already exists,
+/// locked, each carrying the physical tuple ID of the stored row.
+///
+/// The join uses NULL-safe equality for `datasetId` because absent dataset IDs
+/// identify the single default attribute instance. Locking here is what lets the
+/// update stage change rows by `ctid` without racing a concurrent writer.
+fn matched_cte() -> CommonTableExpression {
+    let mut select = Query::select();
+    select
         .columns(PROJECTION_COLUMNS.map(|column| (Input, column)))
         .column((Input, InputId))
         .expr_as(Expr::col((CurrentAttributeValues::Table, Ctid)), TargetTid)
@@ -335,15 +332,21 @@ fn projection_upsert_sql() -> Result<String, ContextStoreError> {
                 ),
         )
         .lock_with_tables(LockType::Update, [CurrentAttributeValues::Table]);
-    let matched = CommonTableExpression::new()
+    let select = select;
+
+    CommonTableExpression::new()
         .table_name(Matched)
         .columns(PROJECTION_COLUMNS)
         .column(InputId)
         .column(TargetTid)
-        .query(matched_select)
+        .query(select)
         .materialized(true)
-        .to_owned();
+        .to_owned()
+}
 
+/// The `updated` common table expression: the direct update of every matched row
+/// whose refreshed columns differ, addressed by its physical tuple ID.
+fn updated_cte() -> CommonTableExpression {
     let mut update = Query::update();
     update
         .table(CurrentAttributeValues::Table)
@@ -352,20 +355,31 @@ fn projection_upsert_sql() -> Result<String, ContextStoreError> {
         .and_where(Expr::col((CurrentAttributeValues::Table, Ctid)).equals((Matched, TargetTid)))
         .and_where(stored_row_differs_from(Matched))
         .returning_col((CurrentAttributeValues::Table, CurrentAttributeValues::EntityKey));
-    let updated = CommonTableExpression::new().table_name(Updated).query(update).to_owned();
+    let update = update;
 
+    CommonTableExpression::new().table_name(Updated).query(update).to_owned()
+}
+
+/// The rows the final insert writes: every input the match stage did not claim,
+/// including inputs whose stored row was value-identical and so left unchanged.
+fn unmatched_input_select() -> SelectStatement {
     let matched_input = Query::select()
         .expr(Expr::val(1))
         .from(Matched)
         .and_where(Expr::col((Matched, InputId)).equals((Input, InputId)))
         .to_owned();
-    let mut insert_select = Query::select();
-    insert_select
+
+    Query::select()
         .columns(PROJECTION_COLUMNS.map(|column| (Input, column)))
         .from(Input)
-        .and_where(Expr::exists(matched_input).not());
+        .and_where(Expr::exists(matched_input).not())
+        .to_owned()
+}
 
-    let conflict = OnConflict::columns([
+/// The natural-grain conflict action retained on the insert solely for a
+/// concurrent transaction that created the same missing grain in between.
+fn concurrent_insert_conflict() -> OnConflict {
+    OnConflict::columns([
         CurrentAttributeValues::ContextSpaceKey,
         CurrentAttributeValues::EntityKey,
         CurrentAttributeValues::AttributeNameId,
@@ -373,18 +387,28 @@ fn projection_upsert_sql() -> Result<String, ContextStoreError> {
     ])
     .update_columns(REFRESHED_COLUMNS)
     .action_and_where(stored_row_differs_from(Excluded))
-    .to_owned();
+    .to_owned()
+}
+
+/// Build the projection upsert statement for one batch.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Internal`] if the projection's expression count
+/// ever stops matching the insert's fourteen-wide column list, which the fixed
+/// shapes of the stages make unreachable.
+fn projection_upsert_sql() -> Result<String, ContextStoreError> {
+    let columns = staging_columns();
+    let stages = WithClause::new().cte(input_cte(&columns)).cte(matched_cte()).cte(updated_cte()).to_owned();
 
     let mut insert = Query::insert();
     insert.into_table(CurrentAttributeValues::Table).columns(PROJECTION_COLUMNS);
     // `select_from` fails only on a column/expression arity mismatch, which the
-    // fixed thirteen-wide column list and projection above make unreachable.
+    // fixed fourteen-wide column list and projection above make unreachable.
     insert
-        .select_from(insert_select)
+        .select_from(unmatched_input_select())
         .map_err(|error| ContextStoreError::Internal(error.to_string()))?;
-    insert
-        .on_conflict(conflict)
-        .with_cte(WithClause::new().cte(input).cte(matched).cte(updated).to_owned());
+    insert.on_conflict(concurrent_insert_conflict()).with_cte(stages);
 
     let sql = insert.to_string(PostgresQueryBuilder);
     Ok(apply_with_ordinality(sql, &Staging, &columns, &Ordinality))

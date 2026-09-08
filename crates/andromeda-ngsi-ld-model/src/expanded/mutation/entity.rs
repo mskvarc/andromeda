@@ -47,7 +47,7 @@ pub fn merge_entity(entity: &mut Value, patch: &Value, default_observed_at: Opti
             continue;
         }
 
-        let patch_instances = if let Some(arr) = value.as_array() { arr } else {
+        let Some(patch_instances) = value.as_array() else {
             // clone: both the key and the value are borrowed from the patch and stored owned.
             entity_obj.insert(key.clone(), value.clone());
             continue;
@@ -177,7 +177,7 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: Overwri
         }
 
         // Attribute already exists -- merge by datasetId
-        let patch_instances = if let Some(arr) = value.as_array() { arr } else {
+        let Some(patch_instances) = value.as_array() else {
             if no_overwrite {
                 not_appended.push(key.parse::<AttributeName>().map_err(|_| ExpandedEntityError::InvalidAttributeName)?);
             } else {
@@ -272,7 +272,7 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Attr
             continue;
         }
 
-        let patch_instances = if let Some(arr) = value.as_array() { arr } else {
+        let Some(patch_instances) = value.as_array() else {
             // clone: both the key and the value are borrowed from the fragment and stored owned.
             entity_obj.insert(key.clone(), value.clone());
             continue;
@@ -297,7 +297,7 @@ mod tests {
 
     /// One expanded Property instance carrying `value`, optionally tagged with a
     /// `datasetId`. A `value` of `urn:ngsi-ld:null` is a deletion sentinel.
-    fn property_instance(value: Value, dataset: Option<&str>) -> Value {
+    fn property_instance(value: &Value, dataset: Option<&str>) -> Value {
         let mut node = json!({
             "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value}]
@@ -309,7 +309,7 @@ mod tests {
     }
 
     /// An entity carrying `speed` with the given instances.
-    fn entity_with_speed(instances: Vec<Value>) -> Value {
+    fn entity_with_speed(instances: &[Value]) -> Value {
         json!([{ "@id": "urn:ngsi-ld:Device:1", "https://example.com/speed": instances }])
     }
 
@@ -324,13 +324,13 @@ mod tests {
         // datasetId A alongside a live update for datasetId B must delete A and
         // apply B. The update must not be dropped for sharing the array with a
         // sentinel.
-        let mut entity = entity_with_speed(vec![
-            property_instance(json!(10), Some("urn:ngsi-ld:Dataset:A")),
-            property_instance(json!(15), Some("urn:ngsi-ld:Dataset:B")),
+        let mut entity = entity_with_speed(&[
+            property_instance(&json!(10), Some("urn:ngsi-ld:Dataset:A")),
+            property_instance(&json!(15), Some("urn:ngsi-ld:Dataset:B")),
         ]);
-        let patch = entity_with_speed(vec![
-            property_instance(json!("urn:ngsi-ld:null"), Some("urn:ngsi-ld:Dataset:A")),
-            property_instance(json!(20), Some("urn:ngsi-ld:Dataset:B")),
+        let patch = entity_with_speed(&[
+            property_instance(&json!("urn:ngsi-ld:null"), Some("urn:ngsi-ld:Dataset:A")),
+            property_instance(&json!(20), Some("urn:ngsi-ld:Dataset:B")),
         ]);
 
         merge_entity(&mut entity, &patch, None).expect("merge succeeds");
@@ -346,13 +346,13 @@ mod tests {
         // The old code removed the whole attribute on a datasetId-less sentinel
         // and broke out of the loop, dropping the datasetId B update that
         // followed. The default instance must go while B survives and updates.
-        let mut entity = entity_with_speed(vec![
-            property_instance(json!(10), None),
-            property_instance(json!(15), Some("urn:ngsi-ld:Dataset:B")),
+        let mut entity = entity_with_speed(&[
+            property_instance(&json!(10), None),
+            property_instance(&json!(15), Some("urn:ngsi-ld:Dataset:B")),
         ]);
-        let patch = entity_with_speed(vec![
-            property_instance(json!("urn:ngsi-ld:null"), None),
-            property_instance(json!(20), Some("urn:ngsi-ld:Dataset:B")),
+        let patch = entity_with_speed(&[
+            property_instance(&json!("urn:ngsi-ld:null"), None),
+            property_instance(&json!(20), Some("urn:ngsi-ld:Dataset:B")),
         ]);
 
         merge_entity(&mut entity, &patch, None).expect("merge succeeds");
@@ -365,9 +365,9 @@ mod tests {
 
     #[test]
     fn a_bare_member_null_sentinel_deletes_every_attribute_instance() {
-        let mut entity = entity_with_speed(vec![
-            property_instance(json!(10), None),
-            property_instance(json!(15), Some("urn:ngsi-ld:Dataset:B")),
+        let mut entity = entity_with_speed(&[
+            property_instance(&json!(10), None),
+            property_instance(&json!(15), Some("urn:ngsi-ld:Dataset:B")),
         ]);
         let patch = json!([{
             "https://example.com/speed": [{"@value": "urn:ngsi-ld:null"}]
@@ -383,20 +383,20 @@ mod tests {
         // ETSI GS CIM 009 v1.9.1 clause 5.6.2 updates each supplied instance;
         // the default-instance deletion sentinel cannot discard a named update
         // later in the same attribute array.
-        let mut entity = entity_with_speed(vec![
-            property_instance(json!(10), None),
-            property_instance(json!(15), Some("urn:ngsi-ld:Dataset:B")),
+        let mut entity = entity_with_speed(&[
+            property_instance(&json!(10), None),
+            property_instance(&json!(15), Some("urn:ngsi-ld:Dataset:B")),
         ]);
         let patch = serde_json::json!({
             "https://example.com/speed": [
-                property_instance(json!("urn:ngsi-ld:null"), None),
-                property_instance(json!(20), Some("urn:ngsi-ld:Dataset:B"))
+                property_instance(&json!("urn:ngsi-ld:null"), None),
+                property_instance(&json!(20), Some("urn:ngsi-ld:Dataset:B"))
             ]
         });
 
         let not_updated = update_entity_attrs(&mut entity, &patch).expect("update succeeds");
 
-        assert!(not_updated.is_empty());
+        pretty_assertions::assert_eq!(not_updated, Vec::<AttributeName>::new());
         let instances = speed_instances(&entity);
         pretty_assertions::assert_eq!(instances.len(), 1);
         pretty_assertions::assert_eq!(instances[0]["https://uri.etsi.org/ngsi-ld/datasetId"][0]["@id"], json!("urn:ngsi-ld:Dataset:B"));
@@ -407,8 +407,8 @@ mod tests {
     fn a_datasetless_null_on_a_lone_default_instance_deletes_the_whole_attribute() {
         // With only a default instance present, deleting it empties the array,
         // so the attribute member itself is dropped — the common bare-null case.
-        let mut entity = entity_with_speed(vec![property_instance(json!(10), None)]);
-        let patch = entity_with_speed(vec![property_instance(json!("urn:ngsi-ld:null"), None)]);
+        let mut entity = entity_with_speed(&[property_instance(&json!(10), None)]);
+        let patch = entity_with_speed(&[property_instance(&json!("urn:ngsi-ld:null"), None)]);
 
         merge_entity(&mut entity, &patch, None).expect("merge succeeds");
 
@@ -420,14 +420,14 @@ mod tests {
         // ETSI GS CIM 009 v1.9.1 clause 5.5.8 EXAMPLE 2: Update Attributes
         // overwrites the whole matched instance, so a `unitCode` the patch omits
         // is removed rather than carried forward.
-        let mut existing = property_instance(json!(25), None);
+        let mut existing = property_instance(&json!(25), None);
         existing["https://uri.etsi.org/ngsi-ld/unitCode"] = json!([{"@value": "CEL"}]);
-        let mut entity = entity_with_speed(vec![existing]);
-        let patch = json!({"https://example.com/speed": [property_instance(json!(100), None)]});
+        let mut entity = entity_with_speed(&[existing]);
+        let patch = json!({"https://example.com/speed": [property_instance(&json!(100), None)]});
 
         let not_updated = update_entity_attrs(&mut entity, &patch).expect("update succeeds");
 
-        assert!(not_updated.is_empty());
+        pretty_assertions::assert_eq!(not_updated, Vec::<AttributeName>::new());
         let instances = speed_instances(&entity);
         pretty_assertions::assert_eq!(instances.len(), 1);
         pretty_assertions::assert_eq!(instances[0]["https://uri.etsi.org/ngsi-ld/hasValue"][0]["@value"], json!(100));
@@ -472,15 +472,15 @@ mod tests {
         // Table 6.5.3.4-1 `observedAt`: the parameter fills in a missing
         // observedAt only where the target instance already had one, and never
         // overrides one the fragment names.
-        let mut observed = property_instance(json!(10), None);
+        let mut observed = property_instance(&json!(10), None);
         observed["https://uri.etsi.org/ngsi-ld/observedAt"] = json!([{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2020-01-01T00:00:00Z"}]);
-        let mut entity = entity_with_speed(vec![observed, property_instance(json!(15), Some("urn:ngsi-ld:Dataset:B"))]);
-        entity[0]["https://example.com/brand"] = json!([property_instance(json!("old"), None)]);
-        let mut explicit = property_instance(json!(20), Some("urn:ngsi-ld:Dataset:B"));
+        let mut entity = entity_with_speed(&[observed, property_instance(&json!(15), Some("urn:ngsi-ld:Dataset:B"))]);
+        entity[0]["https://example.com/brand"] = json!([property_instance(&json!("old"), None)]);
+        let mut explicit = property_instance(&json!(20), Some("urn:ngsi-ld:Dataset:B"));
         explicit["https://uri.etsi.org/ngsi-ld/observedAt"] = json!([{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2021-06-01T00:00:00Z"}]);
         let patch = json!([{
-            "https://example.com/speed": [property_instance(json!(11), None), explicit],
-            "https://example.com/brand": [property_instance(json!("new"), None)]
+            "https://example.com/speed": [property_instance(&json!(11), None), explicit],
+            "https://example.com/brand": [property_instance(&json!("new"), None)]
         }]);
         let at = "2024-02-03T04:05:06Z".parse::<chrono::DateTime<chrono::Utc>>().expect("valid timestamp");
 

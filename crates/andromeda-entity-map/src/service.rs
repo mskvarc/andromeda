@@ -41,6 +41,11 @@ impl EntityMapService {
     /// A fresh, unstored map over entities this broker holds for the request
     /// `fingerprint` describes, expiring after `lifetime` (one hour when the
     /// request suggests none).
+    ///
+    /// # Errors
+    ///
+    /// [`EntityMapError::Invariant`] when the generated identifier is not a
+    /// valid URI.
     pub fn local_map(
         &self,
         entity_ids: impl IntoIterator<Item = Uri>,
@@ -55,11 +60,20 @@ impl EntityMapService {
     }
 
     /// Store a composed map and make it accessible by its identifier.
+    ///
+    /// # Errors
+    ///
+    /// [`EntityMapError::Persistence`] when the store cannot write the map.
     pub async fn store(&self, map: &EntityMap) -> Result<(), EntityMapError> {
         self.store.insert(map).await
     }
 
     /// Retrieve a live Entity Map by identifier.
+    ///
+    /// # Errors
+    ///
+    /// [`EntityMapError::NotFound`] when no live map carries that identifier,
+    /// and [`EntityMapError::Persistence`] when the store cannot be read.
     pub async fn retrieve(&self, identifier: &Uri) -> Result<EntityMap, EntityMapError> {
         self.store.get(identifier).await?.ok_or_else(|| EntityMapError::NotFound {
             identifier: identifier.clone(), // clone: the error must own the identifier after this call returns.
@@ -69,6 +83,10 @@ impl EntityMapService {
     /// Resolve the map a request referenced: clause 5.5.14 says an expired or
     /// inaccessible map yields no inference and a new one is created, so a
     /// missing map is an outcome here rather than an error.
+    ///
+    /// # Errors
+    ///
+    /// [`EntityMapError::Persistence`] when the store cannot be read.
     pub async fn referenced(&self, identifier: &Uri) -> Result<ReferencedEntityMap, EntityMapError> {
         Ok(match self.store.get(identifier).await? {
             Some(map) => ReferencedEntityMap::Live(Box::new(map)),
@@ -117,6 +135,11 @@ impl EntityMapService {
     }
 
     /// Update the expiry of a live Entity Map.
+    ///
+    /// # Errors
+    ///
+    /// [`EntityMapError::NotFound`] when no live map carries that identifier,
+    /// and [`EntityMapError::Persistence`] when the store cannot move the expiry.
     pub async fn update(&self, identifier: &Uri, expires_at: DateTime<Utc>) -> Result<(), EntityMapError> {
         match self.store.update(identifier, expires_at).await? {
             EntityMapMutation::Applied => Ok(()),
@@ -130,6 +153,10 @@ impl EntityMapService {
     /// (clause 5.5.14: "the `EntityMap`'s linked maps are updated to hold the
     /// location of every `EntityMap` used by the Context Source
     /// Registrations"). A map that expired meanwhile is left alone.
+    ///
+    /// # Errors
+    ///
+    /// [`EntityMapError::Persistence`] when the store cannot record a link.
     pub async fn record_linked_maps<'a>(&self, identifier: &Uri, links: impl IntoIterator<Item = (&'a Uri, &'a Uri)>) -> Result<(), EntityMapError> {
         for (registration, linked_map) in links {
             self.store.link(identifier, registration, linked_map).await?;
@@ -151,6 +178,11 @@ impl EntityMapService {
     }
 
     /// Delete a live Entity Map by identifier.
+    ///
+    /// # Errors
+    ///
+    /// [`EntityMapError::NotFound`] when no live map carries that identifier,
+    /// and [`EntityMapError::Persistence`] when the store cannot remove it.
     pub async fn delete(&self, identifier: &Uri) -> Result<(), EntityMapError> {
         match self.store.delete(identifier).await? {
             EntityMapMutation::Applied => Ok(()),
@@ -244,7 +276,7 @@ mod tests {
             Box::pin(async move {
                 let mut maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
                 let before = maps.len();
-                maps.retain(|map| !(&map.id == identifier && !map.is_expired()));
+                maps.retain(|map| &map.id != identifier || map.is_expired());
                 Ok(if maps.len() < before {
                     EntityMapMutation::Applied
                 } else {
@@ -351,10 +383,10 @@ mod tests {
             .await?;
         assert!(matches!(&reused, EntityMapUse::Reuse(stored) if stored.id == map.id));
 
-        let refused = service
+        let changed_filter = service
             .resolve_use(Some(&map.id), EntityMapFlag::Requested, &query("type=Vehicle&q=speed%3E99")?, None)
             .await;
-        assert!(matches!(refused, Err(EntityMapError::RequestChanged { identifier }) if identifier == map.id));
+        assert!(matches!(changed_filter, Err(EntityMapError::RequestChanged { identifier }) if identifier == map.id));
 
         let retrieval = RequestFingerprint::new(MapRequestKind::RetrieveEntity, [0; 32]);
         let other_operation = service.resolve_use(Some(&map.id), EntityMapFlag::NotRequested, &retrieval, None).await?;

@@ -71,8 +71,17 @@ impl TermCache {
         if total == 0 {
             return;
         }
-        let hit_rate = (hits as f64 / total as f64) * 100.0;
-        tracing::debug!(hits, misses, total, hit_rate = format_args!("{hit_rate:.2}%"), "JSON-LD term cache statistics");
+        // Basis points computed in `u128` rather than a floating-point ratio:
+        // both counters are `u64`, and an `f64` division silently loses
+        // precision once either passes the 53-bit mantissa.
+        let hit_rate_basis_points = u128::from(hits) * 10_000 / u128::from(total);
+        tracing::debug!(
+            hits,
+            misses,
+            total,
+            hit_rate = format_args!("{}.{:02}%", hit_rate_basis_points / 100, hit_rate_basis_points % 100),
+            "JSON-LD term cache statistics"
+        );
     }
 }
 

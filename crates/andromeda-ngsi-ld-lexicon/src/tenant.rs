@@ -92,7 +92,7 @@ mod tests {
     fn tenant_name_valid_plain() {
         let tenant = match TenantName::try_from("tenant1".to_string()) {
             Ok(value) => value,
-            Err(err) => unreachable!("unexpected tenant parse error: {err}"),
+            Err(err) => panic!("unexpected tenant parse error: {err}"),
         };
         pretty_assertions::assert_eq!(tenant.as_str(), "tenant1");
     }

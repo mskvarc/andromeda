@@ -112,7 +112,7 @@ async fn delete_attr_exclusive_op_unsupported_returns_409() {
     let response = delete_speed(client, &entity_id).await;
     assert_status(&response, 409);
     assert_problem_details(&response, CONFLICT);
-    assert_eq!(mock.get_count(Method::DELETE, &path).await, 0, "no forward on an unsupported operation");
+    assert_eq!(mock.get_count(Method::DELETE, &path), 0, "no forward on an unsupported operation");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -164,13 +164,9 @@ async fn delete_attr_op_unsupported_multi_returns_207() {
             .any(|entry| entry["registrationId"] == json!(reg_unsupported) && entry["error"]["status"] == json!(409)),
         "the unsupported registration surfaces a keyed 409: {body}"
     );
+    assert_eq!(mock.get_count(Method::DELETE, &path_supported), 1, "the supporting source is forwarded to");
     assert_eq!(
-        mock.get_count(Method::DELETE, &path_supported).await,
-        1,
-        "the supporting source is forwarded to"
-    );
-    assert_eq!(
-        mock.get_count(Method::DELETE, &path_unsupported).await,
+        mock.get_count(Method::DELETE, &path_unsupported),
         0,
         "the unsupported source is not forwarded to"
     );
@@ -220,7 +216,7 @@ async fn delete_attr_registration_matches_entity_absent_not_404() {
         "a matched registration must not 404: {}",
         String::from_utf8_lossy(&response.body)
     );
-    assert_eq!(mock.get_count(Method::DELETE, &path).await, 1, "the delete is forwarded once");
+    assert_eq!(mock.get_count(Method::DELETE, &path), 1, "the delete is forwarded once");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -253,7 +249,7 @@ async fn delete_attr_inclusive_forwards_input() {
 
     let response = delete_speed(client, &entity_id).await;
     assert_status(&response, 204);
-    assert_eq!(mock.get_count(Method::DELETE, &path).await, 1, "the delete is forwarded once");
+    assert_eq!(mock.get_count(Method::DELETE, &path), 1, "the delete is forwarded once");
 
     let local = client
         .get_entity(&entity_id, "local=true", "application/ld+json", None)

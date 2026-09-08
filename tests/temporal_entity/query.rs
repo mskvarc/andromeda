@@ -195,7 +195,7 @@ async fn temporal_query_with_context_success() {
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
-    assert!(!arr.is_empty());
+    assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
 }
 
 // ---------------------------------------------------------------------------
@@ -471,7 +471,7 @@ async fn temporal_query_post_after_success() {
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
-    assert!(!arr.is_empty());
+    assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
 }
 
 #[tokio::test]
@@ -500,7 +500,7 @@ async fn temporal_query_post_before_success() {
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
-    assert!(!arr.is_empty());
+    assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
 }
 
 #[tokio::test]
@@ -530,7 +530,7 @@ async fn temporal_query_post_between_success() {
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
-    assert!(!arr.is_empty());
+    assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
 }
 
 #[tokio::test]
@@ -562,7 +562,7 @@ async fn temporal_query_post_multiple_types_success() {
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
-    assert!(!arr.is_empty());
+    assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
     // Should include both Vehicle and Bus types
     let types: Vec<_> = arr.iter().filter_map(|e| e.get("type").and_then(|t| t.as_str())).collect();
     assert!(types.contains(&"Vehicle") || types.contains(&"Bus"));
@@ -620,7 +620,7 @@ async fn temporal_query_temporal_values_before_success() {
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
-    assert!(!arr.is_empty());
+    assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
 }
 
 #[tokio::test]
@@ -643,7 +643,7 @@ async fn temporal_query_temporal_values_between_success() {
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
-    assert!(!arr.is_empty());
+    assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
 }
 
 // ---------------------------------------------------------------------------
@@ -793,7 +793,7 @@ async fn temporal_query_aggregated_avg_pt1h_success() {
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
-    assert!(!arr.is_empty());
+    assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
 }
 
 #[tokio::test]
@@ -814,7 +814,7 @@ async fn temporal_query_aggregated_avg_fuel_level_success() {
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
-    assert!(!arr.is_empty());
+    assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
     for entity in arr {
         assert!(entity.get("fuelLevel").is_some());
     }
@@ -838,7 +838,7 @@ async fn temporal_query_aggregated_avg_max_success() {
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
-    assert!(!arr.is_empty());
+    assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
 }
 
 #[tokio::test]
@@ -859,7 +859,7 @@ async fn temporal_query_aggregated_min_max_p1d_success() {
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
-    assert!(!arr.is_empty());
+    assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
 }
 
 // ---------------------------------------------------------------------------
@@ -884,7 +884,7 @@ async fn temporal_query_attrs_speed_with_multi_instances_success() {
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
-    assert!(!arr.is_empty());
+    assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
     for entity in arr {
         assert!(entity.get("speed").is_some());
     }

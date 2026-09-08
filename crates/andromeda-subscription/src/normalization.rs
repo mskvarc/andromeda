@@ -9,18 +9,36 @@ use andromeda_jsonld::{
 use andromeda_ngsi_ld_model::subscription::{SubscriptionFilters, SubscriptionStatus};
 use andromeda_ngsi_ld_query::{filter::compaction::compact_q_expr, projection::term::ProjectionTerm};
 use chrono::{DateTime, Utc};
-use serde_json::Value;
+use serde_json::{Number, Value};
 
+/// Render `timeInterval` and `throttling` as JSON integers whenever they hold
+/// a whole number of seconds.
+///
+/// Both members round-trip through the store as floating-point numbers, so a
+/// subscription written with `5` would otherwise be read back as `5.0`.
 pub fn fixup_integer_fields(value: &mut Value) {
-    if let Some(obj) = value.as_object_mut() {
-        for key in &["timeInterval", "throttling"] {
-            if let Some(val) = obj.get(*key).and_then(serde_json::Value::as_f64)
-                && val.fract() == 0.0
+    if let Some(object) = value.as_object_mut() {
+        for key in ["timeInterval", "throttling"] {
+            if let Some(seconds) = object.get(key).and_then(Value::as_f64)
+                && let Some(whole) = whole_seconds(seconds)
             {
-                obj.insert(key.to_string(), Value::Number(serde_json::Number::from(val as i64)));
+                object.insert(key.to_owned(), Value::Number(Number::from(whole)));
             }
         }
     }
+}
+
+/// The whole-second value of `seconds`, or `None` when it carries a fraction
+/// or falls outside the range an integer JSON number can hold.
+///
+/// The conversion goes through the decimal rendering rather than a cast so
+/// that a value too large for [`i64`] keeps its floating-point form instead of
+/// being truncated into range.
+fn whole_seconds(seconds: f64) -> Option<i64> {
+    if seconds.fract() != 0.0 {
+        return None;
+    }
+    format!("{seconds:.0}").parse().ok()
 }
 
 /// Inject default notificationTrigger if absent.

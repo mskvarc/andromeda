@@ -166,7 +166,7 @@ async fn dist_http_merge_entity_new_type_name_added_returns_204() {
     let type_names: Vec<&str> = match types {
         Value::Array(items) => items.iter().filter_map(Value::as_str).collect(),
         Value::String(single) => vec![single.as_str()],
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => unreachable!("type is a string or an array of strings: {types}"),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => panic!("type is a string or an array of strings: {types}"),
     };
     assert!(
         type_names.contains(&"Vehicle") && type_names.contains(&"Car"),

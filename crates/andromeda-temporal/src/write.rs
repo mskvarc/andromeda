@@ -17,6 +17,16 @@ use std::sync::Arc;
 
 impl TemporalService {
     /// Create a temporal entity or append the supplied observations when it already exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError::Validation`] when the payload is not a JSON
+    /// object, carries no `@id` or no `@type` (clause 4.5.1), names an
+    /// unparsable identifier, or puts a `unitCode` on an attribute family
+    /// clause 4.5.2 defines without one; [`TemporalError::JsonLd`] when the
+    /// payload cannot be expanded against `context`; and
+    /// [`TemporalError::Commit`] or [`TemporalError::Persistence`] when the
+    /// atomic write cannot be landed.
     pub async fn create_or_update(&self, target: &ContextTarget, mut payload: Value, context: &ContextSpec) -> Result<CreateOrUpdateResult, TemporalError> {
         normalize_entity_attributes(&mut payload);
         let expanded = self.engine.expand(payload, context).await?;
@@ -36,7 +46,7 @@ impl TemporalService {
             let entity_id = entity_id
                 .parse::<Uri>()
                 .map_err(|error| TemporalError::validation(format!("Invalid entity id: {error}")))?;
-            if entity_obj.get("@type").and_then(|v| v.as_array()).is_none_or(std::vec::Vec::is_empty) {
+            if entity_obj.get("@type").and_then(|v| v.as_array()).is_none_or(Vec::is_empty) {
                 return Err(TemporalError::validation("Entity missing @type"));
             }
             entity_id
@@ -72,6 +82,15 @@ impl TemporalService {
     }
 
     /// Add temporal attributes to an existing temporal entity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError::NotFound`] when the entity has no Temporal
+    /// Evolution, [`TemporalError::Validation`] when the payload puts a
+    /// `unitCode` on an attribute family clause 4.5.2 defines without one,
+    /// [`TemporalError::JsonLd`] when the payload cannot be expanded against
+    /// `context`, and [`TemporalError::Commit`] or
+    /// [`TemporalError::Persistence`] when the append cannot be landed.
     pub async fn add_attrs(&self, target: &ContextTarget, entity_id: &Uri, mut payload: Value, context: &ContextSpec) -> Result<(), TemporalError> {
         if !self.reader.entity_exists(target, entity_id).await? {
             return Err(TemporalError::not_found(entity_id.to_string()));
@@ -147,6 +166,13 @@ impl TemporalService {
     }
 
     /// Delete all temporal data for an entity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError::NotFound`] when the entity has no Temporal
+    /// Evolution, and [`TemporalError::Persistence`] when the delivery
+    /// barrier cannot drain the entity's pending history or the deletion
+    /// cannot be applied.
     pub async fn delete(&self, target: &ContextTarget, entity_id: &Uri) -> Result<(), TemporalError> {
         self.mutation_barrier.synchronize(target, entity_id).await?;
         if !self.mutator.entity_exists(target, entity_id).await? {
@@ -157,6 +183,16 @@ impl TemporalService {
     }
 
     /// Delete a specific temporal attribute (optionally filtered by dataset ID).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError::NotFound`] when the entity has no Temporal
+    /// Evolution, when it carries no such attribute, or when the named
+    /// `datasetId` -- or the default instance -- matches nothing;
+    /// [`TemporalError::Validation`] when the attribute name does not expand
+    /// to a valid one; and [`TemporalError::Persistence`] when the delivery
+    /// barrier cannot drain the entity's pending history or the deletion
+    /// cannot be applied.
     pub async fn delete_attr(
         &self,
         target: &ContextTarget,
@@ -193,6 +229,17 @@ impl TemporalService {
     }
 
     /// Replace an existing attribute instance with new data.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError::NotFound`] when the entity, the attribute or
+    /// the named instance does not exist; [`TemporalError::Validation`] when
+    /// the attribute name does not expand to a valid one or the replacement
+    /// puts a `unitCode` on an attribute family clause 4.5.2 defines without
+    /// one; [`TemporalError::JsonLd`] when the payload cannot be expanded
+    /// against `context`; and [`TemporalError::Persistence`] when the
+    /// delivery barrier cannot drain the entity's pending history or the
+    /// update cannot be applied.
     pub async fn modify_attr_instance(
         &self,
         target: &ContextTarget,
@@ -228,6 +275,14 @@ impl TemporalService {
     }
 
     /// Delete a specific attribute instance by its instance ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError::NotFound`] when the entity, the attribute or
+    /// the named instance does not exist; [`TemporalError::Validation`] when
+    /// the attribute name does not expand to a valid one; and
+    /// [`TemporalError::Persistence`] when the delivery barrier cannot drain
+    /// the entity's pending history or the deletion cannot be applied.
     pub async fn delete_attr_instance(
         &self,
         target: &ContextTarget,

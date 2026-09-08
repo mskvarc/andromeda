@@ -279,10 +279,10 @@ mod tests {
             "speed",
         ];
         for shape in shapes {
-            let parsed = parse(shape).unwrap_or_else(|error| unreachable!("{shape} must parse: {error}"));
+            let parsed = parse(shape).unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
             let rendered = serialize(&parsed);
             pretty_assertions::assert_eq!(rendered, shape, "serialisation of {shape}");
-            let reparsed = parse(&rendered).unwrap_or_else(|error| unreachable!("{rendered} must reparse: {error}"));
+            let reparsed = parse(&rendered).unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
             pretty_assertions::assert_eq!(reparsed, parsed, "round trip of {shape}");
         }
     }
@@ -296,9 +296,9 @@ mod tests {
             "speed==1e2..1.00000000000000000001e2",
             "speed==0.100000000000000004,0.100000000000000005",
         ] {
-            let parsed = parse(expression).unwrap_or_else(|error| unreachable!("{expression} must parse: {error}"));
+            let parsed = parse(expression).unwrap_or_else(|error| panic!("{expression} must parse: {error}"));
             let rendered = serialize(&parsed);
-            let reparsed = parse(&rendered).unwrap_or_else(|error| unreachable!("{rendered} must reparse: {error}"));
+            let reparsed = parse(&rendered).unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
             pretty_assertions::assert_eq!(reparsed, parsed, "mathematical-value round trip of {expression} through {rendered}");
         }
     }
@@ -320,10 +320,10 @@ mod tests {
             ("(a;b);c", "(a;b);c"),
         ];
         for (input, expected) in shapes {
-            let parsed = parse(input).unwrap_or_else(|error| unreachable!("{input} must parse: {error}"));
+            let parsed = parse(input).unwrap_or_else(|error| panic!("{input} must parse: {error}"));
             let rendered = serialize(&parsed);
             pretty_assertions::assert_eq!(rendered, expected, "serialisation of {input}");
-            let reparsed = parse(&rendered).unwrap_or_else(|error| unreachable!("{rendered} must reparse: {error}"));
+            let reparsed = parse(&rendered).unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
             pretty_assertions::assert_eq!(reparsed, parsed, "round trip of {input}");
         }
     }
@@ -355,10 +355,10 @@ mod tests {
             "rel{\"ex:A\",\"ex:B\":category==\"x\"}",
         ];
         for shape in shapes {
-            let parsed = parse(shape).unwrap_or_else(|error| unreachable!("{shape} must parse: {error}"));
+            let parsed = parse(shape).unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
             let rendered = serialize(&parsed);
             pretty_assertions::assert_eq!(rendered, shape, "serialisation of {shape}");
-            let reparsed = parse(&rendered).unwrap_or_else(|error| unreachable!("{rendered} must reparse: {error}"));
+            let reparsed = parse(&rendered).unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
             pretty_assertions::assert_eq!(reparsed, parsed, "round trip of {shape}");
         }
     }
@@ -394,7 +394,7 @@ mod tests {
             Expr::Pred(Predicate::Ordering { path, .. }) => {
                 pretty_assertions::assert_eq!(path.terminal().attr.as_str(), "https://example.com/speed");
             }
-            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected Ordering, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => panic!("expected Ordering, got {other:?}"),
         }
     }
 }

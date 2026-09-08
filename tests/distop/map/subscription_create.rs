@@ -58,7 +58,7 @@ async fn sub_create_without_id_returns_generated_uri() {
     let topology = topology::single().await.expect("single-broker topology");
     let mut body = subscription(&topology.id("Subscription:generated"), INERT_ENDPOINT);
     body.as_object_mut()
-        .unwrap_or_else(|| unreachable!("subscription baseline is an object"))
+        .unwrap_or_else(|| panic!("subscription baseline is an object"))
         .remove("id");
     let created = topology
         .broker(BrokerRole::A)
@@ -70,7 +70,7 @@ async fn sub_create_without_id_returns_generated_uri() {
     let generated = location(&created)
         .rsplit('/')
         .next()
-        .unwrap_or_else(|| unreachable!("Location has a final segment"))
+        .unwrap_or_else(|| panic!("Location has a final segment"))
         .to_owned();
     assert!(generated.starts_with("urn:"), "generated subscription id is a URI: {generated}");
     topology
@@ -237,7 +237,7 @@ async fn sub_create_watched_attributes_expanded_and_stored() {
 
     let watched = json_body(&retrieved)["watchedAttributes"]
         .as_array()
-        .unwrap_or_else(|| unreachable!("watchedAttributes round-trips"))
+        .unwrap_or_else(|| panic!("watchedAttributes round-trips"))
         .clone();
     assert!(
         watched.iter().filter_map(|value| value.as_str()).any(|term| term.starts_with("http")),

@@ -198,16 +198,29 @@ fn keyset_after(key: SimpleExpr, after: Option<&str>) -> Cond {
         .add(Expr::expr(key).gt(Expr::val(after)))
 }
 
+/// The unsigned page bound a signed `limit` or `offset` names.
+///
+/// A negative value is not a narrower bound but an absent one, so it clamps to
+/// zero rather than wrapping into an enormous unsigned width.
+fn page_bound(value: i64) -> u64 {
+    u64::try_from(value).unwrap_or(0)
+}
+
 impl EntityRepository {
     /// Return all distinct entity type IRIs present in the store.
     ///
     /// Driven from the dictionary rather than by unnesting every entity's
     /// `type_ids`: a type is reported when at least one entity carries its
     /// key, which the `type_ids` GIN index answers per dictionary row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the aggregation fails, or when a
+    /// dictionary row holds text that is no longer a valid entity type name.
     pub async fn types(&self, target: &ContextTarget) -> Result<Vec<EntityTypeName>, ContextStoreError> {
         let (sql, values) = types_in_use_statement(target.key()).build_sqlx(PostgresQueryBuilder);
         let raw: Vec<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
-        raw.into_iter().map(stored_type_name).collect()
+        raw.iter().map(String::as_str).map(stored_type_name).collect()
     }
 
     /// The dictionary key of `entity_type`, when the broker has ever
@@ -217,6 +230,11 @@ impl EntityRepository {
     }
 
     /// Retrieve entity payloads filtered by type with optional pagination.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the dictionary lookup for the type or
+    /// the payload query fails.
     pub async fn get_entities_by_type(
         &self,
         target: &ContextTarget,
@@ -240,15 +258,19 @@ impl EntityRepository {
             .and_where(Expr::col((EntitySearch::Table, EntitySearch::ContextSpaceKey)).eq(target.key().as_i64()))
             .and_where(array_contains_key(Expr::col((EntitySearch::Table, EntitySearch::TypeIds)), type_id.get()))
             .order_by((Entities::Table, Entities::Id), Order::Asc)
-            .offset(<i64 as Ord>::max(offset.unwrap_or(0), 0) as u64);
+            .offset(page_bound(offset.unwrap_or(0)));
         if let Some(limit) = limit {
-            statement.limit(<i64 as Ord>::max(limit, 0) as u64);
+            statement.limit(page_bound(limit));
         }
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         Ok(sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?)
     }
 
     /// Retrieve all entity payloads with optional pagination.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the payload query fails.
     pub async fn get_all_entities(&self, target: &ContextTarget, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Value>, ContextStoreError> {
         let mut statement = identity_with_documents();
         statement
@@ -256,15 +278,20 @@ impl EntityRepository {
             .and_where(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(target.key().as_i64()))
             .and_where(Expr::col((EntityDocuments::Table, EntityDocuments::ContextSpaceKey)).eq(target.key().as_i64()))
             .order_by((Entities::Table, Entities::Id), Order::Asc)
-            .offset(<i64 as Ord>::max(offset.unwrap_or(0), 0) as u64);
+            .offset(page_bound(offset.unwrap_or(0)));
         if let Some(limit) = limit {
-            statement.limit(<i64 as Ord>::max(limit, 0) as u64);
+            statement.limit(page_bound(limit));
         }
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         Ok(sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?)
     }
 
     /// Count entities that have the given type IRI.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the dictionary lookup for the type or
+    /// the count fails.
     pub async fn count_by_type(&self, target: &ContextTarget, entity_type: &EntityTypeName) -> Result<i64, ContextStoreError> {
         let Some(type_id) = self.type_id(entity_type).await? else {
             return Ok(0);
@@ -280,6 +307,11 @@ impl EntityRepository {
     }
 
     /// Per-type attribute summaries, keyset-paginated on the aggregated type IRI.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the aggregation fails, or when an
+    /// aggregated type or attribute IRI is no longer a valid lexicon name.
     pub async fn get_entity_type_summaries(
         &self,
         target: &ContextTarget,
@@ -293,7 +325,7 @@ impl EntityRepository {
             .map(|row| {
                 let type_iri = stored_type_name(row.get("type_iri"))?;
                 let attr_keys: Vec<String> = row.get("attr_keys");
-                let attr_names = attr_keys.into_iter().map(stored_attribute_name).collect::<Result<_, _>>()?;
+                let attr_names = attr_keys.iter().map(String::as_str).map(stored_attribute_name).collect::<Result<_, _>>()?;
                 Ok((type_iri, attr_names))
             })
             .collect()
@@ -301,6 +333,12 @@ impl EntityRepository {
 
     /// Attribute metadata aggregated at the SQL level, keyset-paginated on the
     /// attribute IRI.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the aggregation fails, or when an
+    /// aggregated row does not map to an [`AttributeSummary`] because its
+    /// attribute IRI, type names or attribute types no longer parse.
     pub async fn get_attribute_summary(
         &self,
         target: &ContextTarget,
@@ -313,6 +351,12 @@ impl EntityRepository {
     }
 
     /// Attribute metadata for a single attribute IRI.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the aggregation fails, or when the
+    /// aggregated row does not map to an [`AttributeSummary`] because its
+    /// attribute IRI, type names or attribute types no longer parse.
     pub async fn get_attribute_info(&self, target: &ContextTarget, attr_iri: &AttributeName) -> Result<Option<AttributeSummary>, ContextStoreError> {
         let (sql, values) = attribute_info_statement(target.key(), attr_iri.as_str()).build_sqlx(PostgresQueryBuilder);
         let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(&self.pool).await?;
@@ -446,7 +490,7 @@ fn row_to_attribute_summary(row: &PgRow) -> Result<AttributeSummary, ContextStor
     Ok(AttributeSummary {
         attr_iri: stored_attribute_name(row.get("attr_key"))?,
         entity_count: row.get("entity_count"),
-        entity_types: entity_types.into_iter().map(stored_type_name).collect::<Result<_, _>>()?,
+        entity_types: entity_types.iter().map(String::as_str).map(stored_type_name).collect::<Result<_, _>>()?,
         attribute_types: attribute_types
             .unwrap_or_default()
             .iter()

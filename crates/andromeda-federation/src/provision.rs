@@ -40,6 +40,15 @@ pub(crate) struct PlannedWrite<'a> {
 
 impl FederationService {
     /// Forward a single NGSI-LD provision operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FederationError::JsonLd`] when the request's entity type
+    /// cannot be expanded against its context, and
+    /// [`FederationError::Registration`] when the matching registrations
+    /// cannot be read. A source that rejects the write does not fail the
+    /// call: its rejection is reported as one of the returned
+    /// [`ForwardedWriteResult`]s.
     pub async fn forward_provision(&self, target: &ContextTarget, request: ForwardProvisionRequest<'_>) -> Result<Vec<ForwardedWriteResult>, FederationError> {
         if !target.permits_federation() {
             return Ok(Vec::new());
@@ -316,7 +325,8 @@ fn remote_detail(status: u16, body: Option<&Value>) -> String {
 fn parse_timeout_detail(detail: &str) -> Duration {
     detail
         .split(|character: char| !character.is_ascii_digit())
-        .filter(|token| !token.is_empty()).find_map(|token| token.parse::<u64>().ok())
+        .filter(|token| !token.is_empty())
+        .find_map(|token| token.parse::<u64>().ok())
         .map_or(Duration::ZERO, Duration::from_millis)
 }
 

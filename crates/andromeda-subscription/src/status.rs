@@ -25,8 +25,7 @@ pub fn compute_updated_status(current_status: SubscriptionStatus, fields: &Statu
         (Some(true), true) => SubscriptionStatus::Active,
         (Some(false), true) => SubscriptionStatus::Paused,
         (None, true) if current_status == SubscriptionStatus::Expired => SubscriptionStatus::Active,
-        (Some(true | false), false) => current_status,
-        (None, true | false) => current_status,
+        (Some(true | false), false) | (None, true | false) => current_status,
     }
 }
 

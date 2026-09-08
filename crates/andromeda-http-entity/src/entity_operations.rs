@@ -2,7 +2,7 @@ use crate::{
     entity_error::classify_entity_error,
     entity_operations::forwarded::{created_remotely, drop_absent_proxied, forward_entities, forward_identifiers, local_remainder, merge_forwarded},
     error::{EntityResultExt, public_error},
-    join::{JoinRequest, ResolvedJoin},
+    join::ResolvedJoin,
     request_projection::RequestProjection,
     state::{EntityTenantState, EntityTenantStateOrCreate},
 };
@@ -40,13 +40,9 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{expanded::mutation::selection::OverwritePolicy, query::body::Query};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
-use andromeda_ngsi_ld_render::{
-    entity::{EntityRenderer, render_flat_join},
-    response::ResponsePayload,
-};
+use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{
     entity_operations::{PostQueryParams, UpdateParams, UpsertParams},
-    join_traversal::RetrievingJoin,
     options::{OverwritePolicy as RequestOverwritePolicy, UpsertMode},
     query::entity::parameters::EntityQueryParameters,
 };
@@ -57,7 +53,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use headers::HeaderMapExt;
-use serde_json::Value;
 
 fn apply_preference_applied(mut response: Response, mode: BatchSideEffectMode) -> Response {
     if matches!(mode, BatchSideEffectMode::Enqueue) {
@@ -66,7 +61,7 @@ fn apply_preference_applied(mut response: Response, mode: BatchSideEffectMode) -
     response
 }
 
-const fn async_preference(prefer: &PreferHeader) -> AsyncPreference {
+const fn async_preference(prefer: PreferHeader) -> AsyncPreference {
     match prefer.respond_mode {
         Some(RespondMode::Async) => AsyncPreference::Requested,
         Some(RespondMode::Sync) | None => AsyncPreference::NotRequested,
@@ -94,7 +89,7 @@ fn multi_status_response(result: &BatchOperationResult, context: &ContextSpec, u
 /// and 5.6.8.5), rendered under the negotiated media type.
 fn created_response(
     created: &[Uri],
-    accept: &AcceptFormatNoGeo,
+    accept: AcceptFormatNoGeo,
     context: &ContextSpec,
     uri: &HttpUri,
     mode: BatchSideEffectMode,

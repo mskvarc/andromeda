@@ -47,7 +47,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("json property");
         let Attribute::JsonProperty(property) = attr else {
-            unreachable!("expected JsonProperty");
+            panic!("expected JsonProperty");
         };
         assert!(property.previous_json.is_some());
     }
@@ -61,7 +61,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("json property");
         let Attribute::JsonProperty(property) = attr else {
-            unreachable!("expected JsonProperty");
+            panic!("expected JsonProperty");
         };
         let expanded = property.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");

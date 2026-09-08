@@ -177,7 +177,7 @@ mod tests {
         raw.parse().expect("valid attribute name")
     }
 
-    fn registration(extra: Value) -> ContextSourceRegistration {
+    fn registration(extra: &Value) -> ContextSourceRegistration {
         let mut document = json!({
             "id": "urn:ngsi-ld:ContextSourceRegistration:1",
             "type": "ContextSourceRegistration",
@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn an_active_subscription_without_filters_matches_and_a_paused_or_interval_one_does_not() -> Result<(), SubscriptionError> {
-        let registration = registration(json!({}));
+        let registration = registration(&json!({}));
         assert!(matches_csource_subscription(&subscription()?, &registration));
         let mut paused = subscription()?;
         paused.status = SubscriptionStatus::Paused;
@@ -225,13 +225,13 @@ mod tests {
         let mut sub = subscription()?;
         sub.selectors = vec![selector(VEHICLE)];
         sub.matching_attrs = vec![name(SPEED)];
-        assert!(matches_csource_subscription(&sub, &registration(json!({}))));
+        assert!(matches_csource_subscription(&sub, &registration(&json!({}))));
         sub.selectors = vec![selector("https://example.com/Building")];
-        assert!(!matches_csource_subscription(&sub, &registration(json!({}))));
+        assert!(!matches_csource_subscription(&sub, &registration(&json!({}))));
         sub.selectors = vec![selector(VEHICLE)];
         sub.matching_attrs = vec![name("https://example.com/brandName")];
-        assert!(!matches_csource_subscription(&sub, &registration(json!({}))));
-        let entity_only = registration(json!({"information": [{"entities": [{"type": VEHICLE}]}]}));
+        assert!(!matches_csource_subscription(&sub, &registration(&json!({}))));
+        let entity_only = registration(&json!({"information": [{"entities": [{"type": VEHICLE}]}]}));
         assert!(
             matches_csource_subscription(&sub, &entity_only),
             "only entities registered: any attribute may be held"
@@ -243,7 +243,7 @@ mod tests {
     fn matching_information_trims_to_the_elements_the_subscription_matches() -> Result<(), SubscriptionError> {
         let mut sub = subscription()?;
         sub.selectors = vec![selector(VEHICLE)];
-        let registration = registration(json!({"information": [
+        let registration = registration(&json!({"information": [
             {"entities": [{"type": VEHICLE}]},
             {"entities": [{"type": "https://example.com/Building"}]}
         ]}));
@@ -256,9 +256,9 @@ mod tests {
     /// registrations are considered; with one only interval-bearing ones.
     #[test]
     fn the_temporal_partition_table() -> Result<(), SubscriptionError> {
-        let latest = registration(json!({}));
-        let observed = registration(json!({"observationInterval": {"startAt": "2020-01-01T00:00:00Z", "endAt": "2021-01-01T00:00:00Z"}}));
-        let managed = registration(json!({"managementInterval": {"startAt": "2020-01-01T00:00:00Z", "endAt": "2021-01-01T00:00:00Z"}}));
+        let latest = registration(&json!({}));
+        let observed = registration(&json!({"observationInterval": {"startAt": "2020-01-01T00:00:00Z", "endAt": "2021-01-01T00:00:00Z"}}));
+        let managed = registration(&json!({"managementInterval": {"startAt": "2020-01-01T00:00:00Z", "endAt": "2021-01-01T00:00:00Z"}}));
         let without = subscription()?;
         assert!(matches_csource_subscription(&without, &latest));
         assert!(!matches_csource_subscription(&without, &observed));
@@ -300,12 +300,12 @@ mod tests {
             &json!({"georel": "near;maxDistance==3000", "geometry": "Point", "coordinates": [13.404, 52.520]}),
             "urn:ngsi-ld:Subscription:csource",
         );
-        let berlin = registration(json!({"location": {"type": "Point", "coordinates": [13.404, 52.520]}}));
-        let paris = registration(json!({"location": {"type": "Point", "coordinates": [2.349, 48.853]}}));
+        let berlin = registration(&json!({"location": {"type": "Point", "coordinates": [13.404, 52.520]}}));
+        let paris = registration(&json!({"location": {"type": "Point", "coordinates": [2.349, 48.853]}}));
         assert!(matches_csource_subscription(&sub, &berlin));
         assert!(!matches_csource_subscription(&sub, &paris));
         assert!(
-            matches_csource_subscription(&sub, &registration(json!({}))),
+            matches_csource_subscription(&sub, &registration(&json!({}))),
             "no location declared: possibly contains"
         );
         Ok(())
@@ -315,9 +315,9 @@ mod tests {
     fn the_scope_query_is_matched_against_the_registration_scope() -> Result<(), SubscriptionError> {
         let mut sub = subscription()?;
         sub.scope_q = Some(ScopeQuery::parse("/Madrid/#").map_err(|error| SubscriptionError::internal(format!("{error}")))?);
-        assert!(matches_csource_subscription(&sub, &registration(json!({"scope": ["/Madrid/Gardens"]}))));
-        assert!(!matches_csource_subscription(&sub, &registration(json!({"scope": ["/Berlin/Parks"]}))));
-        assert!(!matches_csource_subscription(&sub, &registration(json!({}))));
+        assert!(matches_csource_subscription(&sub, &registration(&json!({"scope": ["/Madrid/Gardens"]}))));
+        assert!(!matches_csource_subscription(&sub, &registration(&json!({"scope": ["/Berlin/Parks"]}))));
+        assert!(!matches_csource_subscription(&sub, &registration(&json!({}))));
         Ok(())
     }
 
@@ -326,11 +326,11 @@ mod tests {
     fn the_context_source_filter_is_matched_against_the_registration_properties() -> Result<(), SubscriptionError> {
         let mut sub = subscription()?;
         sub.compiled_csf = Some(parser::parse(&format!("\"{TIER}\"==\"gold\"")).map_err(|error| SubscriptionError::internal(format!("{error}")))?);
-        let gold = registration(json!({TIER: {"type": "Property", "value": "gold"}}));
-        let silver = registration(json!({TIER: {"type": "Property", "value": "silver"}}));
+        let gold = registration(&json!({TIER: {"type": "Property", "value": "gold"}}));
+        let silver = registration(&json!({TIER: {"type": "Property", "value": "silver"}}));
         assert!(matches_csource_subscription(&sub, &gold));
         assert!(!matches_csource_subscription(&sub, &silver));
-        assert!(!matches_csource_subscription(&sub, &registration(json!({}))));
+        assert!(!matches_csource_subscription(&sub, &registration(&json!({}))));
         Ok(())
     }
 }

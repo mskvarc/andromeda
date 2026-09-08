@@ -88,7 +88,7 @@ pub(crate) async fn batch_upsert(
     // Clause 5.6.8.4: the local phase creates or updates what proxied
     // registrations left.
     let remainder = local_remainder(entities, &forwarded);
-    let mode = service.effective_side_effect_mode(async_preference(&prefer), remainder.len());
+    let mode = service.effective_side_effect_mode(async_preference(prefer), remainder.len());
     let (batch, mut created) = service
         .batch_upsert(&target, &remainder, &context, upsert_policy, mode)
         .await
@@ -105,6 +105,6 @@ pub(crate) async fn batch_upsert(
     } else if created.is_empty() {
         Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), mode))
     } else {
-        created_response(&created, &accept, &context, &uri, mode)
+        created_response(&created, accept, &context, &uri, mode)
     }
 }

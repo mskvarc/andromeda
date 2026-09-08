@@ -37,6 +37,11 @@ pub trait ContextCommitter: Send + Sync + 'static {
 /// Fused statements cannot define an order between two mutations of the same
 /// row. Requiring distinct identifiers keeps the batch a set of independent
 /// per-entity atomic writes.
+///
+/// # Errors
+///
+/// Returns [`CommitError::DuplicateEntity`] carrying the repeated identifier
+/// when two writes in `writes` name the same entity.
 pub fn validate_submission(writes: &[AtomicWrite]) -> Result<(), CommitError> {
     let mut seen = HashSet::with_capacity(writes.len());
     for write in writes {

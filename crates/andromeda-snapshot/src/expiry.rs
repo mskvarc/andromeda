@@ -16,6 +16,11 @@ impl SnapshotExpiry {
     }
 
     /// Delete snapshots due at the explicit execution cutoff.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`SnapshotError`] reported by the store when the bounded
+    /// deletion does not complete.
     pub async fn execute(&self, cutoff: DateTime<Utc>) -> Result<u64, SnapshotError> {
         self.store.delete_expired(cutoff).await
     }

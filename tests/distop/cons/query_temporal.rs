@@ -71,16 +71,16 @@ async fn distop_query_temporal_forwards_matching_querytemporal_local_none() {
         200,
     );
     assert!(
-        mock.get_count(Method::GET, "/s1/ngsi-ld/v1/temporal/entities").await > 0,
+        mock.get_count(Method::GET, "/s1/ngsi-ld/v1/temporal/entities") > 0,
         "queryTemporal source is forwarded"
     );
     assert_eq!(
-        mock.get_count(Method::GET, "/s2/ngsi-ld/v1/temporal/entities").await,
+        mock.get_count(Method::GET, "/s2/ngsi-ld/v1/temporal/entities"),
         0,
         "retrieveTemporal-only source is not forwarded"
     );
 
-    let total_before_local = mock.get_total_count().await;
+    let total_before_local = mock.get_total_count();
     assert_status(
         &front
             .client()
@@ -89,11 +89,7 @@ async fn distop_query_temporal_forwards_matching_querytemporal_local_none() {
             .expect("query"),
         200,
     );
-    assert_eq!(
-        mock.get_total_count().await,
-        total_before_local,
-        "a local=true temporal query forwards to no source"
-    );
+    assert_eq!(mock.get_total_count(), total_before_local, "a local=true temporal query forwards to no source");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

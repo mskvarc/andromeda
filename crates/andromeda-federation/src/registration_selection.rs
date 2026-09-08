@@ -1,6 +1,6 @@
 //! Registration-information matching and federated-fragment partitioning.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, scope::grammar::ScopeBuf, uri::Uri};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, RegistrationInfo};
 use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
 use iri_rs::IriBuf;
@@ -187,7 +187,7 @@ pub(crate) fn registration_scope_admits(registration: &ContextSourceRegistration
         .coverage
         .scope
         .as_ref()
-        .is_none_or(|scopes| scope_q.matches(&scopes.iter().map(andromeda_ngsi_ld_lexicon::scope::grammar::ScopeBuf::as_str).collect::<Vec<_>>()))
+        .is_none_or(|scopes| scope_q.matches(&scopes.iter().map(ScopeBuf::as_str).collect::<Vec<_>>()))
 }
 
 /// Whether the entity selector axis of one information entry matches.
@@ -242,7 +242,7 @@ mod tests {
     use iri_rs::IriBuf;
     use serde_json::{Map, Value, json};
 
-    fn registration(information: Value) -> ContextSourceRegistration {
+    fn registration(information: &Value) -> ContextSourceRegistration {
         serde_json::from_value(json!({
             "id": "urn:ngsi-ld:csr:1",
             "type": "ContextSourceRegistration",
@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn a_registration_naming_attributes_keeps_them_in_either_spelling_and_the_control_members() {
-        let csr = registration(json!({
+        let csr = registration(&json!({
             "entities": [{"type": "https://example.org/Vehicle"}],
             "propertyNames": ["https://example.org/speed", "https://example.org/brandName"]
         }));
@@ -293,7 +293,7 @@ mod tests {
 
     #[test]
     fn a_registration_declaring_no_attribute_names_covers_every_attribute() {
-        let csr = registration(json!({"entities": [{"type": "https://example.org/Vehicle"}]}));
+        let csr = registration(&json!({"entities": [{"type": "https://example.org/Vehicle"}]}));
         let mut object = vehicle();
         assert!(retain_covered_attributes(&mut object, &csr, Some(&vehicle_type()), Some(&vehicle_id())));
         pretty_assertions::assert_eq!(object.len(), 4);
@@ -302,18 +302,21 @@ mod tests {
 
     #[test]
     fn a_registration_not_matching_the_entity_keeps_nothing() {
-        let csr = registration(json!({"entities": [{"type": "https://example.org/Device"}]}));
+        let csr = registration(&json!({"entities": [{"type": "https://example.org/Device"}]}));
         let mut object = vehicle();
         assert!(!retain_covered_attributes(&mut object, &csr, Some(&vehicle_type()), Some(&vehicle_id())));
         let mut kept = object.keys().cloned().collect::<Vec<_>>();
         kept.sort();
         pretty_assertions::assert_eq!(kept, vec!["id", "type"]);
-        assert_eq!(covered_attribute_members(&vehicle(), &csr, Some(&vehicle_type()), Some(&vehicle_id())), [] as [std::string::String; 0]);
+        assert_eq!(
+            covered_attribute_members(&vehicle(), &csr, Some(&vehicle_type()), Some(&vehicle_id())),
+            [] as [String; 0]
+        );
     }
 
     #[test]
     fn a_registration_naming_only_absent_attributes_leaves_no_attribute() {
-        let csr = registration(json!({
+        let csr = registration(&json!({
             "entities": [{"type": "https://example.org/Vehicle"}],
             "propertyNames": ["https://example.org/colour"]
         }));

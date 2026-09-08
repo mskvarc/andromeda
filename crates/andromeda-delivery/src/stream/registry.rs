@@ -126,11 +126,19 @@ impl<P: StreamPayload> ConnectionRegistry<P> {
 
     /// Push a payload to every client connected for a subscription.
     ///
-    /// Succeeds when at least one client took it. `BufferFull` is reported
-    /// only when every live client is behind, which is what distinguishes a
-    /// slow consumer from an absent one — the caller retries the first and
-    /// gives up on the second.
-    pub fn try_send(&self, subscription_id: &Uri, payload: P) -> Result<(), StreamSendError> {
+    /// Succeeds when at least one client took it. The payload is borrowed and
+    /// cloned once per client, so a subscription nobody is streaming clones
+    /// nothing at all.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StreamSendError::BufferFull`] when every live client's channel
+    /// is full, and [`StreamSendError::NoClient`] when the subscription has no
+    /// connected client left — either none ever registered, or every one of
+    /// them closed its channel. The distinction is what separates a slow
+    /// consumer from an absent one: the caller retries the first and gives up
+    /// on the second.
+    pub fn try_send(&self, subscription_id: &Uri, payload: &P) -> Result<(), StreamSendError> {
         let inner = self.connections.get(subscription_id).ok_or_else(|| StreamSendError::NoClient {
             kind: P::KIND,
             subscription_id: subscription_id.clone(), // clone: the error owns the subscription it names
@@ -232,7 +240,7 @@ macro_rules! registry_conformance_tests {
                 let (_, mut rx_a, _token_a) = registry.register(&sub("sub1"), 8);
                 let (_, mut rx_b, _token_b) = registry.register(&sub("sub1"), 8);
 
-                registry.try_send(&sub("sub1"), sample()).expect("a client took it");
+                registry.try_send(&sub("sub1"), &sample()).expect("a client took it");
 
                 pretty_assertions::assert_eq!(rx_a.recv().await.expect("a payload"), sample());
                 pretty_assertions::assert_eq!(rx_b.recv().await.expect("a payload"), sample());
@@ -246,7 +254,7 @@ macro_rules! registry_conformance_tests {
 
                 registry.unregister(&sub("sub1"), first);
 
-                registry.try_send(&sub("sub1"), sample()).expect("the surviving client took it");
+                registry.try_send(&sub("sub1"), &sample()).expect("the surviving client took it");
                 pretty_assertions::assert_eq!(rx_b.recv().await.expect("a payload"), sample());
             }
 
@@ -267,7 +275,7 @@ macro_rules! registry_conformance_tests {
             #[tokio::test]
             async fn a_subscription_nobody_is_streaming_reports_no_client() {
                 let registry: ConnectionRegistry<$payload> = ConnectionRegistry::new();
-                let error = registry.try_send(&sub("nonexistent"), sample()).expect_err("nobody is listening");
+                let error = registry.try_send(&sub("nonexistent"), &sample()).expect_err("nobody is listening");
                 assert!(matches!(error, StreamSendError::NoClient { .. }));
                 pretty_assertions::assert_eq!(
                     error.to_string(),
@@ -281,7 +289,10 @@ macro_rules! registry_conformance_tests {
                 let (only, _rx, _token) = registry.register(&sub("sub1"), 8);
 
                 registry.unregister(&sub("sub1"), only);
-                assert!(matches!(registry.try_send(&sub("sub1"), sample()), Err(StreamSendError::NoClient { .. })));
+                assert!(matches!(
+                    registry.try_send(&sub("sub1"), &sample()),
+                    Err(StreamSendError::NoClient { .. })
+                ));
             }
 
             #[tokio::test]
@@ -289,9 +300,9 @@ macro_rules! registry_conformance_tests {
                 let registry: ConnectionRegistry<$payload> = ConnectionRegistry::new();
                 let (_conn, _rx, _token) = registry.register(&sub("sub1"), 1);
 
-                registry.try_send(&sub("sub1"), sample()).expect("the first payload fits");
+                registry.try_send(&sub("sub1"), &sample()).expect("the first payload fits");
                 assert!(matches!(
-                    registry.try_send(&sub("sub1"), sample()),
+                    registry.try_send(&sub("sub1"), &sample()),
                     Err(StreamSendError::BufferFull { .. })
                 ));
             }
@@ -301,13 +312,13 @@ macro_rules! registry_conformance_tests {
                 let registry: ConnectionRegistry<$payload> = ConnectionRegistry::new();
 
                 let (_full, _rx_full, _token_full) = registry.register(&sub("sub1"), 1);
-                registry.try_send(&sub("sub1"), sample()).expect("the first payload fits");
+                registry.try_send(&sub("sub1"), &sample()).expect("the first payload fits");
 
                 let (_gone, rx_gone, _token_gone) = registry.register(&sub("sub1"), 1);
                 drop(rx_gone);
 
                 assert!(matches!(
-                    registry.try_send(&sub("sub1"), sample()),
+                    registry.try_send(&sub("sub1"), &sample()),
                     Err(StreamSendError::BufferFull { .. })
                 ));
             }

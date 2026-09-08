@@ -83,13 +83,13 @@ impl StorageProfile {
         if selection.geo.is_some() && self.geo_predicates != GeoPredicatePushdown::Full {
             // clone: the residual owns the predicate the store keeps for its
             // own narrowing pass
-            residual.geo = selection.geo.clone();
+            residual.geo.clone_from(&selection.geo);
         }
         if selection.q_expr.is_some() && self.value_filter != ValueFilterPushdown::JsonPath {
-            residual.q_expr = selection.q_expr.clone(); // clone: as above
+            residual.q_expr.clone_from(&selection.q_expr); // clone: as above
         }
         if selection.scope_q.is_some() && self.scope != ScopePushdown::LabelTree {
-            residual.scope_q = selection.scope_q.clone(); // clone: as above
+            residual.scope_q.clone_from(&selection.scope_q); // clone: as above
         }
         ResidualFilter::over(residual)
     }

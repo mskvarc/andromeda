@@ -30,24 +30,22 @@ async fn source_identity_returns_conformant_identity() {
     assert_status(&response, 200);
     let body = json_body(&response);
 
-    let identity_id = body["id"].as_str().unwrap_or_else(|| unreachable!("ContextSourceIdentity id is a string"));
+    let identity_id = body["id"].as_str().unwrap_or_else(|| panic!("ContextSourceIdentity id is a string"));
     assert!(identity_id.contains(':'), "the identity id is a URI, got {identity_id}");
     assert_eq!(
         body["type"].as_str(),
         Some("ContextSourceIdentity"),
         "the identity type is ContextSourceIdentity"
     );
-    let alias = body["contextSourceAlias"]
-        .as_str()
-        .unwrap_or_else(|| unreachable!("contextSourceAlias is a string"));
+    let alias = body["contextSourceAlias"].as_str().unwrap_or_else(|| panic!("contextSourceAlias is a string"));
     assert!(!alias.is_empty(), "contextSourceAlias is non-empty");
     let uptime = body["contextSourceUptime"]
         .as_str()
-        .unwrap_or_else(|| unreachable!("contextSourceUptime is a string"));
+        .unwrap_or_else(|| panic!("contextSourceUptime is a string"));
     assert!(uptime.starts_with('P'), "contextSourceUptime is an ISO 8601 duration, got {uptime}");
     let time_at = body["contextSourceTimeAt"]
         .as_str()
-        .unwrap_or_else(|| unreachable!("contextSourceTimeAt is a string"));
+        .unwrap_or_else(|| panic!("contextSourceTimeAt is a string"));
     assert!(time_at.contains('T'), "contextSourceTimeAt is a DateTime, got {time_at}");
 
     topology.finish().await.expect("topology cleanup");

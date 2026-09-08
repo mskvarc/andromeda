@@ -75,10 +75,12 @@ impl fmt::Display for RawProjectionTerm {
 /// of [`RawProjectionTerm`], each optionally followed by a `{...}` group of
 /// linked-entity sub-terms.
 ///
-/// Returns a `QueryError` variant describing the invalid production: an
-/// empty term where a name was required, or a brace that opens without a
-/// matching close, closes without a matching open, or is followed by content
-/// outside the grammar.
+/// # Errors
+///
+/// Returns [`QueryError::ProjectionEmptyTerm`] where a name was required but
+/// none was written, and [`QueryError::ProjectionUnbalancedBrace`] when a brace
+/// opens without a matching close, closes without a matching open, or is
+/// followed by content outside the grammar.
 pub fn parse_projection_list(raw: &str) -> Result<Vec<RawProjectionTerm>, QueryError> {
     let mut parser = Parser::new(raw);
     let terms = parser.parse_term_list()?;

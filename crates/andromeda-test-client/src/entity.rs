@@ -54,6 +54,13 @@ impl<'a> CreateEntity<'a> {
     }
 
     /// Send the create request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityRequestError::Endpoint`] when `entities` cannot be resolved against the broker endpoint,
+    /// [`EntityRequestError::Header`] when an `application/json` request's context is not a valid IRI reference or cannot be
+    /// encoded as a `Link` header, and [`EntityRequestError::Transport`] when the request cannot be sent or its response body
+    /// cannot be captured.
     pub async fn send(self) -> Result<TestResponse, EntityRequestError> {
         let url = self.client.endpoint().join("entities")?;
         let mut body = self.body;
@@ -96,6 +103,12 @@ impl TestClient {
     }
 
     /// Retrieve one entity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityRequestError::Endpoint`] when the path cannot be resolved against the broker endpoint,
+    /// [`EntityRequestError::Header`] when `context` is not a valid IRI reference or cannot be encoded as a `Link` header, and
+    /// [`EntityRequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn get_entity(&self, id: &str, query: &str, accept: &str, context: Option<&str>) -> Result<TestResponse, EntityRequestError> {
         let suffix = query_suffix(query);
         let url = self.endpoint().join(&format!("entities/{}{suffix}", encode(id)))?;
@@ -107,6 +120,12 @@ impl TestClient {
     }
 
     /// Query entities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityRequestError::Endpoint`] when the path cannot be resolved against the broker endpoint,
+    /// [`EntityRequestError::Header`] when `context` is not a valid IRI reference or cannot be encoded as a `Link` header, and
+    /// [`EntityRequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn query_entities(&self, query: &str, accept: &str, context: Option<&str>) -> Result<TestResponse, EntityRequestError> {
         let url = self.endpoint().join(&format!("entities{}", query_suffix(query)))?;
         let mut request = self.request(Method::GET, url.clone()).header("accept", accept); // clone: transport diagnostics retain the request URL.
@@ -117,6 +136,11 @@ impl TestClient {
     }
 
     /// Delete one entity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityRequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`EntityRequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn delete_entity(&self, id: &str) -> Result<TestResponse, EntityRequestError> {
         let url = self.endpoint().join(&format!("entities/{}", encode(id)))?;
         let request = self.request(Method::DELETE, url.clone()); // clone: transport diagnostics retain the request URL.
@@ -124,6 +148,12 @@ impl TestClient {
     }
 
     /// Delete entities selected by a query.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityRequestError::Endpoint`] when the path cannot be resolved against the broker endpoint,
+    /// [`EntityRequestError::Header`] when `context` is not a valid IRI reference or cannot be encoded as a `Link` header, and
+    /// [`EntityRequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn delete_entities_by_query(&self, query: &str, context: Option<&str>) -> Result<TestResponse, EntityRequestError> {
         let url = self.endpoint().join(&format!("entities{}", query_suffix(query)))?;
         let mut request = self.request(Method::DELETE, url.clone()); // clone: transport diagnostics retain the request URL.
@@ -134,6 +164,12 @@ impl TestClient {
     }
 
     /// Merge an entity fragment.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityRequestError::Endpoint`] when the path cannot be resolved against the broker endpoint,
+    /// [`EntityRequestError::Header`] when `context` is not a valid IRI reference or cannot be encoded as a `Link` header, and
+    /// [`EntityRequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn merge_entity(&self, id: &str, fragment: &Value, context: Option<&str>) -> Result<TestResponse, EntityRequestError> {
         let url = self.endpoint().join(&format!("entities/{}", encode(id)))?;
         let mut body = fragment.clone(); // clone: context stripping must not mutate the caller's fragment.
@@ -153,6 +189,12 @@ impl TestClient {
     }
 
     /// Replace an entity representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityRequestError::Endpoint`] when the path cannot be resolved against the broker endpoint,
+    /// [`EntityRequestError::Header`] when `context` is not a valid IRI reference or cannot be encoded as a `Link` header, and
+    /// [`EntityRequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn replace_entity(&self, id: &str, entity: &Value, content_type: &str, context: Option<&str>) -> Result<TestResponse, EntityRequestError> {
         let url = self.endpoint().join(&format!("entities/{}", encode(id)))?;
         let mut body = entity.clone(); // clone: content-type normalization must not mutate the caller's entity.
@@ -182,6 +224,12 @@ pub fn results_count(headers: &http::HeaderMap) -> Option<usize> {
 }
 
 /// Return a required create response location.
+///
+/// # Errors
+///
+/// Returns [`RequiredLocationError::UnexpectedStatus`] when the response status is not `201 Created`,
+/// [`RequiredLocationError::Header`] when a `Location` header is present but is not valid visible text, and
+/// [`RequiredLocationError::Missing`] when the response carries no `Location` header.
 pub fn require_location(response: &TestResponse) -> Result<&str, RequiredLocationError> {
     if response.status != http::StatusCode::CREATED {
         return Err(RequiredLocationError::UnexpectedStatus(response.status));

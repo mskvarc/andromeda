@@ -87,7 +87,7 @@ async fn entity_map_expires_at_is_datetime() {
 async fn entity_map_output_only_fields_ignored_on_input() {
     let topology = topology::single().await.expect("single-broker topology");
     let (_, map) = map_over_vehicle(&topology, "Vehicle:shape-output-only").await;
-    let map_id = map["id"].as_str().unwrap_or_else(|| unreachable!("map has an id")).to_owned();
+    let map_id = map["id"].as_str().unwrap_or_else(|| panic!("map has an id")).to_owned();
     let before = map["entityMap"].clone();
     let patch = json!({ "expiresAt": "2999-01-01T00:00:00Z", "entityMap": { "urn:fake": ["@none"] } });
     assert_status(&update_entity_map(topology.broker(BrokerRole::A).client(), &map_id, &patch).await, 204);
@@ -109,7 +109,7 @@ async fn entity_map_output_only_fields_ignored_on_input() {
 async fn entity_map_element_shape_entity_to_csr_list() {
     let topology = topology::single().await.expect("single-broker topology");
     let (entity_id, map) = map_over_vehicle(&topology, "Vehicle:shape-element").await;
-    let holders = map["entityMap"].get(&entity_id).unwrap_or_else(|| unreachable!("the entity is mapped"));
+    let holders = map["entityMap"].get(&entity_id).unwrap_or_else(|| panic!("the entity is mapped"));
     assert!(holders.is_array(), "the element maps an id to a list of holders: {holders}");
     topology.finish().await.expect("topology cleanup");
 }

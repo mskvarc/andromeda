@@ -182,14 +182,14 @@ impl PostgresAtomicCommitter {
             .map(|(_, write)| write.entity_id.as_ref().clone()) // clone: the SQL bind list owns identifiers borrowed from writes.
             .collect();
         let expected = expectations(deletes);
-        let mut deleted: HashMap<Uri, DeletedEntity> = EntityRepository::delete_batch_in_tx(tx, target, &ids, &expected)
+        let mut snapshots: HashMap<Uri, DeletedEntity> = EntityRepository::delete_batch_in_tx(tx, target, &ids, &expected)
             .await
             .map_err(context_store)?
             .into_iter()
             .map(|entity| (entity.id.clone(), entity)) // clone: both the lookup key and returned snapshot own the identifier.
             .collect();
         for (index, write) in deletes {
-            outcomes[*index] = Some(delete_outcome(write.precondition, deleted.remove(write.entity_id.as_ref())));
+            outcomes[*index] = Some(delete_outcome(write.precondition, snapshots.remove(write.entity_id.as_ref())));
         }
         Ok(())
     }

@@ -22,6 +22,11 @@ struct D;
 
 impl EntityRepository {
     /// Read identifiers of entities whose `expiresAt` has passed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the candidate query fails, or when a
+    /// returned identifier is no longer a valid URI.
     pub async fn entities_due_for_expiry(
         &self,
         target: &ContextTarget,
@@ -31,10 +36,15 @@ impl EntityRepository {
         let (sql, values) = entities_due_for_expiry_statement(target.key(), cutoff, u64::from(batch_size.get())).build_sqlx(PostgresQueryBuilder);
         let rows: Vec<(String,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 
-        rows.into_iter().map(|(id,)| stored_uri(id)).collect()
+        rows.iter().map(|(id,)| stored_uri(id)).collect()
     }
 
     /// Read every entity that holds a past-due attribute instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the candidate query fails, or when a
+    /// returned identifier is no longer a valid URI.
     pub async fn entities_with_expired_attributes(
         &self,
         target: &ContextTarget,

@@ -147,7 +147,7 @@ pub fn notification_media_type(accept: Option<&MediaTypeBuf>) -> ResponseMediaTy
 #[cfg(test)]
 mod tests {
     use crate::request::{DeliveryRequest, NotificationDelivery, notification_media_type};
-    use andromeda_http_headers::{media_type::ResponseMediaType, ngsild_tenant::NgsiLdTenant};
+    use andromeda_http_headers::{media_type::ResponseMediaType, ngsild_snapshot::NgsiLdSnapshot, ngsild_tenant::NgsiLdTenant};
     use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
@@ -326,6 +326,6 @@ mod tests {
             subscription_id: &subscription,
         }
         .assemble();
-        pretty_assertions::assert_eq!(request.snapshot.as_ref().map(andromeda_http_headers::ngsild_snapshot::NgsiLdSnapshot::as_str), Some(snapshot.as_str()));
+        pretty_assertions::assert_eq!(request.snapshot.as_ref().map(NgsiLdSnapshot::as_str), Some(snapshot.as_str()));
     }
 }

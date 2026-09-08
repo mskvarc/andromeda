@@ -49,6 +49,12 @@ pub enum EntityMapUse {
 impl EntityMapUse {
     /// Decide from the referenced map, if the request named one, and the flag,
     /// minting the fresh map with `mint` when one is wanted.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `mint` reports when no live map is in play and one has to be
+    /// created, which is [`EntityMapError::Invariant`] when the minted
+    /// identifier is not a valid URI.
     pub fn decide(
         referenced: Option<ReferencedEntityMap>,
         flag: EntityMapFlag,
@@ -110,8 +116,8 @@ mod tests {
         ReferencedEntityMap::Live(Box::new(map("urn:ngsi-ld:EntityMap:live")))
     }
 
-    fn fresh() -> Result<EntityMap, EntityMapError> {
-        Ok(map("urn:ngsi-ld:EntityMap:fresh"))
+    fn fresh() -> EntityMap {
+        map("urn:ngsi-ld:EntityMap:fresh")
     }
 
     #[test]
@@ -127,7 +133,7 @@ mod tests {
     #[test]
     fn a_live_map_is_reused_and_never_re_minted() -> Result<(), EntityMapError> {
         for flag in [EntityMapFlag::Requested, EntityMapFlag::NotRequested] {
-            let decided = EntityMapUse::decide(Some(live()), flag, fresh)?;
+            let decided = EntityMapUse::decide(Some(live()), flag, || Ok(fresh()))?;
             assert!(matches!(&decided, EntityMapUse::Reuse(map) if map.id.as_str() == "urn:ngsi-ld:EntityMap:live"));
             assert!(!decided.mints());
             assert!(decided.reused().is_some());
@@ -139,7 +145,7 @@ mod tests {
     #[test]
     fn an_unavailable_map_is_recreated_whatever_the_flag() -> Result<(), EntityMapError> {
         for flag in [EntityMapFlag::Requested, EntityMapFlag::NotRequested] {
-            let decided = EntityMapUse::decide(Some(ReferencedEntityMap::Unavailable), flag, fresh)?;
+            let decided = EntityMapUse::decide(Some(ReferencedEntityMap::Unavailable), flag, || Ok(fresh()))?;
             assert!(decided.mints());
             assert!(decided.reused().is_none());
             pretty_assertions::assert_eq!(decided.minting().map(|map| map.id.as_str()), Some("urn:ngsi-ld:EntityMap:fresh"));
@@ -149,8 +155,11 @@ mod tests {
 
     #[test]
     fn without_a_reference_the_flag_decides() -> Result<(), EntityMapError> {
-        assert!(EntityMapUse::decide(None, EntityMapFlag::Requested, fresh)?.mints());
-        assert!(matches!(EntityMapUse::decide(None, EntityMapFlag::NotRequested, fresh)?, EntityMapUse::None));
+        assert!(EntityMapUse::decide(None, EntityMapFlag::Requested, || Ok(fresh()))?.mints());
+        assert!(matches!(
+            EntityMapUse::decide(None, EntityMapFlag::NotRequested, || Ok(fresh()))?,
+            EntityMapUse::None
+        ));
         Ok(())
     }
 }

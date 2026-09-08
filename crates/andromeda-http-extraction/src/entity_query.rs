@@ -8,6 +8,7 @@ use crate::query::classify_query_parse_error;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use axum::{extract::FromRequestParts, http::request::Parts};
+use std::future::{Future, ready};
 
 /// Axum extractor for NGSI-LD entity query parameters.
 ///
@@ -18,31 +19,36 @@ use axum::{extract::FromRequestParts, http::request::Parts};
 #[derive(Debug)]
 pub struct EntityQuery(pub EntityQueryParameters);
 
+/// Deserialize the entity query string and enforce the clause 5.7.2.4 filter
+/// requirement.
+fn resolve_entity_query(parts: &Parts) -> Result<EntityQuery, ExtractorRejection> {
+    let uri = parts.uri.clone();
+    let query_str = parts.uri.query().unwrap_or("");
+    let params = serde_urlencoded::from_str::<EntityQueryParameters>(query_str).map_err(|error| {
+        let error_text = error.to_string();
+        let message = format!("Invalid query parameters: {error_text}");
+        classify_query_parse_error(&error_text, message, uri.clone())
+    })?;
+
+    // Clause 5.7.2.4: at least one filter OR local=true must be provided.
+    if !params.local.unwrap_or(false) && !params.has_any_filter() {
+        return Err(ExtractorRejection::bad_request_data(
+            "At least one of type, id, idPattern, q, or local=true must be provided",
+            uri,
+        ));
+    }
+
+    Ok(EntityQuery(params))
+}
+
 impl<S> FromRequestParts<S> for EntityQuery
 where
     S: Send + Sync,
 {
     type Rejection = ExtractorRejection;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let uri = parts.uri.clone();
-        // Parse query string manually
-        let query_str = parts.uri.query().unwrap_or("");
-        let params = serde_urlencoded::from_str::<EntityQueryParameters>(query_str).map_err(|error| {
-            let error_text = error.to_string();
-            let message = format!("Invalid query parameters: {error_text}");
-            classify_query_parse_error(&error_text, message, uri.clone())
-        })?;
-
-        // Per NGSI-LD spec 5.7.2.4: at least one filter OR local=true must be provided
-        if !params.local.unwrap_or(false) && !params.has_any_filter() {
-            return Err(ExtractorRejection::bad_request_data(
-                "At least one of type, id, idPattern, q, or local=true must be provided",
-                uri,
-            ));
-        }
-
-        Ok(EntityQuery(params))
+    fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> {
+        ready(resolve_entity_query(parts))
     }
 }
 

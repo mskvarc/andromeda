@@ -134,6 +134,15 @@ pub struct DegradationSample {
 
 impl DegradationSample {
     /// Return the first threshold this sample does not satisfy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeferralReason::RelationTooSmall`] when the relation is below
+    /// the profile's minimum size, [`DeferralReason::ReclaimTooSmall`] when too
+    /// few bytes would be reclaimed, and [`DeferralReason::BelowThreshold`] when
+    /// the measured degradation has not reached the target's threshold. The
+    /// thresholds are tested in that order, so only the first unmet one is
+    /// reported.
     pub const fn qualification(self, profile: PolicyProfile) -> Result<(), DeferralReason> {
         if self.relation_bytes < profile.minimum_relation_bytes {
             return Err(DeferralReason::RelationTooSmall);

@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn every_ipv4_range_an_ssrf_would_aim_at_is_blocked() {
         for address in [
-            Ipv4Addr::LOCALHOST,    // loopback 127.0.0.0/8
+            Ipv4Addr::LOCALHOST,            // loopback 127.0.0.0/8
             Ipv4Addr::new(10, 0, 0, 1),     // private 10/8
             Ipv4Addr::new(172, 16, 0, 1),   // private 172.16/12
             Ipv4Addr::new(192, 168, 1, 1),  // private 192.168/16

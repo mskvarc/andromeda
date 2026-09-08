@@ -75,7 +75,7 @@ impl EntityStoreRegistrationProbe {
 }
 
 /// Erase an entity-store failure at the registration policy boundary.
-fn probe_error(error: EntityError) -> RegistrationError {
+fn probe_error(error: &EntityError) -> RegistrationError {
     RegistrationError::internal(format!("entity store could not answer a registration admission check: {error}"))
 }
 
@@ -92,7 +92,7 @@ impl RegisteredEntityProbe for EntityStoreRegistrationProbe {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let Some(entity) = self.reader.get(&self.live_target, entity_id).await.map_err(probe_error)? else {
+            let Some(entity) = self.reader.get(&self.live_target, entity_id).await.map_err(|error| probe_error(&error))? else {
                 return Ok(EntityPresence::Absent);
             };
             // The reader hands back the stored expanded payload, which wraps
@@ -133,7 +133,7 @@ impl RegisteredEntityProbe for EntityStoreRegistrationProbe {
                     count: CountPolicy::Omit,
                 })
                 .build();
-            let outcome = self.query.query_ids(&self.live_target, &compiled).await.map_err(probe_error)?;
+            let outcome = self.query.query_ids(&self.live_target, &compiled).await.map_err(|error| probe_error(&error))?;
             // An identifier-only read leaves nothing to finish a declined
             // predicate against, so a store that declined one cannot answer.
             if !outcome.unapplied.is_empty() {

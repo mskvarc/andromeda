@@ -91,6 +91,15 @@ struct BrokerLabel {
 }
 
 /// Open a connection to the broker the key names.
+///
+/// # Errors
+///
+/// Returns [`TransportError::Timeout`] when the broker does not complete the
+/// connect handshake within the pool's connect timeout, and
+/// [`TransportError::ConnectionFailed`] when the handshake itself fails — the
+/// socket is refused, TLS is rejected, or the broker denies the credentials.
+/// Failing to subscribe to a `$SYS` topic is not an error: the connection is
+/// usable without the health telemetry those topics carry.
 pub async fn dial(
     key: &MqttConnectionKey,
     endpoint: &MqttEndpointConfig,
@@ -110,7 +119,7 @@ pub async fn dial(
 }
 
 /// The failure a connect attempt that did not complete becomes.
-fn connect_failed(label: &BrokerLabel, detail: String) -> TransportError {
+fn connect_failed(label: &BrokerLabel, detail: &str) -> TransportError {
     TransportError::ConnectionFailed {
         endpoint: label.endpoint_uri.clone(), // clone: the error owns the endpoint label it names
         detail: format!("MQTT {} connection failed: {detail}", label.version),
@@ -148,7 +157,7 @@ async fn dial_v5(
 
     match timeout(pool.connect_timeout, eventloop.poll()).await {
         Ok(Ok(_connected)) => info!(version = %label.version, endpoint = %label.endpoint_uri, "MQTT connected"),
-        Ok(Err(error)) => return Err(connect_failed(&label, error.to_string())),
+        Ok(Err(error)) => return Err(connect_failed(&label, &error.to_string())),
         Err(_elapsed) => return Err(connect_timed_out(&label, pool)),
     }
 
@@ -224,7 +233,7 @@ async fn dial_v311(
 
     match timeout(pool.connect_timeout, eventloop.poll()).await {
         Ok(Ok(_connected)) => info!(version = %label.version, endpoint = %label.endpoint_uri, "MQTT connected"),
-        Ok(Err(error)) => return Err(connect_failed(&label, error.to_string())),
+        Ok(Err(error)) => return Err(connect_failed(&label, &error.to_string())),
         Err(_elapsed) => return Err(connect_timed_out(&label, pool)),
     }
 

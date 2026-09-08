@@ -25,6 +25,11 @@ use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
 /// describe one implicit selector. A POST `entities[]` body carries one selector
 /// per array entry, each compiled independently so their union is not flattened
 /// into a cross product.
+///
+/// # Errors
+///
+/// Reports [`QueryError`] when a selector's type expression is not well formed
+/// or one of its terms cannot be expanded against `context`.
 pub async fn compile_entity_selectors(
     engine: &JsonLdEngine,
     context: &PreparedTermContext,

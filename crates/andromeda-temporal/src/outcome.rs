@@ -58,6 +58,14 @@ pub struct TemporalEntityIdOutcome {
 
 impl TemporalEntityIdOutcome {
     /// Validate the outcome before policy consumes it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidTemporalOutcome::ResidualAfterPagination`] when the
+    /// reader paginated while leaving a predicate for policy to evaluate, and
+    /// [`InvalidTemporalOutcome::ResidualWithoutSelectionValue`] when a
+    /// residual predicate remains but a candidate carries no expanded
+    /// selection value to evaluate it against.
     pub fn validate(&self) -> Result<(), InvalidTemporalOutcome> {
         if !self.residual.is_empty() && matches!(self.pagination, TemporalPaginationOutcome::Applied { .. }) {
             return Err(InvalidTemporalOutcome::ResidualAfterPagination);
@@ -69,6 +77,12 @@ impl TemporalEntityIdOutcome {
     }
 
     /// Complete residual evaluation and deferred pagination, yielding identifiers and optional total count.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever [`TemporalEntityIdOutcome::validate`] refuses: an
+    /// outcome that paginated ahead of a residual predicate, or one whose
+    /// candidates cannot be evaluated against the predicate that remains.
     pub fn complete(self, pagination: Pagination) -> Result<(Vec<Uri>, Option<i64>), InvalidTemporalOutcome> {
         self.validate()?;
         let mut candidates = self.candidates;
@@ -112,7 +126,7 @@ pub enum InvalidTemporalOutcome {
 /// Apply a deferred page after policy finishes residual evaluation.
 #[must_use]
 pub fn apply_deferred_page<T>(rows: Vec<T>, pagination: Pagination) -> (Vec<T>, Option<i64>) {
-    let total = (pagination.count == CountPolicy::Emit).then_some(rows.len() as i64);
+    let total = (pagination.count == CountPolicy::Emit).then(|| i64::try_from(rows.len()).unwrap_or(i64::MAX));
     let offset = usize::try_from(pagination.offset).unwrap_or(usize::MAX);
     let limit = usize::try_from(pagination.limit).unwrap_or(usize::MAX);
     (rows.into_iter().skip(offset).take(limit).collect(), total)

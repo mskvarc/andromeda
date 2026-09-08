@@ -384,7 +384,7 @@ fn collect_discovery_warnings_aggregates() {
 #[test]
 fn collect_proxied_attrs_empty_results() {
     let result = collect_proxied_attrs(&[]);
-    assert_eq!(result, [] as [andromeda_ngsi_ld_lexicon::attribute_name::AttributeName; 0]);
+    assert_eq!(result, [] as [AttributeName; 0]);
 }
 
 #[test]
@@ -434,7 +434,7 @@ fn strip_attributes_from_value_non_object_noop() {
 fn collect_proxied_attrs_results_with_no_proxied_attrs() {
     let results = vec![write_result(ForwardingMode::Inclusive, Vec::new())];
     let attrs = collect_proxied_attrs(&results);
-    assert_eq!(attrs, [] as [andromeda_ngsi_ld_lexicon::attribute_name::AttributeName; 0]);
+    assert_eq!(attrs, [] as [AttributeName; 0]);
 }
 
 #[test]

@@ -156,7 +156,7 @@ impl EntityService {
         previous: &Value,
         merged: Arc<Value>,
         observed: Arc<Value>,
-        groups: Vec<NotificationGroup>,
+        groups: &[NotificationGroup],
         previous_snapshot: Option<&Value>,
         precondition: Precondition,
     ) -> ChunkWrite {
@@ -165,7 +165,7 @@ impl EntityService {
             .map(HistoryRecord::Tombstone)
             .collect();
         let types = extract_types(&merged);
-        let plan = self.plan_notifications(target, &id, &types, &groups, Some(&merged), previous_snapshot);
+        let plan = self.plan_notifications(target, &id, &types, groups, Some(&merged), previous_snapshot);
         let record = EntityRecord::from_expanded(merged);
         ChunkWrite {
             id,

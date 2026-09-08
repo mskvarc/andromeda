@@ -32,7 +32,7 @@ async fn create_csource_subscription(topology: &MultiBrokerTopology<BrokerRole>,
 
 /// A csource subscription over `Vehicle` registrations delivering to `endpoint`,
 /// with the given notification endpoint object spliced in.
-fn csource_subscription(id: &str, notification_endpoint: Value) -> Value {
+fn csource_subscription(id: &str, notification_endpoint: &Value) -> Value {
     json!({
         "id": id,
         "type": "Subscription",
@@ -51,7 +51,7 @@ async fn dist_http_csource_notification_posted_to_endpoint_uri() {
     let sub_id = topology.id("Subscription:csnotif-post");
     let reg_id = topology.id("registration:csnotif-post");
 
-    let subscription = csource_subscription(&sub_id, json!({ "uri": receiver.endpoint_url(), "accept": "application/json" }));
+    let subscription = csource_subscription(&sub_id, &json!({ "uri": receiver.endpoint_url(), "accept": "application/json" }));
     assert_status(&create_csource_subscription(&topology, &subscription).await, 201);
     assert_status(
         &topology
@@ -94,7 +94,7 @@ async fn dist_http_csource_notification_mime_defaults_json_and_ld_json_via_accep
     assert_status(
         &create_csource_subscription(
             &topology,
-            &csource_subscription(&json_sub, json!({ "uri": json_receiver.endpoint_url(), "accept": "application/json" })),
+            &csource_subscription(&json_sub, &json!({ "uri": json_receiver.endpoint_url(), "accept": "application/json" })),
         )
         .await,
         201,
@@ -102,7 +102,7 @@ async fn dist_http_csource_notification_mime_defaults_json_and_ld_json_via_accep
     assert_status(
         &create_csource_subscription(
             &topology,
-            &csource_subscription(&ld_sub, json!({ "uri": ld_receiver.endpoint_url(), "accept": "application/ld+json" })),
+            &csource_subscription(&ld_sub, &json!({ "uri": ld_receiver.endpoint_url(), "accept": "application/ld+json" })),
         )
         .await,
         201,
@@ -153,7 +153,7 @@ async fn dist_http_csource_notification_json_target_carries_link_context() {
     assert_status(
         &create_csource_subscription(
             &topology,
-            &csource_subscription(&sub_id, json!({ "uri": receiver.endpoint_url(), "accept": "application/json" })),
+            &csource_subscription(&sub_id, &json!({ "uri": receiver.endpoint_url(), "accept": "application/json" })),
         )
         .await,
         201,

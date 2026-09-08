@@ -28,7 +28,7 @@ pub(super) struct Pushdown<'a> {
 
 /// Split a compiled query into the part this store can answer and the part it
 /// cannot.
-pub(super) fn plan<'a>(compiled: &'a CompiledEntityQuery, profile: &StorageProfile) -> Pushdown<'a> {
+pub(super) fn plan<'a>(compiled: &'a CompiledEntityQuery, profile: StorageProfile) -> Pushdown<'a> {
     let residual = profile.unapplied(&compiled.selection);
     if residual.is_empty() {
         return Pushdown {
@@ -123,7 +123,7 @@ mod tests {
     fn a_complete_pushdown_issues_the_query_verbatim_and_reports_the_window_as_applied() {
         // Clause 6.3.13: the count the store produced is the answer.
         let compiled = query();
-        let planned = plan(&compiled, &StorageProfile::POSTGIS_LTREE);
+        let planned = plan(&compiled, StorageProfile::POSTGIS_LTREE);
         pretty_assertions::assert_eq!(planned.query.pagination, compiled.pagination);
         assert!(planned.query.selection.geo.is_some());
         let outcome = planned.outcome(vec!["a"], Some(7));
@@ -141,7 +141,7 @@ mod tests {
             value_filter: ValueFilterPushdown::JsonPath,
             scope: ScopePushdown::LabelTree,
         };
-        let planned = plan(&compiled, &profile);
+        let planned = plan(&compiled, profile);
         assert!(planned.query.selection.geo.is_none(), "the geo predicate is not sent");
         assert!(planned.query.selection.q_expr.is_some(), "the q filter still is");
         let outcome = planned.outcome(vec!["a"], Some(7));
@@ -175,7 +175,7 @@ mod tests {
         let compiled = query();
         for profile in every_profile() {
             let residual = profile.unapplied(&compiled.selection);
-            let planned = plan(&compiled, &profile);
+            let planned = plan(&compiled, profile);
             let kinds = residual.kinds();
 
             pretty_assertions::assert_eq!(
@@ -202,7 +202,7 @@ mod tests {
         // refuses the combination as a broken store rather than compensating.
         let compiled = query();
         for profile in every_profile() {
-            let planned = plan(&compiled, &profile);
+            let planned = plan(&compiled, profile);
             let pagination = planned.query.pagination;
             let outcome = planned.outcome(vec!["a"], Some(7));
             match outcome.pagination {
@@ -233,7 +233,7 @@ mod tests {
             value_filter: ValueFilterPushdown::JsonPath,
             scope: ScopePushdown::LabelTree,
         };
-        let planned = plan(&compiled, &profile);
+        let planned = plan(&compiled, profile);
         pretty_assertions::assert_eq!(planned.query.pagination.offset, 0);
         pretty_assertions::assert_eq!(planned.query.pagination.limit, u32::MAX);
         pretty_assertions::assert_eq!(planned.query.pagination.count, CountPolicy::Omit);

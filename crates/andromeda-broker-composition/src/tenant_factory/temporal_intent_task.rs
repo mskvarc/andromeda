@@ -93,7 +93,7 @@ pub(super) fn register_temporal_intent_drain(
         let drain = Arc::clone(&scheduled_drain); // clone: each bounded runtime future owns the shared policy operation.
         async move {
             let now = DateTime::<Utc>::from(execution.cutoff());
-            let outcome = drain.execute(now).await.map_err(classify_temporal_drain_failure)?;
+            let outcome = drain.execute(now).await.map_err(|error| classify_temporal_drain_failure(&error))?;
             if outcome.work_may_remain {
                 Ok(DrainPassOutcome::WorkMayRemain)
             } else {
@@ -111,7 +111,7 @@ pub(super) fn register_temporal_intent_drain(
 }
 
 /// Exhaustively classify temporal policy failures at composition.
-fn classify_temporal_drain_failure(error: TemporalError) -> TaskFailure {
+fn classify_temporal_drain_failure(error: &TemporalError) -> TaskFailure {
     let summary = error.to_string();
     match error {
         TemporalError::Commit(_) | TemporalError::Persistence { detail: _ } => TaskFailure::transient(summary),

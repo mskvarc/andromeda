@@ -62,7 +62,7 @@ async fn distop_entity_attrs_update_exclusive_forwards_to_context_source() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify forwarding happened
-    let count = mock.get_count(Method::PATCH, &stub_path).await;
+    let count = mock.get_count(Method::PATCH, &stub_path);
     assert!(count > 0, "forwarding should have happened");
 
     delete_entity(&c, &entity_id).await;
@@ -99,7 +99,7 @@ async fn distop_entity_attrs_update_inclusive_partial_success_returns_207() {
     pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS);
 
     // Verify forwarding happened
-    let count = mock.get_count(Method::PATCH, &stub_path).await;
+    let count = mock.get_count(Method::PATCH, &stub_path);
     assert!(count > 0, "forwarding should have happened");
 
     delete_registration(&c, &reg_id).await;
@@ -136,7 +136,7 @@ async fn distop_entity_attrs_update_inclusive_both_succeed() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify forwarding happened
-    let count = mock.get_count(Method::PATCH, &stub_path).await;
+    let count = mock.get_count(Method::PATCH, &stub_path);
     assert!(count > 0, "forwarding should have happened");
 
     // Verify local entity was updated
@@ -185,8 +185,8 @@ async fn distop_entity_attrs_update_redirect_forwards_to_multiple() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify both stubs called
-    assert!(mock.get_count(Method::PATCH, &stub_path1).await > 0);
-    assert!(mock.get_count(Method::PATCH, &stub_path2).await > 0);
+    assert!(mock.get_count(Method::PATCH, &stub_path1) > 0);
+    assert!(mock.get_count(Method::PATCH, &stub_path2) > 0);
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
@@ -240,7 +240,7 @@ async fn distop_entity_attrs_update_auxiliary_no_forwarding() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify no forwarding happened
-    let count = mock.get_count(Method::PATCH, &stub_path).await;
+    let count = mock.get_count(Method::PATCH, &stub_path);
     pretty_assertions::assert_eq!(count, 0, "auxiliary registration should not trigger forwarding");
 
     // Verify local entity was updated

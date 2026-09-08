@@ -42,6 +42,11 @@ impl LeaseTerm {
     pub const MAX_SECONDS: u32 = 86_400;
 
     /// Build a lease term from a whole number of seconds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LeaseTermError::ZeroSeconds`] when `seconds` is zero, and
+    /// [`LeaseTermError::TooLong`] when it exceeds [`LeaseTerm::MAX_SECONDS`].
     pub const fn from_seconds(seconds: u32) -> Result<LeaseTerm, LeaseTermError> {
         if seconds > LeaseTerm::MAX_SECONDS {
             return Err(LeaseTermError::TooLong {

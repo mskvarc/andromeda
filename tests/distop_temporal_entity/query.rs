@@ -131,7 +131,7 @@ fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
     headers
         .get_all("NGSILD-Warning")
         .iter()
-        .filter_map(|v| v.to_str().ok().map(std::string::ToString::to_string))
+        .filter_map(|v| v.to_str().ok().map(str::to_owned))
         .collect()
 }
 
@@ -333,7 +333,7 @@ async fn distop_temporal_query_local_true_skips_forwarding() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::GET, "/ngsi-ld/v1/temporal/entities").await,
+        mock.get_count(Method::GET, "/ngsi-ld/v1/temporal/entities"),
         0,
         "mock should not be called when local=true"
     );
@@ -525,7 +525,7 @@ async fn distop_temporal_query_type_star_implies_local() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::GET, "/ngsi-ld/v1/temporal/entities").await,
+        mock.get_count(Method::GET, "/ngsi-ld/v1/temporal/entities"),
         0,
         "mock should not be called when type=* (implies local=true)"
     );
@@ -557,7 +557,7 @@ async fn distop_temporal_query_forwards_temporal_parameters() {
 
     // Verify mock received the forwarded request
     assert!(
-        mock.get_count(Method::GET, "/ngsi-ld/v1/temporal/entities").await > 0,
+        mock.get_count(Method::GET, "/ngsi-ld/v1/temporal/entities") > 0,
         "mock should receive forwarded temporal query"
     );
 
@@ -587,7 +587,7 @@ async fn distop_temporal_query_via_header_propagated() {
 
     // Verify mock was called (Via header is added internally by broker)
     assert!(
-        mock.get_count(Method::GET, "/ngsi-ld/v1/temporal/entities").await > 0,
+        mock.get_count(Method::GET, "/ngsi-ld/v1/temporal/entities") > 0,
         "mock should receive forwarded request with Via header"
     );
 

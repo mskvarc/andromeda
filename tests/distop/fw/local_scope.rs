@@ -68,7 +68,7 @@ async fn distop_entity_local_scope_true_uses_only_directly_held_data() {
         .await
         .expect("query");
     assert_status(&response, 200);
-    assert_eq!(mock.get_total_count().await, 0, "local=true contacts no source");
+    assert_eq!(mock.get_total_count(), 0, "local=true contacts no source");
     assert!(find_entity(&json_body(&response), &entity_id).is_some(), "only local entities are returned");
 
     mock.shutdown().await;
@@ -117,7 +117,7 @@ async fn distop_entity_local_scope_type_wildcard_implies_local() {
         .await
         .expect("query");
     assert_status(&response, 200);
-    assert_eq!(mock.get_total_count().await, 0, "a type wildcard consults no registry CSR");
+    assert_eq!(mock.get_total_count(), 0, "a type wildcard consults no registry CSR");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -167,7 +167,7 @@ async fn distop_entity_local_scope_true_skips_registry_csrs() {
         .await
         .expect("query");
     assert_status(&response, 200);
-    assert_eq!(mock.get_total_count().await, 0, "no registration is consulted under local scope");
+    assert_eq!(mock.get_total_count(), 0, "no registration is consulted under local scope");
     assert!(find_entity(&json_body(&response), &entity_id).is_some(), "local data is returned");
 
     mock.shutdown().await;

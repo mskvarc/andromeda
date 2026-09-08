@@ -9,6 +9,7 @@ use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_ngsi_ld_model::snapshot_filter::{SnapshotPurgeFilter, parse_snapshot_q};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use serde::Deserialize;
+use std::future::{Future, ready};
 
 /// Axum extractor for the required `?q=` parameter of `DELETE /snapshots`.
 #[derive(Debug)]
@@ -21,22 +22,28 @@ struct RawPurgeQuery {
     q: Option<String>,
 }
 
+/// Read the mandatory `q` expression off the request, rejecting a missing or
+/// malformed value as `BadRequestData` (clauses 5.16.7 and 6.3.2).
+fn resolve_purge_query(parts: &Parts) -> Result<SnapshotPurgeQ, ExtractorRejection> {
+    let uri = parts.uri.clone();
+    let query_str = parts.uri.query().unwrap_or("");
+    let raw: RawPurgeQuery = serde_urlencoded::from_str(query_str)
+        .map_err(|error| ExtractorRejection::bad_request_data(format!("Invalid query parameters: {error}"), uri.clone()))?;
+    let q_value = raw
+        .q
+        .ok_or_else(|| ExtractorRejection::bad_request_data("DELETE /snapshots requires a 'q' query parameter (ETSI GS CIM 009 clause 5.16.7)", uri.clone()))?;
+    let filter = parse_snapshot_q(&q_value).map_err(|error| ExtractorRejection::bad_request_data(format!("Invalid snapshot purge q: {error}"), uri))?;
+    Ok(SnapshotPurgeQ(filter))
+}
+
 impl<S> FromRequestParts<S> for SnapshotPurgeQ
 where
     S: Send + Sync,
 {
     type Rejection = ExtractorRejection;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let uri = parts.uri.clone();
-        let query_str = parts.uri.query().unwrap_or("");
-        let raw: RawPurgeQuery = serde_urlencoded::from_str(query_str)
-            .map_err(|error| ExtractorRejection::bad_request_data(format!("Invalid query parameters: {error}"), uri.clone()))?;
-        let q_value = raw.q.ok_or_else(|| {
-            ExtractorRejection::bad_request_data("DELETE /snapshots requires a 'q' query parameter (ETSI GS CIM 009 clause 5.16.7)", uri.clone())
-        })?;
-        let filter = parse_snapshot_q(&q_value).map_err(|error| ExtractorRejection::bad_request_data(format!("Invalid snapshot purge q: {error}"), uri))?;
-        Ok(SnapshotPurgeQ(filter))
+    fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> {
+        ready(resolve_purge_query(parts))
     }
 }
 
@@ -48,7 +55,7 @@ mod tests {
     #[tokio::test]
     async fn missing_q_produces_bad_request_data() {
         let req = Request::builder().uri("/ngsi-ld/v1/snapshots").body(()).expect("request");
-        let (mut parts, _) = req.into_parts();
+        let (mut parts, ()) = req.into_parts();
         let result = SnapshotPurgeQ::from_request_parts(&mut parts, &()).await;
         assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
     }
@@ -56,7 +63,7 @@ mod tests {
     #[tokio::test]
     async fn malformed_q_produces_bad_request_data() {
         let req = Request::builder().uri("/ngsi-ld/v1/snapshots?q=bogus").body(()).expect("request");
-        let (mut parts, _) = req.into_parts();
+        let (mut parts, ()) = req.into_parts();
         let result = SnapshotPurgeQ::from_request_parts(&mut parts, &()).await;
         assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
     }
@@ -67,7 +74,7 @@ mod tests {
             .uri("/ngsi-ld/v1/snapshots?q=snapshotPriority%3D%3D5")
             .body(())
             .expect("request");
-        let (mut parts, _) = req.into_parts();
+        let (mut parts, ()) = req.into_parts();
         let SnapshotPurgeQ(filter) = SnapshotPurgeQ::from_request_parts(&mut parts, &()).await.expect("should parse");
         pretty_assertions::assert_eq!(filter.terms.len(), 1);
     }

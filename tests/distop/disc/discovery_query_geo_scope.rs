@@ -18,7 +18,8 @@ fn near_query(entity_type: &str, coordinates: [f64; 2], distance: u32, geoproper
     let georel = encode(&format!("near;maxDistance=={distance}")).into_owned();
     let mut params = format!("type={}&georel={georel}&geometry=Point&coordinates={coords}", encode(entity_type));
     if let Some(geoproperty) = geoproperty {
-        params.push_str(&format!("&geoproperty={}", encode(geoproperty)));
+        params.push_str("&geoproperty=");
+        params.push_str(&encode(geoproperty));
     }
     params
 }

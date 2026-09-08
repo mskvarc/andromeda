@@ -320,7 +320,7 @@ mod tests {
         pretty_assertions::assert_eq!(csource_matching_attributes(Some(&watched), None), names(&["speed"]));
         pretty_assertions::assert_eq!(csource_matching_attributes(None, Some(&notified)), names(&["brandName", "speed"]));
         pretty_assertions::assert_eq!(csource_matching_attributes(Some(&watched), Some(&[])), names(&["speed"]));
-        assert_eq!(csource_matching_attributes(None, None), [] as [andromeda_ngsi_ld_lexicon::attribute_name::AttributeName; 0]);
+        assert_eq!(csource_matching_attributes(None, None), [] as [AttributeName; 0]);
     }
 
     #[test]

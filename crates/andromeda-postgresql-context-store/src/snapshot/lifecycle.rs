@@ -9,7 +9,7 @@
 
 use crate::{
     context_space::delete_context_space_statement,
-    snapshot::{mapper::row_to_snapshot, persistence_error, status_outbox::enqueue_terminal_notification},
+    snapshot::{mapper::row_to_snapshot, metadata_change::MetadataChange, persistence_error, status_outbox::enqueue_terminal_notification},
 };
 use andromeda_context_space::{
     context_space::{ContextSpace, ContextSpaceKind},
@@ -266,8 +266,8 @@ pub(crate) async fn update_snapshot_metadata(
     id: &Uri,
     lifetime: Option<&Iso8601Duration>,
     priority: Option<SnapshotPriority>,
-    endpoint: Option<Option<&Url>>,
-    receiver_info: Option<Option<serde_json::Value>>,
+    endpoint: MetadataChange<&Url>,
+    receiver_info: MetadataChange<serde_json::Value>,
     new_expires_at: Option<DateTime<Utc>>,
 ) -> Result<u64, SnapshotError> {
     let mut transaction = pool.begin().await.map_err(persistence_error)?;
@@ -287,11 +287,23 @@ pub(crate) async fn update_snapshot_metadata(
             Func::coalesce([Expr::val(new_expires_at), Expr::col(Snapshots::ExpiresAt)]),
         )
         .value(Snapshots::ModifiedAt, now());
-    if let Some(endpoint) = endpoint {
-        statement.value(Snapshots::Endpoint, endpoint.map(ToString::to_string));
+    match endpoint {
+        MetadataChange::Unchanged => {}
+        MetadataChange::Cleared => {
+            statement.value(Snapshots::Endpoint, None::<String>);
+        }
+        MetadataChange::Set(endpoint) => {
+            statement.value(Snapshots::Endpoint, Some(endpoint.to_string()));
+        }
     }
-    if let Some(receiver_info) = receiver_info {
-        statement.value(Snapshots::ReceiverInfo, receiver_info);
+    match receiver_info {
+        MetadataChange::Unchanged => {}
+        MetadataChange::Cleared => {
+            statement.value(Snapshots::ReceiverInfo, None::<serde_json::Value>);
+        }
+        MetadataChange::Set(receiver_info) => {
+            statement.value(Snapshots::ReceiverInfo, Some(receiver_info));
+        }
     }
     statement.and_where(Expr::col(Snapshots::Id).eq(id.as_str()));
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);

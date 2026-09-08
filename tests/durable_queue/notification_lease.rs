@@ -120,7 +120,7 @@ async fn durable_queue_a_stale_worker_cannot_acknowledge_a_reclaimed_delivery() 
 /// Assert that an acknowledgement was refused because the lease had moved on.
 fn assert_lease_lost(outcome: Result<(), DeliveryLeaseError>, delivery: i64, worker: &WorkerInstanceId) {
     match outcome {
-        Ok(()) => unreachable!("a worker whose lease expired must not acknowledge delivery {delivery}"),
+        Ok(()) => panic!("a worker whose lease expired must not acknowledge delivery {delivery}"),
         Err(DeliveryLeaseError::LeaseLost {
             delivery: named,
             worker: owner,
@@ -128,6 +128,6 @@ fn assert_lease_lost(outcome: Result<(), DeliveryLeaseError>, delivery: i64, wor
             assert_eq!(named, DeliveryId::from(delivery));
             assert_eq!(&owner, worker);
         }
-        Err(DeliveryLeaseError::Persistence { detail }) => unreachable!("the acknowledgement statement failed: {detail}"),
+        Err(DeliveryLeaseError::Persistence { detail }) => panic!("the acknowledgement statement failed: {detail}"),
     }
 }

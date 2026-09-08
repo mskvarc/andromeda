@@ -283,7 +283,7 @@ mod tests {
         // The projection closes its own copy, as `geo::Polygon` requires, which
         // is what leaves the wire form free to stay open.
         let geo::Geometry::Polygon(projected) = geometry.planar() else {
-            unreachable!("expected a Polygon projection");
+            panic!("expected a Polygon projection");
         };
         pretty_assertions::assert_eq!(projected.exterior().0.len(), 5);
         pretty_assertions::assert_eq!(projected.exterior().0.first(), projected.exterior().0.last());

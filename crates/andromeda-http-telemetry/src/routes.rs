@@ -13,6 +13,11 @@ pub struct TelemetryRoutes {
 
 impl TelemetryRoutes {
     /// Construct `GET /metrics` over the installed recorder.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TelemetryHttpError::MediaType`] when the exposition media type does not parse,
+    /// and [`TelemetryHttpError::HeaderValue`] when its rendering is not a valid header value.
     pub fn new(recorder: Arc<TelemetryRecorder>) -> Result<TelemetryRoutes, TelemetryHttpError> {
         let router = Router::new()
             .route("/metrics", get(handler::scrape))

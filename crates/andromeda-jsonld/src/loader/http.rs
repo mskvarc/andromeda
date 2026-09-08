@@ -206,100 +206,34 @@ impl HttpContextLoader {
         let allow_remote = self.allow_remote;
         let max_bytes = self.max_context_bytes;
         let l2_cache = self.l2_cache.clone(); // clone: Arc ref-count bump into the cache-fill future
-        let initialized = Arc::new(AtomicBool::new(false));
-        let initializer = Arc::clone(&initialized); // clone: the cache-fill future records whether this caller initialized the entry
+        let filled_here = Arc::new(AtomicBool::new(false));
+        let fill_marker = Arc::clone(&filled_here); // clone: the cache-fill future records whether this caller filled the entry
 
         let result = self
             .cache
             .try_get_with(url_iri.clone(), async move {
-                initializer.store(true, Ordering::Relaxed);
+                fill_marker.store(true, Ordering::Relaxed);
                 if let Some(value) = registry.get(&url_iri) {
-                    return Ok(LoadedContext {
-                        value,
-                        durability: ContextDurability::Registry,
-                        cacheable: true,
-                    });
+                    return Ok(registry_context(value));
                 }
 
-                if let Some(ref cache) = l2_cache {
-                    match cache.get(&url_iri).await {
-                        Ok(Some(payload)) => {
-                            trace!("L2 cache hit for context: {}", url_iri);
-                            let parsed = jsonld_syntax::Value::from_serde_json(payload);
-                            return Ok(LoadedContext {
-                                value: Arc::new(without_embedded_core_context(&url_iri, parsed)),
-                                durability: ContextDurability::Durable,
-                                cacheable: true,
-                            });
-                        }
-                        Ok(None) => {}
-                        Err(error) if allow_remote == RemoteContextFetch::Allow => {
-                            warn!(url = %url_iri, error = %error, "Durable context-cache read failed; attempting remote resolution");
-                        }
-                        Err(error) => {
-                            return Err(LoaderError {
-                                url: url_iri.clone(),
-                                kind: LoaderErrorKind::Cache(error.to_string()),
-                            });
-                        }
-                    }
+                let durable = match l2_cache {
+                    Some(ref cache) => load_from_durable_cache(cache.as_ref(), &url_iri, allow_remote).await?,
+                    None => None,
+                };
+                if let Some(loaded) = durable {
+                    return Ok(loaded);
                 }
 
                 if allow_remote == RemoteContextFetch::Deny {
                     return Err(LoaderError::fetch_disabled(url_iri.clone()));
                 }
 
-                match fetch_and_parse(&client, &url_iri, max_bytes).await {
-                    Ok(fetched) => {
-                        let normalized = without_embedded_core_context(&url_iri, fetched.value);
-                        if !fetched.cacheable {
-                            return Ok(LoadedContext {
-                                value: Arc::new(normalized),
-                                durability: ContextDurability::Registry,
-                                cacheable: false,
-                            });
-                        }
-                        // Written to L2 only here, on the first remote-fetch
-                        // success: the row carries no counter, because hit
-                        // accounting is the HitCounter's job.
-                        if let Some(ref cache) = l2_cache {
-                            let serde_value = jsonld_syntax::Value::into_serde_json(normalized.clone()); // clone: the normalized document is also returned
-                            let durability = match cache.put(&url_iri, &serde_value).await {
-                                Ok(()) => {
-                                    trace!("Persisted context to L2 cache: {}", url_iri);
-                                    ContextDurability::Durable
-                                }
-                                Err(error) => {
-                                    warn!(url = %url_iri, error = %error, "Serving remotely loaded context while durable persistence is pending");
-                                    ContextDurability::Pending(Arc::new(PendingPersistence {
-                                        payload: serde_value,
-                                        retrying: AtomicBool::new(false),
-                                        hits: AtomicU64::new(0),
-                                        durable: AtomicBool::new(false),
-                                    }))
-                                }
-                            };
-                            return Ok(LoadedContext {
-                                value: Arc::new(normalized),
-                                durability,
-                                cacheable: true,
-                            });
-                        }
-                        Ok(LoadedContext {
-                            value: Arc::new(normalized),
-                            durability: ContextDurability::Registry,
-                            cacheable: true,
-                        })
-                    }
-                    Err(error) => match registry.get(&url_iri) {
-                        Some(value) => Ok(LoadedContext {
-                            value,
-                            durability: ContextDurability::Registry,
-                            cacheable: true,
-                        }),
-                        None => Err(error),
-                    },
-                }
+                // A registry entry is preferable to a failed expansion when the
+                // source has become unreachable.
+                fetch_and_persist(&client, &url_iri, max_bytes, l2_cache.as_ref())
+                    .await
+                    .or_else(|unreachable_source| registry.get(&url_iri).map(registry_context).ok_or(unreachable_source))
             })
             .await;
 
@@ -307,7 +241,7 @@ impl HttpContextLoader {
         if !loaded.cacheable {
             self.cache.invalidate(url).await;
         }
-        if !initialized.load(Ordering::Relaxed) {
+        if !filled_here.load(Ordering::Relaxed) {
             self.record_cached_access(url, &loaded).await;
         } else if matches!(loaded.durability, ContextDurability::Durable) {
             // A durable L2 read is a cache hit; the first successful remote
@@ -393,6 +327,106 @@ fn ld_json_media_type() -> MediaTypeBuf {
     jsonld_core::LD_JSON_MEDIA_TYPE.into()
 }
 
+/// A cacheable entry that owns no durable hit row.
+///
+/// Registry documents are embedded or preloaded, so clause 5.13.3.5 accounting
+/// has no `jsonld_contexts` row to attribute an access to.
+const fn registry_context(value: Arc<jsonld_syntax::Value>) -> LoadedContext {
+    LoadedContext {
+        value,
+        durability: ContextDurability::Registry,
+        cacheable: true,
+    }
+}
+
+/// The durable-cache step, yielding a context when the L2 cache holds one.
+///
+/// A read failure is fatal only when configuration forbids the network. With
+/// remote fetch allowed the failure is logged and resolution continues to the
+/// source, because a degraded cache must not make a reachable context
+/// unresolvable.
+///
+/// # Errors
+///
+/// Returns [`LoaderErrorKind::Cache`] when the durable read fails and remote
+/// fetch is denied.
+async fn load_from_durable_cache(cache: &dyn ContextCache, url: &IriBuf, allow_remote: RemoteContextFetch) -> Result<Option<LoadedContext>, LoaderError> {
+    match cache.get(url).await {
+        Ok(Some(payload)) => {
+            trace!("L2 cache hit for context: {url}");
+            let parsed = jsonld_syntax::Value::from_serde_json(payload);
+            Ok(Some(LoadedContext {
+                value: Arc::new(without_embedded_core_context(url, parsed)),
+                durability: ContextDurability::Durable,
+                cacheable: true,
+            }))
+        }
+        Ok(None) => Ok(None),
+        Err(degraded) if allow_remote == RemoteContextFetch::Allow => {
+            warn!(url = %url, error = %degraded, "Durable context-cache read failed; attempting remote resolution");
+            Ok(None)
+        }
+        Err(unavailable) => Err(LoaderError {
+            url: url.clone(), // clone: resolution continues to report under this URL
+            kind: LoaderErrorKind::Cache(unavailable.to_string()),
+        }),
+    }
+}
+
+/// The remote step: fetch the context and, on a first success, persist it.
+///
+/// # Errors
+///
+/// Returns whatever [`fetch_and_parse`] reports; a failed durable write is not
+/// an error, only a downgrade to [`ContextDurability::Pending`].
+async fn fetch_and_persist(client: &Client, url: &IriBuf, max_bytes: usize, l2_cache: Option<&Arc<dyn ContextCache>>) -> Result<LoadedContext, LoaderError> {
+    let fetched = fetch_and_parse(client, url, max_bytes).await?;
+    let normalized = without_embedded_core_context(url, fetched.value);
+    if !fetched.cacheable {
+        return Ok(LoadedContext {
+            value: Arc::new(normalized),
+            durability: ContextDurability::Registry,
+            cacheable: false,
+        });
+    }
+    // Written to L2 only here, on the first remote-fetch success: the row
+    // carries no counter, because hit accounting is the HitCounter's job.
+    let durability = match l2_cache {
+        Some(cache) => persist_to_durable_cache(cache.as_ref(), url, &normalized).await,
+        None => ContextDurability::Registry,
+    };
+    Ok(LoadedContext {
+        value: Arc::new(normalized),
+        durability,
+        cacheable: true,
+    })
+}
+
+/// Persist a freshly fetched context, classifying the entry by whether the
+/// durable write landed.
+///
+/// A write failure keeps the document serving from L1 and hands the payload to
+/// [`PendingPersistence`], so the next access retries it rather than losing the
+/// row.
+async fn persist_to_durable_cache(cache: &dyn ContextCache, url: &IriBuf, normalized: &jsonld_syntax::Value) -> ContextDurability {
+    let payload = jsonld_syntax::Value::into_serde_json(normalized.clone()); // clone: the normalized document is also returned to the caller
+    match cache.put(url, &payload).await {
+        Ok(()) => {
+            trace!("Persisted context to L2 cache: {url}");
+            ContextDurability::Durable
+        }
+        Err(unwritten) => {
+            warn!(url = %url, error = %unwritten, "Serving remotely loaded context while durable persistence is pending");
+            ContextDurability::Pending(Arc::new(PendingPersistence {
+                payload,
+                retrying: AtomicBool::new(false),
+                hits: AtomicU64::new(0),
+                durable: AtomicBool::new(false),
+            }))
+        }
+    }
+}
+
 /// Fetch a context over HTTP and parse it, refusing anything that is not
 /// JSON-shaped or is larger than the configured limit.
 async fn fetch_and_parse(client: &Client, url: &IriBuf, max_bytes: usize) -> Result<FetchedContext, LoaderError> {
@@ -422,10 +456,14 @@ async fn fetch_and_parse(client: &Client, url: &IriBuf, max_bytes: usize) -> Res
     // Checked twice on purpose: the advertised length rejects an oversized
     // body before it is read, and the measured length catches a server that
     // did not advertise one.
-    if let Some(len) = response.content_length()
-        && len as usize > max_bytes
-    {
-        return Err(too_large(url.clone(), len as usize, max_bytes));
+    if let Some(advertised) = response.content_length() {
+        // An advertised length wider than the address space saturates: such a
+        // body could not be held in memory, so `usize::MAX` refuses it under
+        // every configured limit.
+        let advertised_bytes = usize::try_from(advertised).unwrap_or(usize::MAX);
+        if advertised_bytes > max_bytes {
+            return Err(too_large(url.clone(), advertised_bytes, max_bytes));
+        }
     }
 
     let cacheable = response

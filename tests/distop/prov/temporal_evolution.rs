@@ -118,7 +118,7 @@ async fn temporal_delete_evolution_inclusive_forwards_and_removes_local() {
         "inclusive delete-evolution succeeds: {}",
         String::from_utf8_lossy(&response.body)
     );
-    assert_eq!(mock.get_count(Method::DELETE, &evolution_path).await, 1, "the delete is forwarded once");
+    assert_eq!(mock.get_count(Method::DELETE, &evolution_path), 1, "the delete is forwarded once");
 
     let local = client.get_temporal_entity(&entity_id, "local=true", None).await.expect("local read-back");
     assert_status(&local, 404);

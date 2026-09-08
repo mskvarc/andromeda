@@ -28,6 +28,17 @@ impl EntityService {
     /// The update is computed from a payload read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
     /// recomputed against a fresh read if a concurrent writer got in first.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::JsonLd`] when `attr_name` or `fragment` cannot be
+    /// expanded against `context`, [`EntityError::Validation`] when `attr_name`
+    /// names `scope` (clause 5.6.4.4) or the fragment carries a malformed
+    /// attribute instance, [`EntityError::NotFound`] when no entity carries
+    /// `id`, [`EntityError::MemberNotFound`] when the entity carries neither
+    /// the attribute nor the selected instance, [`EntityError::Contention`]
+    /// when concurrent writers superseded the computed write on every attempt,
+    /// and [`EntityError::Persistence`] when the store could not apply it.
     pub async fn partial_update_attr(
         &self,
         target: &ContextTarget,
@@ -73,7 +84,9 @@ impl EntityService {
             })
             .await?;
 
-        events.into_iter().for_each(|event| self.emit_change(target, event));
+        for event in events {
+            self.emit_change(target, event);
+        }
 
         Ok(())
     }

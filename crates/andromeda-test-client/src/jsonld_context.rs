@@ -8,6 +8,11 @@ use urlencoding::encode;
 
 impl TestClient {
     /// Create a hosted JSON-LD context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn create_jsonld_context(&self, body: &Value) -> Result<TestResponse, RequestError> {
         let url = self.endpoint().join("jsonldContexts")?;
         let request = self
@@ -18,11 +23,21 @@ impl TestClient {
     }
 
     /// Retrieve a JSON-LD context resource.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn retrieve_jsonld_context(&self, id: &str) -> Result<TestResponse, RequestError> {
         self.context_resource(Method::GET, id).await
     }
 
     /// Delete a JSON-LD context resource.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn delete_jsonld_context(&self, id: &str) -> Result<TestResponse, RequestError> {
         self.context_resource(Method::DELETE, id).await
     }

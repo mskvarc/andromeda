@@ -126,6 +126,12 @@ impl EntityRepository {
     ///
     /// `expected_modified_at` is positionally aligned with `ids`; a `None` entry
     /// deletes unconditionally.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError::Internal`] when the expectation slice is not
+    /// the same length as `ids` or a returned identifier is no longer a valid
+    /// URI, and [`ContextStoreError::Database`] when the delete fails.
     pub async fn delete_batch_in_tx(
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,

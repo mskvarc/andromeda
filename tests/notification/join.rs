@@ -56,7 +56,10 @@ async fn notification_join_flat_includes_joined_entities_as_separate_data_entrie
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
     pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
-    assert!(!notification.body["data"].as_array().expect("array").is_empty());
+    assert!(
+        !notification.body["data"].as_array().expect("array").is_empty(),
+        "the notification must carry at least one entity in its data array"
+    );
 }
 
 #[serial_test::serial]
@@ -108,7 +111,10 @@ async fn notification_join_flat_with_simplified_format_still_includes_joined_ent
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
     pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
-    assert!(!notification.body["data"].as_array().expect("array").is_empty());
+    assert!(
+        !notification.body["data"].as_array().expect("array").is_empty(),
+        "the notification must carry at least one entity in its data array"
+    );
 }
 
 #[serial_test::serial]

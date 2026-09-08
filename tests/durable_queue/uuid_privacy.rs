@@ -115,7 +115,7 @@ async fn durable_queue_a_valid_instance_identifier_authorizes_nothing_on_another
     let instance_id = minted_instance_id(&retrieved.json_value().expect("temporal entity body"), "speed");
 
     let context = jsonld_link_header(COMPOUND_CONTEXT).expect("a valid JSON-LD Link header");
-    let borrowed = scope
+    let refused = scope
         .client()
         .raw(
             Method::DELETE,
@@ -130,12 +130,12 @@ async fn durable_queue_a_valid_instance_identifier_authorizes_nothing_on_another
         .await
         .expect("instance delete request failed");
     assert_eq!(
-        borrowed.status,
+        refused.status,
         StatusCode::NOT_FOUND,
         "an identifier is not a capability: it names an instance of the Entity that owns it and nothing else"
     );
 
-    let owned = scope
+    let accepted = scope
         .client()
         .raw(
             Method::DELETE,
@@ -150,7 +150,7 @@ async fn durable_queue_a_valid_instance_identifier_authorizes_nothing_on_another
         .await
         .expect("instance delete request failed");
     assert_eq!(
-        owned.status,
+        accepted.status,
         StatusCode::NO_CONTENT,
         "the owning Entity's instance is addressable by the same identifier"
     );

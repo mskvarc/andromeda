@@ -38,6 +38,11 @@ pub struct ServerConfig {
 
 impl ServerConfig {
     /// Validate the externally visible listener configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerConfigError::ZeroPort`] when the configured port is zero, which is
+    /// reserved for dynamic binding and cannot be advertised as a broker listener.
     pub const fn validate(&self) -> Result<(), ServerConfigError> {
         if self.port == 0 { Err(ServerConfigError::ZeroPort) } else { Ok(()) }
     }

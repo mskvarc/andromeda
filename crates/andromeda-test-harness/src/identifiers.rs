@@ -11,6 +11,10 @@ pub struct TestSuiteName(String);
 
 impl TestSuiteName {
     /// Validate a non-empty suite token containing ASCII letters, digits, `-`, or `_`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IdentifierError::InvalidSuiteName`] when the value is empty or contains any character outside that set.
     pub fn parse(value: impl Into<String>) -> Result<TestSuiteName, IdentifierError> {
         let value = value.into();
         if !value.is_empty()
@@ -37,6 +41,10 @@ pub struct ResourceLabel(String);
 
 impl ResourceLabel {
     /// Validate a non-empty URN path token.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IdentifierError::InvalidResourceLabel`] when the value is empty or contains a character other than an ASCII letter, digit, `-`, `_`, or `.`.
     pub fn parse(value: impl Into<String>) -> Result<ResourceLabel, IdentifierError> {
         let value = value.into();
         if !value.is_empty()
@@ -92,6 +100,10 @@ pub struct TestIdentifiers {
 
 impl TestIdentifiers {
     /// Allocate a process-independent unique test scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IdentifierError::GeneratedIri`] when the composed `urn:ngsi-ld:test:` prefix does not parse as an IRI.
     pub fn allocate(suite: &TestSuiteName) -> Result<TestIdentifiers, IdentifierError> {
         let prefix = format!("urn:ngsi-ld:test:{}:{}:{}", suite.as_str(), process::id(), Uuid::new_v4());
         let prefix = prefix.parse().map_err(|_error| IdentifierError::GeneratedIri)?;
@@ -105,6 +117,10 @@ impl TestIdentifiers {
     }
 
     /// Allocate one resource-specific identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IdentifierError::GeneratedIri`] when the prefix, the kind token, and the label do not compose into a valid IRI.
     pub fn resource(&self, kind: ResourceKind, label: &ResourceLabel) -> Result<IriBuf, IdentifierError> {
         format!("{}:{}:{}", self.prefix, kind.token(), label.0)
             .parse()
@@ -132,23 +148,23 @@ mod tests {
 
     #[test]
     fn allocators_are_unique_and_resource_namespaces_are_explicit() {
-        let suite = TestSuiteName::parse("entity").unwrap_or_else(|error| unreachable!("static suite name is valid: {error}"));
-        let label = ResourceLabel::parse("Building").unwrap_or_else(|error| unreachable!("static resource label is valid: {error}"));
-        let first = TestIdentifiers::allocate(&suite).unwrap_or_else(|error| unreachable!("generated identifier is valid: {error}"));
-        let second = TestIdentifiers::allocate(&suite).unwrap_or_else(|error| unreachable!("generated identifier is valid: {error}"));
+        let suite = TestSuiteName::parse("entity").unwrap_or_else(|error| panic!("static suite name is valid: {error}"));
+        let label = ResourceLabel::parse("Building").unwrap_or_else(|error| panic!("static resource label is valid: {error}"));
+        let first = TestIdentifiers::allocate(&suite).unwrap_or_else(|error| panic!("generated identifier is valid: {error}"));
+        let second = TestIdentifiers::allocate(&suite).unwrap_or_else(|error| panic!("generated identifier is valid: {error}"));
 
         assert_ne!(first.prefix(), second.prefix());
         assert!(
             first
                 .resource(ResourceKind::Entity, &label)
-                .unwrap_or_else(|error| unreachable!("generated identifier is valid: {error}"))
+                .unwrap_or_else(|error| panic!("generated identifier is valid: {error}"))
                 .as_str()
                 .contains(":entity:")
         );
         assert!(
             first
                 .resource(ResourceKind::Subscription, &label)
-                .unwrap_or_else(|error| unreachable!("generated identifier is valid: {error}"))
+                .unwrap_or_else(|error| panic!("generated identifier is valid: {error}"))
                 .as_str()
                 .contains(":subscription:")
         );

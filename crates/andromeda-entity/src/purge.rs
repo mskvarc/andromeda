@@ -36,6 +36,14 @@ impl EntityService {
     /// `modifiedAt` it assumed and is re-read if a concurrent writer got in.
     ///
     /// Returns the number of entities modified.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::JsonLd`] when one of the named attributes cannot
+    /// be expanded against `context`, [`EntityError::Contention`] when
+    /// concurrent writers superseded an entity's purge on every attempt, and
+    /// [`EntityError::Persistence`] when the store could not read an entity or
+    /// commit its purge.
     pub async fn purge_attrs(&self, target: &ContextTarget, entity_ids: &[Uri], mode: &PurgeMode, context: &ContextSpec) -> Result<u32, EntityError> {
         let prepared_context = self.engine.prepare_term_context(context);
         let attr_iris: Vec<IriBuf> = match mode {
@@ -55,7 +63,7 @@ impl EntityService {
             let mut purged: Option<PurgedEntity> = None;
             let outcome = self
                 .commit_read_modify_write(target, entity_id, |previous| {
-                    let Some((mut write, mut removed)) = build_purge_write(entity_id, previous, mode, &attr_iris)? else {
+                    let Some((mut write, mut removed)) = build_purge_write(entity_id, previous, mode, &attr_iris) else {
                         return Ok(None);
                     };
                     let groups = attribute_change_groups(previous, &removed.merged);
@@ -100,7 +108,7 @@ struct PurgedEntity {
 
 /// The write that purges `previous` of the attributes `mode` selects, together
 /// with what it removed, or `None` when the entity holds none of them.
-fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_iris: &[IriBuf]) -> Result<Option<(AtomicWrite, PurgedEntity)>, EntityError> {
+fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_iris: &[IriBuf]) -> Option<(AtomicWrite, PurgedEntity)> {
     let mut purged = previous.clone(); // clone: the "before" side stays intact for the removal diff
     let obj = match &mut purged {
         Value::Array(arr) => arr.first_mut().and_then(|v| v.as_object_mut()),
@@ -108,9 +116,7 @@ fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_i
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
     };
 
-    let Some(obj) = obj else {
-        return Ok(None);
-    };
+    let obj = obj?;
 
     let keys_to_remove: Vec<String> = match mode {
         PurgeMode::Drop(_) => attr_iris
@@ -130,7 +136,7 @@ fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_i
     };
 
     if keys_to_remove.is_empty() {
-        return Ok(None);
+        return None;
     }
 
     for key in &keys_to_remove {
@@ -150,5 +156,5 @@ fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_i
         .history(history)
         .build();
 
-    Ok(Some((write, PurgedEntity { merged, events: Vec::new() })))
+    Some((write, PurgedEntity { merged, events: Vec::new() }))
 }

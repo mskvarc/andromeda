@@ -88,7 +88,7 @@ async fn merge_entity_registration_matches_entity_absent_not_404() {
         "a matching registration forwards rather than 404: {}",
         String::from_utf8_lossy(&merged.body)
     );
-    assert_eq!(mock.get_count(Method::PATCH, &forward_path).await, 1, "the merge is forwarded once");
+    assert_eq!(mock.get_count(Method::PATCH, &forward_path), 1, "the merge is forwarded once");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -174,7 +174,7 @@ async fn merge_entity_op_unsupported_returns_409() {
         .expect("merge entity");
     assert_status(&merged, 409);
     assert_problem_details(&merged, CONFLICT);
-    assert_eq!(mock.get_count(Method::PATCH, &forward_path).await, 0, "no forward on an unsupported operation");
+    assert_eq!(mock.get_count(Method::PATCH, &forward_path), 0, "no forward on an unsupported operation");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -208,7 +208,7 @@ async fn merge_entity_inclusive_forwards_remainder_and_merges_local() {
     let forwarded_body = forwarded.json::<Value>().expect("forwarded merge body is JSON");
     assert!(attr_present(&forwarded_body, "speed"), "inclusive forwards the remainder: {forwarded_body}");
     assert!(attr_present(&forwarded_body, "brandName"), "inclusive forwards the remainder: {forwarded_body}");
-    assert_eq!(mock.get_count(Method::PATCH, &forward_path).await, 1, "the merge is forwarded once");
+    assert_eq!(mock.get_count(Method::PATCH, &forward_path), 1, "the merge is forwarded once");
 
     let local = client
         .get_entity(&entity_id, "local=true", "application/ld+json", None)

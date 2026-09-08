@@ -42,7 +42,10 @@ pub enum TemporalSimplifyOutput {
 impl TemporalSimplifyOutput {
     /// Extract the `Single` variant's value.
     ///
-    /// Returns an error if the variant is `Collection`.
+    /// # Errors
+    ///
+    /// Returns [`TemporalSimplifyError::ExpectedSingle`] when the output holds
+    /// a collection rather than one entity.
     pub fn into_single(self) -> Result<Value, TemporalSimplifyError> {
         match self {
             TemporalSimplifyOutput::Single(value) => Ok(value),
@@ -52,7 +55,10 @@ impl TemporalSimplifyOutput {
 
     /// Extract the `Collection` variant's values.
     ///
-    /// Returns an error if the variant is `Single`.
+    /// # Errors
+    ///
+    /// Returns [`TemporalSimplifyError::ExpectedCollection`] when the output
+    /// holds one entity rather than a collection.
     pub fn into_collection(self) -> Result<Vec<Value>, TemporalSimplifyError> {
         match self {
             TemporalSimplifyOutput::Collection(values) => Ok(values),
@@ -86,9 +92,9 @@ impl TemporalSimplifyRenderer {
     /// Returns an error when a value does not deserialise as an entity.
     pub fn render(self) -> Result<TemporalSimplifyOutput, TemporalSimplifyError> {
         match self.payload {
-            TemporalSimplifyPayload::Single(value) => Ok(TemporalSimplifyOutput::Single(simplify_value(value)?)),
+            TemporalSimplifyPayload::Single(value) => Ok(TemporalSimplifyOutput::Single(simplify_value(&value)?)),
             TemporalSimplifyPayload::Collection(values) => {
-                let simplified = values.into_iter().map(simplify_value).collect::<Result<Vec<_>, _>>()?;
+                let simplified = values.iter().map(simplify_value).collect::<Result<Vec<_>, _>>()?;
                 Ok(TemporalSimplifyOutput::Collection(simplified))
             }
         }
@@ -96,8 +102,8 @@ impl TemporalSimplifyRenderer {
 }
 
 /// Simplify one compacted temporal entity.
-fn simplify_value(entity_value: Value) -> Result<Value, TemporalSimplifyError> {
-    let entity: Entity = deserialize_exact(&entity_value).map_err(TemporalSimplifyError::InvalidEntity)?;
+fn simplify_value(entity_value: &Value) -> Result<Value, TemporalSimplifyError> {
+    let entity: Entity = deserialize_exact(entity_value).map_err(TemporalSimplifyError::InvalidEntity)?;
     Ok(simplify_entity(&entity))
 }
 

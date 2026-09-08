@@ -19,6 +19,20 @@ use serde_json::Value;
 
 impl RegistrationService {
     /// Merge an update fragment into an existing registration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrationError::Validation`] when the fragment names a
+    /// `type` other than `ContextSourceRegistration`, nulls a member clause
+    /// 5.5.8 does not allow to be removed, or leaves the merged registration
+    /// outside Table 5.2.9-1, [`RegistrationError::NotFound`] when no
+    /// registration carries `id`, [`RegistrationError::Conflict`] when the
+    /// merged footprint overlaps an existing registration or local context
+    /// data (clause 5.9.3.4), [`RegistrationError::JsonLd`] when the request
+    /// context cannot be loaded or the fragment cannot be expanded,
+    /// [`RegistrationError::Internal`] when the pre-update snapshot cannot be
+    /// serialised, and [`RegistrationError::Persistence`] when the store
+    /// rejects the read or the write.
     pub async fn update(&self, id: &Uri, payload: Value, context: &ContextSpec) -> Result<(), RegistrationError> {
         // A fragment may omit `type`, but one it carries has to be the
         // registration type (clause 5.2.9).
@@ -104,7 +118,7 @@ mod tests {
         Arc::new(FixedStore::new(vec![registration(
             REGISTRATION_ID,
             "inclusive",
-            json!([{"entities": [{"type": "https://example.org/Vehicle"}]}]),
+            &json!([{"entities": [{"type": "https://example.org/Vehicle"}]}]),
         )]))
     }
 

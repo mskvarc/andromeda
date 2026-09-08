@@ -196,7 +196,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
         let Attribute::Property(ref p) = attr else {
-            unreachable!("expected Property");
+            panic!("expected Property");
         };
         pretty_assertions::assert_eq!(p.common.expires_at, Some(Utc.with_ymd_and_hms(2030, 12, 31, 23, 59, 59).unwrap()));
         let reserialized = serde_json::to_value(&attr).unwrap();
@@ -223,7 +223,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
         let Attribute::Relationship(ref r) = attr else {
-            unreachable!("expected Relationship");
+            panic!("expected Relationship");
         };
         pretty_assertions::assert_eq!(r.common.expires_at, Some(Utc.with_ymd_and_hms(2030, 6, 15, 12, 0, 0).unwrap()));
         let reserialized = serde_json::to_value(&attr).unwrap();
@@ -239,7 +239,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
         let Attribute::GeoProperty(ref g) = attr else {
-            unreachable!("expected GeoProperty");
+            panic!("expected GeoProperty");
         };
         assert!(g.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();
@@ -255,7 +255,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
         let Attribute::VocabProperty(ref v) = attr else {
-            unreachable!("expected VocabProperty");
+            panic!("expected VocabProperty");
         };
         assert!(v.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();
@@ -271,7 +271,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
         let Attribute::LanguageProperty(ref l) = attr else {
-            unreachable!("expected LanguageProperty");
+            panic!("expected LanguageProperty");
         };
         assert!(l.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();
@@ -287,7 +287,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
         let Attribute::JsonProperty(ref j) = attr else {
-            unreachable!("expected JsonProperty");
+            panic!("expected JsonProperty");
         };
         assert!(j.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();
@@ -303,7 +303,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
         let Attribute::ListProperty(ref lp) = attr else {
-            unreachable!("expected ListProperty");
+            panic!("expected ListProperty");
         };
         assert!(lp.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();
@@ -319,7 +319,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
         let Attribute::ListRelationship(ref lr) = attr else {
-            unreachable!("expected ListRelationship");
+            panic!("expected ListRelationship");
         };
         assert!(lr.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();

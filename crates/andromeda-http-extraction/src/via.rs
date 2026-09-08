@@ -6,7 +6,10 @@
 
 use andromeda_http_headers::via::Via;
 use axum::{extract::FromRequestParts, http::request::Parts};
-use std::convert::Infallible;
+use std::{
+    convert::Infallible,
+    future::{Future, ready},
+};
 
 /// Axum extractor for the `Via` request header.
 ///
@@ -23,18 +26,21 @@ impl IncomingVia {
     }
 }
 
+/// Decode the `Via` chain the request carries, leaving a header that does not
+/// decode as no chain at all (clause 6.3.18 loop detection is best effort).
+fn incoming_via(parts: &Parts) -> IncomingVia {
+    let mut via_values = parts.headers.get_all("via").iter();
+    IncomingVia(headers::Header::decode(&mut via_values).ok())
+}
+
 impl<S> FromRequestParts<S> for IncomingVia
 where
     S: Send + Sync,
 {
     type Rejection = Infallible;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let via = {
-            let mut via_values = parts.headers.get_all("via").iter();
-            headers::Header::decode(&mut via_values).ok()
-        };
-        Ok(IncomingVia(via))
+    fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> {
+        ready(Ok(incoming_via(parts)))
     }
 }
 
@@ -47,7 +53,7 @@ mod tests {
     #[tokio::test]
     async fn no_header_returns_none() {
         let req = Request::builder().uri("/test").body(()).expect("valid request");
-        let (mut parts, _) = req.into_parts();
+        let (mut parts, ()) = req.into_parts();
         let result = IncomingVia::from_request_parts(&mut parts, &()).await.expect("infallible");
         assert!(result.into_inner().is_none());
     }
@@ -59,7 +65,7 @@ mod tests {
             .header("via", "1.1 broker-a, 1.1 broker-b")
             .body(())
             .expect("valid request");
-        let (mut parts, _) = req.into_parts();
+        let (mut parts, ()) = req.into_parts();
         let result = IncomingVia::from_request_parts(&mut parts, &()).await.expect("infallible");
         let via = result.into_inner().expect("should have value");
         assert!(via.contains_pseudonym(&ContextSourcePseudonym::new("broker-a").expect("valid pseudonym")));
@@ -69,7 +75,7 @@ mod tests {
     #[tokio::test]
     async fn malformed_via_header_returns_none() {
         let req = Request::builder().uri("/test").header("via", "").body(()).expect("valid request");
-        let (mut parts, _) = req.into_parts();
+        let (mut parts, ()) = req.into_parts();
         let result = IncomingVia::from_request_parts(&mut parts, &()).await.expect("infallible");
         assert!(result.into_inner().is_none());
     }

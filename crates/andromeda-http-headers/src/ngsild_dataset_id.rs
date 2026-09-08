@@ -34,17 +34,15 @@ impl headers::Header for NgsiLdDatasetId {
     {
         let mut datasets = Vec::new();
         for value in values {
-            let s = match value.to_str() {
-                Ok(value) => value,
-                Err(_) => return Err(headers::Error::invalid()),
+            let Ok(s) = value.to_str() else {
+                return Err(headers::Error::invalid());
             };
             for segment in s.split(',').map(str::trim) {
                 if segment.is_empty() {
                     return Err(headers::Error::invalid());
                 }
-                let selector = match segment.parse::<DatasetSelector>() {
-                    Ok(value) => value,
-                    Err(_) => return Err(headers::Error::invalid()),
+                let Ok(selector) = segment.parse::<DatasetSelector>() else {
+                    return Err(headers::Error::invalid());
                 };
                 datasets.push(selector);
             }

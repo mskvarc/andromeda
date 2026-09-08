@@ -165,7 +165,7 @@ mod tests {
 
     /// One expanded entity carrying `iri` as a `GeoProperty` whose literal
     /// `@value` is `geojson`.
-    fn entity_with_literal(iri: &str, geojson: Value) -> Value {
+    fn entity_with_literal(iri: &str, geojson: &Value) -> Value {
         json!([{
             "@id": "urn:ngsi-ld:Building:001",
             iri: [{ "@type": [GEO_PROPERTY], HAS_VALUE: [{ "@value": geojson }] }]
@@ -174,7 +174,7 @@ mod tests {
 
     /// One expanded entity carrying `location` as a `GeoProperty` in the fully
     /// expanded node form, with the given coordinate member.
-    fn entity_with_expanded_node(coordinates: Value) -> Value {
+    fn entity_with_expanded_node(coordinates: &Value) -> Value {
         json!([{
             "@id": "urn:ngsi-ld:Building:001",
             LOCATION: [{
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn a_two_dimensional_location_is_accepted() {
-        let entity = entity_with_literal(LOCATION, json!({"type": "Point", "coordinates": [13.38, 52.52]}));
+        let entity = entity_with_literal(LOCATION, &json!({"type": "Point", "coordinates": [13.38, 52.52]}));
         assert!(validate_geo_property_geometries(&entity).is_ok());
     }
 
@@ -202,21 +202,21 @@ mod tests {
     fn a_three_dimensional_location_is_accepted() {
         // RFC 7946 section 3.1.1 makes altitude the optional third ordinate,
         // and clause 4.7 adopts RFC 7946 whole, so a height is valid input.
-        let entity = entity_with_literal(LOCATION, json!({"type": "Point", "coordinates": [13.38, 52.52, 34.5]}));
+        let entity = entity_with_literal(LOCATION, &json!({"type": "Point", "coordinates": [13.38, 52.52, 34.5]}));
         assert!(validate_geo_property_geometries(&entity).is_ok());
     }
 
     #[test]
     fn a_location_mixing_two_and_three_ordinate_positions_is_accepted() {
         // RFC 7946 nowhere requires a uniform arity within one geometry.
-        let entity = entity_with_literal(LOCATION, json!({"type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 1.0, 50.0]]}));
+        let entity = entity_with_literal(LOCATION, &json!({"type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 1.0, 50.0]]}));
         assert!(validate_geo_property_geometries(&entity).is_ok());
     }
 
     #[test]
     fn a_location_whose_position_carries_four_ordinates_is_rejected() {
         // Clause 5.5.4: an unreadable GeoProperty is BadRequestData.
-        let entity = entity_with_literal(LOCATION, json!({"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}));
+        let entity = entity_with_literal(LOCATION, &json!({"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}));
         let error = validate_geo_property_geometries(&entity).expect_err("four ordinates have no meaning");
         pretty_assertions::assert_eq!(
             error.to_string(),
@@ -232,7 +232,7 @@ mod tests {
         // the detail is the decoder's rather than the arity check's; what
         // matters for clause 5.5.4 is that the write is refused and the
         // GeoProperty is named.
-        let entity = entity_with_literal(LOCATION, json!({"type": "Point", "coordinates": [1.0]}));
+        let entity = entity_with_literal(LOCATION, &json!({"type": "Point", "coordinates": [1.0]}));
         let error = validate_geo_property_geometries(&entity).expect_err("one ordinate is not a position");
         assert!(
             error.to_string().starts_with("invalid entity operation: GeoProperty 'location': "),
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn an_expanded_node_location_whose_position_carries_one_ordinate_is_rejected() {
-        let entity = entity_with_expanded_node(json!({"@list": [
+        let entity = entity_with_expanded_node(&json!({"@list": [
             {"@list": [
                 {"@list": [ordinate(0.0), ordinate(0.0)]},
                 {"@list": [ordinate(4.0)]},
@@ -259,7 +259,7 @@ mod tests {
         // levels of nesting below the coordinate member.
         let entity = entity_with_literal(
             LOCATION,
-            json!({
+            &json!({
                 "type": "Polygon",
                 "coordinates": [
                     [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0], [0.0, 0.0]],
@@ -275,7 +275,7 @@ mod tests {
     fn a_custom_geo_property_with_four_ordinates_is_rejected_and_named_by_its_iri() {
         // Clause 4.7.1 lets any attribute be a GeoProperty; the three
         // well-known ones are not a closed list.
-        let entity = entity_with_literal(SITE, json!({"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}));
+        let entity = entity_with_literal(SITE, &json!({"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}));
         let error = validate_geo_property_geometries(&entity).expect_err("a user-defined GeoProperty is validated too");
         pretty_assertions::assert_eq!(
             error.to_string(),
@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn an_operation_space_with_four_ordinates_is_rejected() {
-        let entity = entity_with_literal(OPERATION_SPACE, json!({"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}));
+        let entity = entity_with_literal(OPERATION_SPACE, &json!({"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}));
         let error = validate_geo_property_geometries(&entity).expect_err("operationSpace is a GeoProperty");
         assert!(error.to_string().contains("operationSpace"), "got {error}");
     }
@@ -294,14 +294,14 @@ mod tests {
     #[test]
     fn a_geo_property_written_as_a_json_string_is_validated() {
         // Clause 4.7 permits the GeoJSON document to arrive as a string.
-        let entity = entity_with_literal(LOCATION, json!("{\"type\":\"Point\",\"coordinates\":[1.0,2.0,3.0,4.0]}"));
+        let entity = entity_with_literal(LOCATION, &json!("{\"type\":\"Point\",\"coordinates\":[1.0,2.0,3.0,4.0]}"));
         let error = validate_geo_property_geometries(&entity).expect_err("a stringified document is still a geometry");
         assert!(error.to_string().contains("4 ordinates"), "got {error}");
     }
 
     #[test]
     fn a_geo_property_in_the_fully_expanded_node_form_is_validated() {
-        let entity = entity_with_expanded_node(json!({"@list": [
+        let entity = entity_with_expanded_node(&json!({"@list": [
             {"@list": [
                 {"@list": [ordinate(0.0), ordinate(0.0)]},
                 {"@list": [ordinate(4.0), ordinate(0.0)]},
@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn a_valid_geo_property_in_the_fully_expanded_node_form_is_accepted() {
-        let entity = entity_with_expanded_node(json!({"@list": [
+        let entity = entity_with_expanded_node(&json!({"@list": [
             {"@list": [
                 {"@list": [ordinate(0.0), ordinate(0.0)]},
                 {"@list": [ordinate(4.0), ordinate(0.0), ordinate(12.0)]},
@@ -374,7 +374,7 @@ mod tests {
         // Clause 4.7.1: every RFC 7946 geometry except GeometryCollection.
         let entity = entity_with_literal(
             LOCATION,
-            json!({
+            &json!({
                 "type": "GeometryCollection",
                 "geometries": [
                     {"type": "Point", "coordinates": [1.0, 2.0]},
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn a_custom_geo_property_that_is_a_geometry_collection_is_rejected_and_named_by_its_iri() {
-        let entity = entity_with_literal(SITE, json!({"type": "GeometryCollection", "geometries": []}));
+        let entity = entity_with_literal(SITE, &json!({"type": "GeometryCollection", "geometries": []}));
         let error = validate_geo_property_geometries(&entity).expect_err("a user-defined GeoProperty is validated too");
         assert!(
             error
@@ -426,7 +426,7 @@ mod tests {
     #[test]
     fn a_geometry_collection_written_as_a_json_string_is_rejected() {
         // Clause 4.7 permits the GeoJSON document to arrive as a string.
-        let entity = entity_with_literal(LOCATION, json!("{\"type\":\"GeometryCollection\",\"geometries\":[]}"));
+        let entity = entity_with_literal(LOCATION, &json!("{\"type\":\"GeometryCollection\",\"geometries\":[]}"));
         let error = validate_geo_property_geometries(&entity).expect_err("a stringified collection is still a collection");
         assert!(error.to_string().contains("GeometryCollection is not an allowed"), "got {error}");
     }

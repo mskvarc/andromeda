@@ -29,6 +29,17 @@ impl EntityTypeValue {
     }
 }
 
+// Borrowed iteration goes through the inherent `iter`; the impl is what lets a
+// `&EntityTypeValue` be used directly in a `for` loop or an iterator adapter.
+impl<'a> IntoIterator for &'a EntityTypeValue {
+    type Item = &'a EntityTypeName;
+    type IntoIter = Iter<'a, EntityTypeName>;
+
+    fn into_iter(self) -> Iter<'a, EntityTypeName> {
+        self.iter()
+    }
+}
+
 impl ExpandableTypeValue for EntityTypeValue {
     fn to_type_array<V: JsonValue>(&self) -> V {
         match self {

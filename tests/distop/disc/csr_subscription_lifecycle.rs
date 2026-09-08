@@ -43,14 +43,11 @@ async fn csr_subscription_create_valid_returns_201_and_location() {
     assert!(location(&created).ends_with(&id), "the Location carries the explicit subscription id");
 
     let mut without_id = subscription(&topology.id("subscription:placeholder"), &vtype);
-    without_id
-        .as_object_mut()
-        .unwrap_or_else(|| unreachable!("subscription is an object"))
-        .remove("id");
+    without_id.as_object_mut().unwrap_or_else(|| panic!("subscription is an object")).remove("id");
     let generated = csr_subscription::create(topology.broker(BrokerRole::A).client(), &without_id).await;
     assert_status(&generated, 201);
     let tail = location(&generated);
-    let tail = tail.rsplit('/').next().unwrap_or_else(|| unreachable!("Location has a final segment"));
+    let tail = tail.rsplit('/').next().unwrap_or_else(|| panic!("Location has a final segment"));
     assert!(tail.starts_with("urn:"), "a subscription without an id is assigned a generated URI: {tail}");
     topology.finish().await.expect("topology cleanup");
 }
@@ -66,7 +63,7 @@ async fn csr_subscription_create_applies_local_case_validation() {
     let mutations: [fn(&mut Value); 5] = [
         |body| {
             body.as_object_mut()
-                .unwrap_or_else(|| unreachable!("subscription is an object"))
+                .unwrap_or_else(|| panic!("subscription is an object"))
                 .remove("notification");
         },
         |body| body["type"] = json!("RandomType"),
@@ -215,9 +212,7 @@ async fn csr_subscription_update_emits_notification_with_all_matching_csrs() {
     .await;
     assert_status(&updated, 204);
     let notification = adapter.wait_for_subscription_notification(&subscription_id, PRESENT).await;
-    let data = notification.body["data"]
-        .as_array()
-        .unwrap_or_else(|| unreachable!("notification data is an array"));
+    let data = notification.body["data"].as_array().unwrap_or_else(|| panic!("notification data is an array"));
     assert!(
         data.len() >= 2,
         "the post-update notification lists all currently matching registrations, got {}",

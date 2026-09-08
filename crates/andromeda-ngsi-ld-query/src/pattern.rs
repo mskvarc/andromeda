@@ -47,6 +47,13 @@ pub struct Pattern(Regex);
 
 impl Pattern {
     /// Compile and validate a pattern, rejecting one no engine could run.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::PatternRegex`] when the `regex` crate rejects the
+    /// pattern, and [`QueryError::PatternRepeatedQuantifier`] when a repetition
+    /// operator is applied directly to another repetition, which PostgreSQL's
+    /// POSIX engine rejects.
     pub fn parse(pattern: &str) -> Result<Pattern, QueryError> {
         let compiled = Regex::new(pattern)?;
         let ast = Parser::new().parse(pattern).map_err(|_| QueryError::PatternRepeatedQuantifier)?;

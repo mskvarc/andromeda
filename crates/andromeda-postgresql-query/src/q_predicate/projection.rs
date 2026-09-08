@@ -37,6 +37,14 @@ fn probe_column(column: CurrentAttributeValues) -> SimpleExpr {
 }
 
 /// Compile a parsed `q` expression into a sea-query [`Condition`].
+///
+/// # Errors
+///
+/// Returns [`RenderError`] when a term of the expression cannot be rendered.
+/// No shape clause 4.9 admits reaches that: an attribute or entity type name
+/// the dictionary does not hold compiles to a constant `FALSE` rather than
+/// failing, and every operand is bound as a parameter rather than converted, so
+/// the result is `Ok` for every expression the `q` parser accepts.
 pub fn compile(expr: &Expr, rows: &EntityRowRefs, names: &QueryNames) -> Result<Condition, RenderError> {
     match expr {
         Expr::And(terms) => terms.iter().try_fold(Condition::all(), |cond, term| Ok(cond.add(compile(term, rows, names)?))),
@@ -57,7 +65,7 @@ fn compile_predicate(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames)
 /// a nested traversal's probes cannot shadow an enclosing one's.
 fn compile_along_path(pred: &Predicate, path: &QueryPath, rows: &EntityRowRefs, names: &QueryNames, depth: usize) -> Result<Condition, RenderError> {
     match path {
-        QueryPath::Local(local) => compile_local_predicate(pred, local, rows, names),
+        QueryPath::Local(local) => Ok(compile_local_predicate(pred, local, rows, names)),
         QueryPath::Linked {
             relationship,
             guard_types,
@@ -77,31 +85,31 @@ fn compile_along_path(pred: &Predicate, path: &QueryPath, rows: &EntityRowRefs, 
 }
 
 /// Compile the comparison itself, routing it to the projection or the fallback.
-fn compile_local_predicate(pred: &Predicate, path: &AttrPath, rows: &EntityRowRefs, names: &QueryNames) -> Result<Condition, RenderError> {
+fn compile_local_predicate(pred: &Predicate, path: &AttrPath, rows: &EntityRowRefs, names: &QueryNames) -> Condition {
     match pred {
-        Predicate::Exists(_) => Ok(compile_exists(path, rows, names)),
+        Predicate::Exists(_) => compile_exists(path, rows, names),
         Predicate::Equality { membership, rhs, .. } => {
             if is_projection_eligible(path) {
                 match names.attributes.get(&path.attr) {
-                    Some(id) => Ok(compile_equality_on_projection(id, *membership, rhs, rows)),
-                    None => Ok(unsatisfiable()),
+                    Some(id) => compile_equality_on_projection(id, *membership, rhs, rows),
+                    None => unsatisfiable(),
                 }
             } else {
-                Ok(fallback_equality(path, *membership, rhs, rows))
+                fallback_equality(path, *membership, rhs, rows)
             }
         }
         Predicate::Ordering { op, rhs, .. } => {
             if is_projection_eligible(path) {
                 match names.attributes.get(&path.attr) {
-                    Some(id) => Ok(compile_ordering_on_projection(id, *op, rhs, rows)),
-                    None => Ok(unsatisfiable()),
+                    Some(id) => compile_ordering_on_projection(id, *op, rhs, rows),
+                    None => unsatisfiable(),
                 }
             } else {
-                Ok(fallback_ordering(path, *op, rhs, rows))
+                fallback_ordering(path, *op, rhs, rows)
             }
         }
-        Predicate::MatchPattern { pattern, .. } => Ok(compile_pattern(path, pattern, PatternPolarity::Match, rows, names)),
-        Predicate::NotMatchPattern { pattern, .. } => Ok(compile_pattern(path, pattern, PatternPolarity::NotMatch, rows, names)),
+        Predicate::MatchPattern { pattern, .. } => compile_pattern(path, pattern, PatternPolarity::Match, rows, names),
+        Predicate::NotMatchPattern { pattern, .. } => compile_pattern(path, pattern, PatternPolarity::NotMatch, rows, names),
     }
 }
 

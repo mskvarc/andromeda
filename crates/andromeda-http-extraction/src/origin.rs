@@ -23,6 +23,12 @@ pub enum RequestOriginError {
 }
 
 /// Parse the request's `Host` header into the origin used for broker-hosted resources.
+///
+/// # Errors
+///
+/// Returns [`RequestOriginError::InvalidOrigin`] when a `Host` header is
+/// present but its authority does not form a valid `http` URL. A request
+/// without a `Host` header yields `Ok(None)`.
 pub fn request_origin(headers: &HeaderMap) -> Result<Option<Url>, RequestOriginError> {
     headers
         .typed_get::<headers::Host>()

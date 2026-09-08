@@ -56,11 +56,7 @@ use andromeda_ngsi_ld_request::{
     local::LocalOnlyParams,
     query::temporal::TemporalQueryParameters,
 };
-use andromeda_temporal::{
-    error::TemporalError,
-    port::mutator::TemporalDeleteScope as DeleteScope,
-    service::{CreateOrUpdateResult, TemporalQueryResult},
-};
+use andromeda_temporal::{error::TemporalError, port::mutator::TemporalDeleteScope as DeleteScope, service::CreateOrUpdateResult};
 use axum::{
     extract::OriginalUri,
     http::{HeaderMap, Method, StatusCode},

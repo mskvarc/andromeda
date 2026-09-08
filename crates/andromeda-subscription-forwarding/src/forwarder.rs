@@ -5,6 +5,7 @@
 use crate::{
     error::SubscriptionForwardingError,
     mapping::ForwardedCopy,
+    minted_subscription_id::mint_subscription_id,
     reduced_copy::{FilterCarriage, ReducedSubscription},
     service::SubscriptionForwardingService,
 };
@@ -47,16 +48,15 @@ pub(crate) fn decide(trigger: CsrTriggerReason, mode: ForwardingMode, existing: 
         return ForwardDecision::Nothing;
     }
     match (trigger, existing) {
-        (CsrTriggerReason::NewlyMatching, None) => ForwardDecision::Create,
+        // A registration that changed into matching is, for this broker, newly matching.
+        (CsrTriggerReason::NewlyMatching | CsrTriggerReason::Updated, None) => ForwardDecision::Create,
+        (CsrTriggerReason::Updated, Some(remote)) => ForwardDecision::Update { remote },
+        (CsrTriggerReason::NoLongerMatching, Some(remote)) => ForwardDecision::Delete { remote },
         // The copy was placed when the subscription was created (or the
         // registration was already reported): a source that holds one is
-        // neither given a second one nor sent an update it has no change for.
-        (CsrTriggerReason::NewlyMatching, Some(_)) => ForwardDecision::Nothing,
-        (CsrTriggerReason::Updated, Some(remote)) => ForwardDecision::Update { remote },
-        // A registration that changed into matching is, for this broker, newly matching.
-        (CsrTriggerReason::Updated, None) => ForwardDecision::Create,
-        (CsrTriggerReason::NoLongerMatching, Some(remote)) => ForwardDecision::Delete { remote },
-        (CsrTriggerReason::NoLongerMatching, None) => ForwardDecision::Nothing,
+        // neither given a second one nor sent an update it has no change for,
+        // and a source that holds none has nothing to be relieved of.
+        (CsrTriggerReason::NewlyMatching, Some(_)) | (CsrTriggerReason::NoLongerMatching, None) => ForwardDecision::Nothing,
     }
 }
 
@@ -81,9 +81,7 @@ impl SubscriptionForwardingService {
         let carriage = FilterCarriage::for_split(self.federation.split_entities(subscription.delivery.split_entities));
         match decision {
             ForwardDecision::Create => {
-                let minted = self
-                    .mint_subscription_id()
-                    .map_err(|error| SubscriptionForwardingError::internal(error.to_string()))?;
+                let minted = mint_subscription_id().map_err(|error| SubscriptionForwardingError::internal(error.to_string()))?;
                 let copy = ReducedSubscription::reduce(subscription, registration, &self.receiver, &minted, carriage);
                 let body = serde_json::to_vec(&copy.document)?;
                 let forwarded = self
@@ -146,6 +144,14 @@ impl SubscriptionForwardingService {
 
     /// Handle a notification of a companion subscription: every registration it
     /// names is given, updated on, or relieved of a reduced copy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubscriptionForwardingError::UnknownSubscription`] when the
+    /// notification names a companion this broker holds no local subscription
+    /// for. Propagates the mapping-store, federation, subscription-store and
+    /// serialisation failures raised while placing, updating or removing the
+    /// reduced copies the notification calls for.
     pub async fn handle_csource_notification(&self, notification: &CsourceNotification, context: &ContextSpec) -> Result<(), SubscriptionForwardingError> {
         let Some(local) = self.mappings.local_of_companion(&notification.subscription_id).await? else {
             return Err(SubscriptionForwardingError::UnknownSubscription {

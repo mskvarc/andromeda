@@ -1,12 +1,8 @@
 //! Permanent source guards for broker-wide structural invariants.
 
-use crate::source_scan::{is_test_only, workspace_sources};
+use crate::source_scan::{item_is_test_only, rust_file_paths, workspace_sources};
 use quote::ToTokens;
-use std::{
-    collections::BTreeSet,
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeSet, fs, path::Path};
 use syn::{
     Item,
     ItemImpl,
@@ -23,7 +19,8 @@ use syn::{
 ///
 /// # Panics
 ///
-/// Panics when a forbidden source shape is found or a retired path reappears.
+/// Panics when a forbidden source shape is found, a retired path reappears, or
+/// the broker configuration cannot be read.
 pub fn assert_retired_architecture_invariants(workspace_root: &str) {
     let root = Path::new(workspace_root);
     let mut violations = Vec::new();
@@ -57,16 +54,17 @@ pub fn assert_retired_architecture_invariants(workspace_root: &str) {
         "src/service/temporal.rs",
         "src/repository/temporal/repo.rs",
     ];
-    retired_paths.iter().for_each(|path| {
+    for path in retired_paths {
         if root.join(path).exists() {
             violations.push(format!("retired path exists: {path}"));
         }
-    });
+    }
 
     let config_path = root.join("config/andromeda.toml");
-    let config = fs::read_to_string(&config_path).unwrap_or_else(|error| unreachable!("{} is readable: {error}", config_path.display()));
-    if config.contains("source_identity") {
-        violations.push("config/andromeda.toml contains retired source_identity key".to_owned());
+    match fs::read_to_string(&config_path) {
+        Ok(config) if config.contains("source_identity") => violations.push("config/andromeda.toml contains retired source_identity key".to_owned()),
+        Ok(_) => {}
+        Err(error) => violations.push(format!("{} could not be read: {error}", config_path.display())),
     }
 
     let violations = violations.into_iter().collect::<BTreeSet<_>>();
@@ -82,8 +80,8 @@ pub fn assert_retired_architecture_invariants(workspace_root: &str) {
 /// # Panics
 ///
 /// Panics when root tests contain direct global truncation, when the retired
-/// umbrella crate name returns, or when a focused test crate introduces a
-/// generic dumping-ground module.
+/// umbrella crate name returns, when a focused test crate introduces a generic
+/// dumping-ground module, or when a test source cannot be read or parsed.
 pub fn assert_test_infrastructure_invariants(workspace_root: &str) {
     let root = Path::new(workspace_root);
     let mut violations = Vec::new();
@@ -102,10 +100,18 @@ pub fn assert_test_infrastructure_invariants(workspace_root: &str) {
 }
 
 /// Scan root integration-test sources for retired names and direct global SQL resets.
+///
+/// A test source that cannot be read or parsed is reported as a violation of
+/// its own: the guard cannot vouch for a file it never saw.
 fn scan_test_sources(root: &Path, violations: &mut Vec<String>) {
-    let tests = root.join("tests");
-    for path in rust_files_below(&tests) {
-        let source = fs::read_to_string(&path).unwrap_or_else(|error| unreachable!("{} is readable: {error}", path.display()));
+    for path in rust_file_paths(&root.join("tests")) {
+        let source = match fs::read_to_string(&path) {
+            Ok(source) => source,
+            Err(error) => {
+                violations.push(format!("{} could not be read: {error}", path.display()));
+                continue;
+            }
+        };
         let relative = path.strip_prefix(root).unwrap_or(&path).display();
         if source.contains(concat!("andromeda_test_", "common")) || source.contains(concat!("andromeda-test-", "common")) {
             violations.push(format!("{relative} contains the retired test-common name"));
@@ -113,7 +119,13 @@ fn scan_test_sources(root: &Path, violations: &mut Vec<String>) {
         if source.contains("TcpListener::bind") || source.contains("axum::serve") {
             violations.push(format!("{relative} binds a callback listener outside andromeda-test-mocks"));
         }
-        let syntax = syn::parse_file(&source).unwrap_or_else(|error| unreachable!("{} parses as Rust: {error}", path.display()));
+        let syntax = match syn::parse_file(&source) {
+            Ok(syntax) => syntax,
+            Err(error) => {
+                violations.push(format!("{relative} does not parse as Rust: {error}"));
+                continue;
+            }
+        };
         let mut visitor = TestInfrastructureVisitor {
             path: relative.to_string(),
             violations: Vec::new(),
@@ -133,7 +145,7 @@ fn scan_test_crate_modules(root: &Path, violations: &mut Vec<String>) {
         "andromeda-test-mocks",
     ] {
         let source_root = crates.join(crate_name).join("src");
-        for path in rust_files_below(&source_root) {
+        for path in rust_file_paths(&source_root) {
             let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or_default();
             let parent = path.parent().and_then(Path::file_name).and_then(|value| value.to_str()).unwrap_or_default();
             if ["common", "utils", "helpers", "shared", "misc"].contains(&stem)
@@ -143,29 +155,6 @@ fn scan_test_crate_modules(root: &Path, violations: &mut Vec<String>) {
             }
         }
     }
-}
-
-/// Recursively discover Rust files below one existing directory.
-fn rust_files_below(root: &Path) -> Vec<PathBuf> {
-    if !root.exists() {
-        return Vec::new();
-    }
-    let mut files = Vec::new();
-    let mut directories = vec![root.to_path_buf()];
-    while let Some(directory) = directories.pop() {
-        for entry in fs::read_dir(&directory).unwrap_or_else(|error| unreachable!("{} is readable: {error}", directory.display())) {
-            let path = entry
-                .unwrap_or_else(|error| unreachable!("an entry of {} is readable: {error}", directory.display()))
-                .path();
-            if path.is_dir() {
-                directories.push(path);
-            } else if path.extension().is_some_and(|extension| extension == "rs") {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    files
 }
 
 /// SQL-string visitor for root integration-test source.
@@ -248,36 +237,13 @@ fn technical_http_trait_owner(trait_name: &str) -> Option<&'static str> {
     }
 }
 
-/// Whether one inline item is compiled only for tests.
-fn item_is_test_only(item: &Item) -> bool {
-    match item {
-        Item::Const(item) => is_test_only(&item.attrs),
-        Item::Enum(item) => is_test_only(&item.attrs),
-        Item::ExternCrate(item) => is_test_only(&item.attrs),
-        Item::Fn(item) => is_test_only(&item.attrs),
-        Item::ForeignMod(item) => is_test_only(&item.attrs),
-        Item::Impl(item) => is_test_only(&item.attrs),
-        Item::Macro(item) => is_test_only(&item.attrs),
-        Item::Mod(item) => is_test_only(&item.attrs),
-        Item::Static(item) => is_test_only(&item.attrs),
-        Item::Struct(item) => is_test_only(&item.attrs),
-        Item::Trait(item) => is_test_only(&item.attrs),
-        Item::TraitAlias(item) => is_test_only(&item.attrs),
-        Item::Type(item) => is_test_only(&item.attrs),
-        Item::Union(item) => is_test_only(&item.attrs),
-        Item::Use(item) => is_test_only(&item.attrs),
-        Item::Verbatim(_) => false,
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::architecture::ArchitectureVisitor;
     use syn::visit::Visit;
 
     fn violations(source: &str) -> Vec<String> {
-        let syntax = syn::parse_file(source).unwrap_or_else(|error| unreachable!("fixture parses: {error}"));
+        let syntax = syn::parse_file(source).unwrap_or_else(|error| panic!("fixture parses: {error}"));
         let mut visitor = ArchitectureVisitor {
             path: "fixture.rs",
             violations: Vec::new(),
@@ -295,13 +261,13 @@ mod tests {
     #[test]
     fn accepts_defining_module_imports_and_short_paths() {
         let violations = violations("use crate::domain::Value; fn read() { Value::read(); }");
-        assert!(violations.is_empty());
+        assert_eq!(violations, [] as [String; 0]);
     }
 
     #[test]
     fn ignores_test_only_inline_items() {
         let violations = violations("#[cfg(test)] mod tests { pub use crate::name::Value; }");
-        assert!(violations.is_empty());
+        assert_eq!(violations, [] as [String; 0]);
     }
 
     #[test]
@@ -312,12 +278,12 @@ mod tests {
 
     #[test]
     fn accepts_centralized_http_trait_implementations_inside_their_owner() {
-        let syntax = syn::parse_file("impl axum::response::IntoResponse for Value {}").unwrap_or_else(|error| unreachable!("fixture parses: {error}"));
+        let syntax = syn::parse_file("impl axum::response::IntoResponse for Value {}").unwrap_or_else(|error| panic!("fixture parses: {error}"));
         let mut visitor = ArchitectureVisitor {
             path: "crates/andromeda-http-response/src/value.rs",
             violations: Vec::new(),
         };
         visitor.visit_file(&syntax);
-        assert!(visitor.violations.is_empty());
+        assert_eq!(visitor.violations, [] as [String; 0]);
     }
 }

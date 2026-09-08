@@ -14,6 +14,7 @@ use axum::{
     http::{StatusCode, header::ACCEPT, request::Parts},
 };
 use headers::HeaderMapExt;
+use std::future::{Future, ready};
 
 /// Parse the Accept header and select the best media type.
 fn resolve_accept(parts: &Parts, geo_json: GeoJsonSupport) -> Result<ResponseMediaType, ExtractorRejection> {
@@ -54,21 +55,21 @@ macro_rules! impl_accept_extractor {
         {
             type Rejection = ExtractorRejection;
 
-            async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-                resolve_accept(parts, $geo).map($name)
+            fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> {
+                ready(resolve_accept(parts, $geo).map($name))
             }
         }
     };
 }
 
 impl_accept_extractor!(
-    /// Extractor for Accept header content negotiation (GeoJSON allowed).
+    /// Extractor for Accept header content negotiation (`GeoJSON` allowed).
     AcceptFormat,
     GeoJsonSupport::Allowed
 );
 
 impl_accept_extractor!(
-    /// Extractor variant for endpoints that do not support GeoJSON responses.
+    /// Extractor variant for endpoints that do not support `GeoJSON` responses.
     AcceptFormatNoGeo,
     GeoJsonSupport::Disallowed
 );
@@ -85,7 +86,7 @@ mod tests {
 
     fn parse_format(accept: &str, geo_json: GeoJsonSupport) -> Result<ResponseMediaType, ()> {
         let req = Request::builder().uri("/test").header(ACCEPT, accept).body(()).expect("valid request");
-        let (parts, _) = req.into_parts();
+        let (parts, ()) = req.into_parts();
         resolve_accept(&parts, geo_json).map_err(|_| ())
     }
 
@@ -164,7 +165,7 @@ mod tests {
             Err(ExtractorRejection::Empty(status)) => {
                 pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
             }
-            _ => unreachable!("expected 406 empty rejection"),
+            _ => panic!("expected 406 empty rejection"),
         }
     }
 
@@ -181,7 +182,7 @@ mod tests {
             Err(ExtractorRejection::Empty(status)) => {
                 pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
             }
-            _ => unreachable!("expected 406 empty rejection for geo+json"),
+            _ => panic!("expected 406 empty rejection for geo+json"),
         }
     }
 

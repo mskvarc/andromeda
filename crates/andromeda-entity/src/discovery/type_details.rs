@@ -21,6 +21,13 @@ impl EntityDiscoveryService {
     /// attribute names (clause 5.2.25). A type only the registry knows is
     /// reported with the attribute names registered beside it, which may be
     /// none (clause 5.7.11).
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::Persistence`] when a summary page or the registry
+    /// could not be read, [`EntityError::Validation`] when a stored type or
+    /// attribute name is not well formed, and [`EntityError::JsonLd`] when the
+    /// details cannot be compacted against `context`.
     pub async fn type_details(&self, target: &ContextTarget, scope: DiscoveryScope, context: &ContextSpec) -> Result<Value, EntityError> {
         // Keyset-paginate the aggregation so a very large set of distinct
         // types does not require a single large result set.

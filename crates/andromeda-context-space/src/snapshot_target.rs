@@ -13,6 +13,11 @@ pub struct SnapshotTarget {
 
 impl SnapshotTarget {
     /// Construct a target after resolving a Snapshot control row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SnapshotTargetError::LiveSpace`] when the resolved space is the tenant's live
+    /// branch rather than a Snapshot-owned one.
     pub fn new(space: ContextSpace, snapshot_id: Uri) -> Result<SnapshotTarget, SnapshotTargetError> {
         match space.kind() {
             ContextSpaceKind::Snapshot => Ok(SnapshotTarget { space, snapshot_id }),

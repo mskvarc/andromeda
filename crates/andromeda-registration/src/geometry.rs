@@ -28,22 +28,22 @@ mod tests {
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use serde_json::json;
 
-    fn roundtrip(geometry: Geometry) -> serde_json::Value {
-        serde_json::to_value(&geometry).expect("serialize")
+    fn roundtrip(geometry: &Geometry) -> serde_json::Value {
+        serde_json::to_value(geometry).expect("serialize")
     }
 
     #[test]
     fn geo_property_wrapper_returns_inner_value() {
         let input = json!({ "type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]} });
         let geometry = unwrap_geo_property_to_geometry(&input).expect("decode");
-        pretty_assertions::assert_eq!(roundtrip(geometry), json!({"type": "Point", "coordinates": [1.0, 2.0]}));
+        pretty_assertions::assert_eq!(roundtrip(&geometry), json!({"type": "Point", "coordinates": [1.0, 2.0]}));
     }
 
     #[test]
     fn raw_geojson_returns_as_is() {
         let input = json!({"type": "Point", "coordinates": [1.0, 2.0]});
         let geometry = unwrap_geo_property_to_geometry(&input).expect("decode");
-        pretty_assertions::assert_eq!(roundtrip(geometry), json!({"type": "Point", "coordinates": [1.0, 2.0]}));
+        pretty_assertions::assert_eq!(roundtrip(&geometry), json!({"type": "Point", "coordinates": [1.0, 2.0]}));
     }
 
     #[test]

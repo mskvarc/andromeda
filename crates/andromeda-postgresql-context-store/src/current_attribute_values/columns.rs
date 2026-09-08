@@ -27,40 +27,40 @@ use serde_json::Value;
 /// holding the value from ever disagreeing.
 struct TypedValueColumns<'a> {
     /// The arbitrary-precision value bound directly as `NUMERIC`.
-    value_number: Option<&'a BigDecimal>,
+    number: Option<&'a BigDecimal>,
     /// The string value.
-    value_string: Option<&'a str>,
+    text: Option<&'a str>,
     /// The boolean value.
-    value_bool: Option<bool>,
+    boolean: Option<bool>,
     /// The geometry value, before EWKB encoding.
-    value_geo: Option<&'a Geometry>,
+    geometry: Option<&'a Geometry>,
     /// The structured value.
-    value_object: Option<&'a Value>,
+    object: Option<&'a Value>,
     /// The timestamp value.
-    value_datetime: Option<DateTime<Utc>>,
+    datetime: Option<DateTime<Utc>>,
     /// The URI value.
-    value_uri: Option<&'a str>,
+    uri: Option<&'a str>,
 }
 
 /// Spread one projected value across the typed columns.
 fn typed_value_columns(value: &ProjectedAttributeValue) -> TypedValueColumns<'_> {
     let mut columns = TypedValueColumns {
-        value_number: None,
-        value_string: None,
-        value_bool: None,
-        value_geo: None,
-        value_object: None,
-        value_datetime: None,
-        value_uri: None,
+        number: None,
+        text: None,
+        boolean: None,
+        geometry: None,
+        object: None,
+        datetime: None,
+        uri: None,
     };
     match value {
-        ProjectedAttributeValue::Number(number) => columns.value_number = Some(number.decimal()),
-        ProjectedAttributeValue::String(text) => columns.value_string = Some(text),
-        ProjectedAttributeValue::Boolean(flag) => columns.value_bool = Some(*flag),
-        ProjectedAttributeValue::Geometry(geometry) => columns.value_geo = Some(geometry),
-        ProjectedAttributeValue::Object(object) => columns.value_object = Some(object),
-        ProjectedAttributeValue::DateTime(instant) => columns.value_datetime = Some(*instant),
-        ProjectedAttributeValue::Uri(uri) => columns.value_uri = Some(uri.as_str()),
+        ProjectedAttributeValue::Number(number) => columns.number = Some(number.decimal()),
+        ProjectedAttributeValue::String(text) => columns.text = Some(text),
+        ProjectedAttributeValue::Boolean(flag) => columns.boolean = Some(*flag),
+        ProjectedAttributeValue::Geometry(geometry) => columns.geometry = Some(geometry),
+        ProjectedAttributeValue::Object(object) => columns.object = Some(object),
+        ProjectedAttributeValue::DateTime(instant) => columns.datetime = Some(*instant),
+        ProjectedAttributeValue::Uri(uri) => columns.uri = Some(uri.as_str()),
     }
     columns
 }
@@ -124,17 +124,17 @@ impl<'a> ProjectionBinds<'a> {
             binds.attribute_name_ids.push(AttributeNameId::get(row.key.attribute_name_id));
             binds.attribute_kinds.push(AttributeKind::code(row.attribute_kind));
             binds.value_kinds.push(ValueKind::code(row.value.kind()));
-            binds.value_datetimes.push(value.value_datetime);
+            binds.value_datetimes.push(value.datetime);
             binds.unit_code_ids.push(row.unit_code_id.map(UnitCodeId::get));
-            binds.value_bools.push(value.value_bool);
+            binds.value_bools.push(value.boolean);
             binds.dataset_ids.push(row.key.dataset_id.as_ref().map(Uri::as_str));
             // SQLx owns array elements for the duration of the query. Clone the
             // decimal itself, preserving its exact value without formatting it.
-            binds.value_numbers.push(value.value_number.cloned());
-            binds.value_strings.push(value.value_string);
-            binds.value_geos.push(geometry_bytes(value.value_geo)?);
-            binds.value_objects.push(value.value_object);
-            binds.value_uris.push(value.value_uri);
+            binds.value_numbers.push(value.number.cloned());
+            binds.value_strings.push(value.text);
+            binds.value_geos.push(geometry_bytes(value.geometry)?);
+            binds.value_objects.push(value.object);
+            binds.value_uris.push(value.uri);
         }
         Ok(binds)
     }
@@ -169,7 +169,7 @@ mod tests {
         // One above 2^53, which the double format cannot name individually.
         let value = ProjectedAttributeValue::Number(JsonNumber::from(9_007_199_254_740_993_i64));
         let columns = typed_value_columns(&value);
-        pretty_assertions::assert_eq!(columns.value_number.map(ToString::to_string).as_deref(), Some("9007199254740993"));
+        pretty_assertions::assert_eq!(columns.number.map(ToString::to_string).as_deref(), Some("9007199254740993"));
     }
 
     #[test]
@@ -185,13 +185,13 @@ mod tests {
         ];
         for value in &values {
             let columns = typed_value_columns(value);
-            let populated = usize::from(columns.value_number.is_some())
-                + usize::from(columns.value_string.is_some())
-                + usize::from(columns.value_bool.is_some())
-                + usize::from(columns.value_geo.is_some())
-                + usize::from(columns.value_object.is_some())
-                + usize::from(columns.value_datetime.is_some())
-                + usize::from(columns.value_uri.is_some());
+            let populated = usize::from(columns.number.is_some())
+                + usize::from(columns.text.is_some())
+                + usize::from(columns.boolean.is_some())
+                + usize::from(columns.geometry.is_some())
+                + usize::from(columns.object.is_some())
+                + usize::from(columns.datetime.is_some())
+                + usize::from(columns.uri.is_some());
             pretty_assertions::assert_eq!(populated, 1, "{value:?} populates {populated} columns");
         }
     }

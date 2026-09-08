@@ -48,7 +48,7 @@ pub fn context_link() -> &'static str {
 /// The compound test-suite `@context` as a JSON-LD `Link` header value, for raw
 /// requests that must expand `Vehicle` and its attributes (clause 6.3.5).
 pub fn context_link_header() -> HeaderValue {
-    jsonld_link_header(context_link()).unwrap_or_else(|error| unreachable!("compound context is a valid Link header: {error}"))
+    jsonld_link_header(context_link()).unwrap_or_else(|error| panic!("compound context is a valid Link header: {error}"))
 }
 
 /// A registration covering one `Vehicle` id under `mode`, advertising the

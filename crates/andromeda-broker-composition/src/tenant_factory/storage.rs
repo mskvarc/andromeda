@@ -1,6 +1,9 @@
 //! Initialization of one tenant's database-backed storage graph.
 
-use crate::{context_hit_flush::ContextHitFlushWorker, tenant_factory::error::TenantAssemblyError};
+use crate::{
+    context_hit_flush::ContextHitFlushWorker,
+    tenant_factory::{TenantFactoryConfig, error::TenantAssemblyError},
+};
 use andromeda_context_registry::hit_store::ContextHitStore;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
@@ -15,11 +18,10 @@ use andromeda_entity::{
     spatial_reconciliation::reconcile_location,
 };
 use andromeda_entity_map::store::EntityMapStore;
-use andromeda_jsonld::{config::JsonLdConfig, engine::processor::JsonLdEngine};
+use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-use andromeda_postgresql_atomic_write::config::{AtomicWriteConfig, BulkWriteMode};
+use andromeda_postgresql_atomic_write::config::BulkWriteMode;
 use andromeda_postgresql_context_store::{
-    config::DatabaseConfig,
     context_space::resolve_live_target,
     csource_registration::registration_store::PostgresRegistrationStore,
     entity::repo::EntityRepository,
@@ -35,8 +37,7 @@ use andromeda_registration::store::RegistrationStore;
 use andromeda_snapshot::store::SnapshotStore;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_subscription::cache::SubscriptionCache;
-use andromeda_temporal::config::TemporalConfig;
-use andromeda_tenancy::{config::TenancyConfig, tenant_ref::TenantRef};
+use andromeda_tenancy::tenant_ref::TenantRef;
 use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
 use url::Url;
@@ -69,20 +70,12 @@ pub(super) struct EntityStoragePorts {
 }
 
 /// Open, migrate, validate, and warm every storage component for a tenant.
-pub(super) async fn initialize_storage(
-    database_config: &DatabaseConfig,
-    tenancy_config: &TenancyConfig,
-    jsonld_config: &JsonLdConfig,
-    atomic_write_config: &AtomicWriteConfig,
-    temporal_config: &TemporalConfig,
-    database_url: &Url,
-    tenant: &TenantRef,
-) -> Result<TenantStorage, TenantAssemblyError> {
+pub(super) async fn initialize_storage(config: &TenantFactoryConfig, database_url: &Url, tenant: &TenantRef) -> Result<TenantStorage, TenantAssemblyError> {
     let max_connections = match tenant {
-        TenantRef::UnnamedDefault => database_config.max_connections,
-        TenantRef::Named(_) => tenancy_config.tenant_max_connections,
+        TenantRef::UnnamedDefault => config.database.max_connections,
+        TenantRef::Named(_) => config.tenancy.tenant_max_connections,
     };
-    let pool = configure_pool_options(max_connections, database_config.synchronous_commit.as_postgres_setting())
+    let pool = configure_pool_options(max_connections, config.database.synchronous_commit.as_postgres_setting())
         .connect(database_url.as_str())
         .await?;
     migrate_tenant_db(&pool).await?;
@@ -90,12 +83,12 @@ pub(super) async fn initialize_storage(
         .await
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
-    let engine = jsonld_config.build_engine(Arc::clone(&context_repo))?;
+    let engine = config.jsonld.build_engine(Arc::clone(&context_repo))?;
     let context_hit_flush = engine.hit_counter().map(|hit_counter| {
         ContextHitFlushWorker::spawn(
             hit_counter,
             Arc::clone(&context_repo) as Arc<dyn ContextHitStore>,
-            Duration::from_secs(database_config.context_hit_flush_secs),
+            Duration::from_secs(config.database.context_hit_flush_secs),
         )
     });
 
@@ -110,7 +103,7 @@ pub(super) async fn initialize_storage(
     if let Err(error) = entity_type_names.establish_epoch().await {
         tracing::warn!(%error, event = "entity_type_names_epoch_unestablished");
     }
-    if database_config.preload_name_dictionaries {
+    if config.database.preload_name_dictionaries {
         if let Err(error) = attribute_names.preload().await {
             tracing::warn!(%error, event = "attribute_names_preload_failed");
         }
@@ -118,7 +111,7 @@ pub(super) async fn initialize_storage(
             tracing::warn!(%error, event = "entity_type_names_preload_failed");
         }
     }
-    let bulk_write_mode = match atomic_write_config.bulk_mode {
+    let bulk_write_mode = match config.postgresql_write.bulk_mode {
         BulkWriteMode::Unnest => TemporalBulkWriteMode::Unnest,
         BulkWriteMode::CopyStaging => TemporalBulkWriteMode::CopyStaging,
     };
@@ -136,7 +129,7 @@ pub(super) async fn initialize_storage(
     // The migrations declare the default chunk interval and columnstore lag;
     // an operator override is applied here, after migration and before any
     // history is written through this tenant's repository.
-    let storage_policy = temporal_repo.reconcile_storage_policy(&temporal_config.storage_policy()).await?;
+    let storage_policy = temporal_repo.reconcile_storage_policy(&config.temporal.storage_policy()).await?;
     if !storage_policy.is_unchanged() {
         tracing::info!(outcome = ?storage_policy, event = "temporal_storage_policy_reconciled");
     }

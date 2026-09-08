@@ -1,5 +1,6 @@
 //! That a specification crate does not spell SQL, read from its own sources.
 
+use crate::source_scan::rust_file_paths;
 use std::{fs, path::Path};
 
 /// Fragments that only ever appear in a rendering, never in a grammar.
@@ -91,26 +92,33 @@ pub(crate) fn looks_like_sql(value: &str) -> bool {
 }
 
 /// Every `.rs` file under a directory, paired with its path relative to it.
+///
+/// A file that cannot be read is the one file the guard cannot vouch for, so it
+/// fails the scan rather than being dropped from it.
+///
+/// # Panics
+///
+/// Panics when a discovered source cannot be read.
 fn rust_sources(root: &Path) -> Vec<(String, String)> {
     let mut sources = Vec::new();
-    let mut directories = vec![root.to_path_buf()];
+    let mut unreadable = Vec::new();
 
-    while let Some(directory) = directories.pop() {
-        let entries = fs::read_dir(&directory).unwrap_or_else(|error| unreachable!("{} is readable: {error}", directory.display()));
-        for entry in entries {
-            let path = entry
-                .unwrap_or_else(|error| unreachable!("an entry of {} is readable: {error}", directory.display()))
-                .path();
-            if path.is_dir() {
-                directories.push(path);
-            } else if path.extension().is_some_and(|extension| extension == "rs") {
-                let source = fs::read_to_string(&path).unwrap_or_else(|error| unreachable!("{} is readable: {error}", path.display()));
+    for path in rust_file_paths(root) {
+        match fs::read_to_string(&path) {
+            Ok(source) => {
                 let relative = path.strip_prefix(root).unwrap_or(&path).display().to_string();
                 sources.push((relative, source));
             }
+            Err(error) => unreadable.push(format!("{} could not be read: {error}", path.display())),
         }
     }
 
+    assert!(
+        unreadable.is_empty(),
+        "the sources below {} could not be read:\n{}",
+        root.display(),
+        unreadable.join("\n")
+    );
     sources.sort();
     sources
 }

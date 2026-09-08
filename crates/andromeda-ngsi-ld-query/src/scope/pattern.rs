@@ -32,6 +32,11 @@ pub struct ScopeLabel(ScopeLevelBuf);
 
 impl ScopeLabel {
     /// Validate one level name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::ScopePatternInvalid`] when `raw` is outside the
+    /// clause 4.18 level-name production.
     pub fn parse(raw: &str) -> Result<ScopeLabel, QueryError> {
         ScopeLevel::new(raw)
             .map(|level| ScopeLabel(level.to_owned()))
@@ -55,6 +60,12 @@ impl ScopePattern {
     /// A leading `/` is optional and carries no meaning: every scope is
     /// absolute. `#` matches one or more remaining levels and therefore only
     /// makes sense last.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::ScopePatternInvalid`] when the pattern is empty,
+    /// carries a level outside the clause 4.18 production, or places `#`
+    /// anywhere but last.
     pub fn parse(raw: &str) -> Result<ScopePattern, QueryError> {
         // Exactly one leading slash is stripped: `//B` has an empty first
         // level, which is not a label.

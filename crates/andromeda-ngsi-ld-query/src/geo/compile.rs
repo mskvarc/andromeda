@@ -15,6 +15,12 @@ use andromeda_ngsi_ld_vocabulary::compact::properties;
 ///
 /// `geometry` and `coordinates` are the two halves of one `GeoJSON` geometry
 /// object (clause 4.10, IETF RFC 7946), so they are rejoined and parsed here.
+///
+/// # Errors
+///
+/// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
+/// [`QueryError::AttributeNameInvalid`] when the `geoproperty` term does not
+/// expand to a usable attribute name.
 pub async fn compile_geo_query(input: Option<&GeoQueryInput>, expander: &impl TermExpander) -> Result<Option<GeoQuery>, QueryError> {
     let Some(input) = input else {
         return Ok(None);
@@ -31,16 +37,17 @@ pub async fn compile_geo_query(input: Option<&GeoQueryInput>, expander: &impl Te
 mod tests {
     use super::*;
     use iri_rs::IriBuf;
+    use std::future::{Future, ready};
 
     struct PrefixExpander;
 
     impl TermExpander for PrefixExpander {
-        async fn expand_term(&self, term: &str) -> Result<IriBuf, QueryError> {
-            Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI"))
+        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            ready(Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI")))
         }
 
-        async fn expand_type(&self, term: &str) -> Result<IriBuf, QueryError> {
-            Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI"))
+        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            ready(Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI")))
         }
     }
 

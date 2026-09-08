@@ -13,17 +13,29 @@ use std::{future::Future, pin::Pin};
 /// Used for every attribute selection list the API accepts: `attrs` on entity
 /// and temporal queries, the CSR property/relationship names, and the
 /// `expandValues` / `jsonKeys` extensions.
+///
+/// # Errors
+///
+/// Returns [`QueryError::TermExpansion`] or [`QueryError::TermNotAnIri`] when a
+/// name does not expand to an absolute IRI through the active `@context`.
 pub async fn expand_attrs<S: AsRef<str> + Sync>(raw: &[S], expander: &impl TermExpander) -> Result<Vec<IriBuf>, QueryError> {
-    let mut expanded = Vec::with_capacity(raw.len());
+    let mut expanded_iris = Vec::with_capacity(raw.len());
     for term in raw {
-        expanded.push(expander.expand_term(term.as_ref()).await?);
+        expanded_iris.push(expander.expand_term(term.as_ref()).await?);
     }
-    Ok(expanded)
+    Ok(expanded_iris)
 }
 
 /// Expand a `pick` / `omit` term list (clause 4.21), keeping the keywords
 /// `id`, `type` and `scope` as written and recursing into each term's clause
 /// 4.21 linked-entity sub-projection.
+///
+/// # Errors
+///
+/// Returns [`QueryError::TermExpansion`] or [`QueryError::TermNotAnIri`] when an
+/// attribute term does not expand, and
+/// [`QueryError::ProjectionKeywordWithLinkedTerm`] when `id`, `type` or `scope`
+/// carries a linked-entity sub-projection.
 pub async fn expand_projection_terms(raw: &[RawProjectionTerm], expander: &impl TermExpander) -> Result<Vec<ProjectionTerm>, QueryError> {
     expand_projection_terms_inner(raw, expander).await
 }
@@ -39,11 +51,11 @@ fn expand_projection_terms_inner<'a, E: TermExpander>(
     expander: &'a E,
 ) -> Pin<Box<dyn Future<Output = Result<Vec<ProjectionTerm>, QueryError>> + Send + 'a>> {
     Box::pin(async move {
-        let mut expanded = Vec::with_capacity(raw.len());
+        let mut expanded_terms = Vec::with_capacity(raw.len());
         for term in raw {
-            expanded.push(expand_one_term(term, expander).await?);
+            expanded_terms.push(expand_one_term(term, expander).await?);
         }
-        Ok(expanded)
+        Ok(expanded_terms)
     })
 }
 
@@ -83,16 +95,17 @@ fn keyword_term(term: &RawProjectionTerm, expanded: ProjectionTerm) -> Result<Pr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::ready;
 
     struct PrefixExpander;
 
     impl TermExpander for PrefixExpander {
-        async fn expand_term(&self, term: &str) -> Result<IriBuf, QueryError> {
-            Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI"))
+        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            ready(Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI")))
         }
 
-        async fn expand_type(&self, term: &str) -> Result<IriBuf, QueryError> {
-            Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI"))
+        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            ready(Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI")))
         }
     }
 

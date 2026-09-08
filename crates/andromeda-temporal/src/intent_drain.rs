@@ -81,6 +81,14 @@ impl TemporalIntentDrain {
     }
 
     /// Claim and process one bounded ordered batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError::Internal`] when the configured lease duration
+    /// cannot be expressed as a calendar duration, and whatever the durable
+    /// queue reports when a claim, acknowledgement or retry cannot be
+    /// recorded. A sink that rejects an intent is not an error: the intent is
+    /// rescheduled and counted in the returned outcome.
     pub async fn execute(&self, now: DateTime<Utc>) -> Result<TemporalIntentDrainOutcome, TemporalError> {
         let _execution = self.execution_gate.lock().await;
         let lease_duration = TimeDelta::from_std(self.lease_duration)

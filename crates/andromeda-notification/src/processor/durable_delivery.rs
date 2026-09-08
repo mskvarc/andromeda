@@ -118,6 +118,7 @@ fn entity_types_from_snapshot(snapshot: Option<&Value>) -> Vec<EntityTypeName> {
 #[cfg(test)]
 mod tests {
     use crate::processor::durable_delivery::{entity_types_from_snapshot, sys_attrs_from_snapshot};
+    use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use serde_json::json;
 
@@ -144,7 +145,10 @@ mod tests {
     fn the_types_of_a_wrapped_snapshot_are_read_back() {
         let snapshot = json!([{"@id": "urn:ngsi-ld:Vehicle:1", "@type": ["https://example.com/Vehicle"]}]);
         let types = entity_types_from_snapshot(Some(&snapshot));
-        pretty_assertions::assert_eq!(types.iter().map(andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName::as_str).collect::<Vec<_>>(), vec!["https://example.com/Vehicle"]);
-        assert_eq!(entity_types_from_snapshot(None), [] as [andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName; 0]);
+        pretty_assertions::assert_eq!(
+            types.iter().map(EntityTypeName::as_str).collect::<Vec<_>>(),
+            vec!["https://example.com/Vehicle"]
+        );
+        assert_eq!(entity_types_from_snapshot(None), [] as [EntityTypeName; 0]);
     }
 }

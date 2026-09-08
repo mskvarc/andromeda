@@ -128,7 +128,7 @@ fn dataset_str(key: &AttributeInstanceKey) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use crate::expanded::attribute_change::{AttributeChangeKind, classify_attribute_changes};
+    use crate::expanded::attribute_change::{AttributeChange, AttributeChangeKind, classify_attribute_changes};
     use serde_json::{Value, json};
 
     fn property(value: i64, dataset_id: Option<&str>) -> Value {
@@ -174,6 +174,6 @@ mod tests {
             "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/A"}],
             "https://uri.etsi.org/ngsi-ld/modifiedAt": [{"@value": "2026-01-01T00:00:00Z"}]
         }]);
-        assert!(classify_attribute_changes(&previous, &current).is_empty());
+        pretty_assertions::assert_eq!(classify_attribute_changes(&previous, &current), Vec::<AttributeChange>::new());
     }
 }

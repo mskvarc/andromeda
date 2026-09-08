@@ -68,7 +68,9 @@ impl EntityService {
             match after_attempt(&outcome) {
                 AfterAttempt::Settled => return Ok(Some(outcome)),
                 AfterAttempt::Vanished => return Ok(None),
-                AfterAttempt::Reread => continue,
+                // The attempt lost its precondition: fall through to the next
+                // one, which re-reads the payload the write is computed from.
+                AfterAttempt::Reread => (),
             }
         }
         Err(EntityError::contention(id, WRITE_ATTEMPTS))

@@ -15,6 +15,12 @@ use sqlx::{Row, postgres::PgRow};
 use url::Url;
 
 /// Deserialize an optional JSON column into a typed `Option<T>`.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Database`] when the column cannot be read, and
+/// [`ContextStoreError::Internal`] when the stored JSON does not deserialize
+/// into `T`.
 pub fn deserialize_json_column<T: DeserializeOwned>(row: &PgRow, column: &str) -> Result<Option<T>, ContextStoreError> {
     let val: Option<Value> = row.try_get(column)?;
     val.map(|v| deserialize_exact(&v).map_err(|e| ContextStoreError::Internal(format!("Failed to deserialize {column}: {e}"))))
@@ -22,6 +28,13 @@ pub fn deserialize_json_column<T: DeserializeOwned>(row: &PgRow, column: &str) -
 }
 
 /// Convert a `snapshots` row into the domain [`Snapshot`].
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Database`] when a column cannot be read, and
+/// [`ContextStoreError::Internal`] when a stored value no longer parses back
+/// into its domain type: the Snapshot URI, the status label, the lifetime
+/// duration, the endpoint URL, or one of the JSON-encoded members.
 pub fn row_to_snapshot(row: &PgRow) -> Result<Snapshot, ContextStoreError> {
     let id_str: String = row.try_get("id")?;
     let id = id_str

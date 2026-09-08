@@ -17,6 +17,15 @@ use uuid::Uuid;
 impl EntityDiscoveryService {
     /// List the entity types for which instances exist, or possibly exist in
     /// a registered source, as a compacted `EntityTypeList` (clause 5.2.24).
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::Identifier`] or
+    /// [`EntityError::EntityTypeListIdentifier`] when the generated list
+    /// identifier is not a well-formed NGSI-LD URN,
+    /// [`EntityError::Persistence`] when the store or the registry could not be
+    /// consulted, and [`EntityError::JsonLd`] when a type IRI cannot be
+    /// compacted against `context`.
     pub async fn types(&self, target: &ContextTarget, scope: DiscoveryScope, context: &ContextSpec) -> Result<EntityTypeList, EntityError> {
         const TYPE: &str = "EntityTypeList";
 

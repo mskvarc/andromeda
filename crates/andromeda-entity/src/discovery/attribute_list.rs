@@ -35,6 +35,15 @@ impl EntityDiscoveryService {
     /// List all known attributes, optionally including per-attribute detail.
     /// An attribute only the registry knows is reported with the entity types
     /// registered beside it, which may be none (clause 5.7.11).
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::Persistence`] when a summary page or the registry
+    /// could not be read, [`EntityError::Identifier`] or
+    /// [`EntityError::AttributeListIdentifier`] when the generated list
+    /// identifier is not a well-formed NGSI-LD URN, and
+    /// [`EntityError::JsonLd`] when the list cannot be compacted against
+    /// `context`.
     pub async fn attributes(
         &self,
         target: &ContextTarget,

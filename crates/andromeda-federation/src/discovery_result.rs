@@ -20,20 +20,20 @@ pub fn collect_discovery_warnings(results: &[ForwardedDiscoveryResult]) -> Vec<N
 /// For type info (single type): merge attribute details from all sources.
 #[must_use]
 pub fn merge_types_results(local: Value, remote: Vec<ForwardedDiscoveryResult>, details: bool) -> Value {
-    let bodies: Vec<&Value> = remote.iter().filter_map(|r| r.body.as_ref()).collect();
+    let bodies: Vec<Value> = remote.into_iter().filter_map(|result| result.body).collect();
     if bodies.is_empty() {
         return local;
     }
 
     if details {
-        merge_detailed_types(local, &bodies)
+        merge_detailed_types(&local, &bodies)
     } else {
         merge_simple_types(local, &bodies)
     }
 }
 
 /// Merge simple type lists by unioning `typeList` arrays and deduplicating.
-fn merge_simple_types(mut local: Value, remote_bodies: &[&Value]) -> Value {
+fn merge_simple_types(mut local: Value, remote_bodies: &[Value]) -> Value {
     let local_list = local.get_mut("typeList").and_then(|v| v.as_array_mut());
     let Some(local_list) = local_list else {
         return local;
@@ -67,7 +67,7 @@ fn merge_simple_types(mut local: Value, remote_bodies: &[&Value]) -> Value {
 }
 
 /// Merge detailed type lists by type name, unioning attribute names per type.
-fn merge_detailed_types(local: Value, remote_bodies: &[&Value]) -> Value {
+fn merge_detailed_types(local: &Value, remote_bodies: &[Value]) -> Value {
     let mut type_map: IndexMap<EntityTypeName, Value> = IndexMap::new();
 
     // Collect local types
@@ -121,17 +121,11 @@ fn merge_type_attribute_names(local: &mut Value, remote: &Value) {
 ///
 /// Merges attribute details from all sources, unioning attribute names.
 #[must_use]
-pub fn merge_type_info_results(local: Value, remote: Vec<ForwardedDiscoveryResult>) -> Value {
-    let bodies: Vec<&Value> = remote.iter().filter_map(|r| r.body.as_ref()).collect();
-    if bodies.is_empty() {
-        return local;
+pub fn merge_type_info_results(mut local: Value, remote: Vec<ForwardedDiscoveryResult>) -> Value {
+    for body in remote.into_iter().filter_map(|result| result.body) {
+        merge_type_attribute_names(&mut local, &body);
     }
-
-    let mut result = local;
-    for body in &bodies {
-        merge_type_attribute_names(&mut result, body);
-    }
-    result
+    local
 }
 
 /// Merge local attributes result with forwarded discovery results.
@@ -140,20 +134,20 @@ pub fn merge_type_info_results(local: Value, remote: Vec<ForwardedDiscoveryResul
 /// For detailed attributes (`details=true`): merge by attribute name, union type names per attribute.
 #[must_use]
 pub fn merge_attributes_results(local: Value, remote: Vec<ForwardedDiscoveryResult>, details: bool) -> Value {
-    let bodies: Vec<&Value> = remote.iter().filter_map(|r| r.body.as_ref()).collect();
+    let bodies: Vec<Value> = remote.into_iter().filter_map(|result| result.body).collect();
     if bodies.is_empty() {
         return local;
     }
 
     if details {
-        merge_detailed_attributes(local, &bodies)
+        merge_detailed_attributes(&local, &bodies)
     } else {
         merge_simple_attributes(local, &bodies)
     }
 }
 
 /// Merge simple attribute lists by unioning `attributeList` arrays and deduplicating.
-fn merge_simple_attributes(mut local: Value, remote_bodies: &[&Value]) -> Value {
+fn merge_simple_attributes(mut local: Value, remote_bodies: &[Value]) -> Value {
     let local_list = local.get_mut("attributeList").and_then(|v| v.as_array_mut());
     let Some(local_list) = local_list else {
         return local;
@@ -186,7 +180,7 @@ fn merge_simple_attributes(mut local: Value, remote_bodies: &[&Value]) -> Value 
 }
 
 /// Merge detailed attribute lists by attribute name, unioning type names per attribute.
-fn merge_detailed_attributes(local: Value, remote_bodies: &[&Value]) -> Value {
+fn merge_detailed_attributes(local: &Value, remote_bodies: &[Value]) -> Value {
     let mut attr_map: IndexMap<AttributeName, Value> = IndexMap::new();
 
     if let Some(arr) = local.as_array() {
@@ -238,15 +232,9 @@ fn merge_attribute_type_names(local: &mut Value, remote: &Value) {
 ///
 /// Merges type name lists from all sources.
 #[must_use]
-pub fn merge_attribute_info_results(local: Value, remote: Vec<ForwardedDiscoveryResult>) -> Value {
-    let bodies: Vec<&Value> = remote.iter().filter_map(|r| r.body.as_ref()).collect();
-    if bodies.is_empty() {
-        return local;
+pub fn merge_attribute_info_results(mut local: Value, remote: Vec<ForwardedDiscoveryResult>) -> Value {
+    for body in remote.into_iter().filter_map(|result| result.body) {
+        merge_attribute_type_names(&mut local, &body);
     }
-
-    let mut result = local;
-    for body in &bodies {
-        merge_attribute_type_names(&mut result, body);
-    }
-    result
+    local
 }

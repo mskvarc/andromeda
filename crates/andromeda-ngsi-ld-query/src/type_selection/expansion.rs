@@ -9,6 +9,11 @@ use std::{future::Future, pin::Pin};
 
 /// Recursively expand a raw type expression, replacing compact type names
 /// with their fully expanded IRIs.
+///
+/// # Errors
+///
+/// Returns [`QueryError::TermExpansion`] or [`QueryError::TermNotAnIri`] when a
+/// type name does not expand to an absolute IRI through the active `@context`.
 pub async fn expand_type_expression(raw: &TypeExprRaw, expander: &impl TermExpander) -> Result<TypeExpr, QueryError> {
     match raw {
         TypeExprRaw::Wildcard => Ok(TypeExpr::Wildcard),
@@ -26,11 +31,11 @@ fn expand_children<'a, E: TermExpander>(
     // Box-pinned: the grammar nests, and an `async fn` cannot name its own
     // future type to recurse through.
     Box::pin(async move {
-        let mut expanded = Vec::with_capacity(children.len());
+        let mut expanded_children = Vec::with_capacity(children.len());
         for child in children {
-            expanded.push(expand_type_expression(child, expander).await?);
+            expanded_children.push(expand_type_expression(child, expander).await?);
         }
-        Ok(expanded)
+        Ok(expanded_children)
     })
 }
 
@@ -38,16 +43,17 @@ fn expand_children<'a, E: TermExpander>(
 mod tests {
     use super::*;
     use iri_rs::IriBuf;
+    use std::future::ready;
 
     struct PrefixExpander;
 
     impl TermExpander for PrefixExpander {
-        async fn expand_term(&self, term: &str) -> Result<IriBuf, QueryError> {
-            Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI"))
+        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            ready(Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI")))
         }
 
-        async fn expand_type(&self, term: &str) -> Result<IriBuf, QueryError> {
-            Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI"))
+        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            ready(Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI")))
         }
     }
 

@@ -91,133 +91,166 @@ impl AttributeValue {
 }
 
 /// Read the value of an expanded attribute instance, dispatching on its NGSI-LD type.
+///
+/// # Errors
+///
+/// Returns [`TemporalStoreError::Validation`] when the instance carries no
+/// member of the shape its declared type requires: a `Relationship` with no
+/// object node or an object that is not a valid URI, a `GeoProperty` whose
+/// value is not a `GeoJSON` geometry, a `VocabProperty`, `LanguageProperty`,
+/// `JsonProperty`, `ListProperty` or `ListRelationship` missing its value
+/// member, a `Property` with no value at all, or a number the arbitrary-
+/// precision column cannot hold exactly. Returns
+/// [`TemporalStoreError::TimestampPrecision`] when a value declared
+/// `xsd:dateTime` is not a clause 4.6.3 timestamp the store can hold.
 pub fn extract_attribute_value(instance: &Value, attribute_type: AttributeType) -> Result<AttributeValue, TemporalStoreError> {
     match attribute_type {
-        AttributeType::Relationship => {
-            let uri = instance
-                .get(expanded_properties::OBJECT.as_str())
-                .and_then(|v| v.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|obj| obj.get("@id"))
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| TemporalStoreError::Validation("Relationship missing object".to_string()))?;
-            let uri = uri
-                .parse::<Uri>()
-                .map_err(|error| TemporalStoreError::Validation(format!("Relationship object is not a valid URI: {error}")))?;
-            Ok(AttributeValue::Uri(uri))
-        }
-        AttributeType::GeoProperty => {
-            let geo_node = instance
-                .get(expanded_properties::VALUE.as_str())
-                .and_then(|v| v.as_array())
-                .and_then(|arr| arr.first())
-                .ok_or_else(|| TemporalStoreError::Validation("GeoProperty missing value".to_string()))?;
+        AttributeType::Relationship => relationship_object(instance),
+        AttributeType::GeoProperty => geo_property_geometry(instance),
+        AttributeType::VocabProperty => vocab_property_value(instance),
+        AttributeType::LanguageProperty => language_property_map(instance),
+        AttributeType::JsonProperty => json_property_value(instance),
+        AttributeType::ListProperty => list_property_value(instance),
+        AttributeType::ListRelationship => list_relationship_objects(instance),
+        AttributeType::Property => property_value(instance),
+    }
+}
 
-            // Literal-`@value` form (string or already-compact object) keeps the
-            // legacy decoding path. Expanded JSON-LD GeoJSON nodes go through the
-            // direct walker, skipping the compact-string round-trip and
-            // `extract_coordinates` clones that dominated the temporal hot path.
-            let geometry = if let Some(val) = geo_node.get("@value") {
-                let geo_value: Value = match val.as_str() {
-                    Some(s) => {
-                        serde_json::from_str(s).map_err(|error| TemporalStoreError::Validation(format!("Invalid GeoProperty GeoJSON string: {error}")))?
-                    }
-                    None => val.clone(), // clone: need owned Value for from_geojson_value
-                };
-                Geometry::from_geojson_value(&geo_value).map_err(|error| TemporalStoreError::Validation(format!("Invalid GeoProperty geometry: {error}")))?
-            } else {
-                expanded_geo_node_to_geometry(geo_node).ok_or_else(|| TemporalStoreError::Validation("Invalid expanded GeoProperty geometry".to_string()))?
-            };
-            Ok(AttributeValue::Geometry(geometry))
-        }
-        AttributeType::VocabProperty => {
-            let arr = instance
-                .get(expanded_properties::VOCAB.as_str())
-                .and_then(|v| v.as_array())
-                .ok_or_else(|| TemporalStoreError::Validation("VocabProperty missing vocab value".to_string()))?;
-            if arr.len() > 1 {
-                let values: Vec<Value> = arr.iter().filter_map(|obj| obj.get("@id").or(obj.get("@value")).cloned()).collect(); // clone: need owned Values for collected Vec
-                Ok(AttributeValue::Object(Value::Array(values)))
-            } else {
-                let vocab_val = arr
-                    .first()
-                    .and_then(|obj| obj.get("@id").or(obj.get("@value")))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| TemporalStoreError::Validation("VocabProperty missing vocab value".to_string()))?;
-                Ok(AttributeValue::String(vocab_val.to_string()))
-            }
-        }
-        AttributeType::LanguageProperty => {
-            let lang_map = instance
-                .get(expanded_properties::LANGUAGE_MAP.as_str())
-                .ok_or_else(|| TemporalStoreError::Validation("LanguageProperty missing languageMap".to_string()))?;
-            Ok(AttributeValue::Object(lang_map.clone())) // clone: need owned Value for the enum payload; lang_map is borrowed from instance
-        }
-        AttributeType::JsonProperty => {
-            let json_val = instance
-                .get(expanded_properties::JSON.as_str())
-                .and_then(|v| v.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|obj| obj.get("@value"))
-                .ok_or_else(|| TemporalStoreError::Validation("JsonProperty missing json value".to_string()))?;
-            Ok(AttributeValue::Object(json_val.clone())) // clone: need owned Value for the enum payload; json_val is borrowed from instance
-        }
-        AttributeType::ListProperty => {
-            let list = instance
-                .get(expanded_properties::VALUE_LIST.as_str())
-                .and_then(|v| v.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|obj| obj.get("@list"))
-                .ok_or_else(|| TemporalStoreError::Validation("ListProperty missing valueList".to_string()))?;
-            Ok(AttributeValue::Object(list.clone())) // clone: need owned Value for the enum payload; list is borrowed from instance
-        }
-        AttributeType::ListRelationship => {
-            let list = instance
-                .get(expanded_properties::OBJECT_LIST.as_str())
-                .and_then(|v| v.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|obj| obj.get("@list"))
-                .ok_or_else(|| TemporalStoreError::Validation("ListRelationship missing objectList".to_string()))?;
-            let uris: Vec<Value> = list
-                .as_array()
-                .map(|arr| arr.iter().filter_map(|obj| obj.get("@id").cloned()).collect()) // clone: need owned Values for collected Vec
-                .unwrap_or_default();
-            Ok(AttributeValue::Object(Value::Array(uris)))
-        }
-        AttributeType::Property => {
-            let has_value = instance
-                .get(expanded_properties::VALUE.as_str())
-                .and_then(|v| v.as_array())
-                .and_then(|arr| arr.first())
-                .ok_or_else(|| TemporalStoreError::Validation("Property missing value".to_string()))?;
+/// The object IRI one Relationship instance points at.
+fn relationship_object(instance: &Value) -> Result<AttributeValue, TemporalStoreError> {
+    let object = instance
+        .get(expanded_properties::OBJECT.as_str())
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|obj| obj.get("@id"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| TemporalStoreError::Validation("Relationship missing object".to_string()))?;
+    object
+        .parse::<Uri>()
+        .map(AttributeValue::Uri)
+        .map_err(|error| TemporalStoreError::Validation(format!("Relationship object is not a valid URI: {error}")))
+}
 
-            if let Some(value) = has_value.get("@value") {
-                let type_hint = has_value.get("@type").and_then(|t| t.as_str());
+/// The geometry one `GeoProperty` instance carries.
+fn geo_property_geometry(instance: &Value) -> Result<AttributeValue, TemporalStoreError> {
+    let geo_node = instance
+        .get(expanded_properties::VALUE.as_str())
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .ok_or_else(|| TemporalStoreError::Validation("GeoProperty missing value".to_string()))?;
 
-                if let Some(text) = value.as_str()
-                    && let Some(typed) = temporal_attribute_value(type_hint, text)
-                {
-                    return typed;
-                }
+    // Literal-`@value` form (string or already-compact object) keeps the
+    // legacy decoding path. Expanded JSON-LD GeoJSON nodes go through the
+    // direct walker, skipping the compact-string round-trip and
+    // `extract_coordinates` clones that dominated the temporal hot path.
+    let geometry = if let Some(val) = geo_node.get("@value") {
+        let geo_value: Value = match val.as_str() {
+            Some(s) => serde_json::from_str(s).map_err(|error| TemporalStoreError::Validation(format!("Invalid GeoProperty GeoJSON string: {error}")))?,
+            None => val.clone(), // clone: need owned Value for from_geojson_value
+        };
+        Geometry::from_geojson_value(&geo_value).map_err(|error| TemporalStoreError::Validation(format!("Invalid GeoProperty geometry: {error}")))?
+    } else {
+        expanded_geo_node_to_geometry(geo_node).ok_or_else(|| TemporalStoreError::Validation("Invalid expanded GeoProperty geometry".to_string()))?
+    };
+    Ok(AttributeValue::Geometry(geometry))
+}
 
-                match value {
-                    // The history column is `NUMERIC`, so the number keeps the
-                    // shape it was parsed in and reaches storage as its decimal
-                    // literal: a clause 5.6.14 modification stores exactly the
-                    // values a creation does.
-                    Value::Number(number) => JsonNumber::try_from(number)
-                        .map(AttributeValue::Number)
-                        .map_err(|error| TemporalStoreError::Validation(error.to_string())),
-                    Value::Bool(b) => Ok(AttributeValue::Boolean(*b)),
-                    Value::String(s) => Ok(AttributeValue::String(s.clone())), // clone: need owned String for the enum payload; s is borrowed from JSON
-                    Value::Object(_) | Value::Array(_) => Ok(AttributeValue::Object(value.clone())), // clone: need owned Value for the enum payload; value is borrowed from JSON
-                    Value::Null => Ok(AttributeValue::String("null".to_string())),
-                }
-            } else {
-                // Expanded JSON-LD node without @value -- store as Object
-                Ok(AttributeValue::Object(has_value.clone())) // clone: need owned Value for the enum payload; has_value is borrowed from instance
-            }
-        }
+/// The vocabulary term, or the array of them, one `VocabProperty` instance carries.
+fn vocab_property_value(instance: &Value) -> Result<AttributeValue, TemporalStoreError> {
+    let arr = instance
+        .get(expanded_properties::VOCAB.as_str())
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| TemporalStoreError::Validation("VocabProperty missing vocab value".to_string()))?;
+    if arr.len() > 1 {
+        let values: Vec<Value> = arr.iter().filter_map(|obj| obj.get("@id").or(obj.get("@value")).cloned()).collect(); // clone: need owned Values for collected Vec
+        Ok(AttributeValue::Object(Value::Array(values)))
+    } else {
+        let vocab_val = arr
+            .first()
+            .and_then(|obj| obj.get("@id").or(obj.get("@value")))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| TemporalStoreError::Validation("VocabProperty missing vocab value".to_string()))?;
+        Ok(AttributeValue::String(vocab_val.to_string()))
+    }
+}
+
+/// The language map one `LanguageProperty` instance carries, kept verbatim.
+fn language_property_map(instance: &Value) -> Result<AttributeValue, TemporalStoreError> {
+    let lang_map = instance
+        .get(expanded_properties::LANGUAGE_MAP.as_str())
+        .ok_or_else(|| TemporalStoreError::Validation("LanguageProperty missing languageMap".to_string()))?;
+    Ok(AttributeValue::Object(lang_map.clone())) // clone: need owned Value for the enum payload; lang_map is borrowed from instance
+}
+
+/// The JSON literal one `JsonProperty` instance carries, kept verbatim.
+fn json_property_value(instance: &Value) -> Result<AttributeValue, TemporalStoreError> {
+    let json_val = instance
+        .get(expanded_properties::JSON.as_str())
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|obj| obj.get("@value"))
+        .ok_or_else(|| TemporalStoreError::Validation("JsonProperty missing json value".to_string()))?;
+    Ok(AttributeValue::Object(json_val.clone())) // clone: need owned Value for the enum payload; json_val is borrowed from instance
+}
+
+/// The ordered list one `ListProperty` instance carries, kept verbatim.
+fn list_property_value(instance: &Value) -> Result<AttributeValue, TemporalStoreError> {
+    let list = instance
+        .get(expanded_properties::VALUE_LIST.as_str())
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|obj| obj.get("@list"))
+        .ok_or_else(|| TemporalStoreError::Validation("ListProperty missing valueList".to_string()))?;
+    Ok(AttributeValue::Object(list.clone())) // clone: need owned Value for the enum payload; list is borrowed from instance
+}
+
+/// The ordered object IRIs one `ListRelationship` instance points at.
+fn list_relationship_objects(instance: &Value) -> Result<AttributeValue, TemporalStoreError> {
+    let list = instance
+        .get(expanded_properties::OBJECT_LIST.as_str())
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|obj| obj.get("@list"))
+        .ok_or_else(|| TemporalStoreError::Validation("ListRelationship missing objectList".to_string()))?;
+    let uris: Vec<Value> = list
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|obj| obj.get("@id").cloned()).collect()) // clone: need owned Values for collected Vec
+        .unwrap_or_default();
+    Ok(AttributeValue::Object(Value::Array(uris)))
+}
+
+/// The value one plain Property instance carries, in the shape its JSON names.
+fn property_value(instance: &Value) -> Result<AttributeValue, TemporalStoreError> {
+    let node = instance
+        .get(expanded_properties::VALUE.as_str())
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .ok_or_else(|| TemporalStoreError::Validation("Property missing value".to_string()))?;
+
+    let Some(value) = node.get("@value") else {
+        // An expanded JSON-LD node with no `@value` is stored whole.
+        return Ok(AttributeValue::Object(node.clone())); // clone: need owned Value for the enum payload; node is borrowed from instance
+    };
+
+    let type_hint = node.get("@type").and_then(|t| t.as_str());
+    if let Some(text) = value.as_str()
+        && let Some(typed) = temporal_attribute_value(type_hint, text)
+    {
+        return typed;
+    }
+
+    match value {
+        // The history column is `NUMERIC`, so the number keeps the
+        // shape it was parsed in and reaches storage as its decimal
+        // literal: a clause 5.6.14 modification stores exactly the
+        // values a creation does.
+        Value::Number(number) => JsonNumber::try_from(number)
+            .map(AttributeValue::Number)
+            .map_err(|error| TemporalStoreError::Validation(error.to_string())),
+        Value::Bool(b) => Ok(AttributeValue::Boolean(*b)),
+        Value::String(s) => Ok(AttributeValue::String(s.clone())), // clone: need owned String for the enum payload; s is borrowed from JSON
+        Value::Object(_) | Value::Array(_) => Ok(AttributeValue::Object(value.clone())), // clone: need owned Value for the enum payload; value is borrowed from JSON
+        Value::Null => Ok(AttributeValue::String("null".to_string())),
     }
 }
 

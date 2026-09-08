@@ -134,9 +134,7 @@ async fn sub_update_expands_attribute_terms() {
         .expect("retrieve subscription under the core context");
     assert_status(&retrieved, 200);
     let body = json_body(&retrieved);
-    let watched = body["watchedAttributes"]
-        .as_array()
-        .unwrap_or_else(|| unreachable!("watchedAttributes present"));
+    let watched = body["watchedAttributes"].as_array().unwrap_or_else(|| panic!("watchedAttributes present"));
     assert!(
         watched.iter().filter_map(Value::as_str).any(|term| term.starts_with("http")),
         "updated watchedAttributes stored expanded: {watched:?}"

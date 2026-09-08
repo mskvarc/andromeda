@@ -65,7 +65,7 @@ async fn crud_linestring_3d_round_trips() {
     let id = scope.id("Building:linestring3d");
     let coordinates = json!([[13.4, 52.52, 100.0], [13.5, 52.53, 200.0], [13.6, 52.54, 300.0]]);
 
-    create(client, &building_with_location(&id, json!({"type": "LineString", "coordinates": coordinates}))).await;
+    create(client, &building_with_location(&id, &json!({"type": "LineString", "coordinates": coordinates}))).await;
 
     let (status, body) = get_entity(client, &id).await;
     assert_eq!(status, StatusCode::OK);
@@ -87,7 +87,7 @@ async fn crud_polygon_3d_round_trips() {
         [13.0, 52.0, 10.0]
     ]]);
 
-    create(client, &building_polygon_3d(&id, coordinates.clone())).await;
+    create(client, &building_polygon_3d(&id, &coordinates)).await;
 
     let (status, body) = get_entity(client, &id).await;
     assert_eq!(status, StatusCode::OK);
@@ -103,7 +103,7 @@ async fn crud_multipoint_3d_round_trips() {
     let id = scope.id("Building:multipoint3d");
     let coordinates = json!([[13.4, 52.52, 10.0], [13.5, 52.53, 20.0]]);
 
-    create(client, &building_with_location(&id, json!({"type": "MultiPoint", "coordinates": coordinates}))).await;
+    create(client, &building_with_location(&id, &json!({"type": "MultiPoint", "coordinates": coordinates}))).await;
 
     let (status, body) = get_entity(client, &id).await;
     assert_eq!(status, StatusCode::OK);
@@ -121,7 +121,7 @@ async fn crud_multilinestring_3d_round_trips() {
 
     create(
         client,
-        &building_with_location(&id, json!({"type": "MultiLineString", "coordinates": coordinates})),
+        &building_with_location(&id, &json!({"type": "MultiLineString", "coordinates": coordinates})),
     )
     .await;
 
@@ -144,7 +144,7 @@ async fn crud_multipolygon_3d_round_trips() {
 
     create(
         client,
-        &building_with_location(&id, json!({"type": "MultiPolygon", "coordinates": coordinates})),
+        &building_with_location(&id, &json!({"type": "MultiPolygon", "coordinates": coordinates})),
     )
     .await;
 
@@ -164,7 +164,7 @@ async fn crud_mixed_arity_linestring_preserved_verbatim() {
     // mix two- and three-ordinate positions and the broker must not normalise.
     let coordinates = json!([[13.4, 52.52], [13.5, 52.53, 250.0]]);
 
-    create(client, &building_with_location(&id, json!({"type": "LineString", "coordinates": coordinates}))).await;
+    create(client, &building_with_location(&id, &json!({"type": "LineString", "coordinates": coordinates}))).await;
 
     let (status, body) = get_entity(client, &id).await;
     assert_eq!(status, StatusCode::OK);
@@ -294,7 +294,7 @@ async fn crud_mixed_arity_survives_no_op_attribute_patch() {
     let id = scope.id("Building:mixedarity_patch");
     let coordinates = json!([[13.4, 52.52], [13.5, 52.53, 250.0]]);
 
-    create(client, &building_with_location(&id, json!({"type": "LineString", "coordinates": coordinates}))).await;
+    create(client, &building_with_location(&id, &json!({"type": "LineString", "coordinates": coordinates}))).await;
 
     let fragment = json!({
         "category": {"type": "Property", "value": "tower"},

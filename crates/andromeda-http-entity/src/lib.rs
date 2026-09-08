@@ -11,6 +11,7 @@ mod entity_operations;
 pub mod entity_type;
 pub mod error;
 mod join;
+mod read_rendering;
 mod request_projection;
 pub mod routes;
 pub mod state;

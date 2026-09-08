@@ -36,12 +36,26 @@ use std::{collections::HashSet, sync::Arc};
 
 impl EntityQueryService {
     /// Compile an entity query with the default limit cap applied.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::JsonLd`] when a term of the request cannot be
+    /// expanded against `context`, [`EntityError::Query`] when the `q`, `geoQ`
+    /// or `orderBy` expression is not well formed, and
+    /// [`EntityError::Request`] when a query parameter cannot be interpreted.
     pub async fn compile_query_public(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<CompiledEntityQuery, EntityError> {
         let compiled = self.compile_query_cached(params, context, LimitCap::Capped).await?;
         Ok(Arc::unwrap_or_clone(compiled))
     }
 
     /// Compile an entity query without applying a limit cap.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::JsonLd`] when a term of the request cannot be
+    /// expanded against `context`, [`EntityError::Query`] when the `q`, `geoQ`
+    /// or `orderBy` expression is not well formed, and
+    /// [`EntityError::Request`] when a query parameter cannot be interpreted.
     pub async fn compile_query_uncapped(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<CompiledEntityQuery, EntityError> {
         let compiled = self.compile_query_cached(params, context, LimitCap::Uncapped).await?;
         Ok(Arc::unwrap_or_clone(compiled))

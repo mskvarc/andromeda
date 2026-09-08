@@ -359,7 +359,7 @@ mod tests {
             .as_ref()
             .expect("nested projection");
         assert_eq!(nested.pick, vec![leaf("temperature")]);
-        assert_eq!(nested.omit, [] as [andromeda_ngsi_ld_query::projection::term::ProjectionTerm; 0]);
+        assert!(nested.omit.is_empty());
     }
 
     /// The same relationship, keyed by its already-expanded IRI, matches
@@ -481,7 +481,7 @@ mod tests {
             .expect("target has an entry")
             .as_ref()
             .expect("nested projection");
-        assert_eq!(nested.pick, [] as [andromeda_ngsi_ld_query::projection::term::ProjectionTerm; 0]);
+        assert!(nested.pick.is_empty());
         assert_eq!(nested.omit, vec![leaf("temperature")]);
     }
 

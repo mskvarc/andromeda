@@ -8,6 +8,7 @@ use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::configuration::RUNTIME_BROKER_BASE as BASE_URL;
 use reqwest::Client;
 use serde_json::{Number, Value, json};
+use std::fmt::Write;
 use uuid::Uuid;
 
 const CTX: &iri_rs::Iri<&str> = CORE_CONTEXT;
@@ -41,7 +42,7 @@ async fn get_aggregated(client: &Client, id: &str, methods: &str, period: Option
     let encoded_id = urlencoding::encode(id);
     let mut url = format!("{BASE_URL}/temporal/entities/{encoded_id}?format=aggregatedValues&aggrMethods={methods}");
     if let Some(p) = period {
-        url.push_str(&format!("&aggrPeriodDuration={p}"));
+        write!(url, "&aggrPeriodDuration={p}").expect("formatting into a String cannot fail");
     }
     let resp = client
         .get(&url)

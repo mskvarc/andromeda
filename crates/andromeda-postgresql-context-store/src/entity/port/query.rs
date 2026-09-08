@@ -13,10 +13,12 @@ impl EntityQueryStore for EntityRepository {
     }
 
     async fn query_compiled(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Value>, EntityError> {
-        EntityRepository::query_compiled(self, target, compiled).await.map_err(persistence)
+        EntityRepository::query_compiled(self, target, compiled)
+            .await
+            .map_err(|error| persistence(&error))
     }
 
     async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, EntityError> {
-        EntityRepository::query_ids(self, target, compiled).await.map_err(persistence)
+        EntityRepository::query_ids(self, target, compiled).await.map_err(|error| persistence(&error))
     }
 }

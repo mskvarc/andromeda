@@ -40,6 +40,7 @@ struct PreparedRequest {
 
 impl<'a> RawRequest<'a> {
     /// Attach one validated HTTP header.
+    #[must_use]
     pub fn header(mut self, name: &str, value: impl RawHeaderValue) -> RawRequest<'a> {
         if let Ok(prepared) = self.prepared.as_mut() {
             match value.into_header_value() {
@@ -55,6 +56,7 @@ impl<'a> RawRequest<'a> {
     }
 
     /// Serialize and attach a JSON body.
+    #[must_use]
     pub fn json(mut self, body: &Value) -> RawRequest<'a> {
         if let Ok(prepared) = self.prepared.as_mut()
             && let Some(request) = prepared.request.try_clone()
@@ -65,6 +67,7 @@ impl<'a> RawRequest<'a> {
     }
 
     /// Attach exact body bytes.
+    #[must_use]
     pub fn body(mut self, body: Vec<u8>) -> RawRequest<'a> {
         if let Ok(prepared) = self.prepared.as_mut()
             && let Some(request) = prepared.request.try_clone()
@@ -75,6 +78,7 @@ impl<'a> RawRequest<'a> {
     }
 
     /// Set an explicit request timeout.
+    #[must_use]
     pub fn timeout(mut self, timeout: Duration) -> RawRequest<'a> {
         if let Ok(prepared) = self.prepared.as_mut()
             && let Some(request) = prepared.request.try_clone()
@@ -85,6 +89,12 @@ impl<'a> RawRequest<'a> {
     }
 
     /// Send the request and preserve the response body bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RawRequestError::Header`] when a value passed to [`RawRequest::header`] was not valid HTTP header syntax,
+    /// [`RawRequestError::Endpoint`] when the request path could not be resolved against the broker origin, and
+    /// [`RawRequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn send(self) -> Result<TestResponse, RawRequestError> {
         if let Some(error) = self.header_error {
             return Err(RawRequestError::Header(error));
@@ -100,6 +110,10 @@ impl<'a> RawRequest<'a> {
 /// Values accepted by the raw request header boundary.
 pub trait RawHeaderValue {
     /// Convert the caller's value to an HTTP header value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidHeaderValue`] when the value contains bytes that an HTTP header value may not carry.
     fn into_header_value(self) -> Result<HeaderValue, InvalidHeaderValue>;
 }
 

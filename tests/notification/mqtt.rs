@@ -47,7 +47,7 @@ async fn notification_mqtt_endpoint_without_user_and_default_port_delivers_messa
     let http_client = client();
     let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_01_01/{}", uuid::Uuid::new_v4());
-    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
+    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT);
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
     sleep(Duration::from_millis(200)).await;
 
@@ -74,7 +74,7 @@ async fn notification_mqtt_default_qos_delivers_message() {
     let http_client = client();
     let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_02_01/{}", uuid::Uuid::new_v4());
-    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
+    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT);
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
     sleep(Duration::from_millis(200)).await;
 
@@ -98,7 +98,7 @@ async fn notification_mqtt_qos_1_delivers_message() {
     let http_client = client();
     let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_02_02/{}", uuid::Uuid::new_v4());
-    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
+    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT);
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
     sleep(Duration::from_millis(200)).await;
 
@@ -122,7 +122,7 @@ async fn notification_mqtt_qos_2_delivers_message() {
     let http_client = client();
     let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_02_03/{}", uuid::Uuid::new_v4());
-    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
+    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT);
     receiver.subscribe(&topic, QoS::ExactlyOnce).await;
     sleep(Duration::from_millis(200)).await;
 
@@ -146,7 +146,7 @@ async fn notification_mqtt_default_protocol_delivers_message() {
     let http_client = client();
     let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_03_01/{}", uuid::Uuid::new_v4());
-    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
+    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT);
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
     sleep(Duration::from_millis(200)).await;
 
@@ -170,7 +170,7 @@ async fn notification_mqtt_version_3_1_1_delivers_message() {
     let http_client = client();
     let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_03_02/{}", uuid::Uuid::new_v4());
-    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
+    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT);
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
     sleep(Duration::from_millis(200)).await;
 
@@ -194,7 +194,7 @@ async fn notification_mqtt_version_5_0_delivers_message() {
     let http_client = client();
     let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_03_03/{}", uuid::Uuid::new_v4());
-    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
+    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT);
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
     sleep(Duration::from_millis(200)).await;
 
@@ -218,7 +218,7 @@ async fn notification_mqtt_payload_contains_metadata_and_body_envelope() {
     let http_client = client();
     let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_04_01/{}", uuid::Uuid::new_v4());
-    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
+    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT);
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
     sleep(Duration::from_millis(200)).await;
 
@@ -249,8 +249,7 @@ async fn notification_mqtt_endpoint_with_non_default_port_and_credentials_delive
     let http_client = client();
     let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_01_02/{}", uuid::Uuid::new_v4());
-    let receiver =
-        MqttReceiver::connect_with_credentials(MQTT_AUTH_BROKER_HOST_LOCAL, MQTT_AUTH_BROKER_PORT, Some("user_with_password"), Some("password")).await;
+    let receiver = MqttReceiver::connect_with_credentials(MQTT_AUTH_BROKER_HOST_LOCAL, MQTT_AUTH_BROKER_PORT, Some("user_with_password"), Some("password"));
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
     sleep(Duration::from_millis(200)).await;
 
@@ -275,7 +274,7 @@ async fn notification_mqtt_endpoint_with_username_only_delivers_message() {
     let http_client = client();
     let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_01_03/{}", uuid::Uuid::new_v4());
-    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
+    let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT);
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
     sleep(Duration::from_millis(200)).await;
 
@@ -300,8 +299,7 @@ async fn notification_mqtt_endpoint_with_username_and_password_delivers_message(
     let http_client = client();
     let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_01_04/{}", uuid::Uuid::new_v4());
-    let receiver =
-        MqttReceiver::connect_with_credentials(MQTT_AUTH_BROKER_HOST_LOCAL, MQTT_AUTH_BROKER_PORT, Some("user_with_password"), Some("password")).await;
+    let receiver = MqttReceiver::connect_with_credentials(MQTT_AUTH_BROKER_HOST_LOCAL, MQTT_AUTH_BROKER_PORT, Some("user_with_password"), Some("password"));
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
     sleep(Duration::from_millis(200)).await;
 
@@ -326,8 +324,7 @@ async fn notification_mqtt_endpoint_with_username_password_and_port_delivers_mes
     let http_client = client();
     let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_01_05/{}", uuid::Uuid::new_v4());
-    let receiver =
-        MqttReceiver::connect_with_credentials(MQTT_AUTH_BROKER_HOST_LOCAL, MQTT_AUTH_BROKER_PORT, Some("user_with_password"), Some("password")).await;
+    let receiver = MqttReceiver::connect_with_credentials(MQTT_AUTH_BROKER_HOST_LOCAL, MQTT_AUTH_BROKER_PORT, Some("user_with_password"), Some("password"));
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
     sleep(Duration::from_millis(200)).await;
 

@@ -36,6 +36,12 @@ impl DeliveryErrorBound {
     pub const SCHEMA_MAXIMUM_CHARACTERS: u32 = 2_048;
 
     /// Build a bound from a whole number of characters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeliveryErrorBoundError::ZeroCharacters`] when `characters` is
+    /// zero, and [`DeliveryErrorBoundError::AboveSchemaMaximum`] when it exceeds
+    /// [`DeliveryErrorBound::SCHEMA_MAXIMUM_CHARACTERS`].
     pub const fn from_characters(characters: u32) -> Result<DeliveryErrorBound, DeliveryErrorBoundError> {
         if characters > DeliveryErrorBound::SCHEMA_MAXIMUM_CHARACTERS {
             return Err(DeliveryErrorBoundError::AboveSchemaMaximum {
@@ -61,9 +67,8 @@ impl DeliveryErrorBound {
     /// multi-byte diagnostic is shortened rather than split into invalid UTF-8.
     #[must_use]
     pub fn truncate(self, detail: &str) -> Cow<'_, str> {
-        let limit = match usize::try_from(self.characters()) {
-            Ok(limit) => limit,
-            Err(_) => return Cow::Borrowed(detail),
+        let Ok(limit) = usize::try_from(self.characters()) else {
+            return Cow::Borrowed(detail);
         };
         match detail.char_indices().nth(limit) {
             Some((cut, _)) => Cow::Owned(detail[..cut].to_owned()),

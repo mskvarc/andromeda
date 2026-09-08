@@ -89,8 +89,34 @@ pub struct NotificationDeliveryDrain {
     base_backoff_secs: i64,
 }
 
+/// Record what a claimed delivery carries before it is attempted.
+fn trace_entry(entry: &DeliveryEntry) {
+    debug!(
+        delivery_id = %entry.id,
+        event_id = %entry.event.id,
+        subscription_id = %entry.subscription_id,
+        entity_id = %entry.event.entity_id,
+        trigger = %entry.event.trigger,
+        attempt = entry.attempt_count,
+        has_snapshot = entry.event.entity_snapshot.is_some(),
+        has_previous = entry.event.previous_snapshot.is_some(),
+        changed_attributes = ?entry.event.changed_attributes,
+        created_at = %entry.event.created_at,
+        next_attempt_at = %entry.next_attempt_at,
+        "Processing notification delivery"
+    );
+}
+
 impl NotificationDeliveryDrain {
     /// Create a bounded delivery operation from validated runtime configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NotificationError::Representation`] when the configured base
+    /// backoff does not fit a signed second count, and
+    /// [`NotificationError::Invariant`] when the configured lease term, stored
+    /// diagnostic bound, in-flight delivery bound or attempt ceiling is out of
+    /// range.
     pub fn new(
         store: Arc<dyn DeliveryStore>,
         transport: Arc<dyn NotificationDeliveryTransport>,
@@ -130,6 +156,14 @@ impl NotificationDeliveryDrain {
     /// flight at once. Every delivery is driven to its acknowledgement even
     /// when another one fails, so no lease this worker holds is abandoned
     /// mid-flight; the first persistence failure is then surfaced.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever the delivery store reports when the queue cannot be
+    /// claimed from, whatever the transport reports for a delivery it could not
+    /// evaluate, and [`NotificationError::Persistence`] when acknowledging a
+    /// delivery outcome fails. A lease another worker reclaimed is counted in
+    /// [`DeliveryDrainOutcome::lease_lost`] rather than surfaced as an error.
     pub async fn execute(&self, now: DateTime<Utc>) -> Result<DeliveryDrainOutcome, NotificationError> {
         let entries = self.store.claim_pending(&self.worker_id, self.lease_term, self.batch_size).await?;
         let claimed = entries.len();
@@ -144,7 +178,7 @@ impl NotificationDeliveryDrain {
 
         let acknowledgements: Vec<Result<LeaseAcknowledgement, NotificationError>> = stream::iter(entries)
             .map(|entry| async move {
-                self.trace_entry(&entry);
+                trace_entry(&entry);
                 self.advance(&entry, now).await
             })
             .buffer_unordered(self.concurrency.get())
@@ -204,36 +238,33 @@ impl NotificationDeliveryDrain {
         Ok(acknowledgement)
     }
 
-    /// Record what a claimed delivery carries before it is attempted.
-    fn trace_entry(&self, entry: &DeliveryEntry) {
-        debug!(
-            delivery_id = %entry.id,
-            event_id = %entry.event.id,
-            subscription_id = %entry.subscription_id,
-            entity_id = %entry.event.entity_id,
-            trigger = %entry.event.trigger,
-            attempt = entry.attempt_count,
-            has_snapshot = entry.event.entity_snapshot.is_some(),
-            has_previous = entry.event.previous_snapshot.is_some(),
-            changed_attributes = ?entry.event.changed_attributes,
-            created_at = %entry.event.created_at,
-            next_attempt_at = %entry.next_attempt_at,
-            "Processing notification delivery"
-        );
-    }
-
     /// Purge acknowledged deliveries before an explicit retention cutoff.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever the delivery store reports when the deletion statement
+    /// fails, typically [`NotificationError::Persistence`].
     pub async fn purge_delivered(&self, cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {
         self.store.delete_delivered_before(cutoff).await
     }
 
     /// Purge deliveries dead-lettered before an explicit retention cutoff.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever the delivery store reports when the deletion statement
+    /// fails, typically [`NotificationError::Persistence`].
     pub async fn purge_exhausted(&self, cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {
         self.store.delete_exhausted_before(cutoff).await
     }
 
     /// Purge events with no referencing delivery, created before an explicit
     /// retention cutoff.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever the delivery store reports when the deletion statement
+    /// fails, typically [`NotificationError::Persistence`].
     pub async fn purge_orphan_events(&self, cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {
         self.store.delete_orphan_events_before(cutoff).await
     }

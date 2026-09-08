@@ -168,7 +168,7 @@ async fn distop_entity_auxiliary_write_not_forwarded() {
         .await
         .expect("append attrs");
     assert!(appended.status.is_success(), "the append succeeds locally: {}", appended.status);
-    assert_eq!(mock.get_total_count().await, 0, "an auxiliary registration never receives a write");
+    assert_eq!(mock.get_total_count(), 0, "an auxiliary registration never receives a write");
 
     let local = topology
         .broker(BrokerRole::A)

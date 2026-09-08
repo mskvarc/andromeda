@@ -35,6 +35,26 @@ pub struct BatchExecutionConfig {
     pub async_side_effect_threshold: Option<usize>,
 }
 
+impl BatchExecutionConfig {
+    /// The same tuning with every limit raised to at least one.
+    ///
+    /// The batch paths chunk and stream by these limits, so a configured zero
+    /// would produce an empty chunk or a stream that never polls; the entity
+    /// policy clamps once, when it takes the configuration.
+    #[must_use]
+    pub(crate) fn clamped_to_usable_limits(self) -> BatchExecutionConfig {
+        BatchExecutionConfig {
+            concurrency: self.concurrency.max(1),
+            chunk_concurrency: self.chunk_concurrency.max(1),
+            chunk_write_concurrency: self.chunk_write_concurrency.max(1),
+            chunk_size: self.chunk_size.max(1),
+            large_threshold: self.large_threshold.max(1),
+            prepare_blocking_threshold: self.prepare_blocking_threshold.max(1),
+            async_side_effect_threshold: self.async_side_effect_threshold,
+        }
+    }
+}
+
 /// Concurrency mode for a batch's preparation phase.
 #[derive(Clone, Copy)]
 pub(super) enum BatchExecution {

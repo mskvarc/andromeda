@@ -178,10 +178,9 @@ pub(crate) fn plan_for(operation: BatchProvisionOperation, csr: &ContextSourceRe
             FallbackPlan::PerEntity(SingleWrite::CreateThenOnConflict(follow_up))
         }
         BatchProvisionOperation::Upsert(UpsertMode::Replace) if advertised(ForwardingOperation::ReplaceEntity) => FallbackPlan::PerEntity(SingleWrite::Replace),
-        BatchProvisionOperation::Upsert(UpsertMode::Update) if advertised(ForwardingOperation::UpdateEntityAttributes) => {
-            FallbackPlan::PerEntity(SingleWrite::UpdateAttributes)
-        }
-        BatchProvisionOperation::Update(OverwritePolicy::Overwrite) if advertised(ForwardingOperation::UpdateEntityAttributes) => {
+        BatchProvisionOperation::Upsert(UpsertMode::Update) | BatchProvisionOperation::Update(OverwritePolicy::Overwrite)
+            if advertised(ForwardingOperation::UpdateEntityAttributes) =>
+        {
             FallbackPlan::PerEntity(SingleWrite::UpdateAttributes)
         }
         BatchProvisionOperation::Update(OverwritePolicy::Preserve) if advertised(ForwardingOperation::AppendEntityAttributes) => {
@@ -271,8 +270,8 @@ fn narrow_input(
 /// (clauses 5.6.7.5 and following): a clause 5.2.16 body is read entity by
 /// entity, an array of identifiers names the successes, and a bodiless
 /// success or any failure applies to every entity of the array.
-fn batch_outcomes(ids: &[Uri], outcome: ForwardedWriteOutcome) -> Vec<(Uri, ForwardedWriteOutcome)> {
-    let ForwardedWriteOutcome::Completed { status, body: Some(body) } = &outcome else {
+fn batch_outcomes(ids: &[Uri], outcome: &ForwardedWriteOutcome) -> Vec<(Uri, ForwardedWriteOutcome)> {
+    let ForwardedWriteOutcome::Completed { status, body: Some(body) } = outcome else {
         return ids
             .iter()
             .map(|id| (id.clone(), outcome.clone())) // clone: every entity owns its identifier and the outcome it shares
@@ -356,6 +355,15 @@ const fn follow_up_write(follow_up: UpsertFollowUp) -> Option<SingleWrite> {
 
 impl FederationService {
     /// Forward a batch provision operation to every matching context source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FederationError::JsonLd`] when an entity type of the array
+    /// cannot be expanded against the request's context, and
+    /// [`FederationError::Registration`] when the candidate registrations
+    /// cannot be read. A source that rejects part of the array does not fail
+    /// the call: its rejections are reported per entity in the returned
+    /// [`BatchForwardedResult`]s.
     pub async fn forward_batch(&self, target: &ContextTarget, request: ForwardBatchRequest<'_>) -> Result<Vec<BatchForwardedResult>, FederationError> {
         if !target.permits_federation() {
             return Ok(Vec::new());
@@ -428,7 +436,7 @@ impl FederationService {
                 let outcome = self
                     .forward_write(csr, url, reqwest::Method::POST, body.as_deref(), request.context, request.triggering)
                     .await;
-                let outcomes = batch_outcomes(&ids, outcome).into_iter().collect::<HashMap<_, _>>();
+                let outcomes = batch_outcomes(&ids, &outcome).into_iter().collect::<HashMap<_, _>>();
                 narrowed
                     .into_iter()
                     .filter_map(|entity| {
@@ -765,11 +773,11 @@ mod tests {
                 "errors": [{"entityId": "urn:ngsi-ld:Vehicle:1", "error": {"status": 409, "type": "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists", "title": "exists"}}]
             })),
         };
-        let outcomes = batch_outcomes(&ids, multi_status).into_iter().collect::<HashMap<_, _>>();
+        let outcomes = batch_outcomes(&ids, &multi_status).into_iter().collect::<HashMap<_, _>>();
         assert!(matches!(outcomes[&ids[0]], ForwardedWriteOutcome::RemoteHttpFailure { status: 409, .. }));
         assert!(matches!(outcomes[&ids[1]], ForwardedWriteOutcome::Completed { status: 207, .. }));
 
-        let bodiless = batch_outcomes(&ids, ForwardedWriteOutcome::Completed { status: 204, body: None });
+        let bodiless = batch_outcomes(&ids, &ForwardedWriteOutcome::Completed { status: 204, body: None });
         assert!(
             bodiless
                 .iter()
@@ -778,7 +786,7 @@ mod tests {
 
         let failed = batch_outcomes(
             &ids,
-            ForwardedWriteOutcome::Transport(TransportFailure::Timeout {
+            &ForwardedWriteOutcome::Transport(TransportFailure::Timeout {
                 detail: "no response".to_string(),
             }),
         );

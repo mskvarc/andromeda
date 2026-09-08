@@ -29,11 +29,11 @@ async fn reset_remote_database() {
     reset_owned_tenant(&remote_pool).await.expect("remote Snapshot database reset");
 }
 
-fn current_entity(id: String, entity_type: &str, value: usize) -> Value {
+fn current_entity(id: &str, entity_type: &str, value: usize) -> Value {
     json!({"id": id, "type": entity_type, "value": {"type": "Property", "value": value}, "@context": CORE_CONTEXT})
 }
 
-fn temporal_entity(id: String, entity_type: &str, offset: usize) -> Value {
+fn temporal_entity(id: &str, entity_type: &str, offset: usize) -> Value {
     let start = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).single().expect("static timestamp");
     let observations = (0..20)
         .map(|index| {
@@ -150,10 +150,10 @@ async fn snapshot_stress_capture_4000_distributed_entities_and_64_scoped_clients
         reset_remote_database().await;
         let entity_type = "https://example.org/StressDistributedVehicle";
         let local = (0..2_000)
-            .map(|index| current_entity(format!("urn:ngsi-ld:StressDistributedVehicle:local-{index:04}"), entity_type, index))
+            .map(|index| current_entity(&format!("urn:ngsi-ld:StressDistributedVehicle:local-{index:04}"), entity_type, index))
             .collect::<Vec<_>>();
         let remote = (0..2_000)
-            .map(|index| current_entity(format!("urn:ngsi-ld:StressDistributedVehicle:remote-{index:04}"), entity_type, index))
+            .map(|index| current_entity(&format!("urn:ngsi-ld:StressDistributedVehicle:remote-{index:04}"), entity_type, index))
             .collect::<Vec<_>>();
         create_current_batch_at(&broker_url(""), &local).await;
         create_current_batch_at(REMOTE_BASE, &remote).await;
@@ -202,10 +202,10 @@ async fn snapshot_stress_capture_20000_temporal_observations_and_64_clients() {
         reset_remote_database().await;
         let entity_type = "https://example.org/StressTemporalVehicle";
         let local = (0..500)
-            .map(|index| temporal_entity(format!("urn:ngsi-ld:StressTemporalVehicle:local-{index:04}"), entity_type, index))
+            .map(|index| temporal_entity(&format!("urn:ngsi-ld:StressTemporalVehicle:local-{index:04}"), entity_type, index))
             .collect::<Vec<_>>();
         let remote = (0..500)
-            .map(|index| temporal_entity(format!("urn:ngsi-ld:StressTemporalVehicle:remote-{index:04}"), entity_type, index + 500))
+            .map(|index| temporal_entity(&format!("urn:ngsi-ld:StressTemporalVehicle:remote-{index:04}"), entity_type, index + 500))
             .collect::<Vec<_>>();
         create_temporal_set_at(&broker_url(""), local).await;
         create_temporal_set_at(REMOTE_BASE, remote).await;
@@ -261,7 +261,7 @@ async fn snapshot_stress_clone_large_mixed_branch_is_complete_and_independent() 
         wait_for_snapshot_terminal(&client(), source, Duration::from_secs(10)).await;
         let current_type = "https://example.org/StressCloneCurrent";
         let current = (0..4_000)
-            .map(|index| current_entity(format!("urn:ngsi-ld:StressCloneCurrent:{index:04}"), current_type, index))
+            .map(|index| current_entity(&format!("urn:ngsi-ld:StressCloneCurrent:{index:04}"), current_type, index))
             .collect::<Vec<_>>();
         for chunk in current.chunks(256) {
             let response = client()
@@ -276,7 +276,7 @@ async fn snapshot_stress_clone_large_mixed_branch_is_complete_and_independent() 
         }
         let temporal_type = "https://example.org/StressCloneTemporal";
         let temporal = (0..1_000)
-            .map(|index| temporal_entity(format!("urn:ngsi-ld:StressCloneTemporal:{index:04}"), temporal_type, index))
+            .map(|index| temporal_entity(&format!("urn:ngsi-ld:StressCloneTemporal:{index:04}"), temporal_type, index))
             .collect::<Vec<_>>();
         let temporal_statuses = stream::iter(temporal)
             .map(|body| async move {
@@ -361,7 +361,7 @@ async fn snapshot_stress_64_branch_subscriptions_deliver_and_cleanup() {
         let tenant_suffix = uuid::Uuid::new_v4().simple().to_string();
         let tenants = [format!("stress-tenant-a-{tenant_suffix}"), format!("stress-tenant-b-{tenant_suffix}")];
         for tenant in &tenants {
-            let provision = current_entity(format!("urn:ngsi-ld:StressSubscriptionTenant:{tenant}"), entity_type, 0);
+            let provision = current_entity(&format!("urn:ngsi-ld:StressSubscriptionTenant:{tenant}"), entity_type, 0);
             pretty_assertions::assert_eq!(
                 client()
                     .post(broker_url("/entities"))
@@ -418,7 +418,7 @@ async fn snapshot_stress_64_branch_subscriptions_deliver_and_cleanup() {
             .into_iter()
             .enumerate()
             .map(|(index, (tenant, snapshot))| async move {
-                let body = current_entity(format!("urn:ngsi-ld:StressSubscriptionVehicle:{tenant}-{index}"), entity_type, index);
+                let body = current_entity(&format!("urn:ngsi-ld:StressSubscriptionVehicle:{tenant}-{index}"), entity_type, index);
                 client()
                     .post(broker_url("/entities"))
                     .header("Content-Type", "application/ld+json")

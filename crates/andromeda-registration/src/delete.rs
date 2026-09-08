@@ -6,6 +6,13 @@ use andromeda_ngsi_ld_model::notification::{CsrChangeEvent, CsrTriggerReason};
 
 impl RegistrationService {
     /// Delete a registration by URI.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrationError::NotFound`] when no registration carries
+    /// `id`, [`RegistrationError::Internal`] when the pre-deletion snapshot
+    /// cannot be serialised, and [`RegistrationError::Persistence`] when the
+    /// store rejects the read or the deletion.
     pub async fn delete(&self, id: &Uri) -> Result<(), RegistrationError> {
         let snapshot = self
             .repo

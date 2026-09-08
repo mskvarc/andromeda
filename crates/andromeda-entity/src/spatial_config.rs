@@ -34,6 +34,13 @@ pub struct SpatialConfig {
 
 impl SpatialConfig {
     /// Validate spatial synchronization cadences and capacity.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`SpatialConfigError::ZeroRebuildInterval`],
+    /// [`SpatialConfigError::ZeroChangeChannelCapacity`] or
+    /// [`SpatialConfigError::ZeroLagLogInterval`] for whichever of the three
+    /// limits is configured as zero.
     pub const fn validate(&self) -> Result<(), SpatialConfigError> {
         if self.rebuild_interval_secs == 0 {
             return Err(SpatialConfigError::ZeroRebuildInterval);

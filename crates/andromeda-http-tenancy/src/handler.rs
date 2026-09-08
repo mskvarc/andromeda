@@ -26,6 +26,12 @@ pub struct OrphanEvictionResponse {
 }
 
 /// Query every registered named tenant.
+///
+/// # Errors
+///
+/// Returns a [`ProblemResponse`] when the tenant-list response identifier
+/// cannot be built as an NGSI-LD URN, or when the tenant directory rejects or
+/// fails the enumeration of registered tenants.
 pub async fn query(
     State(state): State<TenancyRouteState>,
     OriginalUri(uri): OriginalUri,

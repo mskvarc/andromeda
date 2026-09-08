@@ -124,7 +124,7 @@ fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
     headers
         .get_all("NGSILD-Warning")
         .iter()
-        .filter_map(|v| v.to_str().ok().map(std::string::ToString::to_string))
+        .filter_map(|v| v.to_str().ok().map(str::to_owned))
         .collect()
 }
 
@@ -163,7 +163,7 @@ async fn distop_temporal_retrieve_local_true_skips_forwarding() {
 
     // Mock should not be called
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::GET, &format!("/ngsi-ld/v1/temporal/entities/{entity_id}")).await,
+        mock.get_count(Method::GET, &format!("/ngsi-ld/v1/temporal/entities/{entity_id}")),
         0,
         "mock should not be called when local=true"
     );

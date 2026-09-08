@@ -29,6 +29,10 @@ use std::collections::HashMap;
 
 impl EntityRepository {
     /// Retrieve an entity's expanded payload by identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the payload query fails.
     pub async fn get(&self, target: &ContextTarget, id: &Uri) -> Result<Option<Value>, ContextStoreError> {
         let (sql, values) = payload_by_id_query(target, id.as_str()).build_sqlx(PostgresQueryBuilder);
         let result: Option<Value> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -38,6 +42,11 @@ impl EntityRepository {
     }
 
     /// Fetch expanded payloads for multiple entities in one query.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the payload query fails, or when a
+    /// returned identifier is no longer a valid URI.
     pub async fn get_batch(&self, target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, Value>, ContextStoreError> {
         if ids.is_empty() {
             return Ok(HashMap::new());
@@ -56,6 +65,10 @@ impl EntityRepository {
     }
 
     /// Retrieve an entity's payload together with its `modified_at`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the snapshot query fails.
     pub async fn get_snapshot(&self, target: &ContextTarget, id: &Uri) -> Result<Option<EntitySnapshot>, ContextStoreError> {
         let (sql, values) = snapshot_by_id_query(target, id.as_str()).build_sqlx(PostgresQueryBuilder);
         let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(&self.pool).await?;
@@ -67,6 +80,11 @@ impl EntityRepository {
     }
 
     /// Retrieve payloads and `modified_at` for several entities in one query.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the snapshot query fails, or when a
+    /// returned identifier is no longer a valid URI.
     pub async fn get_snapshot_batch(&self, target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, ContextStoreError> {
         if ids.is_empty() {
             return Ok(HashMap::new());
@@ -90,6 +108,10 @@ impl EntityRepository {
     }
 
     /// Retrieve system attributes for a single entity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the system-attribute query fails.
     pub async fn get_sys_attrs(&self, target: &ContextTarget, id: &Uri) -> Result<Option<SysAttrsSnapshot>, ContextStoreError> {
         let (sql, values) = sys_attrs_by_id_query(target, id.as_str()).build_sqlx(PostgresQueryBuilder);
         let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(&self.pool).await?;
@@ -102,6 +124,11 @@ impl EntityRepository {
     }
 
     /// Fetch system attributes for multiple entities in one query.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the system-attribute query fails, or
+    /// when a returned identifier is no longer a valid URI.
     pub async fn get_sys_attrs_batch(&self, target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, ContextStoreError> {
         if ids.is_empty() {
             return Ok(HashMap::new());
@@ -133,8 +160,15 @@ impl EntityRepository {
     /// back, so the residual is always empty here -- but the decision is read
     /// off the profile rather than assumed, which is what a store without
     /// those extensions changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when a name the query reads cannot be
+    /// resolved through the dictionaries, when the statement cannot be rendered
+    /// from the compiled query, when the select or the separate count fails, or
+    /// when a returned row does not carry the expected payload column.
     pub async fn query_compiled(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Value>, ContextStoreError> {
-        let planned = pushdown::plan(compiled, &EntityRepository::PROFILE);
+        let planned = pushdown::plan(compiled, EntityRepository::PROFILE);
         let names = self.resolve_names(&planned.query).await?;
         let built = entity_sql::build_query(target, &planned.query, &names)?;
 
@@ -163,8 +197,15 @@ impl EntityRepository {
     ///
     /// Planned the same way [`EntityRepository::query_compiled`] is; the
     /// statement never counts, so the outcome carries no total either way.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when a name the query reads cannot be
+    /// resolved through the dictionaries, when the statement cannot be rendered
+    /// from the compiled query, when the select fails, or when a returned
+    /// identifier is no longer a valid URI.
     pub async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, ContextStoreError> {
-        let planned = pushdown::plan(compiled, &EntityRepository::PROFILE);
+        let planned = pushdown::plan(compiled, EntityRepository::PROFILE);
         let names = self.resolve_names(&planned.query).await?;
         let statement = entity_sql::build_ids_query(target, &planned.query, &names)?;
 

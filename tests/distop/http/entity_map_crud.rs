@@ -34,7 +34,7 @@ async fn provision_map(topology: &MultiBrokerTopology<BrokerRole>, mock: &Contex
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", Some(context_link()))
         .await
         .expect("entity-map query");
-    entity_map_header(&response).unwrap_or_else(|| unreachable!("an entityMap query yields a map id"))
+    entity_map_header(&response).unwrap_or_else(|| panic!("an entityMap query yields a map id"))
 }
 
 /// Retrieving an entity map by id returns `200` (clause 6.31). Confirms REQ-HTTP-93.

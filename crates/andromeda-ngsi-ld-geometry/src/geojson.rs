@@ -178,7 +178,7 @@ mod tests {
         let form = decode(serde_json::json!({ "type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 1.0, 50.0]] })).expect("mixed arity is valid GeoJSON");
         pretty_assertions::assert_eq!(form.dimension(), GeometryDimension::TwoD);
         let GeometryValue::LineString { coordinates } = form.to_geojson() else {
-            unreachable!("expected a LineString");
+            panic!("expected a LineString");
         };
         pretty_assertions::assert_eq!(coordinates.first().map(GeoJsonPosition::as_slice), Some(&[0.0, 0.0][..]));
         pretty_assertions::assert_eq!(coordinates.last().map(GeoJsonPosition::as_slice), Some(&[1.0, 1.0, 50.0][..]));

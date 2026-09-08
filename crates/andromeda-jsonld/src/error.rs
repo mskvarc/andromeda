@@ -172,8 +172,9 @@ impl JsonLdError {
                     false
                 }
             }
-            CompactError::Loading(_) | CompactError::ContextLoading(_) |
-CompactError::Expand(ExpandError::Loading(_) | ExpandError::ContextLoading(_)) => false,
+            CompactError::Loading(_) | CompactError::ContextLoading(_) | CompactError::Expand(ExpandError::Loading(_) | ExpandError::ContextLoading(_)) => {
+                false
+            }
         }
     }
 }
@@ -190,8 +191,7 @@ const fn is_protected_term_redefinition(error: &context_processing::Error<Loader
 /// a match rather than a chain of `Box<dyn Error>` downcasts.
 fn context_error_of_expansion(error: &ExpandError<LoaderError>) -> Option<JsonLdError> {
     match error {
-        ExpandError::Loading(load) => Some(JsonLdError::from(&load.source)),
-        ExpandError::ContextLoading(ContextLoadError::LoadingDocumentFailed(load)) => Some(JsonLdError::from(&load.source)),
+        ExpandError::Loading(load) | ExpandError::ContextLoading(ContextLoadError::LoadingDocumentFailed(load)) => Some(JsonLdError::from(&load.source)),
         ExpandError::ContextLoading(ContextLoadError::ContextExtractionFailed(_)) => None,
         ExpandError::ContextProcessing(processing) => context_error_of_processing(processing),
         ExpandError::Expansion(expanding) => {
@@ -207,12 +207,10 @@ fn context_error_of_expansion(error: &ExpandError<LoaderError>) -> Option<JsonLd
 /// The [`context_error_of_expansion`] rule, over a typed [`CompactError`].
 fn context_error_of_compaction(error: &CompactError<LoaderError>) -> Option<JsonLdError> {
     match error {
-        CompactError::Loading(load) => Some(JsonLdError::from(&load.source)),
-        CompactError::ContextLoading(ContextLoadError::LoadingDocumentFailed(load)) => Some(JsonLdError::from(&load.source)),
-        CompactError::ContextLoading(ContextLoadError::ContextExtractionFailed(_)) => None,
+        CompactError::Loading(load) | CompactError::ContextLoading(ContextLoadError::LoadingDocumentFailed(load)) => Some(JsonLdError::from(&load.source)),
+        CompactError::ContextLoading(ContextLoadError::ContextExtractionFailed(_)) | CompactError::Compaction(_) => None,
         CompactError::ContextProcessing(processing) => context_error_of_processing(processing),
         CompactError::Expand(expand) => context_error_of_expansion(expand),
-        CompactError::Compaction(_) => None,
     }
 }
 

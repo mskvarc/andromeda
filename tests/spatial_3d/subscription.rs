@@ -21,7 +21,7 @@ use std::time::Duration;
 const NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A subscription on `Building` entities with the supplied `geoQ` and endpoint.
-fn geo_subscription(id: &str, endpoint: &str, geo_q: Value, format: Option<&str>) -> Value {
+fn geo_subscription(id: &str, endpoint: &str, geo_q: &Value, format: Option<&str>) -> Value {
     let mut notification = json!({"endpoint": {"uri": endpoint, "accept": "application/json"}});
     if let Some(value) = format {
         notification["format"] = json!(value);
@@ -76,7 +76,7 @@ async fn subscription_geoq_near_3d_reference_matches_horizontally() {
         "geometry": "Point",
         "coordinates": [13.4, 52.52, 0.0]
     });
-    create_subscription(client, &geo_subscription(subscription_id, &receiver.endpoint_url(), geo_q, None)).await;
+    create_subscription(client, &geo_subscription(subscription_id, &receiver.endpoint_url(), &geo_q, None)).await;
     receiver.clear_notifications().await;
 
     // 500 m of vertical separation must not defeat a 100 m horizontal radius.
@@ -117,7 +117,7 @@ async fn subscription_geoq_within_3d_polygon_matches_2d_entity() {
             [13.0, 52.0, 250.0]
         ]]
     });
-    create_subscription(client, &geo_subscription(subscription_id, &receiver.endpoint_url(), geo_q, None)).await;
+    create_subscription(client, &geo_subscription(subscription_id, &receiver.endpoint_url(), &geo_q, None)).await;
     receiver.clear_notifications().await;
 
     let entity_id = "urn:ngsi-ld:Building:spatial3d-within";
@@ -150,7 +150,7 @@ async fn subscription_notification_keyvalues_format_keeps_altitude() {
         "geometry": "Point",
         "coordinates": [13.4, 52.52]
     });
-    let subscription = geo_subscription(subscription_id, &receiver.endpoint_url(), geo_q, Some("keyValues"));
+    let subscription = geo_subscription(subscription_id, &receiver.endpoint_url(), &geo_q, Some("keyValues"));
     create_subscription(client, &subscription).await;
     receiver.clear_notifications().await;
 
@@ -192,7 +192,7 @@ async fn subscription_geoq_matches_a_non_default_dataset_instance() {
         "coordinates": [13.4, 52.52, 0.0],
         "geoproperty": "observationPoint"
     });
-    create_subscription(client, &geo_subscription(subscription_id, &receiver.endpoint_url(), geo_q, None)).await;
+    create_subscription(client, &geo_subscription(subscription_id, &receiver.endpoint_url(), &geo_q, None)).await;
     receiver.clear_notifications().await;
 
     let entity_id = "urn:ngsi-ld:Building:spatial3d-multi-dataset";

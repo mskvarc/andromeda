@@ -40,6 +40,13 @@ impl ContextRegistryService {
     }
 
     /// Create an explicitly hosted Context resource.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextRegistryError::MissingTopLevelContext`] when the payload
+    /// carries no top-level `@context` member, and
+    /// [`ContextRegistryError::Persistence`] when the store cannot record the
+    /// hosted Context.
     pub async fn create(&self, payload: Value, base_url: Option<&Url>) -> Result<Urn, ContextRegistryError> {
         if payload.get("@context").is_none() {
             return Err(ContextRegistryError::MissingTopLevelContext);
@@ -48,6 +55,13 @@ impl ContextRegistryService {
     }
 
     /// Persist a compound Context created while processing another resource.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextRegistryError::MissingTopLevelContext`] when the payload
+    /// carries no top-level `@context` member, and
+    /// [`ContextRegistryError::Persistence`] when the store cannot record the
+    /// implicitly created Context.
     pub async fn create_implicitly(&self, payload: Value, base_url: Option<&Url>) -> Result<Urn, ContextRegistryError> {
         if payload.get("@context").is_none() {
             return Err(ContextRegistryError::MissingTopLevelContext);
@@ -56,6 +70,14 @@ impl ContextRegistryService {
     }
 
     /// List available Contexts, optionally filtered by lifecycle kind.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextRegistryError::Persistence`] when the store cannot read
+    /// the stored rows, [`ContextRegistryError::Invariant`] when the embedded
+    /// core Context URL does not parse as a resource identifier or carries no
+    /// representable metadata, and [`ContextRegistryError::Representation`] when
+    /// the assembled listing cannot be serialized.
     pub async fn list(&self, kind: Option<ContextKind>, detail_level: ContextDetailLevel) -> Result<Value, ContextRegistryError> {
         let include_core = kind.is_none() || kind == Some(ContextKind::ImplicitlyCreated);
         let listed = self
@@ -84,6 +106,17 @@ impl ContextRegistryService {
     }
 
     /// Retrieve a Context document or its lifecycle metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextRegistryError::NotFound`] when no Context is stored under
+    /// the identifier, or when the row disappears between its read and its access
+    /// update. Returns [`ContextRegistryError::Persistence`] when the store cannot
+    /// complete the read or the access update,
+    /// [`ContextRegistryError::Invariant`] when an embedded core Context has no
+    /// representable metadata or document, and
+    /// [`ContextRegistryError::Representation`] when the metadata cannot be
+    /// serialized.
     pub async fn get(&self, identifier: &Uri, detail_level: ContextDetailLevel) -> Result<Value, ContextRegistryError> {
         if core_context::is_core_context(identifier) {
             return match detail_level {
@@ -109,6 +142,20 @@ impl ContextRegistryService {
     }
 
     /// Delete a Context or reload a cached Context from its source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextRegistryError::CoreContextDeletion`] when deletion names
+    /// an embedded core Context, [`ContextRegistryError::NotFound`] when no
+    /// Context is stored under the identifier,
+    /// [`ContextRegistryError::ReloadRequiresCached`] when reload names a Context
+    /// the cache did not populate, [`ContextRegistryError::MissingSourceUrl`] when
+    /// a cached Context records no remote source,
+    /// [`ContextRegistryError::ContextUnavailable`] when the remote document
+    /// cannot be downloaded, [`ContextRegistryError::Persistence`] when the store
+    /// cannot complete the deletion or the replacement, and
+    /// [`ContextRegistryError::Invariant`] when the stored identifier is not an
+    /// IRI reference the in-process cache can be invalidated by.
     pub async fn remove(&self, identifier: &Uri, removal: ContextRemoval) -> Result<(), ContextRegistryError> {
         if core_context::is_core_context(identifier) {
             return match removal {

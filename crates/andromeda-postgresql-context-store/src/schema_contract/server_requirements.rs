@@ -141,6 +141,16 @@ pub enum ExtensionVersionError {
 /// (the `int4_ops` half of the attribute-aware trigram index on
 /// `current_attribute_values`) — ship with every supported server, so their
 /// `CREATE EXTENSION IF NOT EXISTS` in migration 0002 is the check.
+///
+/// # Errors
+///
+/// Returns [`SchemaContractError::Database`] when the introspection query
+/// fails, [`SchemaContractError::ExtensionVersionValue`] when a reported
+/// extension version cannot be read, and
+/// [`SchemaContractError::PostgresBelowMinimum`],
+/// [`SchemaContractError::PostGisBelowMinimum`] or
+/// [`SchemaContractError::TimescaleDbBelowMinimum`] when the server or one of
+/// the two versioned extensions is below the floor the schema depends on.
 pub async fn verify_server_requirements(pool: &PgPool) -> Result<(), SchemaContractError> {
     let (sql, values) = server_requirements_statement().build_sqlx(PostgresQueryBuilder);
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(pool).await?;
@@ -237,8 +247,8 @@ mod tests {
                 pretty_assertions::assert_eq!(required, REQUIRED_POSTGRES_VERSION);
                 pretty_assertions::assert_eq!(reported, found);
             }
-            Err(other) => unreachable!("unexpected refusal: {other}"),
-            Ok(()) => unreachable!("PostgreSQL 14.12 is below the floor"),
+            Err(other) => panic!("unexpected refusal: {other}"),
+            Ok(()) => panic!("PostgreSQL 14.12 is below the floor"),
         }
     }
 
@@ -261,8 +271,8 @@ mod tests {
                     pretty_assertions::assert_eq!(required, REQUIRED_POSTGIS_VERSION);
                     pretty_assertions::assert_eq!(reported, found);
                 }
-                Err(other) => unreachable!("unexpected refusal: {other}"),
-                Ok(()) => unreachable!("{found} does not meet the PostGIS minimum"),
+                Err(other) => panic!("unexpected refusal: {other}"),
+                Ok(()) => panic!("{found} does not meet the PostGIS minimum"),
             }
         }
     }
@@ -278,8 +288,8 @@ mod tests {
                 pretty_assertions::assert_eq!(required, REQUIRED_TIMESCALEDB_VERSION);
                 pretty_assertions::assert_eq!(reported, found);
             }
-            Err(other) => unreachable!("unexpected refusal: {other}"),
-            Ok(()) => unreachable!("TimescaleDB 2.17 is below the floor"),
+            Err(other) => panic!("unexpected refusal: {other}"),
+            Ok(()) => panic!("TimescaleDB 2.17 is below the floor"),
         }
     }
 
@@ -304,7 +314,7 @@ mod tests {
         for (raw, expected) in readable {
             match ExtensionVersion::try_from(raw) {
                 Ok(version) => pretty_assertions::assert_eq!(version, expected),
-                Err(error) => unreachable!("{raw} is a readable extension version: {error}"),
+                Err(error) => panic!("{raw} is a readable extension version: {error}"),
             }
         }
     }
@@ -323,7 +333,7 @@ mod tests {
     fn an_uninstalled_extension_reads_as_absent_rather_than_as_a_version() {
         match ExtensionPresence::try_from(None::<String>) {
             Ok(presence) => pretty_assertions::assert_eq!(presence, ExtensionPresence::Absent),
-            Err(error) => unreachable!("an absent extension is not an error to read: {error}"),
+            Err(error) => panic!("an absent extension is not an error to read: {error}"),
         }
         pretty_assertions::assert_eq!(ExtensionPresence::Absent.to_string(), "absent");
     }

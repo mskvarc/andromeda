@@ -77,6 +77,11 @@ impl CsourceNotificationProcessor {
     }
 
     /// Reload compiled context-source subscriptions after startup or an event-stream gap.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NotificationError::Subscription`] when the subscription store cannot
+    /// list the tenant's active subscriptions; the cache is then left as it was.
     pub async fn reload_cache(&self) -> Result<(), NotificationError> {
         let subscriptions = self.sub_repo.list_active(&self.target).await?;
         self.cache.clear();
@@ -227,9 +232,8 @@ impl CsourceNotificationProcessor {
             },
         };
 
-        let csr_data = match csr_data {
-            Some(d) => d,
-            None => return,
+        let Some(csr_data) = csr_data else {
+            return;
         };
 
         let matching = self.cache.find_matching(&csr_data);

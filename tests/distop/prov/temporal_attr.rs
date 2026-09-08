@@ -144,7 +144,7 @@ async fn temporal_delete_attr_inclusive_forwards_input() {
         "inclusive delete-attr succeeds: {}",
         String::from_utf8_lossy(&response.body)
     );
-    assert_eq!(mock.get_count(Method::DELETE, &attr_path).await, 1, "the delete is forwarded once");
+    assert_eq!(mock.get_count(Method::DELETE, &attr_path), 1, "the delete is forwarded once");
 
     let local = client.get_temporal_entity(&entity_id, "local=true", None).await.expect("local read-back");
     assert_status(&local, 200);
@@ -272,7 +272,7 @@ async fn temporal_modify_instance_op_unsupported_returns_409() {
         .expect("modify temporal instance");
     assert_status(&response, 409);
     assert_problem_details(&response, CONFLICT);
-    assert_eq!(mock.get_count(Method::PATCH, &instance_path).await, 0, "no forward on an unsupported operation");
+    assert_eq!(mock.get_count(Method::PATCH, &instance_path), 0, "no forward on an unsupported operation");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -311,7 +311,7 @@ async fn temporal_modify_instance_inclusive_forwards_input() {
         "inclusive modify-instance succeeds: {}",
         String::from_utf8_lossy(&response.body)
     );
-    assert_eq!(mock.get_count(Method::PATCH, &instance_path).await, 1, "the modify is forwarded once");
+    assert_eq!(mock.get_count(Method::PATCH, &instance_path), 1, "the modify is forwarded once");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -411,7 +411,7 @@ async fn temporal_delete_instance_inclusive_forwards_input() {
         "inclusive delete-instance succeeds: {}",
         String::from_utf8_lossy(&response.body)
     );
-    assert_eq!(mock.get_count(Method::DELETE, &instance_path).await, 1, "the delete is forwarded once");
+    assert_eq!(mock.get_count(Method::DELETE, &instance_path), 1, "the delete is forwarded once");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

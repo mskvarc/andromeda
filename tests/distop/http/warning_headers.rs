@@ -75,7 +75,7 @@ async fn dist_http_query_cached_result_returns_warning_110() {
         "a result served from the cache within cacheDuration must carry warning 110, got {:?}",
         warning_codes(&response)
     );
-    assert_eq!(mock.get_total_count().await, 1, "the second query is served from the cache");
+    assert_eq!(mock.get_total_count(), 1, "the second query is served from the cache");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -267,7 +267,7 @@ async fn dist_http_query_non_ngsi_payload_rejected_and_excluded() {
         warning_codes(&response)
     );
     let body = json_body(&response);
-    let results = body.as_array().unwrap_or_else(|| unreachable!("entity query returns an array"));
+    let results = body.as_array().unwrap_or_else(|| panic!("entity query returns an array"));
     assert!(results.is_empty(), "the rejected source contributes no entities, got {results:?}");
 
     mock.shutdown().await;

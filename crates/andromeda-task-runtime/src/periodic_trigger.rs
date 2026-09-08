@@ -42,6 +42,10 @@ pub struct PeriodicSchedule {
 
 impl PeriodicSchedule {
     /// Construct a non-zero periodic schedule without jitter.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PeriodicScheduleError::ZeroCadence`] when `cadence` is zero, because a zero cadence would make every scheduled execution immediately eligible.
     pub const fn new(
         cadence: Duration,
         initial_execution: InitialExecution,
@@ -59,6 +63,10 @@ impl PeriodicSchedule {
     }
 
     /// Add deterministic jitter bounded below one full cadence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PeriodicScheduleError::JitterNotBelowCadence`] when `maximum_jitter` is greater than or equal to the configured cadence.
     pub fn with_jitter(mut self, maximum_jitter: Duration) -> Result<PeriodicSchedule, PeriodicScheduleError> {
         if maximum_jitter >= self.cadence {
             return Err(PeriodicScheduleError::JitterNotBelowCadence);

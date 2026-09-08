@@ -61,7 +61,7 @@ async fn distop_entity_attrs_delete_inclusive_forwards_and_deletes_local() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify forwarding happened
-    let count = mock.get_count(Method::DELETE, &stub_path).await;
+    let count = mock.get_count(Method::DELETE, &stub_path);
     assert!(count > 0, "forwarding should have happened");
 
     // Verify local entity still contains speed (only default instance deleted)
@@ -107,7 +107,7 @@ async fn distop_entity_attrs_delete_exclusive_forwards_to_context_source() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify forwarding happened
-    let count = mock.get_count(Method::DELETE, &stub_path).await;
+    let count = mock.get_count(Method::DELETE, &stub_path);
     assert!(count > 0, "forwarding should have happened");
 
     delete_entity(&c, &entity_id).await;
@@ -155,8 +155,8 @@ async fn distop_entity_attrs_delete_redirect_forwards_to_multiple() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify both stubs called
-    assert!(mock.get_count(Method::DELETE, &stub_path1).await > 0);
-    assert!(mock.get_count(Method::DELETE, &stub_path2).await > 0);
+    assert!(mock.get_count(Method::DELETE, &stub_path1) > 0);
+    assert!(mock.get_count(Method::DELETE, &stub_path2) > 0);
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id1).await;
@@ -197,7 +197,7 @@ async fn distop_entity_attrs_delete_all_inclusive_deletes_all_instances() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify forwarding happened
-    let count = mock.get_count(Method::DELETE, &stub_path).await;
+    let count = mock.get_count(Method::DELETE, &stub_path);
     assert!(count > 0, "forwarding should have happened");
 
     // Verify local entity does NOT contain speed (all instances deleted)
@@ -243,7 +243,7 @@ async fn distop_entity_attrs_delete_all_exclusive_forwards_to_context_source() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify forwarding happened
-    let count = mock.get_count(Method::DELETE, &stub_path).await;
+    let count = mock.get_count(Method::DELETE, &stub_path);
     assert!(count > 0, "forwarding should have happened");
 
     delete_entity(&c, &entity_id).await;
@@ -291,8 +291,8 @@ async fn distop_entity_attrs_delete_all_redirect_forwards_to_multiple() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify both stubs called
-    assert!(mock.get_count(Method::DELETE, &stub_path1).await > 0);
-    assert!(mock.get_count(Method::DELETE, &stub_path2).await > 0);
+    assert!(mock.get_count(Method::DELETE, &stub_path1) > 0);
+    assert!(mock.get_count(Method::DELETE, &stub_path2) > 0);
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id1).await;
@@ -345,7 +345,7 @@ async fn distop_entity_attrs_delete_auxiliary_no_forwarding() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify no forwarding happened
-    let count = mock.get_count(Method::DELETE, &stub_path).await;
+    let count = mock.get_count(Method::DELETE, &stub_path);
     pretty_assertions::assert_eq!(count, 0, "auxiliary registration should not trigger forwarding");
 
     delete_entity(&c, &entity_id).await;

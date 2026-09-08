@@ -57,7 +57,7 @@ mod tests {
     fn a_positive_migration_version_narrows_into_the_integer_column_domain() {
         let version = match SchemaVersion::try_from(39_i64) {
             Ok(value) => value,
-            Err(error) => unreachable!("39 is a schema version: {error}"),
+            Err(error) => panic!("39 is a schema version: {error}"),
         };
         pretty_assertions::assert_eq!(version.get(), 39);
         pretty_assertions::assert_eq!(version.to_string(), "39");

@@ -161,9 +161,16 @@ where
             partition.generation = generation;
         }
 
+        let mut entries = entries.into_iter();
+        // The final instance takes ownership of the key, so the placements hold
+        // one clone fewer than there are instances.
+        let last = entries.next_back();
         let mut placements = self.placements.entry(id).or_default();
         for entry in entries {
             placements.value_mut().push(Placement { key: key.clone(), entry }); // clone: one key per placement
+        }
+        if let Some(entry) = last {
+            placements.value_mut().push(Placement { key, entry });
         }
     }
 
@@ -229,17 +236,34 @@ where
             departed
         };
 
-        for entry in entries {
-            let id = entry.id().clone(); // clone: the key into the placements map
-            let mut placements = self.placements.entry(id).or_default();
-            placements.value_mut().retain(|placement| placement.key != key);
-            placements.value_mut().push(Placement { key: key.clone(), entry }); // clone: one key per placement
-        }
+        // The departed objects are by construction absent from `incoming`, so
+        // forgetting their records first cannot undo a placement the refresh
+        // below installs.
         for id in departed {
             if let Some(mut placements) = self.placements.get_mut(&id) {
                 placements.value_mut().retain(|placement| placement.key != key);
             }
         }
+
+        let mut entries = entries.into_iter();
+        // The final entry takes ownership of the key, so the placements hold one
+        // clone fewer than there are entries.
+        let last = entries.next_back();
+        for entry in entries {
+            self.replace_placement(key.clone(), entry); // clone: one key per placement
+        }
+        if let Some(entry) = last {
+            self.replace_placement(key, entry);
+        }
+    }
+
+    /// Point one object's placement record at this partition, replacing whatever
+    /// entry it previously held there.
+    fn replace_placement(&self, key: SpatialKey, entry: E) {
+        // clone: the placements map owns the identifier the entry only lends
+        let mut placements = self.placements.entry(entry.id().clone()).or_default();
+        placements.value_mut().retain(|placement| placement.key != key);
+        placements.value_mut().push(Placement { key, entry });
     }
 
     /// Drop an object from one partition, and forget that it was there.

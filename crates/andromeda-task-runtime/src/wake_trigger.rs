@@ -40,6 +40,10 @@ pub struct DrainFallbackCadence(Duration);
 
 impl DrainFallbackCadence {
     /// Construct a non-zero fallback cadence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DrainFallbackCadenceError`] when `cadence` is zero, because a zero cadence would drain continuously instead of recovering a missed edge wake.
     pub const fn new(cadence: Duration) -> Result<DrainFallbackCadence, DrainFallbackCadenceError> {
         if cadence.is_zero() {
             Err(DrainFallbackCadenceError)

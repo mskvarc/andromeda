@@ -15,6 +15,7 @@ pub mod names;
 pub mod pool;
 pub mod queue;
 pub mod recorder;
+mod sample_value;
 pub mod statement;
 pub mod subscription;
 

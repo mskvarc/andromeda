@@ -16,7 +16,7 @@ async fn seed_entities(topology: &MultiBrokerTopology<FedRole>, role: FedRole, p
         FedRole::Berlin => "/Europe/Berlin",
         FedRole::Nordic => "/Europe/Nordic",
         FedRole::North => "/Europe/North",
-        FedRole::Hub => unreachable!("stress data is seeded only in data domains"),
+        FedRole::Hub => panic!("stress data is seeded only in data domains"),
     };
     let entities: Vec<_> = (0..1000)
         .map(|value| entity_with_scope(&topology.id(&format!("{prefix}:{value}")), "Building", value, scope))

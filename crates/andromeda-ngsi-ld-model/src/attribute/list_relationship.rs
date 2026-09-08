@@ -47,7 +47,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("list_relationship");
         let Attribute::ListRelationship(lr) = &attr else {
-            unreachable!("expected ListRelationship");
+            panic!("expected ListRelationship");
         };
         let expanded = lr.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");

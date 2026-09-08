@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 /// Remove a top-level key from a CSR body, panicking if the shape is unexpected.
 fn remove(body: &mut Value, key: &str) {
-    body.as_object_mut().unwrap_or_else(|| unreachable!("CSR baseline is an object")).remove(key);
+    body.as_object_mut().unwrap_or_else(|| panic!("CSR baseline is an object")).remove(key);
 }
 
 /// Generate one `#[tokio::test]` per validation row. Each arm builds the
@@ -106,7 +106,7 @@ async fn reg_entityinfo_type_as_array_accepted() {
     let stored = json_body(&retrieved);
     let types = stored["information"][0]["entities"][0]["type"]
         .as_array()
-        .unwrap_or_else(|| unreachable!("type array round-trips"));
+        .unwrap_or_else(|| panic!("type array round-trips"));
     let types: Vec<&str> = types.iter().filter_map(Value::as_str).collect();
     assert!(
         types.contains(&"Vehicle") && types.contains(&"Car"),
@@ -159,7 +159,7 @@ async fn reg_entityinfo_id_and_idpattern_prefers_id() {
     assert_status(&by_other, 200);
     let by_other = json_body(&by_other);
     assert!(
-        by_other.as_array().is_none_or(std::vec::Vec::is_empty),
+        by_other.as_array().is_none_or(Vec::is_empty),
         "the ignored idPattern must not match, so a pattern-covered id finds nothing"
     );
 

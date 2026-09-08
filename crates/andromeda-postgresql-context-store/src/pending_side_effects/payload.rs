@@ -33,8 +33,15 @@ pub struct PersistedBatchSideEffectJob {
 impl PersistedBatchSideEffectJob {
     /// Decodes a JSONB value while preserving validation failures as a typed
     /// persistence error.
-    pub fn decode(value: Value) -> Result<PersistedBatchSideEffectJob, PendingSideEffectPayloadError> {
-        deserialize_exact(&value).map_err(PendingSideEffectPayloadError::from)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PendingSideEffectPayloadError::InvalidStoredPayload`] when the
+    /// stored JSON does not match the fully validated persistence shape --
+    /// an unknown member, a missing one, or a value that no longer parses into
+    /// its domain type.
+    pub fn decode(value: &Value) -> Result<PersistedBatchSideEffectJob, PendingSideEffectPayloadError> {
+        deserialize_exact(value).map_err(PendingSideEffectPayloadError::from)
     }
 }
 
@@ -153,7 +160,7 @@ mod tests {
     fn pending_side_effect_jsonb_round_trips_every_trigger_origin_and_uri_form() {
         let expected = persisted_job();
         let encoded = serde_json::to_value(&expected).expect("payload serialises");
-        let decoded = PersistedBatchSideEffectJob::decode(encoded).expect("payload decodes");
+        let decoded = PersistedBatchSideEffectJob::decode(&encoded).expect("payload decodes");
 
         pretty_assertions::assert_eq!(decoded, expected);
     }
@@ -176,7 +183,7 @@ mod tests {
                 target = match target {
                     Value::Array(values) => &mut values[segment.parse::<usize>().expect("array index")],
                     Value::Object(values) => values.get_mut(*segment).expect("object member"),
-                    Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => unreachable!("fixture path reaches a container"),
+                    Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => panic!("fixture path reaches a container"),
                 };
             }
             let final_segment = path.last().expect("non-empty path");
@@ -185,11 +192,11 @@ mod tests {
                 Value::Object(values) => {
                     values.insert((*final_segment).to_string(), replacement);
                 }
-                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => unreachable!("fixture path reaches a container"),
+                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => panic!("fixture path reaches a container"),
             }
 
             assert!(matches!(
-                PersistedBatchSideEffectJob::decode(encoded),
+                PersistedBatchSideEffectJob::decode(&encoded),
                 Err(PendingSideEffectPayloadError::InvalidStoredPayload(_))
             ));
         }

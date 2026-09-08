@@ -1,6 +1,9 @@
 //! Candidate-funnel accounting for subscription matching.
 
-use crate::names::{LABEL_STAGE, SUBSCRIPTION_CANDIDATES};
+use crate::{
+    names::{LABEL_STAGE, SUBSCRIPTION_CANDIDATES},
+    sample_value::SampleValue,
+};
 use metrics::histogram;
 use strum::{EnumIter, IntoStaticStr};
 
@@ -49,8 +52,7 @@ impl CandidateFunnel {
             (FunnelStage::Matched, self.matched),
         ] {
             let stage: &'static str = stage.into();
-            // Candidate counts are far below the exactly representable integer range of `f64`.
-            histogram!(SUBSCRIPTION_CANDIDATES, LABEL_STAGE => stage).record(count as f64);
+            histogram!(SUBSCRIPTION_CANDIDATES, LABEL_STAGE => stage).record(SampleValue::from(count));
         }
     }
 }

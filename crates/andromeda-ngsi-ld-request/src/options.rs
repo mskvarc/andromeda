@@ -67,6 +67,13 @@ pub enum UpsertMode {
 
 /// Deserialize optional entity representation options, rejecting unknown,
 /// repeated, and conflicting tokens.
+///
+/// # Errors
+///
+/// Returns a deserialization error when the list is empty or holds an empty
+/// member, when a token is none of `normalized`, `concise`, `simplified`,
+/// `keyValues` and `sysAttrs`, when a token is repeated, or when two tokens
+/// name different representations.
 pub fn deserialize_entity_representation_options<'de, D>(deserializer: D) -> Result<Option<EntityRepresentationOptions>, D::Error>
 where
     D: Deserializer<'de>,
@@ -78,6 +85,13 @@ where
 
 /// Deserialize optional temporal representation options, rejecting unknown,
 /// repeated, and conflicting tokens.
+///
+/// # Errors
+///
+/// Returns a deserialization error when the list is empty or holds an empty
+/// member, when a token is none of `temporalValues`, `aggregatedValues` and
+/// `sysAttrs`, when a token is repeated, or when both representation tokens
+/// are present.
 pub fn deserialize_temporal_representation_options<'de, D>(deserializer: D) -> Result<Option<TemporalRepresentationOptions>, D::Error>
 where
     D: Deserializer<'de>,
@@ -88,6 +102,12 @@ where
 }
 
 /// Deserialize subscription-list options, rejecting unknown and repeated tokens.
+///
+/// # Errors
+///
+/// Returns a deserialization error when the list is empty or holds an empty
+/// member, when a token is neither `count` nor `sysAttrs`, or when either
+/// token is repeated.
 pub fn deserialize_list_options<'de, D>(deserializer: D) -> Result<Option<ListOptions>, D::Error>
 where
     D: Deserializer<'de>,
@@ -98,6 +118,10 @@ where
 }
 
 /// Deserialize the singleton `sysAttrs` option, rejecting every other token.
+///
+/// # Errors
+///
+/// Returns a deserialization error for any value other than `sysAttrs`.
 pub fn deserialize_sys_attrs_options<'de, D>(deserializer: D) -> Result<Option<SysAttrsOptions>, D::Error>
 where
     D: Deserializer<'de>,
@@ -113,6 +137,10 @@ where
 }
 
 /// Deserialize the singleton `noOverwrite` option used by append and batch update.
+///
+/// # Errors
+///
+/// Returns a deserialization error for any value other than `noOverwrite`.
 pub fn deserialize_overwrite_policy<'de, D>(deserializer: D) -> Result<Option<OverwritePolicy>, D::Error>
 where
     D: Deserializer<'de>,

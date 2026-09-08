@@ -147,7 +147,7 @@ mod tests {
     #[tokio::test]
     async fn extracts_defaults_with_no_headers() {
         let req = Request::builder().uri("/ngsi-ld/v1/entities").body(()).unwrap();
-        let (mut parts, _) = req.into_parts();
+        let (mut parts, ()) = req.into_parts();
 
         let result = NgsiLdProtocolHeaders::from_request_parts(&mut parts, &()).await;
         assert!(result.is_ok());
@@ -166,7 +166,7 @@ mod tests {
     #[tokio::test]
     async fn leaves_query_language_to_the_request_model() {
         let req = Request::builder().uri("/ngsi-ld/v1/entities?lang=en").body(()).unwrap();
-        let (mut parts, _) = req.into_parts();
+        let (mut parts, ()) = req.into_parts();
 
         let result = NgsiLdProtocolHeaders::from_request_parts(&mut parts, &()).await;
         assert!(result.is_ok());
@@ -184,7 +184,7 @@ mod tests {
             .header("link", r#"<https://uri.etsi.org/ngsi-ld/profile/1.8>; rel="profile""#)
             .body(())
             .unwrap();
-        let (mut parts, _) = req.into_parts();
+        let (mut parts, ()) = req.into_parts();
 
         let headers = NgsiLdProtocolHeaders::from_request_parts(&mut parts, &()).await.expect("headers extract");
         pretty_assertions::assert_eq!(headers.payload_profile.version(), Some(SpecVersion::V1_8));
@@ -198,7 +198,7 @@ mod tests {
             .header("ngsild-snapshot", "not-a-valid-urn")
             .body(())
             .unwrap();
-        let (mut parts, _) = req.into_parts();
+        let (mut parts, ()) = req.into_parts();
 
         let result = NgsiLdProtocolHeaders::from_request_parts(&mut parts, &()).await;
         assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
@@ -211,7 +211,7 @@ mod tests {
             .header("ngsild-dataset-id", "invalid")
             .body(())
             .unwrap();
-        let (mut parts, _) = req.into_parts();
+        let (mut parts, ()) = req.into_parts();
         let result = NgsiLdProtocolHeaders::from_request_parts(&mut parts, &()).await;
         assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
     }

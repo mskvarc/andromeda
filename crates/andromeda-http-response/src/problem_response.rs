@@ -33,6 +33,7 @@ impl ProblemResponse {
     }
 
     /// Attach the clause 6.3.17 warnings the failed operation gathered.
+    #[must_use]
     pub fn with_warnings(mut self, warnings: Vec<NgsiLdWarning>) -> ProblemResponse {
         self.warnings = warnings;
         self
@@ -49,6 +50,7 @@ impl ProblemResponse {
     }
 
     /// Attach the standard `Retry-After` delay form.
+    #[must_use]
     pub const fn with_retry_after(mut self, retry_after: Duration) -> ProblemResponse {
         self.retry_after = Some(retry_after);
         self

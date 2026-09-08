@@ -32,6 +32,13 @@ impl RegistrationExpiry {
     }
 
     /// Delete every registration due at `cutoff` and publish its pre-deletion snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrationError::Persistence`] when the store cannot delete
+    /// the due registrations, and [`RegistrationError::Representation`] when a
+    /// deleted registration cannot be serialised into the snapshot the change
+    /// event carries.
     pub async fn execute(&self, cutoff: DateTime<Utc>) -> Result<RegistrationExpiryOutcome, RegistrationError> {
         let registrations = self.store.delete_expired(cutoff).await?;
         let mut expired = Vec::with_capacity(registrations.len());

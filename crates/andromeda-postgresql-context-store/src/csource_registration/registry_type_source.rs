@@ -95,13 +95,21 @@ fn stored_attribute_name(raw: &str) -> Result<AttributeName, EntityError> {
 /// Fold the joined rows into one entry per registered type, each with the
 /// attribute names registered beside it, without repetition and in first-seen
 /// order. The wildcard sentinel names no type and contributes nothing.
+///
+/// # Errors
+///
+/// Returns [`EntityError::internal`] when a stored entity type or attribute name
+/// does not parse back into its lexicon type, which can only happen if the
+/// projection wrote a value the dictionary never minted.
 pub fn registered_types_of(pairs: &[RegisteredPair]) -> Result<Vec<RegisteredType>, EntityError> {
     let mut types: Vec<RegisteredType> = Vec::new();
     for pair in pairs {
         let attribute = pair.attribute_name.as_deref().map(stored_attribute_name).transpose()?;
         for raw in pair.entity_types.iter().filter(|raw| raw.as_str() != ANY_TYPE) {
             let name = stored_type_name(raw)?;
-            let entry = if let Some(entry) = types.iter_mut().find(|entry| entry.name == name) { entry } else {
+            let entry = if let Some(entry) = types.iter_mut().find(|entry| entry.name == name) {
+                entry
+            } else {
                 types.push(RegisteredType {
                     name,
                     attribute_names: Vec::new(),
@@ -123,6 +131,12 @@ pub fn registered_types_of(pairs: &[RegisteredPair]) -> Result<Vec<RegisteredTyp
 /// Fold the joined rows into one entry per registered attribute, each with the
 /// entity types registered beside it, without repetition and in first-seen
 /// order. The wildcard sentinel names no type and contributes nothing.
+///
+/// # Errors
+///
+/// Returns [`EntityError::internal`] when a stored attribute name or entity type
+/// does not parse back into its lexicon type, which can only happen if the
+/// projection wrote a value the dictionary never minted.
 pub fn registered_attributes_of(pairs: &[RegisteredPair]) -> Result<Vec<RegisteredAttribute>, EntityError> {
     let mut attributes: Vec<RegisteredAttribute> = Vec::new();
     for pair in pairs {
@@ -130,7 +144,9 @@ pub fn registered_attributes_of(pairs: &[RegisteredPair]) -> Result<Vec<Register
             continue;
         };
         let name = stored_attribute_name(raw_attribute)?;
-        let entry = if let Some(entry) = attributes.iter_mut().find(|entry| entry.name == name) { entry } else {
+        let entry = if let Some(entry) = attributes.iter_mut().find(|entry| entry.name == name) {
+            entry
+        } else {
             attributes.push(RegisteredAttribute {
                 name,
                 entity_types: Vec::new(),

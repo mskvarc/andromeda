@@ -52,7 +52,7 @@ async fn distop_entity_via_csr_alias_in_header_skips_csr() {
     let (status, _, _) = query_entities_with_via(&c, "type=Vehicle", &jsonld_link_value(), "1.1 cs-broker-A").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await;
+    let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities");
     pretty_assertions::assert_eq!(count, 0, "mock should not have been called when CSR alias is in Via");
 
     delete_registration(&c, &reg_id).await;
@@ -82,7 +82,7 @@ async fn distop_entity_via_different_alias_allows_forwarding() {
     let (status, _, _) = query_entities_with_via(&c, "type=Vehicle", &jsonld_link_value(), "1.1 cs-broker-B").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await;
+    let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities");
     pretty_assertions::assert_eq!(count, 1, "mock should have been called when CSR alias is not in Via");
 
     delete_registration(&c, &reg_id).await;
@@ -112,7 +112,7 @@ async fn distop_entity_via_no_header_allows_forwarding() {
     let (status, _, _) = query_entities(&c, "type=Vehicle", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await;
+    let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities");
     pretty_assertions::assert_eq!(count, 1, "mock should have been called without Via header");
 
     delete_registration(&c, &reg_id).await;
@@ -142,7 +142,7 @@ async fn distop_entity_via_substring_no_false_positive() {
     let (status, _, _) = query_entities_with_via(&c, "type=Vehicle", &jsonld_link_value(), "1.1 broker10").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await;
+    let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities");
     pretty_assertions::assert_eq!(count, 1, "mock should have been called -- substring match must not trigger");
 
     delete_registration(&c, &reg_id).await;
@@ -173,7 +173,7 @@ async fn distop_entity_via_no_alias_always_forwards() {
     let (status, _, _) = query_entities_with_via(&c, "type=Vehicle", &jsonld_link_value(), "1.1 whatever").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await;
+    let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities");
     pretty_assertions::assert_eq!(count, 1, "mock should have been called -- CSR has no alias");
 
     delete_registration(&c, &reg_id).await;
@@ -228,7 +228,7 @@ async fn distop_entity_via_multiple_aliases_any_match_skips() {
     let (status, _, _) = query_entities_with_via(&c, "type=Vehicle", &jsonld_link_value(), "1.1 cs-broker-A, 1.1 cs-broker-B").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await;
+    let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities");
     pretty_assertions::assert_eq!(count, 0, "mock should not have been called when CSR alias is in Via");
 
     delete_registration(&c, &reg_id).await;
@@ -258,7 +258,7 @@ async fn distop_entity_via_http_version_prefix_parsed() {
     let (status, _, _) = query_entities_with_via(&c, "type=Vehicle", &jsonld_link_value(), "2.0 cs-broker-A").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await;
+    let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities");
     pretty_assertions::assert_eq!(count, 0, "mock should not have been called regardless of HTTP version");
 
     delete_registration(&c, &reg_id).await;

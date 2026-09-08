@@ -61,14 +61,14 @@ pub(crate) async fn batch_create(
 
     // Clause 5.6.7.4: the local phase creates what proxied registrations left.
     let remainder = local_remainder(entities, &forwarded);
-    let mode = service.effective_side_effect_mode(async_preference(&prefer), remainder.len());
+    let mode = service.effective_side_effect_mode(async_preference(prefer), remainder.len());
     let batch = service.batch_create(&target, &remainder, &context, mode).await.with_entity_instance(&uri)?;
     let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, classify_entity_error);
     result.errors.append(&mut parse_errors);
     merge_forwarded(&mut result, &forwarded);
 
     if result.errors.is_empty() {
-        created_response(&result.success, &accept, &context, &uri, mode)
+        created_response(&result.success, accept, &context, &uri, mode)
     } else {
         multi_status_response(&result, &context, &uri, mode)
     }

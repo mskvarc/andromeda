@@ -62,6 +62,14 @@ impl SubscriptionCache {
     ///
     /// Clears existing entries and replaces them with all currently active
     /// subscriptions. Failed compilations are logged and skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns the store's failure when the active subscriptions of `target`
+    /// cannot be listed — [`SubscriptionError::Persistence`] for an adapter
+    /// failure, [`SubscriptionError::Representation`] for a stored row that no
+    /// longer reads back as a subscription. The cache is left untouched in
+    /// either case.
     pub async fn reload(&self, target: &ContextTarget, repo: &(impl SubscriptionStore + ?Sized)) -> Result<(), SubscriptionError> {
         let subscriptions = repo.list_active(target).await?;
         let compiled: Vec<CompiledSubscription> = subscriptions.iter().map(compile_subscription).collect();

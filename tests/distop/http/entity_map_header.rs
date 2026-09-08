@@ -76,7 +76,7 @@ async fn dist_http_query_with_entity_map_request_header_uses_named_map() {
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", Some(context_link()))
         .await
         .expect("first entity-map query");
-    let map_id = entity_map_header(&first).unwrap_or_else(|| unreachable!("first query yields an entity map"));
+    let map_id = entity_map_header(&first).unwrap_or_else(|| panic!("first query yields an entity map"));
 
     let second = topology
         .broker(BrokerRole::A)
@@ -120,7 +120,7 @@ async fn dist_http_purge_supports_entity_map_request_header() {
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", Some(context_link()))
         .await
         .expect("entity-map query");
-    let map_id = entity_map_header(&map).unwrap_or_else(|| unreachable!("query yields an entity map"));
+    let map_id = entity_map_header(&map).unwrap_or_else(|| panic!("query yields an entity map"));
 
     let response = topology
         .broker(BrokerRole::A)
@@ -173,7 +173,7 @@ async fn dist_http_retrieve_with_entity_map_request_header_uses_named_map() {
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", Some(context_link()))
         .await
         .expect("entity-map query");
-    let map_id = entity_map_header(&map).unwrap_or_else(|| unreachable!("query yields an entity map"));
+    let map_id = entity_map_header(&map).unwrap_or_else(|| panic!("query yields an entity map"));
 
     let response = topology
         .broker(BrokerRole::A)

@@ -55,6 +55,15 @@ pub struct Stage1Query {
 }
 
 /// Build Stage 1 query: find entity IDs matching entity-level filters.
+///
+/// # Errors
+///
+/// Returns [`RenderError::Query`] when the current-state filters cannot be
+/// rendered: a `q` term (clause 4.9) naming an operator the store cannot apply
+/// to the target path, or a geo query (clause 4.10) whose relation and geometry
+/// combination clause 4.10 does not admit. Returns
+/// [`RenderError::ReferenceGeometryEncoding`] when the geo query's reference
+/// geometry cannot be encoded as `PostGIS` EWKB.
 pub fn build_stage1_entity_ids(context_space_key: ContextSpaceKey, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Stage1Query, RenderError> {
     // Entity-level conditions, applied to `temporal_entities` under alias "e".
     let entity_conditions = build_entity_conditions_for_temporal(context_space_key, compiled, names)?;
@@ -64,7 +73,7 @@ pub fn build_stage1_entity_ids(context_space_key: ContextSpaceKey, compiled: &Co
         .expr_as(SeaExpr::col((E, TemporalEntities::Id)), EntityIdColumn)
         .from_as(TemporalEntities::Table, E)
         .cond_where(entity_conditions.clone()) // clone: the count query applies the same entity predicate
-        .cond_where(SeaExpr::exists(temporal_match_subquery(context_space_key, compiled)?))
+        .cond_where(SeaExpr::exists(temporal_match_subquery(context_space_key, compiled)))
         .order_by((E, TemporalEntities::Id), Order::Asc)
         .limit(u64::from(compiled.pagination.limit))
         .offset(u64::from(compiled.pagination.offset));
@@ -75,7 +84,7 @@ pub fn build_stage1_entity_ids(context_space_key: ContextSpaceKey, compiled: &Co
             .expr(Func::count(SeaExpr::col((E, TemporalEntities::Id))))
             .from_as(TemporalEntities::Table, E)
             .cond_where(entity_conditions)
-            .cond_where(SeaExpr::exists(temporal_match_subquery(context_space_key, compiled)?));
+            .cond_where(SeaExpr::exists(temporal_match_subquery(context_space_key, compiled)));
         Some(count_select.take())
     } else {
         None
@@ -85,8 +94,8 @@ pub fn build_stage1_entity_ids(context_space_key: ContextSpaceKey, compiled: &Co
 }
 
 /// Build the correlated stream/history predicate shared by result and count.
-fn temporal_match_subquery(context_space_key: ContextSpaceKey, compiled: &CompiledTemporalQuery) -> Result<SelectStatement, RenderError> {
-    let temporal_conditions = build_temporal_stage1_conditions(compiled)?;
+fn temporal_match_subquery(context_space_key: ContextSpaceKey, compiled: &CompiledTemporalQuery) -> SelectStatement {
+    let temporal_conditions = build_temporal_stage1_conditions(compiled);
     let mut select = SelectStatement::new();
     select
         .expr(int_literal(1))
@@ -110,7 +119,7 @@ fn temporal_match_subquery(context_space_key: ContextSpaceKey, compiled: &Compil
         );
         select.cond_where(SeaExpr::col((Ah, AttributeHistory::ContextSpaceKey)).eq(context_space_key.as_i64()));
     }
-    Ok(select.take())
+    select.take()
 }
 
 /// Build entity-level conditions for temporal queries (using "e" alias for
@@ -210,8 +219,8 @@ fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<
     condition
 }
 
-/// Build temporal-specific conditions for Stage 1 (attribute filters, datasetId, timerel, scopeQ).
-fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery) -> Result<Condition, RenderError> {
+/// Build temporal-specific conditions for Stage 1 (attribute filters, `datasetId`, timerel, `scopeQ`).
+fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery) -> Condition {
     let mut condition = Condition::all();
 
     // Attribute filter: an.name IN (...).
@@ -251,7 +260,7 @@ fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery) -> Result<
         condition = condition.add(scope_condition(scope_q, &target));
     }
 
-    Ok(condition)
+    condition
 }
 
 #[cfg(test)]
@@ -297,7 +306,7 @@ mod tests {
 
     /// A `GeoJSON` point reference geometry, for tests that vary the relation
     /// rather than the geometry.
-    fn point(coordinates: serde_json::Value) -> Geometry {
+    fn point(coordinates: &serde_json::Value) -> Geometry {
         Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": coordinates })).expect("point parses")
     }
 
@@ -603,7 +612,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.entities.geo = Some(GeoQuery {
             georel: GeoRel::Within,
-            geometry: point(serde_json::json!([1.0, 2.0])),
+            geometry: point(&serde_json::json!([1.0, 2.0])),
             geoproperty: "https://example.com/customGeo".parse().expect("valid attribute name"),
         });
         let names = QueryNames {
@@ -629,7 +638,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.entities.geo = Some(GeoQuery {
             georel: GeoRel::Within,
-            geometry: point(serde_json::json!([1.0, 2.0])),
+            geometry: point(&serde_json::json!([1.0, 2.0])),
             geoproperty: "https://example.com/o'brien".parse().expect("valid attribute name"),
         });
         let names = QueryNames {

@@ -237,7 +237,7 @@ mod tests {
     use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, ForwardingMode};
     use serde_json::{Value, json};
 
-    fn registration(information: Value) -> ContextSourceRegistration {
+    fn registration(information: &Value) -> ContextSourceRegistration {
         serde_json::from_value(json!({
             "id": "urn:ngsi-ld:csr:1",
             "type": "ContextSourceRegistration",
@@ -284,18 +284,18 @@ mod tests {
     #[test]
     fn the_registered_type_is_the_one_every_selector_naming_the_entity_agrees_on() {
         let entity_id = "urn:ngsi-ld:Vehicle:1".parse().expect("valid URI");
-        let by_id = registration(json!([{"entities": [{"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"}]}]));
+        let by_id = registration(&json!([{"entities": [{"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"}]}]));
         pretty_assertions::assert_eq!(
             registered_type_of(&[by_id], &entity_id).map(|name| name.as_ref().to_string()),
             Some("Vehicle".to_string())
         );
 
-        let other_id = registration(json!([{"entities": [{"id": "urn:ngsi-ld:Vehicle:2", "type": "Car"}]}]));
+        let other_id = registration(&json!([{"entities": [{"id": "urn:ngsi-ld:Vehicle:2", "type": "Car"}]}]));
         assert!(registered_type_of(&[other_id], &entity_id).is_none());
 
         let disagreeing = [
-            registration(json!([{"entities": [{"idPattern": "urn:ngsi-ld:Vehicle:.*", "type": "Vehicle"}]}])),
-            registration(json!([{"entities": [{"type": "Car"}]}])),
+            registration(&json!([{"entities": [{"idPattern": "urn:ngsi-ld:Vehicle:.*", "type": "Vehicle"}]}])),
+            registration(&json!([{"entities": [{"type": "Car"}]}])),
         ];
         assert!(registered_type_of(&disagreeing, &entity_id).is_none());
     }

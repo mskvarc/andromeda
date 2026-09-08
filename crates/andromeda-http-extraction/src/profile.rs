@@ -13,7 +13,11 @@ use axum::{
     extract::FromRequestParts,
     http::{header::LINK, request::Parts},
 };
-use std::{convert::Infallible, str::FromStr};
+use std::{
+    convert::Infallible,
+    future::{Future, ready},
+    str::FromStr,
+};
 
 /// The NGSI-LD version the request's payload is announced to conform to
 /// (clause 6.3.21), snapped to the nearest version the clause 4.3.6.8 fallback
@@ -34,25 +38,29 @@ impl PayloadProfile {
 /// A `Link` header that does not parse is skipped here rather than rejected:
 /// the context extractor owns the clause 5.5.4 rejection of a malformed
 /// `Link`, and reporting it twice would serve no one.
+fn announced_profile(parts: &Parts) -> PayloadProfile {
+    let announced = parts
+        .headers
+        .get_all(LINK)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter_map(|raw| Link::from_str(raw).ok())
+        .find_map(|link| link.ngsi_ld_profile_version());
+    let profile = announced.map(SpecVersion::nearest_supported);
+    if let Some(version) = profile {
+        tracing::debug!(%version, "request payload announced an NGSI-LD version profile");
+    }
+    PayloadProfile(profile)
+}
+
 impl<S> FromRequestParts<S> for PayloadProfile
 where
     S: Send + Sync,
 {
     type Rejection = Infallible;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let announced = parts
-            .headers
-            .get_all(LINK)
-            .iter()
-            .filter_map(|value| value.to_str().ok())
-            .filter_map(|raw| Link::from_str(raw).ok())
-            .find_map(|link| link.ngsi_ld_profile_version());
-        let profile = announced.map(SpecVersion::nearest_supported);
-        if let Some(version) = profile {
-            tracing::debug!(%version, "request payload announced an NGSI-LD version profile");
-        }
-        Ok(PayloadProfile(profile))
+    fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> {
+        ready(Ok(announced_profile(parts)))
     }
 }
 
@@ -69,7 +77,7 @@ mod tests {
             builder = builder.header("Link", *link);
         }
         let request = builder.body(()).expect("a valid request");
-        let (mut parts, _) = request.into_parts();
+        let (mut parts, ()) = request.into_parts();
         match PayloadProfile::from_request_parts(&mut parts, &()).await {
             Ok(profile) => profile,
             Err(never) => match never {},

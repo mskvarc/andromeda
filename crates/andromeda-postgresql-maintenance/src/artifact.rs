@@ -90,7 +90,7 @@ mod tests {
     #[test]
     fn recognized_identifier_is_quoted_in_the_fixed_drop_shape() {
         let Some((artifact, ArtifactKind::Old)) = ArtifactIndexName::parse("idx_cav_attr_string_ccold2") else {
-            unreachable!("known artifact");
+            panic!("a well-formed ccold artifact of an allowlisted index is recognized");
         };
         assert_eq!(
             artifact.drop_statement().as_sql(),

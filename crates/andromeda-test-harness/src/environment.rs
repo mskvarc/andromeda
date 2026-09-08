@@ -21,6 +21,10 @@ pub struct TestEnvironment {
 
 impl TestEnvironment {
     /// Build an isolated environment from process configuration for a named suite.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TestEnvironmentError::Configuration`] when the process environment is invalid, [`TestEnvironmentError::Identifier`] when the suite name is not a valid token, and every failure [`TestEnvironment::isolated`] reports.
     pub async fn from_suite(suite: &str) -> Result<TestEnvironment, TestEnvironmentError> {
         let configuration = TestRunConfiguration::from_environment().map_err(TestEnvironmentError::Configuration)?;
         let suite = TestSuiteName::parse(suite.to_owned())?;
@@ -28,6 +32,10 @@ impl TestEnvironment {
     }
 
     /// Allocate identifiers, acquire a shared cross-process lease, and construct a probe-free client.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TestEnvironmentError::Identifier`] when identifier allocation fails, [`TestEnvironmentError::Readiness`] when the broker does not answer its health endpoint within the default policy, and [`TestEnvironmentError::Isolation`] when the pool or the shared advisory lock cannot be obtained.
     pub async fn isolated(configuration: &TestRunConfiguration, suite: &TestSuiteName) -> Result<TestEnvironment, TestEnvironmentError> {
         let identifiers = TestIdentifiers::allocate(suite)?;
         let client = TestClient::new(configuration.broker().clone(), None); // clone: the environment owns its client endpoint while configuration remains reusable.
@@ -68,6 +76,10 @@ impl TestEnvironment {
     }
 
     /// Clean owned rows, release the advisory lock, and preserve both failures when necessary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TestEnvironmentError::Cleanup`] when prefix cleanup fails, [`TestEnvironmentError::Isolation`] when the shared advisory lock cannot be released, and [`TestEnvironmentError::CleanupAndRelease`] when both fail.
     pub async fn finish(self) -> Result<(), TestEnvironmentError> {
         let cleanup = cleanup_prefix(&self.pool, &self.identifiers).await;
         let release = self.lease.release().await;

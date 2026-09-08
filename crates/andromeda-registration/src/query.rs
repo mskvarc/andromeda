@@ -27,6 +27,18 @@ impl RegistrationService {
     ///
     /// Each returned registration carries only the `RegistrationInfo` elements
     /// that match (clause 5.10.2.5), compacted under `context`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrationError::Validation`] when `params` is not a
+    /// well-formed discovery request, names more than one entity type, or
+    /// names an attribute that is not an IRI once expanded,
+    /// [`RegistrationError::Query`] when the `q`, `csf`, geo or temporal
+    /// filter cannot be compiled, [`RegistrationError::JsonLd`] when `context`
+    /// cannot be loaded or a response cannot be compacted under it,
+    /// [`RegistrationError::Internal`] when a matched registration cannot be
+    /// serialised, and [`RegistrationError::Persistence`] when the store
+    /// rejects the query.
     pub async fn query(
         &self,
         params: &CsrQueryParameters,
@@ -79,8 +91,8 @@ impl RegistrationService {
         // it; the filter itself is not evaluated against a registration.
         if let Some(expression) = params.q.clone() {
             // clone: expansion owns and rewrites the request expression without mutating cached parameters.
-            let expanded = expand_q_expr(expression, &expander).await?;
-            for name in referenced_attributes(&expanded) {
+            let expanded_filter = expand_q_expr(expression, &expander).await?;
+            for name in referenced_attributes(&expanded_filter) {
                 let iri = IriBuf::new(name.as_str().to_owned())
                     .map_err(|error| RegistrationError::csr_validation(format!("q names a non-IRI attribute: {error}")))?;
                 if !attrs.contains(&iri) {

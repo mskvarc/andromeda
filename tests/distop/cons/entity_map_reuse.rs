@@ -88,11 +88,11 @@ async fn distop_retrieve_entity_map_location_present_retrieves_map() {
     let reuse = retrieve_reusing_map(&topology, &entity_id, &map).await;
     assert_status(&reuse, 200);
     assert!(
-        mock.get_count(Method::GET, &format!("/s1/ngsi-ld/v1/entities/{entity_id}")).await > 0,
+        mock.get_count(Method::GET, &format!("/s1/ngsi-ld/v1/entities/{entity_id}")) > 0,
         "the mapped CSR is consulted"
     );
     assert_eq!(
-        mock.get_count(Method::GET, &format!("/s2/ngsi-ld/v1/entities/{entity_id}")).await,
+        mock.get_count(Method::GET, &format!("/s2/ngsi-ld/v1/entities/{entity_id}")),
         0,
         "a CSR added after minting is not consulted"
     );
@@ -132,7 +132,7 @@ async fn distop_retrieve_entity_map_unreachable_or_expired_creates_new() {
     let reuse = retrieve_reusing_map(&topology, &entity_id, &bogus).await;
     assert_status(&reuse, 200);
     assert!(
-        mock.get_count(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}")).await > 0,
+        mock.get_count(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}")) > 0,
         "a bogus map forces fresh discovery of the source"
     );
 
@@ -196,7 +196,7 @@ async fn distop_retrieve_entity_valid_map_uses_only_mapped_csrs() {
 
     assert_status(&retrieve_reusing_map(&topology, &entity_id, &map).await, 200);
     assert_eq!(
-        mock.get_count(Method::GET, &format!("/s2/ngsi-ld/v1/entities/{entity_id}")).await,
+        mock.get_count(Method::GET, &format!("/s2/ngsi-ld/v1/entities/{entity_id}")),
         0,
         "the post-minting source is not contacted — no fresh discovery"
     );

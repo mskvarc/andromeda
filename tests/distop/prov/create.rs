@@ -147,7 +147,7 @@ async fn create_exclusive_createentity_unsupported_returns_409_conflict() {
     assert_status(&created, 409);
     assert_problem_details(&created, CONFLICT);
     assert_eq!(
-        mock.get_count(Method::POST, "/ngsi-ld/v1/entities").await,
+        mock.get_count(Method::POST, "/ngsi-ld/v1/entities"),
         0,
         "no forward on an unsupported operation"
     );
@@ -193,7 +193,7 @@ async fn create_exclusive_createentity_unsupported_with_local_remainder_returns_
     assert_eq!(errors[0]["registrationId"], json!(reg_id), "the conflict is keyed by registrationId: {body}");
     assert_eq!(errors[0]["error"]["status"], json!(409), "the unsupported operation surfaces a 409: {body}");
     assert_eq!(
-        mock.get_count(Method::POST, "/ngsi-ld/v1/entities").await,
+        mock.get_count(Method::POST, "/ngsi-ld/v1/entities"),
         0,
         "no forward on an unsupported operation"
     );
@@ -327,7 +327,7 @@ async fn create_redirect_createentity_unsupported_returns_409_conflict() {
     assert_status(&created, 409);
     assert_problem_details(&created, CONFLICT);
     assert_eq!(
-        mock.get_count(Method::POST, "/ngsi-ld/v1/entities").await,
+        mock.get_count(Method::POST, "/ngsi-ld/v1/entities"),
         0,
         "no forward on an unsupported operation"
     );
@@ -421,10 +421,7 @@ async fn create_existing_locally_returns_already_exists() {
     let body = json_body(&created);
     let errors = body["errors"].as_array().expect("multi-status carries an errors array");
     assert_eq!(errors[0]["error"]["status"], json!(409), "the local duplicate surfaces a 409: {body}");
-    assert!(
-        mock.get_count(Method::POST, "/ngsi-ld/v1/entities").await >= 1,
-        "the inclusive forward still occurs"
-    );
+    assert!(mock.get_count(Method::POST, "/ngsi-ld/v1/entities") >= 1, "the inclusive forward still occurs");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

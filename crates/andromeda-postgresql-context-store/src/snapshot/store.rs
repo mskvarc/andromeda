@@ -20,6 +20,7 @@ use crate::snapshot::{
         update_snapshot_metadata,
         update_status,
     },
+    metadata_change::MetadataChange,
     preparation_claim::{next_preparing_snapshot, renew_preparation_lease},
     quota::enforce_snapshot_quotas,
     repo::SnapshotRepository,
@@ -79,7 +80,16 @@ impl SnapshotStore for SnapshotRepository {
         receiver_info: Option<Option<Value>>,
         new_expires_at: Option<DateTime<Utc>>,
     ) -> Result<u64, SnapshotError> {
-        update_snapshot_metadata(self.pool(), id, lifetime, priority, endpoint, receiver_info, new_expires_at).await
+        update_snapshot_metadata(
+            self.pool(),
+            id,
+            lifetime,
+            priority,
+            MetadataChange::from(endpoint),
+            MetadataChange::from(receiver_info),
+            new_expires_at,
+        )
+        .await
     }
 
     async fn update_status(

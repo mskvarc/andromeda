@@ -102,24 +102,24 @@ mod tests {
     use std::num::NonZeroU32;
     use url::Url;
 
-    fn internal(error: impl ToString) -> SubscriptionError {
+    fn internal(error: &impl ToString) -> SubscriptionError {
         SubscriptionError::internal(error.to_string())
     }
 
     fn selector(type_expression: &str, id: Option<&str>, id_pattern: Option<&str>) -> Result<EntitySelector, SubscriptionError> {
         Ok(EntitySelector {
-            id: id.map(str::parse).transpose().map_err(internal)?,
-            id_pattern: id_pattern.map(str::parse).transpose().map_err(internal)?,
-            type_: type_expression.parse().map_err(internal)?,
+            id: id.map(str::parse).transpose().map_err(|error| internal(&error))?,
+            id_pattern: id_pattern.map(str::parse).transpose().map_err(|error| internal(&error))?,
+            type_: type_expression.parse().map_err(|error| internal(&error))?,
         })
     }
 
     fn subscription(selectors: Vec<EntitySelector>) -> Result<CompiledSubscription, SubscriptionError> {
         Ok(CompiledSubscription {
-            id: "urn:ngsi-ld:Subscription:routing".parse().map_err(internal)?,
-            key: SubscriptionKey::try_from(9).map_err(internal)?,
+            id: "urn:ngsi-ld:Subscription:routing".parse().map_err(|error| internal(&error))?,
+            key: SubscriptionKey::try_from(9).map_err(|error| internal(&error))?,
             status: SubscriptionStatus::Active,
-            endpoint_uri: Url::parse("http://example.com/notify").map_err(internal)?,
+            endpoint_uri: Url::parse("http://example.com/notify").map_err(|error| internal(&error))?,
             endpoint_accept: None,
             endpoint_receiver_info: None,
             endpoint_notifier_info: None,

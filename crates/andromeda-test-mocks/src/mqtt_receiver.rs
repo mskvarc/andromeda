@@ -1,5 +1,6 @@
 //! Typed MQTT notification receiver with explicit failures.
 
+use derive_more::Into;
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
@@ -12,7 +13,7 @@ use tokio::{
 use uuid::Uuid;
 
 /// MQTT broker host name.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Into, PartialEq, Eq)]
 pub struct MqttHost(String);
 
 impl MqttHost {
@@ -56,6 +57,10 @@ pub struct MqttMessage {
 
 impl MqttMessage {
     /// Decode the exact payload bytes as JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MqttReceiverError::InvalidJson`] when the captured payload bytes are not valid JSON.
     pub fn json(&self) -> Result<Value, MqttReceiverError> {
         serde_json::from_slice(&self.payload).map_err(MqttReceiverError::InvalidJson)
     }
@@ -91,7 +96,7 @@ impl MqttReceiver {
     #[must_use]
     pub fn connect(host: MqttHost, port: u16, credentials: Option<MqttCredentials>) -> MqttReceiver {
         let client_id = format!("andromeda-test-{}", Uuid::new_v4());
-        let mut options = MqttOptions::new(client_id, host.as_str(), port);
+        let mut options = MqttOptions::new(client_id, host, port);
         options.set_keep_alive(Duration::from_secs(30));
         if let Some(credentials) = credentials {
             options.set_credentials(credentials.username, credentials.password);
@@ -125,11 +130,20 @@ impl MqttReceiver {
     }
 
     /// Subscribe to a typed topic.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MqttReceiverError::Client`] when the subscription request cannot be handed to the event loop,
+    /// which happens once the connection to the broker has been lost.
     pub async fn subscribe(&self, topic: &MqttTopic, qos: QoS) -> Result<(), MqttReceiverError> {
         self.client.subscribe(topic.as_str(), qos).await.map_err(MqttReceiverError::Client)
     }
 
     /// Wait for and remove the oldest captured message.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MqttReceiverError::Timeout`] when no publication is captured before `timeout` elapses.
     pub async fn next_message(&self, timeout: Duration) -> Result<MqttMessage, MqttReceiverError> {
         let deadline = Instant::now() + timeout;
         loop {
@@ -145,6 +159,11 @@ impl MqttReceiver {
     }
 
     /// Disconnect and stop the capture task.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MqttReceiverError::Client`] when the disconnect request cannot be handed to the event loop,
+    /// which happens once the connection to the broker has been lost.
     pub async fn shutdown(self) -> Result<(), MqttReceiverError> {
         self.client.disconnect().await.map_err(MqttReceiverError::Client)?;
         self.task.abort();

@@ -4,8 +4,8 @@
 //! - Retrieve: basic, with context, specific attributes, temporal queries, lastN, pagination
 //! - Query: by type, id, idPattern, attrs, geoquery, q filter, lastN, limit, pagination
 //! - Representations: normalized, temporalValues, aggregatedValues
-//! - Property types: Property, LanguageProperty, JsonProperty, VocabProperty
-//! - DeletedAt handling
+//! - Property types: `Property`, `LanguageProperty`, `JsonProperty`, `VocabProperty`
+//! - `DeletedAt` handling
 //!
 //! Standalone test suite using `tokio::test` and `reqwest` directly.
 //!
@@ -173,7 +173,7 @@ fn vehicle_temporal_september(id: &str) -> Value {
     })
 }
 
-/// Vehicle with temporal attributes and location GeoProperty.
+/// Vehicle with temporal attributes and location `GeoProperty`.
 fn vehicle_temporal_with_location(id: &str) -> Value {
     json!({
         "id": id,
@@ -277,7 +277,7 @@ fn bus_temporal_august(id: &str) -> Value {
     })
 }
 
-/// Vehicle with LanguageProperty for name.
+/// Vehicle with `LanguageProperty` for name.
 fn vehicle_temporal_language_property(id: &str) -> Value {
     json!({
         "id": id,
@@ -298,7 +298,7 @@ fn vehicle_temporal_language_property(id: &str) -> Value {
     })
 }
 
-/// Vehicle with JsonProperty.
+/// Vehicle with `JsonProperty`.
 fn vehicle_temporal_json_property(id: &str) -> Value {
     json!({
         "id": id,
@@ -319,7 +319,7 @@ fn vehicle_temporal_json_property(id: &str) -> Value {
     })
 }
 
-/// Vehicle with VocabProperty.
+/// Vehicle with `VocabProperty`.
 fn vehicle_temporal_vocab_property(id: &str) -> Value {
     json!({
         "id": id,

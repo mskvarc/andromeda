@@ -116,7 +116,7 @@ macro_rules! impl_subscription_store {
                 match pg_row {
                     Some(pg) => {
                         let row = row_from_pg(&pg, $hdi).map_err(persistence_error)?;
-                        Ok(Some(row_to_stored_subscription(row).map_err(persistence_error)?))
+                        Ok(Some(row_to_stored_subscription(row)))
                     }
                     None => Ok(None),
                 }
@@ -142,8 +142,11 @@ macro_rules! impl_subscription_store {
                     .and_where(Expr::col((Subscriptions::Table, Subscriptions::ContextSpaceKey)).eq(target.key().as_i64()))
                     .and_where(of_kind($kind))
                     .order_by((Subscriptions::Table, Subscriptions::CreatedAt), Order::Asc)
-                    .limit(<i64 as Ord>::max(limit, 0) as u64)
-                    .offset(<i64 as Ord>::max(offset, 0) as u64);
+                    // A negative window bound is an absent one, not a
+                    // narrower one, so it clamps to zero rather than wrapping
+                    // into an enormous unsigned width.
+                    .limit(u64::try_from(limit).unwrap_or(0))
+                    .offset(u64::try_from(offset).unwrap_or(0));
                 let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
                 let pg_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .fetch_all(&self.pool)
@@ -152,7 +155,6 @@ macro_rules! impl_subscription_store {
                 // A listing renders resources, so the surrogate key each row
                 // carries is dropped rather than threaded into the response.
                 let subscriptions = rows_to_stored_subscriptions(&pg_rows, $hdi)
-                    .map_err(persistence_error)?
                     .into_iter()
                     .map(|stored| stored.subscription)
                     .collect();
@@ -198,7 +200,7 @@ macro_rules! impl_subscription_store {
                     .fetch_all(&self.pool)
                     .await
                     .map_err(persistence_error)?;
-                rows_to_stored_subscriptions(&pg_rows, $hdi).map_err(persistence_error)
+                Ok(rows_to_stored_subscriptions(&pg_rows, $hdi))
             }
 
             async fn claim_notification_slot(
@@ -254,7 +256,7 @@ macro_rules! impl_subscription_store {
                     .map(|row| {
                         row.try_get::<String, _>("id")
                             .map_err(persistence_error)
-                            .and_then(|raw| stored_subscription_uri(raw).map_err(persistence_error))
+                            .and_then(|raw| stored_subscription_uri(&raw).map_err(persistence_error))
                     })
                     .collect()
             }
@@ -315,7 +317,6 @@ macro_rules! impl_subscription_store {
                 // An interval notification is sent straight to the endpoint and
                 // never enqueues a delivery, so it needs no surrogate key.
                 Ok(rows_to_stored_subscriptions(&pg_rows, $hdi)
-                    .map_err(persistence_error)?
                     .into_iter()
                     .map(|stored| stored.subscription)
                     .collect())

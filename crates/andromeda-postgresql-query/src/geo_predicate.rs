@@ -79,6 +79,14 @@ pub enum GeometrySource<'a> {
 /// The reference geometry is encoded here rather than by each caller: it is
 /// already parsed and validated on [`GeoQuery`], so every target binds the same
 /// bytes for the same query by construction.
+///
+/// # Errors
+///
+/// Returns [`RenderError::ReferenceGeometryEncoding`] when the query's
+/// reference geometry has no EWKB spelling the store can bind, and
+/// [`RenderError::Query`] carrying [`QueryError::NearWithoutDistance`] when
+/// `georel=near` names neither `maxDistance` nor `minDistance`, which clause
+/// 4.10 requires at least one of.
 pub fn condition(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names: &ResolvedNames<AttributeName>) -> Result<Condition, RenderError> {
     let Some(subject) = subject_geometry(geo, source, attribute_names) else {
         // Clause 4.10: an Entity that does not convey the target GeoProperty is

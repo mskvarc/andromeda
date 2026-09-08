@@ -91,6 +91,15 @@ impl EntityQueryService {
 
     /// Execute a parameterized entity query (clause 5.7.2), returning matching
     /// entities and the optional clause 6.3.13 count.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::JsonLd`] when the request or a result cannot be
+    /// expanded or compacted against `context`, [`EntityError::Query`] when the
+    /// request's filter expressions are not well formed,
+    /// [`EntityError::OperationNotSupported`] when the store cannot narrow a
+    /// predicate at all (clause 5.5.2), and [`EntityError::Persistence`] when
+    /// the store could not answer the query.
     pub async fn query(&self, target: &ContextTarget, query: &EntityQueryParameters, context: &ContextSpec) -> Result<(Vec<Entity>, Option<i64>), EntityError> {
         let compiled = self.compile_query_cached(query, context, LimitCap::Capped).await?;
         // Gated on the narrowed selection, not the one the client wrote: the
@@ -110,7 +119,7 @@ impl EntityQueryService {
                 return Ok((Vec::new(), total_count));
             }
         };
-        refuse_unnarrowable(self.query_store.profile(), &narrowed.selection)?;
+        refuse_unnarrowable(*self.query_store.profile(), &narrowed.selection)?;
         let outcome = self.query_store.query_compiled(target, &narrowed).await?;
         let page = finish_page(outcome, compiled.pagination)?;
         let sys_attrs = query.parse_options().sys_attrs;
@@ -166,8 +175,14 @@ impl EntityQueryService {
 
     /// Execute a compiled query returning only entity identifiers
     /// (clause 5.2.39 entity maps).
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::OperationNotSupported`] when the store cannot
+    /// narrow a predicate of `compiled` at all (clause 5.5.2), and
+    /// [`EntityError::Persistence`] when the store could not answer the query.
     pub async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<Vec<Uri>, EntityError> {
-        refuse_unnarrowable(self.query_store.profile(), &compiled.selection)?;
+        refuse_unnarrowable(*self.query_store.profile(), &compiled.selection)?;
         let outcome = self.query_store.query_ids(target, compiled).await?;
         self.finish_ids(target, outcome, compiled.pagination).await
     }

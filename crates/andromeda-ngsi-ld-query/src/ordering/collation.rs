@@ -16,6 +16,13 @@ pub struct IcuCollation(LangTagBuf);
 
 impl IcuCollation {
     /// Parses and validates an ICU collation identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IcuCollationError::Empty`] when `raw` is blank,
+    /// [`IcuCollationError::InvalidTag`] when it is not a BCP47 language tag,
+    /// and [`IcuCollationError::MissingUnicodeExtension`] when the tag carries
+    /// no Unicode `-u-` extension.
     pub fn parse(raw: &str) -> Result<IcuCollation, IcuCollationError> {
         let trimmed = raw.trim();
         if trimmed.is_empty() {

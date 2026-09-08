@@ -38,6 +38,17 @@ impl ScopeValue {
     }
 }
 
+// Borrowed iteration goes through the inherent `iter`; the impl is what lets a
+// `&ScopeValue` be used directly in a `for` loop or an iterator adapter.
+impl<'a> IntoIterator for &'a ScopeValue {
+    type Item = &'a ScopeBuf;
+    type IntoIter = Iter<'a, ScopeBuf>;
+
+    fn into_iter(self) -> Iter<'a, ScopeBuf> {
+        self.iter()
+    }
+}
+
 impl Expandable for ScopeValue {
     fn expand<V: JsonValue>(&self) -> V {
         V::array(self.iter().map(|s| V::object(once(("@value".to_string(), V::string(s.as_str()))))))
@@ -647,9 +658,9 @@ mod tests {
         let obj = expanded.as_object().expect("expanded is object");
 
         let location = &obj[expanded_properties::LOCATION.as_str()];
-        // Location is an AttributeValue, expanded via custom
+        // A single-instance AttributeValue expands to a one-element array.
         let arr = location.as_array().expect("location is array");
-        assert!(!arr.is_empty());
+        pretty_assertions::assert_eq!(arr.len(), 1);
     }
 
     #[test]

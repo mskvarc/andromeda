@@ -38,6 +38,31 @@ impl AsRef<str> for AttributeType {
     }
 }
 
+/// Expands to the reserved compacted member names of one attribute type: the
+/// type-specific names passed in, followed by the members every attribute
+/// instance reserves whatever its type — `observedAt` and `expiresAt` (clause
+/// 4.5.1), `datasetId` and `instanceId` (clause 4.5.5), the system attributes
+/// of clause 4.8, and the `name` member a simplified representation carries.
+///
+/// Written once and invoked once per [`AttributeType`] variant in
+/// [`AttributeType::reserved_fields`], so the shared tail cannot drift between
+/// the eight tables.
+macro_rules! reserved_compact_members {
+    ($($specific:expr),+ $(,)?) => {
+        &[
+            $($specific,)+
+            compact_properties::OBSERVED_AT,
+            compact_properties::EXPIRES_AT,
+            compact_properties::DATASET_ID,
+            compact_properties::INSTANCE_ID,
+            compact_properties::CREATED_AT,
+            compact_properties::MODIFIED_AT,
+            compact_properties::DELETED_AT,
+            "name",
+        ]
+    };
+}
+
 impl AttributeType {
     /// Returns the expanded IRI for this attribute type as an [`Iri`].
     #[must_use]
@@ -141,120 +166,56 @@ impl AttributeType {
     #[must_use]
     pub const fn reserved_fields(self) -> &'static [&'static str] {
         match self {
-            Self::Property => &[
+            Self::Property => reserved_compact_members![
                 compact_properties::VALUE,
                 compact_properties::VALUES,
                 compact_properties::PREVIOUS_VALUE,
                 compact_properties::UNIT_CODE,
                 compact_properties::VALUE_TYPE,
-                compact_properties::OBSERVED_AT,
-                compact_properties::EXPIRES_AT,
-                compact_properties::DATASET_ID,
-                compact_properties::INSTANCE_ID,
-                compact_properties::CREATED_AT,
-                compact_properties::MODIFIED_AT,
-                compact_properties::DELETED_AT,
-                "name",
             ],
-            Self::Relationship => &[
+            Self::Relationship => reserved_compact_members![
                 compact_properties::OBJECT,
                 compact_properties::OBJECTS,
                 compact_properties::PREVIOUS_OBJECT,
                 compact_properties::OBJECT_TYPE,
                 compact_properties::ENTITY,
-                compact_properties::OBSERVED_AT,
-                compact_properties::EXPIRES_AT,
-                compact_properties::DATASET_ID,
-                compact_properties::INSTANCE_ID,
-                compact_properties::CREATED_AT,
-                compact_properties::MODIFIED_AT,
-                compact_properties::DELETED_AT,
-                "name",
             ],
-            Self::GeoProperty => &[
+            Self::GeoProperty => reserved_compact_members![
                 compact_properties::VALUE,
                 compact_properties::VALUES,
                 compact_properties::PREVIOUS_VALUE,
                 compact_properties::VALUE_TYPE,
-                compact_properties::OBSERVED_AT,
-                compact_properties::EXPIRES_AT,
-                compact_properties::DATASET_ID,
-                compact_properties::INSTANCE_ID,
-                compact_properties::CREATED_AT,
-                compact_properties::MODIFIED_AT,
-                compact_properties::DELETED_AT,
-                "name",
             ],
-            Self::VocabProperty => &[
+            Self::VocabProperty => reserved_compact_members![
                 compact_properties::VOCAB,
                 compact_properties::VOCABS,
                 compact_properties::PREVIOUS_VOCAB,
                 compact_properties::VALUE_TYPE,
-                compact_properties::OBSERVED_AT,
-                compact_properties::EXPIRES_AT,
-                compact_properties::DATASET_ID,
-                compact_properties::INSTANCE_ID,
-                compact_properties::CREATED_AT,
-                compact_properties::MODIFIED_AT,
-                compact_properties::DELETED_AT,
-                "name",
             ],
-            Self::LanguageProperty => &[
+            Self::LanguageProperty => reserved_compact_members![
                 compact_properties::LANGUAGE_MAP,
                 compact_properties::LANGUAGE_MAPS,
                 compact_properties::PREVIOUS_LANGUAGE_MAP,
                 compact_properties::VALUE_TYPE,
-                compact_properties::OBSERVED_AT,
-                compact_properties::EXPIRES_AT,
-                compact_properties::DATASET_ID,
-                compact_properties::INSTANCE_ID,
-                compact_properties::CREATED_AT,
-                compact_properties::MODIFIED_AT,
-                compact_properties::DELETED_AT,
-                "name",
             ],
-            Self::JsonProperty => &[
+            Self::JsonProperty => reserved_compact_members![
                 compact_properties::JSON,
                 compact_properties::JSONS,
                 compact_properties::PREVIOUS_JSON,
                 compact_properties::VALUE_TYPE,
-                compact_properties::OBSERVED_AT,
-                compact_properties::EXPIRES_AT,
-                compact_properties::DATASET_ID,
-                compact_properties::INSTANCE_ID,
-                compact_properties::CREATED_AT,
-                compact_properties::MODIFIED_AT,
-                compact_properties::DELETED_AT,
-                "name",
             ],
-            Self::ListProperty => &[
+            Self::ListProperty => reserved_compact_members![
                 compact_properties::VALUE_LIST,
                 compact_properties::VALUES,
                 compact_properties::PREVIOUS_VALUE_LIST,
                 compact_properties::VALUE_TYPE,
-                compact_properties::OBSERVED_AT,
-                compact_properties::EXPIRES_AT,
-                compact_properties::DATASET_ID,
-                compact_properties::INSTANCE_ID,
-                compact_properties::CREATED_AT,
-                compact_properties::MODIFIED_AT,
-                compact_properties::DELETED_AT,
-                "name",
             ],
-            Self::ListRelationship => &[
+            Self::ListRelationship => reserved_compact_members![
                 compact_properties::OBJECT_LIST,
                 compact_properties::OBJECTS,
                 compact_properties::PREVIOUS_OBJECT_LIST,
                 compact_properties::OBJECT_TYPE,
                 compact_properties::ENTITY_LIST,
-                compact_properties::OBSERVED_AT,
-                compact_properties::EXPIRES_AT,
-                compact_properties::DATASET_ID,
-                compact_properties::INSTANCE_ID,
-                compact_properties::CREATED_AT,
-                compact_properties::MODIFIED_AT,
-                compact_properties::DELETED_AT,
-                "name",
             ],
         }
     }

@@ -7,6 +7,12 @@ use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Row};
 
 /// Discover the PostgreSQL server and installed storage extensions active on one pool.
+///
+/// # Errors
+///
+/// Returns [`sqlx::Error`] when the introspection statement cannot be executed
+/// against the pool, or when the returned row does not carry the expected
+/// version and license columns.
 pub async fn discover(pool: &PgPool) -> Result<Vec<ComponentReport>, sqlx::Error> {
     let (sql, values) = discover_statement().build_sqlx(PostgresQueryBuilder);
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(pool).await?;

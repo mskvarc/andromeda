@@ -182,12 +182,12 @@ async fn construct(
     )?;
     // The platform route from minted subscription identifiers to tenants is
     // shared by every tenant's forwarding service and by the receiver.
-    let subscription_router: Arc<dyn ForwardedSubscriptionRouter> = Arc::new(PostgresForwardedSubscriptionRouter::new(registry.main_pool()));
+    let forwarded_subscription_router: Arc<dyn ForwardedSubscriptionRouter> = Arc::new(PostgresForwardedSubscriptionRouter::new(registry.main_pool()));
     let factory = Arc::new(BrokerTenantFactory::new(
         &config,
         database_url,
         process_tasks.clone(), // clone: tenant scopes and process shutdown share supervision
-        Arc::clone(&subscription_router),
+        Arc::clone(&forwarded_subscription_router),
     ));
     let tenants = TenantRuntimeManager::new(config.tenancy.clone(), Arc::clone(&registry), Arc::clone(&factory)); // clone: manager owns its policy
     drop(tenants.spawn_janitor());
@@ -226,7 +226,7 @@ async fn construct(
         )))
         .notification_receiver(NotificationReceiverRoutes::new(Arc::new(BrokerNotificationReceiverResolver::new(
             Arc::clone(&tenants),
-            subscription_router,
+            forwarded_subscription_router,
         ))))
         .tenancy(TenancyRoutes::new(directory, evictor))
         .health(HealthRoutes::new(health.build()))
@@ -301,5 +301,9 @@ fn report_ctrl_c(result: Result<(), IoError>) {
 /// Report whether the SIGTERM stream produced a signal before closing.
 #[cfg(unix)]
 fn report_sigterm(received: Option<()>) {
-    if let Some(()) = received { tracing::info!(signal = "sigterm", event = "shutdown_signal_received") } else { tracing::error!("SIGTERM signal stream ended before receiving a signal") }
+    if let Some(()) = received {
+        tracing::info!(signal = "sigterm", event = "shutdown_signal_received")
+    } else {
+        tracing::error!("SIGTERM signal stream ended before receiving a signal")
+    }
 }

@@ -149,8 +149,8 @@ async fn a_tenant_left_between_cutover_phases_is_refused_at_startup() {
             assert_eq!(expected, contract.version(), "the refusal must name the version the binary requires");
             assert_eq!(found.get(), partial, "the refusal must name the version the tenant stopped at");
         }
-        Err(other) => unreachable!("a partially applied migration set must be reported as a version mismatch: {other}"),
-        Ok(()) => unreachable!("a tenant left between cutover phases must be refused"),
+        Err(other) => panic!("a partially applied migration set must be reported as a version mismatch: {other}"),
+        Ok(()) => panic!("a tenant left between cutover phases must be refused"),
     }
 
     pool.close().await;

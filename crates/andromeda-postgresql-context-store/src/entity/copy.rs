@@ -105,6 +105,13 @@ SELECT entity_key, id FROM ins
 ///
 /// The inserts name their target columns explicitly, so the physical column
 /// order of the relations is free to change without this statement moving.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError`] when the batch names an entity type the
+/// dictionary has not interned, when the staging table cannot be created, when
+/// the binary COPY stream is rejected, when the materialising insert fails, or
+/// when a returned surrogate key or identifier is not a valid written entity.
 pub async fn create_batch_via_copy_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     target: &ContextTarget,
@@ -129,7 +136,7 @@ pub async fn create_batch_via_copy_in_tx(
         .fetch_all(&mut **tx)
         .await
         .map_err(entity_write_failure)?;
-    rows.into_iter().map(|(key, id)| stored_written_entity(key, id)).collect()
+    rows.iter().map(|(key, id)| stored_written_entity(*key, id)).collect()
 }
 
 /// Encode a set of entity columns into the Postgres binary COPY format.
@@ -214,7 +221,8 @@ mod tests {
     fn every_row_carries_the_eleven_staged_fields() {
         let stream = encode_entities_copy_stream(&sample_columns());
         // The first tuple's field count follows the 19-byte header.
-        pretty_assertions::assert_eq!(&stream[19..21], &[0, STAGE_ENTITIES_FIELD_COUNT as u8]);
+        let field_count = u8::try_from(STAGE_ENTITIES_FIELD_COUNT).expect("the staged field count fits one byte");
+        pretty_assertions::assert_eq!(&stream[19..21], &[0, field_count]);
     }
 
     #[test]

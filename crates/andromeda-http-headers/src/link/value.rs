@@ -69,6 +69,7 @@ impl LinkValue {
     }
 
     /// Add a relation type to the `rel` parameter.
+    #[must_use]
     pub fn push_rel(mut self, rel: RelationType) -> LinkValue {
         self.rel.get_or_insert_with(Vec::new).push(rel);
         self

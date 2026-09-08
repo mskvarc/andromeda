@@ -8,6 +8,11 @@ use urlencoding::encode;
 
 impl TestClient {
     /// Create a Context Source Registration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn create_registration(&self, body: &Value) -> Result<TestResponse, RequestError> {
         let url = self.endpoint().join("csourceRegistrations")?;
         let request = self
@@ -18,16 +23,34 @@ impl TestClient {
     }
 
     /// Retrieve one Context Source Registration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint,
+    /// [`RequestError::Header`] when `context` is not a valid IRI reference or cannot be encoded as a `Link` header, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn retrieve_registration(&self, id: &str, context: Option<&str>) -> Result<TestResponse, RequestError> {
         self.registration_get(&format!("csourceRegistrations/{}", encode(id)), context).await
     }
 
     /// Query Context Source Registrations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint,
+    /// [`RequestError::Header`] when `context` is not a valid IRI reference or cannot be encoded as a `Link` header, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn query_registrations(&self, query: &str, context: Option<&str>) -> Result<TestResponse, RequestError> {
         self.registration_get(&format!("csourceRegistrations{}", query_suffix(query)), context).await
     }
 
     /// Update one Context Source Registration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint,
+    /// [`RequestError::Header`] when `context` is not a valid IRI reference or cannot be encoded as a `Link` header, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn update_registration(&self, id: &str, fragment: &Value, context: Option<&str>) -> Result<TestResponse, RequestError> {
         let url = self.endpoint().join(&format!("csourceRegistrations/{}", encode(id)))?;
         let mut request = self
@@ -41,6 +64,11 @@ impl TestClient {
     }
 
     /// Delete one Context Source Registration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn delete_registration(&self, id: &str) -> Result<TestResponse, RequestError> {
         let url = self.endpoint().join(&format!("csourceRegistrations/{}", encode(id)))?;
         let request = self.request(Method::DELETE, url.clone()); // clone: transport diagnostics retain the request URL.

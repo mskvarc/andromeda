@@ -72,7 +72,7 @@ fn keeps_scope(projection: &Projection) -> bool {
     if !projection.pick.is_empty() && !projection.pick.contains(&ProjectionTerm::Scope) {
         return false;
     }
-    !(!projection.omit.is_empty() && projection.omit.contains(&ProjectionTerm::Scope))
+    projection.omit.is_empty() || !projection.omit.contains(&ProjectionTerm::Scope)
 }
 
 #[cfg(test)]

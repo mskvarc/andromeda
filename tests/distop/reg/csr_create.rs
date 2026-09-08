@@ -115,7 +115,7 @@ async fn reg_contextsourceinfo_stored() {
     let stored = create_and_retrieve(&topology, &id, &body).await;
     let info = stored["contextSourceInfo"]
         .as_array()
-        .unwrap_or_else(|| unreachable!("contextSourceInfo round-trips"));
+        .unwrap_or_else(|| panic!("contextSourceInfo round-trips"));
     assert!(
         info.iter()
             .any(|entry| entry["key"] == json!("accept") && entry["value"] == json!("application/ld+json")),
@@ -188,7 +188,7 @@ async fn reg_missing_id_generates_uri() {
     let topology = topology::single().await.expect("single-broker topology");
     let placeholder = topology.id("registration:generated");
     let mut body = csr_basic(&placeholder, PEER_ENDPOINT);
-    body.as_object_mut().unwrap_or_else(|| unreachable!("baseline object")).remove("id");
+    body.as_object_mut().unwrap_or_else(|| panic!("baseline object")).remove("id");
 
     let created = topology
         .broker(BrokerRole::A)
@@ -198,7 +198,7 @@ async fn reg_missing_id_generates_uri() {
         .expect("create registration");
     assert_status(&created, 201);
     let location = location(&created);
-    let generated = location.rsplit('/').next().unwrap_or_else(|| unreachable!("Location has a final segment"));
+    let generated = location.rsplit('/').next().unwrap_or_else(|| panic!("Location has a final segment"));
     assert!(generated.starts_with("urn:"), "generated registration id is a URI: {generated}");
 
     let retrieved = topology

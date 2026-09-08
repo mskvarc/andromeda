@@ -88,7 +88,7 @@ async fn distop_query_entities_map_location_reused_or_recreated() {
 
     assert_status(&query_reusing_map(&topology, "type=Vehicle", &map).await, 200);
     assert_eq!(
-        mock.get_count(Method::GET, "/s2/ngsi-ld/v1/entities").await,
+        mock.get_count(Method::GET, "/s2/ngsi-ld/v1/entities"),
         0,
         "a valid map fixes the CSR set and the new source is not consulted"
     );
@@ -96,7 +96,7 @@ async fn distop_query_entities_map_location_reused_or_recreated() {
     let bogus = topology.id("EntityMap:bogus");
     assert_status(&query_reusing_map(&topology, "type=Vehicle", &bogus).await, 201);
     assert!(
-        mock.get_count(Method::GET, "/s2/ngsi-ld/v1/entities").await > 0,
+        mock.get_count(Method::GET, "/s2/ngsi-ld/v1/entities") > 0,
         "a bogus map is recreated by fresh discovery, now consulting the new source"
     );
 

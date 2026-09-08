@@ -144,10 +144,14 @@ impl GeometryBuilder {
     /// Record a position into the geometry currently open.
     fn record(&mut self, position: Position) -> Result<(), GeometryBuildError> {
         match self.stack.last_mut() {
-            Some(PartialGeometry::Point(slot)) => if slot.is_some() { Err(GeometryBuildError::RepeatedPointCoordinate) } else {
-                *slot = Some(position);
-                Ok(())
-            },
+            Some(PartialGeometry::Point(slot)) => {
+                if slot.is_some() {
+                    Err(GeometryBuildError::RepeatedPointCoordinate)
+                } else {
+                    *slot = Some(position);
+                    Ok(())
+                }
+            }
             Some(PartialGeometry::MultiPoint(positions) | PartialGeometry::LineString(positions)) => {
                 positions.push(position);
                 Ok(())
@@ -168,10 +172,14 @@ impl GeometryBuilder {
     fn complete(&mut self, form: GeometryForm) -> Result<(), GeometryBuildError> {
         match self.stack.last() {
             Some(_enclosing) => Err(GeometryBuildError::MisplacedGeometry { geometry: form_name(&form) }),
-            None => if self.finished.is_some() { Err(GeometryBuildError::TrailingGeometry) } else {
-                self.finished = Some(form);
-                Ok(())
-            },
+            None => {
+                if self.finished.is_some() {
+                    Err(GeometryBuildError::TrailingGeometry)
+                } else {
+                    self.finished = Some(form);
+                    Ok(())
+                }
+            }
         }
     }
 }
@@ -474,7 +482,7 @@ mod tests {
         builder.linestring_end(false, 0).expect("a ring may end");
         builder.polygon_end(true, 0).expect("a Polygon may end");
         let GeometryForm::Polygon(rings) = builder.finish().expect("the Polygon is complete") else {
-            unreachable!("a Polygon was built");
+            panic!("a Polygon was built");
         };
         pretty_assertions::assert_eq!(rings.rings().len(), 1);
         pretty_assertions::assert_eq!(rings.rings()[0].len(), 3);

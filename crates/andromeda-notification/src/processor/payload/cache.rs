@@ -196,7 +196,9 @@ fn hash_json_value(value: &Value, hasher: &mut impl Hasher) {
         Value::Array(values) => {
             hasher.write_u8(4);
             hasher.write_usize(values.len());
-            values.iter().for_each(|value| hash_json_value(value, hasher));
+            for value in values {
+                hash_json_value(value, hasher);
+            }
         }
         Value::Object(object) => {
             hasher.write_u8(5);

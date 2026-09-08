@@ -176,7 +176,7 @@ fn building_location_second(id: &str) -> Value {
             "type": "GeoProperty",
             "value": {
                 "type": "Point",
-                "coordinates": [13.388930, 52.534473]
+                "coordinates": [13.388_930, 52.534_473]
             }
         },
         "@context": [COMPOUND_CONTEXT]
@@ -290,7 +290,7 @@ fn building_location_polygon(id: &str) -> Value {
             "type": "GeoProperty",
             "value": {
                 "type": "Polygon",
-                "coordinates": [[[13.2865906,52.5648645],[13.2879639,52.5648645],[13.2797241,52.4988679],[13.477478,52.4712703],[13.5049438,52.5373084],[13.2865906,52.5648645]]]
+                "coordinates": [[[13.286_590_6,52.564_864_5],[13.287_963_9,52.564_864_5],[13.279_724_1,52.498_867_9],[13.477_478,52.471_270_3],[13.504_943_8,52.537_308_4],[13.286_590_6,52.564_864_5]]]
             }
         },
         "@context": [COMPOUND_CONTEXT]
@@ -828,7 +828,7 @@ async fn create_entity_full(client: &Client, entity: &Value, content_type: &str,
     }
     let resp = req.json(entity).send().await.expect("create_entity_full request failed");
     let status = resp.status();
-    let location = resp.headers().get("Location").and_then(|v| v.to_str().ok()).map(std::borrow::ToOwned::to_owned);
+    let location = resp.headers().get("Location").and_then(|v| v.to_str().ok()).map(ToOwned::to_owned);
     let body: Value = resp.json().await.unwrap_or_default();
     (status, location, body)
 }

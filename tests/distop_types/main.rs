@@ -135,7 +135,7 @@ fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
     headers
         .get_all("NGSILD-Warning")
         .iter()
-        .filter_map(|v| v.to_str().ok().map(std::string::ToString::to_string))
+        .filter_map(|v| v.to_str().ok().map(str::to_owned))
         .collect()
 }
 
@@ -166,11 +166,7 @@ async fn distop_types_local_skips_forwarding() {
     let (status, _, _) = list_types(&c, "local=true").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    pretty_assertions::assert_eq!(
-        mock.get_count(Method::GET, "/ngsi-ld/v1/types").await,
-        0,
-        "CSR should not be called when local=true"
-    );
+    pretty_assertions::assert_eq!(mock.get_count(Method::GET, "/ngsi-ld/v1/types"), 0, "CSR should not be called when local=true");
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
@@ -206,7 +202,7 @@ async fn distop_types_merges_remote_types() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     assert!(
-        mock.get_count(Method::GET, "/ngsi-ld/v1/types").await > 0,
+        mock.get_count(Method::GET, "/ngsi-ld/v1/types") > 0,
         "CSR should be called when local is not set"
     );
 

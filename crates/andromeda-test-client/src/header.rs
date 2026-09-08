@@ -7,12 +7,21 @@ use std::str::FromStr;
 use thiserror::Error;
 
 /// Build the JSON-LD context `Link` header defined by NGSI-LD clause 6.3.5.
+///
+/// # Errors
+///
+/// Returns [`HeaderEncodingError::InvalidIri`] when `context_url` is not a valid IRI reference, and
+/// [`HeaderEncodingError::InvalidLink`] when the typed `Link` cannot be rendered as an HTTP header value.
 pub fn jsonld_link_header(context_url: &str) -> Result<HeaderValue, HeaderEncodingError> {
     let context_url = IriRefBuf::from_str(context_url).map_err(|_error| HeaderEncodingError::InvalidIri)?;
     Link::jsonld_context(context_url).to_header_value().ok_or(HeaderEncodingError::InvalidLink)
 }
 
 /// Collect every valid `NGSILD-Warning` response header value.
+///
+/// # Errors
+///
+/// Returns [`HeaderEncodingError::InvalidText`] when any `NGSILD-Warning` header value is not valid visible text.
 pub fn warning_header_values(headers: &HeaderMap) -> Result<Vec<&str>, HeaderEncodingError> {
     headers
         .get_all("ngsild-warning")

@@ -15,7 +15,7 @@ use crate::error::ContextStoreError;
 use andromeda_entity::error::EntityError;
 
 /// Map an adapter failure into the entity port's persistence category.
-fn persistence(error: ContextStoreError) -> EntityError {
+fn persistence(error: &ContextStoreError) -> EntityError {
     EntityError::persistence(error.to_string())
 }
 

@@ -18,6 +18,11 @@ pub struct SubscriptionRepository {
 
 impl SubscriptionRepository {
     /// Generates a new unique URN identifier for an entity subscription.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError::Internal`] when the generated namespace
+    /// specific string is refused by the URN builder.
     pub fn generate_id() -> Result<Uri, ContextStoreError> {
         let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Subscription:{}", Uuid::new_v4()))
             .build()

@@ -26,6 +26,11 @@ pub enum WriteOutcome {
 }
 
 /// Extract the only outcome expected from a one-write commit.
+///
+/// # Errors
+///
+/// Returns [`CommitError::UnexpectedOutcomeCount`] when `outcomes` holds any
+/// number of outcomes other than exactly one.
 pub fn single(outcomes: Vec<WriteOutcome>) -> Result<WriteOutcome, CommitError> {
     let actual = outcomes.len();
     let mut outcomes = outcomes.into_iter();

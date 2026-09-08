@@ -44,7 +44,8 @@ fn widget(id: &str, attributes: &[String]) -> Value {
     object.insert("id".to_owned(), json!(id));
     object.insert("type".to_owned(), json!("Widget"));
     for (ordinal, attribute) in attributes.iter().enumerate() {
-        object.insert(attribute.clone(), json!({ "type": "Property", "value": ordinal as i64 }));
+        let ordinal = i64::try_from(ordinal).expect("attribute ordinal fits in i64");
+        object.insert(attribute.clone(), json!({ "type": "Property", "value": ordinal }));
     }
     object.insert("@context".to_owned(), json!([CORE_CONTEXT]));
     Value::Object(object)

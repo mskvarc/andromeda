@@ -77,9 +77,7 @@ async fn csr_notification_time_interval_periodic_includes_every_currently_matchi
     csr_subscription::create_and_assert(&topology, &subscription).await;
 
     let notification = adapter.wait_for_subscription_notification(&subscription_id, PRESENT).await;
-    let data = notification.body["data"]
-        .as_array()
-        .unwrap_or_else(|| unreachable!("notification data is an array"));
+    let data = notification.body["data"].as_array().unwrap_or_else(|| panic!("notification data is an array"));
     assert!(data.len() >= 2, "a periodic notification lists every matching registration, got {}", data.len());
     adapter.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -208,16 +206,13 @@ async fn csr_notification_returns_only_matching_registration_info() {
     let mut body = CsrBuilder::new(&registration_id, PEER_ENDPOINT).entity_type(&vtype).build();
     body["information"]
         .as_array_mut()
-        .unwrap_or_else(|| unreachable!("information is an array"))
+        .unwrap_or_else(|| panic!("information is an array"))
         .push(json!({ "entities": [ { "type": other_type } ] }));
     register(&topology, &body).await;
 
     let notification = adapter.wait_for_subscription_notification(&subscription_id, PRESENT).await;
-    let registration =
-        find(&notification.body["data"], &registration_id).unwrap_or_else(|| unreachable!("the registration is present in the notification data"));
-    let information = registration["information"]
-        .as_array()
-        .unwrap_or_else(|| unreachable!("information is an array"));
+    let registration = find(&notification.body["data"], &registration_id).unwrap_or_else(|| panic!("the registration is present in the notification data"));
+    let information = registration["information"].as_array().unwrap_or_else(|| panic!("information is an array"));
     assert_eq!(
         information.len(),
         1,

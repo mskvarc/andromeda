@@ -34,6 +34,13 @@ pub fn detect_attribute_type(instance: &Value) -> AttributeType {
 /// same clause 4.6.3 strict-UTC, six-fractional-digit policy as every other
 /// client-supplied `DateTime`, rather than accepting whatever `chrono`'s bare
 /// RFC 3339 parser admits.
+///
+/// # Errors
+///
+/// Returns [`TemporalStoreError::TimestampPrecision`] when the instance
+/// declares an `observedAt` whose `@value` is not a clause 4.6.3 `DateTime`:
+/// not RFC 3339, not expressed in UTC, or carrying a sub-microsecond fraction
+/// the store cannot hold.
 pub fn extract_observed_at(instance: &Value) -> Result<Option<DateTime<Utc>>, TemporalStoreError> {
     instance
         .get(expanded_properties::OBSERVED_AT.as_str())

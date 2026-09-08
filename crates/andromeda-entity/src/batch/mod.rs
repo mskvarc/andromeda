@@ -26,7 +26,12 @@ mod update;
 /// Batch upsert, in both of its modes.
 mod upsert;
 
-use crate::{EntityService, batch::delete::DeleteChunkOutcome, error::EntityError, side_effect::BatchSideEffectMode};
+use crate::{
+    EntityService,
+    batch::{delete::DeleteChunkOutcome, upsert::UpsertChunkOutcome},
+    error::EntityError,
+    side_effect::BatchSideEffectMode,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -70,6 +75,15 @@ impl EntityService {
     }
 
     /// Create multiple entities in a single batch operation (NGSI-LD 5.6.7).
+    ///
+    /// # Errors
+    ///
+    /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when a
+    /// submitted entity cannot be expanded against `context`, and
+    /// [`EntityError::Persistence`] when the store could not commit a chunk. A
+    /// failure that concerns one entity only is carried in
+    /// [`BatchResult::errors`] instead, because clause 5.6.7 reports batch
+    /// results per entity.
     pub async fn batch_create(
         &self,
         target: &ContextTarget,
@@ -101,6 +115,13 @@ impl EntityService {
     }
 
     /// Delete multiple entities by ID in a single batch operation (NGSI-LD 5.6.10).
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::Persistence`] when the store could not read or
+    /// commit a chunk. An identifier that names no entity, or that the batch
+    /// repeats, is carried in [`BatchResult::errors`] instead, because clause
+    /// 5.6.10 reports batch results per entity.
     pub async fn batch_delete(&self, target: &ContextTarget, entity_ids: &[Uri], mode: BatchSideEffectMode) -> Result<BatchResult, EntityError> {
         self.batch_activity.record_activity();
         let mut seen = HashSet::new();
@@ -132,6 +153,15 @@ impl EntityService {
     }
 
     /// Update attributes of multiple entities in a single batch operation (NGSI-LD 5.6.9).
+    ///
+    /// # Errors
+    ///
+    /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when a
+    /// submitted entity cannot be expanded against `context`, and
+    /// [`EntityError::Persistence`] when the store could not read or commit a
+    /// chunk. A failure that concerns one entity only is carried in
+    /// [`BatchResult::errors`] instead, because clause 5.6.9 reports batch
+    /// results per entity.
     pub async fn batch_update(
         &self,
         target: &ContextTarget,
@@ -152,6 +182,14 @@ impl EntityService {
     }
 
     /// Merge partial updates into multiple entities in a single batch operation.
+    ///
+    /// # Errors
+    ///
+    /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when a
+    /// submitted entity cannot be expanded against `context`, and
+    /// [`EntityError::Persistence`] when the store could not read or commit a
+    /// chunk. A failure that concerns one entity only is carried in
+    /// [`BatchResult::errors`] instead.
     pub async fn batch_merge(
         &self,
         target: &ContextTarget,
@@ -171,6 +209,16 @@ impl EntityService {
     }
 
     /// Create or update multiple entities in a single batch operation (NGSI-LD 5.6.8).
+    ///
+    /// # Errors
+    ///
+    /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when a
+    /// submitted entity cannot be expanded against `context`,
+    /// [`EntityError::Contention`] when a replacement lost its precondition on
+    /// every attempt, and [`EntityError::Persistence`] when the store could not
+    /// read or commit a chunk. A failure that concerns one entity only is
+    /// carried in [`BatchResult::errors`] instead, because clause 5.6.8 reports
+    /// batch results per entity.
     pub async fn batch_upsert(
         &self,
         target: &ContextTarget,
@@ -183,8 +231,7 @@ impl EntityService {
         let deduped = Self::dedupe_upsert_entities(entities);
         let chunk_len = self.batch_chunk_len(deduped.len());
 
-        type ChunkOutcome = (BatchResult, Vec<(Uri, EntityError)>, Vec<Uri>);
-        let chunk_results: Vec<Result<ChunkOutcome, EntityError>> = stream::iter(deduped.chunks(chunk_len))
+        let chunk_results: Vec<Result<UpsertChunkOutcome, EntityError>> = stream::iter(deduped.chunks(chunk_len))
             .map(|chunk| async move {
                 let mut chunk_errors = Vec::new();
                 let outcome = match policy {

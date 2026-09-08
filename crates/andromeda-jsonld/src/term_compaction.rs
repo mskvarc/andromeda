@@ -42,8 +42,8 @@ impl<'a> ContextualCompactor<'a> {
 /// only opens if a context maps an IRI to a term an attribute cannot be keyed
 /// by; the original is then the only name that still addresses the stored
 /// attribute.
-fn compacted_or_original(compacted: String, original: &AttributeName) -> AttributeName {
-    compacted.parse().unwrap_or_else(|_| original.clone()) // clone: the original stays in the filter being rendered
+fn compacted_or_original(compacted: &str, original: &AttributeName) -> AttributeName {
+    compacted.parse().unwrap_or_else(|_ungrammatical| original.clone()) // clone: the original stays in the filter being rendered
 }
 
 // Spelled with the trait's own `impl Future` return rather than as `async fn`
@@ -52,12 +52,18 @@ fn compacted_or_original(compacted: String, original: &AttributeName) -> Attribu
 impl TermCompactor for ContextualCompactor<'_> {
     fn compact_term(&self, name: &AttributeName) -> impl Future<Output = AttributeName> + Send {
         let (engine, context) = (self.engine, self.context);
-        async move { compacted_or_original(compact_attr_iri(engine, name.as_str(), context).await, name) }
+        async move {
+            let compacted = compact_attr_iri(engine, name.as_str(), context).await;
+            compacted_or_original(&compacted, name)
+        }
     }
 
     fn compact_type(&self, name: &AttributeName) -> impl Future<Output = AttributeName> + Send {
         let (engine, context) = (self.engine, self.context);
-        async move { compacted_or_original(compact_type_iri(engine, name.as_str(), context).await, name) }
+        async move {
+            let compacted = compact_type_iri(engine, name.as_str(), context).await;
+            compacted_or_original(&compacted, name)
+        }
     }
 }
 

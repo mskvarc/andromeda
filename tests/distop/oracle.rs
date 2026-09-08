@@ -34,7 +34,7 @@ pub fn assert_problem_details(response: &TestResponse, expected_type: &Iri<&str>
 pub fn json_body(response: &TestResponse) -> Value {
     match response.json_value() {
         Ok(value) => value,
-        Err(error) => unreachable!("response body is not JSON ({error}); raw: {}", String::from_utf8_lossy(&response.body)),
+        Err(error) => panic!("response body is not JSON ({error}); raw: {}", String::from_utf8_lossy(&response.body)),
     }
 }
 
@@ -42,11 +42,11 @@ pub fn json_body(response: &TestResponse) -> Value {
 pub fn location(response: &TestResponse) -> String {
     let header = match response.location() {
         Ok(header) => header,
-        Err(error) => unreachable!("Location header is not valid text: {error}"),
+        Err(error) => panic!("Location header is not valid text: {error}"),
     };
     match header {
         Some(value) => value.to_owned(),
-        None => unreachable!("response has no Location header"),
+        None => panic!("response has no Location header"),
     }
 }
 

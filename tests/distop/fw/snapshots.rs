@@ -199,7 +199,7 @@ async fn distop_entity_snapshot_ops_implicitly_local() {
     let endpoint = mock.url("");
     register_inclusive_query(&topology, &endpoint, "registration:snapshot-local").await;
     let snapshot_id = create_snapshot(topology.broker(BrokerRole::A).client()).await;
-    let forwarded_during_capture = mock.get_total_count().await;
+    let forwarded_during_capture = mock.get_total_count();
 
     let response = topology
         .broker(BrokerRole::A)
@@ -212,7 +212,7 @@ async fn distop_entity_snapshot_ops_implicitly_local() {
         .expect("snapshot query");
     assert_status(&response, 200);
     assert_eq!(
-        mock.get_total_count().await,
+        mock.get_total_count(),
         forwarded_during_capture,
         "a scoped operation contacts no source after capture"
     );
@@ -231,7 +231,7 @@ async fn distop_entity_snapshot_implicit_local_skips_registry_csrs() {
     register_inclusive_query(&topology, &endpoint, "registration:snapshot-skip-a").await;
     register_inclusive_query(&topology, &endpoint, "registration:snapshot-skip-b").await;
     let snapshot_id = create_snapshot(topology.broker(BrokerRole::A).client()).await;
-    let forwarded_during_capture = mock.get_total_count().await;
+    let forwarded_during_capture = mock.get_total_count();
 
     let response = topology
         .broker(BrokerRole::A)
@@ -244,7 +244,7 @@ async fn distop_entity_snapshot_implicit_local_skips_registry_csrs() {
         .expect("snapshot query");
     assert_status(&response, 200);
     assert_eq!(
-        mock.get_total_count().await,
+        mock.get_total_count(),
         forwarded_during_capture,
         "no registration is consulted for a scoped operation after capture"
     );
@@ -262,7 +262,7 @@ async fn distop_entity_snapshot_local_false_ignored() {
     let endpoint = mock.url("");
     register_inclusive_query(&topology, &endpoint, "registration:snapshot-localfalse").await;
     let snapshot_id = create_snapshot(topology.broker(BrokerRole::A).client()).await;
-    let forwarded_during_capture = mock.get_total_count().await;
+    let forwarded_during_capture = mock.get_total_count();
 
     let response = topology
         .broker(BrokerRole::A)
@@ -275,7 +275,7 @@ async fn distop_entity_snapshot_local_false_ignored() {
         .expect("snapshot query");
     assert_status(&response, 200);
     assert_eq!(
-        mock.get_total_count().await,
+        mock.get_total_count(),
         forwarded_during_capture,
         "local=false is ignored, so the scoped operation stays local after capture"
     );

@@ -84,6 +84,15 @@ pub struct ForwardedEntityMap {
 impl FederationService {
     /// Ask every matching context source that advertises `EntityMap` creation
     /// for its map of the same query.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FederationError::JsonLd`] when the requested entity type
+    /// cannot be expanded against the request's context, and
+    /// [`FederationError::Registration`] when the matching registrations
+    /// cannot be read. A source that fails to answer does not fail the
+    /// call: its attempt is reported as a [`ForwardedEntityMap`] without a
+    /// map.
     pub async fn forward_entity_map_query(&self, request: ForwardEntityMapRequest<'_>) -> Result<Vec<ForwardedEntityMap>, FederationError> {
         let ForwardEntityMapRequest {
             kind,

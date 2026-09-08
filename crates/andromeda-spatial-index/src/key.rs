@@ -53,7 +53,7 @@ impl SpatialKey {
 #[must_use]
 pub fn flatten_or_type_iris(expr: &TypeExpr) -> Option<Vec<IriBuf>> {
     match expr {
-        TypeExpr::Wildcard => None,
+        TypeExpr::Wildcard | TypeExpr::And(_) => None,
         // clone: the spatial key owns its IRIs and the expression is borrowed
         TypeExpr::Type(iri) => Some(vec![iri.clone()]),
         TypeExpr::Or(children) => {
@@ -63,7 +63,6 @@ pub fn flatten_or_type_iris(expr: &TypeExpr) -> Option<Vec<IriBuf>> {
             }
             Some(out)
         }
-        TypeExpr::And(_) => None,
     }
 }
 

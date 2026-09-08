@@ -133,6 +133,16 @@ impl SubscriptionForwardingService {
     }
 
     /// Handle a notification arriving under a forwarded copy's identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubscriptionForwardingError::UnknownSubscription`] when the
+    /// notification's identifier maps to no local subscription. Propagates the
+    /// mapping-store, subscription-store, JSON-LD, local entity read and
+    /// federation failures raised while re-assembling the entities, and
+    /// [`SubscriptionForwardingError::Internal`] when a notification identifier
+    /// cannot be minted, an entity cannot be rendered, or the local
+    /// subscription's endpoint names no deliverable transport.
     pub async fn handle_notification(&self, notification: &Notification, context: &ContextSpec) -> Result<(), SubscriptionForwardingError> {
         let Some((local, sender)) = self.mappings.local_of_forwarded(&notification.subscription_id).await? else {
             return Err(SubscriptionForwardingError::UnknownSubscription {

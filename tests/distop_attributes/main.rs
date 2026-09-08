@@ -131,7 +131,7 @@ fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
     headers
         .get_all("NGSILD-Warning")
         .iter()
-        .filter_map(|v| v.to_str().ok().map(std::string::ToString::to_string))
+        .filter_map(|v| v.to_str().ok().map(str::to_owned))
         .collect()
 }
 
@@ -163,7 +163,7 @@ async fn distop_attributes_local_skips_forwarding() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::GET, "/ngsi-ld/v1/attributes").await,
+        mock.get_count(Method::GET, "/ngsi-ld/v1/attributes"),
         0,
         "CSR should not be called when local=true"
     );
@@ -201,7 +201,7 @@ async fn distop_attributes_merges_remote_attributes() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     assert!(
-        mock.get_count(Method::GET, "/ngsi-ld/v1/attributes").await > 0,
+        mock.get_count(Method::GET, "/ngsi-ld/v1/attributes") > 0,
         "CSR should be called when local is not set"
     );
 

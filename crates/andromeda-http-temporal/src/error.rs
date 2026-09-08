@@ -123,6 +123,12 @@ impl TemporalHttpClassify for TenancyError {
 /// Attach the inbound request URI while classifying a typed temporal-binding result.
 pub trait TemporalResultExt<T> {
     /// Convert the typed error through the focused classifier and attach `instance`.
+    ///
+    /// # Errors
+    ///
+    /// The [`ProblemResponse`] the typed failure classifies to, carrying
+    /// `instance` as the problem detail's `instance` member. A successful
+    /// result passes its value through untouched.
     fn with_instance(self, instance: &Uri) -> Result<T, ProblemResponse>;
 }
 

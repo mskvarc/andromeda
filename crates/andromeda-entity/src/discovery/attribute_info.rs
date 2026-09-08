@@ -35,6 +35,16 @@ impl EntityDiscoveryService {
     /// registry knows it. One only the registry knows is carried by no local
     /// entity, so its count is zero, its attribute types are empty and its
     /// type names are those registered beside it (clause 5.7.11).
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::JsonLd`] when `attr_id` cannot be expanded
+    /// against `context` or the result cannot be compacted,
+    /// [`EntityError::Validation`] when the expanded term is not a well-formed
+    /// attribute name, [`EntityError::AttributeNotFound`] when neither the
+    /// local store nor the registry knows the attribute, and
+    /// [`EntityError::Persistence`] when the store or the registry could not be
+    /// consulted.
     pub async fn attribute_info(
         &self,
         target: &ContextTarget,

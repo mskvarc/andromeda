@@ -35,7 +35,8 @@ fn temporal_query(entity_id: &str, from: &str, to: &str, timeproperty: Option<&s
         encode(to)
     );
     if let Some(timeproperty) = timeproperty {
-        query.push_str(&format!("&timeproperty={timeproperty}"));
+        query.push_str("&timeproperty=");
+        query.push_str(timeproperty);
     }
     query
 }

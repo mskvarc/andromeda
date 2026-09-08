@@ -35,14 +35,20 @@ impl Default for ReadinessPolicy {
 }
 
 /// Poll broker readiness once for the current test process.
+///
+/// # Errors
+///
+/// Returns the [`ReadinessError`] reported by [`wait_until_ready`] when this call is the one that performs the poll and the broker never becomes ready. Once a poll has succeeded, later calls return without contacting the broker.
 pub async fn wait_until_ready_once(client: &TestClient, policy: ReadinessPolicy) -> Result<(), ReadinessError> {
-    PROCESS_READINESS
-        .get_or_try_init(|| async { wait_until_ready(client, policy).await })
-        .await
-        .map(|()| ())
+    PROCESS_READINESS.get_or_try_init(|| async { wait_until_ready(client, policy).await }).await?;
+    Ok(())
 }
 
 /// Poll the broker health endpoint according to an explicit timing policy.
+///
+/// # Errors
+///
+/// Returns [`ReadinessError::Unreachable`] when the last health request before the deadline failed at the transport level, and [`ReadinessError::UnexpectedStatus`] when that request returned a non-success status.
 pub async fn wait_until_ready(client: &TestClient, policy: ReadinessPolicy) -> Result<(), ReadinessError> {
     let started = Instant::now();
     let mut attempts = 0_u32;

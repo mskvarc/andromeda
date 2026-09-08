@@ -120,7 +120,7 @@ async fn distop_retrieve_temporal_map_reused_or_recreated() {
 
     assert_status(&retrieve_temporal_reusing_map(&topology, &entity_id, &map).await, 200);
     assert_eq!(
-        mock.get_count(Method::GET, &format!("/s2/ngsi-ld/v1/temporal/entities/{entity_id}")).await,
+        mock.get_count(Method::GET, &format!("/s2/ngsi-ld/v1/temporal/entities/{entity_id}")),
         0,
         "a valid map fixes the CSR set"
     );
@@ -128,7 +128,7 @@ async fn distop_retrieve_temporal_map_reused_or_recreated() {
     let bogus = topology.id("EntityMap:bogus");
     assert_status(&retrieve_temporal_reusing_map(&topology, &entity_id, &bogus).await, 201);
     assert!(
-        mock.get_count(Method::GET, &format!("/s2/ngsi-ld/v1/temporal/entities/{entity_id}")).await > 0,
+        mock.get_count(Method::GET, &format!("/s2/ngsi-ld/v1/temporal/entities/{entity_id}")) > 0,
         "a bogus map is recreated by fresh discovery"
     );
 
@@ -345,7 +345,7 @@ async fn distop_query_temporal_map_reused_or_recreated() {
 
     assert_status(&query_temporal_reusing_map(&topology, &map).await, 200);
     assert_eq!(
-        mock.get_count(Method::GET, "/s2/ngsi-ld/v1/temporal/entities").await,
+        mock.get_count(Method::GET, "/s2/ngsi-ld/v1/temporal/entities"),
         0,
         "a valid temporal map fixes the CSR set"
     );
@@ -353,7 +353,7 @@ async fn distop_query_temporal_map_reused_or_recreated() {
     let bogus = topology.id("EntityMap:bogus");
     assert_status(&query_temporal_reusing_map(&topology, &bogus).await, 201);
     assert!(
-        mock.get_count(Method::GET, "/s2/ngsi-ld/v1/temporal/entities").await > 0,
+        mock.get_count(Method::GET, "/s2/ngsi-ld/v1/temporal/entities") > 0,
         "a bogus temporal map is recreated by fresh discovery"
     );
 

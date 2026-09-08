@@ -96,6 +96,14 @@ pub struct FederationConfig {
 
 impl FederationConfig {
     /// Validate Context Source forwarding limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FederationConfigError::ZeroForwardConcurrency`] when no
+    /// forwarding slot is allowed, [`FederationConfigError::ZeroRequestTimeout`]
+    /// when the per-request deadline is zero, and
+    /// [`FederationConfigError::ZeroConnectTimeout`] when the connection
+    /// deadline is zero.
     pub const fn validate(&self) -> Result<(), FederationConfigError> {
         if self.forward_concurrency == 0 {
             return Err(FederationConfigError::ZeroForwardConcurrency);

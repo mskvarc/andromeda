@@ -63,6 +63,11 @@ pub struct CapturedRequest {
 
 impl CapturedRequest {
     /// Decode the captured request bytes as JSON without discarding invalid input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CapturedRequestJsonError::EmptyBody`] when the captured request carried no body bytes, and
+    /// [`CapturedRequestJsonError::InvalidJson`] when those bytes do not decode into `T`.
     pub fn json<T>(&self) -> Result<T, CapturedRequestJsonError>
     where
         T: DeserializeOwned,
@@ -163,6 +168,12 @@ pub struct CallbackServer {
 
 impl CallbackServer {
     /// Bind an ephemeral server and return only after its listener is ready.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CallbackServerError::Bind`] when the configured bind address cannot be claimed,
+    /// [`CallbackServerError::LocalAddress`] when the address of the bound listener cannot be read, and
+    /// [`CallbackServerError::Endpoint`] when the broker-visible host and the bound port do not form a valid URL.
     pub async fn start(config: MockServerConfig) -> Result<CallbackServer, CallbackServerError> {
         let state = Arc::new(CallbackState::default());
         let handler_state = Arc::clone(&state);
@@ -190,6 +201,10 @@ impl CallbackServer {
     }
 
     /// Resolve a callback path against the broker-visible server endpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CallbackServerError::Endpoint`] when `path` cannot be joined onto the server endpoint URL.
     pub fn endpoint(&self, path: &CallbackPath) -> Result<Url, CallbackServerError> {
         self.endpoint.join(path.as_str()).map_err(CallbackServerError::Endpoint)
     }
@@ -207,6 +222,10 @@ impl CallbackServer {
     }
 
     /// Wait for and remove the next captured request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CallbackServerError::RequestTimeout`] when no request is captured before `timeout` elapses.
     pub async fn next_request(&self, timeout: Duration) -> Result<CapturedRequest, CallbackServerError> {
         let deadline = Instant::now() + timeout;
         loop {
@@ -237,6 +256,12 @@ impl CallbackServer {
     }
 
     /// Shut down the listener and report both signaling and server-task failures.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CallbackServerError::ShutdownSignal`] when the server task ended before the signal was delivered,
+    /// [`CallbackServerError::Join`] when the server task panicked or was aborted, and
+    /// [`CallbackServerError::Serve`] when Axum reported a serving failure.
     pub async fn shutdown(mut self) -> Result<(), CallbackServerError> {
         if let Some(shutdown) = self.shutdown.take() {
             shutdown.send(()).map_err(|()| CallbackServerError::ShutdownSignal)?;
@@ -353,7 +378,7 @@ mod tests {
     use url::Host;
 
     fn local_config() -> MockServerConfig {
-        let host = Host::parse("127.0.0.1").unwrap_or_else(|error| unreachable!("static host is valid: {error}"));
+        let host = Host::parse("127.0.0.1").unwrap_or_else(|error| panic!("static host is valid: {error}"));
         MockServerConfig::new(SocketAddr::from(([127, 0, 0, 1], 0)), host)
     }
 
@@ -361,8 +386,8 @@ mod tests {
     async fn response_queue_captures_requests_and_repeats_its_final_response() {
         let server = CallbackServer::start(local_config())
             .await
-            .unwrap_or_else(|error| unreachable!("local callback server starts: {error}"));
-        let path = CallbackPath::parse("/queue").unwrap_or_else(|error| unreachable!("static path is valid: {error}"));
+            .unwrap_or_else(|error| panic!("local callback server starts: {error}"));
+        let path = CallbackPath::parse("/queue").unwrap_or_else(|error| panic!("static path is valid: {error}"));
         let matcher = RequestMatcher::new(Method::POST, path.clone()); // clone: the matcher and endpoint retain the same immutable path.
         server
             .enqueue(
@@ -376,9 +401,7 @@ mod tests {
                 MockResponse::builder().status(StatusCode::ACCEPTED).body(Bytes::from_static(b"final")).build(),
             )
             .await;
-        let endpoint = server
-            .endpoint(&path)
-            .unwrap_or_else(|error| unreachable!("callback endpoint resolves: {error}"));
+        let endpoint = server.endpoint(&path).unwrap_or_else(|error| panic!("callback endpoint resolves: {error}"));
         let client = reqwest::Client::new();
 
         for (expected_status, expected_body) in [(StatusCode::CREATED, "first"), (StatusCode::ACCEPTED, "final"), (StatusCode::ACCEPTED, "final")] {
@@ -387,9 +410,9 @@ mod tests {
                 .body("payload")
                 .send()
                 .await
-                .unwrap_or_else(|error| unreachable!("local callback request succeeds: {error}"));
+                .unwrap_or_else(|error| panic!("local callback request succeeds: {error}"));
             assert_eq!(response.status(), expected_status);
-            let body = response.text().await.unwrap_or_else(|error| unreachable!("response body is readable: {error}"));
+            let body = response.text().await.unwrap_or_else(|error| panic!("response body is readable: {error}"));
             assert_eq!(body, expected_body);
         }
 
@@ -397,24 +420,21 @@ mod tests {
             let captured = server
                 .next_request(Duration::from_secs(1))
                 .await
-                .unwrap_or_else(|error| unreachable!("request was captured: {error}"));
+                .unwrap_or_else(|error| panic!("request was captured: {error}"));
             assert_eq!(captured.method, Method::POST);
             assert_eq!(captured.uri.path(), "/queue");
             assert_eq!(captured.body, Bytes::from_static(b"payload"));
         }
         assert_eq!(server.request_count(&matcher), 3);
-        server
-            .shutdown()
-            .await
-            .unwrap_or_else(|error| unreachable!("callback server shuts down: {error}"));
+        server.shutdown().await.unwrap_or_else(|error| panic!("callback server shuts down: {error}"));
     }
 
     #[tokio::test]
     async fn response_gate_releases_only_after_request_capture() {
         let server = CallbackServer::start(local_config())
             .await
-            .unwrap_or_else(|error| unreachable!("local callback server starts: {error}"));
-        let path = CallbackPath::parse("/gated").unwrap_or_else(|error| unreachable!("static path is valid: {error}"));
+            .unwrap_or_else(|error| panic!("local callback server starts: {error}"));
+        let path = CallbackPath::parse("/gated").unwrap_or_else(|error| panic!("static path is valid: {error}"));
         let gate = ResponseGate::closed();
         server
             .enqueue(
@@ -425,26 +445,21 @@ mod tests {
                     .build(),
             )
             .await;
-        let endpoint = server
-            .endpoint(&path)
-            .unwrap_or_else(|error| unreachable!("callback endpoint resolves: {error}"));
+        let endpoint = server.endpoint(&path).unwrap_or_else(|error| panic!("callback endpoint resolves: {error}"));
         let request = tokio::spawn(async move { reqwest::get(endpoint).await });
 
         let captured = server
             .next_request(Duration::from_secs(1))
             .await
-            .unwrap_or_else(|error| unreachable!("gated request was captured: {error}"));
+            .unwrap_or_else(|error| panic!("gated request was captured: {error}"));
         assert_eq!(captured.uri.path(), "/gated");
         assert!(!request.is_finished());
         gate.release();
         let response = request
             .await
-            .unwrap_or_else(|error| unreachable!("request task joins: {error}"))
-            .unwrap_or_else(|error| unreachable!("local request succeeds: {error}"));
+            .unwrap_or_else(|error| panic!("request task joins: {error}"))
+            .unwrap_or_else(|error| panic!("local request succeeds: {error}"));
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
-        server
-            .shutdown()
-            .await
-            .unwrap_or_else(|error| unreachable!("callback server shuts down: {error}"));
+        server.shutdown().await.unwrap_or_else(|error| panic!("callback server shuts down: {error}"));
     }
 }

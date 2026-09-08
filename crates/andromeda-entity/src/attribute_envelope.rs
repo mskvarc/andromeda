@@ -86,9 +86,7 @@ fn validate_attr_instances(attr_name: &AttributeName, value: &Value) -> Result<(
 
         if (is_property || is_geo_property) && !obj.contains_key(expanded_properties::VALUE.as_str()) {
             let short_type = if is_geo_property { "GeoProperty" } else { "Property" };
-            return Err(EntityError::validation(format!(
-                "{short_type} '{attr_name}' is missing required field 'value'"
-            )));
+            return Err(EntityError::validation(format!("{short_type} '{attr_name}' is missing required field 'value'")));
         }
 
         if is_relationship && !obj.contains_key(expanded_properties::OBJECT.as_str()) {
@@ -140,7 +138,7 @@ mod tests {
     use serde_json::{Value, json};
 
     /// One expanded entity carrying a single instance of `member`.
-    fn entity_with(instance: Value) -> Value {
+    fn entity_with(instance: &Value) -> Value {
         json!([{ "@id": "urn:ngsi-ld:Device:1", "https://example.org/member": [instance] }])
     }
 
@@ -161,7 +159,7 @@ mod tests {
                 value_key: [{"@id": "urn:ngsi-ld:Device:target"}],
                 expanded_properties::UNIT_CODE.as_str(): [{"@value": "KGM"}],
             });
-            let error = validate_attribute_envelopes(&entity_with(instance)).expect_err("the family admits no unitCode");
+            let error = validate_attribute_envelopes(&entity_with(&instance)).expect_err("the family admits no unitCode");
             assert!(error.to_string().contains("unitCode"), "{attribute_type}: {error}");
         }
     }
@@ -173,7 +171,7 @@ mod tests {
             expanded_properties::VALUE.as_str(): [{"@value": 1}],
             expanded_properties::UNIT_CODE.as_str(): [{"@value": "KGM"}],
         });
-        validate_attribute_envelopes(&entity_with(instance)).expect("a Property defines a unitCode member");
+        validate_attribute_envelopes(&entity_with(&instance)).expect("a Property defines a unitCode member");
     }
 
     #[test]
@@ -182,7 +180,7 @@ mod tests {
             "@type": [AttributeType::Relationship.iri().as_str()],
             expanded_properties::OBJECT.as_str(): [{"@id": "urn:ngsi-ld:Device:target"}],
         });
-        validate_attribute_envelopes(&entity_with(instance)).expect("a Relationship with no unit is well formed");
+        validate_attribute_envelopes(&entity_with(&instance)).expect("a Relationship with no unit is well formed");
     }
 
     /// Clause 4.5.5.1 admits exactly one default instance per attribute name.
@@ -264,7 +262,7 @@ mod tests {
     #[test]
     fn a_property_missing_its_value_is_refused() {
         let instance = json!({"@type": [AttributeType::Property.iri().as_str()]});
-        let error = validate_attribute_envelopes(&entity_with(instance)).expect_err("clause 5.2.5 requires a value");
+        let error = validate_attribute_envelopes(&entity_with(&instance)).expect_err("clause 5.2.5 requires a value");
         assert!(error.to_string().contains("value"), "{error}");
     }
 }

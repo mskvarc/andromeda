@@ -67,7 +67,7 @@ async fn distop_entity_attrs_append_inclusive_forwards_and_updates_local() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify forwarding happened
-    let count = mock.get_count(Method::POST, &stub_path).await;
+    let count = mock.get_count(Method::POST, &stub_path);
     pretty_assertions::assert_eq!(count, 1, "forwarding should have happened");
 
     // Verify local entity has speed and isParked changed
@@ -115,7 +115,7 @@ async fn distop_entity_attrs_append_exclusive_forwards_not_local() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify forwarding happened
-    let count = mock.get_count(Method::POST, &stub_path).await;
+    let count = mock.get_count(Method::POST, &stub_path);
     pretty_assertions::assert_eq!(count, 1, "forwarding should have happened");
 
     // Verify local entity does NOT contain speed (exclusive)
@@ -164,8 +164,8 @@ async fn distop_entity_attrs_append_redirect_forwards_to_multiple() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify both stubs called
-    pretty_assertions::assert_eq!(mock.get_count(Method::POST, &stub_path1).await, 1);
-    pretty_assertions::assert_eq!(mock.get_count(Method::POST, &stub_path2).await, 1);
+    pretty_assertions::assert_eq!(mock.get_count(Method::POST, &stub_path1), 1);
+    pretty_assertions::assert_eq!(mock.get_count(Method::POST, &stub_path2), 1);
 
     // Verify entity does not exist locally
     let (status, _, _) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
@@ -215,7 +215,7 @@ async fn distop_entity_attrs_append_nooverwrite_inclusive_preserves_existing() {
     pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS);
 
     // Verify forwarding happened
-    assert!(mock.get_count(Method::POST, &stub_path).await > 0);
+    assert!(mock.get_count(Method::POST, &stub_path) > 0);
 
     // Verify speed exists but isParked unchanged
     let (status, _, body) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
@@ -258,7 +258,7 @@ async fn distop_entity_attrs_append_nooverwrite_exclusive_forwards() {
     pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS);
 
     // Verify forwarding happened
-    assert!(mock.get_count(Method::POST, &stub_path).await > 0);
+    assert!(mock.get_count(Method::POST, &stub_path) > 0);
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
@@ -297,8 +297,8 @@ async fn distop_entity_attrs_append_nooverwrite_redirect_forwards_to_multiple() 
     pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS);
 
     // Verify both stubs called
-    assert!(mock.get_count(Method::POST, &stub_path1).await > 0);
-    assert!(mock.get_count(Method::POST, &stub_path2).await > 0);
+    assert!(mock.get_count(Method::POST, &stub_path1) > 0);
+    assert!(mock.get_count(Method::POST, &stub_path2) > 0);
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
@@ -352,7 +352,7 @@ async fn distop_entity_attrs_append_auxiliary_no_forwarding() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify no forwarding happened (auxiliary is retrieval-only)
-    let count = mock.get_count(Method::POST, &stub_path).await;
+    let count = mock.get_count(Method::POST, &stub_path);
     pretty_assertions::assert_eq!(count, 0, "auxiliary registration should not trigger forwarding");
 
     // Verify local entity was updated

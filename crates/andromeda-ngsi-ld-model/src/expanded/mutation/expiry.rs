@@ -59,7 +59,7 @@ fn has_passed(instance: &Value, cutoff: DateTime<Utc>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::remove_expired_attribute_instances;
+    use crate::expanded::mutation::expiry::remove_expired_attribute_instances;
     use chrono::{DateTime, Utc};
     use serde_json::{Value, json};
 
@@ -83,7 +83,7 @@ mod tests {
         Value::Object(obj)
     }
 
-    fn entity_with(speed: Value) -> Value {
+    fn entity_with(speed: &Value) -> Value {
         json!([{"@id": "urn:ngsi-ld:A", "@type": ["https://example.org/Vehicle"], "https://example.org/speed": speed}])
     }
 
@@ -96,35 +96,35 @@ mod tests {
 
     #[test]
     fn an_instance_past_its_expiry_is_removed() {
-        let mut entity = entity_with(json!([instance(Some("2025-12-31T23:59:59Z"), None)]));
+        let mut entity = entity_with(&json!([instance(Some("2025-12-31T23:59:59Z"), None)]));
         assert!(remove_expired_attribute_instances(&mut entity, cutoff()));
-        assert!(attribute_names(&entity).is_empty());
+        pretty_assertions::assert_eq!(attribute_names(&entity), Vec::<String>::new());
     }
 
     #[test]
     fn an_instance_expiring_exactly_at_the_cutoff_is_removed() {
-        let mut entity = entity_with(json!([instance(Some("2026-01-01T00:00:00Z"), None)]));
+        let mut entity = entity_with(&json!([instance(Some("2026-01-01T00:00:00Z"), None)]));
         assert!(remove_expired_attribute_instances(&mut entity, cutoff()));
-        assert!(attribute_names(&entity).is_empty());
+        pretty_assertions::assert_eq!(attribute_names(&entity), Vec::<String>::new());
     }
 
     #[test]
     fn an_instance_expiring_after_the_cutoff_survives() {
-        let mut entity = entity_with(json!([instance(Some("2026-01-01T00:00:01Z"), None)]));
+        let mut entity = entity_with(&json!([instance(Some("2026-01-01T00:00:01Z"), None)]));
         assert!(!remove_expired_attribute_instances(&mut entity, cutoff()));
         pretty_assertions::assert_eq!(attribute_names(&entity), vec!["https://example.org/speed".to_string()]);
     }
 
     #[test]
     fn an_instance_with_no_expiry_survives() {
-        let mut entity = entity_with(json!([instance(None, None)]));
+        let mut entity = entity_with(&json!([instance(None, None)]));
         assert!(!remove_expired_attribute_instances(&mut entity, cutoff()));
         pretty_assertions::assert_eq!(attribute_names(&entity), vec!["https://example.org/speed".to_string()]);
     }
 
     #[test]
     fn only_the_expired_instance_of_a_multi_attribute_goes() {
-        let mut entity = entity_with(json!([
+        let mut entity = entity_with(&json!([
             instance(Some("2025-06-01T00:00:00Z"), Some("urn:d1")),
             instance(Some("2026-06-01T00:00:00Z"), Some("urn:d2")),
         ]));
@@ -137,14 +137,14 @@ mod tests {
 
     #[test]
     fn an_attribute_whose_last_instance_expires_loses_its_key() {
-        let mut entity = entity_with(json!([instance(Some("2025-01-01T00:00:00Z"), None)]));
+        let mut entity = entity_with(&json!([instance(Some("2025-01-01T00:00:00Z"), None)]));
         assert!(remove_expired_attribute_instances(&mut entity, cutoff()));
         assert!(entity[0].as_object().is_some_and(|obj| !obj.contains_key("https://example.org/speed")));
     }
 
     #[test]
     fn json_ld_keywords_are_preserved() {
-        let mut entity = entity_with(json!([instance(Some("2025-01-01T00:00:00Z"), None)]));
+        let mut entity = entity_with(&json!([instance(Some("2025-01-01T00:00:00Z"), None)]));
         assert!(remove_expired_attribute_instances(&mut entity, cutoff()));
         pretty_assertions::assert_eq!(entity[0]["@id"], json!("urn:ngsi-ld:A"));
         pretty_assertions::assert_eq!(entity[0]["@type"], json!(["https://example.org/Vehicle"]));
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn an_unparseable_expiry_keeps_the_instance() {
-        let mut entity = entity_with(json!([instance(Some("not a date"), None)]));
+        let mut entity = entity_with(&json!([instance(Some("not a date"), None)]));
         assert!(!remove_expired_attribute_instances(&mut entity, cutoff()));
         pretty_assertions::assert_eq!(attribute_names(&entity), vec!["https://example.org/speed".to_string()]);
     }

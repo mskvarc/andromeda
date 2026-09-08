@@ -45,7 +45,7 @@ mod tests {
         }
     }
 
-    /// An entity whose GeoProperty carries the given instances, each as
+    /// An entity whose `GeoProperty` carries the given instances, each as
     /// `(datasetId, coordinates)` with `None` for the default instance.
     fn entity_with_instances(geoproperty: &str, instances: &[(Option<&str>, [f64; 2])]) -> Value {
         let rendered: Vec<Value> = instances
@@ -63,7 +63,7 @@ mod tests {
         json!([{ "@id": "urn:ngsi-ld:Building:001", geoproperty: rendered }])
     }
 
-    /// Clause 4.10: where a GeoProperty has several `datasetId` instances, one
+    /// Clause 4.10: where a `GeoProperty` has several `datasetId` instances, one
     /// of them meeting the restriction is enough. The default instance sits
     /// outside the reference polygon here, so a matcher that read only the
     /// default one would report no match where the SQL rendering's correlated
@@ -88,7 +88,7 @@ mod tests {
         assert!(!matches_geo_query(&within_berlin(CUSTOM_GEOPROPERTY), &entity));
     }
 
-    /// Clause 4.10: an Entity that does not convey the target GeoProperty is
+    /// Clause 4.10: an Entity that does not convey the target `GeoProperty` is
     /// non-matching, whatever the relation.
     #[test]
     fn an_entity_conveying_no_instance_of_the_target_geoproperty_does_not_match() {

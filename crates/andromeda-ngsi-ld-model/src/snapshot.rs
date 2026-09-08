@@ -214,9 +214,10 @@ impl SnapshotStatus {
     pub const fn can_transition_to(self, target: SnapshotStatus) -> bool {
         matches!(
             (self, target),
-            (SnapshotStatus::Preparing,
-SnapshotStatus::Success | SnapshotStatus::Partial | SnapshotStatus::Empty |
-SnapshotStatus::Failure)
+            (
+                SnapshotStatus::Preparing,
+                SnapshotStatus::Success | SnapshotStatus::Partial | SnapshotStatus::Empty | SnapshotStatus::Failure
+            )
         )
     }
 }

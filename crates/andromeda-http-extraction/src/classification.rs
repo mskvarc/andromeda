@@ -123,6 +123,7 @@ pub fn classify_jsonld_error(error: &JsonLdError) -> ClassifiedReport {
         JsonLdError::ContextFetchDisabled { .. } | JsonLdError::ContextLoad { .. } | JsonLdError::ContextHttp { .. } | JsonLdError::ContextTooLarge { .. } => {
             ClassifiedReport::public(NgsiLdErrorType::LdContextNotAvailable, error.to_string())
         }
+        JsonLdError::Json(source) if source.is_syntax() || source.is_eof() => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
         JsonLdError::ProtectedContextPreload { .. }
         | JsonLdError::ContextInvalid { .. }
         | JsonLdError::EmbeddedContextInvalid(_)
@@ -131,9 +132,8 @@ pub fn classify_jsonld_error(error: &JsonLdError) -> ClassifiedReport {
         | JsonLdError::Expansion(_)
         | JsonLdError::Compaction(_)
         | JsonLdError::InvalidIri(_)
-        | JsonLdError::InvalidDocument(_) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
-        JsonLdError::Json(source) if source.is_syntax() || source.is_eof() => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
-        JsonLdError::Json(_) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
+        | JsonLdError::InvalidDocument(_)
+        | JsonLdError::Json(_) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
     }
 }
 

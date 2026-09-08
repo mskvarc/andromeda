@@ -109,7 +109,7 @@ impl IntoResponse for NgsiLdResponse {
         apply_common_headers(
             &mut headers,
             &self.rendered.context_links,
-            CommonHeadersOptions {
+            &CommonHeadersOptions {
                 location: self.location.as_deref(),
                 entity_map_uri: self.entity_map_uri.as_ref(),
                 snapshot_uri: self.snapshot_uri.as_ref(),

@@ -137,6 +137,12 @@ fn from_inserted() -> SelectStatement {
 impl EntityRepository {
     /// Insert every entity in `entities` that does not already exist, returning
     /// the rows actually inserted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when an entity carries no type, when the
+    /// insert statement cannot be built, when the statement fails, or when a
+    /// returned surrogate key or identifier is not a valid written entity.
     pub async fn create_batch_in_tx(
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,
@@ -165,7 +171,7 @@ impl EntityRepository {
             .fetch_all(&mut **tx);
         let rows: Vec<(i64, String)> = observe_statement(ENTITY_INSERT, rows).await.map_err(entity_write_failure)?;
 
-        rows.into_iter().map(|(key, id)| stored_written_entity(key, id)).collect()
+        rows.iter().map(|(key, id)| stored_written_entity(*key, id)).collect()
     }
 }
 

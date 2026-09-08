@@ -60,7 +60,7 @@ async fn distop_entity_attrs_partial_update_inclusive_forwards_and_updates_local
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify forwarding happened
-    let count = mock.get_count(Method::PATCH, &stub_path).await;
+    let count = mock.get_count(Method::PATCH, &stub_path);
     assert!(count > 0, "forwarding should have happened");
 
     // Verify local entity contains both isParked2 and speed
@@ -108,7 +108,7 @@ async fn distop_entity_attrs_partial_update_exclusive_forwards_not_local() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify forwarding happened
-    let count = mock.get_count(Method::PATCH, &stub_path).await;
+    let count = mock.get_count(Method::PATCH, &stub_path);
     assert!(count > 0, "forwarding should have happened");
 
     // Verify local entity does NOT contain speed (exclusive), isParked2 unchanged
@@ -158,8 +158,8 @@ async fn distop_entity_attrs_partial_update_redirect_forwards_to_multiple() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify both stubs called
-    assert!(mock.get_count(Method::PATCH, &stub_path1).await > 0);
-    assert!(mock.get_count(Method::PATCH, &stub_path2).await > 0);
+    assert!(mock.get_count(Method::PATCH, &stub_path1) > 0);
+    assert!(mock.get_count(Method::PATCH, &stub_path2) > 0);
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
@@ -213,7 +213,7 @@ async fn distop_entity_attrs_partial_update_auxiliary_no_forwarding() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify no forwarding happened
-    let count = mock.get_count(Method::PATCH, &stub_path).await;
+    let count = mock.get_count(Method::PATCH, &stub_path);
     pretty_assertions::assert_eq!(count, 0, "auxiliary registration should not trigger forwarding");
 
     delete_entity(&c, &entity_id).await;

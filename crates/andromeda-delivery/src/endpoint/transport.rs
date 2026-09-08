@@ -67,6 +67,19 @@ impl MqttQoS {
 
 /// Parse an endpoint URI, with the subscription's `notifierInfo`, into the
 /// transport it names.
+///
+/// # Errors
+///
+/// Returns [`EndpointParseError::UnsupportedScheme`] when the scheme is none of
+/// `http`, `https`, `mqtt`, `mqtts`, `sse` or `ws`. An `mqtt` or `mqtts` URI
+/// additionally fails with [`EndpointParseError::MissingHost`] when it names no
+/// broker, [`EndpointParseError::MissingTopic`] when its path is empty,
+/// [`EndpointParseError::InvalidTopic`] when the path is not a valid publish
+/// topic, [`EndpointParseError::UnsupportedMqttVersion`] or
+/// [`EndpointParseError::UnsupportedMqttQos`] when `notifierInfo` names a
+/// version or quality of service this broker does not speak, and
+/// [`EndpointParseError::InvalidUri`] when the credential-free URI rebuilt from
+/// the validated parts does not parse.
 pub fn parse_endpoint_transport(uri: &Url, notifier_info: Option<&[KeyValuePair]>) -> Result<EndpointTransport, EndpointParseError> {
     match uri.scheme() {
         "http" | "https" => Ok(EndpointTransport::Http),

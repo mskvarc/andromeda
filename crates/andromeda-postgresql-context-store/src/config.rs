@@ -76,6 +76,13 @@ pub struct DatabaseConfig {
 
 impl DatabaseConfig {
     /// Validate PostgreSQL pool and maintenance limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DatabaseConfigError::ZeroMaxConnections`] when the pool is
+    /// configured without a single connection, and
+    /// [`DatabaseConfigError::ZeroContextHitFlushCadence`] when the JSON-LD
+    /// hit-counter flush interval is zero.
     pub const fn validate(&self) -> Result<(), DatabaseConfigError> {
         if self.max_connections == 0 {
             return Err(DatabaseConfigError::ZeroMaxConnections);

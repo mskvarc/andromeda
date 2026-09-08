@@ -31,7 +31,7 @@ impl PhysicalColumn {
             "s" => 2,
             "i" => 4,
             "d" => 8,
-            other => unreachable!("unknown alignment class {other}"),
+            other => panic!("unknown alignment class {other}"),
         }
     }
 

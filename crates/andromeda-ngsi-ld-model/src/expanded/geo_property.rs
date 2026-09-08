@@ -325,9 +325,9 @@ mod tests {
 
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
 
-    /// Wrap a `location` GeoProperty carrying `value` in one instance, without a
-    /// `datasetId`.
-    fn located(value: serde_json::Value) -> serde_json::Value {
+    /// Wrap a `location` `GeoProperty` carrying `value` in one instance, without
+    /// a `datasetId`.
+    fn located(value: &serde_json::Value) -> serde_json::Value {
         json!([{
             "@id": "urn:ngsi-ld:Building:001",
             LOCATION: [{ "https://uri.etsi.org/ngsi-ld/hasValue": [{ "@value": value }] }]
@@ -721,14 +721,14 @@ mod tests {
     #[test]
     fn a_geoproperty_written_as_a_literal_object_is_read_as_a_geometry() {
         // Clause 4.7 permits the GeoJSON literal to arrive as an inline object.
-        let entity = located(json!({"type": "Point", "coordinates": [13.4, 52.5]}));
+        let entity = located(&json!({"type": "Point", "coordinates": [13.4, 52.5]}));
         assert!(extract_location_geometry(&entity).is_some());
     }
 
     #[test]
     fn a_geoproperty_written_as_a_json_string_is_read_as_a_geometry() {
         // Clause 4.7 permits the GeoJSON document to arrive as a string.
-        let entity = located(json!("{\"type\":\"Point\",\"coordinates\":[13.4,52.5]}"));
+        let entity = located(&json!("{\"type\":\"Point\",\"coordinates\":[13.4,52.5]}"));
         assert!(extract_location_geometry(&entity).is_some());
     }
 
@@ -739,7 +739,7 @@ mod tests {
     }
 
     /// Clause 4.10: a geo restriction is met when *any* instance of the target
-    /// GeoProperty meets it, so the matching reader yields every instance —
+    /// `GeoProperty` meets it, so the matching reader yields every instance —
     /// including the tagged ones the default-instance reader deliberately
     /// ignores — in payload order.
     #[test]
@@ -792,7 +792,7 @@ mod tests {
 
     #[test]
     fn a_geoproperty_whose_value_is_not_geojson_yields_no_geometry() {
-        let entity = located(json!("not geojson"));
+        let entity = located(&json!("not geojson"));
         assert!(extract_location_geometry(&entity).is_none());
     }
 

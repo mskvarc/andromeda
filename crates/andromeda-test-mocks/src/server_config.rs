@@ -19,6 +19,11 @@ pub struct MockServerConfig {
 
 impl MockServerConfig {
     /// Read the broker-visible host and use an explicit wildcard ephemeral bind address.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MockServerConfigError::InvalidVisibleHost`] when the value of `ANDROMEDA_TEST_CALLBACK_HOST`
+    /// is neither a valid DNS name nor a valid IP address.
     pub fn from_environment() -> Result<MockServerConfig, MockServerConfigError> {
         let visible = env::var(CALLBACK_HOST_ENV).unwrap_or_else(|_| DEFAULT_CALLBACK_HOST.to_owned());
         Ok(MockServerConfig::new(
@@ -47,6 +52,11 @@ impl MockServerConfig {
 }
 
 /// Construct a broker-visible callback URL from runtime configuration.
+///
+/// # Errors
+///
+/// Returns [`MockServerConfigError::InvalidVisibleHost`] when the value of `ANDROMEDA_TEST_CALLBACK_HOST`
+/// is neither a valid DNS name nor a valid IP address.
 pub fn callback_url(port: u16, path: &str) -> Result<String, MockServerConfigError> {
     let config = MockServerConfig::from_environment()?;
     Ok(format!("http://{}:{port}{path}", config.visible_host()))

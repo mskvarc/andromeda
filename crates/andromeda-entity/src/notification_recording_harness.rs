@@ -112,7 +112,7 @@ impl ContextCommitter for RecordingCommitter {
     }
 
     fn commit_replayed(&self, _target: &ContextTarget, _replay: CommitReplay, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-        unreachable!("the durable-match recording tests never replay a commit")
+        panic!("the durable-match recording tests never replay a commit")
     }
 }
 

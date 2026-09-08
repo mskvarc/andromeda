@@ -68,6 +68,15 @@ struct MergedEntity {
 
 impl EntityService {
     /// Create a new NGSI-LD entity, returning its URI on success (clause 5.6.1).
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::Validation`] when the entity cannot be serialised
+    /// or carries a malformed attribute instance, a null value or an invalid
+    /// `GeoProperty` geometry, [`EntityError::JsonLd`] when it cannot be
+    /// expanded against `context`, [`EntityError::AlreadyExists`] when another
+    /// entity already holds the identifier (clause 6.4.3.1), and
+    /// [`EntityError::Persistence`] when the store could not commit the insert.
     pub async fn create(&self, target: &ContextTarget, entity: &Entity, context: &ContextSpec) -> Result<Uri, EntityError> {
         let id = &entity.id;
 
@@ -111,6 +120,17 @@ impl EntityService {
     /// The merge is computed from a payload read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
     /// recomputed against a fresh read if a concurrent writer got in first.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::Validation`] when the patch cannot be serialised
+    /// or cannot be adapted to the attribute families the target holds,
+    /// [`EntityError::JsonLd`] when the patch or the type expression cannot be
+    /// expanded against `context`, [`EntityError::NotFound`] when no entity
+    /// carries `id` or the type selector excludes it,
+    /// [`EntityError::Contention`] when concurrent writers superseded the
+    /// computed write on every attempt, and [`EntityError::Persistence`] when
+    /// the store could not apply it.
     pub async fn merge(
         &self,
         target: &ContextTarget,
@@ -161,7 +181,9 @@ impl EntityService {
             })
             .await?;
 
-        events.into_iter().for_each(|event| self.emit_change(target, event));
+        for event in events {
+            self.emit_change(target, event);
+        }
 
         Ok(())
     }
@@ -208,6 +230,16 @@ impl EntityService {
     /// the entity actually had when the write landed. The write therefore
     /// states the `modifiedAt` its diff assumed; a writer that got in first
     /// makes the store refuse it, and the entity is read again.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::NotFound`] when no entity carries `id`,
+    /// [`EntityError::Validation`] when the payload cannot be serialised or
+    /// carries a malformed attribute instance, a null value (clause 5.6.18.4)
+    /// or an invalid `GeoProperty` geometry, [`EntityError::JsonLd`] when it
+    /// cannot be expanded against `context`, [`EntityError::Contention`] when
+    /// concurrent writers superseded the computed write on every attempt, and
+    /// [`EntityError::Persistence`] when the store could not apply it.
     pub async fn replace_entity(&self, target: &ContextTarget, id: &Uri, patch: &EntityPatch, context: &ContextSpec) -> Result<(), EntityError> {
         let entity_uri = id.clone(); // clone: mutation events and computed-write closures own the identifier
         // Read before expanding so a request against a missing entity reports
@@ -246,11 +278,19 @@ impl EntityService {
             })
             .await?;
 
-        events.into_iter().for_each(|event| self.emit_change(target, event));
+        for event in events {
+            self.emit_change(target, event);
+        }
         Ok(())
     }
 
     /// Delete an entity by its URI (NGSI-LD 5.6.6).
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::NotFound`] when no entity carries `id`, and
+    /// [`EntityError::Persistence`] when the store could not read the entity or
+    /// commit the deletion.
     pub async fn delete(&self, target: &ContextTarget, id: &Uri) -> Result<(), EntityError> {
         let entity_uri = id.clone(); // clone: delete events and persistence work own the identifier
         let id = id.as_str();

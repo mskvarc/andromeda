@@ -30,7 +30,8 @@ impl CooldownRegistry {
         let cooldown = registration.access.management.as_ref()?.cooldown?.as_duration();
         let last_failure = *self.last_failure.get(&registration.id)?;
         let elapsed = last_failure.elapsed();
-        (elapsed < cooldown).then(|| cooldown.checked_sub(elapsed).unwrap())
+        // A zero remainder means the window has just closed, so the registration is contacted again.
+        cooldown.checked_sub(elapsed).filter(|remaining| !remaining.is_zero())
     }
 }
 

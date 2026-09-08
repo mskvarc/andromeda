@@ -181,11 +181,11 @@ async fn distop_retrieve_temporal_forwards_only_retrievetemporal_capable() {
 
     assert_status(&front.client().get_temporal_entity(&entity_id, BEFORE_2030, None).await.expect("retrieve"), 200);
     assert!(
-        mock.get_count(Method::GET, &format!("/s1/ngsi-ld/v1/temporal/entities/{entity_id}")).await > 0,
+        mock.get_count(Method::GET, &format!("/s1/ngsi-ld/v1/temporal/entities/{entity_id}")) > 0,
         "retrieveTemporal source is forwarded"
     );
     assert_eq!(
-        mock.get_count(Method::GET, &format!("/s2/ngsi-ld/v1/temporal/entities/{entity_id}")).await,
+        mock.get_count(Method::GET, &format!("/s2/ngsi-ld/v1/temporal/entities/{entity_id}")),
         0,
         "queryTemporal-only source is not forwarded"
     );

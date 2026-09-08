@@ -267,6 +267,11 @@ impl CompiledQueryCache {
 
     /// Return the cached compiled query for `key`, or compute it through
     /// `init` and insert it on cache miss.
+    ///
+    /// # Errors
+    ///
+    /// Propagates whatever `init` reports on a cache miss; nothing is inserted
+    /// when the compilation fails. A cache hit never fails.
     pub async fn get_or_compile<F, Fut, E>(&self, key: CompiledQueryKey, init: F) -> Result<Arc<CompiledEntityQuery>, E>
     where
         F: FnOnce() -> Fut + Send,

@@ -68,7 +68,7 @@ async fn dist_http_local_param_honoured_on_all_listed_resources() {
             .expect("local retrieve"),
         200,
     );
-    assert_eq!(mock.get_total_count().await, 0, "local=true must never contact a registered source");
+    assert_eq!(mock.get_total_count(), 0, "local=true must never contact a registered source");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -124,8 +124,8 @@ async fn dist_http_local_true_bypasses_all_csrs() {
             .expect("local query"),
         200,
     );
-    assert_eq!(first.get_total_count().await, 0, "the first source must be bypassed");
-    assert_eq!(second.get_total_count().await, 0, "the second source must be bypassed");
+    assert_eq!(first.get_total_count(), 0, "the first source must be bypassed");
+    assert_eq!(second.get_total_count(), 0, "the second source must be bypassed");
 
     first.shutdown().await;
     second.shutdown().await;
@@ -160,7 +160,7 @@ async fn dist_http_registry_api_operations_always_local() {
             .expect("registry query"),
         200,
     );
-    assert_eq!(mock.get_total_count().await, 0, "a Registry-API query must never be forwarded");
+    assert_eq!(mock.get_total_count(), 0, "a Registry-API query must never be forwarded");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -209,7 +209,7 @@ async fn dist_http_snapshot_op_ignores_local_false() {
         "@context": context_link()
     });
     let snapshot_id = create_prepared_snapshot(topology.broker(BrokerRole::A).client(), &snapshot).await;
-    let forwarded_during_preparation = mock.get_total_count().await;
+    let forwarded_during_preparation = mock.get_total_count();
 
     let response = topology
         .broker(BrokerRole::A)
@@ -224,7 +224,7 @@ async fn dist_http_snapshot_op_ignores_local_false() {
         .expect("snapshot query");
     assert_status(&response, 200);
     assert_eq!(
-        mock.get_total_count().await,
+        mock.get_total_count(),
         forwarded_during_preparation,
         "a snapshot-scoped query is implicitly local"
     );
@@ -288,7 +288,7 @@ async fn dist_http_query_entities_supports_query_url_params() {
     assert_status(&response, 200);
     let ids: Vec<String> = json_body(&response)
         .as_array()
-        .unwrap_or_else(|| unreachable!("entity query returns an array"))
+        .unwrap_or_else(|| panic!("entity query returns an array"))
         .iter()
         .filter_map(|entity| entity["id"].as_str().map(str::to_owned))
         .collect();
@@ -337,7 +337,7 @@ async fn dist_http_query_type_star_implies_local_and_rejects_local_false() {
             .expect("type-star query"),
         200,
     );
-    assert_eq!(mock.get_total_count().await, 0, "type=* implies local, so no source is contacted");
+    assert_eq!(mock.get_total_count(), 0, "type=* implies local, so no source is contacted");
 
     let rejected = topology
         .broker(BrokerRole::A)
@@ -395,8 +395,8 @@ async fn dist_http_query_split_entities_param_forwards_and_reapplies_filters() {
         .await
         .expect("split query");
     assert_status(&response, 200);
-    assert!(first.get_total_count().await >= 1, "the first source must be queried under splitEntities");
-    assert!(second.get_total_count().await >= 1, "the second source must be queried under splitEntities");
+    assert!(first.get_total_count() >= 1, "the first source must be queried under splitEntities");
+    assert!(second.get_total_count() >= 1, "the second source must be queried under splitEntities");
 
     first.shutdown().await;
     second.shutdown().await;
@@ -550,7 +550,7 @@ async fn dist_http_purge_entities_supports_table_params_and_type_star_local() {
         .await
         .expect("type-star purge");
     assert_status(&response, 204);
-    assert_eq!(mock.get_total_count().await, 0, "type=* purge implies local, so no source is contacted");
+    assert_eq!(mock.get_total_count(), 0, "type=* purge implies local, so no source is contacted");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

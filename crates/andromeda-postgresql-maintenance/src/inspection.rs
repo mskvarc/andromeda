@@ -156,11 +156,14 @@ pub(crate) async fn probe_index(connection: &mut PgConnection, size: IndexSize, 
     let (sql, values) = pgstattuple_statement(&qualified).build_sqlx(PostgresQueryBuilder);
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(connection).await?;
     let reclaimable_bytes = non_negative(row.try_get(CatalogColumn::FreeSpace.as_str())?, "index free bytes")?;
-    let measured = row.try_get::<f64, _>(CatalogColumn::FreePercent.as_str())?.clamp(0.0, 100.0);
+    let physical_bytes = non_negative(row.try_get(CatalogColumn::TableLength.as_str())?, "index physical bytes")?;
     Ok(DegradationSample {
         relation_bytes: size.bytes,
         reclaimable_bytes,
-        degraded_percent: measured as u8,
+        // `pgstattuple` derives `free_percent` as `100 * free_space / table_len`;
+        // deriving it from the two byte counters keeps the sample an exact
+        // integer instead of narrowing the extension's own float.
+        degraded_percent: percent(reclaimable_bytes, physical_bytes),
         threshold_percent: profile.index_free_percent,
     })
 }
@@ -265,7 +268,7 @@ fn heap_samples_statement() -> SelectStatement {
 /// Detailed physical tuple query against one bound `regclass`.
 fn pgstattuple_statement(relation: &str) -> SelectStatement {
     Query::select()
-        .columns([Alias::new(CatalogColumn::FreeSpace.as_str()), Alias::new(CatalogColumn::FreePercent.as_str())])
+        .columns([Alias::new(CatalogColumn::FreeSpace.as_str()), Alias::new(CatalogColumn::TableLength.as_str())])
         .from_function(pgstattuple(to_regclass(Expr::val(relation))), Alias::new("physical"))
         .to_owned()
 }
@@ -391,8 +394,8 @@ enum CatalogColumn {
     Bytes,
     /// Detailed index free-byte projection.
     FreeSpace,
-    /// Detailed index free-space percentage projection.
-    FreePercent,
+    /// Detailed index physical-length projection.
+    TableLength,
 }
 
 impl CatalogColumn {
@@ -405,7 +408,7 @@ impl CatalogColumn {
             CatalogColumn::DeadTuples => "dead_tuples",
             CatalogColumn::Bytes => "bytes",
             CatalogColumn::FreeSpace => "free_space",
-            CatalogColumn::FreePercent => "free_percent",
+            CatalogColumn::TableLength => "table_len",
         }
     }
 }

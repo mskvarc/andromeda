@@ -29,7 +29,7 @@ fn periodic(id: &str, uri: &str, query: Option<&str>) -> Value {
     body["timeInterval"] = json!(1);
     body["notification"]
         .as_object_mut()
-        .unwrap_or_else(|| unreachable!("notification object"))
+        .unwrap_or_else(|| panic!("notification object"))
         .remove("format");
     if let Some(query) = query {
         body["q"] = json!(query);

@@ -8,7 +8,7 @@ use crate::{
         representation::{compact_for_notification, render_format},
     },
 };
-use andromeda_context_space::context_target::ContextTarget;
+use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_entity::{
     port::{discovery::EntityDiscoveryStore, reader::EntityReader},
@@ -82,6 +82,14 @@ impl IntervalNotificationOperation {
     }
 
     /// Evaluate every interval subscription due at the execution boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NotificationError::Subscription`] when the subscription store
+    /// cannot report the due interval subscriptions. Per-subscription failures —
+    /// entity lookup, payload assembly, slot claiming, serialization, endpoint
+    /// parsing, and delivery outcome bookkeeping — are logged and skipped rather
+    /// than aborting the sweep.
     pub async fn execute(&self) -> Result<usize, NotificationError> {
         let due_subs = self.sub_repo.find_due_interval_subscriptions(&self.target).await?;
         let due_count = due_subs.len();
@@ -134,7 +142,7 @@ impl IntervalNotificationOperation {
                     return;
                 }
 
-                let notification_id = if let Ok(u) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() { u } else {
+                let Ok(notification_id) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() else {
                     error!("Failed to construct notification URN for {}", sub.id);
                     return;
                 };
@@ -172,7 +180,7 @@ impl IntervalNotificationOperation {
                     receiver_info: sub.notification.endpoint.receiver_info.as_deref(),
                     jsonld_context: sub.delivery.jsonld_context.as_ref(),
                     tenant: this.tenant.tenant_name(),
-                    snapshot: this.target.snapshot().map(andromeda_context_space::snapshot_target::SnapshotTarget::snapshot_id),
+                    snapshot: this.target.snapshot().map(SnapshotTarget::snapshot_id),
                     subscription_id: &sub.id,
                 })
                 .assemble();

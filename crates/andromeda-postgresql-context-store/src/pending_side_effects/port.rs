@@ -46,7 +46,7 @@ impl SideEffectQueue for PendingSideEffectsRepository {
             sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(self.pool()),
         )
         .await
-        .map_err(persistence)?;
+        .map_err(|error| persistence(&error))?;
 
         let mut leased = Vec::with_capacity(rows.len());
         for row in rows {
@@ -86,7 +86,7 @@ impl SideEffectQueue for PendingSideEffectsRepository {
             sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(self.pool()),
         )
         .await
-        .map_err(persistence)?;
+        .map_err(|error| persistence(&error))?;
         Ok(lease_acknowledgement(result.rows_affected()))
     }
 
@@ -103,7 +103,7 @@ impl SideEffectQueue for PendingSideEffectsRepository {
             sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(self.pool()),
         )
         .await
-        .map_err(persistence)?;
+        .map_err(|error| persistence(&error))?;
         Ok(lease_acknowledgement(result.rows_affected()))
     }
 
@@ -114,7 +114,7 @@ impl SideEffectQueue for PendingSideEffectsRepository {
             sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(self.pool()),
         )
         .await
-        .map_err(persistence)?;
+        .map_err(|error| persistence(&error))?;
         Ok(lease_acknowledgement(result.rows_affected()))
     }
 
@@ -123,7 +123,7 @@ impl SideEffectQueue for PendingSideEffectsRepository {
         let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .execute(self.pool())
             .await
-            .map_err(persistence)?;
+            .map_err(|error| persistence(&error))?;
         Ok(result.rows_affected())
     }
 }
@@ -159,7 +159,8 @@ const fn lease_acknowledgement(rows_affected: u64) -> LeaseAcknowledgement {
 
 /// Decode one claimed row into the leased job the entity policy consumes.
 fn leased_effect(id: SideEffectJobId, target: ContextTarget, row: &PgRow) -> Result<LeasedSideEffect, EntityError> {
-    let job = decode_job(target, row.get("payload"))?;
+    let payload: Value = row.get("payload");
+    let job = decode_job(target, &payload)?;
     let write_id = WriteId::from_uuid(row.get("write_id"));
     let recorded_at: DateTime<Utc> = row.get("recorded_at");
     let record = WriteRecord::restored(write_id, recorded_at);
@@ -176,7 +177,7 @@ fn leased_effect(id: SideEffectJobId, target: ContextTarget, row: &PgRow) -> Res
 }
 
 /// Map a driver failure into the entity port's persistence category.
-fn persistence(error: sqlx::Error) -> EntityError {
+fn persistence(error: &sqlx::Error) -> EntityError {
     EntityError::persistence(error.to_string())
 }
 
@@ -199,7 +200,9 @@ fn lease_batch_statement(owner: &str, batch_size: i32, lease_seconds: f64) -> Up
                 .or(Expr::col(PendingSideEffects::LockedUntil).lte(Expr::current_timestamp())),
         )
         .order_by(PendingSideEffects::NextAttemptAt, Order::Asc)
-        .limit(<i32 as Ord>::max(batch_size, 0) as u64)
+        // A negative batch size is an absent bound, not a narrower one, so it
+        // clamps to zero rather than wrapping into an enormous unsigned width.
+        .limit(u64::try_from(batch_size).unwrap_or(0))
         .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
         .to_owned();
 
@@ -287,7 +290,7 @@ fn purge_dead_statement(cutoff: DateTime<Utc>) -> DeleteStatement {
 }
 
 /// Decode one persisted queue payload into the semantic side-effect job.
-fn decode_job(target: ContextTarget, payload: Value) -> Result<BatchSideEffectJob, EntityError> {
+fn decode_job(target: ContextTarget, payload: &Value) -> Result<BatchSideEffectJob, EntityError> {
     let persisted = PersistedBatchSideEffectJob::decode(payload).map_err(|error| EntityError::persistence(error.to_string()))?;
     Ok(persisted_to_domain(target, persisted))
 }

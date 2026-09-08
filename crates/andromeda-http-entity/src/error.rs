@@ -1,5 +1,6 @@
 //! Focused classification helpers for every non-entity policy consumed by entity routes.
 
+use crate::entity_error::classify_entity_error;
 use andromeda_entity::error::EntityError;
 use andromeda_entity_map::error::EntityMapError;
 use andromeda_federation::error::FederationError;
@@ -20,7 +21,7 @@ pub trait EntityHttpClassify {
 
 impl EntityHttpClassify for EntityError {
     fn classify_for_entity_http(&self) -> ClassifiedReport {
-        super::entity_error::classify_entity_error(self)
+        classify_entity_error(self)
     }
 }
 
@@ -96,6 +97,11 @@ pub(crate) fn public_error(error_type: NgsiLdErrorType, detail: impl Into<String
 /// Attach the inbound request URI while converting a typed result at the entity HTTP boundary.
 pub trait EntityResultExt<T> {
     /// Convert the typed error through its exhaustive route-binding classifier and attach `instance`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`ProblemResponse`] the error classifies to whenever `self`
+    /// is `Err`; an `Ok` result passes through untouched.
     fn with_entity_instance(self, instance: &Uri) -> Result<T, ProblemResponse>;
 }
 

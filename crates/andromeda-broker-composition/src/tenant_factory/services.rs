@@ -12,53 +12,37 @@ use crate::{
     registered_entity_probe::EntityStoreRegistrationProbe,
     retry_delay::TokioRetryDelay,
     temporal_linked_forwarding::ForwardedTemporalLinkedSource,
-    tenant_factory::{error::TenantAssemblyError, tasks::TenantSignals, transport::TenantTransports},
+    tenant_factory::{TenantFactoryConfig, error::TenantAssemblyError, storage::TenantStorage, tasks::TenantSignals, transport::TenantTransports},
     tenant_state::AndromedaState,
 };
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_registry::{service::ContextRegistryService, store::ContextRegistryStore};
-use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     EntityService,
     NotificationWriteConfig,
     batch::execution::BatchExecutionConfig,
     batch_activity::BatchActivityTracker,
     change_sink::EntityChangeSink,
-    config::EntityConfig,
     discovery::EntityDiscoveryService,
-    port::{
-        attribute_history::AttributeDatasetHistory,
-        discovery::EntityDiscoveryStore,
-        query::EntityQueryStore,
-        reader::EntityReader,
-        registry_types::RegistryTypeSource,
-    },
+    port::attribute_history::AttributeDatasetHistory,
     query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource},
 };
-use andromeda_entity_map::{service::EntityMapService, store::EntityMapStore};
-use andromeda_federation::{FederationService, config::FederationConfig};
+use andromeda_entity_map::service::EntityMapService;
+use andromeda_federation::FederationService;
 use andromeda_http_source_identity::config::InfoConfig;
-use andromeda_http_subscription::config::NotificationConfig;
-use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_notification::delivery_config::DeliveryConfig;
 use andromeda_postgresql_context_store::{
-    config::DatabaseConfig,
     csource_subscription::repo::CsourceSubscriptionRepository,
     jsonld_context::repo::JsonLdContextRepository,
     subscription::repo::SubscriptionRepository,
     subscription_forwarding::repo::SubscriptionForwardingRepository,
 };
-use andromeda_postgresql_temporal_store::repo::TemporalRepository;
-use andromeda_registration::{RegistrationService, entity_probe::RegisteredEntityProbe, store::RegistrationStore};
+use andromeda_registration::{RegistrationService, entity_probe::RegisteredEntityProbe};
 use andromeda_snapshot::{
     config::SnapshotConfig,
     executor::{SnapshotPreparation, SnapshotPreparationConfig},
     service::SnapshotService,
-    store::SnapshotStore,
 };
-use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_subscription::{
-    cache::SubscriptionCache,
     csource::CsrSubscriptionVariant,
     entity::EntitySubscriptionVariant,
     forwarding_hook::SubscriptionForwardingHook,
@@ -71,50 +55,12 @@ use andromeda_subscription_forwarding::{
     service::SubscriptionForwardingService,
 };
 use andromeda_temporal::{
-    config::TemporalConfig,
     port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator},
     remote_linked::RemoteTemporalLinkedSource,
     service::TemporalService,
 };
-use andromeda_tenancy::{config::TenancyConfig, tenant_ref::TenantRef};
-use sqlx::PgPool;
+use andromeda_tenancy::tenant_ref::TenantRef;
 use std::{sync::Arc, time::Duration};
-use typed_builder::TypedBuilder;
-
-/// Values used once to compose a tenant's request services.
-#[derive(TypedBuilder)]
-pub(super) struct ServiceConstructionInputs<'a> {
-    pub(super) database_config: &'a DatabaseConfig,
-    pub(super) entity_config: &'a EntityConfig,
-    pub(super) federation_config: &'a FederationConfig,
-    pub(super) info_config: &'a InfoConfig,
-    pub(super) notification_config: &'a NotificationConfig,
-    pub(super) delivery_config: &'a DeliveryConfig,
-    pub(super) snapshot_config: &'a SnapshotConfig,
-    pub(super) temporal_config: &'a TemporalConfig,
-    pub(super) tenancy_config: &'a TenancyConfig,
-    pub(super) pool: &'a PgPool,
-    pub(super) live_target: &'a ContextTarget,
-    pub(super) tenant: &'a TenantRef,
-    pub(super) signals: &'a TenantSignals,
-    pub(super) transports: &'a TenantTransports,
-    pub(super) engine: &'a JsonLdEngine,
-    pub(super) temporal_repo: &'a Arc<TemporalRepository>,
-    pub(super) temporal_reader: &'a Arc<dyn TemporalHistoryReader>,
-    pub(super) temporal_mutation_barrier: &'a Arc<dyn TemporalMutationBarrier>,
-    pub(super) entity_reader: &'a Arc<dyn EntityReader>,
-    pub(super) entity_query_store: &'a Arc<dyn EntityQueryStore>,
-    pub(super) entity_discovery_store: &'a Arc<dyn EntityDiscoveryStore>,
-    pub(super) registration_store: &'a Arc<dyn RegistrationStore>,
-    pub(super) registry_type_source: &'a Arc<dyn RegistryTypeSource>,
-    pub(super) entity_map_store: &'a Arc<dyn EntityMapStore>,
-    pub(super) subscription_router: &'a Arc<dyn ForwardedSubscriptionRouter>,
-    pub(super) snapshot_store: &'a Arc<dyn SnapshotStore>,
-    pub(super) subscription_cache: &'a Arc<SubscriptionCache>,
-    pub(super) spatial_index: &'a Arc<SpatialEntityIndex>,
-    pub(super) writes: &'a Arc<dyn ContextCommitter>,
-    pub(super) batch_activity: &'a BatchActivityTracker,
-}
 
 /// Request-facing state and the scheduled snapshot preparation operation composed with it.
 pub(super) struct ConstructedServices {
@@ -122,210 +68,303 @@ pub(super) struct ConstructedServices {
     pub(super) snapshot_preparation: Arc<SnapshotPreparation>,
 }
 
+/// The subscription services one tenant answers requests with.
+struct SubscriptionServices {
+    /// Entity subscriptions (clause 5.8).
+    entity: Arc<SubscriptionService<EntitySubscriptionVariant>>,
+    /// Context Source Registration subscriptions (clause 5.11).
+    csource: Arc<SubscriptionService<CsrSubscriptionVariant>>,
+    /// The distributed side of subscriptions, absent when nothing advertises
+    /// an origin peers could deliver notifications back to.
+    forwarding: Option<Arc<SubscriptionForwardingService>>,
+}
+
 /// Construct all request-facing services for one tenant.
-pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Result<ConstructedServices, TenantAssemblyError> {
-    let ServiceConstructionInputs {
-        database_config,
-        entity_config,
-        federation_config,
-        info_config,
-        notification_config,
-        delivery_config,
-        snapshot_config,
-        temporal_config,
-        tenancy_config,
-        pool,
-        live_target,
-        tenant,
-        signals,
-        transports,
-        engine,
-        temporal_repo,
-        temporal_reader,
-        temporal_mutation_barrier,
-        entity_reader,
-        entity_query_store,
-        entity_discovery_store,
-        registration_store,
-        registry_type_source,
-        entity_map_store,
-        subscription_router,
-        snapshot_store,
-        subscription_cache,
-        spatial_index,
-        writes,
-        batch_activity,
-    } = inputs;
+pub(super) fn construct_services(
+    config: &TenantFactoryConfig,
+    storage: &TenantStorage,
+    tenant: &TenantRef,
+    signals: &TenantSignals,
+    transports: &TenantTransports,
+    temporal_reader: &Arc<dyn TemporalHistoryReader>,
+    temporal_mutation_barrier: &Arc<dyn TemporalMutationBarrier>,
+    subscription_router: &Arc<dyn ForwardedSubscriptionRouter>,
+    writes: &Arc<dyn ContextCommitter>,
+    batch_activity: &BatchActivityTracker,
+) -> Result<ConstructedServices, TenantAssemblyError> {
     let pool_size = match tenant {
-        TenantRef::UnnamedDefault => database_config.max_connections as usize,
-        TenantRef::Named(_) => tenancy_config.tenant_max_connections as usize,
+        TenantRef::UnnamedDefault => config.database.max_connections as usize,
+        TenantRef::Named(_) => config.tenancy.tenant_max_connections as usize,
     };
-    let entity_change_sink = Arc::new(BroadcastEntityChangeSink::new(signals.entity.clone())) as Arc<dyn EntityChangeSink>; // clone: the runtime and policy each own a sender handle.
-    let attribute_history = Arc::clone(temporal_repo) as Arc<dyn AttributeDatasetHistory>; // clone: temporal and entity policy share the concrete history adapter.
-    let entities = Arc::new(EntityService::new(
-        Arc::clone(entity_reader),
-        Arc::new(TokioBlockingExecutor),
-        Arc::new(TokioRetryDelay),
-        attribute_history,
-        Arc::clone(writes),
-        engine.clone(),
-        Some(entity_change_sink),
-        BatchExecutionConfig {
-            concurrency: entity_config.batch_concurrency.unwrap_or_else(|| usize::min(pool_size, 25)),
-            chunk_concurrency: entity_config.batch_chunk_concurrency.unwrap_or(4),
-            chunk_write_concurrency: entity_config.batch_chunk_write_concurrency.unwrap_or(4),
-            chunk_size: entity_config.batch_chunk_size,
-            large_threshold: entity_config.batch_large_threshold,
-            prepare_blocking_threshold: entity_config.batch_prepare_blocking_threshold,
-            async_side_effect_threshold: entity_config.batch_async_side_effect_threshold,
-        },
-        batch_activity.clone(), // clone: request services and worker supervision share activity state.
-        delivery_config.enabled.then(|| NotificationWriteConfig {
-            subscription_cache: Arc::clone(subscription_cache),
-        }),
-    ));
+    let entities = compose_entity_service(config, storage, signals, writes, batch_activity, pool_size);
     // Forwarding is constructed ahead of the services that join through it:
     // both the entity and the temporal join resolve an `objectType`-annotated
     // Linked Entity this broker does not hold through the same registrations.
     let forwarding = Arc::new(
         FederationService::new(
-            Arc::clone(registration_store),
-            engine.clone(),
-            info_config.source_alias.clone(), // clone: each forwarding service owns the validated alias.
-            federation_config,
+            Arc::clone(&storage.registration_store),
+            storage.engine.clone(),           // clone: each tenant service owns its JSON-LD engine handle.
+            config.info.source_alias.clone(), // clone: each forwarding service owns the validated alias.
+            &config.federation,
         )
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?,
     );
-    let temporal = Arc::new(TemporalService::new(
-        Arc::clone(entity_reader),
-        Arc::clone(temporal_reader),
-        Arc::clone(temporal_mutation_barrier),
-        Arc::clone(temporal_repo) as Arc<dyn TemporalMutator>,
-        Arc::clone(writes),
-        engine.clone(),
-        temporal_config.default_last_n,
-        // Clause 4.5.23.1 applied to the temporal API: an annotated Linked
-        // Entity whose history this broker does not record is fetched from the
-        // context sources registered for it.
-        Some(Arc::new(ForwardedTemporalLinkedSource::new(Arc::clone(&forwarding), live_target.clone())) as Arc<dyn RemoteTemporalLinkedSource>), // clone: request handling and linked resolution share one forwarding service.
-    ));
-    let entity_query = Arc::new(EntityQueryService::new(
-        Arc::clone(entity_reader),
-        Arc::clone(entity_query_store),
-        engine.clone(),
-        Arc::clone(spatial_index),
-        tenant.clone(), // clone: the query service owns its tenant partition.
-        // Clause 4.5.23.1: an `objectType`-annotated Linked Entity this broker
-        // does not store is fetched from the context sources registered for it.
-        Some(Arc::new(ForwardedLinkedEntitySource::new(Arc::clone(&forwarding), live_target.clone())) as Arc<dyn RemoteLinkedEntitySource>), // clone: request handling and linked resolution share one forwarding service.
-    ));
-    let context_store = Arc::new(JsonLdContextRepository::new(pool)) as Arc<dyn ContextRegistryStore>;
-    let contexts = Arc::new(ContextRegistryService::new(context_store, engine.clone()));
-    let snapshot_preparation = Arc::new(SnapshotPreparation::new(
-        live_target.clone(), // clone: capture queries execute against the tenant's ordinary live branch.
-        Arc::clone(snapshot_store),
-        Arc::clone(writes),
-        Arc::clone(&entity_query),
-        Arc::clone(&temporal),
-        Arc::clone(&forwarding),
-        SnapshotPreparationConfig {
-            capture_page_size: snapshot_config.capture_page_size,
-            max_per_pass: snapshot_config.preparation_concurrency,
-            lease_duration: Duration::from_secs(snapshot_config.preparation_lease_secs),
-            tenant_count_quota: snapshot_config.tenant_count_quota,
-            tenant_byte_quota: snapshot_config.tenant_byte_quota,
-        },
-    ));
-    let snapshots = Arc::new(SnapshotService::new(
-        Arc::clone(snapshot_store),
-        Some(Arc::clone(&snapshot_preparation)),
-        Duration::from_secs(snapshot_config.default_lifetime_secs),
-        Duration::from_secs(snapshot_config.maximum_lifetime_secs),
-        Duration::from_secs(snapshot_config.scoped_operation_wait_secs),
-        snapshot_config.tenant_count_quota,
-        snapshot_config.tenant_byte_quota,
-    ));
-
-    let subscription_endpoint_validator: Arc<dyn SubscriptionEndpointValidator> = Arc::new(DeliverySubscriptionEndpointValidator);
-    let csr_subscriptions = Arc::new(SubscriptionService::new(
-        Arc::new(CsourceSubscriptionRepository::new(pool)),
-        engine.clone(),
-        CsrSubscriptionVariant::new(engine.clone()),
-        Some(Arc::new(BroadcastSubscriptionChangeSink::new(signals.csource_subscription.clone()))),
-        Arc::clone(&subscription_endpoint_validator),
-    ));
-    let subscription_store = Arc::new(SubscriptionRepository::new(pool)) as Arc<dyn SubscriptionStore>;
-    // Clauses 5.8.1.4 and 5.8.6 need a notification endpoint peers can reach;
-    // without an advertised origin the distributed side of subscriptions stays
-    // off, and the broker says so once per tenant.
-    let subscription_forwarding = if let Some(receiver) = info_config.advertised_url.as_ref().and_then(ReceiverEndpoint::from_advertised) { Some(Arc::new(
-        SubscriptionForwardingService::builder()
-            .live_target(live_target.clone()) // clone: forwarding is defined only over the tenant's live branch.
-            .receiver(receiver)
-            .tenant(tenant.clone()) // clone: the forwarding service owns its tenant
-            .subscriptions(Arc::clone(&subscription_store))
-            .csource_subscriptions(Arc::clone(&csr_subscriptions))
-            .mappings(Arc::new(SubscriptionForwardingRepository::new(pool)) as Arc<dyn SubscriptionForwardingStore>)
-            .router(Arc::clone(subscription_router))
-            .federation(Arc::clone(&forwarding))
-            .entity_query(Arc::clone(&entity_query))
-            .transport(Arc::clone(&transports.dispatcher))
-            .engine(engine.clone())
-            .build(),
-    )) } else {
-        tracing::info!(tenant = ?tenant, "subscription forwarding disabled: ANDROMEDA_INFO_ADVERTISED_URL is not set");
-        None
-    };
-    let mut subscriptions = SubscriptionService::new(
-        Arc::clone(&subscription_store),
-        engine.clone(),
-        EntitySubscriptionVariant::new(engine.clone(), Arc::clone(&contexts)),
-        Some(Arc::new(CoherentSubscriptionChangeSink::new(
-            signals.subscription.clone(),
-            Arc::clone(subscription_cache),
-            subscription_store,
-        ))),
-        Arc::clone(&subscription_endpoint_validator),
+    let temporal = compose_temporal_service(config, storage, temporal_reader, temporal_mutation_barrier, writes, &forwarding);
+    let entity_query = compose_entity_query_service(storage, tenant, &forwarding);
+    let context_store = Arc::new(JsonLdContextRepository::new(&storage.pool)) as Arc<dyn ContextRegistryStore>;
+    let contexts = Arc::new(ContextRegistryService::new(context_store, storage.engine.clone()));
+    let (snapshot_preparation, snapshots) = compose_snapshot_services(&config.snapshot, storage, writes, &entity_query, &temporal, &forwarding);
+    let subscriptions = compose_subscription_services(
+        config,
+        storage,
+        tenant,
+        signals,
+        transports,
+        subscription_router,
+        &forwarding,
+        &entity_query,
+        &contexts,
     );
-    if let Some(forwarding_service) = &subscription_forwarding {
-        subscriptions = subscriptions.with_forwarding_hook(Arc::clone(forwarding_service) as Arc<dyn SubscriptionForwardingHook>);
-    }
     let state = AndromedaState {
-        live_target: live_target.clone(), // clone: request state owns the immutable typed live-branch selection.
+        live_target: storage.live_target.clone(), // clone: request state owns the immutable typed live-branch selection.
         entities,
         entity_query,
         entity_discovery: Arc::new(EntityDiscoveryService::new(
-            Arc::clone(entity_discovery_store),
-            Arc::clone(registry_type_source),
-            engine.clone(),
+            Arc::clone(&storage.entity_ports.discovery),
+            Arc::clone(&storage.registry_type_source),
+            storage.engine.clone(), // clone: discovery owns its engine handle.
         )),
         temporal,
-        subscriptions: Arc::new(subscriptions),
+        subscriptions: subscriptions.entity,
         contexts,
-        csr: Arc::new(RegistrationService::new(
-            Arc::clone(registration_store),
-            // Clauses 5.9.2.4 and 5.9.3.4: a proxied registration is refused
-            // when this broker already holds the context data it claims.
-            Arc::new(EntityStoreRegistrationProbe::new(
-                Arc::clone(entity_reader),
-                Arc::clone(entity_query_store),
-                engine.clone(), // clone: the probe compiles registration selectors against its own engine handle.
-                live_target.clone(),
-            )) as Arc<dyn RegisteredEntityProbe>,
-            engine.clone(),
-            Some(Arc::new(BroadcastRegistrationChangeSink::new(signals.registration.clone()))), // clone: each tenant service and worker own a sender handle.
-        )),
-        csr_subscriptions,
+        csr: compose_registration_service(storage, signals),
+        csr_subscriptions: subscriptions.csource,
         forwarding,
-        entity_maps: Arc::new(EntityMapService::new(Arc::clone(entity_map_store))),
-        subscription_forwarding,
+        entity_maps: Arc::new(EntityMapService::new(Arc::clone(&storage.entity_map_store))),
+        subscription_forwarding: subscriptions.forwarding,
         snapshots,
         sse_registry: Arc::clone(&transports.sse_registry),
-        sse_channel_buffer_size: notification_config.sse.channel_buffer_size,
-        sse_keep_alive_interval_secs: notification_config.sse.keep_alive_interval_secs,
+        sse_channel_buffer_size: config.notifications.sse.channel_buffer_size,
+        sse_keep_alive_interval_secs: config.notifications.sse.keep_alive_interval_secs,
         ws_registry: Arc::clone(&transports.ws_registry),
-        ws_channel_buffer_size: notification_config.ws.channel_buffer_size,
-        ws_ping_interval_secs: notification_config.ws.ping_interval_secs,
+        ws_channel_buffer_size: config.notifications.ws.channel_buffer_size,
+        ws_ping_interval_secs: config.notifications.ws.ping_interval_secs,
     };
     Ok(ConstructedServices { state, snapshot_preparation })
+}
+
+/// Compose the entity policy service every write and read request enters.
+///
+/// A durable notification write is configured only when delivery is enabled;
+/// with live delivery the notification worker evaluates subscriptions itself.
+fn compose_entity_service(
+    config: &TenantFactoryConfig,
+    storage: &TenantStorage,
+    signals: &TenantSignals,
+    writes: &Arc<dyn ContextCommitter>,
+    batch_activity: &BatchActivityTracker,
+    pool_size: usize,
+) -> Arc<EntityService> {
+    let entity_change_sink = Arc::new(BroadcastEntityChangeSink::new(signals.entity.clone())) as Arc<dyn EntityChangeSink>; // clone: the runtime and policy each own a sender handle.
+    let attribute_history = Arc::clone(&storage.temporal_repo) as Arc<dyn AttributeDatasetHistory>; // clone: temporal and entity policy share the concrete history adapter.
+    Arc::new(EntityService::new(
+        Arc::clone(&storage.entity_ports.reader),
+        Arc::new(TokioBlockingExecutor),
+        Arc::new(TokioRetryDelay),
+        attribute_history,
+        Arc::clone(writes),
+        storage.engine.clone(), // clone: entity policy owns its engine handle.
+        Some(entity_change_sink),
+        BatchExecutionConfig {
+            concurrency: config.entity.batch_concurrency.unwrap_or_else(|| usize::min(pool_size, 25)),
+            chunk_concurrency: config.entity.batch_chunk_concurrency.unwrap_or(4),
+            chunk_write_concurrency: config.entity.batch_chunk_write_concurrency.unwrap_or(4),
+            chunk_size: config.entity.batch_chunk_size,
+            large_threshold: config.entity.batch_large_threshold,
+            prepare_blocking_threshold: config.entity.batch_prepare_blocking_threshold,
+            async_side_effect_threshold: config.entity.batch_async_side_effect_threshold,
+        },
+        batch_activity.clone(), // clone: request services and worker supervision share activity state.
+        config.notification_delivery.enabled.then(|| NotificationWriteConfig {
+            subscription_cache: Arc::clone(&storage.subscription_cache),
+        }),
+    ))
+}
+
+/// Compose the temporal service the temporal API is answered from.
+fn compose_temporal_service(
+    config: &TenantFactoryConfig,
+    storage: &TenantStorage,
+    reader: &Arc<dyn TemporalHistoryReader>,
+    mutation_barrier: &Arc<dyn TemporalMutationBarrier>,
+    writes: &Arc<dyn ContextCommitter>,
+    forwarding: &Arc<FederationService>,
+) -> Arc<TemporalService> {
+    Arc::new(TemporalService::new(
+        Arc::clone(&storage.entity_ports.reader),
+        Arc::clone(reader),
+        Arc::clone(mutation_barrier),
+        Arc::clone(&storage.temporal_repo) as Arc<dyn TemporalMutator>,
+        Arc::clone(writes),
+        storage.engine.clone(), // clone: temporal policy owns its engine handle.
+        config.temporal.default_last_n,
+        // Clause 4.5.23.1 applied to the temporal API: an annotated Linked
+        // Entity whose history this broker does not record is fetched from the
+        // context sources registered for it.
+        Some(Arc::new(ForwardedTemporalLinkedSource::new(
+            Arc::clone(forwarding),      // clone: request handling and linked resolution share one forwarding service.
+            storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
+        )) as Arc<dyn RemoteTemporalLinkedSource>),
+    ))
+}
+
+/// Compose the entity query service every entity read is answered from.
+fn compose_entity_query_service(storage: &TenantStorage, tenant: &TenantRef, forwarding: &Arc<FederationService>) -> Arc<EntityQueryService> {
+    Arc::new(EntityQueryService::new(
+        Arc::clone(&storage.entity_ports.reader),
+        Arc::clone(&storage.entity_ports.query),
+        storage.engine.clone(), // clone: the query service owns its engine handle.
+        Arc::clone(&storage.spatial_index),
+        tenant.clone(), // clone: the query service owns its tenant partition.
+        // Clause 4.5.23.1: an `objectType`-annotated Linked Entity this broker
+        // does not store is fetched from the context sources registered for it.
+        Some(Arc::new(ForwardedLinkedEntitySource::new(
+            Arc::clone(forwarding),      // clone: request handling and linked resolution share one forwarding service.
+            storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
+        )) as Arc<dyn RemoteLinkedEntitySource>),
+    ))
+}
+
+/// Compose the snapshot preparation operation and the service scheduling it.
+fn compose_snapshot_services(
+    config: &SnapshotConfig,
+    storage: &TenantStorage,
+    writes: &Arc<dyn ContextCommitter>,
+    entity_query: &Arc<EntityQueryService>,
+    temporal: &Arc<TemporalService>,
+    forwarding: &Arc<FederationService>,
+) -> (Arc<SnapshotPreparation>, Arc<SnapshotService>) {
+    let preparation = Arc::new(SnapshotPreparation::new(
+        storage.live_target.clone(), // clone: capture queries execute against the tenant's ordinary live branch.
+        Arc::clone(&storage.snapshot_store),
+        Arc::clone(writes),
+        Arc::clone(entity_query),
+        Arc::clone(temporal),
+        Arc::clone(forwarding),
+        SnapshotPreparationConfig {
+            capture_page_size: config.capture_page_size,
+            max_per_pass: config.preparation_concurrency,
+            lease_duration: Duration::from_secs(config.preparation_lease_secs),
+            tenant_count_quota: config.tenant_count_quota,
+            tenant_byte_quota: config.tenant_byte_quota,
+        },
+    ));
+    let service = Arc::new(SnapshotService::new(
+        Arc::clone(&storage.snapshot_store),
+        Some(Arc::clone(&preparation)), // clone: the service schedules the same preparation the worker drives.
+        Duration::from_secs(config.default_lifetime_secs),
+        Duration::from_secs(config.maximum_lifetime_secs),
+        Duration::from_secs(config.scoped_operation_wait_secs),
+        config.tenant_count_quota,
+        config.tenant_byte_quota,
+    ));
+    (preparation, service)
+}
+
+/// Compose both subscription services and the distributed side joining them.
+fn compose_subscription_services(
+    config: &TenantFactoryConfig,
+    storage: &TenantStorage,
+    tenant: &TenantRef,
+    signals: &TenantSignals,
+    transports: &TenantTransports,
+    router: &Arc<dyn ForwardedSubscriptionRouter>,
+    federation: &Arc<FederationService>,
+    entity_query: &Arc<EntityQueryService>,
+    contexts: &Arc<ContextRegistryService>,
+) -> SubscriptionServices {
+    let endpoint_validator: Arc<dyn SubscriptionEndpointValidator> = Arc::new(DeliverySubscriptionEndpointValidator);
+    let csource = Arc::new(SubscriptionService::new(
+        Arc::new(CsourceSubscriptionRepository::new(&storage.pool)),
+        storage.engine.clone(),                              // clone: each subscription service owns its engine handle.
+        CsrSubscriptionVariant::new(storage.engine.clone()), // clone: the variant expands against its own engine handle.
+        Some(Arc::new(BroadcastSubscriptionChangeSink::new(signals.csource_subscription.clone()))), // clone: service and worker each own a sender handle.
+        Arc::clone(&endpoint_validator),                     // clone: both subscription services share one endpoint validator.
+    ));
+    let store = Arc::new(SubscriptionRepository::new(&storage.pool)) as Arc<dyn SubscriptionStore>;
+    let forwarding = compose_subscription_forwarding(&config.info, storage, tenant, transports, router, federation, entity_query, &csource, &store);
+    let mut entity = SubscriptionService::new(
+        Arc::clone(&store),
+        storage.engine.clone(), // clone: each subscription service owns its engine handle.
+        EntitySubscriptionVariant::new(storage.engine.clone(), Arc::clone(contexts)), // clone: the variant expands against its own engine handle.
+        Some(Arc::new(CoherentSubscriptionChangeSink::new(
+            signals.subscription.clone(), // clone: service and worker each own a sender handle.
+            Arc::clone(&storage.subscription_cache),
+            store,
+        ))),
+        endpoint_validator,
+    );
+    if let Some(forwarding_service) = &forwarding {
+        entity = entity.with_forwarding_hook(Arc::clone(forwarding_service) as Arc<dyn SubscriptionForwardingHook>);
+    }
+    SubscriptionServices {
+        entity: Arc::new(entity),
+        csource,
+        forwarding,
+    }
+}
+
+/// Compose the distributed side of subscriptions for one tenant.
+///
+/// Clauses 5.8.1.4 and 5.8.6 need a notification endpoint peers can reach;
+/// without an advertised origin the distributed side stays off, and the broker
+/// says so once per tenant.
+fn compose_subscription_forwarding(
+    info: &InfoConfig,
+    storage: &TenantStorage,
+    tenant: &TenantRef,
+    transports: &TenantTransports,
+    router: &Arc<dyn ForwardedSubscriptionRouter>,
+    federation: &Arc<FederationService>,
+    entity_query: &Arc<EntityQueryService>,
+    csource_subscriptions: &Arc<SubscriptionService<CsrSubscriptionVariant>>,
+    subscriptions: &Arc<dyn SubscriptionStore>,
+) -> Option<Arc<SubscriptionForwardingService>> {
+    let Some(receiver) = info.advertised_url.as_ref().and_then(ReceiverEndpoint::from_advertised) else {
+        tracing::info!(tenant = ?tenant, "subscription forwarding disabled: ANDROMEDA_INFO_ADVERTISED_URL is not set");
+        return None;
+    };
+    Some(Arc::new(
+        SubscriptionForwardingService::builder()
+            .live_target(storage.live_target.clone()) // clone: forwarding is defined only over the tenant's live branch.
+            .receiver(receiver)
+            .tenant(tenant.clone()) // clone: the forwarding service owns its tenant
+            .subscriptions(Arc::clone(subscriptions))
+            .csource_subscriptions(Arc::clone(csource_subscriptions))
+            .mappings(Arc::new(SubscriptionForwardingRepository::new(&storage.pool)) as Arc<dyn SubscriptionForwardingStore>)
+            .router(Arc::clone(router))
+            .federation(Arc::clone(federation))
+            .entity_query(Arc::clone(entity_query))
+            .transport(Arc::clone(&transports.dispatcher))
+            .engine(storage.engine.clone()) // clone: forwarding owns its engine handle.
+            .build(),
+    ))
+}
+
+/// Compose registration policy with the admission probe clauses 5.9.2.4 and
+/// 5.9.3.4 require: a proxied registration is refused when this broker already
+/// holds the context data it claims.
+fn compose_registration_service(storage: &TenantStorage, signals: &TenantSignals) -> Arc<RegistrationService> {
+    let probe = Arc::new(EntityStoreRegistrationProbe::new(
+        Arc::clone(&storage.entity_ports.reader),
+        Arc::clone(&storage.entity_ports.query),
+        storage.engine.clone(),      // clone: the probe compiles registration selectors against its own engine handle.
+        storage.live_target.clone(), // clone: admission inspects the tenant's live branch.
+    )) as Arc<dyn RegisteredEntityProbe>;
+    Arc::new(RegistrationService::new(
+        Arc::clone(&storage.registration_store),
+        probe,
+        storage.engine.clone(), // clone: registration policy owns its engine handle.
+        Some(Arc::new(BroadcastRegistrationChangeSink::new(signals.registration.clone()))), // clone: each tenant service and worker own a sender handle.
+    ))
 }

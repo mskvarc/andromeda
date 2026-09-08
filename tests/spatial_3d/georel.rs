@@ -103,7 +103,7 @@ async fn georel_contains_3d_polygon_contains_reference_point_at_other_altitude()
     let client = scope.client();
     let id = scope.id("Building:contains_3d");
 
-    create(client, &building_polygon_3d(&id, pillar_ring_3d(10.0))).await;
+    create(client, &building_polygon_3d(&id, &pillar_ring_3d(10.0))).await;
 
     let coordinates = encode_json(&json!([13.4, 52.52, 8000.0]));
     let (status, _, body) = query(
@@ -128,7 +128,7 @@ async fn georel_intersects_3d_geometries_intersect_on_footprint() {
 
     // Entity ring at altitude 0, reference ring at altitude 5000: disjoint in
     // space, overlapping on the footprint, so they intersect per OGC semantics.
-    create(client, &building_polygon_3d(&id, pillar_ring_3d(0.0))).await;
+    create(client, &building_polygon_3d(&id, &pillar_ring_3d(0.0))).await;
 
     let reference = json!([[
         [13.5, 52.5, 5000.0],
@@ -211,9 +211,9 @@ async fn georel_overlaps_3d_polygons_overlap_on_footprint() {
     let overlapping = scope.id("Building:overlaps_3d");
     let far = scope.id("Building:overlaps_far");
 
-    create(client, &building_polygon_3d(&overlapping, pillar_ring_3d(0.0))).await;
+    create(client, &building_polygon_3d(&overlapping, &pillar_ring_3d(0.0))).await;
     let far_ring = json!([[[30.0, 10.0, 0.0], [31.0, 10.0, 0.0], [31.0, 11.0, 0.0], [30.0, 11.0, 0.0], [30.0, 10.0, 0.0]]]);
-    create(client, &building_polygon_3d(&far, far_ring)).await;
+    create(client, &building_polygon_3d(&far, &far_ring)).await;
 
     // Partially overlapping ring at a different altitude.
     let reference = json!([[

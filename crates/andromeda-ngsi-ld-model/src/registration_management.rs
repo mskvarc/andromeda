@@ -66,6 +66,7 @@ pub struct RegistrationManagementInfo {
 #[cfg(test)]
 mod tests {
     use crate::registration_management::{LocalScope, RegistrationManagementInfo};
+    use andromeda_ngsi_ld_lexicon::positive_milliseconds::PositiveMilliseconds;
     use serde_json::json;
 
     #[test]
@@ -73,8 +74,8 @@ mod tests {
         let wire = json!({"cacheDuration": "PT10S", "cooldown": 500, "localOnly": true, "timeout": 3000});
         let parsed: RegistrationManagementInfo = serde_json::from_value(wire.clone()).expect("management parses"); // clone: compared below
         pretty_assertions::assert_eq!(parsed.local_only, Some(LocalScope::LocalOnly));
-        pretty_assertions::assert_eq!(parsed.cooldown.map(|value| value.get()), Some(500));
-        pretty_assertions::assert_eq!(parsed.timeout.map(|value| value.get()), Some(3000));
+        pretty_assertions::assert_eq!(parsed.cooldown.map(PositiveMilliseconds::get), Some(500));
+        pretty_assertions::assert_eq!(parsed.timeout.map(PositiveMilliseconds::get), Some(3000));
         pretty_assertions::assert_eq!(serde_json::to_value(&parsed).expect("serialises"), wire);
     }
 

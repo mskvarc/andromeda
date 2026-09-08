@@ -10,6 +10,10 @@ use std::{any::Any, future::Future, panic::AssertUnwindSafe};
 use thiserror::Error;
 
 /// Run one prefix-isolated test and always attempt explicit cleanup.
+///
+/// # Errors
+///
+/// Returns [`RunIsolatedError::Environment`] when the environment cannot be built or its cleanup fails on its own, [`RunIsolatedError::Test`] when the test body returns an error or panics, and [`RunIsolatedError::TestAndCleanup`] when the body and the cleanup both fail.
 pub async fn run_isolated<F, Fut, E>(configuration: &TestRunConfiguration, suite: &TestSuiteName, test: F) -> Result<(), RunIsolatedError<E>>
 where
     F: FnOnce(&TestEnvironment) -> Fut,

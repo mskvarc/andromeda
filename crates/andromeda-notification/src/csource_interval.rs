@@ -51,6 +51,13 @@ impl CsourceIntervalNotificationOperation {
     }
 
     /// Evaluate every context-source interval subscription due at the execution boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NotificationError::Subscription`] when the subscription store cannot
+    /// report the due interval subscriptions. Per-subscription failures — registration
+    /// lookup, slot claiming, serialization, endpoint parsing, and delivery outcome
+    /// bookkeeping — are logged and skipped rather than aborting the sweep.
     pub async fn execute(&self) -> Result<usize, NotificationError> {
         let due_subs = self.sub_repo.find_due_interval_subscriptions(&self.target).await?;
         let due_count = due_subs.len();
@@ -84,7 +91,7 @@ impl CsourceIntervalNotificationOperation {
                 continue;
             }
 
-            let notification_id = if let Ok(u) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() { u } else {
+            let Ok(notification_id) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() else {
                 error!("Failed to construct notification URN for {}", sub.id);
                 continue;
             };

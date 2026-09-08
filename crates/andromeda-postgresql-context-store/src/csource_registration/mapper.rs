@@ -32,6 +32,16 @@ use sqlx::{Row, postgres::PgRow};
 use url::Url;
 
 /// Convert a `context_source_registrations` row into the domain type.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Internal`] when a stored column does not parse
+/// back into its domain type: the registration URI, the `registrationName` or
+/// `description` text, the tenant name, the `information` document and the rest
+/// of the coverage members, the endpoint, media type, forwarding mode,
+/// operations, refresh rate and remaining access members, or the health status
+/// label. It is also returned when the `context_source_alias` column exists but
+/// fails to read for a reason other than being absent or undecodable.
 pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStoreError> {
     let id_raw: String = row.get("id");
     let id: Uri = id_raw
@@ -47,17 +57,44 @@ pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStore
         .map(NonEmptyText::try_from)
         .transpose()
         .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR description: {e}")))?;
+    let tenant = row
+        .get::<Option<String>, _>("tenant")
+        .map(TenantName::try_from)
+        .transpose()
+        .map_err(|e| ContextStoreError::Internal(e.to_string()))?;
+    let additional_properties: Option<Value> = row.get("additional_properties");
+
+    Ok(ContextSourceRegistration::builder()
+        .id(id)
+        .registration_name(registration_name)
+        .description(description)
+        .tenant(tenant)
+        .coverage(row_to_coverage(row)?)
+        .access(row_to_access(row)?)
+        .health(row_to_health(row)?)
+        .lifecycle(row_to_lifecycle(row))
+        .additional_properties(additional_properties)
+        .build())
+}
+
+/// Rebuild the coverage members: what context the registration claims to serve.
+fn row_to_coverage(row: &PgRow) -> Result<RegistrationCoverage, ContextStoreError> {
     let information_json: Value = row.get("information");
+    let information = serde_json::from_value(information_json).map_err(|e| ContextStoreError::Internal(format!("Failed to parse CSR information: {e}")))?;
     let dataset_id = row
         .get::<Option<Vec<String>>, _>("dataset_id")
         .map(|values| values.iter().map(|raw| DatasetSelector::parse(raw)).collect::<Result<Vec<_>, _>>())
         .transpose()
         .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR datasetId: {e}")))?;
-    let tenant_str: Option<String> = row.get("tenant");
-    let tenant = tenant_str
-        .map(TenantName::try_from)
-        .transpose()
-        .map_err(|e| ContextStoreError::Internal(e.to_string()))?;
+    let scope: Option<Vec<ScopeBuf>> = row
+        .get::<Option<Vec<String>>, _>("scope")
+        .map(|values| {
+            values
+                .into_iter()
+                .map(|raw| ScopeBuf::new(raw).map_err(|e| ContextStoreError::Internal(format!("Invalid scope value in DB: {e}"))))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
     let observation_interval = row
         .get::<Option<Value>, _>("observation_interval")
         .map(serde_json::from_value::<TimeInterval>)
@@ -71,7 +108,21 @@ pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStore
     let location: Option<Value> = row.get("location");
     let observation_space: Option<Value> = row.get("observation_space");
     let operation_space: Option<Value> = row.get("operation_space");
-    let expires_at: Option<DateTime<Utc>> = row.get("expires_at");
+
+    Ok(RegistrationCoverage::builder()
+        .information(information)
+        .dataset_id(dataset_id)
+        .scope(scope)
+        .location(location)
+        .observation_space(observation_space)
+        .operation_space(operation_space)
+        .observation_interval(observation_interval)
+        .management_interval(management_interval)
+        .build())
+}
+
+/// Rebuild the access members: how the broker reaches the context source.
+fn row_to_access(row: &PgRow) -> Result<ContextSourceAccess, ContextStoreError> {
     let endpoint_raw: String = row.get("endpoint");
     let endpoint = Url::parse(&endpoint_raw).map_err(|e| ContextStoreError::Internal(format!("Invalid CSR endpoint '{endpoint_raw}': {e}")))?;
     let accept: Option<MediaTypeBuf> = row
@@ -79,30 +130,24 @@ pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStore
         .map(|raw| raw.parse())
         .transpose()
         .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR accept media type: {e}")))?;
-    // `mode` and `status` are projected as `::text`; the PostgreSQL enum labels
-    // and the domain `EnumString` share one definition, so a label the broker
-    // does not know becomes a typed parse error here rather than an opaque
-    // sqlx decode failure deep in the driver.
+    // `mode` is projected as `::text`; the PostgreSQL enum labels and the domain
+    // `EnumString` share one definition, so a label the broker does not know
+    // becomes a typed parse error here rather than an opaque sqlx decode failure
+    // deep in the driver.
     let mode_label: String = row.get("mode");
     let mode = mode_label
         .parse::<ForwardingMode>()
         .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR mode '{mode_label}': {e}")))?;
     let operations: Option<Vec<CsrOperation>> = row
         .get::<Option<Vec<String>>, _>("operations")
-        .map(|v| {
-            v.into_iter()
-                .map(|s| {
-                    s.parse::<CsrOperation>()
-                        .map_err(|_| ContextStoreError::Internal(format!("Invalid CSR operation '{s}'")))
+        .map(|labels| {
+            labels
+                .into_iter()
+                .map(|label| {
+                    label
+                        .parse::<CsrOperation>()
+                        .map_err(|_| ContextStoreError::Internal(format!("Invalid CSR operation '{label}'")))
                 })
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .transpose()?;
-    let scope: Option<Vec<ScopeBuf>> = row
-        .get::<Option<Vec<String>>, _>("scope")
-        .map(|v| {
-            v.into_iter()
-                .map(|s| ScopeBuf::new(s).map_err(|e| ContextStoreError::Internal(format!("Invalid scope value in DB: {e}"))))
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?;
@@ -127,14 +172,40 @@ pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStore
         .map(Url::parse)
         .transpose()
         .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR jsonldContext: {e}")))?;
-    let context_source_alias = match row.try_get::<Option<String>, _>("context_source_alias") {
+    let context_source_alias = row_to_alias(row)?;
+
+    Ok(ContextSourceAccess::builder()
+        .endpoint(endpoint)
+        .accept(accept)
+        .mode(Some(mode))
+        .operations(operations)
+        .refresh_rate(refresh_rate)
+        .management(management)
+        .context_source_info(context_source_info)
+        .jsonld_context(jsonld_context)
+        .context_source_alias(context_source_alias)
+        .build())
+}
+
+/// The pseudonym a distributed operation attributes forwarded context to.
+///
+/// The column is absent from projections that predate it and undecodable where
+/// the projection widened it, and neither case is a broken registration, so both
+/// read as "no alias declared".
+fn row_to_alias(row: &PgRow) -> Result<Option<ContextSourcePseudonym>, ContextStoreError> {
+    match row.try_get::<Option<String>, _>("context_source_alias") {
         Ok(value) => value
             .map(ContextSourcePseudonym::try_from)
             .transpose()
-            .map_err(|error| ContextStoreError::Internal(format!("Invalid CSR contextSourceAlias: {error}")))?,
-        Err(sqlx::Error::ColumnNotFound(_) | sqlx::Error::ColumnDecode { .. }) => None,
-        Err(e) => return Err(ContextStoreError::Internal(format!("Failed to read context_source_alias column: {e}"))),
-    };
+            .map_err(|error| ContextStoreError::Internal(format!("Invalid CSR contextSourceAlias: {error}"))),
+        Err(sqlx::Error::ColumnNotFound(_) | sqlx::Error::ColumnDecode { .. }) => Ok(None),
+        Err(e) => Err(ContextStoreError::Internal(format!("Failed to read context_source_alias column: {e}"))),
+    }
+}
+
+/// Rebuild the health members: the forwarding outcome counters and timestamps.
+fn row_to_health(row: &PgRow) -> Result<RegistrationHealth, ContextStoreError> {
+    // `status` is projected as `::text` for the same reason as `mode`.
     let status_label: String = row.get("status");
     let status = status_label
         .parse::<CsrStatus>()
@@ -143,58 +214,25 @@ pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStore
     let times_failed: i32 = row.get("times_failed");
     let last_success: Option<DateTime<Utc>> = row.get("last_success");
     let last_failure: Option<DateTime<Utc>> = row.get("last_failure");
+
+    Ok(RegistrationHealth::builder()
+        .status(status)
+        .times_sent(Some(times_sent))
+        .times_failed(Some(times_failed))
+        .last_success(last_success)
+        .last_failure(last_failure)
+        .build())
+}
+
+/// Rebuild the lifecycle members: the timestamps the broker maintains itself.
+fn row_to_lifecycle(row: &PgRow) -> RegistrationLifecycle {
+    let expires_at: Option<DateTime<Utc>> = row.get("expires_at");
     let created_at: DateTime<Utc> = row.get("created_at");
     let modified_at: DateTime<Utc> = row.get("modified_at");
-    let additional_properties: Option<Value> = row.get("additional_properties");
 
-    let information = serde_json::from_value(information_json).map_err(|e| ContextStoreError::Internal(format!("Failed to parse CSR information: {e}")))?;
-
-    Ok(ContextSourceRegistration::builder()
-        .id(id)
-        .registration_name(registration_name)
-        .description(description)
-        .tenant(tenant)
-        .coverage(
-            RegistrationCoverage::builder()
-                .information(information)
-                .dataset_id(dataset_id)
-                .scope(scope)
-                .location(location)
-                .observation_space(observation_space)
-                .operation_space(operation_space)
-                .observation_interval(observation_interval)
-                .management_interval(management_interval)
-                .build(),
-        )
-        .access(
-            ContextSourceAccess::builder()
-                .endpoint(endpoint)
-                .accept(accept)
-                .mode(Some(mode))
-                .operations(operations)
-                .refresh_rate(refresh_rate)
-                .management(management)
-                .context_source_info(context_source_info)
-                .jsonld_context(jsonld_context)
-                .context_source_alias(context_source_alias)
-                .build(),
-        )
-        .health(
-            RegistrationHealth::builder()
-                .status(status)
-                .times_sent(Some(times_sent))
-                .times_failed(Some(times_failed))
-                .last_success(last_success)
-                .last_failure(last_failure)
-                .build(),
-        )
-        .lifecycle(
-            RegistrationLifecycle::builder()
-                .expires_at(expires_at)
-                .created_at(created_at)
-                .modified_at(modified_at)
-                .build(),
-        )
-        .additional_properties(additional_properties)
-        .build())
+    RegistrationLifecycle::builder()
+        .expires_at(expires_at)
+        .created_at(created_at)
+        .modified_at(modified_at)
+        .build()
 }

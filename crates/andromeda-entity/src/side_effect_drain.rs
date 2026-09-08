@@ -85,6 +85,12 @@ impl EntitySideEffectDrain {
     }
 
     /// Claim and process one bounded batch at `now`.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::Persistence`] when the queue cannot be leased or
+    /// a job's outcome cannot be recorded, and whatever the replayed commit
+    /// reported for the first job that could not be applied.
     pub async fn execute(&self, now: DateTime<Utc>) -> Result<EntitySideEffectDrainOutcome, EntityError> {
         let leased = self
             .queue
@@ -182,6 +188,10 @@ impl EntitySideEffectDrain {
 
     /// Remove dead-lettered jobs created before `cutoff`, returning how many
     /// were removed.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::Persistence`] when the queue could not be swept.
     pub async fn purge_dead(&self, cutoff: DateTime<Utc>) -> Result<u64, EntityError> {
         self.queue.purge_dead_before(cutoff).await
     }

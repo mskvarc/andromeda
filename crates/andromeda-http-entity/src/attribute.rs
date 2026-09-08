@@ -28,6 +28,12 @@ use axum::{
 };
 
 /// GET /ngsi-ld/v1/attributes -- Query available attributes.
+///
+/// # Errors
+///
+/// Returns a [`ProblemResponse`] when local attribute discovery fails, when a
+/// referenced context cannot be resolved, or when the discovery result cannot
+/// be rendered under the negotiated media type.
 pub async fn query(
     context_target::ExistingTargetedTenantState {
         services: state,
@@ -51,7 +57,11 @@ pub async fn query(
         DiscoveryScope::Local
     };
 
-    let representation = if params.details { AttributeCollectionRepresentation::Detailed } else { AttributeCollectionRepresentation::List };
+    let representation = if params.details {
+        AttributeCollectionRepresentation::Detailed
+    } else {
+        AttributeCollectionRepresentation::List
+    };
     let local_result = service.attributes(&target, representation, scope, &context).await.with_entity_instance(&uri)?;
 
     let (result, warnings) = if is_local {
@@ -95,6 +105,12 @@ pub async fn query(
 }
 
 /// GET /ngsi-ld/v1/attributes/{attr_id} -- Retrieve information about a specific attribute.
+///
+/// # Errors
+///
+/// Returns a [`ProblemResponse`] when the named attribute is unknown to the
+/// broker, when a referenced context cannot be resolved, or when the discovery
+/// result cannot be rendered under the negotiated media type.
 pub async fn get(
     context_target::ExistingTargetedTenantState {
         services: state,

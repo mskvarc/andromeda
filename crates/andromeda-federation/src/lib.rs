@@ -73,7 +73,12 @@ use andromeda_http_headers::{
     warning::Warning,
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, spec_version::SpecVersion, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    context_source_pseudonym::ContextSourcePseudonym,
+    positive_milliseconds::PositiveMilliseconds,
+    spec_version::SpecVersion,
+    uri::Uri,
+};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_registration::store::{ForwardingOutcome, RegistrationStore};
 use chrono::Utc;
@@ -138,6 +143,12 @@ pub struct FederationService {
 
 impl FederationService {
     /// Create a forwarding service with its validated `Via` identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FederationError::Internal`] when the forwarding HTTP client
+    /// cannot be built from `config`, or when the `Received-Protocol` token
+    /// the forwarded `Via` header carries cannot be constructed.
     pub fn new(
         csr_repo: Arc<dyn RegistrationStore>,
         engine: JsonLdEngine,
@@ -208,7 +219,7 @@ impl FederationService {
             .management
             .as_ref()
             .and_then(|management| management.timeout)
-            .map_or(self.default_timeout, andromeda_ngsi_ld_lexicon::positive_milliseconds::PositiveMilliseconds::as_duration)
+            .map_or(self.default_timeout, PositiveMilliseconds::as_duration)
     }
 
     /// Send a request to `registration` and return its status, `Warning` and raw body.
@@ -241,10 +252,10 @@ impl FederationService {
                         entity_map,
                         body: body.to_vec(),
                     }),
-                    Err(error) => Err(classify_transport_failure(error, timeout)),
+                    Err(error) => Err(classify_transport_failure(&error, timeout)),
                 }
             }
-            Err(error) => Err(classify_transport_failure(error, timeout)),
+            Err(error) => Err(classify_transport_failure(&error, timeout)),
         };
         let health = match &outcome {
             Ok(sent) if sent.status.is_success() || sent.status == reqwest::StatusCode::NOT_FOUND => ForwardingOutcome::Succeeded,
@@ -269,7 +280,7 @@ impl FederationService {
 }
 
 /// Sort a `reqwest` failure into the two clause 6.3.17 transport outcomes.
-fn classify_transport_failure(error: reqwest::Error, timeout: Duration) -> TransportFailure {
+fn classify_transport_failure(error: &reqwest::Error, timeout: Duration) -> TransportFailure {
     if error.is_timeout() {
         TransportFailure::Timeout {
             detail: format!("no response within {}ms", timeout.as_millis()),

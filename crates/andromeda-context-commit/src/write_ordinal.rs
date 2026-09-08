@@ -31,9 +31,16 @@ impl WriteOrdinal {
     }
 
     /// Return the persistence representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WriteOrdinalOutOfRange`] when the ordinal is larger than
+    /// [`i32::MAX`], the widest value the signed column that stores it holds.
     pub const fn as_i32(self) -> Result<i32, WriteOrdinalOutOfRange> {
-        if self.0 <= i32::MAX as u32 {
-            Ok(self.0 as i32)
+        if self.0 <= i32::MAX.cast_unsigned() {
+            // Exact rather than wrapping: the branch above established that the
+            // ordinal is within the non-negative half of `i32`.
+            Ok(self.0.cast_signed())
         } else {
             Err(WriteOrdinalOutOfRange)
         }
@@ -47,6 +54,11 @@ impl WriteOrdinal {
     /// and advances by the number of consequences each phase consumes. Checked
     /// arithmetic is what keeps a pathological write from wrapping the counter
     /// back into a range an earlier consequence already claimed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WriteOrdinalOutOfRange`] when advancing by `delta` would carry
+    /// the position past [`u32::MAX`].
     pub const fn advanced_by(self, delta: u32) -> Result<WriteOrdinal, WriteOrdinalOutOfRange> {
         match self.0.checked_add(delta) {
             Some(sum) => Ok(WriteOrdinal(sum)),

@@ -193,7 +193,7 @@ impl PostgresTemporalIntentStore {
         lease_until: DateTime<Utc>,
     ) -> Result<Vec<ClaimedTemporalAppendIntent>, TemporalError> {
         let (sql, values) =
-            claim_statement(target.key(), owner.as_uuid(), entity_id.map(Uri::as_str), i64::from(limit.get()), lease_until).build_sqlx(PostgresQueryBuilder);
+            claim_statement(target.key(), owner.as_uuid(), entity_id.map(Uri::as_str), limit.get(), lease_until).build_sqlx(PostgresQueryBuilder);
         let rows = observe_statement(INTENT_CLAIM, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool))
             .await
             .map_err(persistence)?;
@@ -322,7 +322,7 @@ fn held(rows_affected: u64) -> Result<LeaseAcknowledgement, TemporalError> {
 /// atomically. When `entity_id` is given, only that entity's intents are
 /// eligible; the original expressed this with a `$4 IS NULL OR entity_id = $4`
 /// guard, which is here simply an absent predicate.
-fn claim_statement(context_space_key: ContextSpaceKey, owner: Uuid, entity_id: Option<&str>, limit: i64, lease_until: DateTime<Utc>) -> UpdateStatement {
+fn claim_statement(context_space_key: ContextSpaceKey, owner: Uuid, entity_id: Option<&str>, limit: u32, lease_until: DateTime<Utc>) -> UpdateStatement {
     let mut eligible = Query::select();
     eligible
         .column(TemporalAppendIntents::Sequence)
@@ -339,7 +339,7 @@ fn claim_statement(context_space_key: ContextSpaceKey, owner: Uuid, entity_id: O
     }
     eligible
         .order_by(TemporalAppendIntents::Sequence, Order::Asc)
-        .limit(<i64 as Ord>::max(limit, 0) as u64)
+        .limit(u64::from(limit))
         .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked);
 
     Query::update()

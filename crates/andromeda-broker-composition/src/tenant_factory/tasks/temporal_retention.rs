@@ -63,7 +63,11 @@ pub(super) fn register_temporal_retention(
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
         let repository = Arc::clone(&repository); // clone: each bounded pass owns the repository handle while running.
         async move {
-            match repository.sweep_retention(retention, Utc::now()).await.map_err(classify_retention_failure)? {
+            let outcome = repository
+                .sweep_retention(retention, Utc::now())
+                .await
+                .map_err(|error| classify_retention_failure(&error))?;
+            match outcome {
                 TemporalRetentionOutcome::Disabled => Ok(()),
                 TemporalRetentionOutcome::Swept(sweep) => {
                     tracing::info!(
@@ -87,7 +91,7 @@ pub(super) fn register_temporal_retention(
 }
 
 /// Classify exhaustive temporal-store failures at the composition boundary.
-fn classify_retention_failure(error: TemporalStoreError) -> TaskFailure {
+fn classify_retention_failure(error: &TemporalStoreError) -> TaskFailure {
     let summary = error.to_string();
     match error {
         TemporalStoreError::Database(_) | TemporalStoreError::NameLookup(_) => TaskFailure::transient(summary),

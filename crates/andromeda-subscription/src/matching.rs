@@ -174,7 +174,12 @@ mod tests {
     use chrono::DateTime;
     use futures::executor::block_on;
     use iri_rs::IriBuf;
-    use std::{fmt::Display, num::NonZeroU32, str::FromStr};
+    use std::{
+        fmt::Display,
+        future::{Future, ready},
+        num::NonZeroU32,
+        str::FromStr,
+    };
     use url::Url;
 
     fn parse_fixture<T>(value: &str, description: &str) -> Result<T, SubscriptionError>
@@ -267,18 +272,18 @@ mod tests {
     struct LocationExpander;
 
     impl TermExpander for LocationExpander {
-        async fn expand_term(&self, term: &str) -> Result<IriBuf, QueryError> {
-            IriBuf::new(LOCATION.to_owned()).map_err(|error| QueryError::TermExpansion {
+        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            ready(IriBuf::new(LOCATION.to_owned()).map_err(|error| QueryError::TermExpansion {
                 term: term.to_owned(),
                 message: error.to_string(),
-            })
+            }))
         }
 
-        async fn expand_type(&self, term: &str) -> Result<IriBuf, QueryError> {
-            IriBuf::new(format!("https://example.com/{term}")).map_err(|error| QueryError::TermExpansion {
+        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            ready(IriBuf::new(format!("https://example.com/{term}")).map_err(|error| QueryError::TermExpansion {
                 term: term.to_owned(),
                 message: error.to_string(),
-            })
+            }))
         }
     }
 

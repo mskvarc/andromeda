@@ -61,7 +61,7 @@ fn building_point(id: &str, lon: f64, lat: f64) -> Value {
     })
 }
 
-fn building_polygon(id: &str, coords: Value) -> Value {
+fn building_polygon(id: &str, coords: &Value) -> Value {
     json!({
         "id": id,
         "type": "Building",
@@ -146,7 +146,7 @@ async fn spatial_contains_polygon_contains_point_returns_entity() {
     let client = scope.client();
     let hall = scope.id("Building:contains_hall");
     let coords = json!([[[0.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0], [0.0, 0.0]]]);
-    create(client, &building_polygon(&hall, coords)).await;
+    create(client, &building_polygon(&hall, &coords)).await;
 
     let (status, _, body) = query(
         client,
@@ -169,7 +169,7 @@ async fn spatial_intersects_overlapping_polygons_returns_entity() {
     let client = scope.client();
     let id = scope.id("Building:intersects");
     let coords = json!([[[0.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0], [0.0, 0.0]]]);
-    create(client, &building_polygon(&id, coords)).await;
+    create(client, &building_polygon(&id, &coords)).await;
 
     let ref_coords = "%5B%5B%5B1.0,1.0%5D,%5B3.0,1.0%5D,%5B3.0,3.0%5D,%5B1.0,3.0%5D,%5B1.0,1.0%5D%5D%5D";
     let (status, _, body) = query(
@@ -260,7 +260,7 @@ async fn spatial_overlaps_partial_intersection_matches() {
     let client = scope.client();
     let id = scope.id("Building:overlaps");
     let coords = json!([[[0.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0], [0.0, 0.0]]]);
-    create(client, &building_polygon(&id, coords)).await;
+    create(client, &building_polygon(&id, &coords)).await;
 
     let ref_coords = "%5B%5B%5B1.0,1.0%5D,%5B3.0,1.0%5D,%5B3.0,3.0%5D,%5B1.0,3.0%5D,%5B1.0,1.0%5D%5D%5D";
     let (status, _, body) = query(
@@ -306,8 +306,8 @@ async fn spatial_near_min_distance_excludes_inside_inner_radius() {
     let client = scope.client();
     let inner = scope.id("Building:near_inner");
     let outer = scope.id("Building:near_outer");
-    create(client, &building_point(&inner, 13.389830, 52.534473)).await;
-    create(client, &building_point(&outer, 13.464_0, 52.534473)).await;
+    create(client, &building_point(&inner, 13.389_830, 52.534_473)).await;
+    create(client, &building_point(&outer, 13.464_0, 52.534_473)).await;
 
     let filter = id_filter(&[&inner, &outer]);
     let (status, _, body) = query(
@@ -329,9 +329,9 @@ async fn spatial_near_band_min_and_max() {
     let too_close = scope.id("Building:band_close");
     let in_band = scope.id("Building:band_in");
     let too_far = scope.id("Building:band_far");
-    create(client, &building_point(&too_close, 13.389830, 52.534473)).await;
-    create(client, &building_point(&in_band, 13.433, 52.534473)).await;
-    create(client, &building_point(&too_far, 14.0, 52.534473)).await;
+    create(client, &building_point(&too_close, 13.389_830, 52.534_473)).await;
+    create(client, &building_point(&in_band, 13.433, 52.534_473)).await;
+    create(client, &building_point(&too_far, 14.0, 52.534_473)).await;
 
     let filter = id_filter(&[&too_close, &in_band, &too_far]);
     let (status, _, body) = query(
@@ -533,7 +533,7 @@ async fn spatial_georel_count_header_is_populated() {
     let mut ids = Vec::new();
     for i in 0..3 {
         let id = scope.id(&format!("Building:count_{i}"));
-        create(client, &building_point(&id, 13.388930 + f64::from(i) * 0.001, 52.534473)).await;
+        create(client, &building_point(&id, 13.388_930 + f64::from(i) * 0.001, 52.534_473)).await;
         ids.push(id);
     }
 
@@ -560,7 +560,7 @@ async fn spatial_georel_limit_caps_result_set() {
     let mut ids = Vec::new();
     for i in 0..5 {
         let id = scope.id(&format!("Building:lim_{i}"));
-        create(client, &building_point(&id, 13.388930 + f64::from(i) * 0.001, 52.534473)).await;
+        create(client, &building_point(&id, 13.388_930 + f64::from(i) * 0.001, 52.534_473)).await;
         ids.push(id);
     }
 

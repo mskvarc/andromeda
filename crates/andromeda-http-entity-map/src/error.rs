@@ -99,6 +99,12 @@ impl EntityMapHttpClassify for FederationError {
 /// Attach the inbound URI while classifying a typed Entity Map result.
 pub trait EntityMapResultExt<T> {
     /// Map the focused failure and attach `instance`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`ProblemResponse`] the failure classifies to, carrying
+    /// `instance` as the problem's `instance` member. A successful result
+    /// passes through unchanged.
     fn with_entity_map_instance(self, instance: &Uri) -> Result<T, ProblemResponse>;
 }
 

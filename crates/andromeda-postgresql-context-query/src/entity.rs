@@ -59,6 +59,16 @@ pub struct EntityQuery {
 /// Generates filter conditions from the compiled query (IDs, types, attrs, q expression,
 /// geo filter, scope query), ordering, and pagination clauses, joining only the
 /// relations those clauses read.
+///
+/// # Errors
+///
+/// Returns [`RenderError::ReferenceGeometryEncoding`] when a reference geometry
+/// — the geoquery's, or the one a distance ordering measures from — has no
+/// EWKB spelling the store can bind. Returns [`RenderError::Query`] for the two
+/// query-language rules a renderer is the first place to decide: `georel=near`
+/// naming neither `maxDistance` nor `minDistance`, which clause 4.10 requires
+/// at least one of, and an `orderBy` distance term with no reference geometry
+/// anywhere in the query to measure from (clause 4.23).
 pub fn build_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &QueryNames) -> Result<EntityQuery, RenderError> {
     let relations = EntityRelations::for_query(query);
     let rows = relations.rows();
@@ -124,6 +134,14 @@ pub const TOTAL_COUNT_COLUMN: &str = "total_count";
 /// Similar to [`build_query`] but selects `id` instead of `payload`, used for
 /// operations that only need to identify matching entities; the document row
 /// is joined only when a filter or ordering reads the payload.
+///
+/// # Errors
+///
+/// Renders the same filter and ordering as [`build_query`] and so fails in the
+/// same cases: [`RenderError::ReferenceGeometryEncoding`] for a reference
+/// geometry with no EWKB spelling, and [`RenderError::Query`] for a `near`
+/// relation naming no distance (clause 4.10) or a distance ordering with no
+/// reference geometry (clause 4.23).
 pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &QueryNames) -> Result<SelectStatement, RenderError> {
     let relations = EntityRelations::for_query(query);
     let rows = relations.rows();
@@ -374,7 +392,7 @@ mod tests {
 
     /// A `GeoJSON` point reference geometry, for tests that vary the relation
     /// rather than the geometry.
-    fn point(coordinates: serde_json::Value) -> Geometry {
+    fn point(coordinates: &serde_json::Value) -> Geometry {
         Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": coordinates })).expect("point parses")
     }
 
@@ -500,7 +518,7 @@ mod tests {
                 max_distance: Some(1000.0),
                 min_distance: None,
             },
-            geometry: point(serde_json::json!([13.4, 52.5])),
+            geometry: point(&serde_json::json!([13.4, 52.5])),
             geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
         let built = build(&q, &known_types());
@@ -755,7 +773,7 @@ mod tests {
                 max_distance: Some(1000.0),
                 min_distance: None,
             },
-            geometry: point(serde_json::json!([13.4, 52.5])),
+            geometry: point(&serde_json::json!([13.4, 52.5])),
             geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
         q.ordering.terms = vec![CompiledOrderTerm {
@@ -811,10 +829,10 @@ mod tests {
         let mut q = empty_query();
         q.selection.geo = Some(GeoQuery {
             georel: GeoRel::Near {
-                max_distance: Some(1000000.0),
+                max_distance: Some(1_000_000.0),
                 min_distance: None,
             },
-            geometry: point(serde_json::json!([2.3522, 48.8566])),
+            geometry: point(&serde_json::json!([2.3522, 48.8566])),
             geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
         let geometry = Geometry::from_geojson_value(&serde_json::json!({
@@ -851,12 +869,12 @@ mod tests {
         };
 
         let mut flat_query = empty_query();
-        flat_query.ordering.geometry = Some(OrderingGeometry::new(point(serde_json::json!([13.3986, 52.5547]))));
+        flat_query.ordering.geometry = Some(OrderingGeometry::new(point(&serde_json::json!([13.3986, 52.5547]))));
         flat_query.ordering.terms = vec![ordering_term.clone()]; // clone: the elevated query orders the same way
         let flat = build(&flat_query, &known_types());
 
         let mut elevated_query = empty_query();
-        elevated_query.ordering.geometry = Some(OrderingGeometry::new(point(serde_json::json!([13.3986, 52.5547, 34.5]))));
+        elevated_query.ordering.geometry = Some(OrderingGeometry::new(point(&serde_json::json!([13.3986, 52.5547, 34.5]))));
         elevated_query.ordering.terms = vec![ordering_term];
         let elevated = build(&elevated_query, &known_types());
 
@@ -909,7 +927,7 @@ mod tests {
                 max_distance: Some(5000.0),
                 min_distance: None,
             },
-            geometry: point(serde_json::json!([13.4, 52.5])),
+            geometry: point(&serde_json::json!([13.4, 52.5])),
             geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
         let built = build(&q, &known_types());
@@ -945,7 +963,7 @@ mod tests {
             let mut q = empty_query();
             q.selection.geo = Some(GeoQuery {
                 georel: georel.clone(), // clone: the relation names the failing case in every assertion below
-                geometry: point(serde_json::json!([1.0, 2.0])),
+                geometry: point(&serde_json::json!([1.0, 2.0])),
                 geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
             });
             let built = build(&q, &known_types());
@@ -971,7 +989,7 @@ mod tests {
         let mut q = empty_query();
         q.selection.geo = Some(GeoQuery {
             georel: GeoRel::Within,
-            geometry: point(serde_json::json!([1.0, 2.0])),
+            geometry: point(&serde_json::json!([1.0, 2.0])),
             geoproperty: "https://example.com/customGeo".parse().expect("valid attribute name"),
         });
         let names = attributes_only(ResolvedNames::from_pairs([(
@@ -997,7 +1015,7 @@ mod tests {
         let mut q = empty_query();
         q.selection.geo = Some(GeoQuery {
             georel: GeoRel::Within,
-            geometry: point(serde_json::json!([1.0, 2.0])),
+            geometry: point(&serde_json::json!([1.0, 2.0])),
             geoproperty: "https://example.com/neverRecorded".parse().expect("valid attribute name"),
         });
         let built = build(&q, &known_types());
@@ -1044,7 +1062,7 @@ mod tests {
             let mut q = empty_query();
             q.selection.geo = Some(GeoQuery {
                 georel: georel.clone(), // clone: the relation is named again in the assertion
-                geometry: point(serde_json::json!([1.0, 2.0])),
+                geometry: point(&serde_json::json!([1.0, 2.0])),
                 geoproperty: "https://example.com/o'brien".parse().expect("valid attribute name"),
             });
             let built = build(&q, &names);

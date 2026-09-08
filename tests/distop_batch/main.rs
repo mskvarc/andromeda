@@ -275,7 +275,7 @@ async fn distop_batch_create_exclusive_forwards_to_csr() {
     pretty_assertions::assert_eq!(batch_create(&c, &batch).await, StatusCode::CREATED);
 
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/create").await,
+        mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/create"),
         1,
         "exclusive CSR should receive exactly one forwarded batch create"
     );
@@ -307,7 +307,7 @@ async fn distop_batch_create_inclusive_stores_locally_and_forwards() {
     pretty_assertions::assert_eq!(batch_create(&c, &batch).await, StatusCode::CREATED);
 
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::POST, "/ngsi-ld/v1/entityOperations/create").await,
+        mock.get_count(Method::POST, "/ngsi-ld/v1/entityOperations/create"),
         1,
         "inclusive CSR should receive exactly one forwarded batch create"
     );
@@ -354,12 +354,12 @@ async fn distop_batch_create_redirect_forwards_to_both_csrs() {
     pretty_assertions::assert_eq!(batch_create(&c, &batch).await, StatusCode::CREATED);
 
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/create").await,
+        mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/create"),
         1,
         "broker1 should receive exactly one forwarded batch create"
     );
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::POST, "/broker2/ngsi-ld/v1/entityOperations/create").await,
+        mock.get_count(Method::POST, "/broker2/ngsi-ld/v1/entityOperations/create"),
         1,
         "broker2 should receive exactly one forwarded batch create"
     );
@@ -398,7 +398,7 @@ async fn distop_batch_upsert_replace_exclusive_forwards_to_csr() {
     pretty_assertions::assert_eq!(batch_upsert_replace(&c, &batch).await, StatusCode::NO_CONTENT);
 
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert").await,
+        mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert"),
         1,
         "exclusive CSR should receive exactly one forwarded batch upsert"
     );
@@ -433,7 +433,7 @@ async fn distop_batch_upsert_replace_inclusive_updates_locally_and_forwards() {
     pretty_assertions::assert_eq!(batch_upsert_replace(&c, &batch).await, StatusCode::NO_CONTENT);
 
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::POST, "/ngsi-ld/v1/entityOperations/upsert").await,
+        mock.get_count(Method::POST, "/ngsi-ld/v1/entityOperations/upsert"),
         1,
         "inclusive CSR should receive exactly one forwarded batch upsert"
     );
@@ -474,12 +474,12 @@ async fn distop_batch_upsert_replace_redirect_forwards_to_both_csrs() {
     pretty_assertions::assert_eq!(batch_upsert_replace(&c, &batch).await, StatusCode::NO_CONTENT);
 
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert").await,
+        mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert"),
         1,
         "broker1 should receive exactly one forwarded batch upsert"
     );
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::POST, "/broker2/ngsi-ld/v1/entityOperations/upsert").await,
+        mock.get_count(Method::POST, "/broker2/ngsi-ld/v1/entityOperations/upsert"),
         1,
         "broker2 should receive exactly one forwarded batch upsert"
     );
@@ -517,7 +517,7 @@ async fn distop_batch_upsert_update_exclusive_forwards_to_csr() {
     pretty_assertions::assert_eq!(batch_upsert_update(&c, &batch).await, StatusCode::NO_CONTENT);
 
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert").await,
+        mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert"),
         1,
         "exclusive CSR should receive exactly one forwarded batch upsert (update)"
     );
@@ -552,7 +552,7 @@ async fn distop_batch_upsert_update_inclusive_merges_locally_and_forwards() {
     pretty_assertions::assert_eq!(batch_upsert_update(&c, &batch).await, StatusCode::NO_CONTENT);
 
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::POST, "/ngsi-ld/v1/entityOperations/upsert").await,
+        mock.get_count(Method::POST, "/ngsi-ld/v1/entityOperations/upsert"),
         1,
         "inclusive CSR should receive exactly one forwarded batch upsert (update)"
     );
@@ -593,12 +593,12 @@ async fn distop_batch_upsert_update_redirect_forwards_to_both_csrs() {
     pretty_assertions::assert_eq!(batch_upsert_update(&c, &batch).await, StatusCode::NO_CONTENT);
 
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert").await,
+        mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert"),
         1,
         "broker1 should receive exactly one forwarded batch upsert (update)"
     );
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::POST, "/broker2/ngsi-ld/v1/entityOperations/upsert").await,
+        mock.get_count(Method::POST, "/broker2/ngsi-ld/v1/entityOperations/upsert"),
         1,
         "broker2 should receive exactly one forwarded batch upsert (update)"
     );
@@ -636,7 +636,7 @@ async fn distop_batch_delete_inclusive_deletes_locally_and_forwards() {
     pretty_assertions::assert_eq!(batch_delete(&c, &ids).await, StatusCode::NO_CONTENT);
 
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::POST, "/ngsi-ld/v1/entityOperations/delete").await,
+        mock.get_count(Method::POST, "/ngsi-ld/v1/entityOperations/delete"),
         1,
         "inclusive CSR should receive exactly one forwarded batch delete"
     );
@@ -673,7 +673,7 @@ async fn distop_batch_delete_exclusive_forwards_to_csr_and_deletes_locally() {
     pretty_assertions::assert_eq!(batch_delete(&c, &ids).await, StatusCode::NO_CONTENT);
 
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/delete").await,
+        mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/delete"),
         1,
         "exclusive CSR should receive exactly one forwarded batch delete"
     );
@@ -712,12 +712,12 @@ async fn distop_batch_delete_redirect_forwards_to_both_csrs() {
     pretty_assertions::assert_eq!(batch_delete(&c, &ids).await, StatusCode::NO_CONTENT);
 
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/delete").await,
+        mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/delete"),
         1,
         "broker1 should receive exactly one forwarded batch delete"
     );
     pretty_assertions::assert_eq!(
-        mock.get_count(Method::POST, "/broker2/ngsi-ld/v1/entityOperations/delete").await,
+        mock.get_count(Method::POST, "/broker2/ngsi-ld/v1/entityOperations/delete"),
         1,
         "broker2 should receive exactly one forwarded batch delete"
     );

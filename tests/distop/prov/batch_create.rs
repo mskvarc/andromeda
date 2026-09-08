@@ -179,12 +179,12 @@ async fn batch_create_empty_in_skips_csr() {
     client.batch_create(&batch).await.expect("batch create");
 
     assert_eq!(
-        mock.get_count(Method::POST, "/s1/ngsi-ld/v1/entityOperations/create").await,
+        mock.get_count(Method::POST, "/s1/ngsi-ld/v1/entityOperations/create"),
         0,
         "the source owning only the absent colour is skipped"
     );
     assert!(
-        mock.get_count(Method::POST, "/s2/ngsi-ld/v1/entityOperations/create").await >= 1,
+        mock.get_count(Method::POST, "/s2/ngsi-ld/v1/entityOperations/create") >= 1,
         "the source owning speed is still forwarded"
     );
 
@@ -260,7 +260,7 @@ async fn batch_create_fallback_per_entity_create() {
     client.batch_create(&batch).await.expect("batch create");
 
     assert_eq!(
-        mock.get_count(Method::POST, "/ngsi-ld/v1/entities").await,
+        mock.get_count(Method::POST, "/ngsi-ld/v1/entities"),
         2,
         "the batch fell back to one create per entity"
     );
@@ -302,7 +302,7 @@ async fn batch_create_redirect_neither_op_conflict_per_entity() {
         .filter(|entry| entry["error"]["status"] == json!(409) && entry["registrationId"] == json!(reg_id))
         .count();
     assert_eq!(conflicts, 2, "each entity surfaces a keyed conflict: {body}");
-    assert_eq!(mock.get_total_count().await, 0, "no forwarding on an unsupported operation");
+    assert_eq!(mock.get_total_count(), 0, "no forwarding on an unsupported operation");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -355,11 +355,7 @@ async fn batch_create_local_phase_populates_success_and_errors() {
             .any(|entry| entry["entityId"] == json!(v2) && entry["error"]["status"] == json!(409))),
         "the pre-existing entity is a local conflict: {body}"
     );
-    assert_eq!(
-        mock.get_total_count().await,
-        0,
-        "the auxiliary registration does not forward provision operations"
-    );
+    assert_eq!(mock.get_total_count(), 0, "the auxiliary registration does not forward provision operations");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

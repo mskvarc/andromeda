@@ -54,7 +54,7 @@ async fn matching_spec_matches_csr_if_any_registrationinfo_matches() {
     let mut body = CsrBuilder::new(&id, PEER_ENDPOINT).entity_type(&first_type).build();
     body["information"]
         .as_array_mut()
-        .unwrap_or_else(|| unreachable!("information is an array"))
+        .unwrap_or_else(|| panic!("information is an array"))
         .push(json!({ "entities": [ { "type": second_type } ] }));
     register(&topology, &body).await;
 

@@ -104,6 +104,7 @@ impl EntityRecord {
 #[cfg(test)]
 mod tests {
     use crate::entity_record::{EntityRecord, SearchProjection};
+    use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use chrono::{DateTime, Utc};
     use serde_json::json;
     use std::sync::Arc;
@@ -136,6 +137,6 @@ mod tests {
         let payload = Arc::new(json!([{"@id": "urn:ngsi-ld:A"}]));
         let record = EntityRecord::from_parts(Arc::clone(&payload), SearchProjection::default(), None, None);
         assert!(Arc::ptr_eq(&payload, &record.payload));
-        assert_eq!(record.projection.types, [] as [andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName; 0]);
+        assert_eq!(record.projection.types, [] as [EntityTypeName; 0]);
     }
 }

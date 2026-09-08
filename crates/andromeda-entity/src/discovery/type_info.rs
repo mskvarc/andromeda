@@ -31,6 +31,15 @@ impl EntityDiscoveryService {
     /// registry knows it. A type only the registry knows has no instances
     /// here, so its count is zero and its attribute details carry the names
     /// registered beside it with no attribute types (clause 5.7.11).
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::JsonLd`] when `type_name` cannot be expanded
+    /// against `context` or the result cannot be compacted,
+    /// [`EntityError::Validation`] when the expanded term is not a well-formed
+    /// entity type name, [`EntityError::TypeNotFound`] when neither the local
+    /// store nor the registry knows the type, and [`EntityError::Persistence`]
+    /// when the store or the registry could not be consulted.
     pub async fn type_info(
         &self,
         target: &ContextTarget,

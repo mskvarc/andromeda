@@ -37,14 +37,14 @@ mod tests {
     fn tenant_migrations() -> Vec<String> {
         let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../migrations/tenant");
         let mut paths: Vec<PathBuf> = fs::read_dir(&directory)
-            .unwrap_or_else(|error| unreachable!("{} is readable: {error}", directory.display()))
-            .map(|entry| entry.unwrap_or_else(|error| unreachable!("directory entry is readable: {error}")).path())
+            .unwrap_or_else(|error| panic!("{} is readable: {error}", directory.display()))
+            .map(|entry| entry.unwrap_or_else(|error| panic!("directory entry is readable: {error}")).path())
             .filter(|path| path.extension().is_some_and(|extension| extension == "sql"))
             .collect();
         paths.sort();
         paths
             .iter()
-            .map(|path| fs::read_to_string(path).unwrap_or_else(|error| unreachable!("{} is readable: {error}", path.display())))
+            .map(|path| fs::read_to_string(path).unwrap_or_else(|error| panic!("{} is readable: {error}", path.display())))
             .collect()
     }
 
@@ -69,7 +69,7 @@ mod tests {
             return Vec::new();
         };
         let body = &migration[offset + header.len()..];
-        let end = body.find(");").unwrap_or_else(|| unreachable!("the {enum_type} declaration is terminated"));
+        let end = body.find(");").unwrap_or_else(|| panic!("the {enum_type} declaration is terminated"));
         quoted_tokens(&body[..end])
     }
 
@@ -114,7 +114,7 @@ mod tests {
         for variant in T::iter() {
             let rendered = variant.to_string();
             assert!(declared.contains(&rendered), "{enum_type} has no label '{rendered}'; it declares {declared:?}");
-            let parsed = T::from_str(&rendered).unwrap_or_else(|_| unreachable!("'{rendered}' parses back"));
+            let parsed = T::from_str(&rendered).unwrap_or_else(|_| panic!("'{rendered}' parses back"));
             assert_eq!(parsed, variant, "{enum_type} label '{rendered}' does not round-trip");
             rendered_by_variant.push(rendered);
         }
@@ -166,6 +166,6 @@ mod tests {
         // reader would otherwise be untested until one does.
         let migration = "ALTER TYPE csr_status ADD VALUE IF NOT EXISTS 'degraded';\nALTER TYPE csr_status ADD VALUE 'unknown';\n";
         assert_eq!(added_labels(migration, "csr_status"), vec!["degraded".to_string(), "unknown".to_string()]);
-        assert_eq!(added_labels(migration, "snapshot_status"), [] as [std::string::String; 0]);
+        assert_eq!(added_labels(migration, "snapshot_status"), [] as [String; 0]);
     }
 }

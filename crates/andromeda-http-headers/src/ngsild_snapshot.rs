@@ -47,17 +47,15 @@ impl headers::Header for NgsiLdSnapshot {
         I: Iterator<Item = &'i HeaderValue>,
     {
         let value = values.next().ok_or_else(headers::Error::invalid)?;
-        let s = match value.to_str() {
-            Ok(value) => value,
-            Err(_) => return Err(headers::Error::invalid()),
+        let Ok(s) = value.to_str() else {
+            return Err(headers::Error::invalid());
         };
         let trimmed = s.trim();
         if trimmed.is_empty() || trimmed != s || trimmed.chars().any(char::is_whitespace) {
             return Err(headers::Error::invalid());
         }
-        let snapshot_id = match trimmed.parse::<Uri>() {
-            Ok(value) => value,
-            Err(_) => return Err(headers::Error::invalid()),
+        let Ok(snapshot_id) = trimmed.parse::<Uri>() else {
+            return Err(headers::Error::invalid());
         };
         Ok(NgsiLdSnapshot(snapshot_id))
     }

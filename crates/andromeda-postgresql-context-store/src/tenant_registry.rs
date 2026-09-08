@@ -47,6 +47,14 @@ pub struct PostgresTenantRegistry {
 impl PostgresTenantRegistry {
     /// Open the platform database, migrate it, and register the unnamed
     /// default tenant.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError::Internal`] when the base URL names no
+    /// database or the default-tenant upsert cannot be assembled,
+    /// [`ContextStoreError::Migration`] or [`ContextStoreError::SchemaContract`]
+    /// when the platform database cannot be migrated to this binary's contract,
+    /// and [`ContextStoreError::Database`] when the upsert fails.
     pub async fn connect(
         main_pool: PgPool,
         database_url: DatabaseUrl,
@@ -76,7 +84,7 @@ impl PostgresTenantRegistry {
     /// Record the unnamed default tenant, so it appears in the registry like
     /// any other.
     async fn register_default_tenant(&self) -> Result<(), ContextStoreError> {
-        let statement = default_tenant_upsert(self.default_database.as_str(), &TenantStatus::Active.to_string()).map_err(statement_error)?;
+        let statement = default_tenant_upsert(self.default_database.as_str(), &TenantStatus::Active.to_string()).map_err(|error| statement_error(&error))?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&self.main_pool).await?;
         Ok(())
@@ -92,7 +100,7 @@ fn registry_unavailable(error: &sqlx::Error) -> TenancyError {
 ///
 /// A column/value arity mismatch is the only cause, so it is an internal
 /// invariant rather than a database failure.
-fn statement_error(error: SeaQueryError) -> ContextStoreError {
+fn statement_error(error: &SeaQueryError) -> ContextStoreError {
     ContextStoreError::Internal(error.to_string())
 }
 
@@ -160,7 +168,7 @@ impl PostgresTenantRegistry {
         let db_name = generate_db_name(&self.tenancy.tenant_db_prefix, name);
         create_database_if_missing(&self.database_url, &db_name).await?;
 
-        let statement = tenant_insert(name.as_str(), db_name.as_str(), &TenantStatus::Active.to_string()).map_err(statement_error)?;
+        let statement = tenant_insert(name.as_str(), db_name.as_str(), &TenantStatus::Active.to_string()).map_err(|error| statement_error(&error))?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut *tx).await?;
         tx.commit().await?;
@@ -280,15 +288,15 @@ mod tests {
         registered_tenants_query,
         tenant_insert,
     };
-    use sea_query::PostgresQueryBuilder;
+    use sea_query::{PostgresQueryBuilder, SelectStatement};
 
-    fn select_sql(statement: sea_query::SelectStatement) -> String {
+    fn select_sql(statement: &SelectStatement) -> String {
         statement.to_string(PostgresQueryBuilder)
     }
 
     #[test]
     fn registered_tenants_lists_named_tenants_in_order() {
-        let sql = select_sql(registered_tenants_query());
+        let sql = select_sql(&registered_tenants_query());
         assert!(sql.contains("SELECT \"name\" FROM \"tenants\""), "{sql}");
         assert!(sql.contains("\"is_unnamed_default\" ="), "{sql}");
         assert!(sql.contains("\"name\" IS NOT NULL"), "{sql}");
@@ -297,7 +305,7 @@ mod tests {
 
     #[test]
     fn the_port_lookup_excludes_the_unnamed_default() {
-        let sql = select_sql(named_tenant_database_query("acme", NamedTenantScope::ExcludeDefault));
+        let sql = select_sql(&named_tenant_database_query("acme", NamedTenantScope::ExcludeDefault));
         assert!(sql.contains("SELECT \"db_name\" FROM \"tenants\""), "{sql}");
         assert!(sql.contains("\"name\" ="), "{sql}");
         assert!(sql.contains("\"is_unnamed_default\""), "{sql}");
@@ -305,7 +313,7 @@ mod tests {
 
     #[test]
     fn the_provisioning_lookup_reads_any_row() {
-        let sql = select_sql(named_tenant_database_query("acme", NamedTenantScope::AnyRow));
+        let sql = select_sql(&named_tenant_database_query("acme", NamedTenantScope::AnyRow));
         assert!(sql.contains("\"name\" ="), "{sql}");
         assert!(!sql.contains("is_unnamed_default"), "provisioning must not exclude the default row: {sql}");
     }

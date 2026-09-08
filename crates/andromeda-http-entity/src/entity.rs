@@ -5,12 +5,9 @@ use crate::{
     request_projection::RequestProjection,
     state::{EntityTenantState, EntityTenantStateOrCreate},
 };
-use andromeda_entity::{
-    merge_options::MergeOptions,
-    query::{EntityQueryService, retrieval::RetrievalNarrowing},
-};
+use andromeda_entity::{merge_options::MergeOptions, query::retrieval::RetrievalNarrowing};
 use andromeda_federation::{
-    entity_result::{collect_proxied_attrs, collect_warnings, contributions_of, merge_retrieve_results, strip_attributes_from_value},
+    entity_result::{collect_proxied_attrs, collect_warnings, contributions_of, strip_attributes_from_value},
     operation::{ForwardingOperation, ProvisionResource},
     outcome::SourceContribution,
     provision::single_source_failure,
@@ -42,26 +39,14 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
     entity_type::EntityTypeValue,
-    expanded::{
-        mutation::selection::{DatasetSelection, OverwritePolicy},
-        query_match::{matches_geo_query, matches_scope_query},
-    },
+    expanded::mutation::selection::{DatasetSelection, OverwritePolicy},
 };
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
-use andromeda_ngsi_ld_query::{
-    dataset::DatasetSelector,
-    filter::{eval::evaluate, expansion::expand_q_expr},
-    geo::compile::compile_geo_query,
-    projection::purge::PurgeMode,
-};
-use andromeda_ngsi_ld_render::{
-    entity::{EntityRenderer, render_flat_join},
-    response::ResponsePayload,
-};
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expansion::expand_q_expr, projection::purge::PurgeMode};
+use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_representation::attribute_type_validation::{validate_attribute_node, validate_fragment_attribute_types};
 use andromeda_ngsi_ld_request::{
     attribute_deletion::DeleteAttrParams,
-    deferred_split_filters::DeferredSplitFilters,
     entity::{AppendParams, GetEntityParams, MergeParams, PartialUpdateAttrParams, ReplaceAttrParams},
     join_traversal::RetrievingJoin,
     linked_retrieval_consistency::reject_linked_retrieval,
@@ -127,11 +112,19 @@ pub mod partial_update_attribute;
 pub mod query;
 /// The forwarding phases of an entity query.
 pub mod query_forwarding;
+/// Where the page of an entity query is cut.
+pub mod query_page;
+/// The filters `splitEntities` decides after the merge.
+pub mod query_split_filters;
 /// Entity replacement handling.
 pub mod replace;
 /// Attribute replacement handling.
 pub mod replace_attribute;
+/// The `EntityMap` a distributed read runs under.
+pub mod request_entity_map;
 /// Single-entity retrieval handling.
 pub mod retrieve;
+/// The forwarding phases of a single-entity retrieval.
+pub mod retrieve_forwarding;
 /// Attribute collection update handling.
 pub mod update_attributes;

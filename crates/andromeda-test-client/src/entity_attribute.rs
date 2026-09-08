@@ -19,24 +19,45 @@ pub enum DatasetSelection {
 
 impl TestClient {
     /// Append attributes to an entity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn append_entity_attrs(&self, id: &str, fragment: &Value) -> Result<TestResponse, RequestError> {
         self.send_attribute_fragment(Method::POST, &format!("entities/{}/attrs", encode(id)), fragment)
             .await
     }
 
     /// Update a set of entity attributes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn update_entity_attrs(&self, id: &str, fragment: &Value) -> Result<TestResponse, RequestError> {
         self.send_attribute_fragment(Method::PATCH, &format!("entities/{}/attrs", encode(id)), fragment)
             .await
     }
 
     /// Partially update one entity attribute.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn partial_update_attr(&self, id: &str, attribute: &str, fragment: &Value) -> Result<TestResponse, RequestError> {
         self.send_attribute_fragment(Method::PATCH, &format!("entities/{}/attrs/{}", encode(id), encode(attribute)), fragment)
             .await
     }
 
     /// Delete an entity attribute instance or all its dataset instances.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint,
+    /// [`RequestError::Header`] when `context` is not a valid IRI reference or cannot be encoded as a `Link` header, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn delete_entity_attr(
         &self,
         id: &str,

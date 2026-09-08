@@ -33,6 +33,7 @@ fn parse_batch_body_json(body: &Bytes) -> Result<Value, serde_json::Error> {
 }
 
 /// Content-Type classification for batch entity parsing.
+#[derive(Clone, Copy)]
 enum ContentKind {
     /// Plain `application/json` batch representation.
     Json,
@@ -95,161 +96,195 @@ where
     }
 }
 
-/// Parse a batch request body with per-entity error handling.
+/// Return whether any `Link` header names the JSON-LD context relation.
+fn carries_context_link(headers: &HeaderMap) -> bool {
+    headers
+        .get_all("Link")
+        .iter()
+        .any(|v| v.to_str().is_ok_and(|s| s.contains("http://www.w3.org/ns/json-ld#context")))
+}
+
+/// Classify the batch representation the request announces.
 ///
-/// Returns `(valid_entities, context, per_entity_errors)`.
-/// Whole-request errors (empty body, invalid JSON, unsupported Content-Type)
-/// are returned as `Err`.
-pub fn parse_batch_entities(
-    body: &Bytes,
-    headers: &HeaderMap,
-    context: &ContextUrl,
-    uri: &Uri,
-) -> Result<(Vec<Entity>, ContextSpec, Vec<BatchEntityError>), ProblemResponse> {
+/// Clause 6.3.5: an `application/ld+json` body names its context in the body,
+/// so it must not be combined with a context `Link` header.
+fn batch_content_kind(headers: &HeaderMap, uri: &Uri) -> Result<ContentKind, ProblemResponse> {
     let content_type_raw = headers.typed_get::<headers::ContentType>().map(|value| value.to_string()).unwrap_or_default();
 
     let content_kind = classify_batch_content_type(&content_type_raw)
         .ok_or_else(|| public_error(NgsiLdErrorType::InvalidRequest, format!("Unsupported Media Type: {content_type_raw}"), uri))?;
 
-    let is_ld_json = matches!(content_kind, ContentKind::LdJson);
-    let is_plain_json = matches!(content_kind, ContentKind::Json);
-
-    // Check for conflicting Link header + ld+json
-    if is_ld_json {
-        let has_context_link = headers
-            .get_all("Link")
-            .iter()
-            .any(|v| v.to_str().is_ok_and(|s| s.contains("http://www.w3.org/ns/json-ld#context")));
-        if has_context_link {
-            return Err(public_error(
-                NgsiLdErrorType::InvalidRequest,
-                "application/ld+json must not be combined with a Link context header",
-                uri,
-            ));
-        }
+    match content_kind {
+        ContentKind::LdJson if carries_context_link(headers) => Err(public_error(
+            NgsiLdErrorType::InvalidRequest,
+            "application/ld+json must not be combined with a Link context header",
+            uri,
+        )),
+        ContentKind::Json | ContentKind::LdJson => Ok(content_kind),
     }
+}
 
+/// Decode the request body into the non-empty JSON array of entity
+/// representations that clauses 5.6.7 to 5.6.10 require of a batch operation.
+fn batch_items(body: &Bytes, uri: &Uri) -> Result<Vec<Value>, ProblemResponse> {
     if body.is_empty() {
         return Err(public_error(NgsiLdErrorType::InvalidRequest, "Request body shall not be empty", uri));
     }
 
     let value: Value = parse_batch_body_json(body).map_err(|error| public_error(NgsiLdErrorType::InvalidRequest, format!("Invalid JSON: {error}"), uri))?;
 
-    let items = match value {
-        Value::Array(arr) if arr.is_empty() => {
-            return Err(public_error(
-                NgsiLdErrorType::BadRequestData,
-                "Request body must contain a non-empty array of entities",
-                uri,
-            ));
-        }
-        Value::Array(arr) => arr,
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => {
-            return Err(public_error(
-                NgsiLdErrorType::BadRequestData,
-                "Request body must be a JSON array of entities",
-                uri,
-            ));
-        }
-    };
+    match value {
+        Value::Array(items) if items.is_empty() => Err(public_error(
+            NgsiLdErrorType::BadRequestData,
+            "Request body must contain a non-empty array of entities",
+            uri,
+        )),
+        Value::Array(items) => Ok(items),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => Err(public_error(
+            NgsiLdErrorType::BadRequestData,
+            "Request body must be a JSON array of entities",
+            uri,
+        )),
+    }
+}
 
-    // Merge all @context values from all items for the overall context
-    let mut merged_context = context.0.clone(); // clone: need owned ContextSpec to merge body contexts into
-    if is_ld_json {
-        let mut seen = HashSet::new();
-        let mut merged_ctx_values = Vec::new();
-        for item in &items {
-            if let Some(ctx) = item.as_object().and_then(|o| o.get("@context")) {
-                match ctx {
-                    Value::Array(arr) => {
-                        for v in arr {
-                            let key = v.to_string();
-                            if seen.insert(key) {
-                                merged_ctx_values.push(v.clone()); // clone: collecting values from borrowed JSON
-                            }
+/// Fold the `@context` of every batch item into the request's context.
+///
+/// A batch is one request with one context, so the item contexts are merged
+/// into a single body context, each distinct value kept once.
+fn merge_item_contexts(items: &[Value], context: ContextSpec) -> ContextSpec {
+    let mut seen = HashSet::new();
+    let mut merged = Vec::new();
+
+    for item in items {
+        if let Some(ctx) = item.as_object().and_then(|o| o.get("@context")) {
+            match ctx {
+                Value::Array(entries) => {
+                    for entry in entries {
+                        let key = entry.to_string();
+                        if seen.insert(key) {
+                            merged.push(entry.clone()); // clone: collecting values from borrowed JSON
                         }
                     }
-                    other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => {
-                        let key = other.to_string();
-                        if seen.insert(key) {
-                            merged_ctx_values.push(other.clone()); // clone: collecting values from borrowed JSON
-                        }
+                }
+                other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => {
+                    let key = other.to_string();
+                    if seen.insert(key) {
+                        merged.push(other.clone()); // clone: collecting values from borrowed JSON
                     }
                 }
             }
         }
-        if !merged_ctx_values.is_empty() {
-            let ctx_value = if merged_ctx_values.len() == 1 {
-                match merged_ctx_values.into_iter().next() {
-                    Some(value) => value,
-                    None => Value::Array(Vec::new()),
-                }
-            } else {
-                Value::Array(merged_ctx_values)
-            };
-            merged_context = merged_context.with_body_context(Some(ctx_value));
-        }
     }
 
-    let mut entities = Vec::new();
-    let mut parse_errors = Vec::new();
+    let body_context = match merged.len() {
+        0 => return context,
+        1 => merged.into_iter().next(),
+        _ => Some(Value::Array(merged)),
+    };
 
-    for mut item in items {
-        // Clause 5.6.7 to 5.6.10: a null array item is malformed batch content,
-        // reported as BadRequestData for the whole request rather than the
-        // InvalidRequest a missing id raises.
-        if item.is_null() {
-            return Err(public_error(NgsiLdErrorType::BadRequestData, "Batch array items must not be null", uri));
-        }
+    context.with_body_context(body_context)
+}
 
-        let entity_id = item
-            .as_object()
-            .and_then(|o| o.get("id"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| public_error(NgsiLdErrorType::InvalidRequest, "Every batch entity must contain a valid URI id", uri))?
-            .parse::<EntityId>()
-            .map_err(|_error| public_error(NgsiLdErrorType::InvalidRequest, "Every batch entity must contain a valid URI id", uri))?;
+/// The identifier a batch item must carry before anything can be reported
+/// against it.
+///
+/// # Errors
+///
+/// Returns a [`ProblemResponse`] for the malformed content that fails the
+/// whole request: a null array item (clauses 5.6.7 to 5.6.10), or an item
+/// whose `id` is absent or not a URI.
+fn batch_entity_id(item: &Value, uri: &Uri) -> Result<EntityId, ProblemResponse> {
+    // Clause 5.6.7 to 5.6.10: a null array item is malformed batch content,
+    // reported as BadRequestData for the whole request rather than the
+    // InvalidRequest a missing id raises.
+    if item.is_null() {
+        return Err(public_error(NgsiLdErrorType::BadRequestData, "Batch array items must not be null", uri));
+    }
 
-        if let Err(error) = canonicalize_numbers(&mut item) {
-            parse_errors.push(BatchEntityError::new(entity_id, NgsiLdErrorType::BadRequestData, &error.to_string()));
-            continue;
-        }
+    item.as_object()
+        .and_then(|o| o.get("id"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| public_error(NgsiLdErrorType::InvalidRequest, "Every batch entity must contain a valid URI id", uri))?
+        .parse::<EntityId>()
+        .map_err(|_error| public_error(NgsiLdErrorType::InvalidRequest, "Every batch entity must contain a valid URI id", uri))
+}
 
-        // Per-entity @context validation
-        let has_context = item.as_object().is_some_and(|o| o.contains_key("@context"));
+/// Decode one batch array item into its entity.
+///
+/// # Errors
+///
+/// Returns a [`BatchEntityError`] against `entity_id` when the item carries a
+/// number the model cannot represent, carries an `@context` its representation
+/// forbids or lacks one it requires (clause 6.3.5), or is not an entity.
+/// Clause 5.6.7 reports these per entity, leaving the rest of the batch intact.
+fn decode_batch_item(mut item: Value, entity_id: EntityId, content_kind: ContentKind) -> Result<Entity, BatchEntityError> {
+    if let Err(error) = canonicalize_numbers(&mut item) {
+        return Err(BatchEntityError::new(entity_id, NgsiLdErrorType::BadRequestData, &error.to_string()));
+    }
 
-        if is_plain_json && has_context {
-            parse_errors.push(BatchEntityError::new(
+    let has_context = item.as_object().is_some_and(|o| o.contains_key("@context"));
+    match content_kind {
+        ContentKind::Json if has_context => {
+            return Err(BatchEntityError::new(
                 entity_id,
                 NgsiLdErrorType::BadRequestData,
                 "application/json body must not contain @context",
             ));
-            continue;
         }
-
-        if is_ld_json && !has_context {
-            parse_errors.push(BatchEntityError::new(
+        ContentKind::LdJson if !has_context => {
+            return Err(BatchEntityError::new(
                 entity_id,
                 NgsiLdErrorType::BadRequestData,
                 "application/ld+json body must contain @context",
             ));
-            continue;
         }
+        ContentKind::Json | ContentKind::LdJson => {}
+    }
 
-        // Strip @context before deserializing
-        if let Some(obj) = item.as_object_mut() {
-            obj.remove("@context");
-        }
+    // Strip @context before deserializing: the context is carried separately.
+    if let Some(obj) = item.as_object_mut() {
+        obj.remove("@context");
+    }
 
-        match deserialize_exact::<Entity>(&item) {
+    deserialize_exact::<Entity>(&item).map_err(|error| BatchEntityError::new(entity_id, NgsiLdErrorType::BadRequestData, &format!("Invalid entity: {error}")))
+}
+
+/// Parse a batch request body with per-entity error handling.
+///
+/// Returns `(valid_entities, context, per_entity_errors)`.
+///
+/// # Errors
+///
+/// Returns a [`ProblemResponse`] when the request fails as a whole: an
+/// unsupported `Content-Type`, an `application/ld+json` body combined with a
+/// context `Link` header (clause 6.3.5), an empty or unparsable body, a body
+/// that is not a non-empty JSON array, a null array item, or an item without a
+/// valid URI `id`. Every other failure is reported per entity in the returned
+/// [`BatchEntityError`] list, leaving the rest of the batch intact.
+pub fn parse_batch_entities(
+    body: &Bytes,
+    headers: &HeaderMap,
+    context: &ContextUrl,
+    uri: &Uri,
+) -> Result<(Vec<Entity>, ContextSpec, Vec<BatchEntityError>), ProblemResponse> {
+    let content_kind = batch_content_kind(headers, uri)?;
+    let items = batch_items(body, uri)?;
+
+    let request_context = context.0.clone(); // clone: need owned ContextSpec to merge body contexts into
+    let merged_context = match content_kind {
+        ContentKind::Json => request_context,
+        ContentKind::LdJson => merge_item_contexts(&items, request_context),
+    };
+
+    let mut entities = Vec::new();
+    let mut parse_errors = Vec::new();
+
+    for item in items {
+        let entity_id = batch_entity_id(&item, uri)?;
+        match decode_batch_item(item, entity_id, content_kind) {
             Ok(entity) => entities.push(entity),
-            Err(e) => {
-                parse_errors.push(BatchEntityError::new(
-                    entity_id,
-                    NgsiLdErrorType::BadRequestData,
-                    &format!("Invalid entity: {e}"),
-                ));
-            }
+            Err(error) => parse_errors.push(error),
         }
     }
 

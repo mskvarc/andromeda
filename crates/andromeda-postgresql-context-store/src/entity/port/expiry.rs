@@ -10,7 +10,7 @@ impl EntityExpirySource for EntityRepository {
     async fn entities_due_for_expiry(&self, target: &ContextTarget, cutoff: DateTime<Utc>, batch_size: EntityExpiryBatchSize) -> Result<Vec<Uri>, EntityError> {
         EntityRepository::entities_due_for_expiry(self, target, cutoff, batch_size)
             .await
-            .map_err(persistence)
+            .map_err(|error| persistence(&error))
     }
 
     async fn entities_with_expired_attributes(
@@ -21,6 +21,6 @@ impl EntityExpirySource for EntityRepository {
     ) -> Result<Vec<(Uri, EntitySnapshot)>, EntityError> {
         EntityRepository::entities_with_expired_attributes(self, target, cutoff, batch_size)
             .await
-            .map_err(persistence)
+            .map_err(|error| persistence(&error))
     }
 }

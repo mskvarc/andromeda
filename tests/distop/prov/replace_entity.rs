@@ -70,7 +70,7 @@ async fn replace_entity_registration_matches_entity_absent_not_404() {
         "a matching registration forwards rather than 404: {}",
         String::from_utf8_lossy(&replaced.body)
     );
-    assert_eq!(mock.get_count(Method::PUT, &path).await, 1, "the replacement is forwarded once");
+    assert_eq!(mock.get_count(Method::PUT, &path), 1, "the replacement is forwarded once");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -171,7 +171,7 @@ async fn replace_entity_op_unsupported_returns_409() {
         .expect("replace entity");
     assert_status(&replaced, 409);
     assert_problem_details(&replaced, CONFLICT);
-    assert_eq!(mock.get_count(Method::PUT, &path).await, 0, "no forward on an unsupported operation");
+    assert_eq!(mock.get_count(Method::PUT, &path), 0, "no forward on an unsupported operation");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -221,7 +221,7 @@ async fn replace_entity_inclusive_forwards_remainder_replaces_local_preserves_cr
         "the replacement is accepted: {}",
         String::from_utf8_lossy(&replaced.body)
     );
-    assert_eq!(mock.get_count(Method::PUT, &path).await, 1, "inclusive forwards the replacement once");
+    assert_eq!(mock.get_count(Method::PUT, &path), 1, "inclusive forwards the replacement once");
 
     let after = client
         .get_entity(&entity_id, "local=true&options=sysAttrs", "application/ld+json", None)

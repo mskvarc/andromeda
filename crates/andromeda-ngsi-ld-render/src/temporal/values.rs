@@ -8,6 +8,11 @@ use indexmap::IndexMap;
 use serde_json::{Value, json};
 use thiserror::Error;
 
+/// The entity-level members that pass through untouched: clause 4.5.8 collapses
+/// attributes alone, so the identity and the clause 4.8 system timestamps are
+/// copied across rather than read as instance arrays.
+const RESERVED: &[&str] = &["id", "type", "@context", "createdAt", "modifiedAt", "deletedAt"];
+
 /// A compacted temporal entity contains a malformed typed member.
 #[derive(Debug, Error)]
 pub enum TemporalValuesError {
@@ -40,14 +45,17 @@ impl TemporalValuesRenderer {
 
     /// Collapse each attribute into the clause 4.5.8 `temporalValues` pairs.
     ///
-    /// Returns an error when a compacted typed member is malformed.
+    /// # Errors
+    ///
+    /// Returns [`TemporalValuesError::InvalidDatasetId`] when an instance
+    /// carries a `datasetId` that is not a URI, and
+    /// [`TemporalValuesError::InvalidAttributeType`] when an instance carries a
+    /// `type` that names no NGSI-LD attribute type.
     pub fn render(self) -> Result<Value, TemporalValuesError> {
         let obj = match self.payload {
             Value::Object(m) => m,
             other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => return Ok(other),
         };
-
-        const RESERVED: &[&str] = &["id", "type", "@context", "createdAt", "modifiedAt", "deletedAt"];
 
         let mut result = serde_json::Map::new();
 

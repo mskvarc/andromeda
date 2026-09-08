@@ -4,7 +4,8 @@
 //! a partial entity. A temporal forward keeps the temporal window either way,
 //! as the window is the query itself rather than a filter on it.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_query::pattern::Pattern;
 use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
 use axum::http::Uri as HttpUri;
 use url::form_urlencoded;
@@ -97,11 +98,11 @@ pub(crate) fn body_query_string(query: &EntityQueryParameters, filters: Forwarde
         &mut serializer,
         query.id.as_deref(),
         query.entity_type.as_ref().map(ToString::to_string),
-        query.id_pattern.as_ref().map(andromeda_ngsi_ld_query::pattern::Pattern::as_str),
+        query.id_pattern.as_ref().map(Pattern::as_str),
     );
     if filters == ForwardedFilters::Forwarded {
         if let Some(attrs) = &query.attrs {
-            serializer.append_pair("attrs", &attrs.iter().map(andromeda_ngsi_ld_lexicon::attribute_name::AttributeName::as_str).collect::<Vec<_>>().join(","));
+            serializer.append_pair("attrs", &attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>().join(","));
         }
         for (key, value) in form_urlencoded::parse(uri.query().unwrap_or("").as_bytes()) {
             serializer.append_pair(&key, &value);
@@ -117,7 +118,7 @@ pub(crate) fn temporal_body_query_string(params: &TemporalQueryParameters, filte
         &mut serializer,
         params.id.as_deref(),
         params.entity_type.as_ref().map(ToString::to_string),
-        params.id_pattern.as_ref().map(andromeda_ngsi_ld_query::pattern::Pattern::as_str),
+        params.id_pattern.as_ref().map(Pattern::as_str),
     );
     if let Some(timerel) = params.timerel {
         serializer.append_pair("timerel", &timerel.to_string());
@@ -137,7 +138,7 @@ pub(crate) fn temporal_body_query_string(params: &TemporalQueryParameters, filte
     if filters == ForwardedFilters::Forwarded
         && let Some(attrs) = &params.attrs
     {
-        serializer.append_pair("attrs", &attrs.iter().map(andromeda_ngsi_ld_lexicon::attribute_name::AttributeName::as_str).collect::<Vec<_>>().join(","));
+        serializer.append_pair("attrs", &attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>().join(","));
     }
     serializer.finish()
 }

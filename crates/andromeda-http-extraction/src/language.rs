@@ -8,6 +8,7 @@ use andromeda_http_headers::{language::LanguageFilter, ngsild_language::NgsiLdLa
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
+use std::future::{Future, ready};
 
 /// Axum extractor that resolves an optional [`LanguageFilter`] from the request.
 ///
@@ -15,24 +16,28 @@ use headers::HeaderMapExt;
 /// produces a `BadRequestData` rejection.
 pub struct LanguageNegotiation(pub Option<LanguageFilter>);
 
+/// Decode the `NGSILD-Language` header, rejecting a header that is present but
+/// not a valid language list.
+fn resolve_language_negotiation(parts: &Parts) -> Result<LanguageNegotiation, ExtractorRejection> {
+    if parts.headers.contains_key("ngsild-language") {
+        let header = parts
+            .headers
+            .typed_get::<NgsiLdLanguage>()
+            .ok_or_else(|| ExtractorRejection::bad_request_data("Invalid NGSILD-Language header value", parts.uri.clone()))?;
+        return Ok(LanguageNegotiation(Some(header.into_filter())));
+    }
+
+    Ok(LanguageNegotiation(None))
+}
+
 impl<S> FromRequestParts<S> for LanguageNegotiation
 where
     S: Send + Sync,
 {
     type Rejection = ExtractorRejection;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let uri = parts.uri.clone();
-
-        if parts.headers.contains_key("ngsild-language") {
-            let header = parts
-                .headers
-                .typed_get::<NgsiLdLanguage>()
-                .ok_or_else(|| ExtractorRejection::bad_request_data("Invalid NGSILD-Language header value", uri))?;
-            return Ok(LanguageNegotiation(Some(header.into_filter())));
-        }
-
-        Ok(LanguageNegotiation(None))
+    fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> {
+        ready(resolve_language_negotiation(parts))
     }
 }
 
@@ -42,12 +47,12 @@ mod tests {
     use axum::{extract::FromRequestParts, http::Request};
 
     async fn extract_from_uri(uri: &str) -> LanguageNegotiation {
-        let (mut parts, _) = Request::builder().uri(uri).body(()).expect("valid request").into_parts();
+        let (mut parts, ()) = Request::builder().uri(uri).body(()).expect("valid request").into_parts();
         LanguageNegotiation::from_request_parts(&mut parts, &()).await.expect("extraction")
     }
 
     async fn extract_with_header(header_value: &str) -> LanguageNegotiation {
-        let (mut parts, _) = Request::builder()
+        let (mut parts, ()) = Request::builder()
             .uri("/entities")
             .header("NGSILD-Language", header_value)
             .body(())
@@ -66,7 +71,7 @@ mod tests {
 
     #[tokio::test]
     async fn query_parameter_is_left_to_the_request_model() {
-        let (mut parts, _) = Request::builder().uri("/entities?lang=fr").body(()).expect("valid request").into_parts();
+        let (mut parts, ()) = Request::builder().uri("/entities?lang=fr").body(()).expect("valid request").into_parts();
         let LanguageNegotiation(filter) = LanguageNegotiation::from_request_parts(&mut parts, &()).await.expect("extraction");
         assert!(filter.is_none());
     }
@@ -79,7 +84,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_empty_header() {
-        let (mut parts, _) = Request::builder()
+        let (mut parts, ()) = Request::builder()
             .uri("/entities")
             .header("NGSILD-Language", "")
             .body(())

@@ -159,6 +159,18 @@ mod tests {
     /// The conformance table over every clause 4.10 relation. The fixtures are
     /// the ones the three deleted copies each tested separately.
     fn conformance_table(fixtures: &Fixtures) -> Vec<Case<'_>> {
+        containment_cases(fixtures)
+            .into_iter()
+            .chain(intersection_cases(fixtures))
+            .chain(equality_cases(fixtures))
+            .chain(overlap_cases(fixtures))
+            .chain(proximity_cases(fixtures))
+            .collect()
+    }
+
+    /// The rows asserting `within` and `contains`, the two directions of the
+    /// same containment question.
+    fn containment_cases(fixtures: &Fixtures) -> Vec<Case<'_>> {
         vec![
             Case {
                 description: "a point inside the reference area is within it",
@@ -188,6 +200,12 @@ mod tests {
                 reference: &fixtures.outside,
                 expected: false,
             },
+        ]
+    }
+
+    /// The rows asserting `intersects` and its negation `disjoint`.
+    fn intersection_cases(fixtures: &Fixtures) -> Vec<Case<'_>> {
+        vec![
             Case {
                 description: "overlapping areas intersect",
                 georel: GeoRel::Intersects,
@@ -216,6 +234,12 @@ mod tests {
                 reference: &fixtures.same_area,
                 expected: false,
             },
+        ]
+    }
+
+    /// The rows asserting `equals`.
+    fn equality_cases(fixtures: &Fixtures) -> Vec<Case<'_>> {
+        vec![
             Case {
                 description: "identical areas are equal",
                 georel: GeoRel::Equals,
@@ -230,6 +254,13 @@ mod tests {
                 reference: &fixtures.far_area,
                 expected: false,
             },
+        ]
+    }
+
+    /// The rows asserting `overlaps`, including the containment and dimension
+    /// exclusions `ST_Overlaps` carries.
+    fn overlap_cases(fixtures: &Fixtures) -> Vec<Case<'_>> {
+        vec![
             Case {
                 description: "partially overlapping areas overlap",
                 georel: GeoRel::Overlaps,
@@ -269,6 +300,12 @@ mod tests {
                 reference: &fixtures.area,
                 expected: false,
             },
+        ]
+    }
+
+    /// The rows asserting `near`, over every combination of its two bounds.
+    fn proximity_cases(fixtures: &Fixtures) -> Vec<Case<'_>> {
+        vec![
             Case {
                 // The two fixtures are ~7 300 km apart on the great circle.
                 description: "a point inside the max distance is near",

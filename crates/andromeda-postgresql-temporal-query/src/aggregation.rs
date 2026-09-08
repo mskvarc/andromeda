@@ -195,14 +195,13 @@ pub fn build_aggregation_query(compiled: &CompiledTemporalQuery, condition: Cond
 
     if let Some(period) = period {
         let iso = period.as_iso8601();
-        let origin = match compiled.window.interval.reference() {
-            // The reference instant of clause 4.5.19 aligns the buckets.
-            Some(reference) => Expr::val(*reference),
-            // Absent, buckets align to the actual data range (not epoch).
-            None => {
-                select.join_lateral(JoinType::Join, origin_subquery(axis), BucketOrigin, SimpleExpr::from(true));
-                Expr::col((BucketOrigin, Origin))
-            }
+        // The reference instant of clause 4.5.19 aligns the buckets; absent,
+        // they align to the actual data range (not epoch).
+        let origin = if let Some(reference) = compiled.window.interval.reference() {
+            Expr::val(*reference)
+        } else {
+            select.join_lateral(JoinType::Join, origin_subquery(axis), BucketOrigin, SimpleExpr::from(true));
+            Expr::col((BucketOrigin, Origin))
         };
         select.join_lateral(
             JoinType::Join,

@@ -63,6 +63,14 @@ impl SnapshotExecutor {
     }
 
     /// Execute all queries for a snapshot and record its final status.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SnapshotError::Internal`] when the snapshot owns no durable
+    /// staging context branch, [`SnapshotError::Validation`] when the aggregated
+    /// execution status is not a permitted transition out of `preparing`, and the
+    /// store's own failure when promoting the capture or enforcing the tenant
+    /// quotas does not complete.
     pub async fn execute(&self, snapshot: Snapshot, query_context: serde_json::Value, claimed_by: Uuid) -> Result<(), SnapshotError> {
         info!(snapshot_id = %snapshot.id, "Starting snapshot query execution");
         let target = self
@@ -123,6 +131,7 @@ pub struct SnapshotPreparation {
 }
 
 /// Bounded execution and resource policies for Snapshot preparation.
+#[derive(Clone, Copy, Debug)]
 pub struct SnapshotPreparationConfig {
     /// Maximum source page size used during capture.
     pub capture_page_size: usize,
@@ -167,6 +176,14 @@ impl SnapshotPreparation {
     }
 
     /// Execute one bounded group of pending preparations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SnapshotError::Internal`] when the configured lease duration
+    /// cannot be turned into a wall-clock deadline, and the store's own failure
+    /// when claiming the next preparing snapshot does not complete. A failure of
+    /// one individual preparation is logged and leaves that claim reclaimable
+    /// instead of aborting the pass.
     pub async fn execute(&self) -> Result<SnapshotPreparationOutcome, SnapshotError> {
         let mut jobs = Vec::with_capacity(self.max_per_pass);
         while jobs.len() < self.max_per_pass {
@@ -178,7 +195,9 @@ impl SnapshotPreparation {
         let count = stream::iter(jobs)
             .map(|job| async move {
                 let identifier = job.snapshot.id.clone(); // clone: execution consumes the job while diagnostics retain its identifier.
-                if let Err(error) = self.execute_with_lease_renewal(job).await {
+                // Boxed: one capture drives the whole query pipeline, so its future is far
+                // too large to hold inline for every buffered job of the pass.
+                if let Err(error) = Box::pin(self.execute_with_lease_renewal(job)).await {
                     tracing::warn!(snapshot_id = %identifier, %error, "Snapshot preparation failed; its renewable claim remains reclaimable");
                     return false;
                 }

@@ -99,7 +99,7 @@ mod tests {
         }
     }
 
-    fn collected(names: Vec<AttributeName>) -> Vec<String> {
+    fn collected(names: &[AttributeName]) -> Vec<String> {
         names.iter().map(AttributeName::as_str).map(str::to_string).collect()
     }
 
@@ -112,7 +112,7 @@ mod tests {
             IriBuf::new("https://example.com/name".to_string()).expect("valid IRI"),
         ];
         assert_eq!(
-            collected(projected_attribute_names(&attrs, None, None, &[])),
+            collected(&projected_attribute_names(&attrs, None, None, &[])),
             vec!["https://example.com/speed", "https://example.com/name"]
         );
     }
@@ -123,7 +123,7 @@ mod tests {
     fn a_geo_query_contributes_its_target_geoproperty() {
         let geo = geo_query("https://example.com/observationPoint");
         assert_eq!(
-            collected(projected_attribute_names(&[], None, Some(&geo), &[])),
+            collected(&projected_attribute_names(&[], None, Some(&geo), &[])),
             vec!["https://example.com/observationPoint"]
         );
     }
@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn a_geo_query_on_the_default_geoproperty_resolves_nothing() {
         let geo = geo_query(LOCATION.as_str());
-        assert_eq!(projected_attribute_names(&[], None, Some(&geo), &[]), [] as [andromeda_ngsi_ld_lexicon::attribute_name::AttributeName; 0]);
+        assert_eq!(projected_attribute_names(&[], None, Some(&geo), &[]), [] as [AttributeName; 0]);
     }
 
     /// The clause 4.7 `GeoProperties` are stored in the projection like any other
@@ -143,7 +143,7 @@ mod tests {
     fn a_geo_query_on_a_spec_defined_geoproperty_still_resolves_it() {
         for iri in ["https://uri.etsi.org/ngsi-ld/observationSpace", "https://uri.etsi.org/ngsi-ld/operationSpace"] {
             let geo = geo_query(iri);
-            assert_eq!(collected(projected_attribute_names(&[], None, Some(&geo), &[])), vec![iri.to_string()]);
+            assert_eq!(collected(&projected_attribute_names(&[], None, Some(&geo), &[])), vec![iri.to_string()]);
         }
     }
 
@@ -156,7 +156,7 @@ mod tests {
             OrderDirection::DistAsc,
         )];
         assert_eq!(
-            collected(projected_attribute_names(&[], None, None, &terms)),
+            collected(&projected_attribute_names(&[], None, None, &terms)),
             vec!["https://example.com/observationPoint"]
         );
     }
@@ -166,14 +166,14 @@ mod tests {
     #[test]
     fn a_distance_ordering_on_the_default_geoproperty_resolves_nothing() {
         let terms = [order_term(OrderTarget::Attribute(name(LOCATION.as_str())), OrderDirection::DistAsc)];
-        assert_eq!(projected_attribute_names(&[], None, None, &terms), [] as [andromeda_ngsi_ld_lexicon::attribute_name::AttributeName; 0]);
+        assert_eq!(projected_attribute_names(&[], None, None, &terms), [] as [AttributeName; 0]);
     }
 
     /// A value ordering navigates the payload, so it contributes nothing.
     #[test]
     fn a_value_ordering_contributes_no_name() {
         let terms = [order_term(OrderTarget::Attribute(name("https://example.com/temperature")), OrderDirection::Asc)];
-        assert_eq!(projected_attribute_names(&[], None, None, &terms), [] as [andromeda_ngsi_ld_lexicon::attribute_name::AttributeName; 0]);
+        assert_eq!(projected_attribute_names(&[], None, None, &terms), [] as [AttributeName; 0]);
     }
 
     /// Clause 4.23's keywords name no attribute, whichever direction they sort.
@@ -184,7 +184,7 @@ mod tests {
             order_term(OrderTarget::Type, OrderDirection::DistDesc),
             order_term(OrderTarget::Scope, OrderDirection::DistAsc),
         ];
-        assert_eq!(projected_attribute_names(&[], None, None, &terms), [] as [andromeda_ngsi_ld_lexicon::attribute_name::AttributeName; 0]);
+        assert_eq!(projected_attribute_names(&[], None, None, &terms), [] as [AttributeName; 0]);
     }
 
     /// The three axes accumulate rather than displacing one another.
@@ -197,7 +197,7 @@ mod tests {
             OrderDirection::DistAsc,
         )];
         assert_eq!(
-            collected(projected_attribute_names(&[], Some(&expr), Some(&geo), &terms)),
+            collected(&projected_attribute_names(&[], Some(&expr), Some(&geo), &terms)),
             vec![
                 "https://example.com/speed",
                 "https://example.com/observationPoint",
@@ -208,6 +208,6 @@ mod tests {
 
     #[test]
     fn a_query_with_neither_filter_nor_geometry_resolves_nothing() {
-        assert_eq!(projected_attribute_names(&[], None, None, &[]), [] as [andromeda_ngsi_ld_lexicon::attribute_name::AttributeName; 0]);
+        assert_eq!(projected_attribute_names(&[], None, None, &[]), [] as [AttributeName; 0]);
     }
 }

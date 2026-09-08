@@ -197,7 +197,7 @@ where
             .map(|value| value.to_string())
             .unwrap_or_default();
 
-        let content_kind = if let Some(kind) = classify_content_type(&content_type_raw) { kind } else {
+        let Some(content_kind) = classify_content_type(&content_type_raw) else {
             tracing::warn!("JsonLd extraction failed: unsupported media type '{}'", content_type_raw);
             return Err(ExtractorRejection::Empty(StatusCode::UNSUPPORTED_MEDIA_TYPE));
         };
@@ -238,7 +238,7 @@ where
         canonicalize_numbers(&mut value).map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri.clone()))?;
 
         // Reject empty arrays — not a valid NGSI-LD entity or batch payload
-        if value.as_array().is_some_and(std::vec::Vec::is_empty) {
+        if value.as_array().is_some_and(Vec::is_empty) {
             return Err(ExtractorRejection::bad_request_data(
                 "Invalid JSON: expected object, got empty array",
                 uri.clone(),
@@ -313,7 +313,7 @@ mod tests {
             Err(ExtractorRejection::Empty(status)) => {
                 pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
             }
-            _ => unreachable!("expected 415 empty rejection"),
+            _ => panic!("expected 415 empty rejection"),
         }
     }
 
@@ -331,7 +331,7 @@ mod tests {
             Err(ExtractorRejection::Empty(status)) => {
                 pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
             }
-            _ => unreachable!("expected 415 for json-patch+json"),
+            _ => panic!("expected 415 for json-patch+json"),
         }
     }
 
@@ -483,7 +483,7 @@ mod tests {
             Err(ExtractorRejection::BadRequestData { detail, .. }) => {
                 assert!(detail.contains("/property/value/nested/0"), "{detail}");
             }
-            _other => unreachable!("expected BadRequestData"),
+            _other => panic!("expected BadRequestData"),
         }
     }
 }

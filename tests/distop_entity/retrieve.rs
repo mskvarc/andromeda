@@ -113,7 +113,7 @@ async fn distop_entity_retrieve_exclusive_returns_remote_attributes() {
         obj.keys().collect::<Vec<_>>()
     );
 
-    let count = mock.get_count(Method::GET, &format!("/broker1/ngsi-ld/v1/entities/{entity_id}")).await;
+    let count = mock.get_count(Method::GET, &format!("/broker1/ngsi-ld/v1/entities/{entity_id}"));
     assert!(count > 0, "mock should have been called");
 
     delete_entity(&c, &entity_id).await;
@@ -220,7 +220,7 @@ async fn distop_entity_retrieve_inclusive_local_true_returns_404() {
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
     // Verify no request was forwarded
-    pretty_assertions::assert_eq!(mock.get_total_count().await, 0);
+    pretty_assertions::assert_eq!(mock.get_total_count(), 0);
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
@@ -277,7 +277,7 @@ async fn distop_entity_retrieve_with_only_query_entity_does_not_forward() {
 
     let (status, _, _) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
-    pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}")).await, 0);
+    pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}")), 0);
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
@@ -305,7 +305,7 @@ async fn distop_entity_retrieve_with_only_query_batch_does_not_forward() {
 
     let (status, _, _) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
-    pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}")).await, 0);
+    pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}")), 0);
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
@@ -390,8 +390,8 @@ async fn distop_entity_retrieve_redirect_local_true_returns_404() {
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
     // Verify no requests forwarded
-    pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/broker1/ngsi-ld/v1/entities/{entity_id}")).await, 0);
-    pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/broker2/ngsi-ld/v1/entities/{entity_id}")).await, 0);
+    pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/broker1/ngsi-ld/v1/entities/{entity_id}")), 0);
+    pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/broker2/ngsi-ld/v1/entities/{entity_id}")), 0);
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;

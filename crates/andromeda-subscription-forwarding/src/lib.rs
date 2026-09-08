@@ -19,6 +19,8 @@ pub mod error;
 pub mod forwarder;
 /// The identifier mappings the distributed side keeps.
 pub mod mapping;
+/// The identifier this broker mints for a subscription it hands to a peer.
+mod minted_subscription_id;
 /// Re-assembling an inbound notification for the local subscriber.
 pub mod reassembly;
 /// The notification endpoint this broker advertises to context sources.

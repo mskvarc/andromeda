@@ -1,13 +1,16 @@
 //! Bounded-cardinality PostgreSQL maintenance metrics.
 
-use crate::names::{
-    LABEL_ACTION,
-    LABEL_DECISION,
-    LABEL_OUTCOME,
-    POSTGRESQL_MAINTENANCE_ACTION_SECONDS,
-    POSTGRESQL_MAINTENANCE_ACTIONS_TOTAL,
-    POSTGRESQL_MAINTENANCE_DECISIONS_TOTAL,
-    POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES,
+use crate::{
+    names::{
+        LABEL_ACTION,
+        LABEL_DECISION,
+        LABEL_OUTCOME,
+        POSTGRESQL_MAINTENANCE_ACTION_SECONDS,
+        POSTGRESQL_MAINTENANCE_ACTIONS_TOTAL,
+        POSTGRESQL_MAINTENANCE_DECISIONS_TOTAL,
+        POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES,
+    },
+    sample_value::SampleValue,
 };
 use metrics::{counter, histogram};
 use std::time::Duration;
@@ -84,7 +87,7 @@ pub fn record_action(action: MaintenanceAction, outcome: MaintenanceActionOutcom
     counter!(POSTGRESQL_MAINTENANCE_ACTIONS_TOTAL, LABEL_ACTION => action, LABEL_OUTCOME => outcome).increment(1);
     histogram!(POSTGRESQL_MAINTENANCE_ACTION_SECONDS, LABEL_ACTION => action, LABEL_OUTCOME => outcome).record(duration);
     if let Some(bytes) = reclaimed_bytes {
-        histogram!(POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES, LABEL_ACTION => action).record(bytes as f64);
+        histogram!(POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES, LABEL_ACTION => action).record(SampleValue::from(bytes));
     }
 }
 

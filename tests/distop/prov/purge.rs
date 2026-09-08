@@ -64,7 +64,7 @@ async fn purge_local_scope_skips_forwarding() {
         "a local purge succeeds: {}",
         String::from_utf8_lossy(&purged.body)
     );
-    assert_eq!(mock.get_total_count().await, 0, "a local-scope purge forwards nothing");
+    assert_eq!(mock.get_total_count(), 0, "a local-scope purge forwards nothing");
 
     let local = client
         .get_entity(&entity_id, "local=true", "application/ld+json", None)
@@ -113,11 +113,11 @@ async fn purge_non_local_matching_csr_forwards_per_registration() {
     );
 
     assert!(
-        mock.get_count(Method::DELETE, "/s1/ngsi-ld/v1/entities").await >= 1,
+        mock.get_count(Method::DELETE, "/s1/ngsi-ld/v1/entities") >= 1,
         "the first registration is forwarded a purge"
     );
     assert!(
-        mock.get_count(Method::DELETE, "/s2/ngsi-ld/v1/entities").await >= 1,
+        mock.get_count(Method::DELETE, "/s2/ngsi-ld/v1/entities") >= 1,
         "the second registration is forwarded a purge"
     );
 
@@ -152,7 +152,7 @@ async fn purge_op_unsupported_returns_conflict_or_partial() {
         String::from_utf8_lossy(&purged.body)
     );
     assert_eq!(
-        mock.get_count(Method::DELETE, "/ngsi-ld/v1/entities").await,
+        mock.get_count(Method::DELETE, "/ngsi-ld/v1/entities"),
         0,
         "no purge is forwarded on an unsupported operation"
     );
@@ -211,7 +211,7 @@ async fn purge_local_phase_queries_then_deletes() {
         .await
         .expect("second read-back");
     assert_status(&second, 404);
-    assert_eq!(mock.get_total_count().await, 0, "an auxiliary registration receives no forwarded purge");
+    assert_eq!(mock.get_total_count(), 0, "an auxiliary registration receives no forwarded purge");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

@@ -249,134 +249,190 @@ mod tests {
         let mut preloads = HashMap::new();
         preloads.insert("https://example.com/context.jsonld".parse().expect("test URL"), path.into());
         RuntimeConfig {
-            server: ServerConfig {
-                host: "127.0.0.1".parse().unwrap(),
-                port: 1056,
-                graceful_drain_secs: 30,
-            },
-            http: HttpStackConfig {
-                request_timeout_secs: 30,
-                response_compression: HttpFeatureMode::Enabled,
-                request_decompression: HttpFeatureMode::Enabled,
-                cors: CorsMode::Permissive,
-                max_request_body_bytes: 67_108_864,
-            },
-            database: DatabaseConfig {
-                url: "postgres://postgres:postgres@localhost:5432/postgres".parse().expect("database URL"),
-                max_connections: 32,
-                synchronous_commit: SynchronousCommit::Off,
-                preload_name_dictionaries: true,
-                context_hit_flush_secs: 5,
-                maintenance: MaintenanceConfig::default(),
-            },
-            jsonld: JsonLdConfig {
-                allow_remote_contexts: true,
-                timeout_seconds: 30,
-                max_redirects: 5,
-                max_context_bytes: 2_000_000,
-                cache_capacity: 1024,
-                cache_ttl_seconds: 3600,
-                preload_contexts: preloads,
-            },
-            temporal: TemporalConfig {
-                append_mode: TemporalAppendMode::Native,
-                default_last_n: 19,
-                expiration_check_interval_secs: 30,
-                intent_fallback_secs: 1,
-                intent_batch_size: 64,
-                intent_lease_secs: 30,
-                intent_retry_secs: 2,
-                intent_retry_max_secs: 300,
-                intent_stuck_after_attempts: 10,
-                chunk_interval_days: None,
-                columnstore_after_days: None,
-                retention_horizon_days: None,
-                retention_sweep_interval_secs: 3600,
-            },
-            tenancy: TenancyConfig {
-                enabled: true,
-                tenant_db_prefix: DbNamePrefix::try_from("andromeda_tenant").expect("valid default db name prefix"),
-                tenant_max_connections: 16,
-                runtime_idle_ttl_seconds: 900,
-                runtime_max_cached: 64,
-                janitor_interval_seconds: 30,
-            },
-            info: InfoConfig {
-                source_id: "urn:ngsi-ld:ContextSourceIdentity:andromeda".parse::<Uri>().expect("valid source ID"),
-                source_alias: "andromeda".parse::<ContextSourcePseudonym>().expect("valid source alias"),
-                source_extras: None,
-                advertised_url: None,
-            },
-            entity: EntityConfig {
-                batch_concurrency: None,
-                batch_chunk_concurrency: None,
-                batch_chunk_write_concurrency: None,
-                batch_chunk_size: 512,
-                batch_large_threshold: 512,
-                batch_prepare_blocking_threshold: 128,
-                batch_async_side_effect_threshold: None,
-                expiry_batch_size: 1_000,
-                pending_side_effects_poll_secs: 1,
-                pending_side_effects_lease_secs: 30,
-                pending_side_effects_batch_size: 32,
-                pending_side_effects_max_attempts: 5,
-                pending_side_effects_base_backoff_secs: 2,
-                pending_side_effects_dead_letter_after_secs: 604_800,
-                pending_side_effects_cleanup_interval_secs: 300,
-            },
-            federation: FederationConfig {
-                forward_concurrency: 16,
-                connect_timeout_ms: 3000,
-                request_timeout_ms: 5000,
-                cache_max_entries: 1024,
-                split_entities_default: SplitEntitiesDefault::Complete,
-            },
+            server: test_server_config(),
+            http: test_http_stack_config(),
+            database: test_database_config(),
+            jsonld: test_jsonld_config(preloads),
+            temporal: test_temporal_config(),
+            tenancy: test_tenancy_config(),
+            info: test_info_config(),
+            entity: test_entity_config(),
+            federation: test_federation_config(),
             postgresql_write: AtomicWriteConfig {
                 bulk_mode: BulkWriteMode::Unnest,
             },
-            snapshot: SnapshotConfig {
-                default_lifetime_secs: 3_600,
-                maximum_lifetime_secs: 2_592_000,
-                capture_page_size: 250,
-                preparation_concurrency: 4,
-                scoped_operation_wait_secs: 30,
-                preparation_lease_secs: 30,
-                tenant_count_quota: None,
-                tenant_byte_quota: None,
+            snapshot: test_snapshot_config(),
+            notification_delivery: test_delivery_config(),
+            notifications: test_notification_config(),
+            spatial: test_spatial_config(),
+            observability: test_observability_config(),
+        }
+    }
+
+    fn test_server_config() -> ServerConfig {
+        ServerConfig {
+            host: "127.0.0.1".parse().expect("test host address"),
+            port: 1056,
+            graceful_drain_secs: 30,
+        }
+    }
+
+    fn test_http_stack_config() -> HttpStackConfig {
+        HttpStackConfig {
+            request_timeout_secs: 30,
+            response_compression: HttpFeatureMode::Enabled,
+            request_decompression: HttpFeatureMode::Enabled,
+            cors: CorsMode::Permissive,
+            max_request_body_bytes: 67_108_864,
+        }
+    }
+
+    fn test_database_config() -> DatabaseConfig {
+        DatabaseConfig {
+            url: "postgres://postgres:postgres@localhost:5432/postgres".parse().expect("database URL"),
+            max_connections: 32,
+            synchronous_commit: SynchronousCommit::Off,
+            preload_name_dictionaries: true,
+            context_hit_flush_secs: 5,
+            maintenance: MaintenanceConfig::default(),
+        }
+    }
+
+    fn test_jsonld_config(preload_contexts: HashMap<Url, PathBuf>) -> JsonLdConfig {
+        JsonLdConfig {
+            allow_remote_contexts: true,
+            timeout_seconds: 30,
+            max_redirects: 5,
+            max_context_bytes: 2_000_000,
+            cache_capacity: 1024,
+            cache_ttl_seconds: 3600,
+            preload_contexts,
+        }
+    }
+
+    fn test_temporal_config() -> TemporalConfig {
+        TemporalConfig {
+            append_mode: TemporalAppendMode::Native,
+            default_last_n: 19,
+            expiration_check_interval_secs: 30,
+            intent_fallback_secs: 1,
+            intent_batch_size: 64,
+            intent_lease_secs: 30,
+            intent_retry_secs: 2,
+            intent_retry_max_secs: 300,
+            intent_stuck_after_attempts: 10,
+            chunk_interval_days: None,
+            columnstore_after_days: None,
+            retention_horizon_days: None,
+            retention_sweep_interval_secs: 3600,
+        }
+    }
+
+    fn test_tenancy_config() -> TenancyConfig {
+        TenancyConfig {
+            enabled: true,
+            tenant_db_prefix: DbNamePrefix::try_from("andromeda_tenant").expect("valid default db name prefix"),
+            tenant_max_connections: 16,
+            runtime_idle_ttl_seconds: 900,
+            runtime_max_cached: 64,
+            janitor_interval_seconds: 30,
+        }
+    }
+
+    fn test_info_config() -> InfoConfig {
+        InfoConfig {
+            source_id: "urn:ngsi-ld:ContextSourceIdentity:andromeda".parse::<Uri>().expect("valid source ID"),
+            source_alias: "andromeda".parse::<ContextSourcePseudonym>().expect("valid source alias"),
+            source_extras: None,
+            advertised_url: None,
+        }
+    }
+
+    fn test_entity_config() -> EntityConfig {
+        EntityConfig {
+            batch_concurrency: None,
+            batch_chunk_concurrency: None,
+            batch_chunk_write_concurrency: None,
+            batch_chunk_size: 512,
+            batch_large_threshold: 512,
+            batch_prepare_blocking_threshold: 128,
+            batch_async_side_effect_threshold: None,
+            expiry_batch_size: 1_000,
+            pending_side_effects_poll_secs: 1,
+            pending_side_effects_lease_secs: 30,
+            pending_side_effects_batch_size: 32,
+            pending_side_effects_max_attempts: 5,
+            pending_side_effects_base_backoff_secs: 2,
+            pending_side_effects_dead_letter_after_secs: 604_800,
+            pending_side_effects_cleanup_interval_secs: 300,
+        }
+    }
+
+    fn test_federation_config() -> FederationConfig {
+        FederationConfig {
+            forward_concurrency: 16,
+            connect_timeout_ms: 3000,
+            request_timeout_ms: 5000,
+            cache_max_entries: 1024,
+            split_entities_default: SplitEntitiesDefault::Complete,
+        }
+    }
+
+    fn test_snapshot_config() -> SnapshotConfig {
+        SnapshotConfig {
+            default_lifetime_secs: 3_600,
+            maximum_lifetime_secs: 2_592_000,
+            capture_page_size: 250,
+            preparation_concurrency: 4,
+            scoped_operation_wait_secs: 30,
+            preparation_lease_secs: 30,
+            tenant_count_quota: None,
+            tenant_byte_quota: None,
+        }
+    }
+
+    fn test_delivery_config() -> DeliveryConfig {
+        DeliveryConfig {
+            enabled: false,
+            max_attempts: 5,
+            base_backoff_secs: 5,
+            poll_interval_secs: 1,
+            batch_size: 50,
+            concurrency: 20,
+            lease_secs: 30,
+            error_max_chars: 1024,
+            cleanup_after_secs: 86400,
+            cleanup_interval_secs: 300,
+            dead_letter_after_secs: 604_800,
+            orphan_event_after_secs: 86400,
+        }
+    }
+
+    fn test_notification_config() -> NotificationConfig {
+        NotificationConfig {
+            sse: SseConfig {
+                channel_buffer_size: 64,
+                keep_alive_interval_secs: 15,
             },
-            notification_delivery: DeliveryConfig {
-                enabled: false,
-                max_attempts: 5,
-                base_backoff_secs: 5,
-                poll_interval_secs: 1,
-                batch_size: 50,
-                concurrency: 20,
-                lease_secs: 30,
-                error_max_chars: 1024,
-                cleanup_after_secs: 86400,
-                cleanup_interval_secs: 300,
-                dead_letter_after_secs: 604_800,
-                orphan_event_after_secs: 86400,
+            ws: WsConfig {
+                channel_buffer_size: 64,
+                ping_interval_secs: 30,
             },
-            notifications: NotificationConfig {
-                sse: SseConfig {
-                    channel_buffer_size: 64,
-                    keep_alive_interval_secs: 15,
-                },
-                ws: WsConfig {
-                    channel_buffer_size: 64,
-                    ping_interval_secs: 30,
-                },
-            },
-            spatial: SpatialConfig {
-                rebuild_interval_secs: 1800,
-                change_channel_capacity: 65_536,
-                lag_log_interval_secs: 5,
-            },
-            observability: ObservabilityConfig {
-                log_level: LogLevel::Info,
-                metrics: MetricsExposure::Disabled,
-            },
+        }
+    }
+
+    fn test_spatial_config() -> SpatialConfig {
+        SpatialConfig {
+            rebuild_interval_secs: 1800,
+            change_channel_capacity: 65_536,
+            lag_log_interval_secs: 5,
+        }
+    }
+
+    fn test_observability_config() -> ObservabilityConfig {
+        ObservabilityConfig {
+            log_level: LogLevel::Info,
+            metrics: MetricsExposure::Disabled,
         }
     }
 

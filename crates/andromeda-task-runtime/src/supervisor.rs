@@ -157,6 +157,10 @@ impl TaskSupervisor {
     }
 
     /// Run one finite startup task and wait for its result before composition publishes resources.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StartupTaskError`] when the task name is already reserved by this supervisor, when the operation reports a [`TaskFailure`], or when the spawned operation panics or is aborted.
     pub async fn run_startup(&self, task: StartupTask) -> Result<(), StartupTaskError> {
         let (registration, operation) = task.into_parts();
         let health = self.reserve(&registration).map_err(|error| StartupTaskError {
@@ -187,6 +191,10 @@ impl TaskSupervisor {
     }
 
     /// Register and start one periodic bounded task.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TaskRegistrationError`] when the task name is already reserved by this supervisor.
     pub fn register_scheduled(&self, task: ScheduledTask) -> Result<RunNowHandle, TaskRegistrationError> {
         let (registration, schedule, operation) = task.into_parts();
         let health = self.reserve(&registration)?;
@@ -212,11 +220,15 @@ impl TaskSupervisor {
             )
             .await
         });
-        self.observe(name, registration, health, driver);
+        self.observe(name, &registration, health, driver);
         Ok(run_now)
     }
 
     /// Register and start one wake-triggered durable drain task.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TaskRegistrationError`] when the task name is already reserved by this supervisor.
     pub fn register_drain(&self, task: DrainTask) -> Result<WakeHandle, TaskRegistrationError> {
         let (registration, fallback, operation) = task.into_parts();
         let health = self.reserve(&registration)?;
@@ -242,11 +254,15 @@ impl TaskSupervisor {
             )
             .await
         });
-        self.observe(name, registration, health, driver);
+        self.observe(name, &registration, health, driver);
         Ok(wake)
     }
 
     /// Register and start one long-lived resident task.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TaskRegistrationError`] when the task name is already reserved by this supervisor.
     pub fn register_resident(&self, task: ResidentTask) -> Result<(), TaskRegistrationError> {
         let (registration, operation) = task.into_parts();
         let health = self.reserve(&registration)?;
@@ -260,7 +276,7 @@ impl TaskSupervisor {
             .inner
             .host
             .spawn(async move { resident_driver::run(driver_name, restart_policy, operation, cancellation, driver_health, lifecycle).await });
-        self.observe(name, registration, health, driver);
+        self.observe(name, &registration, health, driver);
         Ok(())
     }
 
@@ -277,12 +293,12 @@ impl TaskSupervisor {
                     continue;
                 }
                 pending += 1;
-                let elapsed = started.elapsed();
-                if elapsed >= task.grace_period {
+                // A saturated remainder of zero is exactly the expired grace period, so the deadline test stays total.
+                let remaining = task.grace_period.saturating_sub(started.elapsed());
+                if remaining.is_zero() {
                     task.forced.store(true, Ordering::Release);
                     task.abort.abort();
                 } else {
-                    let remaining = task.grace_period.checked_sub(elapsed).unwrap();
                     nearest_deadline = Some(nearest_deadline.map_or(remaining, |nearest| nearest.min(remaining)));
                 }
             }
@@ -320,7 +336,7 @@ impl TaskSupervisor {
     }
 
     /// Spawn an observer that attributes every terminal driver result.
-    fn observe(&self, name: TaskName, registration: TaskRegistration, health: Arc<RwLock<TaskHealth>>, driver: JoinHandle<DriverTerminal>) {
+    fn observe(&self, name: TaskName, registration: &TaskRegistration, health: Arc<RwLock<TaskHealth>>, driver: JoinHandle<DriverTerminal>) {
         let abort = driver.abort_handle();
         let forced = Arc::new(AtomicBool::new(false));
         let observer_forced = Arc::clone(&forced); // clone: shutdown sets the flag while the observer classifies cancellation.

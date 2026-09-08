@@ -48,6 +48,12 @@ pub struct ScopeQuery {
 
 impl ScopeQuery {
     /// Parse a raw `scopeQ` parameter value (clause 4.19).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::ScopePatternInvalid`] when the expression is
+    /// unbalanced, ends on an operator, or contains a pattern outside the
+    /// clause 4.19 grammar.
     pub fn parse(raw: &str) -> Result<ScopeQuery, QueryError> {
         let tokens = tokenize_scope_query(raw);
         let mut parser = ScopeQueryParser { tokens: &tokens, position: 0 };

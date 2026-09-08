@@ -142,6 +142,13 @@ impl CsrQueryParameters {
     /// At least one of the clause 5.10.2.4 narrowing parameters must be
     /// present, and the temporal parameter group must be complete when any
     /// member is specified.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParameterError::SelectorRequired`] when none of `type`,
+    /// `attrs`, `q` and `georel` narrows the registrations, and
+    /// [`ParameterError::Query`] when the `timerel`, `timeAt` and `endTimeAt`
+    /// group is incomplete for the requested temporal relation.
     pub fn validate(&self) -> Result<(), ParameterError> {
         if !self.has_filter() {
             return Err(ParameterError::SelectorRequired("At least one of type, attrs, q, or georel must be provided"));

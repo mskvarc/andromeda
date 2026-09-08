@@ -36,9 +36,8 @@ fn compose_grammars() -> Result<(), Box<dyn Error>> {
         if path.extension().and_then(|e| e.to_str()) != Some("abnf") {
             continue;
         }
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(name) => name,
-            None => continue,
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
         };
         if name.starts_with('_') {
             continue;

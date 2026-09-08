@@ -22,6 +22,11 @@ pub enum PurgeMode {
 /// Clause 5.6.21 names attributes, so a value outside the clause 4.6.2 name
 /// grammar cannot name one and the request is rejected rather than silently
 /// purging nothing.
+///
+/// # Errors
+///
+/// Returns [`QueryError::AttributeNameInvalid`] when an entry is outside the
+/// clause 4.6.2 attribute-name grammar.
 pub fn parse_attribute_list(raw: &str) -> Result<Vec<AttributeName>, QueryError> {
     raw.split(',')
         .map(|entry| {

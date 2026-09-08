@@ -44,14 +44,16 @@ impl HealthIndicator for DatabaseHealthIndicator {
         // selected constant is never read, only the success of the query.
         let (sql, values) = Query::select().expr(Expr::val(1)).build_sqlx(PostgresQueryBuilder);
         let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&self.pool).await;
-        let elapsed_ms = start.elapsed().as_millis();
+        // A latency past `u64::MAX` milliseconds is not representable and not
+        // reachable; reporting the cap keeps the detail a number either way.
+        let elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         let mut details = BTreeMap::new();
         match result {
             Ok(_answered) => {
                 details.insert("poolSize".to_owned(), serde_json::Value::from(self.pool.size()));
                 details.insert("idleConnections".to_owned(), serde_json::Value::from(self.pool.num_idle()));
-                details.insert("pingLatencyMs".to_owned(), serde_json::Value::from(elapsed_ms as i64));
+                details.insert("pingLatencyMs".to_owned(), serde_json::Value::from(elapsed_ms));
                 ComponentDetail {
                     status: HealthStatus::Up,
                     details,

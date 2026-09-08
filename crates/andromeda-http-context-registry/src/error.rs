@@ -26,6 +26,11 @@ pub fn classify_context_registry_error(error: &ContextRegistryError) -> Classifi
 /// Attach the request URI while converting a typed Context Registry result.
 pub trait ContextRegistryResultExt<T> {
     /// Map the focused error and attach `instance`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`ProblemResponse`] the failure classifies to whenever `self`
+    /// is `Err`; an `Ok` result passes through untouched.
     fn with_context_registry_instance(self, instance: &Uri) -> Result<T, ProblemResponse>;
 }
 

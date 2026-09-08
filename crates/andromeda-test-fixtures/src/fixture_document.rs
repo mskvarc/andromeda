@@ -13,6 +13,11 @@ pub struct JsonPointer {
 
 impl JsonPointer {
     /// Validate an empty root pointer or a slash-prefixed JSON Pointer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JsonPointerError`] when the value is neither empty nor prefixed with `/`,
+    /// the two forms RFC 6901 permits.
     pub fn parse(value: impl Into<String>) -> Result<JsonPointer, JsonPointerError> {
         let value = value.into();
         if value.is_empty() || value.starts_with('/') {
@@ -37,12 +42,21 @@ pub struct FixtureDocument {
 
 impl FixtureDocument {
     /// Parse a fixture from JSON bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixtureError::Parse`] when the bytes are not a well-formed JSON document.
     pub fn parse(bytes: &[u8]) -> Result<FixtureDocument, FixtureError> {
         let value = serde_json::from_slice(bytes).map_err(FixtureError::Parse)?;
         Ok(FixtureDocument { value })
     }
 
     /// Load and cache a JSON fixture file, returning an independently mutable document.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixtureError::Read`] when the file cannot be read from disk, and
+    /// [`FixtureError::Parse`] when its contents are not well-formed JSON.
     pub fn load(path: PathBuf) -> Result<FixtureDocument, FixtureError> {
         let cache = fixture_cache();
         if let Some(value) = cache.get(&path) {
@@ -57,6 +71,11 @@ impl FixtureDocument {
     }
 
     /// Replace the value at an existing pointer without textual substitution.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixtureError::PointerNotFound`] when the document holds no value at the
+    /// pointer, in which case the document is left unchanged.
     pub fn replace(&mut self, pointer: &JsonPointer, replacement: Value) -> Result<(), FixtureError> {
         let target = self
             .value
@@ -112,16 +131,16 @@ mod tests {
 
     #[test]
     fn replacement_preserves_string_escaping_and_json_types() {
-        let mut document = FixtureDocument::parse(br#"{"text":"old","nested":null}"#).unwrap_or_else(|error| unreachable!("static fixture is valid: {error}"));
-        let text = JsonPointer::parse("/text").unwrap_or_else(|error| unreachable!("static pointer is valid: {error}"));
-        let nested = JsonPointer::parse("/nested").unwrap_or_else(|error| unreachable!("static pointer is valid: {error}"));
+        let mut document = FixtureDocument::parse(br#"{"text":"old","nested":null}"#).expect("static fixture is valid JSON");
+        let text = JsonPointer::parse("/text").expect("static pointer is valid");
+        let nested = JsonPointer::parse("/nested").expect("static pointer is valid");
 
         document
             .replace(&text, Value::String("a \"quoted\" value".to_owned()))
-            .unwrap_or_else(|error| unreachable!("pointer exists: {error}"));
+            .expect("the text pointer exists in the fixture");
         document
             .replace(&nested, json!({"items": [1, 2]}))
-            .unwrap_or_else(|error| unreachable!("pointer exists: {error}"));
+            .expect("the nested pointer exists in the fixture");
         let value = document.into_value();
 
         assert_eq!(value["text"], "a \"quoted\" value");
@@ -130,8 +149,8 @@ mod tests {
 
     #[test]
     fn missing_pointer_returns_a_typed_error() {
-        let mut document = FixtureDocument::parse(br#"{"present":1}"#).unwrap_or_else(|error| unreachable!("static fixture is valid: {error}"));
-        let pointer = JsonPointer::parse("/missing").unwrap_or_else(|error| unreachable!("static pointer is valid: {error}"));
+        let mut document = FixtureDocument::parse(br#"{"present":1}"#).expect("static fixture is valid JSON");
+        let pointer = JsonPointer::parse("/missing").expect("static pointer is valid");
         let result = document.replace(&pointer, Value::Null);
 
         assert!(matches!(result, Err(FixtureError::PointerNotFound(actual)) if actual == pointer));

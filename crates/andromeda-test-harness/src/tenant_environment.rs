@@ -17,6 +17,10 @@ pub struct TenantEnvironment {
 
 impl TenantEnvironment {
     /// Acquire exclusive tenant-state ownership and construct a tenant-bound client.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenantEnvironmentError::Isolation`] when the pool cannot be opened or the exclusive advisory lock cannot be acquired.
     pub async fn acquire(configuration: &TestRunConfiguration, tenant: TenantName) -> Result<TenantEnvironment, TenantEnvironmentError> {
         let pool = connect_pool(configuration.database()).await?;
         let lease = SerializedLease::acquire(&pool).await?;
@@ -33,6 +37,10 @@ impl TenantEnvironment {
     }
 
     /// Release exclusive tenant-state ownership after caller-managed tenant removal.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenantEnvironmentError::Isolation`] when the exclusive advisory lock cannot be released.
     pub async fn finish(self) -> Result<(), TenantEnvironmentError> {
         let result = self.lease.release().await.map_err(TenantEnvironmentError::Isolation);
         self.pool.close().await;

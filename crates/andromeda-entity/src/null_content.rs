@@ -68,7 +68,7 @@ mod tests {
     use serde_json::{Value, json};
 
     /// One expanded entity carrying a single `member` attribute value.
-    fn entity_with(member: Value) -> Value {
+    fn entity_with(member: &Value) -> Value {
         json!([{ "@id": "urn:ngsi-ld:Device:1", "https://example.org/member": member }])
     }
 
@@ -78,7 +78,7 @@ mod tests {
             "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
             expanded_properties::VALUE.as_str(): [{"@value": "urn:ngsi-ld:null"}]
         }]);
-        let error = reject_null_content(&entity_with(member)).expect_err("clause 5.5.4 forbids a null value here");
+        let error = reject_null_content(&entity_with(&member)).expect_err("clause 5.5.4 forbids a null value here");
         assert!(error.to_string().contains("urn:ngsi-ld:null"), "{error}");
     }
 
@@ -88,14 +88,14 @@ mod tests {
             "@type": ["https://uri.etsi.org/ngsi-ld/Relationship"],
             expanded_properties::OBJECT.as_str(): [{"@id": "urn:ngsi-ld:null"}]
         }]);
-        let error = reject_null_content(&entity_with(member)).expect_err("clause 5.5.4 forbids a null object here");
+        let error = reject_null_content(&entity_with(&member)).expect_err("clause 5.5.4 forbids a null object here");
         assert!(error.to_string().contains("urn:ngsi-ld:null"), "{error}");
     }
 
     #[test]
     fn a_bare_first_level_null_member_is_rejected() {
         let member = json!([{"@value": "urn:ngsi-ld:null"}]);
-        let error = reject_null_content(&entity_with(member)).expect_err("a bare null member is forbidden");
+        let error = reject_null_content(&entity_with(&member)).expect_err("a bare null member is forbidden");
         assert!(error.to_string().contains("urn:ngsi-ld:null"), "{error}");
     }
 
@@ -105,6 +105,6 @@ mod tests {
             "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
             expanded_properties::VALUE.as_str(): [{"@value": "office"}]
         }]);
-        reject_null_content(&entity_with(member)).expect("an ordinary value is well formed");
+        reject_null_content(&entity_with(&member)).expect("an ordinary value is well formed");
     }
 }

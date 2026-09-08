@@ -32,6 +32,11 @@ where
     }
 
     /// Transition every due subscription at the supplied cutoff and publish each change.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubscriptionError::Persistence`] when the store cannot apply
+    /// the expiry transition; no change is published in that case.
     pub async fn execute(&self, cutoff: DateTime<Utc>) -> Result<SubscriptionExpiryOutcome, SubscriptionError> {
         let expired = self.service.expire_due(&self.target, cutoff).await?;
         Ok(SubscriptionExpiryOutcome { expired })

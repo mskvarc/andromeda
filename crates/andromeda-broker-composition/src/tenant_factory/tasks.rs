@@ -8,105 +8,36 @@ mod retention;
 mod temporal_retention;
 
 use crate::{
-    event::{
-        entity_change_sink::BroadcastEntityChangeSink,
-        registration_change_sink::BroadcastRegistrationChangeSink,
-        snapshot_notification_sink::{DeliverySnapshotNotificationSink, SnapshotStatusDeliveryDrain},
-    },
-    linked_entity_forwarding::ForwardedLinkedEntitySource,
     tenant_factory::{
+        TenantFactoryConfig,
         error::TenantAssemblyError,
+        storage::TenantStorage,
         tasks::{
-            expiry::{
-                register_entity_expiry,
-                register_entity_map_expiry,
-                register_registration_expiry,
-                register_snapshot_expiry,
-                register_snapshot_preparation,
-                register_snapshot_status_delivery,
-                register_subscription_expiry,
-            },
-            maintenance::{
-                register_entity_side_effect_drain,
-                register_entity_side_effect_reap,
-                register_spatial_reconciliation,
-                register_spatial_synchronization,
-            },
-            notification::{
-                register_csource_interval_notification,
-                register_csource_notification_processor,
-                register_interval_notification,
-                register_notification_delivery,
-                register_notification_processor,
-            },
+            expiry::{register_expiry_workers, register_snapshot_workers},
+            maintenance::{register_entity_side_effects, register_spatial_workers},
+            notification::{register_interval_workers, register_notification_workers},
             pool_gauges::register_pool_gauges,
-            retention::retention_duration,
             temporal_retention::register_temporal_retention,
         },
     },
+    tenant_state::AndromedaState,
 };
 use andromeda_context_commit::{committer::ContextCommitter, context_change_event::ContextChangeEvent};
-use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::dispatch::TransportDispatcher;
-use andromeda_entity::{
-    EntityService,
-    change_sink::EntityChangeSink,
-    config::EntityConfig,
-    port::{
-        discovery::EntityDiscoveryStore,
-        expiry::EntityExpirySource,
-        query::EntityQueryStore,
-        reader::EntityReader,
-        spatial_snapshot::EntitySpatialSnapshotSource,
-    },
-    query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource},
-    side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainConfig},
-    side_effect_queue::SideEffectLeaseOwner,
-    spatial_config::SpatialConfig,
-    spatial_synchronization::SpatialSynchronizer,
-};
-use andromeda_entity_map::store::EntityMapStore;
-use andromeda_federation::FederationService;
-use andromeda_http_source_identity::config::InfoConfig;
-use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
-use andromeda_notification::{
-    csource_interval::CsourceIntervalNotificationOperation,
-    delivery_config::DeliveryConfig,
-    delivery_drain::{NotificationDeliveryDrain, NotificationDeliveryTransport},
-    delivery_store::DeliveryStore,
-    interval::IntervalNotificationOperation,
-    processor::{NotificationProcessor, NotificationProcessorDeps},
-};
-use andromeda_postgresql_context_store::{
-    csource_subscription::repo::CsourceSubscriptionRepository,
-    notification_delivery::queue::NotificationDeliveryQueue,
-    pending_side_effects::repo::PendingSideEffectsRepository,
-    snapshot::status_outbox::SnapshotStatusOutbox,
-    subscription::repo::SubscriptionRepository,
-};
-use andromeda_postgresql_temporal_store::repo::TemporalRepository;
-use andromeda_registration::store::RegistrationStore;
-use andromeda_snapshot::{executor::SnapshotPreparation, store::SnapshotStore};
-use andromeda_spatial_index::entity::index::SpatialEntityIndex;
+use andromeda_postgresql_context_store::{csource_subscription::repo::CsourceSubscriptionRepository, subscription::repo::SubscriptionRepository};
+use andromeda_snapshot::executor::SnapshotPreparation;
 use andromeda_subscription::{
-    cache::SubscriptionCache,
     change::{CsourceSubscriptionChange, SubscriptionChange},
-    csource::CsrSubscriptionVariant,
-    entity::EntitySubscriptionVariant,
-    lifecycle::SubscriptionService,
     store::SubscriptionStore,
 };
 use andromeda_task_runtime::{supervisor::TaskSupervisor, wake_trigger::WakeHandle};
-use andromeda_temporal::config::TemporalConfig;
 use andromeda_tenancy::tenant_ref::TenantRef;
-use sqlx::PgPool;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use tokio::{
     sync::{broadcast, watch},
     task::JoinHandle,
 };
-use typed_builder::TypedBuilder;
 
 /// Change channels shared by tenant services and their workers.
 pub(super) struct TenantSignals {
@@ -132,40 +63,6 @@ impl TenantSignals {
     }
 }
 
-/// Inputs owned or shared by the tenant's worker set.
-#[derive(TypedBuilder)]
-pub(super) struct TaskSupervisionInputs<'a> {
-    pub(super) live_target: ContextTarget,
-    pub(super) entity_config: &'a EntityConfig,
-    pub(super) info_config: &'a InfoConfig,
-    pub(super) delivery_config: &'a DeliveryConfig,
-    pub(super) spatial_config: &'a SpatialConfig,
-    pub(super) temporal_config: &'a TemporalConfig,
-    pub(super) temporal_repo: Arc<TemporalRepository>,
-    pub(super) pool: &'a PgPool,
-    pub(super) tenant: TenantRef,
-    pub(super) signals: TenantSignals,
-    pub(super) entity_policy: Arc<EntityService>,
-    pub(super) subscription_policy: Arc<SubscriptionService<EntitySubscriptionVariant>>,
-    pub(super) csource_subscription_policy: Arc<SubscriptionService<CsrSubscriptionVariant>>,
-    pub(super) entity_reader: Arc<dyn EntityReader>,
-    pub(super) entity_query_store: Arc<dyn EntityQueryStore>,
-    pub(super) entity_discovery_store: Arc<dyn EntityDiscoveryStore>,
-    pub(super) entity_expiry_source: Arc<dyn EntityExpirySource>,
-    pub(super) entity_spatial_snapshots: Arc<dyn EntitySpatialSnapshotSource>,
-    pub(super) registration_store: Arc<dyn RegistrationStore>,
-    pub(super) forwarding: Arc<FederationService>,
-    pub(super) entity_map_store: Arc<dyn EntityMapStore>,
-    pub(super) snapshot_store: Arc<dyn SnapshotStore>,
-    pub(super) snapshot_preparation: Arc<SnapshotPreparation>,
-    pub(super) subscription_cache: Arc<SubscriptionCache>,
-    pub(super) writes: Arc<dyn ContextCommitter>,
-    pub(super) engine: JsonLdEngine,
-    pub(super) spatial_index: Arc<SpatialEntityIndex>,
-    pub(super) transport: Arc<TransportDispatcher>,
-    pub(super) task_supervisor: TaskSupervisor,
-}
-
 /// Handles needed to stop the complete tenant worker set.
 pub(super) struct TaskSupervision {
     pub(super) handles: Vec<JoinHandle<()>>,
@@ -174,6 +71,7 @@ pub(super) struct TaskSupervision {
     pub(super) drain_wakes: Vec<WakeHandle>,
 }
 
+/// Whether entity notifications are delivered live or through the durable queue.
 #[derive(Clone, Copy)]
 enum EntityNotificationDelivery {
     Live,
@@ -181,38 +79,22 @@ enum EntityNotificationDelivery {
 }
 
 /// Spawn every background worker owned by a tenant.
-pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskSupervision, TenantAssemblyError> {
-    let TaskSupervisionInputs {
-        live_target,
-        entity_config,
-        info_config,
-        delivery_config,
-        spatial_config,
-        temporal_config,
-        temporal_repo,
-        pool,
-        tenant,
-        signals,
-        entity_policy,
-        subscription_policy,
-        csource_subscription_policy,
-        entity_reader,
-        entity_query_store,
-        entity_discovery_store,
-        entity_expiry_source,
-        entity_spatial_snapshots,
-        registration_store,
-        forwarding,
-        entity_map_store,
-        snapshot_store,
-        snapshot_preparation,
-        subscription_cache,
-        writes,
-        engine,
-        spatial_index,
-        transport,
-        task_supervisor,
-    } = inputs;
+///
+/// # Errors
+///
+/// Returns [`TenantAssemblyError`] when a worker's configuration is out of
+/// range or the supervisor refuses one of the registrations.
+pub(super) fn supervise_tasks(
+    config: &TenantFactoryConfig,
+    storage: &TenantStorage,
+    state: &AndromedaState,
+    tenant: &TenantRef,
+    signals: TenantSignals,
+    snapshot_preparation: Arc<SnapshotPreparation>,
+    writes: &Arc<dyn ContextCommitter>,
+    transport: &Arc<TransportDispatcher>,
+    task_supervisor: TaskSupervisor,
+) -> Result<TaskSupervision, TenantAssemblyError> {
     let TenantSignals {
         entity,
         subscription,
@@ -221,41 +103,8 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
     } = signals;
     let mut handles: Vec<JoinHandle<()>> = Vec::new();
     let mut drain_wakes = Vec::new();
-    register_pool_gauges(&task_supervisor, pool.clone(), &tenant)?; // clone: PgPool is a shared handle sampled by the gauge task.
-
-    // The drain always runs: `Prefer: respond-async` enqueues a durable job
-    // whenever the request opts in, with or without a configured batch-size
-    // threshold, so an unconditional drain is what keeps every enqueued job
-    // from waiting forever.
-    let lease_seconds = i32::try_from(entity_config.pending_side_effects_lease_secs).unwrap_or(i32::MAX);
-    let batch_size = i32::try_from(entity_config.pending_side_effects_batch_size).unwrap_or(i32::MAX);
-    let change_sink = Arc::new(BroadcastEntityChangeSink::new(entity.clone())) as Arc<dyn EntityChangeSink>;
-    let drain = EntitySideEffectDrain::new(
-        Arc::new(PendingSideEffectsRepository::new(pool)),
-        Arc::clone(&writes),
-        Some(change_sink),
-        EntitySideEffectDrainConfig {
-            lease_seconds,
-            batch_size,
-            max_attempts: entity_config.pending_side_effects_max_attempts,
-            base_backoff: Duration::from_secs(entity_config.pending_side_effects_base_backoff_secs),
-            lease_owner: SideEffectLeaseOwner::for_tenant(&info_config.source_id, uuid::Uuid::new_v4()),
-        },
-    );
-    let drain = Arc::new(drain);
-    drain_wakes.push(register_entity_side_effect_drain(
-        &task_supervisor,
-        Arc::clone(&drain),
-        Duration::from_secs(entity_config.pending_side_effects_poll_secs),
-        Duration::from_secs(entity_config.pending_side_effects_lease_secs),
-    )?);
-    register_entity_side_effect_reap(
-        &task_supervisor,
-        drain,
-        Duration::from_secs(entity_config.pending_side_effects_cleanup_interval_secs),
-        retention_duration(entity_config.pending_side_effects_dead_letter_after_secs, "pending side-effect dead-letter age")?,
-    )?;
-
+    register_pool_gauges(&task_supervisor, storage.pool.clone(), tenant)?; // clone: PgPool is a shared handle sampled by the gauge task.
+    drain_wakes.push(register_entity_side_effects(&task_supervisor, config, storage, writes, &entity)?);
     let health_shutdown = if tenant.is_unnamed_default() {
         let (shutdown, receiver) = watch::channel(false);
         handles.push(transport.mqtt_pool().spawn_health_probe(receiver));
@@ -263,133 +112,33 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
     } else {
         None
     };
-    let notification_query = Arc::new(EntityQueryService::new(
-        Arc::clone(&entity_reader),
-        Arc::clone(&entity_query_store),
-        engine.clone(),
-        Arc::clone(&spatial_index),
-        tenant.clone(), // clone: the query service owns its tenant partition.
-        // A notification's join resolves Linked Entities exactly as a request's
-        // does, including the ones clause 4.5.23.1 places outside this broker.
-        Some(Arc::new(ForwardedLinkedEntitySource::new(forwarding, live_target.clone())) as Arc<dyn RemoteLinkedEntitySource>),
-    ));
-    let entity_subscription_store = Arc::new(SubscriptionRepository::new(pool)) as Arc<dyn SubscriptionStore>;
-    let csource_subscription_store = Arc::new(CsourceSubscriptionRepository::new(pool)) as Arc<dyn SubscriptionStore>;
-    let notification_processor = Arc::new(NotificationProcessor::new(NotificationProcessorDeps {
-        live_target: live_target.clone(), // clone: worker startup reloads the durable live-branch cache.
-        sub_repo: Arc::clone(&entity_subscription_store),
-        entity_reader: Arc::clone(&entity_reader),
-        entity_query: notification_query,
-        engine: engine.clone(),
-        transport: Arc::clone(&transport),
-        tenant: tenant.clone(), // clone: notification policy owns its tenant partition.
-        subscription_cache: Arc::clone(&subscription_cache),
-    }));
-    register_notification_processor(
+    let entity_subscriptions = Arc::new(SubscriptionRepository::new(&storage.pool)) as Arc<dyn SubscriptionStore>;
+    let csource_subscriptions = Arc::new(CsourceSubscriptionRepository::new(&storage.pool)) as Arc<dyn SubscriptionStore>;
+    drain_wakes.extend(register_notification_workers(
         &task_supervisor,
-        entity.clone(),
+        config,
+        storage,
+        &state.forwarding,
+        tenant,
+        transport,
+        &entity_subscriptions,
+        &entity,
         subscription,
-        Arc::clone(&notification_processor),
-        if delivery_config.enabled {
-            EntityNotificationDelivery::Durable
-        } else {
-            EntityNotificationDelivery::Live
-        },
-    )?;
-    if delivery_config.enabled {
-        let store = Arc::new(NotificationDeliveryQueue::new(pool)) as Arc<dyn DeliveryStore>;
-        let transport = notification_processor as Arc<dyn NotificationDeliveryTransport>;
-        let drain = NotificationDeliveryDrain::new(store, transport, delivery_config).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-        drain_wakes.push(register_notification_delivery(&task_supervisor, Arc::new(drain), delivery_config)?);
-    }
-    let expiration_interval = temporal_config.expiration_check_interval_secs;
-    register_subscription_expiry(
+    )?);
+    register_expiry_workers(&task_supervisor, config, storage, state, &registration)?;
+    register_interval_workers(
         &task_supervisor,
-        "subscription-expiry",
-        live_target.clone(),
-        subscription_policy,
-        expiration_interval,
-    )?;
-    register_subscription_expiry(
-        &task_supervisor,
-        "csource-subscription-expiry",
-        live_target.clone(),
-        csource_subscription_policy,
-        expiration_interval,
-    )?;
-    register_registration_expiry(
-        &task_supervisor,
-        Arc::clone(&registration_store),
-        Arc::new(BroadcastRegistrationChangeSink::new(registration.clone())),
-        expiration_interval,
-    )?;
-    register_interval_notification(
-        &task_supervisor,
-        Arc::new(IntervalNotificationOperation::new(
-            live_target.clone(), // clone: interval delivery and expiry both operate on the tenant's live branch.
-            entity_subscription_store,
-            Arc::clone(&entity_reader),
-            Arc::clone(&entity_discovery_store),
-            engine,
-            Arc::clone(&transport),
-            tenant.clone(), // clone: interval policy owns its tenant partition.
-        )),
-    )?;
-    register_csource_notification_processor(
-        &task_supervisor,
-        live_target.clone(),
+        storage,
+        tenant,
+        transport,
+        entity_subscriptions,
+        csource_subscriptions,
         registration,
         csource_subscription,
-        csource_subscription_store.clone(),
-        Arc::clone(&registration_store),
-        Arc::clone(&transport),
-        tenant.clone(),
     )?;
-    register_entity_expiry(
-        &task_supervisor,
-        live_target.clone(),
-        entity_policy,
-        entity_expiry_source,
-        expiration_interval,
-        entity_config.expiry_batch_size,
-    )?;
-    register_temporal_retention(&task_supervisor, temporal_repo, temporal_config)?;
-    register_snapshot_preparation(&task_supervisor, snapshot_preparation)?;
-    let snapshot_status_drain = SnapshotStatusDeliveryDrain::new(
-        Arc::new(SnapshotStatusOutbox::new(pool)),
-        Arc::new(DeliverySnapshotNotificationSink::new(Arc::clone(&transport))),
-        delivery_config,
-    )
-    .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    register_snapshot_status_delivery(
-        &task_supervisor,
-        Arc::new(snapshot_status_drain),
-        Duration::from_secs(delivery_config.poll_interval_secs),
-    )?;
-    register_snapshot_expiry(&task_supervisor, snapshot_store, expiration_interval)?;
-    register_entity_map_expiry(&task_supervisor, entity_map_store, expiration_interval)?;
-    register_spatial_synchronization(
-        &task_supervisor,
-        entity,
-        Arc::new(SpatialSynchronizer::new(Arc::clone(&spatial_index), Arc::clone(&entity_reader), tenant.clone())),
-    )?;
-    register_spatial_reconciliation(
-        &task_supervisor,
-        spatial_index,
-        entity_spatial_snapshots,
-        tenant.clone(),
-        Duration::from_secs(spatial_config.rebuild_interval_secs),
-    )?;
-    register_csource_interval_notification(
-        &task_supervisor,
-        Arc::new(CsourceIntervalNotificationOperation::new(
-            live_target,
-            csource_subscription_store,
-            registration_store,
-            transport,
-            tenant,
-        )),
-    )?;
+    register_temporal_retention(&task_supervisor, Arc::clone(&storage.temporal_repo), &config.temporal)?; // clone: the sweep and the read stores share one repository.
+    register_snapshot_workers(&task_supervisor, &storage.pool, snapshot_preparation, transport, &config.notification_delivery)?;
+    register_spatial_workers(&task_supervisor, config, storage, tenant, entity)?;
     Ok(TaskSupervision {
         handles,
         health_shutdown,

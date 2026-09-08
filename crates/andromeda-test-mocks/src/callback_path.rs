@@ -10,6 +10,10 @@ pub struct CallbackPath {
 
 impl CallbackPath {
     /// Validate a slash-prefixed callback path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CallbackPathError`] when `value` does not begin with `/`.
     pub fn parse(value: impl Into<String>) -> Result<CallbackPath, CallbackPathError> {
         let value = value.into();
         if value.starts_with('/') {

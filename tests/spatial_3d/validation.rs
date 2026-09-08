@@ -35,7 +35,7 @@ async fn create_expecting_bad_request(client: &TestClient, entity: &Value) -> Va
 }
 
 /// An entity whose `location` carries the supplied raw geometry.
-fn entity_with_geometry(id: &str, geometry: Value) -> Value {
+fn entity_with_geometry(id: &str, geometry: &Value) -> Value {
     json!({
         "id": id,
         "type": "Building",
@@ -52,7 +52,7 @@ async fn validation_four_ordinate_point_location_returns_bad_request() {
 
     let body = create_expecting_bad_request(
         client,
-        &entity_with_geometry(&id, json!({"type": "Point", "coordinates": [13.4, 52.52, 300.0, 7.0]})),
+        &entity_with_geometry(&id, &json!({"type": "Point", "coordinates": [13.4, 52.52, 300.0, 7.0]})),
     )
     .await;
 
@@ -76,7 +76,7 @@ async fn validation_four_ordinate_polygon_vertex_returns_bad_request() {
         [13.0, 52.0, 10.0]
     ]]);
 
-    create_expecting_bad_request(client, &entity_with_geometry(&id, json!({"type": "Polygon", "coordinates": coordinates}))).await;
+    create_expecting_bad_request(client, &entity_with_geometry(&id, &json!({"type": "Polygon", "coordinates": coordinates}))).await;
 
     scope.finish().await.expect("cleanup failed");
 }
@@ -87,7 +87,7 @@ async fn validation_single_ordinate_point_returns_bad_request() {
     let client = scope.client();
     let id = scope.id("Building:one_ordinate");
 
-    create_expecting_bad_request(client, &entity_with_geometry(&id, json!({"type": "Point", "coordinates": [13.4]}))).await;
+    create_expecting_bad_request(client, &entity_with_geometry(&id, &json!({"type": "Point", "coordinates": [13.4]}))).await;
 
     scope.finish().await.expect("cleanup failed");
 }
@@ -98,7 +98,7 @@ async fn validation_non_numeric_longitude_returns_bad_request() {
     let client = scope.client();
     let id = scope.id("Building:string_lon");
 
-    create_expecting_bad_request(client, &entity_with_geometry(&id, json!({"type": "Point", "coordinates": ["13.4", 52.52]}))).await;
+    create_expecting_bad_request(client, &entity_with_geometry(&id, &json!({"type": "Point", "coordinates": ["13.4", 52.52]}))).await;
 
     scope.finish().await.expect("cleanup failed");
 }
@@ -111,7 +111,7 @@ async fn validation_non_numeric_altitude_returns_bad_request() {
 
     create_expecting_bad_request(
         client,
-        &entity_with_geometry(&id, json!({"type": "Point", "coordinates": [13.4, 52.52, "high"]})),
+        &entity_with_geometry(&id, &json!({"type": "Point", "coordinates": [13.4, 52.52, "high"]})),
     )
     .await;
 
@@ -133,7 +133,7 @@ async fn validation_geometrycollection_location_returns_bad_request() {
         ]
     });
 
-    create_expecting_bad_request(client, &entity_with_geometry(&id, geometry)).await;
+    create_expecting_bad_request(client, &entity_with_geometry(&id, &geometry)).await;
 
     scope.finish().await.expect("cleanup failed");
 }
@@ -195,7 +195,7 @@ async fn validation_batch_create_reports_per_entity_coordinate_errors() {
 
     let batch = json!([
         building_point_3d(&good, 13.4, 52.52, 300.0),
-        entity_with_geometry(&bad, json!({"type": "Point", "coordinates": [13.4, 52.52, 300.0, 7.0]}))
+        entity_with_geometry(&bad, &json!({"type": "Point", "coordinates": [13.4, 52.52, 300.0, 7.0]}))
     ]);
     let response = client.batch_create(&batch).await.expect("batch create failed");
     assert_eq!(response.status, StatusCode::MULTI_STATUS, "a partially valid batch reports 207");

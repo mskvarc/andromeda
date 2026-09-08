@@ -103,7 +103,7 @@ mod tests {
     fn encode_roundtrip() {
         let name = match TenantName::try_from("t1".to_string()) {
             Ok(value) => value,
-            Err(err) => unreachable!("unexpected tenant error: {err}"),
+            Err(err) => panic!("unexpected tenant error: {err}"),
         };
         let header = NgsiLdTenant::new(name);
         let mut encoded = Vec::new();
@@ -113,7 +113,7 @@ mod tests {
         assert!(encoded_str.is_ok());
         let encoded_str = match encoded_str {
             Ok(value) => value,
-            Err(err) => unreachable!("unexpected header value error: {err}"),
+            Err(err) => panic!("unexpected header value error: {err}"),
         };
         pretty_assertions::assert_eq!(encoded_str, "t1");
 
@@ -122,7 +122,7 @@ mod tests {
         assert!(decoded.is_ok());
         let decoded = match decoded {
             Ok(value) => value,
-            Err(err) => unreachable!("unexpected roundtrip decode error: {err}"),
+            Err(err) => panic!("unexpected roundtrip decode error: {err}"),
         };
         pretty_assertions::assert_eq!(header, decoded);
     }

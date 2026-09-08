@@ -258,10 +258,7 @@ async fn emq_local_map_stored_and_retrievable() {
     seed_vehicle(topology.broker(BrokerRole::A).client(), &topology.id("Vehicle:stored"), 20).await;
     let created = create_entity_map(topology.broker(BrokerRole::A).client(), "type=Vehicle").await;
     assert_status(&created, 201);
-    let map_id = json_body(&created)["id"]
-        .as_str()
-        .unwrap_or_else(|| unreachable!("created map has an id"))
-        .to_owned();
+    let map_id = json_body(&created)["id"].as_str().unwrap_or_else(|| panic!("created map has an id")).to_owned();
     let retrieved = topology
         .broker(BrokerRole::A)
         .client()

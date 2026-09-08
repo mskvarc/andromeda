@@ -50,16 +50,16 @@ pub(crate) struct ForwardedRequest<'a> {
     pub(crate) linked_map: Option<&'a Uri>,
 }
 
-impl FederationService {
-    /// Read a registration's `contextSourceInfo`; stored registrations passed
-    /// the clause 4.3.6.6 restrictions at registration time, so a failure here
-    /// is an invariant violation rather than a request error.
-    pub(crate) fn context_source_info<'a>(&self, registration: &'a ContextSourceRegistration) -> Result<ContextSourceInfo<'a>, FederationError> {
-        let pairs = registration.access.context_source_info.as_deref().unwrap_or_default();
-        ContextSourceInfo::try_from(pairs)
-            .map_err(|error| FederationError::internal(format!("registration {} carries an invalid contextSourceInfo: {error}", registration.id)))
-    }
+/// Read a registration's `contextSourceInfo`; stored registrations passed the
+/// clause 4.3.6.6 restrictions at registration time, so a failure here is an
+/// invariant violation rather than a request error.
+fn context_source_info(registration: &ContextSourceRegistration) -> Result<ContextSourceInfo<'_>, FederationError> {
+    let pairs = registration.access.context_source_info.as_deref().unwrap_or_default();
+    ContextSourceInfo::try_from(pairs)
+        .map_err(|error| FederationError::internal(format!("registration {} carries an invalid contextSourceInfo: {error}", registration.id)))
+}
 
+impl FederationService {
     /// Decide the representation one forwarded request carries for `registration`.
     pub(crate) async fn payload_for(
         &self,
@@ -67,7 +67,7 @@ impl FederationService {
         inbound: &ContextSpec,
         body: Option<&[u8]>,
     ) -> Result<ForwardedPayload, FederationError> {
-        let info = self.context_source_info(registration)?;
+        let info = context_source_info(registration)?;
         build_forwarded_payload(&self.engine, inbound, body, &info, registration.access.jsonld_context.as_ref()).await
     }
 
@@ -182,7 +182,7 @@ impl FederationService {
             linked_map,
         } = forwarded;
         let access = &registration.access;
-        let info = self.context_source_info(registration)?;
+        let info = context_source_info(registration)?;
 
         // Clause 5.5.13 through clause 6.3.18: a `localOnly` registration is
         // asked for its own data only.

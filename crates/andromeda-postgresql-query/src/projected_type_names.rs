@@ -91,7 +91,7 @@ mod tests {
         selection
     }
 
-    fn texts(names: Vec<EntityTypeName>) -> Vec<String> {
+    fn texts(names: &[EntityTypeName]) -> Vec<String> {
         let mut texts: Vec<String> = names.iter().map(EntityTypeName::as_str).map(str::to_string).collect();
         texts.sort();
         texts
@@ -107,7 +107,7 @@ mod tests {
             TypeExpr::Wildcard,
         ]);
         pretty_assertions::assert_eq!(
-            texts(projected_type_names(&selection_with(Some(expr), None))),
+            texts(&projected_type_names(&selection_with(Some(expr), None))),
             vec!["https://example.com/Home".to_string(), "https://example.com/Vehicle".to_string()]
         );
     }
@@ -119,13 +119,16 @@ mod tests {
             Some("\"https://example.com/outer\"{\"https://example.com/A\",\"https://example.com/B\":\"https://example.com/zone\"==\"north\"}"),
         );
         pretty_assertions::assert_eq!(
-            texts(projected_type_names(&selection)),
+            texts(&projected_type_names(&selection)),
             vec!["https://example.com/A".to_string(), "https://example.com/B".to_string()]
         );
     }
 
     #[test]
     fn a_selection_without_types_or_guards_resolves_nothing() {
-        assert_eq!(projected_type_names(&selection_with(None, Some("\"https://example.com/speed\">1"))), [] as [andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName; 0]);
+        assert_eq!(
+            projected_type_names(&selection_with(None, Some("\"https://example.com/speed\">1"))),
+            [] as [EntityTypeName; 0]
+        );
     }
 }

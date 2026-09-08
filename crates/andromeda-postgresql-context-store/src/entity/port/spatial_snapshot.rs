@@ -47,7 +47,7 @@ impl EntitySpatialSnapshotSource for EntityRepository {
 
         let mut snapshots = Vec::with_capacity(rows.len());
         for (identifier, entity_types, ewkb_bytes) in rows {
-            let entity_id = match stored_uri(identifier.clone()) {
+            let entity_id = match stored_uri(&identifier) {
                 Ok(entity_id) => entity_id,
                 Err(error) => {
                     warn!(entity = %identifier, %error, "spatial snapshot skipped an invalid stored entity identifier");
@@ -62,7 +62,8 @@ impl EntitySpatialSnapshotSource for EntityRepository {
                 }
             };
             let entity_types = entity_types
-                .into_iter()
+                .iter()
+                .map(String::as_str)
                 .map(stored_type_name)
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|error| EntityError::persistence(error.to_string()))?;

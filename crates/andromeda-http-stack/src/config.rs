@@ -62,6 +62,13 @@ pub struct HttpStackConfig {
 
 impl HttpStackConfig {
     /// Validate process-wide HTTP execution limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HttpStackConfigError::ZeroRequestTimeout`] when
+    /// `request_timeout_secs` is zero, and
+    /// [`HttpStackConfigError::ZeroRequestBodyLimit`] when
+    /// `max_request_body_bytes` is zero.
     pub const fn validate(&self) -> Result<(), HttpStackConfigError> {
         if self.request_timeout_secs == 0 {
             return Err(HttpStackConfigError::ZeroRequestTimeout);

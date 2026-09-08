@@ -63,7 +63,7 @@ pub(crate) async fn batch_merge(
 
     // Clause 5.6.20.4: the local phase merges what proxied registrations left.
     let remainder = local_remainder(entities, &forwarded);
-    let mode = service.effective_side_effect_mode(async_preference(&prefer), remainder.len());
+    let mode = service.effective_side_effect_mode(async_preference(prefer), remainder.len());
     let batch = service.batch_merge(&target, &remainder, &context, mode).await.with_entity_instance(&uri)?;
     let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, classify_entity_error);
     result.errors.append(&mut parse_errors);

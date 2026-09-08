@@ -21,6 +21,11 @@ impl StatementName {
 
 /// Await `statement`, recording its wall-clock duration under `name` and
 /// counting a failure when it resolves to `Err`.
+///
+/// # Errors
+///
+/// Returns the awaited statement's own error unchanged; observing it never
+/// introduces a failure of its own.
 pub async fn observe_statement<T, E, F>(name: StatementName, statement: F) -> Result<T, E>
 where
     F: Future<Output = Result<T, E>>,

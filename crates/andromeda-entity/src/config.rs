@@ -103,7 +103,7 @@ pub struct EntityConfig {
     ///
     /// A dead job is evidence of a batch whose deferred side effects never
     /// landed, so it is kept for a week by default before the reap removes it.
-    #[config(env = "ANDROMEDA_ENTITY_PENDING_SIDE_EFFECTS_DEAD_LETTER_AFTER_SECS", default = 604800)]
+    #[config(env = "ANDROMEDA_ENTITY_PENDING_SIDE_EFFECTS_DEAD_LETTER_AFTER_SECS", default = 604_800)]
     pub pending_side_effects_dead_letter_after_secs: u64,
     /// Cadence of the dead-lettered side-effect reap.
     #[config(env = "ANDROMEDA_ENTITY_PENDING_SIDE_EFFECTS_CLEANUP_INTERVAL_SECS", default = 300)]
@@ -112,6 +112,13 @@ pub struct EntityConfig {
 
 impl EntityConfig {
     /// Validate the entity policy and execution limits.
+    ///
+    /// # Errors
+    ///
+    /// Reports the matching [`EntityConfigError`] variant for the first limit
+    /// that is zero, and [`EntityConfigError::ExpiryBatchSizeOutOfRange`] when
+    /// the expiry batch size does not fit the unsigned 32-bit width the expiry
+    /// source port accepts.
     pub fn validate(&self) -> Result<(), EntityConfigError> {
         if self.batch_concurrency == Some(0) {
             return Err(EntityConfigError::ZeroBatchConcurrency);

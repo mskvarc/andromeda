@@ -14,6 +14,10 @@ pub struct IsolatedLease {
 
 impl IsolatedLease {
     /// Acquire a cross-process shared advisory lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DatabaseIsolationError::Sqlx`] when the pool cannot hand out a connection or the `pg_advisory_lock_shared` call fails.
     pub async fn acquire(pool: &PgPool) -> Result<IsolatedLease, DatabaseIsolationError> {
         let mut connection = pool.acquire().await.map_err(DatabaseIsolationError::Sqlx)?;
         sqlx::query("SELECT pg_advisory_lock_shared($1)")
@@ -25,6 +29,10 @@ impl IsolatedLease {
     }
 
     /// Release the shared lock on the same PostgreSQL session.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DatabaseIsolationError::Sqlx`] when the `pg_advisory_unlock_shared` statement fails, and [`DatabaseIsolationError::LockNotHeld`] when the server reports that this session held no shared lock.
     pub async fn release(mut self) -> Result<(), DatabaseIsolationError> {
         if let Some(mut connection) = self.connection.take() {
             let released: bool = sqlx::query_scalar("SELECT pg_advisory_unlock_shared($1)")
@@ -55,6 +63,10 @@ pub struct SerializedLease {
 
 impl SerializedLease {
     /// Acquire a cross-process exclusive advisory lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DatabaseIsolationError::Sqlx`] when the pool cannot hand out a connection or the `pg_advisory_lock` call fails.
     pub async fn acquire(pool: &PgPool) -> Result<SerializedLease, DatabaseIsolationError> {
         let mut connection = pool.acquire().await.map_err(DatabaseIsolationError::Sqlx)?;
         sqlx::query("SELECT pg_advisory_lock($1)")
@@ -71,6 +83,10 @@ impl SerializedLease {
     }
 
     /// Release the exclusive lock on the same PostgreSQL session.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DatabaseIsolationError::Sqlx`] when the `pg_advisory_unlock` statement fails, and [`DatabaseIsolationError::LockNotHeld`] when the server reports that this session held no exclusive lock.
     pub async fn release(mut self) -> Result<(), DatabaseIsolationError> {
         if let Some(mut connection) = self.connection.take() {
             let released: bool = sqlx::query_scalar("SELECT pg_advisory_unlock($1)")
@@ -104,6 +120,10 @@ const POOL_MAX_CONNECTIONS: u32 = 2;
 const POOL_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Open a bounded pool for the configured test database.
+///
+/// # Errors
+///
+/// Returns [`DatabaseIsolationError::Sqlx`] when the first connection cannot be established before the pool's acquire timeout elapses.
 pub async fn connect_pool(endpoint: &DatabaseEndpoint) -> Result<PgPool, DatabaseIsolationError> {
     PgPoolOptions::new()
         .min_connections(0)

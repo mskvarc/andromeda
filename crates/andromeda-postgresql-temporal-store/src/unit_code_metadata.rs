@@ -149,13 +149,13 @@ mod tests {
     use andromeda_unit_catalog::unit_code_id::UnitCodeId;
     use serde_json::{Value, json};
 
-    fn metadata_with_unit(code: &str) -> Option<Value> {
-        Some(json!({ expanded_properties::UNIT_CODE.as_str(): [{"@value": code}] }))
+    fn metadata_with_unit(code: &str) -> Value {
+        json!({ expanded_properties::UNIT_CODE.as_str(): [{"@value": code}] })
     }
 
     #[test]
     fn a_unit_bearing_instance_round_trips_through_the_column() {
-        let original = metadata_with_unit("KGM");
+        let original = Some(metadata_with_unit("KGM"));
         let mut metadata = original.clone();
         let identity = take_unit_code(&mut metadata).expect("a registered code");
         pretty_assertions::assert_eq!(metadata, None);
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn an_unregistered_code_refuses_the_write() {
-        let mut metadata = metadata_with_unit("NOTACODE");
+        let mut metadata = Some(metadata_with_unit("NOTACODE"));
         pretty_assertions::assert_eq!(
             take_unit_code(&mut metadata),
             Err(UnitCodeMetadataError::Unregistered { code: "NOTACODE".to_owned() })
@@ -212,7 +212,7 @@ mod tests {
     fn a_lower_case_code_refuses_the_write() {
         // Recommendation 20 common codes are upper case; accepting `kgm` would
         // make two spellings of one unit collide on different identities.
-        let mut metadata = metadata_with_unit("kgm");
+        let mut metadata = Some(metadata_with_unit("kgm"));
         pretty_assertions::assert_eq!(
             take_unit_code(&mut metadata),
             Err(UnitCodeMetadataError::Unregistered { code: "kgm".to_owned() })
@@ -236,11 +236,11 @@ mod tests {
 
     #[test]
     fn restoring_into_an_instance_that_stored_no_metadata_creates_the_member() {
-        let mut metadata = metadata_with_unit("MTR");
+        let mut metadata = Some(metadata_with_unit("MTR"));
         let identity = take_unit_code(&mut metadata).expect("a registered code");
         pretty_assertions::assert_eq!(metadata, None);
         restore_unit_code(&mut metadata, identity).expect("a registered identity");
-        pretty_assertions::assert_eq!(metadata, metadata_with_unit("MTR"));
+        pretty_assertions::assert_eq!(metadata, Some(metadata_with_unit("MTR")));
     }
 
     #[test]

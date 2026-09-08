@@ -104,12 +104,12 @@ fn event_desc() -> impl Strategy<Value = EventDesc> {
         })
 }
 
-fn internal(error: impl ToString) -> SubscriptionError {
+fn internal(error: &impl ToString) -> SubscriptionError {
     SubscriptionError::internal(error.to_string())
 }
 
 fn entity_uri(index: usize) -> Result<Uri, SubscriptionError> {
-    format!("urn:ngsi-ld:E:{index}").parse().map_err(internal)
+    format!("urn:ngsi-ld:E:{index}").parse().map_err(|error| internal(&error))
 }
 
 fn type_expression(desc: &TypeDesc) -> String {
@@ -128,8 +128,11 @@ fn build_subscription(ordinal: usize, desc: &SubscriptionDesc) -> Result<Compile
         .map(|selector| {
             Ok(EntitySelector {
                 id: selector.id.map(entity_uri).transpose()?,
-                id_pattern: selector.id_pattern.map(|index| ID_PATTERNS[index].parse().map_err(internal)).transpose()?,
-                type_: type_expression(&selector.type_expr).parse().map_err(internal)?,
+                id_pattern: selector
+                    .id_pattern
+                    .map(|index| ID_PATTERNS[index].parse().map_err(|error| internal(&error)))
+                    .transpose()?,
+                type_: type_expression(&selector.type_expr).parse().map_err(|error| internal(&error))?,
             })
         })
         .collect::<Result<Vec<_>, SubscriptionError>>()?;
@@ -139,15 +142,15 @@ fn build_subscription(ordinal: usize, desc: &SubscriptionDesc) -> Result<Compile
         .map(|watched| {
             watched
                 .iter()
-                .map(|index| ATTRIBUTES[*index].parse::<AttributeName>().map_err(internal))
+                .map(|index| ATTRIBUTES[*index].parse::<AttributeName>().map_err(|error| internal(&error)))
                 .collect::<Result<HashSet<_>, SubscriptionError>>()
         })
         .transpose()?;
     Ok(CompiledSubscription {
-        id: format!("urn:ngsi-ld:Subscription:{ordinal}").parse().map_err(internal)?,
-        key: SubscriptionKey::try_from(i64::try_from(ordinal + 1).map_err(internal)?).map_err(internal)?,
+        id: format!("urn:ngsi-ld:Subscription:{ordinal}").parse().map_err(|error| internal(&error))?,
+        key: SubscriptionKey::try_from(i64::try_from(ordinal + 1).map_err(|error| internal(&error))?).map_err(|error| internal(&error))?,
         status: SubscriptionStatus::Active,
-        endpoint_uri: Url::parse("http://example.com/notify").map_err(internal)?,
+        endpoint_uri: Url::parse("http://example.com/notify").map_err(|error| internal(&error))?,
         endpoint_accept: None,
         endpoint_receiver_info: None,
         endpoint_notifier_info: None,
@@ -181,7 +184,7 @@ fn build_event(desc: &EventDesc) -> Result<ChangeEvent, SubscriptionError> {
         .entity_types(
             desc.types
                 .iter()
-                .map(|index| TYPES[*index].parse::<EntityTypeName>().map_err(internal))
+                .map(|index| TYPES[*index].parse::<EntityTypeName>().map_err(|error| internal(&error)))
                 .collect::<Result<Vec<_>, _>>()?,
         )
         .trigger_reason(desc.trigger)
@@ -190,7 +193,7 @@ fn build_event(desc: &EventDesc) -> Result<ChangeEvent, SubscriptionError> {
         .changed_attributes(
             desc.attributes
                 .iter()
-                .map(|index| ATTRIBUTES[*index].parse::<AttributeName>().map_err(internal))
+                .map(|index| ATTRIBUTES[*index].parse::<AttributeName>().map_err(|error| internal(&error)))
                 .collect::<Result<Vec<_>, _>>()?,
         )
         .build())
@@ -208,7 +211,7 @@ fn full_scan(subscriptions: &[Arc<CompiledSubscription>], event: &ChangeEvent) -
         .collect()
 }
 
-fn fail(error: SubscriptionError) -> TestCaseError {
+fn fail(error: &SubscriptionError) -> TestCaseError {
     TestCaseError::fail(error.to_string())
 }
 
@@ -225,13 +228,13 @@ proptest! {
             .enumerate()
             .map(|(ordinal, desc)| build_subscription(ordinal, desc).map(Arc::new))
             .collect::<Result<_, _>>()
-            .map_err(fail)?;
+            .map_err(|error| fail(&error))?;
         let mut index = CandidateIndex::default();
         for subscription in &compiled {
             index.insert(Arc::clone(subscription));
         }
         for desc in &events {
-            let event = build_event(desc).map_err(fail)?;
+            let event = build_event(desc).map_err(|error| fail(&error))?;
             let outcome = index.find_matching(&event);
             prop_assert_eq!(matched_ids(&outcome.matched), full_scan(&compiled, &event));
             let funnel = outcome.funnel;
@@ -254,7 +257,7 @@ proptest! {
             .enumerate()
             .map(|(ordinal, desc)| build_subscription(ordinal, desc).map(Arc::new))
             .collect::<Result<_, _>>()
-            .map_err(fail)?;
+            .map_err(|error| fail(&error))?;
         let mut pruned = CandidateIndex::default();
         let mut rebuilt = CandidateIndex::default();
         for subscription in &compiled {
@@ -269,7 +272,7 @@ proptest! {
         }
         prop_assert_eq!(pruned.len(), rebuilt.len());
         for desc in &events {
-            let event = build_event(desc).map_err(fail)?;
+            let event = build_event(desc).map_err(|error| fail(&error))?;
             let from_pruned = pruned.find_matching(&event);
             let from_rebuilt = rebuilt.find_matching(&event);
             prop_assert_eq!(matched_ids(&from_pruned.matched), matched_ids(&from_rebuilt.matched));

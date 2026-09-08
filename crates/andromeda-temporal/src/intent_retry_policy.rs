@@ -3,7 +3,7 @@
 
 use crate::error::TemporalError;
 use chrono::{DateTime, TimeDelta, Utc};
-use std::{num::NonZeroU32, time::Duration};
+use std::{fmt::Display, num::NonZeroU32, time::Duration};
 use thiserror::Error;
 
 /// The longest failure summary the queue row keeps.
@@ -68,7 +68,7 @@ impl TemporalIntentRetryPolicy {
     }
 
     /// The failure summary the queue row keeps, cut at a character boundary.
-    pub fn summary(error: impl ToString) -> String {
+    pub fn summary(error: &(impl Display + ?Sized)) -> String {
         let mut summary = error.to_string();
         if summary.len() > ERROR_SUMMARY_LIMIT {
             let cut = (0..=ERROR_SUMMARY_LIMIT).rev().find(|index| summary.is_char_boundary(*index)).unwrap_or(0);
@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn a_long_summary_is_cut_at_the_column_limit_on_a_character_boundary() {
         let long = "é".repeat(ERROR_SUMMARY_LIMIT);
-        let summary = TemporalIntentRetryPolicy::summary(long);
+        let summary = TemporalIntentRetryPolicy::summary(&long);
         assert!(summary.len() <= ERROR_SUMMARY_LIMIT);
         assert!(summary.chars().all(|character| character == 'é'));
         assert_eq!(TemporalIntentRetryPolicy::summary("boom"), "boom");

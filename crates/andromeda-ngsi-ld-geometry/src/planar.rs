@@ -85,7 +85,7 @@ mod tests {
     fn projecting_an_open_polygon_ring_closes_the_projected_copy() {
         let form = GeometryForm::Polygon(PolygonRings::new(vec![vec![tall(0.0, 0.0, 1.0), tall(1.0, 0.0, 1.0), tall(1.0, 1.0, 1.0)]]));
         let GeoGeometry::Polygon(projected) = project(&form) else {
-            unreachable!("expected a Polygon");
+            panic!("expected a Polygon");
         };
         let exterior = projected.exterior();
         pretty_assertions::assert_eq!(exterior.0.len(), 4);
@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn projecting_a_polygon_with_no_rings_yields_an_empty_exterior() {
         let GeoGeometry::Polygon(projected) = project(&GeometryForm::Polygon(PolygonRings::new(Vec::new()))) else {
-            unreachable!("expected a Polygon");
+            panic!("expected a Polygon");
         };
         assert!(projected.exterior().0.is_empty(), "an empty ring list projects to an empty exterior");
     }
@@ -106,7 +106,7 @@ mod tests {
         let interior_ring = vec![tall(1.0, 1.0, 1.0), tall(2.0, 1.0, 1.0), tall(2.0, 2.0, 1.0), tall(1.0, 1.0, 1.0)];
         let form = GeometryForm::Polygon(PolygonRings::new(vec![exterior_ring, interior_ring]));
         let GeoGeometry::Polygon(projected) = project(&form) else {
-            unreachable!("expected a Polygon");
+            panic!("expected a Polygon");
         };
         pretty_assertions::assert_eq!(projected.interiors().len(), 1);
     }

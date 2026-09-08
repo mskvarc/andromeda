@@ -143,6 +143,6 @@ async fn pagination_entities_limit_zero_with_count_returns_the_count() {
     assert_eq!(response.status, StatusCode::OK);
     assert_eq!(results_count(&response.headers), Some(3), "the count header reports every matching entity");
     let body = response.json_value().expect("entity query response must be valid JSON");
-    assert_eq!(body.as_array().map(std::vec::Vec::len), Some(0), "limit=0 returns no entity data");
+    assert_eq!(body.as_array().map(Vec::len), Some(0), "limit=0 returns no entity data");
     scope.reset_and_finish().await.expect("post-test reset failed");
 }

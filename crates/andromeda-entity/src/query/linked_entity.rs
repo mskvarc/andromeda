@@ -471,7 +471,7 @@ mod tests {
     #[async_trait]
     impl EntityQueryStore for StubStore {
         fn profile(&self) -> &StorageProfile {
-            unreachable!("the traversal never inspects the store's profile")
+            panic!("the traversal never inspects the store's profile")
         }
 
         async fn query_compiled(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Value>, EntityError> {
@@ -770,7 +770,7 @@ mod tests {
             .expect("resolves");
 
         assert!(resolved.entities.is_empty());
-        assert_eq!(resolved.failures, [] as [andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure; 0]);
+        assert!(resolved.failures.is_empty());
         assert!(source.calls().is_empty());
     }
 

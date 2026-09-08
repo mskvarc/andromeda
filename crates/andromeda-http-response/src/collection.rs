@@ -118,7 +118,7 @@ impl IntoResponse for NgsiLdCollectionResponse {
         apply_common_headers(
             &mut headers,
             &self.rendered.context_links,
-            CommonHeadersOptions {
+            &CommonHeadersOptions {
                 location: None,
                 entity_map_uri: self.entity_map_uri.as_ref(),
                 snapshot_uri: self.snapshot_uri.as_ref(),

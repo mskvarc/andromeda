@@ -125,7 +125,11 @@ fn collect_from_instance(
     let Some(fields) = instance.as_object() else {
         return;
     };
-    let eligibility = if fields.contains_key("objectType") { RemoteEligibility::Eligible } else { RemoteEligibility::LocalOnly };
+    let eligibility = if fields.contains_key("objectType") {
+        RemoteEligibility::Eligible
+    } else {
+        RemoteEligibility::LocalOnly
+    };
 
     let objects = fields.get("object").into_iter().chain(fields.get("objectList"));
     for object in objects {

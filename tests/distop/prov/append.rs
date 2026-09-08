@@ -67,7 +67,7 @@ async fn append_registration_matches_entity_absent_not_404() {
         "a matching registration prevents 404: {}",
         String::from_utf8_lossy(&response.body)
     );
-    assert_eq!(mock.get_count(Method::POST, &attrs_path).await, 1, "the append forwards once");
+    assert_eq!(mock.get_count(Method::POST, &attrs_path), 1, "the append forwards once");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -164,7 +164,7 @@ async fn append_exclusive_op_unsupported_returns_409() {
     let response = client.append_entity_attrs(&entity_id, &fragment).await.expect("append attributes");
     assert_status(&response, 409);
     assert_problem_details(&response, CONFLICT);
-    assert_eq!(mock.get_count(Method::POST, &attrs_path).await, 0, "no forward on an unsupported operation");
+    assert_eq!(mock.get_count(Method::POST, &attrs_path), 0, "no forward on an unsupported operation");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -206,7 +206,7 @@ async fn append_op_unsupported_with_remainder_returns_207() {
     let errors = body["errors"].as_array().expect("multi-status carries an errors array");
     assert_eq!(errors[0]["registrationId"], json!(reg_id), "the conflict is keyed by registrationId: {body}");
     assert_eq!(errors[0]["error"]["status"], json!(409), "the unsupported operation surfaces a 409: {body}");
-    assert_eq!(mock.get_count(Method::POST, &attrs_path).await, 0, "no forward on an unsupported operation");
+    assert_eq!(mock.get_count(Method::POST, &attrs_path), 0, "no forward on an unsupported operation");
 
     let local = client
         .get_entity(&entity_id, "local=true", "application/ld+json", None)

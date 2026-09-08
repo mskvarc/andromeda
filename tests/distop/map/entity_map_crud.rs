@@ -31,7 +31,7 @@ async fn create_map(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -> 
     assert_status(&created, 201);
     json_body(&created)["id"]
         .as_str()
-        .unwrap_or_else(|| unreachable!("created entity map carries an id"))
+        .unwrap_or_else(|| panic!("created entity map carries an id"))
         .to_owned()
 }
 

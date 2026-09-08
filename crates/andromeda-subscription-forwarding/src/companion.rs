@@ -11,6 +11,7 @@ use crate::{
     error::SubscriptionForwardingError,
     forwarder::{ForwardDecision, decide},
     mapping::ForwardedCopy,
+    minted_subscription_id::mint_subscription_id,
     service::SubscriptionForwardingService,
 };
 use andromeda_federation::subscription::SubscriptionForward;
@@ -75,9 +76,7 @@ impl SubscriptionForwardingService {
         context: &ContextSpec,
         encountered_sources: &[ContextSourcePseudonym],
     ) -> Result<Uri, SubscriptionForwardingError> {
-        let minted = self
-            .mint_subscription_id()
-            .map_err(|error| SubscriptionForwardingError::internal(error.to_string()))?;
+        let minted = mint_subscription_id().map_err(|error| SubscriptionForwardingError::internal(error.to_string()))?;
         let document = companion_document(subscription, &minted, self.receiver.url());
         // The companion is a local resource; its own creation passes through no
         // context source, so it carries no `Via` chain of its own.

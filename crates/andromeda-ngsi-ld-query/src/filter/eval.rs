@@ -498,6 +498,7 @@ mod tests {
         term_expander::TermExpander,
     };
     use iri_rs::IriBuf;
+    use std::future::{Future, ready};
 
     fn vehicle_entity() -> Value {
         serde_json::json!([{
@@ -783,12 +784,12 @@ mod tests {
     struct PrefixExpander;
 
     impl TermExpander for PrefixExpander {
-        async fn expand_term(&self, term: &str) -> Result<IriBuf, QueryError> {
-            Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI"))
+        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            ready(Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI")))
         }
 
-        async fn expand_type(&self, term: &str) -> Result<IriBuf, QueryError> {
-            Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI"))
+        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            ready(Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI")))
         }
     }
 

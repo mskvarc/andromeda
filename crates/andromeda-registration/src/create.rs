@@ -16,6 +16,20 @@ use serde_json::Value;
 
 impl RegistrationService {
     /// Create a context-source registration from a JSON-LD payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrationError::Validation`] when `id` is not a URI or a
+    /// member of the payload falls outside Table 5.2.9-1,
+    /// [`RegistrationError::AlreadyExists`] when the payload names an
+    /// identifier the store already holds, [`RegistrationError::Conflict`]
+    /// when a proxied footprint overlaps an existing registration or context
+    /// data the broker already holds (clause 5.9.2.4),
+    /// [`RegistrationError::JsonLd`] when the request context cannot be loaded
+    /// or the payload cannot be expanded, [`RegistrationError::Identifier`]
+    /// when no identifier could be generated for an anonymous registration,
+    /// and [`RegistrationError::Persistence`] when the store rejects the
+    /// write.
     pub async fn create(&self, payload: Value, context: &ContextSpec) -> Result<Uri, RegistrationError> {
         let id = match payload.get("id").and_then(Value::as_str) {
             Some(raw) => {

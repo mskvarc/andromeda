@@ -54,7 +54,9 @@ impl SpatialSynchronizer {
     }
 
     async fn synchronize_entity(&self, target: &ContextTarget, urn: &Urn, event: &ChangeEvent) {
-        let payload = if let Some(payload) = &event.current_payload { Arc::clone(payload) } else {
+        let payload = if let Some(payload) = &event.current_payload {
+            Arc::clone(payload)
+        } else {
             let identifier = Uri::from(urn.clone()); // clone: the fallback read owns a URI while the index retains the URN.
             match self.reader.get(target, &identifier).await {
                 Ok(Some(payload)) => Arc::new(payload),
@@ -92,7 +94,7 @@ impl SpatialSynchronizer {
                 self.index.insert_all(
                     SpatialKey::new(self.tenant.clone(), type_iri, geoproperty.clone()), // clone: each partition key independently owns its tenant and geoproperty.
                     urn.clone(),                                                         // clone: each type partition owns the entity identifier.
-                    geometries.clone(),                                                 // clone: each type partition owns its geometries.
+                    geometries.clone(),                                                  // clone: each type partition owns its geometries.
                 );
             }
         }

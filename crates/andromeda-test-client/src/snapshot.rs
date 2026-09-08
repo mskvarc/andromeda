@@ -8,6 +8,11 @@ use urlencoding::encode;
 
 impl TestClient {
     /// Create a snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn create_snapshot(&self, body: &Value) -> Result<TestResponse, RequestError> {
         let url = self.endpoint().join("snapshots")?;
         let request = self
@@ -18,6 +23,12 @@ impl TestClient {
     }
 
     /// Retrieve a snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint,
+    /// [`RequestError::Header`] when `context` is not a valid IRI reference or cannot be encoded as a `Link` header, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn retrieve_snapshot(&self, id: &str, context: Option<&str>) -> Result<TestResponse, RequestError> {
         let url = self.endpoint().join(&format!("snapshots/{}", encode(id)))?;
         let mut request = self.request(Method::GET, url.clone()).header("accept", ResponseMediaType::JsonLd.to_string()); // clone: transport diagnostics retain the request URL.
@@ -28,6 +39,11 @@ impl TestClient {
     }
 
     /// Delete a snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn delete_snapshot(&self, id: &str) -> Result<TestResponse, RequestError> {
         let url = self.endpoint().join(&format!("snapshots/{}", encode(id)))?;
         let request = self.request(Method::DELETE, url.clone()); // clone: transport diagnostics retain the request URL.

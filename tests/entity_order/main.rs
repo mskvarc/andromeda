@@ -44,7 +44,7 @@ async fn create_ordering_fixtures(scope: &TestEnvironment, client: &TestClient) 
 
     for (id, name, lon, lat) in [
         (&id_a, "Alpha", 13.3986_f64, 52.5547_f64),
-        (&id_b, "Beta", 13.509818, 52.363457),
+        (&id_b, "Beta", 13.509_818, 52.363_457),
         (&id_c, "Gamma", 2.3522, 48.8566),
     ] {
         create(

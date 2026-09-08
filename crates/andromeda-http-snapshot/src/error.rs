@@ -79,6 +79,11 @@ fn classify_federation_error(error: &FederationError) -> ClassifiedReport {
 /// Attach the inbound URI while classifying a snapshot result.
 pub trait SnapshotResultExt<T> {
     /// Map the focused failure and attach `instance`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`ProblemResponse`] the failure classifies to whenever `self`
+    /// is `Err`; an `Ok` result passes through untouched.
     fn with_snapshot_instance(self, instance: &Uri) -> Result<T, ProblemResponse>;
 }
 

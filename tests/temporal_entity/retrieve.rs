@@ -8,9 +8,9 @@
 //! - lastN parameter
 //! - Simplified temporal representation (temporalValues)
 //! - Aggregated values
-//! - LanguageProperty, JsonProperty, VocabProperty representations
+//! - `LanguageProperty`, `JsonProperty`, `VocabProperty` representations
 //! - Pagination
-//! - DeletedAt handling
+//! - `DeletedAt` handling
 //! - Error cases (invalid ID, non-existent entity, invalid temporal params)
 
 use crate::{
@@ -484,7 +484,7 @@ async fn temporal_retrieve_language_property_normalized_success() {
 
     // Check LanguageProperty structure
     if let Some(name_arr) = body.get("name").and_then(|v| v.as_array()) {
-        assert!(!name_arr.is_empty());
+        assert!(!name_arr.is_empty(), "the retrieved LanguageProperty must carry at least one instance");
         let first = &name_arr[0];
         assert_eq!(first["type"], "LanguageProperty");
         assert!(first.get("languageMap").is_some());
@@ -654,7 +654,7 @@ async fn temporal_retrieve_json_property_normalized_success() {
     assert_eq!(status, StatusCode::OK);
 
     if let Some(config_arr) = body.get("config").and_then(|v| v.as_array()) {
-        assert!(!config_arr.is_empty());
+        assert!(!config_arr.is_empty(), "the retrieved JsonProperty must carry at least one instance");
         let first = &config_arr[0];
         assert_eq!(first["type"], "JsonProperty");
         assert!(first.get("json").is_some());
@@ -700,7 +700,7 @@ async fn temporal_retrieve_vocab_property_normalized_success() {
     assert_eq!(status, StatusCode::OK);
 
     if let Some(cat_arr) = body.get("category").and_then(|v| v.as_array()) {
-        assert!(!cat_arr.is_empty());
+        assert!(!cat_arr.is_empty(), "the retrieved VocabProperty must carry at least one instance");
         let first = &cat_arr[0];
         assert_eq!(first["type"], "VocabProperty");
         assert!(first.get("vocab").is_some());

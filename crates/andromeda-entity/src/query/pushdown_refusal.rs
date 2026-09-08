@@ -16,7 +16,7 @@ use andromeda_ngsi_ld_query::entity_selection::EntitySelection;
 ///
 /// Returns [`EntityError::operation_not_supported`] naming every query
 /// parameter the store could not narrow (clause 5.5.2).
-pub(super) fn refuse_unnarrowable(profile: &StorageProfile, selection: &EntitySelection) -> Result<(), EntityError> {
+pub(super) fn refuse_unnarrowable(profile: StorageProfile, selection: &EntitySelection) -> Result<(), EntityError> {
     let refused = profile.unnarrowable(selection);
     if refused.is_empty() {
         return Ok(());
@@ -61,7 +61,7 @@ mod tests {
             value_filter: ValueFilterPushdown::JsonPath,
             scope: ScopePushdown::LabelTree,
         };
-        let error = refuse_unnarrowable(&profile, &all_three()).expect_err("must refuse");
+        let error = refuse_unnarrowable(profile, &all_three()).expect_err("must refuse");
         assert!(error.to_string().contains("georel"), "the refusal names the parameter: {error}");
     }
 
@@ -72,7 +72,7 @@ mod tests {
             value_filter: ValueFilterPushdown::None,
             scope: ScopePushdown::None,
         };
-        let error = refuse_unnarrowable(&profile, &all_three()).expect_err("must refuse");
+        let error = refuse_unnarrowable(profile, &all_three()).expect_err("must refuse");
         let message = error.to_string();
         for parameter in ["q", "georel", "scopeQ"] {
             assert!(message.contains(parameter), "the refusal names {parameter}: {message}");
@@ -88,11 +88,11 @@ mod tests {
             value_filter: ValueFilterPushdown::Structured,
             scope: ScopePushdown::PrefixOnly,
         };
-        assert!(refuse_unnarrowable(&profile, &all_three()).is_ok());
+        assert!(refuse_unnarrowable(profile, &all_three()).is_ok());
     }
 
     #[test]
     fn a_query_a_store_applies_fully_is_not_refused() {
-        assert!(refuse_unnarrowable(&StorageProfile::POSTGIS_LTREE, &all_three()).is_ok());
+        assert!(refuse_unnarrowable(StorageProfile::POSTGIS_LTREE, &all_three()).is_ok());
     }
 }

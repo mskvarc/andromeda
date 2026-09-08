@@ -9,6 +9,7 @@ mod clone_statements;
 pub mod lifecycle;
 /// Row-to-domain conversions for snapshot records.
 pub mod mapper;
+mod metadata_change;
 mod preparation_claim;
 mod quota;
 /// The snapshot repository struct.

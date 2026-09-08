@@ -176,6 +176,7 @@ pub fn strip_attributes_from_value(fragment: &mut Value, attributes: &[Attribute
 #[cfg(test)]
 mod tests {
     use crate::entity_result::parse_forwarded_entities;
+    use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -195,7 +196,7 @@ mod tests {
 
         let (entities, warnings) = parse_forwarded_entities(&registration_id(), vec![value], Utc::now());
         pretty_assertions::assert_eq!(entities.len(), 1);
-        assert_eq!(warnings, [] as [andromeda_http_headers::ngsild_warning::NgsiLdWarning; 0]);
+        assert_eq!(warnings, [] as [NgsiLdWarning; 0]);
     }
 
     #[test]
@@ -203,7 +204,7 @@ mod tests {
         let value = serde_json::from_str(r#"{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":0.100000000000000005}}"#)
             .expect("exact remote JSON");
         let (entities, warnings) = parse_forwarded_entities(&registration_id(), vec![value], Utc::now());
-        assert_eq!(warnings, [] as [andromeda_http_headers::ngsild_warning::NgsiLdWarning; 0]);
+        assert_eq!(warnings, [] as [NgsiLdWarning; 0]);
         let encoded = serde_json::to_string(&entities).expect("forwarded response JSON");
         assert!(encoded.contains("0.100000000000000005"), "{encoded}");
     }
@@ -216,7 +217,7 @@ mod tests {
         let expired = json!({"id": "urn:ngsi-ld:Vehicle:old", "type": "Vehicle", "expiresAt": "2000-01-01T00:00:00Z"});
         let valid = json!({"id": "urn:ngsi-ld:Vehicle:new", "type": "Vehicle", "expiresAt": "2999-01-01T00:00:00Z"});
         let (entities, warnings) = parse_forwarded_entities(&registration_id(), vec![expired, valid], now);
-        assert_eq!(warnings, [] as [andromeda_http_headers::ngsild_warning::NgsiLdWarning; 0]);
+        assert_eq!(warnings, [] as [NgsiLdWarning; 0]);
         pretty_assertions::assert_eq!(
             entities.iter().map(|entity| entity.id.as_str()).collect::<Vec<_>>(),
             vec!["urn:ngsi-ld:Vehicle:new"]

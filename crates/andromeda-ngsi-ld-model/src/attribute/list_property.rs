@@ -44,7 +44,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("list_property");
         let Attribute::ListProperty(lp) = &attr else {
-            unreachable!("expected ListProperty");
+            panic!("expected ListProperty");
         };
         let expanded = lp.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");

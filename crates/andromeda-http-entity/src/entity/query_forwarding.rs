@@ -16,6 +16,7 @@ use crate::entity::{
     single_source_declined,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::{
     FederationService,
     config::SplitEntities,
@@ -25,6 +26,8 @@ use andromeda_federation::{
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::filter::expression::Expr;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use axum::http::Uri as HttpUri;
@@ -47,6 +50,49 @@ impl ForwardedQueryResults {
     /// page an incomplete view of the result (clause 5.5.9).
     pub(crate) fn holds_remote_entities(&self) -> bool {
         self.primary.iter().chain(&self.auxiliary).any(|result| !result.entities.is_empty())
+    }
+
+    /// Fold what the sources returned onto the entities the broker holds
+    /// itself: the primary phase's answers first, then the auxiliary ones,
+    /// which only supplement what is present already (clause 4.3.6.2).
+    pub(crate) fn merge_onto(self, local_entities: Vec<Entity>, attrs: Option<&[AttributeName]>) -> MergedEntities {
+        let merged = if self.primary.is_empty() {
+            local_entities
+        } else {
+            EntityQueryService::merge_with_forwarded(local_entities, self.primary, attrs)
+        };
+        let merged = if self.auxiliary.is_empty() {
+            merged
+        } else {
+            EntityQueryService::merge_with_forwarded(merged, self.auxiliary, attrs)
+        };
+        MergedEntities {
+            entities: merged,
+            warnings: self.warnings,
+            contributions: self.contributions,
+        }
+    }
+}
+
+/// The entities a query answers with before its page is cut, together with
+/// what the forwarding reported about the sources that helped.
+pub(crate) struct MergedEntities {
+    /// The local and forwarded entities, merged.
+    pub(crate) entities: Vec<Entity>,
+    /// The clause 6.3.17 warnings of the forwarding phases.
+    pub(crate) warnings: Vec<NgsiLdWarning>,
+    /// What each source contributed to the map of the request (clause 5.2.39).
+    pub(crate) contributions: Vec<SourceContribution>,
+}
+
+impl MergedEntities {
+    /// The answer of a query no context source contributed to.
+    pub(crate) const fn local(entities: Vec<Entity>) -> MergedEntities {
+        MergedEntities {
+            entities,
+            warnings: Vec::new(),
+            contributions: Vec::new(),
+        }
     }
 }
 

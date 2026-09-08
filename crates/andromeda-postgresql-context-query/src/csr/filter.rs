@@ -10,7 +10,6 @@ use andromeda_ngsi_ld_query::filter::{
     scalar::{CompareValue, Scalar},
 };
 use andromeda_postgresql_query::{
-    error::RenderError,
     jsonb::lift_comparison,
     operator::{compare, pattern as pattern_predicate},
 };
@@ -29,25 +28,33 @@ fn additional_properties() -> SimpleExpr {
 }
 
 /// Compile a parsed `q` expression against `additional_properties`.
-pub fn csr_expr_to_condition(expr: &Expr) -> Result<Condition, RenderError> {
+///
+/// The compilation is infallible, which is why it reports no error: a
+/// registration property is addressed as a JSONB key rather than resolved
+/// against a name dictionary, every operand is bound as a parameter rather
+/// than converted, and the one shape with no registration counterpart — the
+/// clause 4.9 `{}` traversal, which needs a Relationship a registration cannot
+/// carry — renders as a constant `FALSE` instead of a failure.
+#[must_use]
+pub fn csr_expr_to_condition(expr: &Expr) -> Condition {
     match expr {
-        Expr::And(terms) => terms.iter().try_fold(Condition::all(), |cond, term| Ok(cond.add(csr_expr_to_condition(term)?))),
-        Expr::Or(terms) => terms.iter().try_fold(Condition::any(), |cond, term| Ok(cond.add(csr_expr_to_condition(term)?))),
+        Expr::And(terms) => terms.iter().fold(Condition::all(), |cond, term| cond.add(csr_expr_to_condition(term))),
+        Expr::Or(terms) => terms.iter().fold(Condition::any(), |cond, term| cond.add(csr_expr_to_condition(term))),
         Expr::Pred(pred) => csr_pred_to_condition(pred),
     }
 }
 
 /// Compile one leaf predicate against `additional_properties`.
-fn csr_pred_to_condition(pred: &Predicate) -> Result<Condition, RenderError> {
+fn csr_pred_to_condition(pred: &Predicate) -> Condition {
     let QueryPath::Local(path) = pred.path() else {
-        return Ok(no_registration_matches());
+        return no_registration_matches();
     };
     match pred {
-        Predicate::Exists(_) => Ok(Condition::all().add(jsonb_key_exists(additional_properties(), SeaExpr::val(path.attr.as_str())))),
-        Predicate::Equality { membership, rhs, .. } => Ok(csr_equality_condition(path, *membership, rhs)),
-        Predicate::Ordering { op, rhs, .. } => Ok(csr_ordering_condition(path, *op, rhs)),
-        Predicate::MatchPattern { pattern, .. } => Ok(csr_pattern_condition(path, pattern.as_str(), PatternPolarity::Match)),
-        Predicate::NotMatchPattern { pattern, .. } => Ok(csr_pattern_condition(path, pattern.as_str(), PatternPolarity::NotMatch)),
+        Predicate::Exists(_) => Condition::all().add(jsonb_key_exists(additional_properties(), SeaExpr::val(path.attr.as_str()))),
+        Predicate::Equality { membership, rhs, .. } => csr_equality_condition(path, *membership, rhs),
+        Predicate::Ordering { op, rhs, .. } => csr_ordering_condition(path, *op, rhs),
+        Predicate::MatchPattern { pattern, .. } => csr_pattern_condition(path, pattern.as_str(), PatternPolarity::Match),
+        Predicate::NotMatchPattern { pattern, .. } => csr_pattern_condition(path, pattern.as_str(), PatternPolarity::NotMatch),
     }
 }
 
@@ -209,7 +216,7 @@ mod tests {
 
     fn render(q: &str) -> String {
         let expr = parser::parse(q).expect("parse q");
-        let condition = csr_expr_to_condition(&expr).expect("compile q");
+        let condition = csr_expr_to_condition(&expr);
         Query::select()
             .expr(SeaExpr::cust("1"))
             .from(Alias::new("context_source_registrations"))
@@ -425,7 +432,7 @@ mod tests {
     #[test]
     fn every_backend_reads_clause_four_nine_the_same_way() {
         for case in cases() {
-            let expr = parser::parse(&case.expression).unwrap_or_else(|error| unreachable!("{}: {error}", case.expression));
+            let expr = parser::parse(&case.expression).unwrap_or_else(|error| panic!("{}: {error}", case.expression));
 
             for entity in &case.matching {
                 assert!(evaluate(&expr, entity), "{} must select {entity}", case.expression);
@@ -435,9 +442,8 @@ mod tests {
             }
             assert!(!evaluate(&expr, &absent()), "{} must reject an entity without the attribute", case.expression);
 
-            let projection_sql = render_entity_condition(
-                compile(&expr, &EntityRowRefs::unaliased(), &names()).unwrap_or_else(|error| unreachable!("{}: {error}", case.expression)),
-            );
+            let projection_sql =
+                render_entity_condition(compile(&expr, &EntityRowRefs::unaliased(), &names()).unwrap_or_else(|error| panic!("{}: {error}", case.expression)));
             assert!(
                 projection_sql.contains("EXISTS("),
                 "{} must test presence structurally: {projection_sql}",
@@ -449,7 +455,7 @@ mod tests {
                 case.expression
             );
 
-            let csr_sql = render_entity_condition(csr_expr_to_condition(&expr).unwrap_or_else(|error| unreachable!("{}: {error}", case.expression)));
+            let csr_sql = render_entity_condition(csr_expr_to_condition(&expr));
             assert!(
                 !csr_sql.contains("IS NULL OR"),
                 "{} must not admit a registration without the property: {csr_sql}",

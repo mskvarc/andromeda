@@ -15,6 +15,11 @@ use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use indexmap::IndexMap;
 use serde_json::{Value, json};
 
+/// The key one attribute instance is grouped under: its name plus the
+/// `datasetId` that clause 4.5.5 uses to tell the instances of one attribute
+/// apart.
+type GroupKey = (AttributeName, Option<Uri>);
+
 /// Builds aggregated temporal data from decoded aggregation rows.
 ///
 /// Groups rows by `(attribute_name, dataset_id)` and extracts aggregation
@@ -57,7 +62,6 @@ impl TemporalAggregationRenderer<'_> {
     pub fn render(self) -> IndexMap<AttributeName, Value> {
         let TemporalAggregationRenderer { rows, compiled } = self;
 
-        type GroupKey = (AttributeName, Option<Uri>);
         // The family is carried on the group rather than re-read from a row,
         // which is what removes the "no rows in this group" case an index built
         // by pushing can never actually produce.

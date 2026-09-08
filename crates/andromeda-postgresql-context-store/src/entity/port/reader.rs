@@ -10,26 +10,30 @@ use std::collections::HashMap;
 #[async_trait]
 impl EntityReader for EntityRepository {
     async fn get(&self, target: &ContextTarget, id: &Uri) -> Result<Option<Value>, EntityError> {
-        EntityRepository::get(self, target, id).await.map_err(persistence)
+        EntityRepository::get(self, target, id).await.map_err(|error| persistence(&error))
     }
 
     async fn get_batch(&self, target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, Value>, EntityError> {
-        EntityRepository::get_batch(self, target, ids).await.map_err(persistence)
+        EntityRepository::get_batch(self, target, ids).await.map_err(|error| persistence(&error))
     }
 
     async fn get_snapshot(&self, target: &ContextTarget, id: &Uri) -> Result<Option<EntitySnapshot>, EntityError> {
-        EntityRepository::get_snapshot(self, target, id).await.map_err(persistence)
+        EntityRepository::get_snapshot(self, target, id).await.map_err(|error| persistence(&error))
     }
 
     async fn get_snapshot_batch(&self, target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, EntityError> {
-        EntityRepository::get_snapshot_batch(self, target, ids).await.map_err(persistence)
+        EntityRepository::get_snapshot_batch(self, target, ids)
+            .await
+            .map_err(|error| persistence(&error))
     }
 
     async fn get_sys_attrs(&self, target: &ContextTarget, id: &Uri) -> Result<Option<SysAttrsSnapshot>, EntityError> {
-        EntityRepository::get_sys_attrs(self, target, id).await.map_err(persistence)
+        EntityRepository::get_sys_attrs(self, target, id).await.map_err(|error| persistence(&error))
     }
 
     async fn get_sys_attrs_batch(&self, target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, EntityError> {
-        EntityRepository::get_sys_attrs_batch(self, target, ids).await.map_err(persistence)
+        EntityRepository::get_sys_attrs_batch(self, target, ids)
+            .await
+            .map_err(|error| persistence(&error))
     }
 }

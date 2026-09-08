@@ -22,6 +22,12 @@ pub struct WarmupStats {
 }
 
 /// Rebuild every default `location` partition from one typed snapshot source.
+///
+/// # Errors
+///
+/// Reports [`EntityError::Persistence`] when the snapshot source cannot be
+/// read, and [`EntityError::Internal`] when the core `location` term is not a
+/// well-formed attribute name.
 pub async fn reconcile_location(
     index: &Arc<SpatialEntityIndex>,
     source: &dyn EntitySpatialSnapshotSource,

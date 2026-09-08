@@ -16,6 +16,12 @@ pub struct TemporalIntentSequence(i64);
 
 impl TemporalIntentSequence {
     /// Construct a positive sequence decoded from durable storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidTemporalIntentSequence`] when `value` is not strictly
+    /// positive: the queue numbers its commits from one, so zero or a negative
+    /// value names no committed intent.
     pub const fn new(value: i64) -> Result<TemporalIntentSequence, InvalidTemporalIntentSequence> {
         if value > 0 {
             Ok(TemporalIntentSequence(value))
@@ -120,6 +126,16 @@ impl TemporalAppendIntent {
     /// `record` and `base` come from the commit, not from this call: every
     /// entity a commit lands shares the commit's one write identity, and draws
     /// its entries' ordinals from the commit's single running counter.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError::Validation`] when a history record carries an
+    /// attribute the NGSI-LD data model does not admit -- an unparsable
+    /// attribute name, `datasetId`, `observedAt` or `instanceId`, a
+    /// Relationship or `ListRelationship` member that names no target URI, a
+    /// GeoProperty whose value is not a geometry, or a Property whose typed
+    /// value cannot be carried -- and [`TemporalError::Internal`] when an
+    /// interpreted geometry cannot be serialised back to JSON.
     pub fn from_history(
         entity_id: &Uri,
         history: &[HistoryRecord],

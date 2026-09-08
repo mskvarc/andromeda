@@ -7,6 +7,14 @@ use serde_json::Value;
 
 impl RegistrationService {
     /// Retrieve one context-source registration by URI.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrationError::NotFound`] when no registration carries
+    /// `id`, [`RegistrationError::Internal`] when the registration cannot be
+    /// serialised, [`RegistrationError::JsonLd`] when `context` cannot be
+    /// loaded or the response cannot be compacted under it, and
+    /// [`RegistrationError::Persistence`] when the store rejects the read.
     pub async fn get(&self, id: &Uri, context: &ContextSpec) -> Result<Value, RegistrationError> {
         let mut registration = self.repo.get(id).await?.ok_or_else(|| RegistrationError::not_found(id))?;
         let additional_properties = registration.additional_properties.take();

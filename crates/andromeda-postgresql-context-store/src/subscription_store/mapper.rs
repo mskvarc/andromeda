@@ -10,17 +10,20 @@ use crate::{
     subscription_store::{params::DatasetIdPresence, rows::SubscriptionRow},
 };
 use andromeda_context_commit::subscription_key::SubscriptionKey;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::subscription::{
-    EntitySelector,
-    NotificationParams,
-    NotificationStatus,
-    Subscription,
-    SubscriptionDelivery,
-    SubscriptionFilters,
-    SubscriptionLifecycle,
-    SubscriptionSelection,
-    SubscriptionStatus,
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_model::{
+    notification::NotificationTrigger,
+    subscription::{
+        EntitySelector,
+        NotificationParams,
+        NotificationStatus,
+        Subscription,
+        SubscriptionDelivery,
+        SubscriptionFilters,
+        SubscriptionLifecycle,
+        SubscriptionSelection,
+        SubscriptionStatus,
+    },
 };
 use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
 use andromeda_postgresql_codes::notification_trigger::NotificationTriggerCode;
@@ -33,33 +36,31 @@ use tracing::warn;
 use url::Url;
 
 /// Parse a subscription identifier read from PostgreSQL.
-pub fn stored_subscription_uri(raw: String) -> Result<Uri, ContextStoreError> {
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Internal`] when the stored text is not a valid
+/// URI, which means the column holds a value the broker never wrote.
+pub fn stored_subscription_uri(raw: &str) -> Result<Uri, ContextStoreError> {
     raw.parse()
         .map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription id '{raw}': {error}")))
 }
 
-/// Parse a stored surrogate key into a [`SubscriptionKey`].
-fn stored_subscription_key(raw: i64) -> Result<SubscriptionKey, ContextStoreError> {
-    SubscriptionKey::try_from(raw).map_err(|error| ContextStoreError::Internal(format!("stored subscription key is not a valid surrogate key: {error}")))
-}
-
-/// Read a `SubscriptionRow` from a `PgRow`, honouring [`DatasetIdPresence`].
-pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Result<SubscriptionRow, ContextStoreError> {
-    let dataset_id_raw: Option<Vec<String>> = match dataset_id_presence {
-        DatasetIdPresence::Present => row.try_get("dataset_id")?,
-        DatasetIdPresence::Absent => None,
-    };
-    let dataset_id = dataset_id_raw.map(|ids| ids.into_iter().map(stored_subscription_uri).collect()).transpose()?;
-    let id = stored_subscription_uri(row.try_get("id")?)?;
+/// The entity selectors the `entities` column holds.
+fn stored_entities(row: &PgRow) -> Result<Option<Vec<EntitySelector>>, ContextStoreError> {
     let entities_json: Option<Value> = row.try_get("entities")?;
-    let entities = entities_json
+    entities_json
         .map(|value| {
             serde_json::from_value::<Vec<EntitySelector>>(value)
                 .map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription entities: {error}")))
         })
-        .transpose()?;
-    let watched_attribute_names: Option<Vec<String>> = row.try_get("watched_attributes")?;
-    let watched_attributes = watched_attribute_names
+        .transpose()
+}
+
+/// The attribute names the `watched_attributes` column holds.
+fn stored_watched_attributes(row: &PgRow) -> Result<Option<Vec<AttributeName>>, ContextStoreError> {
+    let stored: Option<Vec<String>> = row.try_get("watched_attributes")?;
+    stored
         .map(|names| {
             names
                 .into_iter()
@@ -69,9 +70,13 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
                 })
                 .collect()
         })
-        .transpose()?;
+        .transpose()
+}
+
+/// The clause 5.3.3 triggers the `notification_trigger` registry codes name.
+fn stored_notification_triggers(row: &PgRow) -> Result<Option<Vec<NotificationTrigger>>, ContextStoreError> {
     let trigger_codes: Option<Vec<i16>> = row.try_get("notification_trigger")?;
-    let notification_trigger = trigger_codes
+    trigger_codes
         .map(|codes| {
             codes
                 .into_iter()
@@ -82,7 +87,36 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
                 })
                 .collect()
         })
+        .transpose()
+}
+
+/// Parse a stored surrogate key into a [`SubscriptionKey`].
+fn stored_subscription_key(raw: i64) -> Result<SubscriptionKey, ContextStoreError> {
+    SubscriptionKey::try_from(raw).map_err(|error| ContextStoreError::Internal(format!("stored subscription key is not a valid surrogate key: {error}")))
+}
+
+/// Read a `SubscriptionRow` from a `PgRow`, honouring [`DatasetIdPresence`].
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Database`] when a projected column is missing or
+/// cannot be decoded, and [`ContextStoreError::Internal`] when a stored value no
+/// longer parses into its domain type: the subscription URI, an entity selector,
+/// a watched attribute name, a notification trigger code, the `q`, `scopeQ` or
+/// `csf` filter, the notification parameters, the language tag, the JSON-LD
+/// context URL, or the status label.
+pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Result<SubscriptionRow, ContextStoreError> {
+    let dataset_id_raw: Option<Vec<String>> = match dataset_id_presence {
+        DatasetIdPresence::Present => row.try_get("dataset_id")?,
+        DatasetIdPresence::Absent => None,
+    };
+    let dataset_id = dataset_id_raw
+        .map(|ids| ids.iter().map(String::as_str).map(stored_subscription_uri).collect())
         .transpose()?;
+    let id = stored_subscription_uri(row.try_get("id")?)?;
+    let entities = stored_entities(row)?;
+    let watched_attributes = stored_watched_attributes(row)?;
+    let notification_trigger = stored_notification_triggers(row)?;
     let q_raw: Option<String> = row.try_get("q")?;
     let q = q_raw
         .map(|raw| {
@@ -155,43 +189,46 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
 /// reject. Failing the whole read for one of them takes every other
 /// subscription with it: a listing becomes a 500, and `list_active` empties the
 /// matching cache so no subscription fires at all. A multi-row read therefore
-/// reports what it can read and logs what it cannot, while
-/// [`row_to_stored_subscription`] keeps its hard error for `get`, where the
+/// reports what it can read and logs what it cannot, while a single-row read
+/// calls [`row_from_pg`] directly and keeps its hard error for `get`, where the
 /// client named that one subscription and has to be told it is unreadable.
 ///
 /// A listing's total still counts the stored rows, so it can exceed the number
 /// returned. That is the honest figure: the rows are there, this build cannot
 /// read them.
-pub fn rows_to_stored_subscriptions(rows: &[PgRow], dataset_id_presence: DatasetIdPresence) -> Result<Vec<StoredSubscription>, ContextStoreError> {
+#[must_use]
+pub fn rows_to_stored_subscriptions(rows: &[PgRow], dataset_id_presence: DatasetIdPresence) -> Vec<StoredSubscription> {
     let mut subscriptions = Vec::with_capacity(rows.len());
     for pg_row in rows {
-        let row = row_from_pg(pg_row, dataset_id_presence)?;
-        // clone: the identifier is needed for the log after `row` is consumed,
-        // and it is the only thing that names the row that failed
-        let id = row.id.clone();
-        match row_to_stored_subscription(row) {
-            Ok(stored) => subscriptions.push(stored),
-            Err(error) => warn!(subscription_id = %id, %error, "subscription row could not be read and was omitted"),
+        match row_from_pg(pg_row, dataset_id_presence) {
+            Ok(row) => subscriptions.push(row_to_stored_subscription(row)),
+            Err(error) => {
+                // The identifier is read raw, because the value that failed to
+                // parse may be the identifier itself.
+                let identifier = pg_row.try_get::<&str, _>("id").unwrap_or("<unreadable>");
+                warn!(subscription_id = %identifier, %error, "subscription row could not be read and was omitted");
+            }
         }
     }
-    Ok(subscriptions)
+    subscriptions
 }
 
 /// Convert a persistence-shaped `SubscriptionRow` into the resource paired with
 /// the key it is stored under.
-pub fn row_to_stored_subscription(row: SubscriptionRow) -> Result<StoredSubscription, ContextStoreError> {
+#[must_use]
+pub fn row_to_stored_subscription(row: SubscriptionRow) -> StoredSubscription {
     let key = row.key;
-    Ok(StoredSubscription {
+    StoredSubscription {
         key,
-        subscription: row_to_subscription(row)?,
-    })
+        subscription: row_to_subscription(row),
+    }
 }
 
 /// Convert a persistence-shaped `SubscriptionRow` into the domain [`Subscription`].
 ///
 /// Parses JSON columns into typed domain values and derives the notification
 /// delivery status from the `last_success`/`last_failure` timestamps.
-fn row_to_subscription(row: SubscriptionRow) -> Result<Subscription, ContextStoreError> {
+fn row_to_subscription(row: SubscriptionRow) -> Subscription {
     let mut notification: NotificationParams = row.notification;
 
     notification.times_sent = Some(row.times_sent);
@@ -200,7 +237,7 @@ fn row_to_subscription(row: SubscriptionRow) -> Result<Subscription, ContextStor
     notification.last_failure = row.last_failure;
     notification.status = notification_status_from_timestamps(row.last_success, row.last_failure);
 
-    Ok(Subscription::builder()
+    Subscription::builder()
         .id(row.id)
         .subscription_name(row.subscription_name)
         .description(row.description)
@@ -243,7 +280,7 @@ fn row_to_subscription(row: SubscriptionRow) -> Result<Subscription, ContextStor
                 .modified_at(row.modified_at)
                 .build(),
         )
-        .build())
+        .build()
 }
 
 /// Derive the notification delivery status from `last_success`/`last_failure`.

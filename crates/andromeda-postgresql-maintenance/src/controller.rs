@@ -84,6 +84,14 @@ impl MaintenanceController {
     }
 
     /// Execute one fair, fleet-serialized inspection pass.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MaintenanceError`] when the platform connection cannot be
+    /// acquired, when the fleet-wide advisory lock cannot be taken or released,
+    /// or when a statement of the selected tenant's inspection fails. A pass
+    /// that finds no work, yields to another broker, or declines to act is
+    /// reported through [`PassOutcome`], not through an error.
     pub async fn run(&self, cancellation: &CancellationToken) -> Result<PassOutcome, MaintenanceError> {
         let result = self.run_unrecorded(cancellation).await;
         if let Ok(outcome) = result.as_ref() {
@@ -108,12 +116,11 @@ impl MaintenanceController {
             return Ok(PassOutcome::GlobalLockUnavailable);
         }
         let result = self.run_locked(&mut platform, cancellation).await;
-        let release = state::release_global_lock(&mut platform).await;
-        match (result, release) {
-            (Ok(outcome), Ok(())) => Ok(outcome),
-            (Err(error), Ok(())) => Err(error),
-            (Ok(_) | Err(_), Err(error)) => Err(error),
-        }
+        // A failed release outranks the pass result: the advisory lock is
+        // fleet-wide state, so reporting an outcome while it may still be held
+        // would hide the condition that blocks every other broker.
+        state::release_global_lock(&mut platform).await?;
+        result
     }
 
     /// Execute the selected tenant pass while the global session lock is held.
@@ -200,8 +207,7 @@ impl MaintenanceController {
         state::record_decision(platform, &tenant, target, Some(measured), decision).await?;
         let outcome = match decision {
             PolicyDecision::Queued => PassOutcome::Queued,
-            PolicyDecision::WouldAct => PassOutcome::WouldAct,
-            PolicyDecision::Act => PassOutcome::WouldAct,
+            PolicyDecision::WouldAct | PolicyDecision::Act => PassOutcome::WouldAct,
             PolicyDecision::Deferred(
                 DeferralReason::RelationTooSmall
                 | DeferralReason::ReclaimTooSmall

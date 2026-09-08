@@ -92,6 +92,13 @@ impl PendingSideEffectsRepository {
     /// deduplication key. `record` and `consequence_base` are persisted
     /// verbatim, so a worker that leases this job later can resume the
     /// enqueueing commit's identity and ordinal counter exactly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError::Internal`] when the payload cannot be
+    /// encoded as JSON, when the consequence base does not fit the column's
+    /// signed range, or when the insert statement cannot be built, and
+    /// [`ContextStoreError::Database`] when the insert fails.
     pub async fn enqueue_in_tx(
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,

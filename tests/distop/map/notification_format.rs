@@ -95,7 +95,7 @@ async fn notif_default_format_normalized() {
     let mut body = subscription(&id, &receiver.endpoint_url());
     body["notification"]
         .as_object_mut()
-        .unwrap_or_else(|| unreachable!("notification object"))
+        .unwrap_or_else(|| panic!("notification object"))
         .remove("format");
     assert_status(
         &topology

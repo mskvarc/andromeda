@@ -262,7 +262,7 @@ mod tests {
             let store = FixedStore::new(vec![registration(
                 "urn:ngsi-ld:csr:existing",
                 existing_mode,
-                json!([exclusive_info(V1, &[SPEED])]),
+                &json!([exclusive_info(V1, &[SPEED])]),
             )]);
             let probe = FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent);
             let result = check_conflicts(&store, &probe, ForwardingMode::Exclusive, &[info(exclusive_info(V1, &[SPEED]))], None).await;
@@ -275,7 +275,7 @@ mod tests {
         let store = FixedStore::new(vec![registration(
             "urn:ngsi-ld:csr:existing",
             "exclusive",
-            json!([exclusive_info(V1, &[SPEED])]),
+            &json!([exclusive_info(V1, &[SPEED])]),
         )]);
         let probe = FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent);
         assert!(
@@ -298,7 +298,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_redirect_registering_the_whole_entity_overlaps_every_attribute() {
-        let whole_entity = registration("urn:ngsi-ld:csr:redirect", "redirect", json!([{"entities": [{"type": VEHICLE, "id": V1}]}]));
+        let whole_entity = registration("urn:ngsi-ld:csr:redirect", "redirect", &json!([{"entities": [{"type": VEHICLE, "id": V1}]}]));
         let store = FixedStore::new(vec![whole_entity]);
         let probe = FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent);
         let result = check_conflicts(&store, &probe, ForwardingMode::Exclusive, &[info(exclusive_info(V1, &[FUEL]))], None).await;
@@ -310,7 +310,7 @@ mod tests {
         let pattern = registration(
             "urn:ngsi-ld:csr:pattern",
             "redirect",
-            json!([{"entities": [{"type": VEHICLE, "idPattern": "urn:ngsi-ld:Vehicle:V.*"}], "propertyNames": [SPEED]}]),
+            &json!([{"entities": [{"type": VEHICLE, "idPattern": "urn:ngsi-ld:Vehicle:V.*"}], "propertyNames": [SPEED]}]),
         );
         let store = FixedStore::new(vec![pattern]);
         let probe = FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent);
@@ -334,7 +334,7 @@ mod tests {
     #[tokio::test]
     async fn the_registration_being_updated_never_conflicts_with_itself() {
         let self_id: Uri = "urn:ngsi-ld:csr:self".parse().expect("valid URI");
-        let store = FixedStore::new(vec![registration(self_id.as_str(), "exclusive", json!([exclusive_info(V1, &[SPEED])]))]);
+        let store = FixedStore::new(vec![registration(self_id.as_str(), "exclusive", &json!([exclusive_info(V1, &[SPEED])]))]);
         let probe = FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent);
         assert!(
             check_conflicts(&store, &probe, ForwardingMode::Exclusive, &[info(exclusive_info(V1, &[SPEED]))], Some(&self_id))
@@ -374,7 +374,7 @@ mod tests {
         let store = FixedStore::new(vec![registration(
             "urn:ngsi-ld:csr:exclusive",
             "exclusive",
-            json!([exclusive_info(V1, &[SPEED])]),
+            &json!([exclusive_info(V1, &[SPEED])]),
         )]);
         let probe = FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent);
         let redirect = info(json!({"entities": [{"type": VEHICLE, "id": V1}]}));
@@ -389,7 +389,7 @@ mod tests {
         let store = FixedStore::new(vec![registration(
             "urn:ngsi-ld:csr:existing",
             "exclusive",
-            json!([exclusive_info(V1, &[SPEED])]),
+            &json!([exclusive_info(V1, &[SPEED])]),
         )]);
         let probe = FixedProbe::new(EntityPresence::Present, EntityPresence::Present);
         let entry = info(exclusive_info(V1, &[SPEED]));
@@ -399,6 +399,6 @@ mod tests {
                 .is_ok()
         );
         assert!(check_conflicts(&store, &probe, ForwardingMode::Auxiliary, &[entry], None).await.is_ok());
-        assert_eq!(probe.asked(), [] as [std::string::String; 0]);
+        assert_eq!(probe.asked(), [] as [String; 0]);
     }
 }

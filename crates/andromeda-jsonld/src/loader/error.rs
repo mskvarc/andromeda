@@ -70,11 +70,7 @@ impl From<&LoaderError> for JsonLdError {
         match &error.kind {
             LoaderErrorKind::FetchDisabled => JsonLdError::ContextFetchDisabled { url },
             LoaderErrorKind::Http(status) => JsonLdError::ContextHttp { url, status: *status },
-            LoaderErrorKind::Request(message) => JsonLdError::ContextLoad {
-                url,
-                message: message.clone(), // clone: the caller keeps the LoaderError
-            },
-            LoaderErrorKind::Cache(message) => JsonLdError::ContextLoad {
+            LoaderErrorKind::Request(message) | LoaderErrorKind::Cache(message) => JsonLdError::ContextLoad {
                 url,
                 message: message.clone(), // clone: the caller keeps the LoaderError
             },
@@ -145,7 +141,7 @@ mod tests {
             | JsonLdError::Compaction(_)
             | JsonLdError::InvalidIri(_)
             | JsonLdError::InvalidDocument(_)
-            | JsonLdError::Json(_)) => unreachable!("expected ContextHttp, got {other}"),
+            | JsonLdError::Json(_)) => panic!("expected ContextHttp, got {other}"),
         }
     }
 }

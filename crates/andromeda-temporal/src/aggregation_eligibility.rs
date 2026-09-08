@@ -5,7 +5,10 @@
 use crate::port::history_reader::RecordedValueKind;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName};
 use andromeda_ngsi_ld_request::error::ParameterError;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    hash::BuildHasher,
+};
 
 /// Check every requested attribute against every requested method.
 ///
@@ -18,11 +21,15 @@ use std::collections::{HashMap, HashSet};
 ///
 /// [`ParameterError::AggregationIneligible`] naming the first attribute and
 /// method the tables do not admit.
-pub fn ensure_aggregation_eligible(
+pub fn ensure_aggregation_eligible<MapHasher, SetHasher>(
     attributes: &[AttributeName],
     methods: &[AggrMethod],
-    recorded: &HashMap<AttributeName, HashSet<RecordedValueKind>>,
-) -> Result<(), ParameterError> {
+    recorded: &HashMap<AttributeName, HashSet<RecordedValueKind, SetHasher>, MapHasher>,
+) -> Result<(), ParameterError>
+where
+    MapHasher: BuildHasher,
+    SetHasher: BuildHasher,
+{
     for attribute in attributes {
         for method in methods {
             let eligible = match recorded.get(attribute) {

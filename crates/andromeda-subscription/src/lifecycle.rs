@@ -65,6 +65,12 @@ fn validate_endpoint(payload: &Value, validator: &dyn SubscriptionEndpointValida
 /// Validates whether endpoint configuration can be served by the selected delivery bindings.
 pub trait SubscriptionEndpointValidator: Send + Sync + 'static {
     /// Validate one endpoint URL and its optional notifier metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubscriptionError::Validation`] when no delivery binding this
+    /// broker was built with serves the endpoint's scheme, or when the binding
+    /// that does cannot honour the `notifierInfo` the endpoint carries.
     fn validate(&self, endpoint: &Url, notifier_info: Option<&[KeyValuePair]>) -> Result<(), SubscriptionError>;
 }
 
@@ -114,7 +120,13 @@ pub trait SubscriptionVariant: Send + Sync {
         'life2: 'async_trait,
         Self: 'async_trait;
 
-    /// Additional update-specific validation (e.g. expiresAt future check).
+    /// Additional update-specific validation (e.g. `expiresAt` future check).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubscriptionError::Validation`] when the fragment breaks a
+    /// rule that holds for this variant alone, such as an `expiresAt` that is
+    /// already in the past.
     fn validate_update_extra(&self, payload: &Value) -> Result<(), SubscriptionError>;
 
     /// Select how this subscription variant handles the `datasetId` field.
@@ -206,6 +218,18 @@ where
     /// companion copy back to a context source it already passed through, so the
     /// forwarding hook excludes their registrations. A local request supplies an
     /// empty slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubscriptionError::Validation`] when the payload does not
+    /// satisfy clause 5.8.1, when its `id` is not a URI, or when the endpoint
+    /// names a transport this broker cannot deliver over;
+    /// [`SubscriptionError::AlreadyExists`] when the requested `id` is taken;
+    /// [`SubscriptionError::JsonLd`] when the request `@context` or the
+    /// subscription's own `jsonldContext` cannot be resolved or the terms
+    /// cannot be expanded; [`SubscriptionError::Persistence`] when the store
+    /// rejects the write. A failing forwarding hook is logged rather than
+    /// returned: the local subscription is created either way.
     pub async fn create(
         &self,
         target: &ContextTarget,
@@ -262,6 +286,12 @@ where
     ///
     /// The store-assigned key is dropped here: every caller of this method
     /// renders or edits the resource, and the resource is addressed by its URI.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubscriptionError::NotFound`] when `target` holds no
+    /// subscription under `id`, and [`SubscriptionError::Persistence`] when
+    /// the store cannot be read.
     pub async fn get(&self, target: &ContextTarget, id: &Uri) -> Result<Subscription, SubscriptionError> {
         self.repo
             .get(target, id)
@@ -271,12 +301,25 @@ where
     }
 
     /// Retrieve a subscription and serialize it for an HTTP response.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubscriptionError::NotFound`] when `target` holds no
+    /// subscription under `id`, [`SubscriptionError::Persistence`] when the
+    /// store cannot be read, and [`SubscriptionError::JsonLd`] when `context`
+    /// cannot be resolved or the resource cannot be compacted against it.
     pub async fn get_for_response(&self, target: &ContextTarget, id: &Uri, context: &ContextSpec) -> Result<Value, SubscriptionError> {
         let subscription = self.get(target, id).await?;
         self.variant.serialize_for_response(&subscription, context).await
     }
 
     /// List subscriptions with pagination and serialize them for an HTTP response.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubscriptionError::Persistence`] when the store cannot be
+    /// read, and [`SubscriptionError::JsonLd`] when `context` cannot be
+    /// resolved or one of the listed resources cannot be compacted against it.
     pub async fn list_for_response(
         &self,
         target: &ContextTarget,
@@ -293,6 +336,17 @@ where
     }
 
     /// Update an existing subscription with the given fragment payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubscriptionError::Validation`] when the fragment does not
+    /// satisfy clause 5.8.2 or names an endpoint this broker cannot deliver
+    /// over; [`SubscriptionError::NotFound`] when `target` holds no
+    /// subscription under `id`; [`SubscriptionError::JsonLd`] when the request
+    /// `@context` or the subscription's own `jsonldContext` cannot be resolved
+    /// or the terms cannot be expanded; [`SubscriptionError::Persistence`]
+    /// when the store rejects the write. A failing forwarding hook is logged
+    /// rather than returned: the local subscription is updated either way.
     pub async fn update(
         &self,
         target: &ContextTarget,
@@ -341,6 +395,13 @@ where
     }
 
     /// Delete a subscription by its identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubscriptionError::NotFound`] when `target` holds no
+    /// subscription under `id`, and [`SubscriptionError::Persistence`] when
+    /// the store rejects the delete. A failing forwarding hook is logged
+    /// rather than returned: the local subscription is deleted either way.
     pub async fn delete(&self, target: &ContextTarget, id: &Uri) -> Result<(), SubscriptionError> {
         let deleted = self.repo.delete(target, id).await?;
         if deleted == 0 {

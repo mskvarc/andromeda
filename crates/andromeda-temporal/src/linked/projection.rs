@@ -287,7 +287,7 @@ mod tests {
 
         let nested = result.get(&uri("urn:ngsi-ld:Slot:1")).expect("nested projection recorded");
         pretty_assertions::assert_eq!(nested.pick, vec![leaf("category")]);
-        assert!(nested.omit.is_empty());
+        pretty_assertions::assert_eq!(nested.omit, Vec::<ProjectionTerm>::new());
     }
 
     /// A candidate with no recorded attribute association contributes no
@@ -387,7 +387,7 @@ mod tests {
     fn term_iri(term: &ProjectionTerm) -> &IriBuf {
         match term {
             ProjectionTerm::Attribute { iri, .. } => iri,
-            ProjectionTerm::Id | ProjectionTerm::Type | ProjectionTerm::Scope => unreachable!("test terms are always attribute leaves"),
+            ProjectionTerm::Id | ProjectionTerm::Type | ProjectionTerm::Scope => panic!("test terms are always attribute leaves"),
         }
     }
 

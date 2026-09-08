@@ -12,6 +12,14 @@ use tokio::{net::TcpListener, sync::oneshot, time::timeout};
 use tower::Service;
 
 /// Bind the configured listener and serve until the supplied shutdown future resolves.
+///
+/// # Errors
+///
+/// Returns [`HttpServerError::Bind`] when the configured address cannot be bound,
+/// [`HttpServerError::LocalAddress`] when the bound listener's effective address cannot be read,
+/// [`HttpServerError::Serve`] when connection acceptance or serving fails, and
+/// [`HttpServerError::DrainDeadlineExceeded`] when accepted connections are still in flight once
+/// the configured graceful-drain deadline has passed.
 pub async fn serve<S, F>(config: &ServerConfig, service: S, shutdown: F) -> Result<(), HttpServerError>
 where
     S: Service<Request, Response = Response, Error = Infallible> + Clone + Send + 'static,
@@ -26,6 +34,12 @@ where
 }
 
 /// Serve an already bound listener, allowing composition and tests to control its address.
+///
+/// # Errors
+///
+/// Returns [`HttpServerError::Serve`] when connection acceptance or serving fails, and
+/// [`HttpServerError::DrainDeadlineExceeded`] when accepted connections are still in flight once
+/// `drain_deadline` has passed.
 pub async fn serve_listener<S, F>(listener: TcpListener, service: S, shutdown: F, drain_deadline: Duration) -> Result<(), HttpServerError>
 where
     S: Service<Request, Response = Response, Error = Infallible> + Clone + Send + 'static,

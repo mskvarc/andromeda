@@ -39,6 +39,15 @@ pub struct CsrQuery {
 /// filter, geoquery, scope query, dataset identifiers, encountered sources and
 /// temporal window are matched against the registrations' own members (clause
 /// 5.10.2.4).
+///
+/// # Errors
+///
+/// Returns [`RenderError::ReferenceGeometryEncoding`] when the geoquery's
+/// reference geometry has no EWKB spelling the store can bind, and
+/// [`RenderError::Query`] when `georel=near` names neither `maxDistance` nor
+/// `minDistance`, which clause 4.10 requires at least one of. A discovery
+/// carries no ordering terms, so no other fragment of the statement can fail
+/// to render.
 pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<CsrQuery, RenderError> {
     let condition = build_csr_conditions(query)?;
 
@@ -133,7 +142,7 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
     // Clause 4.9: the context source filter reads the registration's own
     // Context Source Properties.
     if let Some(expr) = &query.csf_expr {
-        condition = condition.add(csr_expr_to_condition(expr)?);
+        condition = condition.add(csr_expr_to_condition(expr));
     }
 
     // Geo filter: a registration that declares no location still matches
@@ -229,14 +238,14 @@ mod tests {
 
     /// A `GeoJSON` point reference geometry, for tests that vary the relation
     /// rather than the geometry.
-    fn point(coordinates: serde_json::Value) -> Geometry {
+    fn point(coordinates: &serde_json::Value) -> Geometry {
         Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": coordinates })).expect("point parses")
     }
 
     fn geo_query(geoproperty: &str) -> GeoQuery {
         GeoQuery {
             georel: GeoRel::Within,
-            geometry: point(serde_json::json!([1.0, 2.0])),
+            geometry: point(&serde_json::json!([1.0, 2.0])),
             geoproperty: geoproperty.parse().expect("valid attribute name"),
         }
     }

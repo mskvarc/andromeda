@@ -44,7 +44,7 @@ async fn an_attribute_family_the_specification_leaves_unitless_cannot_carry_a_un
     for (label, clause, attribute) in unitless_fixtures() {
         let id = scope.id(&format!("Device:unitless-{label}"));
         let created = client
-            .post_entity(&entity_with_unitless_attribute(&id, attribute))
+            .post_entity(&entity_with_unitless_attribute(&id, &attribute))
             .send()
             .await
             .expect("create entity request failed");
@@ -86,7 +86,7 @@ async fn a_unit_on_a_unitless_family_is_refused_as_bad_request_data() {
     for (label, clause, attribute) in unitless_fixtures() {
         let id = scope.id(&format!("Device:unitless-status-{label}"));
         let created = client
-            .post_entity(&entity_with_unitless_attribute(&id, attribute))
+            .post_entity(&entity_with_unitless_attribute(&id, &attribute))
             .send()
             .await
             .expect("create entity request failed");

@@ -62,6 +62,11 @@ pub fn resolve_response_format(format: Option<ResponseFormat>, options: Option<&
 /// understand. `format`
 /// must name a defined representation and each comma-separated `options` token
 /// must be one the broker defines.
+///
+/// # Errors
+///
+/// Returns [`ParameterError::OptionsInvalid`] naming the first `options` token
+/// the broker does not define.
 pub fn validate_representation_params(_format: Option<ResponseFormat>, options: Option<&str>) -> Result<(), ParameterError> {
     if let Some(opts) = options {
         for opt in opts.split(',').map(str::trim) {

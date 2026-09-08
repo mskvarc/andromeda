@@ -64,7 +64,7 @@ impl EntityReader for UnusedStore {
 #[async_trait]
 impl EntityQueryStore for UnusedStore {
     fn profile(&self) -> &StorageProfile {
-        unreachable!("the read-path unit tests never inspect the store's profile")
+        panic!("the read-path unit tests never inspect the store's profile")
     }
 
     async fn query_compiled(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Value>, EntityError> {

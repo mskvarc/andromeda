@@ -68,12 +68,12 @@ async fn distop_entity_map_broad_request_to_each_matching_source() {
     assert_status(&response, 201);
     assert!(entity_map_header(&response).is_some(), "an entity map is created and its id returned");
     assert_eq!(
-        first_mock.get_count(Method::GET, FORWARDED_ENTITIES).await,
+        first_mock.get_count(Method::GET, FORWARDED_ENTITIES),
         1,
         "the first source gets one broad query"
     );
     assert_eq!(
-        second_mock.get_count(Method::GET, FORWARDED_ENTITIES).await,
+        second_mock.get_count(Method::GET, FORWARDED_ENTITIES),
         1,
         "the second source gets one broad query"
     );
@@ -272,7 +272,7 @@ async fn distop_entity_map_retrieve_records_holding_sources_single_instance() {
         .expect("map query");
     assert_status(&created, 201);
     let map_id = entity_map_header(&created).expect("map id returned");
-    let other_after_create = other_mock.get_total_count().await;
+    let other_after_create = other_mock.get_total_count();
 
     let reused = topology
         .broker(BrokerRole::A)
@@ -285,7 +285,7 @@ async fn distop_entity_map_retrieve_records_holding_sources_single_instance() {
         .expect("reuse");
     assert_status(&reused, 200);
     assert_eq!(
-        other_mock.get_total_count().await,
+        other_mock.get_total_count(),
         other_after_create,
         "the non-holding source is not contacted on reuse"
     );
@@ -368,7 +368,7 @@ async fn distop_entity_map_reused_when_field_passed_back() {
     assert_status(&created, 201);
     let map_id = entity_map_header(&created).expect("map id returned");
     let _broad = mock.next_request(FORWARD_WAIT).await;
-    let count_after_create = mock.get_total_count().await;
+    let count_after_create = mock.get_total_count();
 
     let reused = topology
         .broker(BrokerRole::A)
@@ -381,10 +381,7 @@ async fn distop_entity_map_reused_when_field_passed_back() {
         .expect("reuse");
     assert_status(&reused, 200);
     assert_eq!(entity_map_header(&reused).as_deref(), Some(map_id.as_str()), "reusing the map mints no new map");
-    assert!(
-        mock.get_total_count().await > count_after_create,
-        "the mapped source is consulted under the map"
-    );
+    assert!(mock.get_total_count() > count_after_create, "the mapped source is consulted under the map");
     let forwarded = mock.next_request(FORWARD_WAIT).await;
     assert!(
         forwarded_header(&forwarded, "ngsild-entitymap").is_some(),
@@ -528,7 +525,7 @@ async fn distop_entity_map_expired_or_inaccessible_creates_new() {
         "an unknown map yields a fresh map rather than an error: {}",
         response.status
     );
-    assert!(mock.get_total_count().await >= 1, "the broad request is re-issued for a fresh map");
+    assert!(mock.get_total_count() >= 1, "the broad request is re-issued for a fresh map");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

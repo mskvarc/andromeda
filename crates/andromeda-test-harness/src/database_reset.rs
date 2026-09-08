@@ -13,6 +13,10 @@ use tokio::time::sleep;
 pub const RESET_TENANT_SQL: &str = include_str!("../sql/reset-tenant.sql");
 
 /// Reset every mutable tenant table while preserving the cached `attribute_names` and `entity_type_names` dictionaries, the `schema_metadata` contract row, and the seeded unit-code catalogue.
+///
+/// # Errors
+///
+/// Returns [`DatabaseResetError::Isolation`] when the exclusive lease no longer holds its connection, and [`DatabaseResetError::Sqlx`] when the reset script fails.
 pub async fn reset_tenant(lease: &mut SerializedLease) -> Result<(), DatabaseResetError> {
     let connection = lease.connection()?;
     connection.execute(RESET_TENANT_SQL).await.map_err(DatabaseResetError::Sqlx)?;
@@ -25,6 +29,10 @@ pub async fn reset_tenant(lease: &mut SerializedLease) -> Result<(), DatabaseRes
 /// because no other suite ever connects to it. The reset therefore runs on the
 /// suite's own pool instead of the exclusive lease the shared test database
 /// requires, and preserves exactly the same migration-owned relations.
+///
+/// # Errors
+///
+/// Returns [`DatabaseResetError::Sqlx`] when the reset script fails for any reason other than a deadlock, or when it still deadlocks after the bounded deadlock retries are exhausted.
 pub async fn reset_owned_tenant(pool: &PgPool) -> Result<(), DatabaseResetError> {
     let mut attempt = 0;
     loop {
@@ -87,6 +95,10 @@ const PREFIX_DELETES: &[&str] = &[
 ];
 
 /// Delete every row discoverably owned by one isolated identifier prefix.
+///
+/// # Errors
+///
+/// Returns [`DatabaseResetError::Sqlx`] when the transaction cannot be opened, when any prefix-scoped delete fails, or when the commit fails.
 pub async fn cleanup_prefix(pool: &PgPool, identifiers: &TestIdentifiers) -> Result<(), DatabaseResetError> {
     let like = format!("{}%", identifiers.prefix());
     let mut transaction = pool.begin().await.map_err(DatabaseResetError::Sqlx)?;
@@ -140,12 +152,10 @@ mod tests {
     /// The relation list of the reset script's `TRUNCATE`, without the header
     /// comment that explains which relations are deliberately absent from it.
     fn truncated_relations() -> &'static str {
-        let (_, statement) = RESET_TENANT_SQL
-            .split_once("TRUNCATE")
-            .unwrap_or_else(|| unreachable!("the reset script truncates"));
+        let (_, statement) = RESET_TENANT_SQL.split_once("TRUNCATE").unwrap_or_else(|| panic!("the reset script truncates"));
         let (relations, _) = statement
             .split_once("RESTART IDENTITY")
-            .unwrap_or_else(|| unreachable!("the truncation restarts identities"));
+            .unwrap_or_else(|| panic!("the truncation restarts identities"));
         relations
     }
 
@@ -205,12 +215,12 @@ mod tests {
         let catalogue = PREFIX_DELETES
             .iter()
             .position(|statement| statement.starts_with("DELETE FROM temporal_entities"))
-            .unwrap_or_else(|| unreachable!("the catalogue is deleted"));
+            .unwrap_or_else(|| panic!("the catalogue is deleted"));
         for relation in ["DELETE FROM attribute_history", "DELETE FROM scope_history"] {
             let dependent = PREFIX_DELETES
                 .iter()
                 .position(|statement| statement.starts_with(relation))
-                .unwrap_or_else(|| unreachable!("{relation} is deleted"));
+                .unwrap_or_else(|| panic!("{relation} is deleted"));
             assert!(dependent < catalogue, "{relation} must run before the catalogue it reads");
         }
     }

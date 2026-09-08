@@ -46,7 +46,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("geo property");
         let Attribute::GeoProperty(property) = attr else {
-            unreachable!("expected GeoProperty");
+            panic!("expected GeoProperty");
         };
         assert!(property.previous_value.is_some());
     }
@@ -60,7 +60,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("geo property");
         let Attribute::GeoProperty(property) = attr else {
-            unreachable!("expected GeoProperty");
+            panic!("expected GeoProperty");
         };
         let expanded = property.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");

@@ -37,7 +37,7 @@ async fn emq_returns_candidate_ids_not_entities() {
     let created = create_entity_map(topology.broker(BrokerRole::A).client(), "type=Vehicle").await;
     assert_status(&created, 201);
     let map = json_body(&created)["entityMap"].clone();
-    let entry = map.get(&entity_id).unwrap_or_else(|| unreachable!("the created entity is a candidate"));
+    let entry = map.get(&entity_id).unwrap_or_else(|| panic!("the created entity is a candidate"));
     assert!(
         entry.is_array(),
         "each candidate maps an entity id to a list of holders, not to an entity: {entry}"

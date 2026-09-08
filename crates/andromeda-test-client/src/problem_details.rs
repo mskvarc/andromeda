@@ -5,6 +5,14 @@ use serde_json::Value;
 use thiserror::Error;
 
 /// Validate the required Problem Details fields and expected NGSI-LD error type.
+///
+/// # Errors
+///
+/// Returns [`ProblemDetailsAssertionError::NotObject`] when `body` is not a JSON object,
+/// [`ProblemDetailsAssertionError::MissingType`] or [`ProblemDetailsAssertionError::TypeNotString`] when `type` is absent
+/// or is not a string, [`ProblemDetailsAssertionError::TypeMismatch`] when `type` differs from `expected_type`, and
+/// [`ProblemDetailsAssertionError::MissingTitle`] or [`ProblemDetailsAssertionError::TitleNotString`] when `title` is
+/// absent or is not a string.
 pub fn validate_problem_details(body: &Value, expected_type: &Iri<&str>) -> Result<(), ProblemDetailsAssertionError> {
     let object = body.as_object().ok_or(ProblemDetailsAssertionError::NotObject)?;
     let actual_type = object
@@ -27,6 +35,12 @@ pub fn validate_problem_details(body: &Value, expected_type: &Iri<&str>) -> Resu
 }
 
 /// Validate an entity object's identifier.
+///
+/// # Errors
+///
+/// Returns [`EntityAssertionError::NotObject`] when `body` is not a JSON object,
+/// [`EntityAssertionError::MissingId`] or [`EntityAssertionError::IdNotString`] when `id` is absent or is not a string,
+/// and [`EntityAssertionError::IdMismatch`] when `id` differs from `expected_id`.
 pub fn validate_entity_id(body: &Value, expected_id: &Iri<&str>) -> Result<(), EntityAssertionError> {
     let actual = body
         .as_object()

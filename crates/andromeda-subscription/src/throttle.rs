@@ -4,25 +4,27 @@
 //! policy layer converts the subscription's configured throttling interval
 //! into the earliest `last_notification` that still permits a new slot.
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
+use std::time::Duration;
 
 /// Compute the earliest `last_notification` timestamp that still allows a new
 /// notification slot to be claimed, given the subscription's throttling window.
 ///
 /// Returns `None` when throttling is disabled (no ceiling: any prior
-/// `last_notification` is acceptable).
+/// `last_notification` is acceptable), when the configured window is not a
+/// positive finite number of seconds, and when the window is too wide to be
+/// subtracted from `now`.
 ///
-/// Fractional-second throttling values are converted into nanoseconds before
-/// building the [`Duration`], so sub-second throttling (e.g. `0.5`) stays
-/// precise.
+/// The window is built from the fractional seconds themselves rather than from
+/// a whole number of them, so sub-second throttling (e.g. `0.5`) stays precise.
 #[must_use]
 pub fn ceiling_for_throttle(now: DateTime<Utc>, throttling_secs: Option<f64>) -> Option<DateTime<Utc>> {
     let secs = throttling_secs?;
     if !secs.is_finite() || secs <= 0.0 {
         return None;
     }
-    let nanos = (secs * 1_000_000_000.0).round() as i64;
-    Some(now - Duration::nanoseconds(nanos))
+    let window = TimeDelta::from_std(Duration::try_from_secs_f64(secs).ok()?).ok()?;
+    now.checked_sub_signed(window)
 }
 
 #[cfg(test)]

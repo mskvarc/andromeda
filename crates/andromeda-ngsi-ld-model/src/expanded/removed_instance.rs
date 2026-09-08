@@ -40,7 +40,7 @@ pub fn removed_attribute_instances(previous: &Value, replacement: &Value) -> Vec
 
 #[cfg(test)]
 mod tests {
-    use crate::expanded::removed_instance::removed_attribute_instances;
+    use crate::expanded::removed_instance::{RemovedAttributeInstance, removed_attribute_instances};
     use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
     use serde_json::{Value, json};
 
@@ -82,7 +82,7 @@ mod tests {
             "@id": "urn:ngsi-ld:Vehicle:1",
             "https://example.com/a": [property(1)],
         }]);
-        assert!(removed_attribute_instances(&payload, &payload).is_empty());
+        pretty_assertions::assert_eq!(removed_attribute_instances(&payload, &payload), Vec::<RemovedAttributeInstance>::new());
     }
 
     #[test]

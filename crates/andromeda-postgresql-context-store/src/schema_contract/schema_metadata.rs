@@ -52,6 +52,14 @@ use sqlx::{PgPool, Row};
 /// a database whose `schema_metadata` row cannot be written or does not
 /// survive into a refusal here rather than into a failure on the first query
 /// that depends on the new shape.
+///
+/// # Errors
+///
+/// Returns [`SchemaContractError`] when the server or its extensions are below
+/// the floor the schema depends on, when the stamp cannot be read or written,
+/// when a freshly written stamp does not read back, or when the stamp the
+/// tenant carries names a different schema version or migration set than this
+/// binary requires.
 pub async fn ensure_schema_contract(pool: &PgPool, contract: &SchemaContract) -> Result<(), SchemaContractError> {
     verify_server_requirements(pool).await?;
 
@@ -146,6 +154,14 @@ async fn applied_migrations_digest_between(
 ///
 /// Unlike [`ensure_schema_contract`], this never writes: an absent stamp is
 /// refused rather than filled in.
+///
+/// # Errors
+///
+/// Returns [`SchemaContractError`] when the server or its extensions are below
+/// the floor the schema depends on, when the stamp cannot be read,
+/// [`SchemaContractError::Unstamped`] when the tenant carries no stamp at all,
+/// and a version or digest mismatch when the stamp names a different schema
+/// version or migration set than this binary requires.
 pub async fn verify_schema_contract(pool: &PgPool, contract: &SchemaContract) -> Result<(), SchemaContractError> {
     verify_server_requirements(pool).await?;
 
@@ -348,7 +364,7 @@ mod tests {
         };
         match SchemaContract::of(&migrator) {
             Ok(contract) => contract,
-            Err(error) => unreachable!("the fixture set has a contract: {error}"),
+            Err(error) => panic!("the fixture set has a contract: {error}"),
         }
     }
 
@@ -382,7 +398,7 @@ mod tests {
                 assert_eq!(expected, contract.version(), "the refusal must name what the binary requires");
                 assert_eq!(found, behind_contract.version(), "the refusal must name what the tenant carries");
             }
-            other => unreachable!("a version mismatch must refuse naming both versions: {other:?}"),
+            other => panic!("a version mismatch must refuse naming both versions: {other:?}"),
         }
     }
 
@@ -405,7 +421,7 @@ mod tests {
                 assert_eq!(expected, contract.digest(), "the refusal must name the digest the binary requires");
                 assert_eq!(found, other_contract.digest(), "the refusal must name the digest the tenant carries");
             }
-            other => unreachable!("a digest mismatch must refuse naming both digests: {other:?}"),
+            other => panic!("a digest mismatch must refuse naming both digests: {other:?}"),
         }
     }
 

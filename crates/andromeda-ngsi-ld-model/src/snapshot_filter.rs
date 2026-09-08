@@ -158,6 +158,18 @@ impl From<SnapshotPriorityParseError> for SnapshotQParseError {
 }
 
 /// Parse a `q` expression into a typed [`SnapshotPurgeFilter`].
+///
+/// # Errors
+///
+/// Returns [`SnapshotQParseError::Empty`] when the expression is blank or holds
+/// only separators, [`SnapshotQParseError::MixedConjunctions`] when it joins
+/// terms with both `;` and `|`, [`SnapshotQParseError::MissingOperator`] for a
+/// term carrying no recognised comparison,
+/// [`SnapshotQParseError::UnknownField`] for a member the `Snapshot` resource
+/// does not have, [`SnapshotQParseError::OperatorNotSupported`] for an
+/// ordering comparison on a member that has no ordering, and
+/// [`SnapshotQParseError::InvalidValue`] when the value does not parse as the
+/// member's type.
 pub fn parse_snapshot_q(input: &str) -> Result<SnapshotPurgeFilter, SnapshotQParseError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -424,7 +436,7 @@ mod tests {
         match &filter.terms[0].value {
             SnapshotValue::Endpoint(url) => pretty_assertions::assert_eq!(url.as_str(), "https://example.org/sink"),
             other @ (SnapshotValue::Id(_) | SnapshotValue::Type(_) | SnapshotValue::Priority(_)) => {
-                panic!("unexpected value: {:?}", other)
+                panic!("unexpected value: {other:?}")
             }
         }
     }
@@ -435,7 +447,7 @@ mod tests {
         match &filter.terms[0].value {
             SnapshotValue::Id(id) => pretty_assertions::assert_eq!(id.as_str(), "urn:ngsi-ld:Snapshot:abc"),
             other @ (SnapshotValue::Type(_) | SnapshotValue::Priority(_) | SnapshotValue::Endpoint(_)) => {
-                panic!("unexpected value: {:?}", other)
+                panic!("unexpected value: {other:?}")
             }
         }
     }

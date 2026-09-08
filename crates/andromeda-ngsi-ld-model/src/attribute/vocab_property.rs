@@ -45,7 +45,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("vocab property");
         let Attribute::VocabProperty(property) = attr else {
-            unreachable!("expected VocabProperty");
+            panic!("expected VocabProperty");
         };
         assert!(matches!(property.vocab, OneOrMany::Many(_)));
         assert!(property.previous_vocab.is_some());
@@ -60,7 +60,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("vocab property");
         let Attribute::VocabProperty(property) = attr else {
-            unreachable!("expected VocabProperty");
+            panic!("expected VocabProperty");
         };
         let expanded = property.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");

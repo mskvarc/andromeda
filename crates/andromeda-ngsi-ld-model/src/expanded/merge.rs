@@ -171,7 +171,7 @@ fn merge_member(base: &mut Value, patch: &Value) {
             merge_node(&mut base_arr[0], &patch_arr[0]);
         }
         // clone: nothing to recurse into, so the patch member replaces the base.
-        (Some(_) | None, Some(_)) | (Some(_) | None, None) => *base = patch.clone(),
+        (Some(_) | None, Some(_) | None) => *base = patch.clone(),
     }
 }
 

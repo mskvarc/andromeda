@@ -80,7 +80,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_ngsi_ld_model::{entity_info::EntityInfo, registration::RegistrationInfo};
 use andromeda_ngsi_ld_query::pattern::Pattern;
 use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
-use std::collections::HashMap;
+use std::{collections::HashMap, hash::BuildHasher};
 
 /// The type-axis sentinel stored where a row admits every type.
 const ANY_TYPE: &str = "*";
@@ -260,7 +260,10 @@ pub fn projected_attribute_names(information: &[RegistrationInfo]) -> Vec<Attrib
 /// names that did resolve, which would drop a registration that genuinely serves
 /// the missing one.
 #[must_use]
-pub fn derive_routing<'info>(information: &'info [RegistrationInfo], ids: &HashMap<AttributeName, AttributeNameId>) -> RegistrationRouting<'info> {
+pub fn derive_routing<'info, S: BuildHasher>(
+    information: &'info [RegistrationInfo],
+    ids: &HashMap<AttributeName, AttributeNameId, S>,
+) -> RegistrationRouting<'info> {
     let mut rows = Vec::new();
     for entry in information {
         match entry_rows(entry, ids) {
@@ -276,7 +279,10 @@ pub fn derive_routing<'info>(information: &'info [RegistrationInfo], ids: &HashM
 
 /// The rows one `information` entry contributes, or `None` where the entry
 /// constrains no axis and so makes the whole registration unconstrained.
-fn entry_rows<'info>(entry: &'info RegistrationInfo, ids: &HashMap<AttributeName, AttributeNameId>) -> Option<Vec<RegistrationInformationRow<'info>>> {
+fn entry_rows<'info, S: BuildHasher>(
+    entry: &'info RegistrationInfo,
+    ids: &HashMap<AttributeName, AttributeNameId, S>,
+) -> Option<Vec<RegistrationInformationRow<'info>>> {
     let attributes = entry_attributes(entry, ids);
     let selectors = entry.entities.as_deref().filter(|selectors| !selectors.is_empty());
 
@@ -323,7 +329,7 @@ enum DeclaredNames {
 }
 
 /// The attribute routing of an entry's `propertyNames` and `relationshipNames`.
-fn entry_attributes(entry: &RegistrationInfo, ids: &HashMap<AttributeName, AttributeNameId>) -> AttributeRouting {
+fn entry_attributes<S: BuildHasher>(entry: &RegistrationInfo, ids: &HashMap<AttributeName, AttributeNameId, S>) -> AttributeRouting {
     let properties = interned_names(entry.property_names.as_deref(), ids);
     let relationships = interned_names(entry.relationship_names.as_deref(), ids);
     match (properties, relationships) {
@@ -345,7 +351,7 @@ fn declared_keys(names: DeclaredNames) -> Vec<AttributeNameId> {
 }
 
 /// The dictionary keys of a declared attribute-name list.
-fn interned_names(names: Option<&[AttributeName]>, ids: &HashMap<AttributeName, AttributeNameId>) -> DeclaredNames {
+fn interned_names<S: BuildHasher>(names: Option<&[AttributeName]>, ids: &HashMap<AttributeName, AttributeNameId, S>) -> DeclaredNames {
     match names.filter(|names| !names.is_empty()) {
         None => DeclaredNames::Absent,
         Some(names) => match names.iter().map(|name| ids.get(name).copied()).collect() {
@@ -416,7 +422,7 @@ mod tests {
 
     fn rows_of<'info>(information: &'info [RegistrationInfo], ids: &HashMap<AttributeName, AttributeNameId>) -> Vec<RegistrationInformationRow<'info>> {
         match derive_routing(information, ids) {
-            RegistrationRouting::Unconstrained => unreachable!("the fixture constrains at least one axis"),
+            RegistrationRouting::Unconstrained => panic!("the fixture constrains at least one axis"),
             RegistrationRouting::Selective(rows) => rows,
         }
     }
@@ -427,7 +433,7 @@ mod tests {
 
     fn type_names<'info>(row: &RegistrationInformationRow<'info>) -> Vec<&'info str> {
         match &row.types {
-            TypeRouting::Any => unreachable!("the fixture names a type"),
+            TypeRouting::Any => panic!("the fixture names a type"),
             TypeRouting::Named(names) => names.iter().map(|name| name.as_str()).collect(),
         }
     }
@@ -637,6 +643,6 @@ mod tests {
     #[test]
     fn a_registration_without_declared_names_interns_nothing() {
         let information = vec![entry(Some(vec![selector("Vehicle")]), None, None)];
-        assert_eq!(projected_attribute_names(&information), [] as [andromeda_ngsi_ld_lexicon::attribute_name::AttributeName; 0]);
+        assert_eq!(projected_attribute_names(&information), [] as [AttributeName; 0]);
     }
 }

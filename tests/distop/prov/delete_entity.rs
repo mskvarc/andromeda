@@ -77,7 +77,7 @@ async fn delete_entity_registration_matches_entity_absent_not_404() {
         "a matching registration forwards rather than 404: {}",
         String::from_utf8_lossy(&deleted.body)
     );
-    assert_eq!(mock.get_count(Method::DELETE, &forward_path).await, 1, "the delete is forwarded once");
+    assert_eq!(mock.get_count(Method::DELETE, &forward_path), 1, "the delete is forwarded once");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -143,7 +143,7 @@ async fn delete_entity_op_unsupported_returns_409() {
     let deleted = client.delete_entity(&entity_id).await.expect("delete entity");
     assert_status(&deleted, 409);
     assert_problem_details(&deleted, CONFLICT);
-    assert_eq!(mock.get_count(Method::DELETE, &forward_path).await, 0, "no forward on an unsupported operation");
+    assert_eq!(mock.get_count(Method::DELETE, &forward_path), 0, "no forward on an unsupported operation");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -172,7 +172,7 @@ async fn delete_entity_inclusive_forwards_and_removes_local() {
 
     let deleted = client.delete_entity(&entity_id).await.expect("delete entity");
     assert_status(&deleted, 204);
-    assert_eq!(mock.get_count(Method::DELETE, &forward_path).await, 1, "the delete is forwarded once");
+    assert_eq!(mock.get_count(Method::DELETE, &forward_path), 1, "the delete is forwarded once");
 
     let local = client
         .get_entity(&entity_id, "local=true", "application/ld+json", None)

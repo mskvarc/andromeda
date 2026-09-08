@@ -220,7 +220,7 @@ mod tests {
         .expect("valid subscription")
     }
 
-    fn registration(information: serde_json::Value) -> ContextSourceRegistration {
+    fn registration(information: &serde_json::Value) -> ContextSourceRegistration {
         serde_json::from_value(json!({
             "id": "urn:ngsi-ld:ContextSourceRegistration:b",
             "type": "ContextSourceRegistration",
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn the_copy_is_narrowed_to_the_registration_and_notifies_this_broker() {
-        let registration = registration(json!([{"entities": [{"type": VEHICLE}], "propertyNames": [SPEED]}]));
+        let registration = registration(&json!([{"entities": [{"type": VEHICLE}], "propertyNames": [SPEED]}]));
         let copy = ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Keep);
         let document = copy.document;
         pretty_assertions::assert_eq!(document["id"], json!("urn:ngsi-ld:Subscription:forwarded-1"));
@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn split_entities_strip_the_filters() {
-        let registration = registration(json!([{"entities": [{"type": VEHICLE}]}]));
+        let registration = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         let copy = ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Strip);
         let document = copy.document;
         assert!(document.get("q").is_none());
@@ -274,7 +274,7 @@ mod tests {
     /// of the three the subscription set.
     #[test]
     fn the_reduce_matrix_keeps_filters_by_carriage_and_never_the_projection_members() {
-        let registration = registration(json!([{"entities": [{"type": VEHICLE}], "propertyNames": [SPEED]}]));
+        let registration = registration(&json!([{"entities": [{"type": VEHICLE}], "propertyNames": [SPEED]}]));
         let projections = [
             json!({"attributes": [SPEED, COLOUR]}),
             json!({"pick": [SPEED]}),
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn the_update_fragment_drops_the_identifier_and_type() {
-        let registration = registration(json!([{"entities": [{"type": VEHICLE}]}]));
+        let registration = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         let fragment = ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Keep).as_fragment();
         assert!(fragment.get("id").is_none());
         assert!(fragment.get("type").is_none());
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn a_registration_that_covers_none_of_the_selectors_yields_no_entities_member() {
-        let registration = registration(json!([{"entities": [{"type": "https://example.org/Sensor"}]}]));
+        let registration = registration(&json!([{"entities": [{"type": "https://example.org/Sensor"}]}]));
         let document = ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Keep).document;
         assert!(document.get("entities").is_none());
         pretty_assertions::assert_eq!(FilterCarriage::for_split(SplitEntities::Split), FilterCarriage::Strip);

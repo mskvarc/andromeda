@@ -15,7 +15,7 @@ use crate::{
     queue_workers::{delivery_worker, holding_lease},
 };
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use andromeda_notification::delivery_store::DeliveryStore;
 use andromeda_postgresql_context_store::notification_delivery::{queue::NotificationDeliveryQueue, rows::NewNotificationEvent};
@@ -142,7 +142,11 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
     .fetch_one(&pool)
     .await
     .expect("distinct subscribers owed a delivery");
-    assert_eq!(owed, HIGH_FAN_OUT as i64, "every matching Subscription owes exactly one delivery");
+    assert_eq!(
+        owed,
+        i64::try_from(HIGH_FAN_OUT).expect("the fan-out size fits in i64"),
+        "every matching Subscription owes exactly one delivery"
+    );
 
     // The saving the split exists for, stated as a measurement the test can
     // fail on: a hundred narrow delivery rows together stay smaller than the
@@ -160,12 +164,7 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
     assert_eq!(claimed.len(), HIGH_FAN_OUT + 1, "every owed delivery is claimable");
     let rendered = claimed.first().expect("a claimed delivery");
     assert_eq!(
-        rendered
-            .event
-            .changed_attributes
-            .iter()
-            .map(andromeda_ngsi_ld_lexicon::attribute_name::AttributeName::as_str)
-            .collect::<Vec<&str>>(),
+        rendered.event.changed_attributes.iter().map(AttributeName::as_str).collect::<Vec<&str>>(),
         vec![
             "https://uri.etsi.org/ngsi-ld/default-context/temperature",
             "https://uri.etsi.org/ngsi-ld/default-context/speed"

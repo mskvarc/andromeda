@@ -124,7 +124,7 @@ async fn query_csr_geometry_property_selects_geometry() {
         .into_iter()
         .flatten()
         .find(|feature| feature["id"].as_str() == Some(reg_id.as_str()) || feature["properties"]["id"].as_str() == Some(reg_id.as_str()))
-        .unwrap_or_else(|| unreachable!("the created registration is a Feature in the collection: {collection}"));
+        .unwrap_or_else(|| panic!("the created registration is a Feature in the collection: {collection}"));
     assert_eq!(
         feature["geometry"]["type"].as_str(),
         Some("Point"),

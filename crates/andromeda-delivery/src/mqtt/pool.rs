@@ -108,6 +108,16 @@ impl MqttTransportPool {
 
     /// The connection for an endpoint, opening one if the pool has none that
     /// is answering.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportError::ConnectionFailed`] when the broker is still
+    /// inside its reconnect backoff, so no dial is attempted at all, and
+    /// otherwise whatever the dial reports —
+    /// [`TransportError::ConnectionFailed`] for a refused or rejected
+    /// handshake, [`TransportError::Timeout`] when the broker does not answer
+    /// within the configured connect timeout. A failed dial advances the
+    /// broker's backoff.
     pub async fn get_or_create_connection(&self, config: &MqttEndpointConfig) -> Result<Arc<MqttConnection>, TransportError> {
         let key = MqttConnectionKey::from_config(config);
 

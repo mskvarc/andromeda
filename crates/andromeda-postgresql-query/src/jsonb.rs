@@ -108,13 +108,21 @@ pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr) -> LiftedCompar
 /// exist, so every compound-value predicate resolved nothing.
 #[must_use]
 pub fn attribute_value_jsonpath(attr_iri: &str, sub_attrs: &[&str], value_path: &[&str], terminal_iri: &str) -> String {
-    let mut jsonpath = format!("$[0].\"{}\"", escape_jsonpath_key(attr_iri));
+    let mut jsonpath = String::from("$[0].\"");
+    jsonpath.push_str(&escape_jsonpath_key(attr_iri));
+    jsonpath.push('"');
     for sub in sub_attrs {
-        jsonpath.push_str(&format!("[0].\"{}\"", escape_jsonpath_key(sub)));
+        jsonpath.push_str("[0].\"");
+        jsonpath.push_str(&escape_jsonpath_key(sub));
+        jsonpath.push('"');
     }
-    jsonpath.push_str(&format!("[0].\"{}\"[0]", escape_jsonpath_key(terminal_iri)));
+    jsonpath.push_str("[0].\"");
+    jsonpath.push_str(&escape_jsonpath_key(terminal_iri));
+    jsonpath.push_str("\"[0]");
     for member in value_path {
-        jsonpath.push_str(&format!(".\"{}\"[*]", escape_jsonpath_key(member)));
+        jsonpath.push_str(".\"");
+        jsonpath.push_str(&escape_jsonpath_key(member));
+        jsonpath.push_str("\"[*]");
     }
     // A Relationship's object is keyed by `@id`, a Property's value by `@value`.
     // A member reached through a compound value is always a value node, whatever
@@ -124,7 +132,9 @@ pub fn attribute_value_jsonpath(attr_iri: &str, sub_attrs: &[&str], value_path: 
     } else {
         "@value"
     };
-    jsonpath.push_str(&format!(".\"{value_key}\""));
+    jsonpath.push_str(".\"");
+    jsonpath.push_str(value_key);
+    jsonpath.push('"');
     jsonpath
 }
 
@@ -174,8 +184,8 @@ mod tests {
             | Value::ChronoDateTimeLocal(_)
             | Value::ChronoDateTimeWithTimeZone(_)
             | Value::Uuid(_)
-            | Value::Array(..)) => unreachable!("a lifted operand binds text: {other:?}"),
-            Value::String(None) => unreachable!("a lifted operand binds an absent value"),
+            | Value::Array(..)) => panic!("a lifted operand binds text: {other:?}"),
+            Value::String(None) => panic!("a lifted operand binds an absent value"),
         }
     }
 

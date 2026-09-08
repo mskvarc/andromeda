@@ -51,6 +51,21 @@ impl EntityQueryParameters {
     }
 
     /// Validate entity-query semantic constraints.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParameterError::AttrsReservedMember`] when `attrs` names an
+    /// Entity member, [`ParameterError::WildcardTypeWithLocalFalse`] when
+    /// `type=*` is combined with `local=false`,
+    /// [`ParameterError::DropKeepExclusive`] when `drop` and `keep` are both
+    /// present, [`ParameterError::OrderingRequiresLocalScope`] when `orderBy`
+    /// is sent on a query that is not confined to the local scope,
+    /// [`ParameterError::PickOmitExclusive`] and
+    /// [`ParameterError::PickOmitWithAttrs`] for the clause 4.21 projection
+    /// conflicts, [`ParameterError::LimitZeroWithoutCount`] for `limit=0`
+    /// without the `count` option, and the clause 5.7.2.4 depth errors when a
+    /// nested projection term or a `q` hop names a Linked Entity the requested
+    /// traversal does not reach.
     pub fn validate(&self) -> Result<(), ParameterError> {
         validate_attrs(self.attrs.as_deref())?;
         // Table 5.2.33-1: `type=*` implies local scope, which the request may

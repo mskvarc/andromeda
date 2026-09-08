@@ -136,6 +136,7 @@ mod tests {
         instance::Attribute,
         language_property::{LanguageMapKey, LanguageMapValue, LanguageProperty},
     };
+    use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use indexmap::IndexMap;
     use jsonld::Expandable;
@@ -150,10 +151,10 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("language property");
         let Attribute::LanguageProperty(property) = attr else {
-            unreachable!("expected LanguageProperty");
+            panic!("expected LanguageProperty");
         };
         assert!(property.previous_language_map.is_some());
-        pretty_assertions::assert_eq!(property.value_type.as_deref().map(|value| value.as_str()), Some("langString"));
+        pretty_assertions::assert_eq!(property.value_type.as_ref().map(NgsiLdReference::as_str), Some("langString"));
     }
 
     #[test]

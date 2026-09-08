@@ -113,8 +113,12 @@ pub struct NameCache<N: DictionaryRelation> {
 static EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
 
 /// Milliseconds elapsed since [`EPOCH`].
+///
+/// `Duration::as_millis` reports a `u128`; the origin is a process-monotonic
+/// instant, so the elapsed value cannot approach the `u64` bound and saturating
+/// there is unreachable rather than a silent narrowing.
 fn now_millis() -> u64 {
-    EPOCH.elapsed().as_millis() as u64
+    u64::try_from(EPOCH.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
 /// The sentinel for a schema epoch not yet read. `schema_metadata.applied_at`
@@ -266,7 +270,7 @@ impl<N: DictionaryRelation> NameCache<N> {
     async fn revalidate_epoch<'e, E: Executor<'e, Database = Postgres>>(&self, executor: E) -> Result<(), NameLookupError> {
         let now = now_millis();
         let last = self.epoch_checked_at.load(Ordering::Relaxed);
-        if now.saturating_sub(last) < EPOCH_CHECK_INTERVAL.as_millis() as u64 {
+        if Duration::from_millis(now.saturating_sub(last)) < EPOCH_CHECK_INTERVAL {
             return Ok(());
         }
         // Stamp the check before issuing the probe so concurrent resolutions
@@ -373,7 +377,9 @@ impl<N: DictionaryRelation> NameLookup<N> for NameCache<N> {
         // that says otherwise refuses the write rather than admitting it.
         self.growth_limit.admit(N::KIND, u64::try_from(existing).unwrap_or(u64::MAX), unheld.len())?;
 
-        let (insert_sql, insert_values) = name_insert_query::<N>(&unheld).map_err(statement_error)?.build_sqlx(PostgresQueryBuilder);
+        let (insert_sql, insert_values) = name_insert_query::<N>(&unheld)
+            .map_err(|error| statement_error(&error))?
+            .build_sqlx(PostgresQueryBuilder);
         sqlx::query_with(AssertSqlSafe(insert_sql), insert_values).execute(&mut *connection).await?;
         let (minted_sql, minted_values) = name_select_query::<N>(&unheld).build_sqlx(PostgresQueryBuilder);
         let minted = decode::<N>(&sqlx::query_with(AssertSqlSafe(minted_sql), minted_values).fetch_all(&mut *connection).await?)?;
@@ -433,7 +439,7 @@ const fn stored_name_error<N: DictionaryRelation>(name: String, source: NgsiLdRe
 }
 
 /// The failure a statement that could not be assembled becomes.
-fn statement_error(error: SeaQueryError) -> NameLookupError {
+fn statement_error(error: &SeaQueryError) -> NameLookupError {
     NameLookupError::StatementBuild(error.to_string())
 }
 

@@ -54,6 +54,12 @@ impl SnapshotStatusOutbox {
     }
 
     /// Claim a due batch using a renewable, replica-safe lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SnapshotError::persistence`] when the claim, the projection of
+    /// the claimed rows or the commit fails, and when a claimed row does not map
+    /// back to a delivery because its endpoint or Snapshot URI no longer parses.
     pub async fn claim(&self, worker: Uuid, lease_until: DateTime<Utc>, limit: i32) -> Result<Vec<SnapshotStatusDelivery>, SnapshotError> {
         let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
         let claimable = || {
@@ -70,7 +76,9 @@ impl SnapshotStatusOutbox {
             .and_where(claimable().lte(Expr::current_timestamp()))
             .order_by_expr(claimable(), Order::Asc)
             .order_by(SnapshotNotificationOutbox::Id, Order::Asc)
-            .limit(<i32 as Ord>::max(limit, 1) as u64)
+            // A batch of at most zero rows would spin the worker, so the floor is
+            // one row rather than the caller's number.
+            .limit(u64::try_from(limit).unwrap_or(1).max(1))
             .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
             .to_owned();
         let claim = Query::update()
@@ -120,6 +128,10 @@ impl SnapshotStatusOutbox {
     }
 
     /// Mark a leased event delivered.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SnapshotError::persistence`] when the update fails.
     pub async fn acknowledge(&self, id: Uuid, worker: Uuid) -> Result<bool, SnapshotError> {
         let statement = Query::update()
             .table(SnapshotNotificationOutbox::Table)
@@ -137,6 +149,10 @@ impl SnapshotStatusOutbox {
     }
 
     /// Record a failed attempt, scheduling retry or dead-lettering it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SnapshotError::persistence`] when the update fails.
     pub async fn fail(
         &self,
         id: Uuid,
@@ -176,6 +192,10 @@ impl SnapshotStatusOutbox {
     }
 
     /// Remove old delivered and dead-lettered rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SnapshotError::persistence`] when the delete fails.
     pub async fn cleanup(&self, delivered_before: DateTime<Utc>, exhausted_before: DateTime<Utc>) -> Result<u64, SnapshotError> {
         let statement = Query::delete()
             .from_table(SnapshotNotificationOutbox::Table)

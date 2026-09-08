@@ -63,6 +63,11 @@ impl DatabaseUrl {
     }
 
     /// Return the database name from the URL path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError::Internal`] when the URL carries no path
+    /// segment, so it names no database.
     pub fn db_name(&self) -> Result<TenantDatabaseName, ContextStoreError> {
         let path = self.0.path().trim_start_matches('/');
         if path.is_empty() {
@@ -124,6 +129,12 @@ pub fn generate_db_name(prefix: &DbNamePrefix, tenant_name: &TenantName) -> Tena
 /// declaration on databases Andromeda creates while leaving it live on every
 /// database an operator, a managed service or a restore provisions.
 /// `docs/text-collation-invariant.md` states the invariant and its inventory.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Database`] when the administrative connection
+/// cannot be opened, when the existence probe or the `CREATE DATABASE` fails,
+/// or when the connection cannot be closed cleanly.
 pub async fn create_database_if_missing(base_url: &DatabaseUrl, db_name: &TenantDatabaseName) -> Result<(), ContextStoreError> {
     let admin_database = TenantDatabaseName::from("postgres".to_owned());
     let admin_url = base_url.with_db_name(&admin_database);
@@ -159,6 +170,12 @@ fn database_exists_statement(db_name: &str) -> sea_query::SelectStatement {
 /// The platform database is also the unnamed default tenant's database, so it
 /// carries the tenant schema and its contract before the platform tables are
 /// added on top.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Migration`] when a tenant or platform migration
+/// fails, and [`ContextStoreError::SchemaContract`] when the migrated database
+/// does not carry the schema, server or extensions this binary requires.
 pub async fn migrate_main_db(pool: &sqlx::PgPool) -> Result<(), ContextStoreError> {
     migrate_tenant_db(pool).await?;
 
@@ -179,6 +196,13 @@ pub async fn migrate_main_db(pool: &sqlx::PgPool) -> Result<(), ContextStoreErro
 /// proves it, which [`ensure_schema_contract`] re-stamps in place: a fleet
 /// upgrade migrates every tenant's schema on this same call, and a stamp left
 /// at the previous binary's version must not then read back as drift.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Migration`] when a tenant migration fails, and
+/// [`ContextStoreError::SchemaContract`] when the embedded migration set has no
+/// contract or the migrated database does not carry the schema, server or
+/// extensions this binary requires.
 pub async fn migrate_tenant_db(pool: &sqlx::PgPool) -> Result<(), ContextStoreError> {
     let mut tenant_migrator = sqlx::migrate!("../../migrations/tenant");
     tenant_migrator.set_ignore_missing(true);
@@ -190,6 +214,12 @@ pub async fn migrate_tenant_db(pool: &sqlx::PgPool) -> Result<(), ContextStoreEr
 }
 
 /// Connect to a single tenant database, migrate it, and close the pool.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Database`] when the pool cannot connect, and
+/// the errors [`migrate_tenant_db`] returns when the migration or the schema
+/// contract check fails.
 pub async fn migrate_single_tenant_db(
     database_url: &Url,
     tenant_max_connections: u32,
@@ -233,7 +263,7 @@ mod tests {
 
         let db_name = match parsed.db_name() {
             Ok(value) => value,
-            Err(err) => unreachable!("unexpected db name error: {err}"),
+            Err(err) => panic!("unexpected db name error: {err}"),
         };
         pretty_assertions::assert_eq!(db_name.as_str(), "postgres");
 

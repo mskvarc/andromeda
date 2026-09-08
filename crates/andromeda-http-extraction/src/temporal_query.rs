@@ -9,10 +9,30 @@ use crate::{classification::classify_parameter_error, query::classify_query_pars
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use axum::{extract::FromRequestParts, http::request::Parts};
+use std::future::{Future, ready};
 
 /// Axum extractor for NGSI-LD temporal query parameters with a mandatory window.
 #[derive(Debug)]
 pub struct TemporalQuery(pub TemporalQueryParameters);
+
+/// Deserialize the temporal query string and validate it as a temporal query.
+fn resolve_temporal_query(parts: &Parts) -> Result<TemporalQuery, ExtractorRejection> {
+    let uri = parts.uri.clone();
+    let query_str = parts.uri.query().unwrap_or("");
+    let params = serde_urlencoded::from_str::<TemporalQueryParameters>(query_str).map_err(|error| {
+        let error_text = error.to_string();
+        let message = format!("Invalid query parameters: {error_text}");
+        classify_query_parse_error(&error_text, message, uri.clone())
+    })?;
+
+    // Clause 5.14.5.4: a temporal query and one selection criterion are mandatory.
+    params.validate(true).map_err(|error| {
+        let report = classify_parameter_error(&error);
+        ExtractorRejection::Classified(report.with_instance(uri.clone()))
+    })?;
+
+    Ok(TemporalQuery(params))
+}
 
 impl<S> FromRequestParts<S> for TemporalQuery
 where
@@ -20,22 +40,8 @@ where
 {
     type Rejection = ExtractorRejection;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let uri = parts.uri.clone();
-        let query_str = parts.uri.query().unwrap_or("");
-        let params = serde_urlencoded::from_str::<TemporalQueryParameters>(query_str).map_err(|error| {
-            let error_text = error.to_string();
-            let message = format!("Invalid query parameters: {error_text}");
-            classify_query_parse_error(&error_text, message, uri.clone())
-        })?;
-
-        // Clause 5.14.5.4: a temporal query and one selection criterion are mandatory.
-        params.validate(true).map_err(|error| {
-            let report = classify_parameter_error(&error);
-            ExtractorRejection::Classified(report.with_instance(uri.clone()))
-        })?;
-
-        Ok(TemporalQuery(params))
+    fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> {
+        ready(resolve_temporal_query(parts))
     }
 }
 

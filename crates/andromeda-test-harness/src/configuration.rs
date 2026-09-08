@@ -42,6 +42,10 @@ pub struct DatabaseEndpoint {
 
 impl DatabaseEndpoint {
     /// Parse a PostgreSQL URL.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigurationError::InvalidDatabaseEndpoint`] when the value does not parse as a URL, and [`ConfigurationError::InvalidDatabaseScheme`] when the parsed scheme is neither `postgres` nor `postgresql`.
     pub fn parse(value: impl AsRef<str>) -> Result<DatabaseEndpoint, ConfigurationError> {
         let url = Url::parse(value.as_ref()).map_err(ConfigurationError::InvalidDatabaseEndpoint)?;
         match url.scheme() {
@@ -73,6 +77,10 @@ pub struct CallbackEndpoint {
 
 impl CallbackEndpoint {
     /// Parse a DNS name or IP address used by the broker for callbacks.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigurationError::InvalidCallbackHost`] when the value is neither a valid DNS name nor a valid IP address.
     pub fn parse(value: impl AsRef<str>) -> Result<CallbackEndpoint, ConfigurationError> {
         let host = Host::parse(value.as_ref()).map_err(ConfigurationError::InvalidCallbackHost)?;
         Ok(CallbackEndpoint { host })
@@ -95,6 +103,10 @@ pub struct TestRunConfiguration {
 
 impl TestRunConfiguration {
     /// Read and validate every integration-test environment setting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigurationError::InvalidBrokerEndpoint`] when the broker endpoint variable holds an unusable URL, and the [`DatabaseEndpoint::parse`] or [`CallbackEndpoint::parse`] failure when [`DATABASE_ENDPOINT_ENV`] or [`CALLBACK_HOST_ENV`] holds an invalid value.
     pub fn from_environment() -> Result<TestRunConfiguration, ConfigurationError> {
         let broker = BrokerEndpoint::from_environment().map_err(ConfigurationError::InvalidBrokerEndpoint)?;
         let database_value = env::var(DATABASE_ENDPOINT_ENV).unwrap_or_else(|_| DEFAULT_DATABASE_ENDPOINT.to_owned());
@@ -173,10 +185,9 @@ mod tests {
     #[test]
     fn diagnostic_summary_never_contains_the_database_password() {
         let configuration = TestRunConfiguration {
-            broker: BrokerEndpoint::parse("http://127.0.0.1:1056/ngsi-ld/v1/").unwrap_or_else(|error| unreachable!("static broker URL is valid: {error}")),
-            database: DatabaseEndpoint::parse("postgres://alice:secret@127.0.0.1/db")
-                .unwrap_or_else(|error| unreachable!("static database URL is valid: {error}")),
-            callback: CallbackEndpoint::parse("127.0.0.1").unwrap_or_else(|error| unreachable!("static callback host is valid: {error}")),
+            broker: BrokerEndpoint::parse("http://127.0.0.1:1056/ngsi-ld/v1/").unwrap_or_else(|error| panic!("static broker URL is valid: {error}")),
+            database: DatabaseEndpoint::parse("postgres://alice:secret@127.0.0.1/db").unwrap_or_else(|error| panic!("static database URL is valid: {error}")),
+            callback: CallbackEndpoint::parse("127.0.0.1").unwrap_or_else(|error| panic!("static callback host is valid: {error}")),
         };
 
         let summary = configuration.diagnostic_summary().to_string();

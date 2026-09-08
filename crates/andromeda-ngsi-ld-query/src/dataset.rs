@@ -30,6 +30,11 @@ pub enum DatasetSelector {
 
 impl DatasetSelector {
     /// Parse one `datasetId` entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::ParamDatasetIdInvalid`] when `raw` is neither the
+    /// `@none` token of clause 4.5.5 nor a URI.
     pub fn parse(raw: &str) -> Result<DatasetSelector, QueryError> {
         if raw == DEFAULT_INSTANCE_TOKEN {
             return Ok(DatasetSelector::Default);

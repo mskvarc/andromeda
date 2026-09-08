@@ -14,6 +14,11 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 /// carry a `Vec` rather than an `Option<Vec>`: "absent" and "empty" select the
 /// same rows, and having two spellings of that invited a `Some(ids) &&
 /// !ids.is_empty()` guard at every use.
+///
+/// # Errors
+///
+/// Returns [`QueryError::ParamIdListEmpty`] when an entry is blank, and
+/// [`QueryError::ParamIdInvalid`] when an entry is not a clause 4.6.2 URI.
 pub fn parse_id_list(raw: &[String]) -> Result<Vec<Uri>, QueryError> {
     raw.iter()
         .map(|entry| {
@@ -46,7 +51,7 @@ mod tests {
 
     #[test]
     fn an_empty_parameter_is_no_filter() {
-        assert_eq!(parse_id_list(&[]).expect("parses"), [] as [andromeda_ngsi_ld_lexicon::uri::Uri; 0]);
+        assert_eq!(parse_id_list(&[]).expect("parses"), [] as [Uri; 0]);
     }
 
     #[test]

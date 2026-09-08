@@ -114,7 +114,7 @@ fn decode_extremum(
     match extremum_column(value_shape) {
         ExtremumColumn::Numeric => Ok(decode_exact_aggregate(row, numeric_column)?.map(AggregationMinMax::Number)),
         ExtremumColumn::NumericAsBoolean => decode_exact_aggregate(row, numeric_column)?
-            .map(|counted| boolean_extremum(counted, numeric_column))
+            .map(|counted| boolean_extremum(&counted, numeric_column))
             .transpose(),
         ExtremumColumn::Text => Ok(projected_column::<String>(row, text_column)?.map(AggregationMinMax::String)),
         ExtremumColumn::Instant => Ok(projected_column::<DateTime<Utc>>(row, instant_column)?.map(AggregationMinMax::DateTime)),
@@ -128,10 +128,10 @@ fn decode_extremum(
 /// extremum arrives as one of those two numbers and is reported in the family
 /// the observations were recorded in. Any other number means the row did not
 /// come from that expression, which is a fault rather than a value.
-fn boolean_extremum(counted: JsonNumber, column: &str) -> Result<AggregationMinMax, TemporalStoreError> {
-    if counted == JsonNumber::from(0) {
+fn boolean_extremum(counted: &JsonNumber, column: &str) -> Result<AggregationMinMax, TemporalStoreError> {
+    if *counted == JsonNumber::from(0) {
         Ok(AggregationMinMax::Boolean(false))
-    } else if counted == JsonNumber::from(1) {
+    } else if *counted == JsonNumber::from(1) {
         Ok(AggregationMinMax::Boolean(true))
     } else {
         Err(TemporalStoreError::Decode(format!(
@@ -261,11 +261,11 @@ mod tests {
     #[test]
     fn a_boolean_extremum_comes_back_as_the_boolean_its_count_stood_for() {
         pretty_assertions::assert_eq!(
-            boolean_extremum(JsonNumber::from(0), "agg_min").expect("zero counts false"),
+            boolean_extremum(&JsonNumber::from(0), "agg_min").expect("zero counts false"),
             AggregationMinMax::Boolean(false)
         );
         pretty_assertions::assert_eq!(
-            boolean_extremum(JsonNumber::from(1), "agg_max").expect("one counts true"),
+            boolean_extremum(&JsonNumber::from(1), "agg_max").expect("one counts true"),
             AggregationMinMax::Boolean(true)
         );
     }
@@ -275,8 +275,8 @@ mod tests {
     /// being reported as one of the two.
     #[test]
     fn a_boolean_extremum_that_counts_neither_value_is_refused() {
-        let error = boolean_extremum(JsonNumber::from(2), "agg_min").expect_err("two counts nothing");
+        let error = boolean_extremum(&JsonNumber::from(2), "agg_min").expect_err("two counts nothing");
         assert!(error.to_string().contains("agg_min"), "got {error}");
-        assert!(boolean_extremum("0.5".parse::<JsonNumber>().expect("an exact decimal"), "agg_min").is_err());
+        assert!(boolean_extremum(&"0.5".parse::<JsonNumber>().expect("an exact decimal"), "agg_min").is_err());
     }
 }

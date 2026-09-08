@@ -44,6 +44,10 @@ impl TestClient {
     /// broker hostnames. This keeps the endpoint URL returned by discovery
     /// unchanged while allowing a host-side test process to contact a
     /// compose-network hostname through its published port.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientBuildError::Reqwest`] when reqwest rejects the resolver overrides while building the client.
     pub fn new_with_dns_overrides(
         endpoint: BrokerEndpoint,
         tenant: Option<TenantName>,
@@ -53,6 +57,10 @@ impl TestClient {
     }
 
     /// Return this client with deterministic reqwest DNS mappings installed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientBuildError::Reqwest`] when reqwest rejects the resolver overrides while building the client.
     pub fn with_dns_overrides(self, overrides: &[BrokerDnsOverride]) -> Result<TestClient, ClientBuildError> {
         let mut builder = Client::builder();
         for override_entry in overrides {
@@ -65,6 +73,7 @@ impl TestClient {
     /// Attach the JSON-LD context `Link` sent with every request that neither
     /// names a context through its own `Link` nor carries one inline in an
     /// `application/ld+json` body (clause 6.3.5).
+    #[must_use]
     pub fn with_default_context(self, link: HeaderValue) -> TestClient {
         TestClient {
             default_context: Some(link),
@@ -79,6 +88,7 @@ impl TestClient {
 
     /// A view of this client that sends no JSON-LD context unless a request
     /// names one, for requests whose point is the absence of a context.
+    #[must_use]
     pub fn without_default_context(&self) -> TestClient {
         TestClient {
             endpoint: self.endpoint.clone(), // clone: the view owns its endpoint while this client keeps its own
@@ -140,7 +150,7 @@ mod tests {
 
     #[test]
     fn construction_does_not_probe_an_unreachable_endpoint() {
-        let endpoint = BrokerEndpoint::parse("http://127.0.0.1:1/ngsi-ld/v1/").unwrap_or_else(|error| unreachable!("static URL is valid: {error}"));
+        let endpoint = BrokerEndpoint::parse("http://127.0.0.1:1/ngsi-ld/v1/").unwrap_or_else(|error| panic!("static URL is valid: {error}"));
 
         let _client = TestClient::new(endpoint, None);
     }

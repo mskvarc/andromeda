@@ -198,15 +198,13 @@ async fn query_csr_returns_registrationinfo_trimmed_to_matching() {
     let extra = json!({ "entities": [ { "type": other_type } ] });
     body["information"]
         .as_array_mut()
-        .unwrap_or_else(|| unreachable!("information is an array"))
+        .unwrap_or_else(|| panic!("information is an array"))
         .push(extra);
     register(&topology, &body).await;
 
     let result = query(&topology, &format!("type={}", encode(&vtype))).await;
-    let registration = find(&result, &id).unwrap_or_else(|| unreachable!("the registration is returned"));
-    let information = registration["information"]
-        .as_array()
-        .unwrap_or_else(|| unreachable!("information is an array"));
+    let registration = find(&result, &id).unwrap_or_else(|| panic!("the registration is returned"));
+    let information = registration["information"].as_array().unwrap_or_else(|| panic!("information is an array"));
     assert_eq!(
         information.len(),
         1,

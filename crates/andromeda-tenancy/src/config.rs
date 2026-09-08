@@ -62,6 +62,12 @@ pub struct TenancyConfig {
 
 impl TenancyConfig {
     /// Validate tenant pool and runtime-cache limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`TenancyConfigError`] naming the first setting configured
+    /// as zero: the per-tenant pool size, the runtime idle retention, the
+    /// runtime cache capacity or the janitor cadence.
     pub const fn validate(&self) -> Result<(), TenancyConfigError> {
         if self.tenant_max_connections == 0 {
             return Err(TenancyConfigError::ZeroTenantMaxConnections);

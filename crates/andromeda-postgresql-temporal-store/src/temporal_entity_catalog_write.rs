@@ -146,13 +146,13 @@ fn first_missing_typeless<'a>(upserts: &'a [TemporalCatalogUpsert], entity_keys:
 
 /// The distinct entity types one chunk's typed upserts have to resolve.
 fn distinct_types(typed: &[&TemporalCatalogUpsert]) -> Vec<EntityTypeName> {
-    let mut types: Vec<EntityTypeName> = typed
+    let mut names: Vec<EntityTypeName> = typed
         .iter()
         .flat_map(|upsert| upsert.types.iter().cloned()) // clone: dictionary resolution owns each distinct name.
         .collect();
-    types.sort_unstable();
-    types.dedup();
-    types
+    names.sort_unstable();
+    names.dedup();
+    names
 }
 
 /// Column-major binds for one chunk's temporal-entity upsert.

@@ -17,6 +17,11 @@ impl EntityMapExpiry {
     }
 
     /// Delete Entity Maps due at the explicit execution cutoff, returning how many.
+    ///
+    /// # Errors
+    ///
+    /// [`EntityMapError::Persistence`] when the store cannot delete the maps
+    /// that are due.
     pub async fn execute(&self, cutoff: DateTime<Utc>) -> Result<u64, EntityMapError> {
         self.store.delete_expired(cutoff).await
     }

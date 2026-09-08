@@ -11,6 +11,10 @@ pub struct TenantName {
 
 impl TenantName {
     /// Validate a tenant name as an HTTP header value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenantNameError::InvalidHeaderValue`] when `value` contains bytes that an HTTP header value may not carry.
     pub fn parse(value: impl AsRef<str>) -> Result<TenantName, TenantNameError> {
         let header = HeaderValue::from_str(value.as_ref()).map_err(TenantNameError::InvalidHeaderValue)?;
         Ok(TenantName { header })

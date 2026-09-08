@@ -64,7 +64,7 @@ pub(crate) struct CreationRendering<'a> {
 pub(crate) async fn create_map(
     state: &Arc<EntityMapRouteServices>,
     creation: MapCreation<'_>,
-    rendering: CreationRendering<'_>,
+    rendering: &CreationRendering<'_>,
     triggering: TriggeringRequest<'_>,
 ) -> Result<Response, ProblemResponse> {
     let mut map = state
@@ -100,7 +100,7 @@ pub(crate) async fn create_map(
 /// Render a created map: 201 with `Location` and `NGSILD-EntityMap`, or 203
 /// with `Preference-Applied` when the body was adapted to an older version
 /// (Table 6.34.3.1-1).
-fn render_created(map: &EntityMap, resource: &str, rendering: CreationRendering<'_>, warnings: Vec<NgsiLdWarning>) -> Result<Response, ProblemResponse> {
+fn render_created(map: &EntityMap, resource: &str, rendering: &CreationRendering<'_>, warnings: Vec<NgsiLdWarning>) -> Result<Response, ProblemResponse> {
     let location = format!("/ngsi-ld/v1/{resource}/{}", map.id);
     let value = serde_json::to_value(map).map_err(|error| internal_problem(&error, rendering.uri))?;
     let rendered = start_rendering(rendering.accept.media_type(), rendering.context, rendering.prefer.rendering_preferences())

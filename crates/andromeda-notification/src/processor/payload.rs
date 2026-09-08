@@ -2,7 +2,7 @@
 //! filtering, nullification, projection, and format rendering.
 
 use crate::processor::payload::{
-    cache::{NotificationCompactionCache, resolve_linked_cached},
+    cache::{NotificationCompactionCache, ResolvedLinkedEntities, resolve_linked_cached},
     context::{normalize_compacted_entity, strip_to_structural_keys},
     deletion::{fix_null_language_maps, inject_deleted_attributes, nullify_entity_attributes},
     filtering::{filter_entity_attributes, filter_entity_by_dataset_id, inject_previous_values},
@@ -47,204 +47,249 @@ pub(super) struct NotificationBuildParams<'a> {
     pub(super) compaction_cache: Option<&'a NotificationCompactionCache>,
 }
 
-pub(super) async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec<Value> {
-    let NotificationBuildParams {
-        engine,
-        target,
-        entity_data,
-        previous_attributes,
-        sub,
-        trigger_reason,
-        changed_attributes,
-        changed_dataset_id,
-        occurred_at,
-        entity_query,
-        compaction_cache,
-    } = params;
-
-    let mut entity = match entity_data {
-        Value::Array(arr) => match arr.first() {
-            Some(value) => value.clone(),
-            None => Value::Null,
-        },
-        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => other.clone(),
-    };
-
+/// The entities one notification carries for a subscription (clause 5.8.6).
+///
+/// The entity the change event supplies is shaped for its trigger, reduced to
+/// what the subscription selects, compacted under the subscription's context,
+/// given its `showChanges` view and its `join` linked entities, and finally
+/// rendered in the subscription's `notification.format`. An entity that is
+/// gone by the time any of that runs leaves nothing to notify, which is an
+/// empty payload.
+pub(super) async fn build_notification_data(params: &NotificationBuildParams<'_>) -> Vec<Value> {
+    let mut entity = expanded_entity_node(params.entity_data);
     if entity.is_null() {
         return vec![];
     }
 
-    let is_entity_deleted = matches!(trigger_reason, NotificationTrigger::EntityDeleted);
-    let is_attr_deleted = matches!(trigger_reason, NotificationTrigger::AttributeDeleted);
+    apply_deletion_shape(&mut entity, params);
+    apply_notification_selection(&mut entity, params.sub);
 
-    if is_entity_deleted && !sub.notification_show_changes {
-        entity = strip_to_structural_keys(&entity, sub.notification_sys_attrs);
+    let context = ContextSpec::for_subscription_context(params.sub.jsonld_context.as_ref());
+    let Ok(mut compacted) = compact_for_notification(params.engine, &entity, &context, params.compaction_cache).await else {
+        return vec![];
+    };
+    apply_show_changes(&mut compacted, params, &context).await;
+
+    let payload = apply_join(compacted, params, &context).await;
+    render_notification_entities(payload, params.sub)
+}
+
+/// The single expanded entity node a notification is built from.
+///
+/// An expanded entity travels either bare or wrapped in a one-element array; a
+/// document carrying neither yields [`Value::Null`], which the caller reads as
+/// nothing left to notify about.
+fn expanded_entity_node(document: &Value) -> Value {
+    match document {
+        Value::Array(values) => match values.first() {
+            // clone: the notification owns its node while the event keeps the document
+            Some(value) => value.clone(),
+            None => Value::Null,
+        },
+        // clone: same
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => other.clone(),
     }
+}
 
-    if is_entity_deleted && sub.notification_show_changes {
-        nullify_entity_attributes(&mut entity);
-    }
-
-    if is_attr_deleted {
-        let deleted_at = if sub.notification_sys_attrs == SysAttrsInclusion::Include {
-            Some(occurred_at)
-        } else {
-            None
-        };
-        let filtered_changed: Vec<AttributeName>;
-        let effective_changed = if let Some(ref watched) = sub.watched_attrs {
-            filtered_changed = changed_attributes.iter().filter(|attribute| watched.contains(*attribute)).cloned().collect();
-            &filtered_changed
-        } else {
-            changed_attributes
-        };
-        inject_deleted_attributes(&mut entity, effective_changed, changed_dataset_id, previous_attributes, deleted_at);
-
-        if sub.notification_sys_attrs == SysAttrsInclusion::Include
-            && let Some(obj) = expanded_entity_object_mut(&mut entity)
-        {
-            let ca = obj.get(expanded_properties::CREATED_AT.as_str()).cloned();
-            let ma = obj.get(expanded_properties::MODIFIED_AT.as_str()).cloned();
-            if let (Some(ca), Some(ma)) = (ca, ma) {
-                inject_attr_sys_attrs(obj, &ca, &ma);
+/// Shape the notified entity for a deletion trigger (clause 5.8.6).
+///
+/// A deleted entity is carried as its structural members alone, or, under
+/// `showChanges`, with every attribute nullified so the subscriber sees what
+/// went. A deleted attribute is materialised back into what survived it. Every
+/// other trigger notifies the entity as the write left it.
+fn apply_deletion_shape(entity: &mut Value, params: &NotificationBuildParams<'_>) {
+    match params.trigger_reason {
+        NotificationTrigger::EntityDeleted => {
+            if params.sub.notification_show_changes {
+                nullify_entity_attributes(entity);
+            } else {
+                let structural = strip_to_structural_keys(entity, params.sub.notification_sys_attrs);
+                *entity = structural;
             }
         }
+        NotificationTrigger::AttributeDeleted => apply_attribute_deletion(entity, params),
+        NotificationTrigger::EntityCreated
+        | NotificationTrigger::EntityUpdated
+        | NotificationTrigger::AttributeCreated
+        | NotificationTrigger::AttributeUpdated => (),
     }
+}
 
-    if let Some(ref dataset_ids) = sub.dataset_id {
-        filter_entity_by_dataset_id(&mut entity, dataset_ids);
-    }
-
-    let mut entity = if let Some(ref attrs) = sub.notification_attributes {
-        filter_entity_attributes(&entity, attrs)
+/// Materialise the attribute instances a deletion removed, so the notification
+/// carries what was deleted and not only what remains.
+///
+/// A subscription with `watchedAttributes` is told about those attributes
+/// alone, so the changed set is narrowed to them before the instances are
+/// injected.
+fn apply_attribute_deletion(entity: &mut Value, params: &NotificationBuildParams<'_>) {
+    let sub = params.sub;
+    let deleted_at = if sub.notification_sys_attrs == SysAttrsInclusion::Include {
+        Some(params.occurred_at)
     } else {
-        entity
+        None
     };
+    let watched_changed: Vec<AttributeName>;
+    let effective_changed: &[AttributeName] = if let Some(ref watched) = sub.watched_attrs {
+        watched_changed = params
+            .changed_attributes
+            .iter()
+            .filter(|attribute| watched.contains(*attribute))
+            .cloned()
+            .collect();
+        &watched_changed
+    } else {
+        params.changed_attributes
+    };
+    inject_deleted_attributes(entity, effective_changed, params.changed_dataset_id, params.previous_attributes, deleted_at);
 
+    if sub.notification_sys_attrs == SysAttrsInclusion::Include
+        && let Some(object) = expanded_entity_object_mut(entity)
+    {
+        // clone: the entity-level timestamps are read out before the same object is mutated
+        let created_at = object.get(expanded_properties::CREATED_AT.as_str()).cloned();
+        let modified_at = object.get(expanded_properties::MODIFIED_AT.as_str()).cloned();
+        if let (Some(created_at), Some(modified_at)) = (created_at, modified_at) {
+            inject_attr_sys_attrs(object, &created_at, &modified_at);
+        }
+    }
+}
+
+/// Reduce the notified entity to what the subscription selects: the
+/// `datasetId` instances it names, the attributes it lists, and its
+/// `pick`/`omit` projection.
+fn apply_notification_selection(entity: &mut Value, sub: &CompiledSubscription) {
+    if let Some(ref dataset_ids) = sub.dataset_id {
+        filter_entity_by_dataset_id(entity, dataset_ids);
+    }
+    if let Some(ref attributes) = sub.notification_attributes {
+        let selected = filter_entity_attributes(entity, attributes);
+        *entity = selected;
+    }
     // Clause 5.8.6: `pick` and `omit` reduce every entity in the payload to
     // the listed members. `id` and `type` are never among what goes: clause
     // 5.3.1 carries Entities in `data`, and Table 5.2.4-1 makes both mandatory
     // (cardinality 1), so a notified entity that lost them would not be one.
-    apply_notification_projection(&mut entity, &sub.notification_projection);
+    apply_notification_projection(entity, &sub.notification_projection);
+}
 
-    let context = ContextSpec::for_subscription_context(sub.jsonld_context.as_ref());
-    let Ok(compacted) = compact_for_notification(engine, &entity, &context, compaction_cache).await else {
-        return vec![];
+/// Apply the `showChanges` view to the compacted entity (clause 5.8.6): the
+/// language maps a deletion left null, and the previous value of every changed
+/// instance.
+///
+/// A previous representation that cannot be compacted leaves the notification
+/// with its current values alone rather than failing the delivery.
+async fn apply_show_changes(compacted: &mut Value, params: &NotificationBuildParams<'_>, context: &ContextSpec) {
+    if !params.sub.notification_show_changes {
+        return;
+    }
+    if matches!(params.trigger_reason, NotificationTrigger::EntityDeleted) {
+        fix_null_language_maps(compacted);
+    }
+    let Some(previous) = params.previous_attributes else {
+        return;
     };
-    let mut compacted = compacted;
-
-    if is_entity_deleted && sub.notification_show_changes {
-        fix_null_language_maps(&mut compacted);
-    }
-
-    if sub.notification_show_changes
-        && let Some(prev) = previous_attributes
-    {
-        let prev_entity = match prev {
-            Value::Array(arr) => match arr.first() {
-                Some(value) => value.clone(),
-                None => Value::Null,
+    let Ok(previous_compacted) = params
+        .engine
+        .compact(
+            expanded_entity_node(previous),
+            context,
+            CompactOptions {
+                strip_context: ContextStripping::Strip,
             },
-            other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => other.clone(),
-        };
-        if let Ok(prev_compacted) = engine
-            .compact(
-                prev_entity,
-                &context,
-                CompactOptions {
-                    strip_context: ContextStripping::Strip,
-                },
-            )
-            .await
-        {
-            let prev_compacted = normalize_compacted_entity(prev_compacted);
-            let exact_attribute_instance = matches!(
-                trigger_reason,
-                NotificationTrigger::AttributeCreated | NotificationTrigger::AttributeUpdated | NotificationTrigger::AttributeDeleted
-            );
-            inject_previous_values(
-                &mut compacted,
-                &prev_compacted,
-                changed_attributes,
-                changed_dataset_id,
-                exact_attribute_instance,
-                engine,
-                &context,
-            )
-            .await;
-        }
-    }
+        )
+        .await
+    else {
+        return;
+    };
+    let previous_compacted = normalize_compacted_entity(previous_compacted);
+    let exact_attribute_instance = matches!(
+        params.trigger_reason,
+        NotificationTrigger::AttributeCreated | NotificationTrigger::AttributeUpdated | NotificationTrigger::AttributeDeleted
+    );
+    inject_previous_values(
+        compacted,
+        &previous_compacted,
+        params.changed_attributes,
+        params.changed_dataset_id,
+        exact_attribute_instance,
+        params.engine,
+        context,
+    )
+    .await;
+}
 
-    let mut all_compacted = vec![compacted];
-    if let Some(join) = sub.notification_join {
-        if join == JoinMode::Flat
-            && let Ok(main_entity) = deserialize_exact::<Entity>(&all_compacted[0])
-        {
-            match resolve_linked_cached(
-                target,
-                entity_query,
-                &main_entity,
-                sub.notification_join_level,
-                sub.notification_sys_attrs,
-                &context,
-                compaction_cache,
-            )
-            .await
-            {
-                Ok(resolved) => {
-                    all_compacted.reserve(resolved.as_values.len());
-                    for linked_val in resolved.as_values.iter() {
-                        all_compacted.push(linked_val.clone());
-                    }
-                }
-                Err(e) => {
-                    debug!("Failed to resolve linked entities for join=flat: {}", e);
-                }
+/// Place the linked entities the subscription's `join` asks for into the
+/// payload (clause 4.5.23): appended beside the notified entity for `flat`,
+/// nested inside it for `inline`.
+async fn apply_join(compacted: Value, params: &NotificationBuildParams<'_>, context: &ContextSpec) -> Vec<Value> {
+    let mut payload = vec![compacted];
+    match params.sub.notification_join {
+        Some(JoinMode::Flat) => {
+            let resolved = resolve_join_targets(&payload[0], params, context).await;
+            if let Some(resolved) = resolved {
+                payload.reserve(resolved.as_values.len());
+                // clone: the notification owns its payload while the resolution stays cached for the notifications still to come
+                payload.extend(resolved.as_values.iter().cloned());
             }
-        } else if join == JoinMode::Inline
-            && let Ok(main_entity) = deserialize_exact::<Entity>(&all_compacted[0])
-        {
-            match resolve_linked_cached(
-                target,
-                entity_query,
-                &main_entity,
-                sub.notification_join_level,
-                sub.notification_sys_attrs,
-                &context,
-                compaction_cache,
-            )
-            .await
-            {
-                Ok(resolved) => {
-                    let payload = take(&mut all_compacted[0]);
-                    match SnapshotRenderer::new(payload).with_inline_linked_entities(&resolved.by_id).render() {
-                        Ok(rendered) => all_compacted[0] = rendered,
-                        Err(error) => {
-                            debug!("Failed to apply join=inline to notification payload: {}", error);
-                        }
-                    }
-                }
-                Err(e) => {
-                    debug!("Failed to resolve linked entities for join=inline: {}", e);
+        }
+        Some(JoinMode::Inline) => {
+            let resolved = resolve_join_targets(&payload[0], params, context).await;
+            if let Some(resolved) = resolved {
+                let notified = take(&mut payload[0]);
+                match SnapshotRenderer::new(notified).with_inline_linked_entities(&resolved.by_id).render() {
+                    Ok(rendered) => payload[0] = rendered,
+                    Err(error) => debug!(%error, "Failed to apply join=inline to a notification payload"),
                 }
             }
         }
+        Some(JoinMode::None) | None => (),
     }
+    payload
+}
 
+/// The linked entities of the notified entity, or `None` when the payload
+/// cannot be read back as an entity or its links cannot be resolved.
+///
+/// Neither condition fails the notification: it goes out carrying the notified
+/// entity alone.
+async fn resolve_join_targets(notified: &Value, params: &NotificationBuildParams<'_>, context: &ContextSpec) -> Option<ResolvedLinkedEntities> {
+    let main_entity = deserialize_exact::<Entity>(notified).ok()?;
+    match resolve_linked_cached(
+        params.target,
+        params.entity_query,
+        &main_entity,
+        params.sub.notification_join_level,
+        params.sub.notification_sys_attrs,
+        context,
+        params.compaction_cache,
+    )
+    .await
+    {
+        Ok(resolved) => Some(resolved),
+        Err(error) => {
+            debug!(%error, "Failed to resolve linked entities for a notification payload");
+            None
+        }
+    }
+}
+
+/// Render every entity in the payload in the subscription's
+/// `notification.format` (clause 5.8.6).
+fn render_notification_entities(payload: Vec<Value>, sub: &CompiledSubscription) -> Vec<Value> {
     let format = sub.notification_format.unwrap_or_default();
-    let mut result = Vec::with_capacity(all_compacted.len());
-    for item in all_compacted {
-        let mut formatted = render_format(item, format, sub.notification_join);
-        // The same targeted walk the query response uses (clause 4.5.1): only a
-        // Relationship's `object` and a ListRelationship's `objectList` are
-        // percent-encoded entity ids to decode, so a Property value carrying a
-        // `%` is not corrupted, and a notification decodes exactly as a GET of
-        // the same entity does.
-        decode_percent_encoded_uris(&mut formatted);
-        result.push(formatted);
-    }
-
-    result
+    payload
+        .into_iter()
+        .map(|entity| {
+            let mut formatted = render_format(entity, format, sub.notification_join);
+            // The same targeted walk the query response uses (clause 4.5.1): only a
+            // Relationship's `object` and a ListRelationship's `objectList` are
+            // percent-encoded entity ids to decode, so a Property value carrying a
+            // `%` is not corrupted, and a notification decodes exactly as a GET of
+            // the same entity does.
+            decode_percent_encoded_uris(&mut formatted);
+            formatted
+        })
+        .collect()
 }
 
 pub(super) mod cache;

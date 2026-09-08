@@ -31,13 +31,13 @@ impl HttpApi {
             .merge(routes.tenancy.into_router())
             .merge(routes.health.into_router())
             .merge(routes.component_report.into_router());
-        let router = Router::new().nest("/ngsi-ld/v1", stack.apply_api(v1));
-        let router = match routes.telemetry {
-            Some(telemetry) => router.merge(telemetry.into_router()),
-            None => router,
+        let api_root = Router::new().nest("/ngsi-ld/v1", stack.apply_api(v1));
+        let process_root = match routes.telemetry {
+            Some(telemetry) => api_root.merge(telemetry.into_router()),
+            None => api_root,
         };
         HttpApi {
-            service: stack.apply_process(router),
+            service: stack.apply_process(process_root),
         }
     }
 

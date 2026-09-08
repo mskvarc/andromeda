@@ -34,6 +34,11 @@ pub enum EntityTypesMissing {
 /// A type column is a JSON array of type dictionary keys; anything that is not
 /// a non-empty array would land in the table as an empty `integer[]`, which is
 /// the state the constraint forbids.
+///
+/// # Errors
+///
+/// Returns [`EntityTypesMissing::Rejected`] naming the first entity whose type
+/// column is not a non-empty JSON array.
 pub fn types_present(columns: &PreparedEntityColumns) -> Result<(), EntityTypesMissing> {
     match columns
         .ids

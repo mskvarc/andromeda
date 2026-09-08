@@ -1,6 +1,9 @@
 //! Gauges describing one connection pool.
 
-use crate::names::{DB_POOL_CONNECTIONS, DB_POOL_IDLE_CONNECTIONS, LABEL_TENANT};
+use crate::{
+    names::{DB_POOL_CONNECTIONS, DB_POOL_IDLE_CONNECTIONS, LABEL_TENANT},
+    sample_value::SampleValue,
+};
 use metrics::gauge;
 
 /// A point-in-time sample of one pool's occupancy.
@@ -35,8 +38,7 @@ impl PoolGauges {
     pub fn record(&self, sample: PoolSample) {
         // clone: the metrics facade owns each label value it stores.
         gauge!(DB_POOL_CONNECTIONS, LABEL_TENANT => self.tenant.clone()).set(f64::from(sample.open));
-        // Pool sizes are far below the exactly representable integer range of `f64`.
-        gauge!(DB_POOL_IDLE_CONNECTIONS, LABEL_TENANT => self.tenant.clone()).set(sample.idle as f64);
+        gauge!(DB_POOL_IDLE_CONNECTIONS, LABEL_TENANT => self.tenant.clone()).set(SampleValue::from(sample.idle));
     }
 }
 

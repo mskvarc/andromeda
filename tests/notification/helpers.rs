@@ -517,11 +517,11 @@ pub struct MqttReceiver {
 }
 
 impl MqttReceiver {
-    pub async fn connect(host: &str, port: u16) -> Self {
-        Self::connect_with_credentials(host, port, None, None).await
+    pub fn connect(host: &str, port: u16) -> Self {
+        Self::connect_with_credentials(host, port, None, None)
     }
 
-    pub async fn connect_with_credentials(host: &str, port: u16, username: Option<&str>, password: Option<&str>) -> Self {
+    pub fn connect_with_credentials(host: &str, port: u16, username: Option<&str>, password: Option<&str>) -> Self {
         let credentials = username.map(|username| MqttCredentials::new(username, password.unwrap_or("")));
         Self {
             receiver: RawMqttReceiver::connect(MqttHost::new(host), port, credentials),

@@ -96,6 +96,6 @@ mod tests {
     /// A join that resolved everything adds nothing.
     #[test]
     fn a_complete_join_adds_no_warning() {
-        assert_eq!(with_linked_resolution_warnings(Vec::new(), &[]), [] as [andromeda_http_headers::ngsild_warning::NgsiLdWarning; 0]);
+        assert_eq!(with_linked_resolution_warnings(Vec::new(), &[]), [] as [NgsiLdWarning; 0]);
     }
 }

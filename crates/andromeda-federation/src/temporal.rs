@@ -91,6 +91,15 @@ impl FederationService {
 
     /// Forward a temporal entity query to the matching registrations (clause
     /// 5.7.4.4), each sent the part of the client's query it is registered for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FederationError::JsonLd`] when the query's entity type
+    /// cannot be expanded against the request's context,
+    /// [`FederationError::Registration`] when the matching registrations
+    /// cannot be read, and [`FederationError::Conflict`] when the selected
+    /// registrations are mutually exclusive. A source that fails to answer
+    /// does not fail the call: its failure travels as a warning.
     pub async fn forward_temporal_query(
         &self,
         target: &ContextTarget,
@@ -155,6 +164,13 @@ impl FederationService {
     /// Forward a temporal entity retrieval to the matching context sources
     /// (clause 5.7.3.4), each sent the part of the client's parameters it is
     /// registered for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FederationError::Registration`] when the matching
+    /// registrations cannot be read, and [`FederationError::Conflict`] when
+    /// the selected registrations are mutually exclusive. A source that fails
+    /// to answer does not fail the call: its failure travels as a warning.
     pub async fn forward_temporal_retrieve(
         &self,
         target: &ContextTarget,

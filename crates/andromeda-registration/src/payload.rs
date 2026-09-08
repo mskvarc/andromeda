@@ -9,6 +9,7 @@
 use crate::{
     error::RegistrationError,
     geometry::unwrap_geo_property_to_geometry,
+    nullable_member::NullableMember,
     store::{CreateCsrParams, CsrUpdateFragment},
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
@@ -49,17 +50,16 @@ where
     deserialize_member(payload, key)?.ok_or_else(|| RegistrationError::csr_validation(format!("{key} is required")))
 }
 
-/// Read one nullable member for an update: absent -> `None`, `null` ->
-/// `Some(None)`, value -> `Some(Some(v))` (clause 5.5.8 member removal).
-fn deserialize_nullable<T>(payload: &Value, key: &str) -> Result<Option<Option<T>>, RegistrationError>
+/// Read one nullable member for an update (clause 5.5.8 member removal).
+fn deserialize_nullable<T>(payload: &Value, key: &str) -> Result<NullableMember<T>, RegistrationError>
 where
     T: DeserializeOwned,
 {
     match payload.get(key) {
-        None => Ok(None),
-        Some(value) if value.is_null() => Ok(Some(None)),
+        None => Ok(NullableMember::Absent),
+        Some(value) if value.is_null() => Ok(NullableMember::Cleared),
         Some(value) => serde_json::from_value(value.clone()) // clone: serde owns the selected member while the update payload remains borrowed.
-            .map(|parsed| Some(Some(parsed)))
+            .map(NullableMember::Set)
             .map_err(|error| RegistrationError::csr_validation(format!("Invalid '{key}' value: {error}"))),
     }
 }
@@ -70,11 +70,11 @@ fn deserialize_geometry(payload: &Value, key: &str) -> Result<Option<Geometry>, 
 }
 
 /// Read one nullable `GeoJSON` geometry member for an update.
-fn deserialize_nullable_geometry(payload: &Value, key: &str) -> Result<Option<Option<Geometry>>, RegistrationError> {
+fn deserialize_nullable_geometry(payload: &Value, key: &str) -> Result<NullableMember<Geometry>, RegistrationError> {
     match payload.get(key) {
-        None => Ok(None),
-        Some(value) if value.is_null() => Ok(Some(None)),
-        Some(value) => unwrap_geo_property_to_geometry(value).map(|geometry| Some(Some(geometry))),
+        None => Ok(NullableMember::Absent),
+        Some(value) if value.is_null() => Ok(NullableMember::Cleared),
+        Some(value) => unwrap_geo_property_to_geometry(value).map(NullableMember::Set),
     }
 }
 
@@ -161,9 +161,9 @@ pub(super) fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragm
         observation_space: deserialize_nullable_geometry(fragment, "observationSpace")?,
         operation_space: deserialize_nullable_geometry(fragment, "operationSpace")?,
         expires_at: match fragment.get("expiresAt") {
-            None => None,
-            Some(value) if value.is_null() => Some(None),
-            Some(value) => Some(Some(parse_datetime(value, "expiresAt")?)),
+            None => NullableMember::Absent,
+            Some(value) if value.is_null() => NullableMember::Cleared,
+            Some(value) => NullableMember::Set(parse_datetime(value, "expiresAt")?),
         },
         endpoint: deserialize_member::<Url>(fragment, "endpoint")?,
         accept: deserialize_nullable::<MediaTypeBuf>(fragment, "accept")?,
@@ -171,9 +171,9 @@ pub(super) fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragm
         operations: deserialize_nullable::<Vec<CsrOperation>>(fragment, "operations")?,
         scope: deserialize_nullable(fragment, "scope")?,
         refresh_rate: match fragment.get("refreshRate") {
-            None => None,
-            Some(value) if value.is_null() => Some(None),
-            Some(value) => Some(Some(parse_duration_value(value, "refreshRate")?)),
+            None => NullableMember::Absent,
+            Some(value) if value.is_null() => NullableMember::Cleared,
+            Some(value) => NullableMember::Set(parse_duration_value(value, "refreshRate")?),
         },
         management: deserialize_nullable::<RegistrationManagementInfo>(fragment, "management")?,
         context_source_info: deserialize_nullable::<Vec<KeyValuePair>>(fragment, "contextSourceInfo")?,
@@ -195,7 +195,10 @@ pub(super) fn extract_additional_properties(payload: &Value) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
-    use crate::payload::{extract_create_params, extract_update_fragment};
+    use crate::{
+        nullable_member::NullableMember,
+        payload::{extract_create_params, extract_update_fragment},
+    };
     use andromeda_ngsi_ld_model::registration::CsrOperation;
     use serde_json::json;
 
@@ -296,9 +299,9 @@ mod tests {
     #[test]
     fn update_distinguishes_absent_null_and_present_members() {
         let fragment = extract_update_fragment(&json!({"description": null, "management": {"timeout": 10}})).expect("valid fragment");
-        pretty_assertions::assert_eq!(fragment.description, Some(None));
-        assert!(fragment.registration_name.is_none());
-        assert!(fragment.management.as_ref().is_some_and(Option::is_some));
+        assert!(matches!(fragment.description, NullableMember::Cleared));
+        assert!(matches!(fragment.registration_name, NullableMember::Absent));
+        assert!(matches!(fragment.management, NullableMember::Set(_)));
     }
 
     #[test]

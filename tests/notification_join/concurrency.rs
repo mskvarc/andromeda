@@ -23,10 +23,10 @@ const CONCURRENT_APPENDERS: usize = 8;
 /// The distinct identifiers one appender task owns for the whole flat-join
 /// chain it drives.
 struct JoinChain {
-    country_id: String,
-    city_id: String,
-    building_id: String,
-    subscription_id: String,
+    country: String,
+    city: String,
+    building: String,
+    subscription: String,
 }
 
 /// Run one appender's full failing sequence against its own entities and its
@@ -34,16 +34,16 @@ struct JoinChain {
 /// delivered payload does not carry the value the append just wrote.
 async fn drive_one_appender(client: TestClient, suffix: usize, chain: JoinChain) -> Result<(), String> {
     let JoinChain {
-        country_id,
-        city_id,
-        building_id,
-        subscription_id,
+        country,
+        city,
+        building,
+        subscription,
     } = chain;
 
     create(
         &client,
         &json!({
-            "id": country_id,
+            "id": country,
             "type": "Country",
             "name": {"type": "Property", "value": "Portugal"},
             "@context": [CORE_CONTEXT]
@@ -53,9 +53,9 @@ async fn drive_one_appender(client: TestClient, suffix: usize, chain: JoinChain)
     create(
         &client,
         &json!({
-            "id": city_id,
+            "id": city,
             "type": "City",
-            "locatedIn": {"type": "Relationship", "object": country_id},
+            "locatedIn": {"type": "Relationship", "object": country},
             "@context": [CORE_CONTEXT]
         }),
     )
@@ -63,9 +63,9 @@ async fn drive_one_appender(client: TestClient, suffix: usize, chain: JoinChain)
     create(
         &client,
         &json!({
-            "id": building_id,
+            "id": building,
             "type": "Building",
-            "locatedAt": {"type": "Relationship", "object": city_id},
+            "locatedAt": {"type": "Relationship", "object": city},
             "@context": [CORE_CONTEXT]
         }),
     )
@@ -75,18 +75,18 @@ async fn drive_one_appender(client: TestClient, suffix: usize, chain: JoinChain)
         .await
         .expect("notification server must start");
     let endpoint_url = receiver.endpoint_url().expect("notification endpoint must be valid");
-    let sub = subscription_with_flat_join(&subscription_id, &building_id, &endpoint_url, Some(2));
+    let sub = subscription_with_flat_join(&subscription, &building, &endpoint_url, Some(2));
     create_subscription(&client, &sub).await;
 
     let fired_value = format!("task-{suffix}-once");
-    append_attrs(&client, &building_id, &trigger_fragment(&fired_value)).await;
+    append_attrs(&client, &building, &trigger_fragment(&fired_value)).await;
 
     let notification = receiver.next_request(Duration::from_secs(5)).await.expect("notification must arrive");
     let raw_body = String::from_utf8_lossy(&notification.body).into_owned();
     let body: Value = notification.json().expect("notification must be valid JSON");
     receiver.shutdown().await.expect("notification server shutdown failed");
 
-    let expected_ids = vec![building_id, city_id, country_id];
+    let expected_ids = vec![building, city, country];
     let data = body["data"].as_array().cloned().unwrap_or_default();
     let ids: Vec<String> = data.iter().filter_map(|entity| entity["id"].as_str().map(str::to_owned)).collect();
     let delivered_name = data.first().map(|entity| &entity["name"]["value"]).cloned().unwrap_or(Value::Null);
@@ -118,10 +118,10 @@ async fn notification_join_flat_order_survives_concurrent_appends() {
     for suffix in 0..CONCURRENT_APPENDERS {
         let client = scope.client().clone(); // clone: each spawned appender owns a handle to the shared broker endpoint
         let chain = JoinChain {
-            country_id: scope.id(&format!("Country:conc-{suffix}")),
-            city_id: scope.id(&format!("City:conc-{suffix}")),
-            building_id: scope.id(&format!("Building:conc-{suffix}")),
-            subscription_id: scope.id(&format!("Subscription:conc-{suffix}")),
+            country: scope.id(&format!("Country:conc-{suffix}")),
+            city: scope.id(&format!("City:conc-{suffix}")),
+            building: scope.id(&format!("Building:conc-{suffix}")),
+            subscription: scope.id(&format!("Subscription:conc-{suffix}")),
         };
         appenders.push(tokio::spawn(drive_one_appender(client, suffix, chain)));
     }

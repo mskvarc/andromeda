@@ -57,6 +57,12 @@ pub struct HttpTransport {
 
 impl HttpTransport {
     /// Build the transport, failing if a client cannot be constructed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportError::ClientInitializationFailed`] when `reqwest`
+    /// refuses the client configuration — a TLS backend that cannot be
+    /// initialised, or a resolver the runtime will not accept.
     pub fn new(config: HttpTransportConfig) -> Result<HttpTransport, TransportError> {
         let client = reqwest::ClientBuilder::new()
             .http1_title_case_headers()
@@ -92,7 +98,9 @@ impl HttpTransport {
         let port = endpoint_uri.port_or_known_default().unwrap_or(DEFAULT_HTTP_PORT);
         let authority = HostPort::new(host, port);
 
-        let outcome = if let Some(cached) = self.dns_cache.get(&authority).await { cached } else {
+        let outcome = if let Some(cached) = self.dns_cache.get(&authority).await {
+            cached
+        } else {
             let computed = resolve_private_ip_outcome(&authority).await;
             self.dns_cache.insert(authority, computed.clone()).await; // clone: the cache takes one and the caller reads the other
             computed

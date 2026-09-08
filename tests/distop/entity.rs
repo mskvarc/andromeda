@@ -7,7 +7,10 @@ use serde_json::{Map, Value, json};
 
 /// A normalized `Property` node with the given value.
 pub fn property(value: Value) -> Value {
-    json!({ "type": "Property", "value": value })
+    let mut node = Map::new();
+    node.insert("type".to_owned(), json!("Property"));
+    node.insert("value".to_owned(), value);
+    Value::Object(node)
 }
 
 /// A normalized `Relationship` node pointing at the given object id.
@@ -17,7 +20,11 @@ pub fn relationship(object: &str) -> Value {
 
 /// A `Property` carrying a `datasetId`, for multi-instance attribute tests.
 pub fn property_with_dataset(value: Value, dataset_id: &str) -> Value {
-    json!({ "type": "Property", "value": value, "datasetId": dataset_id })
+    let mut node = Map::new();
+    node.insert("type".to_owned(), json!("Property"));
+    node.insert("value".to_owned(), value);
+    node.insert("datasetId".to_owned(), json!(dataset_id));
+    Value::Object(node)
 }
 
 /// A minimal `Vehicle` entity holding a single `speed` property, with the

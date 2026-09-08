@@ -7,9 +7,14 @@ use serde_json::Value;
 
 /// Build an [`InsertSnapshotParams`] from a domain [`Snapshot`].
 ///
-/// Serialises every nullable JSON column up-front; any failure is surfaced as
-/// an [`SnapshotError::internal`] so the repository call is infallible w.r.t.
-/// encoding.
+/// Serialises every nullable JSON column up-front so the repository call is
+/// infallible with respect to encoding.
+///
+/// # Errors
+///
+/// Returns [`SnapshotError::Internal`] when the receiver info, the entity query
+/// execution details or the temporal query execution details cannot be
+/// serialised to JSON.
 pub fn to_insert_params(snapshot: &Snapshot, query_context_json: Value) -> Result<InsertSnapshotParams<'_>, SnapshotError> {
     let receiver_info_json = match snapshot.receiver_info.as_ref() {
         Some(v) => Some(to_value(v, "receiver_info")?),

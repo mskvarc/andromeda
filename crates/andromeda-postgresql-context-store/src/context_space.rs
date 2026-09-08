@@ -29,6 +29,14 @@ pub enum ContextSpacePersistenceError {
 }
 
 /// Resolve the exactly-one live context space installed by tenant migrations.
+///
+/// # Errors
+///
+/// Returns [`ContextSpacePersistenceError::Persistence`] when the lookup fails
+/// or no live row exists, [`ContextSpacePersistenceError::InvalidKey`] when the
+/// stored surrogate key is not positive, and
+/// [`ContextSpacePersistenceError::InvalidTarget`] when the record cannot form a
+/// live target.
 pub async fn resolve_live_target(pool: &PgPool) -> Result<ContextTarget, ContextSpacePersistenceError> {
     let statement = Query::select()
         .column(ContextSpaces::ContextSpaceKey)
@@ -43,6 +51,14 @@ pub async fn resolve_live_target(pool: &PgPool) -> Result<ContextTarget, Context
 }
 
 /// Resolve any persisted branch by its durable key, including the owning Snapshot URI.
+///
+/// # Errors
+///
+/// Returns [`ContextSpacePersistenceError::Persistence`] when the lookup fails
+/// or the key names no row, and
+/// [`ContextSpacePersistenceError::InvalidTarget`] when the stored kind is
+/// unknown, when a snapshot branch carries no owning Snapshot URI, or when that
+/// URI does not parse.
 pub async fn resolve_context_target(pool: &PgPool, key: ContextSpaceKey) -> Result<ContextTarget, ContextSpacePersistenceError> {
     let kind = Alias::new("kind");
     let snapshot_id = Alias::new("snapshot_id");

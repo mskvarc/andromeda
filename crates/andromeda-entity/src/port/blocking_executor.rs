@@ -7,6 +7,13 @@ use std::num::NonZeroUsize;
 /// One CPU-bound operation prepared by entity policy for a runtime executor.
 pub trait BlockingTask: Send + 'static {
     /// Run the operation to completion on a blocking worker thread.
+    ///
+    /// # Errors
+    ///
+    /// Reports the [`EntityError`] the prepared operation failed with. The
+    /// executor neither interprets nor retries it: it stops dispatching the
+    /// remaining tasks and hands the failure back to the caller that queued
+    /// them.
     fn run(self: Box<Self>) -> Result<(), EntityError>;
 }
 

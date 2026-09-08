@@ -102,217 +102,188 @@ impl Token {
 
 /// Split a `q` expression into tokens.
 ///
-/// Returns a typed [`QueryError`] variant when a character cannot start any
-/// token or a quoted literal is left open.
+/// # Errors
+///
+/// Returns [`QueryError::QUnterminatedString`] when a double-quoted literal is
+/// left open, and [`QueryError::QUnexpectedChar`] when a character can start no
+/// token of the clause 4.9 grammar.
 pub fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
-    let mut tokens = Vec::new();
     let chars: Vec<char> = input.chars().collect();
-    let mut i = 0;
+    let mut tokens = Vec::new();
+    let mut cursor = 0;
 
-    while i < chars.len() {
-        match chars[i] {
-            ' ' | '\t' | '\n' | '\r' => i += 1,
-            ';' => {
-                tokens.push(Token::Semi);
-                i += 1;
-            }
-            '|' => {
-                tokens.push(Token::Pipe);
-                i += 1;
-            }
-            '(' => {
-                tokens.push(Token::LParen);
-                i += 1;
-            }
-            ')' => {
-                tokens.push(Token::RParen);
-                i += 1;
-            }
-            '[' => {
-                tokens.push(Token::LBracket);
-                i += 1;
-            }
-            ']' => {
-                tokens.push(Token::RBracket);
-                i += 1;
-            }
-            '{' => {
-                tokens.push(Token::LBrace);
-                i += 1;
-            }
-            '}' => {
-                tokens.push(Token::RBrace);
-                i += 1;
-            }
-            '*' => {
-                tokens.push(Token::Star);
-                i += 1;
-            }
-            ',' => {
-                tokens.push(Token::Comma);
-                i += 1;
-            }
-            '=' if i + 1 < chars.len() && chars[i + 1] == '=' => {
-                tokens.push(Token::Eq);
-                i += 2;
-            }
-            '!' if i + 2 < chars.len() && chars[i + 1] == '~' && chars[i + 2] == '=' => {
-                tokens.push(Token::NotMatch);
-                i += 3;
-            }
-            '!' if i + 1 < chars.len() && chars[i + 1] == '=' => {
-                tokens.push(Token::Neq);
-                i += 2;
-            }
-            '~' if i + 1 < chars.len() && chars[i + 1] == '=' => {
-                tokens.push(Token::Match);
-                i += 2;
-            }
-            '>' if i + 1 < chars.len() && chars[i + 1] == '=' => {
-                tokens.push(Token::Ge);
-                i += 2;
-            }
-            '>' => {
-                tokens.push(Token::Gt);
-                i += 1;
-            }
-            '<' if i + 1 < chars.len() && chars[i + 1] == '=' => {
-                tokens.push(Token::Le);
-                i += 2;
-            }
-            '<' => {
-                tokens.push(Token::Lt);
-                i += 1;
-            }
-            '.' if i + 1 < chars.len() && chars[i + 1] == '.' => {
-                tokens.push(Token::Dots);
-                i += 2;
-            }
-            '.' => {
-                tokens.push(Token::Dot);
-                i += 1;
-            }
-            '"' => {
-                i += 1;
-                let mut s = String::new();
-                while i < chars.len() && chars[i] != '"' {
-                    if chars[i] == '\\' && i + 1 < chars.len() {
-                        s.push(chars[i + 1]);
-                        i += 2;
-                    } else {
-                        s.push(chars[i]);
-                        i += 1;
-                    }
-                }
-                if i >= chars.len() {
-                    return Err(QueryError::QUnterminatedString);
-                }
-                i += 1;
-                tokens.push(Token::QuotedStr(s));
-            }
-            c if c == '-' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() => {
-                let start = i;
-                i += 1;
-                while i < chars.len() && chars[i].is_ascii_digit() {
-                    i += 1;
-                }
-                if i < chars.len() && chars[i] == '.' && !(i + 1 < chars.len() && chars[i + 1] == '.') && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
-                    i += 1;
-                    while i < chars.len() && chars[i].is_ascii_digit() {
-                        i += 1;
-                    }
-                }
-                if i < chars.len() && (chars[i] == 'e' || chars[i] == 'E') {
-                    i += 1;
-                    if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
-                        i += 1;
-                    }
-                    while i < chars.len() && chars[i].is_ascii_digit() {
-                        i += 1;
-                    }
-                }
-                let num_str: String = chars[start..i].iter().collect();
-                tokens.push(Token::NumberLit(num_str));
-            }
-            c if c.is_ascii_digit() => {
-                let start = i;
-                while i < chars.len() && chars[i].is_ascii_digit() {
-                    i += 1;
-                }
-                // Check if this looks like a datetime/date (digits followed by '-')
-                // e.g. 2017-12-24T12:00:00Z
-                if i < chars.len() && chars[i] == '-' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
-                    // Looks like a date-like token, consume as identifier
-                    while i < chars.len()
-                        && (chars[i].is_alphanumeric()
-                            || chars[i] == '-'
-                            || chars[i] == ':'
-                            || chars[i] == '.'
-                            || chars[i] == '+'
-                            || chars[i] == 'T'
-                            || chars[i] == 'Z')
-                    {
-                        if chars[i] == '.' && i + 1 < chars.len() && chars[i + 1] == '.' {
-                            break;
-                        }
-                        i += 1;
-                    }
-                    let word: String = chars[start..i].iter().collect();
-                    tokens.push(Token::Ident(word));
-                } else {
-                    if i < chars.len()
-                        && chars[i] == '.'
-                        && !(i + 1 < chars.len() && chars[i + 1] == '.')
-                        && i + 1 < chars.len()
-                        && chars[i + 1].is_ascii_digit()
-                    {
-                        i += 1;
-                        while i < chars.len() && chars[i].is_ascii_digit() {
-                            i += 1;
-                        }
-                    }
-                    if i < chars.len() && (chars[i] == 'e' || chars[i] == 'E') {
-                        i += 1;
-                        if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
-                            i += 1;
-                        }
-                        while i < chars.len() && chars[i].is_ascii_digit() {
-                            i += 1;
-                        }
-                    }
-                    let num_str: String = chars[start..i].iter().collect();
-                    tokens.push(Token::NumberLit(num_str));
-                }
-            }
-            c if c.is_alphanumeric() || c == '_' || c == ':' || c == '/' => {
-                let start = i;
-                while i < chars.len()
-                    && (chars[i].is_alphanumeric() || chars[i] == '_' || chars[i] == ':' || chars[i] == '/' || chars[i] == '-' || chars[i] == '#')
-                {
-                    if chars[i] == '.' && i + 1 < chars.len() && chars[i + 1] == '.' {
-                        break;
-                    }
-                    if chars[i] == '.' {
-                        break;
-                    }
-                    i += 1;
-                }
-                let word: String = chars[start..i].iter().collect();
-                match word.as_str() {
-                    "true" => tokens.push(Token::True),
-                    "false" => tokens.push(Token::False),
-                    // `&str` is unbounded, so a catch-all is the only way to
-                    // close this match; every other word is an identifier.
-                    _ => tokens.push(Token::Ident(word)),
-                }
-            }
-            other => {
-                return Err(QueryError::QUnexpectedChar { ch: other, position: i });
-            }
+    while cursor < chars.len() {
+        if matches!(chars[cursor], ' ' | '\t' | '\n' | '\r') {
+            cursor += 1;
+            continue;
         }
+        let (token, next) = scan_token(&chars, cursor)?;
+        tokens.push(token);
+        cursor = next;
     }
 
     Ok(tokens)
+}
+
+/// Scan the single token that starts at `start`, returning it together with the
+/// index that follows it.
+///
+/// The multi-character operators are matched before their prefixes, because
+/// clause 4.9 spells `!~=` with a `!` that does not open a `!=`.
+fn scan_token(chars: &[char], start: usize) -> Result<(Token, usize), QueryError> {
+    match chars[start] {
+        ';' => Ok((Token::Semi, start + 1)),
+        '|' => Ok((Token::Pipe, start + 1)),
+        '(' => Ok((Token::LParen, start + 1)),
+        ')' => Ok((Token::RParen, start + 1)),
+        '[' => Ok((Token::LBracket, start + 1)),
+        ']' => Ok((Token::RBracket, start + 1)),
+        '{' => Ok((Token::LBrace, start + 1)),
+        '}' => Ok((Token::RBrace, start + 1)),
+        '*' => Ok((Token::Star, start + 1)),
+        ',' => Ok((Token::Comma, start + 1)),
+        '=' if is_at(chars, start + 1, '=') => Ok((Token::Eq, start + 2)),
+        '!' if is_at(chars, start + 1, '~') && is_at(chars, start + 2, '=') => Ok((Token::NotMatch, start + 3)),
+        '!' if is_at(chars, start + 1, '=') => Ok((Token::Neq, start + 2)),
+        '~' if is_at(chars, start + 1, '=') => Ok((Token::Match, start + 2)),
+        '>' if is_at(chars, start + 1, '=') => Ok((Token::Ge, start + 2)),
+        '>' => Ok((Token::Gt, start + 1)),
+        '<' if is_at(chars, start + 1, '=') => Ok((Token::Le, start + 2)),
+        '<' => Ok((Token::Lt, start + 1)),
+        '.' if is_at(chars, start + 1, '.') => Ok((Token::Dots, start + 2)),
+        '.' => Ok((Token::Dot, start + 1)),
+        '"' => scan_quoted_string(chars, start),
+        '-' if starts_digit(chars, start + 1) => Ok(scan_signed_number(chars, start)),
+        digit if digit.is_ascii_digit() => Ok(scan_digit_run(chars, start)),
+        name if name.is_alphanumeric() || matches!(name, '_' | ':' | '/') => Ok(scan_identifier(chars, start)),
+        other => Err(QueryError::QUnexpectedChar { ch: other, position: start }),
+    }
+}
+
+/// Whether `chars` holds `expected` at `index`.
+fn is_at(chars: &[char], index: usize, expected: char) -> bool {
+    chars.get(index) == Some(&expected)
+}
+
+/// Whether `chars` holds an ASCII digit at `index`.
+fn starts_digit(chars: &[char], index: usize) -> bool {
+    chars.get(index).is_some_and(char::is_ascii_digit)
+}
+
+/// Advance past a run of ASCII digits, returning the index that follows it.
+fn consume_digits(chars: &[char], from: usize) -> usize {
+    let mut cursor = from;
+    while starts_digit(chars, cursor) {
+        cursor += 1;
+    }
+    cursor
+}
+
+/// Scan a double-quoted string literal, resolving backslash escapes.
+///
+/// The contents are otherwise taken verbatim: percent-encoding is the HTTP
+/// binding's concern (clause 4.9) and is decoded once before a filter reaches
+/// this tokeniser, so a second decode here would rewrite a URN that legitimately
+/// carries `%2F`.
+fn scan_quoted_string(chars: &[char], start: usize) -> Result<(Token, usize), QueryError> {
+    let mut literal = String::new();
+    let mut cursor = start + 1;
+    while cursor < chars.len() && chars[cursor] != '"' {
+        if chars[cursor] == '\\' && cursor + 1 < chars.len() {
+            literal.push(chars[cursor + 1]);
+            cursor += 2;
+        } else {
+            literal.push(chars[cursor]);
+            cursor += 1;
+        }
+    }
+    if cursor >= chars.len() {
+        return Err(QueryError::QUnterminatedString);
+    }
+    Ok((Token::QuotedStr(literal), cursor + 1))
+}
+
+/// Consume the optional fraction and exponent of a numeric literal, starting at
+/// the index that follows its integer digits.
+///
+/// A `.` is only a decimal point when a digit follows it and it does not open
+/// the `..` range separator, which otherwise would be swallowed by `1..5`.
+fn scan_number_tail(chars: &[char], from: usize) -> usize {
+    let mut cursor = from;
+    if is_at(chars, cursor, '.') && !is_at(chars, cursor + 1, '.') && starts_digit(chars, cursor + 1) {
+        cursor = consume_digits(chars, cursor + 1);
+    }
+    if is_at(chars, cursor, 'e') || is_at(chars, cursor, 'E') {
+        cursor += 1;
+        if is_at(chars, cursor, '+') || is_at(chars, cursor, '-') {
+            cursor += 1;
+        }
+        cursor = consume_digits(chars, cursor);
+    }
+    cursor
+}
+
+/// Scan a numeric literal that opens with a `-` sign.
+fn scan_signed_number(chars: &[char], start: usize) -> (Token, usize) {
+    let end = scan_number_tail(chars, consume_digits(chars, start + 1));
+    (Token::NumberLit(chars[start..end].iter().collect()), end)
+}
+
+/// Scan a token that opens with an ASCII digit.
+///
+/// Clause 4.6.3 operands are unquoted, so a digit run followed by `-` and
+/// another digit is an RFC 3339 date-like literal rather than a number followed
+/// by punctuation.
+fn scan_digit_run(chars: &[char], start: usize) -> (Token, usize) {
+    let after_digits = consume_digits(chars, start);
+    if is_at(chars, after_digits, '-') && starts_digit(chars, after_digits + 1) {
+        return scan_date_like(chars, start, after_digits);
+    }
+    let end = scan_number_tail(chars, after_digits);
+    (Token::NumberLit(chars[start..end].iter().collect()), end)
+}
+
+/// Consume an RFC 3339 date-like literal as one identifier, stopping before the
+/// `..` range separator so that `2017-12-24..2017-12-25` stays a range.
+fn scan_date_like(chars: &[char], start: usize, from: usize) -> (Token, usize) {
+    let mut cursor = from;
+    while chars.get(cursor).copied().is_some_and(is_temporal_char) {
+        if is_at(chars, cursor, '.') && is_at(chars, cursor + 1, '.') {
+            break;
+        }
+        cursor += 1;
+    }
+    (Token::Ident(chars[start..cursor].iter().collect()), cursor)
+}
+
+/// Whether `current` may appear inside an unquoted RFC 3339 temporal literal.
+fn is_temporal_char(current: char) -> bool {
+    current.is_alphanumeric() || matches!(current, '-' | ':' | '.' | '+')
+}
+
+/// Scan a bare identifier — an attribute name, a prefixed name, or an IRI a
+/// client wrote unquoted — and recognise the two boolean keywords.
+fn scan_identifier(chars: &[char], start: usize) -> (Token, usize) {
+    let mut cursor = start;
+    while chars.get(cursor).copied().is_some_and(is_identifier_char) {
+        cursor += 1;
+    }
+    let word: String = chars[start..cursor].iter().collect();
+    let token = match word.as_str() {
+        "true" => Token::True,
+        "false" => Token::False,
+        // `&str` is unbounded, so a catch-all is the only way to close this
+        // match; every other word is an identifier.
+        _ => Token::Ident(word),
+    };
+    (token, cursor)
+}
+
+/// Whether `current` may appear inside a bare identifier.
+///
+/// `.` is excluded because clause 4.9 makes it the sub-attribute separator.
+fn is_identifier_char(current: char) -> bool {
+    current.is_alphanumeric() || matches!(current, '_' | ':' | '/' | '-' | '#')
 }
 
 #[cfg(test)]

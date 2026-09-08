@@ -170,6 +170,10 @@ impl JsonLdEngineBuilder {
             info!("JSON-LD preloaded contexts registered ({}): {:?}", preloaded.len(), preloaded);
         }
 
+        // A configured limit wider than the address space saturates rather
+        // than failing the build: no response that large could be held in
+        // memory, so `usize::MAX` refuses exactly the same set of documents.
+        let max_context_bytes = usize::try_from(self.max_context_bytes).unwrap_or(usize::MAX);
         let mut loader = HttpContextLoader::new(
             Arc::clone(&self.registry), // clone: Arc ref-count bump
             self.allow_remote,
@@ -177,7 +181,7 @@ impl JsonLdEngineBuilder {
             self.max_redirects,
             self.cache_capacity,
             self.cache_ttl_seconds,
-            self.max_context_bytes as usize,
+            max_context_bytes,
         )?;
 
         // Counting accesses is only worth doing when there is a durable cache

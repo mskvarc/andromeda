@@ -179,11 +179,7 @@ async fn batch_upsert_fallback_per_entity_create() {
             .expect("batch upsert"),
         201,
     );
-    assert_eq!(
-        mock.get_count(Method::POST, "/ngsi-ld/v1/entities").await,
-        2,
-        "each entity is created individually"
-    );
+    assert_eq!(mock.get_count(Method::POST, "/ngsi-ld/v1/entities"), 2, "each entity is created individually");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -214,7 +210,7 @@ async fn batch_upsert_already_exists_replace_mode_forwards_replace() {
         upserted.status
     );
     assert!(
-        mock.get_count(Method::PUT, &format!("/ngsi-ld/v1/entities/{v1}")).await >= 1,
+        mock.get_count(Method::PUT, &format!("/ngsi-ld/v1/entities/{v1}")) >= 1,
         "replace mode drives a Replace Entity"
     );
 
@@ -256,7 +252,7 @@ async fn batch_upsert_already_exists_update_mode_forwards_update() {
         upserted.status
     );
     assert!(
-        mock.get_count(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v1}/attrs")).await >= 1,
+        mock.get_count(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v1}/attrs")) >= 1,
         "update mode drives an Update Attributes"
     );
 
@@ -318,12 +314,12 @@ async fn batch_upsert_fallback_per_entity_replace() {
         .await
         .expect("batch upsert");
     assert_eq!(
-        mock.get_count(Method::PUT, &format!("/ngsi-ld/v1/entities/{v1}")).await,
+        mock.get_count(Method::PUT, &format!("/ngsi-ld/v1/entities/{v1}")),
         1,
         "V1 is replaced individually"
     );
     assert_eq!(
-        mock.get_count(Method::PUT, &format!("/ngsi-ld/v1/entities/{v2}")).await,
+        mock.get_count(Method::PUT, &format!("/ngsi-ld/v1/entities/{v2}")),
         1,
         "V2 is replaced individually"
     );
@@ -362,12 +358,12 @@ async fn batch_upsert_fallback_per_entity_update() {
         .await
         .expect("batch upsert");
     assert_eq!(
-        mock.get_count(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v1}/attrs")).await,
+        mock.get_count(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v1}/attrs")),
         1,
         "V1 attrs are patched individually"
     );
     assert_eq!(
-        mock.get_count(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v2}/attrs")).await,
+        mock.get_count(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v2}/attrs")),
         1,
         "V2 attrs are patched individually"
     );
@@ -407,7 +403,7 @@ async fn batch_upsert_redirect_no_viable_op_conflict_per_entity() {
         .filter(|entry| entry["registrationId"].as_str() == Some(reg_id.as_str()) && entry["error"]["status"].as_u64() == Some(409))
         .count();
     assert_eq!(conflicts, 2, "both owned entities are rejected with a keyed conflict: {body}");
-    assert_eq!(mock.get_total_count().await, 0, "no forward on an unsupported operation");
+    assert_eq!(mock.get_total_count(), 0, "no forward on an unsupported operation");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -451,7 +447,7 @@ async fn batch_upsert_local_phase_per_mode() {
         .expect("local read-back");
     assert_status(&local, 200);
     assert_eq!(json_body(&local)["brandName"]["value"].as_str(), Some("BMW"), "the local replace took effect");
-    assert_eq!(mock.get_total_count().await, 0, "an auxiliary registration does not forward");
+    assert_eq!(mock.get_total_count(), 0, "an auxiliary registration does not forward");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

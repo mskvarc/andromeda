@@ -243,7 +243,9 @@ impl EntityService {
                     obj.insert("@context".to_string(), resolved);
                 }
                 hit_pending.push((idx, id, value));
-            } else { miss_pending.push((idx, id, value)) }
+            } else {
+                miss_pending.push((idx, id, value))
+            }
         }
 
         let mut results: Vec<IndexedPrepared> = Vec::new();

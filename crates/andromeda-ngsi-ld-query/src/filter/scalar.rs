@@ -54,6 +54,12 @@ impl Scalar {
     /// malformed request rather than a string that happens to contain colons —
     /// which is why the classification and the parse live together here rather
     /// than being re-derived by every caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::QInvalidDateTime`], [`QueryError::QInvalidDate`] or
+    /// [`QueryError::QInvalidTime`] when the literal has a temporal shape but is
+    /// not a well-formed RFC 3339 value of that kind.
     pub fn from_literal(raw: &str) -> Result<Scalar, QueryError> {
         if has_date_time_shape(raw) {
             Ok(Scalar::DateTime(parse_date_time(raw)?))
@@ -87,6 +93,11 @@ fn has_time_shape(raw: &str) -> bool {
 /// Returns the instant rather than a [`Scalar`] wrapping it: a caller that
 /// needs the value back out of the variant it was just placed in has to prove
 /// the variant, and there is nothing to prove here.
+///
+/// # Errors
+///
+/// Returns [`QueryError::QInvalidDateTime`] when `raw` is not an RFC 3339
+/// `date-time`.
 pub fn parse_date_time(raw: &str) -> Result<DateTime<Utc>, QueryError> {
     DateTime::parse_from_rfc3339(raw)
         .map(|parsed| parsed.with_timezone(&Utc))
@@ -97,6 +108,11 @@ pub fn parse_date_time(raw: &str) -> Result<DateTime<Utc>, QueryError> {
 }
 
 /// Parse an RFC 3339 `full-date` operand.
+///
+/// # Errors
+///
+/// Returns [`QueryError::QInvalidDate`] when `raw` is not an RFC 3339
+/// `full-date`.
 pub fn parse_date(raw: &str) -> Result<NaiveDate, QueryError> {
     raw.parse::<NaiveDate>().map_err(|source| QueryError::QInvalidDate {
         value: raw.to_string(),
@@ -109,6 +125,11 @@ pub fn parse_date(raw: &str) -> Result<NaiveDate, QueryError> {
 /// RFC 3339 requires a `full-time` to carry an offset, so the operand is
 /// resolved against an arbitrary date and the date discarded: only the offset
 /// matters, and it shifts every date identically.
+///
+/// # Errors
+///
+/// Returns [`QueryError::QInvalidTime`] when `raw` is not an RFC 3339
+/// `full-time`, which includes a `full-time` written without its offset.
 pub fn parse_time(raw: &str) -> Result<NaiveTime, QueryError> {
     let anchored = format!("{TIME_ANCHOR_DATE}T{raw}");
     DateTime::parse_from_rfc3339(&anchored)

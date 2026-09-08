@@ -73,6 +73,7 @@ impl TryFrom<Query> for EntityQueryParameters {
 mod tests {
     use crate::query::entity::parameters::EntityQueryParameters;
     use andromeda_ngsi_ld_model::query::body::Query;
+    use andromeda_ngsi_ld_query::projection::grammar::RawProjectionTerm;
 
     #[test]
     fn every_applicable_query_member_survives_body_conversion() {
@@ -144,7 +145,7 @@ mod tests {
         pretty_assertions::assert_eq!(terms[0].name.as_str(), "observation");
         pretty_assertions::assert_eq!(terms[0].linked.iter().map(|term| term.name.as_str()).collect::<Vec<_>>(), vec!["temperature"]);
         pretty_assertions::assert_eq!(terms[1].name.as_str(), "name");
-        assert_eq!(terms[1].linked, [] as [andromeda_ngsi_ld_query::projection::grammar::RawProjectionTerm; 0]);
+        assert_eq!(terms[1].linked, [] as [RawProjectionTerm; 0]);
     }
 
     #[test]

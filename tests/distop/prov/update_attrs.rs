@@ -68,7 +68,7 @@ async fn update_attrs_registration_matches_entity_absent_not_404() {
         "a matching registration prevents 404: {}",
         String::from_utf8_lossy(&response.body)
     );
-    assert_eq!(mock.get_count(Method::PATCH, &attrs_path).await, 1, "the update forwards once");
+    assert_eq!(mock.get_count(Method::PATCH, &attrs_path), 1, "the update forwards once");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -169,7 +169,7 @@ async fn update_attrs_exclusive_op_unsupported_returns_409() {
     let response = client.update_entity_attrs(&entity_id, &fragment).await.expect("update attributes");
     assert_status(&response, 409);
     assert_problem_details(&response, CONFLICT);
-    assert_eq!(mock.get_count(Method::PATCH, &attrs_path).await, 0, "no forward on an unsupported operation");
+    assert_eq!(mock.get_count(Method::PATCH, &attrs_path), 0, "no forward on an unsupported operation");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -211,7 +211,7 @@ async fn update_attrs_op_unsupported_with_remainder_returns_207() {
     let errors = body["errors"].as_array().expect("multi-status carries an errors array");
     assert_eq!(errors[0]["registrationId"], json!(reg_id), "the conflict is keyed by registrationId: {body}");
     assert_eq!(errors[0]["error"]["status"], json!(409), "the unsupported operation surfaces a 409: {body}");
-    assert_eq!(mock.get_count(Method::PATCH, &attrs_path).await, 0, "no forward on an unsupported operation");
+    assert_eq!(mock.get_count(Method::PATCH, &attrs_path), 0, "no forward on an unsupported operation");
 
     let local = client
         .get_entity(&entity_id, "local=true", "application/ld+json", None)
@@ -279,7 +279,7 @@ async fn update_attrs_inclusive_forwards_remainder_and_patches_local() {
         attr_present(&forwarded_body, "brandName"),
         "inclusive forwards the full remainder: {forwarded_body}"
     );
-    assert_eq!(mock.get_count(Method::PATCH, &attrs_path).await, 1, "the update forwards once");
+    assert_eq!(mock.get_count(Method::PATCH, &attrs_path), 1, "the update forwards once");
 
     let local = client
         .get_entity(&entity_id, "local=true", "application/ld+json", None)

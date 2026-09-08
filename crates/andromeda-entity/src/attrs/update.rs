@@ -28,6 +28,17 @@ impl EntityService {
     /// The update is computed from a payload read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
     /// recomputed against a fresh read if a concurrent writer got in first.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::JsonLd`] when `fragment` cannot be expanded
+    /// against `context`, [`EntityError::Validation`] when an attribute
+    /// instance omits the member its family requires, carries a `unitCode` the
+    /// family does not define or holds a malformed `GeoProperty` geometry,
+    /// [`EntityError::NotFound`] when no entity carries `id`,
+    /// [`EntityError::Contention`] when concurrent writers superseded the
+    /// computed write on every attempt, and [`EntityError::Persistence`] when
+    /// the store could not apply it.
     pub async fn update_attrs(&self, target: &ContextTarget, id: &Uri, mut fragment: Value, context: &ContextSpec) -> Result<Vec<AttributeName>, EntityError> {
         let entity_uri = id.clone(); // clone: notification and computed write own the identifier
 

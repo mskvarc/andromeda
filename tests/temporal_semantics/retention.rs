@@ -120,7 +120,7 @@ async fn temporal_semantics_operator_retention_ages_storage_out_without_deletion
         .await
         .expect("the retention sweep runs");
     let sweep = match outcome {
-        TemporalRetentionOutcome::Disabled => unreachable!("retention was configured for this sweep"),
+        TemporalRetentionOutcome::Disabled => panic!("retention was configured for this sweep"),
         TemporalRetentionOutcome::Swept(sweep) => sweep,
     };
 

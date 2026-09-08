@@ -7,6 +7,10 @@ use crate::{
 use sqlx::PgPool;
 
 /// Connect to the configured test database for persistence assertions.
+///
+/// # Errors
+///
+/// Returns [`DatabaseAccessError::Configuration`] when the process environment does not describe a usable test database, and [`DatabaseAccessError::Isolation`] when the connection pool cannot be opened.
 pub async fn connect_test_database() -> Result<PgPool, DatabaseAccessError> {
     let configuration = TestRunConfiguration::from_environment().map_err(DatabaseAccessError::Configuration)?;
     connect_pool(configuration.database()).await.map_err(DatabaseAccessError::Isolation)

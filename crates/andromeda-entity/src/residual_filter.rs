@@ -366,16 +366,13 @@ mod tests {
         }])
     }
 
-    #[test]
-    fn every_predicate_kind_reads_its_clause_the_way_the_specification_states_it() {
-        // One table over all seven members of an `EntitySelection`, including
-        // the four no `StorageProfile` axis can produce today. The expected
-        // verdicts are read off the specification rather than off the
-        // implementation, which is what makes this a check and not a restatement
-        // -- an earlier reading of `attrs` as a conjunction passed every test
-        // that restated it.
-        let entity = conformance_entity();
-        let cases: Vec<(&str, EntitySelection, bool)> = vec![
+    /// One clause of the specification, the selection that states it, and the
+    /// verdict the reference reading requires for [`conformance_entity`].
+    type ConformanceCase = (&'static str, EntitySelection, bool);
+
+    /// The clause 5.7.2 `id` and clause 5.2.8 `idPattern` readings.
+    fn identifier_selection_cases() -> Vec<ConformanceCase> {
+        vec![
             (
                 "clause 5.7.2 id: the list names this entity",
                 EntitySelection::builder()
@@ -420,6 +417,12 @@ mod tests {
                     .build(),
                 false,
             ),
+        ]
+    }
+
+    /// The clause 4.17 type-expression readings.
+    fn type_selection_cases() -> Vec<ConformanceCase> {
+        vec![
             (
                 "clause 4.17 type: the entity carries the named type",
                 EntitySelection::builder()
@@ -445,6 +448,12 @@ mod tests {
                     .build(),
                 false,
             ),
+        ]
+    }
+
+    /// The Table 6.4.3.2-1 `attrs` readings.
+    fn attribute_selection_cases() -> Vec<ConformanceCase> {
+        vec![
             (
                 "Table 6.4.3.2-1 attrs: the entity carries at least one of them",
                 EntitySelection::builder()
@@ -462,6 +471,12 @@ mod tests {
                     .build(),
                 false,
             ),
+        ]
+    }
+
+    /// The clause 4.9 `q` and clause 4.10 `georel` readings.
+    fn value_and_geo_selection_cases() -> Vec<ConformanceCase> {
+        vec![
             (
                 "clause 4.9 q: the value satisfies the comparison",
                 EntitySelection::builder().q_expr(Some(q("\"https://example.com/temperature\">25"))).build(),
@@ -477,6 +492,12 @@ mod tests {
                 EntitySelection::builder().geo(Some(near_berlin())).build(),
                 true,
             ),
+        ]
+    }
+
+    /// The clause 4.18 and clause 4.19 `scopeQ` readings.
+    fn scope_selection_cases() -> Vec<ConformanceCase> {
+        vec![
             (
                 "clause 4.19 scopeQ: a prefix multi-level wildcard matches a descendant of its anchor",
                 EntitySelection::builder()
@@ -498,7 +519,24 @@ mod tests {
                     .build(),
                 true,
             ),
-        ];
+        ]
+    }
+
+    #[test]
+    fn every_predicate_kind_reads_its_clause_the_way_the_specification_states_it() {
+        // One table over all seven members of an `EntitySelection`, including
+        // the four no `StorageProfile` axis can produce today. The expected
+        // verdicts are read off the specification rather than off the
+        // implementation, which is what makes this a check and not a restatement
+        // -- an earlier reading of `attrs` as a conjunction passed every test
+        // that restated it.
+        let entity = conformance_entity();
+        let cases = identifier_selection_cases()
+            .into_iter()
+            .chain(type_selection_cases())
+            .chain(attribute_selection_cases())
+            .chain(value_and_geo_selection_cases())
+            .chain(scope_selection_cases());
 
         for (clause, selection, expected) in cases {
             pretty_assertions::assert_eq!(matches(&ResidualFilter::over(selection), &entity), expected, "{clause}");

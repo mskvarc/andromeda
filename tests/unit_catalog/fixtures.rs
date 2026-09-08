@@ -32,7 +32,7 @@ pub fn device_with_unit(id: &str, code: &str, sub_attribute_code: &str) -> Value
 /// The families here are the ones clauses 4.5.3, 4.5.18, 4.5.20 and 4.5.24
 /// define without a unit, so every body this builds is one the broker must
 /// refuse.
-pub fn entity_with_unitless_attribute(id: &str, attribute: Value) -> Value {
+pub fn entity_with_unitless_attribute(id: &str, attribute: &Value) -> Value {
     json!({
         "id": id,
         "type": "Device",

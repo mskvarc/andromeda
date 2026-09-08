@@ -7,6 +7,11 @@ use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
 ///
 /// Table 6.5.3.4-1 `lang` names "the natural language of data held in the
 /// request": one tag, not the ranked filter of clause 4.15 a query carries.
+///
+/// # Errors
+///
+/// Returns a deserialization error when the value is not a well-formed BCP 47
+/// language tag.
 pub fn deserialize_optional_language_tag<'de, D>(deserializer: D) -> Result<Option<LangTagBuf>, D::Error>
 where
     D: Deserializer<'de>,

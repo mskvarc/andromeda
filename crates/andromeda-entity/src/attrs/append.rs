@@ -33,6 +33,17 @@ impl EntityService {
     /// The append is computed from a payload read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
     /// recomputed against a fresh read if a concurrent writer got in first.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::JsonLd`] when `fragment` cannot be expanded
+    /// against `context`, [`EntityError::Validation`] when an attribute
+    /// instance omits the member its family requires, carries a `unitCode` the
+    /// family does not define, repeats an instance identity or holds a
+    /// malformed `GeoProperty` geometry, [`EntityError::NotFound`] when no
+    /// entity carries `id`, [`EntityError::Contention`] when concurrent writers
+    /// superseded the computed write on every attempt, and
+    /// [`EntityError::Persistence`] when the store could not apply it.
     pub async fn append_attrs(
         &self,
         target: &ContextTarget,
@@ -70,7 +81,9 @@ impl EntityService {
             .await?;
 
         let attr_keys = extract_attribute_names(&merged);
-        events.into_iter().for_each(|event| self.emit_change(target, event));
+        for event in events {
+            self.emit_change(target, event);
+        }
 
         Ok((attr_keys, not_appended))
     }

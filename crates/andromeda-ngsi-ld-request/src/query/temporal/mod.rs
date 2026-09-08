@@ -268,6 +268,24 @@ impl TemporalQueryParameters {
     /// Validate parameters.
     /// - For query endpoint (`require_temporal=true)`: timerel and timeAt are REQUIRED.
     /// - For single-entity GET (`require_temporal=false)`: timerel and timeAt are optional (both or neither).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParameterError::AttrsReservedMember`] when `attrs` names an
+    /// Entity member, [`ParameterError::PickOmitExclusive`] and
+    /// [`ParameterError::PickOmitWithAttrs`] for the clause 4.21 projection
+    /// conflicts, the clause 5.7.2.4 depth errors when a nested projection
+    /// term or a `q` hop names a Linked Entity the requested traversal does
+    /// not reach, [`ParameterError::InlineJoinWithoutInstances`] when
+    /// `join=inline` meets a representation with no instance to nest under,
+    /// [`ParameterError::OrderingRequiresLocalScope`] and
+    /// [`ParameterError::TemporalOrderingNotById`] for an ordering clause
+    /// 5.7.4.4 does not admit, [`ParameterError::TimerelTimeatRequired`] and
+    /// [`ParameterError::SelectorRequired`] when a query endpoint omits the
+    /// temporal window or every entity selector,
+    /// [`ParameterError::Query`] when the `timerel`, `timeAt` and `endTimeAt`
+    /// group is incomplete, and [`ParameterError::AggrMethodsRequired`] when
+    /// `format=aggregatedValues` carries no aggregation methods.
     pub fn validate(&self, require_temporal: bool) -> Result<(), ParameterError> {
         validate_attrs(self.attrs.as_deref())?;
         // Clause 4.21: pick and omit select opposite ends of the same

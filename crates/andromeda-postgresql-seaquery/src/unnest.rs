@@ -77,12 +77,16 @@ pub fn unnest_call<'column>(arrays: impl IntoIterator<Item = (&'column UnnestCol
 /// single `AS "alias"` the table source produces is the only match. The suffix
 /// holds identifiers only, so no bound value moves and the statement's parameter
 /// numbering is untouched.
-pub fn apply_with_ordinality(sql: String, alias: &dyn Iden, columns: &[UnnestColumn], ordinality: &dyn Iden) -> String {
+pub fn apply_with_ordinality(mut sql: String, alias: &dyn Iden, columns: &[UnnestColumn], ordinality: &dyn Iden) -> String {
     let emitted = format!("AS {}", quoted(alias));
     let mut names: Vec<String> = columns.iter().map(|column| column.name.to_string()).collect();
     names.push(Iden::to_string(ordinality));
+    let names = names;
     let replacement = format!("WITH ORDINALITY AS {}({})", Iden::to_string(alias), names.join(", "));
-    sql.replacen(&emitted, &replacement, 1)
+    if let Some(position) = sql.find(&emitted) {
+        sql.replace_range(position..position + emitted.len(), &replacement);
+    }
+    sql
 }
 
 /// Rewrite the `AS "alias"` that `from_function` emits for the `UNNEST` source
@@ -94,11 +98,14 @@ pub fn apply_with_ordinality(sql: String, alias: &dyn Iden, columns: &[UnnestCol
 /// value moves and the statement's parameter numbering is untouched. The alias
 /// must be one sea-query renders nowhere else, so its single `AS "alias"` is the
 /// only match.
-pub fn apply_column_alias(sql: String, alias: &dyn Iden, columns: &[UnnestColumn]) -> String {
+pub fn apply_column_alias(mut sql: String, alias: &dyn Iden, columns: &[UnnestColumn]) -> String {
     let emitted = format!("AS {}", quoted(alias));
     let names: Vec<String> = columns.iter().map(|column| column.name.to_string()).collect();
     let replacement = format!("AS {}({})", Iden::to_string(alias), names.join(", "));
-    sql.replacen(&emitted, &replacement, 1)
+    if let Some(position) = sql.find(&emitted) {
+        sql.replace_range(position..position + emitted.len(), &replacement);
+    }
+    sql
 }
 
 #[cfg(test)]

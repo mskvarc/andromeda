@@ -362,13 +362,13 @@ mod tests {
         let ewkb = Ewkb::try_from(&original).expect("encodes");
         let decoded = Geometry::try_from(&ewkb).expect("decodes");
         let GeometryForm::Polygon(rings) = decoded.form() else {
-            unreachable!("a Polygon was encoded");
+            panic!("a Polygon was encoded");
         };
         pretty_assertions::assert_eq!(rings.rings()[0].len(), 4, "the ring is closed on the wire");
         pretty_assertions::assert_eq!(rings.rings()[0].first(), rings.rings()[0].last());
 
         let GeometryForm::Polygon(stored) = original.form() else {
-            unreachable!("a Polygon was parsed");
+            panic!("a Polygon was parsed");
         };
         pretty_assertions::assert_eq!(stored.rings()[0].len(), 3, "the stored form keeps the open ring");
     }

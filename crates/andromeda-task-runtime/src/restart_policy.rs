@@ -33,7 +33,6 @@ impl RestartPolicy {
     /// Return the next delay for the numbered consecutive failure.
     pub(crate) fn delay(self, class: FailureClass, consecutive_failures: u32) -> Option<Duration> {
         match self {
-            RestartPolicy::Never => None,
             RestartPolicy::Transient {
                 max_restarts,
                 initial_backoff,
@@ -43,7 +42,8 @@ impl RestartPolicy {
                 let multiplier = 1u32 << exponent;
                 Some(initial_backoff.saturating_mul(multiplier).min(maximum_backoff))
             }
-            RestartPolicy::Transient {
+            RestartPolicy::Never
+            | RestartPolicy::Transient {
                 max_restarts: _,
                 initial_backoff: _,
                 maximum_backoff: _,

@@ -208,7 +208,7 @@ mod tests {
 
         let warnings = fold_resolution(RetrievingJoin::Flat, &mut entities, resolution(&["urn:ngsi-ld:T:B"]), Vec::new());
 
-        assert_eq!(warnings, [] as [andromeda_http_headers::ngsild_warning::NgsiLdWarning; 0]);
+        assert!(warnings.is_empty(), "a complete join adds no warning: {warnings:?}");
     }
 
     /// Clause 4.5.23: a flat join turns a single-entity retrieval into a

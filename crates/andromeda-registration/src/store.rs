@@ -45,7 +45,7 @@
 //! Implementations therefore derive projection rows store-side from the typed
 //! `information` they are handed, and own the encoding of that derivation.
 
-use crate::{error::RegistrationError, resolved_update::ResolvedCsrUpdate};
+use crate::{error::RegistrationError, nullable_member::NullableMember, resolved_update::ResolvedCsrUpdate};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonym,
@@ -176,73 +176,77 @@ impl CreateCsrParams {
     ];
 }
 
-/// Typed fragment for CSR updates. `None` = field not provided (keep existing).
-/// `Some(None)` = explicitly null (clear field). `Some(Some(v))` = new value.
+/// Typed fragment for CSR updates.
+///
+/// Every member clause 5.5.8 lets a fragment remove is a
+/// [`NullableMember`]: omitted keeps the stored value, `null` clears it and a
+/// value replaces it. The members the clause gives no removal semantics carry
+/// a plain [`Option`], where `None` simply means the fragment left them alone.
 #[derive(Debug, Default, TypedBuilder)]
 pub struct CsrUpdateFragment {
     /// Updated registration name.
     #[builder(default = Default::default())]
-    pub registration_name: Option<Option<NonEmptyText>>,
+    pub registration_name: NullableMember<NonEmptyText>,
     /// Updated description.
     #[builder(default = Default::default())]
-    pub description: Option<Option<NonEmptyText>>,
+    pub description: NullableMember<NonEmptyText>,
     /// Updated registration information entries.
     #[builder(default = Default::default())]
     pub information: Option<Vec<RegistrationInfo>>,
     /// Updated dataset identifiers.
     #[builder(default = Default::default())]
-    pub dataset_id: Option<Option<Vec<DatasetSelector>>>,
+    pub dataset_id: NullableMember<Vec<DatasetSelector>>,
     /// Updated tenant identifier.
     #[builder(default = Default::default())]
-    pub tenant: Option<Option<TenantName>>,
+    pub tenant: NullableMember<TenantName>,
     /// Updated observation interval.
     #[builder(default = Default::default())]
-    pub observation_interval: Option<Option<TimeInterval>>,
+    pub observation_interval: NullableMember<TimeInterval>,
     /// Updated management interval.
     #[builder(default = Default::default())]
-    pub management_interval: Option<Option<TimeInterval>>,
-    /// Updated `location` geometry (`Some(None)` clears, `Some(Some(_))` replaces).
+    pub management_interval: NullableMember<TimeInterval>,
+    /// Updated `location` geometry.
     #[builder(default = Default::default())]
-    pub location: Option<Option<Geometry>>,
+    pub location: NullableMember<Geometry>,
     /// Updated `observationSpace` geometry.
     #[builder(default = Default::default())]
-    pub observation_space: Option<Option<Geometry>>,
+    pub observation_space: NullableMember<Geometry>,
     /// Updated `operationSpace` geometry.
     #[builder(default = Default::default())]
-    pub operation_space: Option<Option<Geometry>>,
+    pub operation_space: NullableMember<Geometry>,
     /// Updated expiration timestamp.
     #[builder(default = Default::default())]
-    pub expires_at: Option<Option<DateTime<Utc>>>,
+    pub expires_at: NullableMember<DateTime<Utc>>,
     /// Updated endpoint URL.
     #[builder(default = Default::default())]
     pub endpoint: Option<Url>,
     /// Updated accepted MIME type.
     #[builder(default = Default::default())]
-    pub accept: Option<Option<MediaTypeBuf>>,
+    pub accept: NullableMember<MediaTypeBuf>,
     /// Updated forwarding mode.
     #[builder(default = Default::default())]
     pub mode: Option<ForwardingMode>,
     /// Updated supported operations.
     #[builder(default = Default::default())]
-    pub operations: Option<Option<Vec<CsrOperation>>>,
+    pub operations: NullableMember<Vec<CsrOperation>>,
     /// Updated scope values.
     #[builder(default = Default::default())]
-    pub scope: Option<Option<Vec<ScopeBuf>>>,
+    pub scope: NullableMember<Vec<ScopeBuf>>,
     /// Updated refresh rate duration.
     #[builder(default = Default::default())]
-    pub refresh_rate: Option<Option<Iso8601Duration>>,
+    pub refresh_rate: NullableMember<Iso8601Duration>,
     /// Updated management information.
     #[builder(default = Default::default())]
-    pub management: Option<Option<RegistrationManagementInfo>>,
+    pub management: NullableMember<RegistrationManagementInfo>,
     /// Updated context source metadata entries.
     #[builder(default = Default::default())]
-    pub context_source_info: Option<Option<Vec<KeyValuePair>>>,
+    pub context_source_info: NullableMember<Vec<KeyValuePair>>,
     /// Updated JSON-LD context reference.
     #[builder(default = Default::default())]
-    pub jsonld_context: Option<Option<Url>>,
+    pub jsonld_context: NullableMember<Url>,
     /// Updated context source alias pseudonym.
     #[builder(default = Default::default())]
-    pub context_source_alias: Option<Option<ContextSourcePseudonym>>,
+    pub context_source_alias: NullableMember<ContextSourcePseudonym>,
     /// Updated non-standard properties.
     #[builder(default = Default::default())]
     pub additional_properties: Option<Value>,
@@ -278,6 +282,11 @@ pub struct RegistrationPage {
 
 impl RegistrationMutation {
     /// Require a mutation to have changed the requested registration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrationError::NotFound`] when the mutation matched no
+    /// registration carrying `identifier`.
     pub fn require_applied(self, identifier: &Uri) -> Result<(), RegistrationError> {
         match self {
             RegistrationMutation::Applied => Ok(()),

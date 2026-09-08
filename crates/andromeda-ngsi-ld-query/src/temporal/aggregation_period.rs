@@ -21,6 +21,11 @@ impl AggregationPeriod {
     /// Returns `Ok(None)` for the inputs clause 4.5.19 treats as "no
     /// bucketing", and an error for a value that is neither those nor a valid
     /// ISO 8601 duration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::ParamAggrPeriodDurationInvalid`] when the value is
+    /// neither one of those inputs nor a valid ISO 8601 duration.
     pub fn parse(raw: &str) -> Result<Option<AggregationPeriod>, QueryError> {
         let trimmed = raw.trim();
         if trimmed.is_empty() {

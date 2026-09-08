@@ -141,15 +141,7 @@ impl EntityService {
         notifications: Option<NotificationWriteConfig>,
     ) -> EntityService {
         let id_locks: Arc<IdLockMap> = Arc::new(DashMap::new());
-        let batch_execution = BatchExecutionConfig {
-            concurrency: batch_config.concurrency.max(1),
-            chunk_concurrency: batch_config.chunk_concurrency.max(1),
-            chunk_write_concurrency: batch_config.chunk_write_concurrency.max(1),
-            chunk_size: batch_config.chunk_size.max(1),
-            large_threshold: batch_config.large_threshold.max(1),
-            prepare_blocking_threshold: batch_config.prepare_blocking_threshold.max(1),
-            async_side_effect_threshold: batch_config.async_side_effect_threshold,
-        };
+        let batch_execution = batch_config.clamped_to_usable_limits();
 
         EntityService {
             reader,

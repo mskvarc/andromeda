@@ -64,40 +64,36 @@ fn parameter<'a>(pairs: &'a [(String, String)], name: &str) -> Option<&'a str> {
 
 /// A locally held Building linking to a Building only the context source holds.
 struct LinkedFixture {
-    /// The locally held root.
-    root_id: String,
-    /// The Linked Entity, held by the context source alone.
-    linked_id: String,
-    /// The registration pointing at the context source.
-    registration_id: String,
+    /// Identifier of the locally held root.
+    root: String,
+    /// Identifier of the Linked Entity, held by the context source alone.
+    linked: String,
+    /// Identifier of the registration pointing at the context source.
+    registration: String,
 }
 
 /// Provision the root, the registration, and — unless the caller stubs it
 /// otherwise — the context source's answer for the Linked Entity.
 async fn provision(mock: &MockServer, label: &str, object_type: Option<&str>) -> LinkedFixture {
     let c = client();
-    let root_id = unique_id(&format!("urn:ngsi-ld:Building:{label}-A"));
-    let linked_id = unique_id(&format!("urn:ngsi-ld:Building:{label}-R"));
-    let registration_id = unique_id(&format!("urn:ngsi-ld:Registration:{label}"));
+    let root = unique_id(&format!("urn:ngsi-ld:Building:{label}-A"));
+    let linked = unique_id(&format!("urn:ngsi-ld:Building:{label}-R"));
+    let registration = unique_id(&format!("urn:ngsi-ld:Registration:{label}"));
 
-    let (status, _) = create_entity_local(&c, &building_linking_to(&root_id, &linked_id, object_type)).await;
+    let (status, _) = create_entity_local(&c, &building_linking_to(&root, &linked, object_type)).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    let (status, _) = create_registration(&c, &building_registration(&registration_id, &linked_id, &mock.url(""))).await;
+    let (status, _) = create_registration(&c, &building_registration(&registration, &linked, &mock.url(""))).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    LinkedFixture {
-        root_id,
-        linked_id,
-        registration_id,
-    }
+    LinkedFixture { root, linked, registration }
 }
 
 /// Remove everything one case provisioned.
 async fn discard(fixture: &LinkedFixture) {
     let c = client();
-    delete_entity(&c, &fixture.root_id).await;
-    delete_registration(&c, &fixture.registration_id).await;
+    delete_entity(&c, &fixture.root).await;
+    delete_registration(&c, &fixture.registration).await;
 }
 
 /// Clause 4.5.23.1: the annotated object is fetched from the context source
@@ -115,31 +111,31 @@ async fn distop_join_fetches_object_type_annotated_remote_link() {
     let fixture = provision(&mock, "join-two", Some("Building")).await;
     mock.set_stub_with_body(
         Method::GET,
-        &format!("/ngsi-ld/v1/entities/{}", fixture.linked_id),
+        &format!("/ngsi-ld/v1/entities/{}", fixture.linked),
         200,
-        &minimal_building(&fixture.linked_id),
+        &minimal_building(&fixture.linked),
     )
     .await;
 
-    let (status, _, body) = get_entity(&c, &fixture.root_id, "join=flat&joinLevel=2", &jsonld_link_value()).await;
+    let (status, _, body) = get_entity(&c, &fixture.root, "join=flat&joinLevel=2", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK, "{body}");
 
     let ids = ids_from_array(&body);
-    assert!(ids.contains(&fixture.root_id), "the root must be present: {ids:?}");
-    assert!(ids.contains(&fixture.linked_id), "the remotely held Linked Entity must be present: {ids:?}");
+    assert!(ids.contains(&fixture.root), "the root must be present: {ids:?}");
+    assert!(ids.contains(&fixture.linked), "the remotely held Linked Entity must be present: {ids:?}");
 
     let captured = mock.next_request(CAPTURE_TIMEOUT).await;
     pretty_assertions::assert_eq!(captured.method, Method::GET);
-    pretty_assertions::assert_eq!(captured.uri.path(), format!("/ngsi-ld/v1/entities/{}", fixture.linked_id));
+    pretty_assertions::assert_eq!(captured.uri.path(), format!("/ngsi-ld/v1/entities/{}", fixture.linked));
     let pairs = captured_query_pairs(captured.uri.query());
     pretty_assertions::assert_eq!(parameter(&pairs, "join"), Some("flat"));
     pretty_assertions::assert_eq!(parameter(&pairs, "joinLevel"), Some("1"));
     let contained_by = parameter(&pairs, "containedBy").expect("the forwarded retrieval names the entities already held");
     assert!(
-        contained_by.split(',').any(|held| held == fixture.root_id),
+        contained_by.split(',').any(|held| held == fixture.root),
         "containedBy must name the root: {contained_by}"
     );
-    pretty_assertions::assert_eq!(mock.get_total_count().await, 1, "exactly one retrieval is forwarded");
+    pretty_assertions::assert_eq!(mock.get_total_count(), 1, "exactly one retrieval is forwarded");
 
     discard(&fixture).await;
     mock.shutdown().await;
@@ -159,18 +155,18 @@ async fn distop_join_single_level_forwards_a_plain_retrieval() {
     let fixture = provision(&mock, "join-one", Some("Building")).await;
     mock.set_stub_with_body(
         Method::GET,
-        &format!("/ngsi-ld/v1/entities/{}", fixture.linked_id),
+        &format!("/ngsi-ld/v1/entities/{}", fixture.linked),
         200,
-        &minimal_building(&fixture.linked_id),
+        &minimal_building(&fixture.linked),
     )
     .await;
 
-    let (status, _, body) = get_entity(&c, &fixture.root_id, "join=flat&joinLevel=1", &jsonld_link_value()).await;
+    let (status, _, body) = get_entity(&c, &fixture.root, "join=flat&joinLevel=1", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK, "{body}");
 
     let ids = ids_from_array(&body);
-    assert!(ids.contains(&fixture.root_id), "the root must be present: {ids:?}");
-    assert!(ids.contains(&fixture.linked_id), "the remotely held Linked Entity must be present: {ids:?}");
+    assert!(ids.contains(&fixture.root), "the root must be present: {ids:?}");
+    assert!(ids.contains(&fixture.linked), "the remotely held Linked Entity must be present: {ids:?}");
 
     let captured = mock.next_request(CAPTURE_TIMEOUT).await;
     let pairs = captured_query_pairs(captured.uri.query());
@@ -178,10 +174,10 @@ async fn distop_join_single_level_forwards_a_plain_retrieval() {
     pretty_assertions::assert_eq!(parameter(&pairs, "joinLevel"), None, "a zero-hop join carries no level: {pairs:?}");
     let contained_by = parameter(&pairs, "containedBy").expect("the forwarded retrieval names the entities already held");
     assert!(
-        contained_by.split(',').any(|held| held == fixture.root_id),
+        contained_by.split(',').any(|held| held == fixture.root),
         "containedBy must name the root: {contained_by}"
     );
-    pretty_assertions::assert_eq!(mock.get_total_count().await, 1, "exactly one retrieval is forwarded");
+    pretty_assertions::assert_eq!(mock.get_total_count(), 1, "exactly one retrieval is forwarded");
 
     discard(&fixture).await;
     mock.shutdown().await;
@@ -200,22 +196,19 @@ async fn distop_join_skips_unannotated_missing_link() {
     let fixture = provision(&mock, "join-bare", None).await;
     mock.set_stub_with_body(
         Method::GET,
-        &format!("/ngsi-ld/v1/entities/{}", fixture.linked_id),
+        &format!("/ngsi-ld/v1/entities/{}", fixture.linked),
         200,
-        &minimal_building(&fixture.linked_id),
+        &minimal_building(&fixture.linked),
     )
     .await;
 
-    let (status, _, body) = get_entity(&c, &fixture.root_id, "join=flat&joinLevel=2", &jsonld_link_value()).await;
+    let (status, _, body) = get_entity(&c, &fixture.root, "join=flat&joinLevel=2", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK, "{body}");
 
     let ids = ids_from_array(&body);
-    assert!(ids.contains(&fixture.root_id), "the root must be present: {ids:?}");
-    assert!(
-        !ids.contains(&fixture.linked_id),
-        "an unannotated missing object must stay a plain URI: {ids:?}"
-    );
-    pretty_assertions::assert_eq!(mock.get_total_count().await, 0, "no retrieval may be forwarded");
+    assert!(ids.contains(&fixture.root), "the root must be present: {ids:?}");
+    assert!(!ids.contains(&fixture.linked), "an unannotated missing object must stay a plain URI: {ids:?}");
+    pretty_assertions::assert_eq!(mock.get_total_count(), 0, "no retrieval may be forwarded");
 
     discard(&fixture).await;
     mock.shutdown().await;
@@ -232,19 +225,19 @@ async fn distop_join_remote_failure_degrades_to_warning() {
     let mock = MockServer::start().await;
 
     let fixture = provision(&mock, "join-fail", Some("Building")).await;
-    mock.set_stub(Method::GET, &format!("/ngsi-ld/v1/entities/{}", fixture.linked_id), 500).await;
+    mock.set_stub(Method::GET, &format!("/ngsi-ld/v1/entities/{}", fixture.linked), 500).await;
 
-    let (status, headers, body) = get_entity(&c, &fixture.root_id, "join=flat&joinLevel=1", &jsonld_link_value()).await;
+    let (status, headers, body) = get_entity(&c, &fixture.root, "join=flat&joinLevel=1", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK, "{body}");
 
     let ids = ids_from_array(&body);
-    assert!(ids.contains(&fixture.root_id), "the root must survive the failed join: {ids:?}");
-    assert!(!ids.contains(&fixture.linked_id), "an unresolved Linked Entity must be absent: {ids:?}");
+    assert!(ids.contains(&fixture.root), "the root must survive the failed join: {ids:?}");
+    assert!(!ids.contains(&fixture.linked), "an unresolved Linked Entity must be absent: {ids:?}");
 
     let warnings = warning_header_values(&headers);
     assert!(!warnings.is_empty(), "an unresolved Linked Entity must be reported as a warning");
     assert!(
-        warnings.iter().any(|warning| warning.contains(&fixture.linked_id)),
+        warnings.iter().any(|warning| warning.contains(&fixture.linked)),
         "the warning must name the unresolved Linked Entity: {warnings:?}"
     );
 
@@ -264,20 +257,20 @@ async fn distop_join_contained_by_prevents_refetch() {
     let fixture = provision(&mock, "join-held", Some("Building")).await;
     mock.set_stub_with_body(
         Method::GET,
-        &format!("/ngsi-ld/v1/entities/{}", fixture.linked_id),
+        &format!("/ngsi-ld/v1/entities/{}", fixture.linked),
         200,
-        &minimal_building(&fixture.linked_id),
+        &minimal_building(&fixture.linked),
     )
     .await;
 
-    let query = format!("join=flat&joinLevel=2&containedBy={}", fixture.linked_id);
-    let (status, _, body) = get_entity(&c, &fixture.root_id, &query, &jsonld_link_value()).await;
+    let query = format!("join=flat&joinLevel=2&containedBy={}", fixture.linked);
+    let (status, _, body) = get_entity(&c, &fixture.root, &query, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK, "{body}");
 
     let ids = ids_from_array(&body);
-    assert!(ids.contains(&fixture.root_id), "the root must be present: {ids:?}");
-    assert!(!ids.contains(&fixture.linked_id), "an already-held entity must not be returned: {ids:?}");
-    pretty_assertions::assert_eq!(mock.get_total_count().await, 0, "an already-held entity is never fetched");
+    assert!(ids.contains(&fixture.root), "the root must be present: {ids:?}");
+    assert!(!ids.contains(&fixture.linked), "an already-held entity must not be returned: {ids:?}");
+    pretty_assertions::assert_eq!(mock.get_total_count(), 0, "an already-held entity is never fetched");
 
     discard(&fixture).await;
     mock.shutdown().await;

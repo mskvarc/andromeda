@@ -28,6 +28,13 @@ use axum::{
 };
 
 /// GET /ngsi-ld/v1/types -- Query available entity types.
+///
+/// # Errors
+///
+/// Returns a [`ProblemResponse`] when local type discovery fails, when the
+/// type list cannot be serialised, when a referenced context cannot be
+/// resolved, or when the discovery result cannot be rendered under the
+/// negotiated media type.
 pub async fn query(
     context_target::ExistingTargetedTenantState {
         services: state,
@@ -130,6 +137,12 @@ pub async fn query(
 }
 
 /// GET /ngsi-ld/v1/types/{type_} -- Retrieve information about a specific entity type.
+///
+/// # Errors
+///
+/// Returns a [`ProblemResponse`] when the named entity type is unknown to the
+/// broker, when a referenced context cannot be resolved, or when the discovery
+/// result cannot be rendered under the negotiated media type.
 pub async fn get(
     context_target::ExistingTargetedTenantState {
         services: state,

@@ -13,6 +13,7 @@ andromeda-http-headers.workspace = true
 axum = "0.8.9"
 bytes = "1.12.1"
 dashmap = { version = "6.2.1", features = ["inline"] }
+derive_more = { version = "2.1.1", features = ["into"] }
 http = "1.5.0"
 rumqttc = { version = "0.25.1", features = ["use-rustls"] }
 serde = "1.0.229"

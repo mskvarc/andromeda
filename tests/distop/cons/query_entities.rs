@@ -41,7 +41,7 @@ async fn distop_query_entities_too_wide_returns_400() {
     let response = front.client().query_entities("", "application/ld+json", None).await.expect("query");
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
-    assert_eq!(mock.get_total_count().await, 0, "a rejected too-wide query forwards nothing");
+    assert_eq!(mock.get_total_count(), 0, "a rejected too-wide query forwards nothing");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -69,7 +69,7 @@ async fn distop_query_entities_orderby_without_local_returns_400() {
         .expect("query");
     assert_status(&rejected, 400);
     assert_problem_details(&rejected, BAD_REQUEST_DATA);
-    assert_eq!(mock.get_total_count().await, 0, "the rejected query forwards nothing");
+    assert_eq!(mock.get_total_count(), 0, "the rejected query forwards nothing");
 
     let accepted = front
         .client()
@@ -105,17 +105,14 @@ async fn distop_query_entities_forwards_matching_queryentity_csrs_local_none() {
         &front.client().query_entities("type=Vehicle", "application/ld+json", None).await.expect("query"),
         200,
     );
-    assert!(
-        mock.get_count(Method::GET, "/s1/ngsi-ld/v1/entities").await > 0,
-        "queryEntity source is forwarded"
-    );
+    assert!(mock.get_count(Method::GET, "/s1/ngsi-ld/v1/entities") > 0, "queryEntity source is forwarded");
     assert_eq!(
-        mock.get_count(Method::GET, "/s2/ngsi-ld/v1/entities").await,
+        mock.get_count(Method::GET, "/s2/ngsi-ld/v1/entities"),
         0,
         "retrieveEntity-only source is not forwarded"
     );
 
-    let total_before_local = mock.get_total_count().await;
+    let total_before_local = mock.get_total_count();
     assert_status(
         &front
             .client()
@@ -124,7 +121,7 @@ async fn distop_query_entities_forwards_matching_queryentity_csrs_local_none() {
             .expect("query"),
         200,
     );
-    assert_eq!(mock.get_total_count().await, total_before_local, "a local=true query forwards to no source");
+    assert_eq!(mock.get_total_count(), total_before_local, "a local=true query forwards to no source");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -151,7 +148,7 @@ async fn distop_query_entities_forwards_all_modes_returns_entity_arrays() {
         let registration = match mode {
             "exclusive" => builder.entity_id(&entity_id).property_names(&["speed"]).build(),
             "redirect" | "inclusive" => builder.build(),
-            other => unreachable!("the mode loop names only the three proxying modes, got {other}"),
+            other => panic!("the mode loop names only the three proxying modes, got {other}"),
         };
         assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
         mock.set_stub_with_body(Method::GET, &format!("{source}/ngsi-ld/v1/entities"), 200, &json!([vehicle(&entity_id, 50)]))

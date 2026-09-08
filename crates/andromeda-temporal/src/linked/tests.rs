@@ -48,7 +48,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::{projection::grammar::parse_projection_list, temporal::compiled::CompiledTemporalQuery};
-use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailureKind;
+use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -121,7 +121,7 @@ fn a_repeated_object_is_collected_once() {
     pretty_assertions::assert_eq!(ids(&candidates), vec!["urn:ngsi-ld:T:B"]);
 }
 
-/// A ListRelationship names its objects in `objectList`, and the list's order
+/// A `ListRelationship` names its objects in `objectList`, and the list's order
 /// is the order they are collected in.
 #[test]
 fn an_object_list_is_collected_in_list_order() {
@@ -223,7 +223,7 @@ fn structural_members_and_properties_name_no_linked_entity() {
         "reading": [{"type": "Property", "value": "urn:ngsi-ld:T:B", "observedAt": "2024-01-01T00:00:00Z"}]
     });
 
-    assert!(collect(&entity).is_empty());
+    pretty_assertions::assert_eq!(collect(&entity), Vec::<TemporalLinkedCandidate>::new());
 }
 
 /// The visited guard is what terminates a cycle: an identifier already walked,
@@ -250,9 +250,9 @@ fn a_visited_identifier_is_never_collected_again() {
 /// retrieval: it names no Linked Entity and the rest of the walk continues.
 #[test]
 fn an_unusable_object_value_names_no_linked_entity() {
-    assert!(identifiers_in(&json!("not a uri")).is_empty());
-    assert!(identifiers_in(&json!(42)).is_empty());
-    assert!(identifiers_in(&json!({"nested": "object"})).is_empty());
+    pretty_assertions::assert_eq!(identifiers_in(&json!("not a uri")), Vec::<Uri>::new());
+    pretty_assertions::assert_eq!(identifiers_in(&json!(42)), Vec::<Uri>::new());
+    pretty_assertions::assert_eq!(identifiers_in(&json!({"nested": "object"})), Vec::<Uri>::new());
     pretty_assertions::assert_eq!(identifiers_in(&json!(["urn:ngsi-ld:T:B", 7])), vec![uri("urn:ngsi-ld:T:B")]);
 }
 
@@ -763,7 +763,7 @@ async fn an_absent_unannotated_candidate_is_never_fetched_remotely() {
         .expect("resolves");
 
     assert!(resolved.entities.is_empty());
-    assert!(resolved.failures.is_empty());
+    pretty_assertions::assert_eq!(resolved.failures, Vec::<LinkedResolutionFailure>::new());
     assert!(source.calls().is_empty());
 }
 

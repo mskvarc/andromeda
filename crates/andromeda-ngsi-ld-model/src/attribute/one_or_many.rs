@@ -40,6 +40,17 @@ impl<T> OneOrMany<T> {
     }
 }
 
+// Borrowed iteration goes through the inherent `iter`; the impl is what lets a
+// `&OneOrMany<T>` be used directly in a `for` loop or an iterator adapter.
+impl<'a, T> IntoIterator for &'a OneOrMany<T> {
+    type Item = &'a T;
+    type IntoIter = Iter<'a, T>;
+
+    fn into_iter(self) -> Iter<'a, T> {
+        self.iter()
+    }
+}
+
 // `derive_more::Display` renders each variant with one format string; the
 // `Many` arm has to join its elements, which a format string cannot express.
 impl<T> fmt::Display for OneOrMany<T>

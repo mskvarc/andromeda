@@ -78,6 +78,13 @@ fn classify(outcome: Result<DeliveryOutcome, TransportError>) -> DeliveryResult 
 
 impl TransportDispatcher {
     /// Build a dispatcher over the four transports.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportError::ClientInitializationFailed`] when the HTTP
+    /// client cannot be built from `http_config`. The MQTT pool and both
+    /// stream registries are constructed without a fallible step, so no other
+    /// variant can arise here.
     pub fn new(
         http_config: HttpTransportConfig,
         mqtt_config: MqttPoolConfig,
@@ -149,7 +156,7 @@ impl TransportDispatcher {
             .unwrap_or_else(|| request.subscription_id.clone());
         report_stream(
             &request.subscription_id,
-            self.sse_registry.try_send(&request.subscription_id, SseNotificationEvent { event_id, data }),
+            self.sse_registry.try_send(&request.subscription_id, &SseNotificationEvent { event_id, data }),
         )
     }
 
@@ -158,7 +165,7 @@ impl TransportDispatcher {
         let data = request.payload.to_string();
         report_stream(
             &request.subscription_id,
-            self.ws_registry.try_send(&request.subscription_id, WsNotificationMessage { data }),
+            self.ws_registry.try_send(&request.subscription_id, &WsNotificationMessage { data }),
         )
     }
 

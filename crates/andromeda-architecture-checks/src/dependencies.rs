@@ -122,13 +122,19 @@ pub fn forbidden_production_dependencies_except(permitted: &[&str]) -> Vec<&'sta
 /// its layer does not permit, or when its manifest cannot be read.
 pub fn assert_dependency_boundary(crate_root: &str, forbidden: &[&str], allowed_workspace_dependencies: &[&str], allowed_workspace_dev_dependencies: &[&str]) {
     let path = Path::new(crate_root).join("Cargo.toml");
-    let manifest = fs::read_to_string(&path).unwrap_or_else(|error| unreachable!("{} is readable: {error}", path.display()));
-    assert_permitted(
-        &declarations(&manifest),
-        forbidden,
-        allowed_workspace_dependencies,
-        allowed_workspace_dev_dependencies,
-    );
+    let manifest = fs::read_to_string(&path);
+    // A boundary read from a manifest that is not there is no boundary at all,
+    // so the read failure fails the guard; the binding below is what the
+    // assertion has already proven present.
+    assert!(manifest.is_ok(), "{} could not be read as a manifest: {manifest:?}", path.display());
+    if let Ok(manifest) = manifest {
+        assert_permitted(
+            &declarations(&manifest),
+            forbidden,
+            allowed_workspace_dependencies,
+            allowed_workspace_dev_dependencies,
+        );
+    }
 }
 
 /// Assert that an in-workspace dependency is declared only for tests.
@@ -142,12 +148,15 @@ pub fn assert_dependency_boundary(crate_root: &str, forbidden: &[&str], allowed_
 /// the manifest cannot be read.
 pub fn assert_development_only(crate_root: &str, dependency: &str) {
     let path = Path::new(crate_root).join("Cargo.toml");
-    let manifest = fs::read_to_string(&path).unwrap_or_else(|error| unreachable!("{} is readable: {error}", path.display()));
-    for (kind, name) in declarations(&manifest) {
-        assert!(
-            name != dependency || kind == DependencyKind::Development,
-            "{dependency} must be a dev-only edge, but it is declared as a {kind:?} dependency"
-        );
+    let manifest = fs::read_to_string(&path);
+    assert!(manifest.is_ok(), "{} could not be read as a manifest: {manifest:?}", path.display());
+    if let Ok(manifest) = manifest {
+        for (kind, name) in declarations(&manifest) {
+            assert!(
+                name != dependency || kind == DependencyKind::Development,
+                "{dependency} must be a dev-only edge, but it is declared as a {kind:?} dependency"
+            );
+        }
     }
 }
 
@@ -159,42 +168,65 @@ pub fn assert_development_only(crate_root: &str, dependency: &str) {
 /// # Panics
 ///
 /// Panics when a production package declares a focused test crate as a normal
-/// or build dependency, or when a discovered manifest cannot be read.
+/// or build dependency, when a package directory cannot be listed, or when a
+/// discovered manifest cannot be read.
 pub fn assert_test_infrastructure_is_development_only(workspace_root: &str) {
     let root = Path::new(workspace_root);
     for path in workspace_manifest_paths(root) {
-        let manifest = fs::read_to_string(&path).unwrap_or_else(|error| unreachable!("{} is readable: {error}", path.display()));
-        let package = package_name(&manifest);
-        if package.is_some_and(|name| TEST_INFRASTRUCTURE_CRATES.contains(&name)) {
-            continue;
-        }
-        for (kind, dependency) in declarations(&manifest) {
-            assert!(
-                !TEST_INFRASTRUCTURE_CRATES.contains(&dependency) || kind == DependencyKind::Development,
-                "{} declares test infrastructure {dependency} as a {kind:?} dependency",
-                path.display()
-            );
+        let manifest = fs::read_to_string(&path);
+        assert!(manifest.is_ok(), "{} could not be read as a manifest: {manifest:?}", path.display());
+        if let Ok(manifest) = manifest {
+            let package = package_name(&manifest);
+            if package.is_some_and(|name| TEST_INFRASTRUCTURE_CRATES.contains(&name)) {
+                continue;
+            }
+            for (kind, dependency) in declarations(&manifest) {
+                assert!(
+                    !TEST_INFRASTRUCTURE_CRATES.contains(&dependency) || kind == DependencyKind::Development,
+                    "{} declares test infrastructure {dependency} as a {kind:?} dependency",
+                    path.display()
+                );
+            }
         }
     }
 }
 
 /// Discover root and crate manifests without walking generated output.
+///
+/// A package directory that cannot be listed hides every manifest below it, so
+/// the walk fails rather than reporting a boundary it could not see.
+///
+/// # Panics
+///
+/// Panics when an existing package directory cannot be listed.
 fn workspace_manifest_paths(root: &Path) -> Vec<PathBuf> {
     let mut paths = vec![root.join("Cargo.toml")];
+    let mut unreadable = Vec::new();
     for parent in [root.join("crates"), root.join("lib")] {
         if !parent.exists() {
             continue;
         }
-        for entry in fs::read_dir(&parent).unwrap_or_else(|error| unreachable!("{} is readable: {error}", parent.display())) {
-            let path = entry
-                .unwrap_or_else(|error| unreachable!("an entry of {} is readable: {error}", parent.display()))
-                .path()
-                .join("Cargo.toml");
+        let entries = match fs::read_dir(&parent) {
+            Ok(entries) => entries,
+            Err(error) => {
+                unreadable.push(format!("{} could not be listed: {error}", parent.display()));
+                continue;
+            }
+        };
+        for entry in entries {
+            let path = match entry {
+                Ok(entry) => entry.path().join("Cargo.toml"),
+                Err(error) => {
+                    unreadable.push(format!("an entry of {} could not be read: {error}", parent.display()));
+                    continue;
+                }
+            };
             if path.exists() {
                 paths.push(path);
             }
         }
     }
+    assert!(unreadable.is_empty(), "the workspace packages could not be listed:\n{}", unreadable.join("\n"));
     paths.sort();
     paths
 }
@@ -411,7 +443,7 @@ workspace = true
     #[test]
     fn a_table_that_is_not_a_dependency_table_declares_nothing() {
         let manifest = "[package.metadata.docs.rs]\nall-features = true\n";
-        assert!(declarations(manifest).is_empty());
+        assert_eq!(declarations(manifest), [] as [(DependencyKind, &str); 0]);
     }
 
     #[test]

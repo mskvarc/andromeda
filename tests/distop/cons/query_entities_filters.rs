@@ -90,7 +90,13 @@ async fn distop_query_entities_pagination_over_mapped_candidates() {
     let mock = ContextSourceAdapter::start().await;
 
     let candidates: Vec<String> = (0..5).map(|index| topology.id(&format!("Vehicle:cons34-{index}"))).collect();
-    let array = Value::Array(candidates.iter().enumerate().map(|(index, id)| vehicle(id, 10 * index as i64)).collect());
+    let array = Value::Array(
+        candidates
+            .iter()
+            .enumerate()
+            .map(|(index, id)| vehicle(id, 10 * i64::try_from(index).expect("a candidate index fits in an i64")))
+            .collect(),
+    );
     let registration_id = topology.id("registration:cons34");
     let registration = CsrBuilder::new(&registration_id, &mock.url(""))
         .mode("inclusive")

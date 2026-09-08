@@ -20,7 +20,7 @@ use crate::{
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::{cast::cast, clock::now, literal::text_literal, pg_type::PostgresType, placeholder::external_placeholder};
@@ -53,7 +53,7 @@ pub fn bind_entity_create<'q>(
         .bind(
             fields
                 .watched_attributes
-                .map(|names| names.iter().map(andromeda_ngsi_ld_lexicon::attribute_name::AttributeName::as_str).collect::<Vec<_>>()),
+                .map(|names| names.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
         )
         .bind(stored_triggers(fields))
         .bind(fields.time_interval)
@@ -90,7 +90,7 @@ pub fn bind_entity_update<'q>(
         .bind(
             fields
                 .watched_attributes
-                .map(|names| names.iter().map(andromeda_ngsi_ld_lexicon::attribute_name::AttributeName::as_str).collect::<Vec<_>>()),
+                .map(|names| names.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
         )
         .bind(stored_triggers(fields))
         .bind(fields.time_interval)
@@ -126,7 +126,7 @@ pub fn bind_csource_create<'q>(
         .bind(
             fields
                 .watched_attributes
-                .map(|names| names.iter().map(andromeda_ngsi_ld_lexicon::attribute_name::AttributeName::as_str).collect::<Vec<_>>()),
+                .map(|names| names.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
         )
         .bind(stored_triggers(fields))
         .bind(fields.time_interval)
@@ -160,7 +160,7 @@ pub fn bind_csource_update<'q>(
         .bind(
             fields
                 .watched_attributes
-                .map(|names| names.iter().map(andromeda_ngsi_ld_lexicon::attribute_name::AttributeName::as_str).collect::<Vec<_>>()),
+                .map(|names| names.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
         )
         .bind(stored_triggers(fields))
         .bind(fields.time_interval)

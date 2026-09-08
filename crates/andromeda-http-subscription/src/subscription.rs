@@ -1,7 +1,7 @@
 //! Handlers for the `/subscriptions` endpoints.
 
 use crate::{
-    error::{SubscriptionResultExt, origin_problem, public_problem},
+    error::{SubscriptionResultExt, internal_problem, origin_problem, public_problem},
     state::{SubscriptionTenantState, SubscriptionTenantStateOrCreate},
 };
 use andromeda_http_extraction::{
@@ -144,7 +144,10 @@ pub async fn query(
     let mut response = NgsiLdCollectionResponse::ok(rendered);
 
     if options.count == CountPolicy::Emit {
-        response = response.with_total_count(total as usize);
+        // The store counts rows, so the total is never negative; a conversion
+        // that fails here is an internal inconsistency, not client input.
+        let total_count = usize::try_from(total).map_err(|error| internal_problem(&error, &uri))?;
+        response = response.with_total_count(total_count);
     }
 
     let mut response = response.into_response();

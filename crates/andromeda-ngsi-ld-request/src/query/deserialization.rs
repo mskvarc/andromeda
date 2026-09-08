@@ -65,6 +65,11 @@ impl<'de> Deserialize<'de> for OptionalGeoQuery {
 }
 
 /// Decode a complete geo-query at a request boundary.
+///
+/// # Errors
+///
+/// Returns [`GeoQueryDecodeError::Decode`] when the relationship token, the
+/// geometry type or the coordinates do not form a clause 4.10 geoquery.
 pub fn decode_geo_query(
     georel: String,
     geometry_type: String,
@@ -87,6 +92,11 @@ pub enum GeoQueryDecodeError {
 /// NGSI-LD clause 4.6.2 admits only URNs and URLs as entity identifiers. Empty
 /// members are malformed input, so the request is rejected while extracting the
 /// query rather than leaving a later compiler to reinterpret the wire value.
+///
+/// # Errors
+///
+/// Returns a deserialization error when a member is empty or is neither a URN
+/// nor a URL.
 pub fn deserialize_optional_uri_csv<'de, D>(deserializer: D) -> Result<Option<Vec<Uri>>, D::Error>
 where
     D: Deserializer<'de>,
@@ -108,6 +118,11 @@ where
 }
 
 /// Deserialize an optional non-empty `idPattern` as a compiled regular expression.
+///
+/// # Errors
+///
+/// Returns a deserialization error when the value is blank or is not a valid
+/// regular expression.
 pub fn deserialize_optional_pattern<'de, D>(deserializer: D) -> Result<Option<Pattern>, D::Error>
 where
     D: Deserializer<'de>,
@@ -187,6 +202,11 @@ where
 ///
 /// Clause 4.5.5 defines `datasetId` as a list of URIs. Empty entries and
 /// non-URI values are malformed request data at the extraction boundary.
+///
+/// # Errors
+///
+/// Returns a deserialization error when a member is empty or is neither a URI
+/// nor the `@none` selector.
 pub fn deserialize_optional_dataset_selectors<'de, D>(deserializer: D) -> Result<Option<Vec<DatasetSelector>>, D::Error>
 where
     D: Deserializer<'de>,
@@ -212,6 +232,11 @@ where
 /// Unlike query filtering, mutation `datasetId` is singleton-valued. Keeping
 /// the whole wire value in the parser means a comma-separated list cannot be
 /// accidentally accepted as one opaque identifier.
+///
+/// # Errors
+///
+/// Returns a deserialization error when the value carries a comma, is empty,
+/// or is neither a URI nor the `@none` selector.
 pub fn deserialize_optional_dataset_selector<'de, D>(deserializer: D) -> Result<Option<DatasetSelector>, D::Error>
 where
     D: Deserializer<'de>,
@@ -231,6 +256,10 @@ where
 }
 
 /// Deserialize an optional ISO-8601 calendar duration at the request boundary.
+///
+/// # Errors
+///
+/// Returns a deserialization error when the value is not an ISO-8601 duration.
 pub fn deserialize_optional_iso8601_duration<'de, D>(deserializer: D) -> Result<Option<Iso8601Duration>, D::Error>
 where
     D: Deserializer<'de>,

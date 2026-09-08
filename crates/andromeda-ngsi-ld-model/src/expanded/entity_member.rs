@@ -83,7 +83,7 @@ pub fn extract_expires_at(expanded: &Value) -> Option<DateTime<Utc>> {
 #[cfg(test)]
 mod tests {
     use crate::expanded::entity_member::{extract_attribute_names, extract_expires_at, extract_id, extract_scopes};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, scope::grammar::ScopeBuf, uri::Uri};
     use chrono::Datelike;
     use serde_json::json;
 
@@ -109,15 +109,18 @@ mod tests {
         }]);
         let names = extract_attribute_names(&entity);
         pretty_assertions::assert_eq!(
-            names.iter().map(|name| name.as_str()).collect::<Vec<&str>>(),
+            names.iter().map(AttributeName::as_str).collect::<Vec<&str>>(),
             vec!["https://example.com/address", "https://example.com/name", "https://uri.etsi.org/ngsi-ld/scope"]
         );
     }
 
     #[test]
     fn a_payload_with_only_keywords_carries_no_attribute_names() {
-        assert!(extract_attribute_names(&json!([])).is_empty());
-        assert!(extract_attribute_names(&json!({"@id": "urn:x", "@type": ["https://example.com/T"]})).is_empty());
+        pretty_assertions::assert_eq!(extract_attribute_names(&json!([])), Vec::<AttributeName>::new());
+        pretty_assertions::assert_eq!(
+            extract_attribute_names(&json!({"@id": "urn:x", "@type": ["https://example.com/T"]})),
+            Vec::<AttributeName>::new()
+        );
     }
 
     #[test]
@@ -130,7 +133,7 @@ mod tests {
             ]
         }]);
         let scopes = extract_scopes(&entity);
-        pretty_assertions::assert_eq!(scopes.iter().map(|scope| scope.as_str()).collect::<Vec<&str>>(), vec!["/Madrid", "/Traffic"]);
+        pretty_assertions::assert_eq!(scopes.iter().map(ScopeBuf::as_str).collect::<Vec<&str>>(), vec!["/Madrid", "/Traffic"]);
     }
 
     #[test]

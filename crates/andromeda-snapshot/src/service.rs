@@ -78,6 +78,16 @@ impl SnapshotService {
     }
 
     /// Create a new snapshot from the given input parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SnapshotError::Validation`] when both query collections are
+    /// absent, when a query occupies the wrong collection, or when the requested
+    /// lifetime is not positive; [`SnapshotError::AlreadyExists`] when the
+    /// requested identifier is already taken; [`SnapshotError::Internal`] when a
+    /// generated identifier, the configured default lifetime or the request
+    /// context cannot be materialised; and the store's own failure when the
+    /// record cannot be persisted or the tenant quotas cannot be enforced.
     pub async fn create(&self, input: SnapshotInput, context: ContextSpec) -> Result<Snapshot, SnapshotError> {
         if input.snapshot_queries.is_none() && input.snapshot_temporal_queries.is_none() {
             return Err(SnapshotError::validation(
@@ -134,6 +144,13 @@ impl SnapshotService {
     }
 
     /// Retrieve a snapshot by its identifier, returning 404 if expired.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SnapshotError::NotFound`] when no record exists or the record
+    /// has expired, and the store's own failure when the read does not complete.
+    /// Failing to delete an expired record or to touch `last_used_at` is logged
+    /// rather than returned.
     pub async fn get(&self, id: &Uri) -> Result<Snapshot, SnapshotError> {
         let snapshot = self.repo.get(id).await?.ok_or_else(|| SnapshotError::not_found(id))?;
 
@@ -153,6 +170,15 @@ impl SnapshotService {
     }
 
     /// Partially update a snapshot's lifetime or priority.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SnapshotError::NotFound`] when the snapshot is absent or
+    /// expired, [`SnapshotError::Validation`] when the patch changes the
+    /// identifier or either query collection or supplies a non-positive
+    /// lifetime, [`SnapshotError::Representation`] when the patched receiver
+    /// info cannot be serialised, and the store's own failure when the metadata
+    /// write does not complete.
     pub async fn update(&self, id: &Uri, patch: SnapshotPatch) -> Result<Snapshot, SnapshotError> {
         self.get(id).await?;
 
@@ -192,6 +218,11 @@ impl SnapshotService {
     }
 
     /// Delete a snapshot by its identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SnapshotError::NotFound`] when no row was removed, and the
+    /// store's own failure when the deletion does not complete.
     pub async fn delete(&self, id: &Uri) -> Result<(), SnapshotError> {
         let deleted = self.repo.delete(id).await?;
         if deleted == 0 {
@@ -211,6 +242,12 @@ impl SnapshotService {
     ///   (maps to 204).
     /// - [`PurgeOutcome::Partial`] when at least one row succeeded and at
     ///   least one failed (maps to 207).
+    ///
+    /// # Errors
+    ///
+    /// Returns the store's own failure when matching the filter does not
+    /// complete. A per-row deletion failure is collected into the returned
+    /// outcome instead of aborting the purge.
     pub async fn purge_by_query(&self, filter: &SnapshotPurgeFilter) -> Result<PurgeOutcome, SnapshotError> {
         let matched = self.repo.match_by_filter(filter).await?;
         if matched.is_empty() {
@@ -246,6 +283,13 @@ impl SnapshotService {
     /// `Success`, `Partial`, or `Empty` (clause 5.2.40: an empty snapshot is a
     /// prepared one whose queries matched nothing, so it scopes to an empty
     /// dataset rather than to "no snapshot"). Touches `last_used_at` on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SnapshotError::NotFound`] when the snapshot is absent or
+    /// expired, [`SnapshotError::PreparationTimeout`] when it is still
+    /// `preparing` at the scoped-operation deadline, and the store's own failure
+    /// when the read does not complete.
     pub async fn validate_for_scoping(&self, id: &Uri) -> Result<Snapshot, SnapshotError> {
         let snapshot = self.repo.get(id).await?.ok_or_else(|| SnapshotError::not_found(id))?;
 
@@ -269,6 +313,12 @@ impl SnapshotService {
     }
 
     /// Resolve and validate the typed branch target for a scoped operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns every failure of [`SnapshotService::validate_for_scoping`], plus
+    /// [`SnapshotError::NotFound`] when the validated snapshot owns no durable
+    /// context branch.
     pub async fn resolve_context_target(&self, id: &Uri) -> Result<ContextTarget, SnapshotError> {
         self.validate_for_scoping(id).await?;
         let target = self.repo.target(id).await?.ok_or_else(|| SnapshotError::not_found(id))?;
@@ -298,6 +348,16 @@ impl SnapshotService {
     }
 
     /// Commit an asynchronous clone job and return its preparing control resource.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SnapshotError::NotFound`] when the source snapshot is absent or
+    /// expired, [`SnapshotError::AlreadyExists`] when the requested clone
+    /// identifier is already taken, [`SnapshotError::Validation`] when the
+    /// resolved lifetime is not positive, [`SnapshotError::Internal`] when a
+    /// generated identifier or the configured default lifetime cannot be
+    /// materialised, and the store's own failure when the clone job cannot be
+    /// persisted or the tenant quotas cannot be enforced.
     pub async fn clone_snapshot(&self, source_id: &Uri, input: SnapshotCloneInput) -> Result<Snapshot, SnapshotError> {
         let source = self.get(source_id).await?;
 

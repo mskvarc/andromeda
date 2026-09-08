@@ -109,7 +109,7 @@ async fn subscription_query_with_high_limit_returns_created_subscriptions() {
         sleep(Duration::from_millis(300)).await;
     }
 
-    unreachable!("query result did not include all created subscriptions within the retry window");
+    panic!("query result did not include all created subscriptions within the retry window");
 }
 
 #[serial_test::serial]

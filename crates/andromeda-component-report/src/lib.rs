@@ -52,7 +52,7 @@ report_text!(
     BuildTarget
 );
 report_text!(
-    /// License identifier reported by TimescaleDB.
+    /// License identifier reported by `TimescaleDB`.
     TimescaleLicense
 );
 

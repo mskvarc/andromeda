@@ -129,7 +129,7 @@ async fn distop_entity_query_exclusive_returns_remote() {
         obj.keys().collect::<Vec<_>>()
     );
 
-    let count = mock.get_count(Method::GET, "/broker1/ngsi-ld/v1/entities").await;
+    let count = mock.get_count(Method::GET, "/broker1/ngsi-ld/v1/entities");
     assert!(count > 0, "mock should have been called");
 
     delete_entity(&c, &entity_id).await;
@@ -307,8 +307,11 @@ async fn distop_entity_query_redirect_with_only_query_batch_does_not_forward() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let entries = body.as_array().expect("response should be array");
-    assert!(entries.is_empty());
-    pretty_assertions::assert_eq!(mock.get_count(Method::GET, "/broker1/ngsi-ld/v1/entities").await, 0);
+    assert!(
+        entries.is_empty(),
+        "a registration offering only queryBatch is never forwarded a GET query: {entries:?}"
+    );
+    pretty_assertions::assert_eq!(mock.get_count(Method::GET, "/broker1/ngsi-ld/v1/entities"), 0);
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
@@ -600,8 +603,11 @@ async fn distop_entity_query_inclusive_by_id_with_only_query_batch_does_not_forw
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let entries = body.as_array().expect("response should be array");
-    assert!(entries.is_empty());
-    pretty_assertions::assert_eq!(mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await, 0);
+    assert!(
+        entries.is_empty(),
+        "a registration offering only queryBatch is never forwarded a GET query: {entries:?}"
+    );
+    pretty_assertions::assert_eq!(mock.get_count(Method::GET, "/ngsi-ld/v1/entities"), 0);
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
@@ -673,8 +679,11 @@ async fn distop_entity_query_post_with_only_query_entity_does_not_forward() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let entries = body.as_array().expect("response should be array");
-    assert!(entries.is_empty());
-    pretty_assertions::assert_eq!(mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await, 0);
+    assert!(
+        entries.is_empty(),
+        "a registration offering only queryEntity is never used for a batch query: {entries:?}"
+    );
+    pretty_assertions::assert_eq!(mock.get_count(Method::GET, "/ngsi-ld/v1/entities"), 0);
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
@@ -684,7 +693,7 @@ async fn distop_entity_query_post_with_only_query_entity_does_not_forward() {
 // EntityMap tests
 // ---------------------------------------------------------------------------
 
-/// EntityMap from distributed query includes both local and forwarded entity IDs.
+/// `EntityMap` from distributed query includes both local and forwarded entity IDs.
 #[tokio::test]
 #[serial]
 async fn distop_entity_map_includes_forwarded_entity_ids() {
@@ -744,7 +753,7 @@ async fn distop_entity_map_includes_forwarded_entity_ids() {
     mock.shutdown().await;
 }
 
-/// EntityMap with local=true only contains local entity IDs.
+/// `EntityMap` with local=true only contains local entity IDs.
 #[tokio::test]
 #[serial]
 async fn distop_entity_map_local_true_excludes_remote() {

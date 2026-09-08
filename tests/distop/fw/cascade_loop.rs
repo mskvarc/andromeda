@@ -144,7 +144,7 @@ async fn distop_entity_via_csr_alias_in_header_skips_csr() {
         .await
         .expect("query with Via");
     assert_status(&response, 200);
-    assert_eq!(mock.get_total_count().await, 0, "a source already listed in the incoming Via is skipped");
+    assert_eq!(mock.get_total_count(), 0, "a source already listed in the incoming Via is skipped");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

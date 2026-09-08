@@ -141,12 +141,12 @@ async fn batch_merge_fallback_per_entity_merge() {
         .await
         .expect("batch merge");
     assert_eq!(
-        mock.get_count(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v1}")).await,
+        mock.get_count(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v1}")),
         1,
         "V1 is merged individually"
     );
     assert_eq!(
-        mock.get_count(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v2}")).await,
+        mock.get_count(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v2}")),
         1,
         "V2 is merged individually"
     );
@@ -186,7 +186,7 @@ async fn batch_merge_redirect_neither_op_conflict_per_entity() {
         .filter(|entry| entry["registrationId"].as_str() == Some(reg_id.as_str()) && entry["error"]["status"].as_u64() == Some(409))
         .count();
     assert_eq!(conflicts, 2, "both owned entities are rejected with a keyed conflict: {body}");
-    assert_eq!(mock.get_total_count().await, 0, "no forward on an unsupported operation");
+    assert_eq!(mock.get_total_count(), 0, "no forward on an unsupported operation");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -228,7 +228,7 @@ async fn batch_merge_local_phase_populates_results() {
         .expect("local read-back");
     assert_status(&local, 200);
     assert_eq!(json_body(&local)["speed"]["value"].as_i64(), Some(99), "the local merge added speed");
-    assert_eq!(mock.get_total_count().await, 0, "an auxiliary registration does not forward");
+    assert_eq!(mock.get_total_count(), 0, "an auxiliary registration does not forward");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

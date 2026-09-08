@@ -18,6 +18,11 @@ pub enum ContextTarget {
 
 impl ContextTarget {
     /// Construct a live target from the tenant's persisted live space.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextTargetError::SnapshotSpace`] when the persisted space is Snapshot-owned,
+    /// which cannot serve as the tenant's live branch.
     pub const fn live(space: ContextSpace) -> Result<ContextTarget, ContextTargetError> {
         match space.kind() {
             ContextSpaceKind::Live => Ok(ContextTarget::Live(space)),

@@ -236,11 +236,13 @@ impl ReadyResponse<'_> {
             ContextLocation::LinkHeader => None,
         };
 
-        value = if let Some(shape) = geo_json_shape { GeoJsonRenderer::new(value)
-        .with_context(context_value)
-        .with_geometry_property(renderer.geometry_property)
-        .with_shape(shape)
-        .render()? } else {
+        value = if let Some(shape) = geo_json_shape {
+            GeoJsonRenderer::new(value)
+                .with_context(context_value)
+                .with_geometry_property(renderer.geometry_property)
+                .with_shape(shape)
+                .render()?
+        } else {
             inject_context(&mut value, context_value);
             value
         };

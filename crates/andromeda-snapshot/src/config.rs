@@ -67,6 +67,13 @@ pub struct SnapshotConfig {
 
 impl SnapshotConfig {
     /// Validate snapshot preparation execution limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns the matching [`SnapshotConfigError`] when a lifetime, capture
+    /// page size, preparation concurrency, scoped-operation wait or preparation
+    /// lease is zero, when the default lifetime exceeds the maximum lifetime, or
+    /// when a configured tenant count or byte quota is zero.
     pub fn validate(&self) -> Result<(), SnapshotConfigError> {
         if self.default_lifetime_secs == 0 {
             Err(SnapshotConfigError::ZeroDefaultLifetime)

@@ -23,6 +23,11 @@ fn unique_subscription_id(scenario: &str) -> String {
     format!("urn:ngsi-ld:Subscription:csr-sub:{scenario}:{}", Uuid::new_v4())
 }
 
+/// Resets the shared test database and returns the serialized environment guard.
+///
+/// # Panics
+///
+/// Panics when the test database environment cannot be acquired or reset.
 pub async fn clean_database() -> SerializedEnvironment {
     SerializedEnvironment::from_environment_reset()
         .await
@@ -36,6 +41,11 @@ async fn read_body(response: reqwest::Response) -> Value {
     }
 }
 
+/// Creates a context source subscription and returns the status, `Location` header and body.
+///
+/// # Panics
+///
+/// Panics when the HTTP request cannot be sent or the response cannot be received.
 pub async fn create_csource_subscription(client: &Client, body: &Value) -> (StatusCode, Option<String>, Value) {
     let response = client
         .post(format!("{BASE_URL}/csourceSubscriptions"))
@@ -51,6 +61,11 @@ pub async fn create_csource_subscription(client: &Client, body: &Value) -> (Stat
     (status, location, body)
 }
 
+/// Retrieves a single context source subscription, optionally passing `?options=`.
+///
+/// # Panics
+///
+/// Panics when the HTTP request cannot be sent or the response cannot be received.
 pub async fn retrieve_csource_subscription(client: &Client, subscription_id: &str, options: Option<&str>) -> (StatusCode, Value) {
     let encoded_id = urlencoding::encode(subscription_id);
     let query = match options {
@@ -69,6 +84,11 @@ pub async fn retrieve_csource_subscription(client: &Client, subscription_id: &st
     (status, body)
 }
 
+/// Queries context source subscriptions with the given raw query string.
+///
+/// # Panics
+///
+/// Panics when the HTTP request cannot be sent or the response cannot be received.
 pub async fn query_csource_subscriptions(client: &Client, query: &str) -> (StatusCode, Value) {
     let separator = if query.is_empty() { "" } else { "?" };
     let response = client
@@ -83,6 +103,11 @@ pub async fn query_csource_subscriptions(client: &Client, query: &str) -> (Statu
     (status, body)
 }
 
+/// Patches a context source subscription with the given fragment.
+///
+/// # Panics
+///
+/// Panics when the HTTP request cannot be sent or the response cannot be received.
 pub async fn update_csource_subscription(client: &Client, subscription_id: &str, fragment: &Value) -> (StatusCode, Value) {
     let encoded_id = urlencoding::encode(subscription_id);
     let response = client
@@ -102,6 +127,11 @@ pub async fn update_csource_subscription(client: &Client, subscription_id: &str,
     (status, body)
 }
 
+/// Patches a context source subscription with an unparsed request body.
+///
+/// # Panics
+///
+/// Panics when the HTTP request cannot be sent or the response cannot be received.
 pub async fn update_csource_subscription_raw(client: &Client, subscription_id: &str, raw_fragment: &[u8]) -> (StatusCode, Value) {
     let encoded_id = urlencoding::encode(subscription_id);
     let response = client
@@ -117,6 +147,11 @@ pub async fn update_csource_subscription_raw(client: &Client, subscription_id: &
     (status, body)
 }
 
+/// Deletes a context source subscription.
+///
+/// # Panics
+///
+/// Panics when the HTTP request cannot be sent or the response cannot be received.
 pub async fn delete_csource_subscription(client: &Client, subscription_id: &str) -> (StatusCode, Value) {
     let encoded_id = urlencoding::encode(subscription_id);
     let response = client
@@ -247,6 +282,11 @@ pub fn update_entities_vehicle_fragment() -> Value {
     })
 }
 
+/// Issues a bare `GET` against the broker with no negotiated headers.
+///
+/// # Panics
+///
+/// Panics when the HTTP request cannot be sent or the response cannot be received.
 pub async fn raw_get(client: &Client, path_and_query: &str) -> (StatusCode, Value) {
     let response = client
         .request(Method::GET, format!("{BASE_URL}{path_and_query}"))
@@ -258,6 +298,11 @@ pub async fn raw_get(client: &Client, path_and_query: &str) -> (StatusCode, Valu
     (status, body)
 }
 
+/// Asserts that a `ProblemDetails` body carries the expected `type` and a `title`.
+///
+/// # Panics
+///
+/// Panics when the `type` member differs from `expected_type` or `title` is not a string.
 pub fn assert_problem_detail_type(body: &Value, expected_type: &str) {
     pretty_assertions::assert_eq!(body["type"], expected_type, "unexpected problem detail type: {body}");
     assert!(body["title"].is_string(), "problem details title should be present: {body}");

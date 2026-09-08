@@ -74,6 +74,13 @@ fn insert_rows_statement(
 /// set rather than a fragment, so rows for capabilities the update dropped must
 /// not survive it. Every registration has at least one row after it: the
 /// unconstrained one has the wildcard row.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError`] when the attribute-name dictionary cannot
+/// resolve or mint the declared names, when the insert statement cannot be built
+/// from the derived rows, or when the delete or the insert fails against the
+/// caller's connection.
 pub async fn replace_registration_information(
     connection: &mut PgConnection,
     registration: &Uri,
@@ -141,7 +148,7 @@ mod tests {
             relationship_names: None,
         }];
         let mut rows = match derive_routing(&information, &dictionary) {
-            RegistrationRouting::Unconstrained => unreachable!("the fixture constrains the type axis"),
+            RegistrationRouting::Unconstrained => panic!("the fixture constrains the type axis"),
             RegistrationRouting::Selective(rows) => rows,
         };
         rows.push(RegistrationInformationRow::wildcard());

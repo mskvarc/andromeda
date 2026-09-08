@@ -8,6 +8,11 @@ use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
 /// Clause 4.15 permits comma-separated language ranges, wildcard ranges and
 /// RFC quality factors, so a single language-tag value is not sufficient for
 /// URL parameters.
+///
+/// # Errors
+///
+/// Returns a deserialization error when the value does not satisfy the clause
+/// 4.15 language-filter grammar.
 pub fn deserialize_optional_language_filter<'de, D>(deserializer: D) -> Result<Option<LanguageFilter>, D::Error>
 where
     D: Deserializer<'de>,

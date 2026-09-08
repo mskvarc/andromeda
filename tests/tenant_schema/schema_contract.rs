@@ -203,8 +203,8 @@ async fn ensure_schema_contract_refuses_a_tenant_stamped_behind_with_a_digest_th
             );
             assert_eq!(found, contract.digest(), "the refusal must name the digest the drifted stamp actually carries");
         }
-        Err(other) => unreachable!("an inconsistent behind-contract stamp must be reported as a digest mismatch: {other}"),
-        Ok(()) => unreachable!("a stamp whose digest does not match its real history must be refused, not silently restamped"),
+        Err(other) => panic!("an inconsistent behind-contract stamp must be reported as a digest mismatch: {other}"),
+        Ok(()) => panic!("a stamp whose digest does not match its real history must be refused, not silently restamped"),
     }
     let (row_version, row_digest) = row_after_ensure.expect("a stamp present before the call must still be present after a refusal");
     assert_eq!(
@@ -291,8 +291,8 @@ async fn ensure_schema_contract_refuses_a_tenant_stamped_with_another_migration_
             assert_eq!(expected, contract.digest(), "the refusal must name the digest the binary requires");
             assert_eq!(found.to_string(), "a".repeat(64), "the refusal must name the digest the tenant carries");
         }
-        Err(other) => unreachable!("a digest mismatch must be reported as such: {other}"),
-        Ok(()) => unreachable!("a tenant migrated along another path must be refused, not silently restamped"),
+        Err(other) => panic!("a digest mismatch must be reported as such: {other}"),
+        Ok(()) => panic!("a tenant migrated along another path must be refused, not silently restamped"),
     }
     let (row_version, row_digest) = row_after_ensure.expect("a stamp present before the call must still be present after a refusal");
     assert_eq!(
@@ -350,8 +350,8 @@ async fn a_migrated_but_unstamped_tenant_is_refused_naming_what_it_should_carry(
             assert_eq!(expected_version, contract.version(), "the refusal must name the version to stamp");
             assert_eq!(expected_digest, contract.digest(), "the refusal must name the digest to stamp");
         }
-        Err(other) => unreachable!("an unstamped tenant must be reported as such: {other}"),
-        Ok(()) => unreachable!("an unstamped tenant must be refused"),
+        Err(other) => panic!("an unstamped tenant must be reported as such: {other}"),
+        Ok(()) => panic!("an unstamped tenant must be refused"),
     }
 
     pool.close().await;

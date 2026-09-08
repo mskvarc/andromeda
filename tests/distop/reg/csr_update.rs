@@ -231,7 +231,7 @@ async fn update_shorthand_names_expanded() {
     let stored = json_body(&retrieved);
     let names: Vec<&str> = stored["information"][0]["propertyNames"]
         .as_array()
-        .unwrap_or_else(|| unreachable!("propertyNames round-trips as an array"))
+        .unwrap_or_else(|| panic!("propertyNames round-trips as an array"))
         .iter()
         .filter_map(Value::as_str)
         .collect();

@@ -120,7 +120,7 @@ async fn temporal_upsert_exclusive_create_unsupported_returns_409() {
     assert_status(&created, 409);
     assert_problem_details(&created, CONFLICT);
     assert_eq!(
-        mock.get_count(Method::POST, "/ngsi-ld/v1/temporal/entities").await,
+        mock.get_count(Method::POST, "/ngsi-ld/v1/temporal/entities"),
         0,
         "no forward on an unsupported operation"
     );
@@ -270,7 +270,7 @@ async fn temporal_add_attrs_registration_matches_absent_not_404_and_strips() {
     let forwarded = mock.next_request(FORWARD_WAIT).await;
     let forwarded_body = forwarded.json::<Value>().expect("forwarded temporal body is JSON");
     assert!(attr_present(&forwarded_body, "speed"), "the owned attribute is forwarded: {forwarded_body}");
-    assert_eq!(mock.get_count(Method::POST, &attrs_path).await, 1, "the add is forwarded once");
+    assert_eq!(mock.get_count(Method::POST, &attrs_path), 1, "the add is forwarded once");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -309,7 +309,7 @@ async fn temporal_add_attrs_inclusive_forwards_remainder_and_local() {
         "inclusive add succeeds: {}",
         String::from_utf8_lossy(&response.body)
     );
-    assert_eq!(mock.get_count(Method::POST, &attrs_path).await, 1, "the add is forwarded once");
+    assert_eq!(mock.get_count(Method::POST, &attrs_path), 1, "the add is forwarded once");
 
     let local = client.get_temporal_entity(&entity_id, "local=true", None).await.expect("local read-back");
     assert_status(&local, 200);

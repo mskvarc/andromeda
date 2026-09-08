@@ -114,11 +114,21 @@ pub struct Query {
 }
 
 /// Serde support for comma-separated attribute-name members.
-mod attribute_name_csv {
+///
+/// The module is public because it names the wire form of `expandValues` and
+/// `jsonKeys`: the pair of functions is the encoding those members have, and a
+/// caller rendering one of them outside a `Query` needs the same encoding.
+pub mod attribute_name_csv {
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use serde::{Deserialize, Deserializer, Serializer, de::Error as DeserializeError};
 
     /// Deserialize a comma-separated member into validated names.
+    ///
+    /// # Errors
+    ///
+    /// Returns the deserializer's own error when the member is neither absent
+    /// nor a string, and a custom error when the list carries an empty member
+    /// or a member that does not satisfy the NGSI-LD attribute-name grammar.
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<AttributeName>>, D::Error>
     where
         D: Deserializer<'de>,
@@ -139,6 +149,10 @@ mod attribute_name_csv {
     }
 
     /// Serialize validated names as the comma-separated member the spec defines.
+    ///
+    /// # Errors
+    ///
+    /// Returns the serializer's own error when the member cannot be written.
     pub fn serialize<S>(value: &Option<Vec<AttributeName>>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -158,12 +172,22 @@ mod attribute_name_csv {
 /// member is therefore not the same as splitting on `,` across the whole
 /// member: a member's grammar owns its own comma/pipe splitting, and the
 /// terms every member yields are concatenated into one flat list.
-mod projection_term_list {
+///
+/// The module is public because it names the wire form of `pick` and `omit`:
+/// the pair of functions is the encoding those members have, and a caller
+/// rendering one of them outside a `Query` needs the same encoding.
+pub mod projection_term_list {
     use andromeda_ngsi_ld_query::projection::grammar::{RawProjectionTerm, parse_projection_list};
     use serde::{Deserialize, Deserializer, Serializer, de::Error as DeserializeError};
 
     /// Deserialize the array of projection-language strings into the terms
     /// they parse to, concatenated in array order.
+    ///
+    /// # Errors
+    ///
+    /// Returns the deserializer's own error when the member is neither absent
+    /// nor an array of strings, and a custom error when one of those strings
+    /// does not parse as a clause 4.21 projection list.
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<RawProjectionTerm>>, D::Error>
     where
         D: Deserializer<'de>,
@@ -180,6 +204,10 @@ mod projection_term_list {
     }
 
     /// Serialize each term as its own clause 4.21 array member.
+    ///
+    /// # Errors
+    ///
+    /// Returns the serializer's own error when the member cannot be written.
     pub fn serialize<S>(value: &Option<Vec<RawProjectionTerm>>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,

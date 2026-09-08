@@ -68,10 +68,10 @@ async fn dist_http_query_format_key_values_returns_simplified_representation() {
     let entities = json_body(&response);
     let found = entities
         .as_array()
-        .unwrap_or_else(|| unreachable!("query returns an array"))
+        .unwrap_or_else(|| panic!("query returns an array"))
         .iter()
         .find(|entity| entity["id"].as_str() == Some(entity_id.as_str()));
-    let found = found.unwrap_or_else(|| unreachable!("the created vehicle is returned"));
+    let found = found.unwrap_or_else(|| panic!("the created vehicle is returned"));
     assert_eq!(found["speed"].as_i64(), Some(42), "keyValues collapses the attribute to its raw value");
 
     topology.finish().await.expect("topology cleanup");

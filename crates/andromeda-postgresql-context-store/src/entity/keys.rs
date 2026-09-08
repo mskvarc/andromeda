@@ -23,6 +23,11 @@ impl EntityRepository {
     /// such an entity, so nothing handed the key back; this is where the
     /// commit fetches it. Identifiers with no row are simply absent from the
     /// result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the lookup fails, or when a returned
+    /// surrogate key or identifier is not a valid written entity.
     pub async fn keys_by_ids_in_tx(tx: &mut Transaction<'_, Postgres>, target: &ContextTarget, ids: &[Uri]) -> Result<Vec<WrittenEntity>, ContextStoreError> {
         if ids.is_empty() {
             return Ok(Vec::new());
@@ -30,7 +35,7 @@ impl EntityRepository {
         let id_strs: Vec<&str> = ids.iter().map(Uri::as_str).collect();
         let (sql, values) = keys_by_ids_query(target, &id_strs).build_sqlx(PostgresQueryBuilder);
         let rows: Vec<(i64, String)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut **tx).await?;
-        rows.into_iter().map(|(key, id)| stored_written_entity(key, id)).collect()
+        rows.iter().map(|(key, id)| stored_written_entity(*key, id)).collect()
     }
 }
 

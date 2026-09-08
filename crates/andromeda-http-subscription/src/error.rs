@@ -9,6 +9,7 @@ use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_subscription::error::SubscriptionError;
 use axum::http::Uri;
+use std::fmt::Display;
 
 /// A typed failure consumed by subscription routes.
 pub trait SubscriptionHttpClassify {
@@ -41,6 +42,12 @@ impl SubscriptionHttpClassify for RenderError {
 /// Attach the inbound URI while classifying a typed subscription-binding result.
 pub trait SubscriptionResultExt<T> {
     /// Map the focused failure and attach `instance`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ProblemResponse`] whenever the receiver is `Err`: the typed
+    /// failure is classified into its NGSI-LD `ProblemDetails` category and the
+    /// inbound request URI is recorded as the `instance` member.
     fn with_subscription_instance(self, instance: &Uri) -> Result<T, ProblemResponse>;
 }
 
@@ -59,6 +66,11 @@ pub(crate) fn public_problem(detail: impl Into<String>, instance: &Uri) -> Probl
 
 pub(crate) fn origin_problem(error: &RequestOriginError, instance: &Uri) -> ProblemResponse {
     classify_request_origin_error(error).with_instance(instance.clone())
+}
+
+/// Sanitize a failure that no client input can provoke, attaching `instance`.
+pub(crate) fn internal_problem(error: &impl Display, instance: &Uri) -> ProblemResponse {
+    ClassifiedReport::internal(error).with_instance(instance.clone())
 }
 
 #[cfg(test)]

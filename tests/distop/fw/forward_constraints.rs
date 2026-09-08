@@ -71,11 +71,7 @@ async fn forward_scopes_request_to_registered_type_only() {
         !forwarded_query.contains("Device"),
         "the uncovered type is stripped before forwarding: {forwarded_query}"
     );
-    assert_eq!(
-        mock.get_count(Method::GET, FORWARDED_ENTITIES).await,
-        1,
-        "exactly one forwarded query is issued"
-    );
+    assert_eq!(mock.get_count(Method::GET, FORWARDED_ENTITIES), 1, "exactly one forwarded query is issued");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -238,8 +234,8 @@ async fn forward_mode_governs_distribution_and_local_hold() {
         .expect("auxiliary create");
     assert!(auxiliary_created.status.is_success(), "auxiliary create succeeds: {}", auxiliary_created.status);
 
-    assert_eq!(inclusive_mock.get_total_count().await, 1, "an inclusive write is forwarded to the source");
-    assert_eq!(auxiliary_mock.get_total_count().await, 0, "an auxiliary write is never forwarded");
+    assert_eq!(inclusive_mock.get_total_count(), 1, "an inclusive write is forwarded to the source");
+    assert_eq!(auxiliary_mock.get_total_count(), 0, "an auxiliary write is never forwarded");
 
     let inclusive_local = topology
         .broker(BrokerRole::A)
@@ -362,7 +358,7 @@ async fn forward_omits_operation_not_supported_by_source() {
         .expect("query");
     assert_status(&response, 200);
     assert_eq!(
-        mock.get_count(Method::GET, FORWARDED_ENTITIES).await,
+        mock.get_count(Method::GET, FORWARDED_ENTITIES),
         0,
         "a query is not forwarded to a retrieve-only source"
     );

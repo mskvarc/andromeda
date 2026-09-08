@@ -28,6 +28,11 @@ impl TestResponse {
     }
 
     /// Decode the captured body as JSON without discarding the response context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JsonBodyError::EmptyBody`] when the captured body has no bytes, and [`JsonBodyError::InvalidJson`] when those
+    /// bytes are not valid JSON or do not describe a `T`.
     pub fn json<T>(&self) -> Result<T, JsonBodyError>
     where
         T: DeserializeOwned,
@@ -43,11 +48,20 @@ impl TestResponse {
     }
 
     /// Decode the captured body as an untyped JSON value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JsonBodyError::EmptyBody`] when the captured body has no bytes, and [`JsonBodyError::InvalidJson`] when those
+    /// bytes are not valid JSON.
     pub fn json_value(&self) -> Result<Value, JsonBodyError> {
         self.json()
     }
 
     /// Return the `Location` header when it is present and valid UTF-8.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HeaderDecodeError::InvalidHeaderValue`] when a `Location` header is present but is not valid visible text.
     pub fn location(&self) -> Result<Option<&str>, HeaderDecodeError> {
         self.headers
             .get(LOCATION)
@@ -96,7 +110,7 @@ mod tests {
     #[test]
     fn valid_json_decodes_to_the_requested_type() {
         let response = TestResponse::new(StatusCode::OK, HeaderMap::new(), Bytes::from_static(br#"{"answer":42}"#));
-        let body: Value = response.json().unwrap_or_else(|error| unreachable!("static JSON is valid: {error}"));
+        let body: Value = response.json().unwrap_or_else(|error| panic!("static JSON is valid: {error}"));
 
         assert_eq!(body["answer"], 42);
     }
@@ -124,7 +138,7 @@ mod tests {
                 assert_eq!(status, StatusCode::BAD_GATEWAY);
                 assert_eq!(body, Bytes::from_static(b"not-json"));
             }
-            JsonBodyError::EmptyBody { status } => unreachable!("body was non-empty, status was {status}"),
+            JsonBodyError::EmptyBody { status } => panic!("body was non-empty, status was {status}"),
         }
     }
 }

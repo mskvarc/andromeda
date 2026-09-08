@@ -27,6 +27,10 @@ mod toast_compression;
 pub const SUITE: &str = "tenant_schema";
 
 /// Resolve the durable live context-space key installed by the tenant schema.
+///
+/// # Panics
+///
+/// Panics when the tenant schema holds no live context space row, or the query fails.
 pub async fn live_context_space_key(pool: &sqlx::PgPool) -> i64 {
     sqlx::query_scalar("SELECT context_space_key FROM context_spaces WHERE kind = 'live'")
         .fetch_one(pool)

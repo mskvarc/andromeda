@@ -19,6 +19,11 @@ use axum::{
 use chrono::Utc;
 
 /// Retrieve the configured context source identity.
+///
+/// # Errors
+///
+/// Returns a [`ProblemResponse`] when the typed identity cannot be serialized
+/// for the renderer, or when the negotiated representation cannot be rendered.
 pub async fn get(
     State(state): State<SourceIdentityState>,
     OriginalUri(uri): OriginalUri,

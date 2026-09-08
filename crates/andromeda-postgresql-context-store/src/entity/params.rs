@@ -66,6 +66,11 @@ impl PreparedEntityColumns {
     }
 
     /// Serialise an expanded payload once and append its JSON text.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError::Internal`] when the payload cannot be
+    /// serialised to JSON text.
     pub fn push_payload(&mut self, payload: &Value) -> Result<(), ContextStoreError> {
         let json = serde_json::to_string(payload).map_err(|error| ContextStoreError::Internal(format!("serialise entity payload: {error}")))?;
         self.payload_json.push(json);
@@ -75,6 +80,11 @@ impl PreparedEntityColumns {
     /// Encode one row's three hoisted geometries into the parallel EWKB bind
     /// vectors. This is the only way to append them, so the vectors cannot
     /// fall out of step with each other and EWKB stays inside the store.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError::Encoding`] when one of the three geometries
+    /// cannot be encoded as EWKB.
     pub fn push_geometries(
         &mut self,
         location: Option<&Geometry>,

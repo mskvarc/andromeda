@@ -63,7 +63,7 @@ mod tests {
     fn encoded() -> HeaderValue {
         let mut values = Vec::new();
         JsonLdAccept.encode(&mut values);
-        values.into_iter().next().unwrap_or_else(|| unreachable!("the offer is a valid header value"))
+        values.into_iter().next().expect("the offer is a valid header value")
     }
 
     #[test]

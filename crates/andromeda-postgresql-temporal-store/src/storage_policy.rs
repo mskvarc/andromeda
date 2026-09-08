@@ -142,7 +142,11 @@ const fn day_seconds(days: NonZeroU32) -> i64 {
 const fn day_count(days: NonZeroU32) -> i32 {
     // Configuration is a `u32`, so a value past `i32::MAX` days is not a
     // storage policy anyone can mean; it saturates rather than wraps.
-    if days.get() > i32::MAX as u32 { i32::MAX } else { days.get() as i32 }
+    if days.get() > i32::MAX.cast_unsigned() {
+        i32::MAX
+    } else {
+        days.get().cast_signed()
+    }
 }
 
 #[cfg(test)]

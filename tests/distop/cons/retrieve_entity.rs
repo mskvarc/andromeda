@@ -132,15 +132,15 @@ async fn distop_retrieve_entity_forwards_only_retrieveentity_capable_csrs() {
     );
 
     assert!(
-        mock.get_count(Method::GET, &format!("/s1/ngsi-ld/v1/entities/{entity_id}")).await > 0,
+        mock.get_count(Method::GET, &format!("/s1/ngsi-ld/v1/entities/{entity_id}")) > 0,
         "retrieveEntity source is forwarded"
     );
     assert!(
-        mock.get_count(Method::GET, &format!("/s3/ngsi-ld/v1/entities/{entity_id}")).await > 0,
+        mock.get_count(Method::GET, &format!("/s3/ngsi-ld/v1/entities/{entity_id}")) > 0,
         "combined-capability source is forwarded"
     );
     assert_eq!(
-        mock.get_count(Method::GET, &format!("/s2/ngsi-ld/v1/entities/{entity_id}")).await,
+        mock.get_count(Method::GET, &format!("/s2/ngsi-ld/v1/entities/{entity_id}")),
         0,
         "queryEntity-only source is not forwarded"
     );
@@ -180,7 +180,7 @@ async fn distop_retrieve_entity_forwards_exclusive_redirect_inclusive() {
             "{mode} mode serves the remote speed"
         );
         assert!(
-            mock.get_count(Method::GET, &format!("{source}/ngsi-ld/v1/entities/{entity_id}")).await > 0,
+            mock.get_count(Method::GET, &format!("{source}/ngsi-ld/v1/entities/{entity_id}")) > 0,
             "{mode} mode forwards the retrieve"
         );
     }

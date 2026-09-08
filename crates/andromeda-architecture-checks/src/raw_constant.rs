@@ -3,7 +3,7 @@
 use crate::source_scan::{is_test_only, workspace_sources};
 use quote::ToTokens;
 use std::path::Path;
-use syn::{Attribute, Expr, ExprLit, ImplItem, Item, Lit, TraitItem, Type};
+use syn::{Attribute, Expr, ExprLit, ImplItem, Item, ItemImpl, ItemTrait, Lit, TraitItem, Type};
 
 /// Assert that production constants do not encode IRIs or media types as `&str`.
 ///
@@ -32,86 +32,85 @@ pub fn raw_iri_or_media_constants(workspace_root: &str) -> Vec<String> {
 
 /// Inspect one top-level constant or static declaration.
 #[cfg(test)]
-fn raw_constant(path: &str, item: Item) -> Option<String> {
-    let (attributes, identifier, ty, expression) = match item {
-        Item::Const(item) => (item.attrs, item.ident, item.ty, item.expr),
-        Item::Static(item) => (item.attrs, item.ident, item.ty, item.expr),
-        Item::Enum(_)
-        | Item::ExternCrate(_)
-        | Item::Fn(_)
-        | Item::ForeignMod(_)
-        | Item::Impl(_)
-        | Item::Macro(_)
-        | Item::Mod(_)
-        | Item::Struct(_)
-        | Item::Trait(_)
-        | Item::TraitAlias(_)
-        | Item::Type(_)
-        | Item::Union(_)
-        | Item::Use(_)
-        | Item::Verbatim(_) => return None,
-        _ => return None,
-    };
-    raw_declaration(path, &identifier.to_string(), &attributes, &ty, &expression)
+fn raw_constant(path: &str, item: &Item) -> Option<String> {
+    if let Item::Const(item) = item {
+        return raw_declaration(path, &item.ident.to_string(), &item.attrs, &item.ty, &item.expr);
+    }
+    if let Item::Static(item) = item {
+        return raw_declaration(path, &item.ident.to_string(), &item.attrs, &item.ty, &item.expr);
+    }
+    None
 }
 
 /// Recursively scan items, including associated constants.
 fn scan_items(path: &str, items: &[Item], violations: &mut Vec<String>) {
-    items.iter().for_each(|item| match item {
-        Item::Const(item) if !is_test_only(&item.attrs) => {
-            if let Some(violation) = raw_declaration(path, &item.ident.to_string(), &item.attrs, &item.ty, &item.expr) {
-                violations.push(violation);
-            }
+    for item in items {
+        scan_item(path, item, violations);
+    }
+}
+
+/// Inspect one item, descending into inline modules, implementations and traits.
+///
+/// `syn::Item` is `#[non_exhaustive]`, so each shape that can declare a constant
+/// is asked in turn rather than matched against a catch-all arm.
+fn scan_item(path: &str, item: &Item, violations: &mut Vec<String>) {
+    if let Item::Const(item) = item
+        && !is_test_only(&item.attrs)
+        && let Some(violation) = raw_declaration(path, &item.ident.to_string(), &item.attrs, &item.ty, &item.expr)
+    {
+        violations.push(violation);
+    }
+    if let Item::Static(item) = item
+        && !is_test_only(&item.attrs)
+        && let Some(violation) = raw_declaration(path, &item.ident.to_string(), &item.attrs, &item.ty, &item.expr)
+    {
+        violations.push(violation);
+    }
+    if let Item::Impl(item) = item
+        && !is_test_only(&item.attrs)
+    {
+        scan_implementation_constants(path, item, violations);
+    }
+    if let Item::Mod(item) = item
+        && !is_test_only(&item.attrs)
+        && let Some((_, nested)) = &item.content
+    {
+        scan_items(path, nested, violations);
+    }
+    if let Item::Trait(item) = item
+        && !is_test_only(&item.attrs)
+    {
+        scan_trait_constants(path, item, violations);
+    }
+}
+
+/// Inspect the associated constants one implementation block declares.
+fn scan_implementation_constants(path: &str, item: &ItemImpl, violations: &mut Vec<String>) {
+    for member in &item.items {
+        if let ImplItem::Const(member) = member
+            && let Some(violation) = raw_declaration(
+                path,
+                &format!("{}::{}", item.self_ty.to_token_stream(), member.ident),
+                &member.attrs,
+                &member.ty,
+                &member.expr,
+            )
+        {
+            violations.push(violation);
         }
-        Item::Impl(item) if !is_test_only(&item.attrs) => item.items.iter().for_each(|member| {
-            if let ImplItem::Const(member) = member
-                && let Some(violation) = raw_declaration(
-                    path,
-                    &format!("{}::{}", item.self_ty.to_token_stream(), member.ident),
-                    &member.attrs,
-                    &member.ty,
-                    &member.expr,
-                )
-            {
-                violations.push(violation);
-            }
-        }),
-        Item::Mod(item) if !is_test_only(&item.attrs) => {
-            if let Some((_, nested)) = &item.content {
-                scan_items(path, nested, violations);
-            }
+    }
+}
+
+/// Inspect the defaulted associated constants one trait declares.
+fn scan_trait_constants(path: &str, item: &ItemTrait, violations: &mut Vec<String>) {
+    for member in &item.items {
+        if let TraitItem::Const(member) = member
+            && let Some((_, default)) = &member.default
+            && let Some(violation) = raw_declaration(path, &format!("{}::{}", item.ident, member.ident), &member.attrs, &member.ty, default)
+        {
+            violations.push(violation);
         }
-        Item::Static(item) if !is_test_only(&item.attrs) => {
-            if let Some(violation) = raw_declaration(path, &item.ident.to_string(), &item.attrs, &item.ty, &item.expr) {
-                violations.push(violation);
-            }
-        }
-        Item::Trait(item) if !is_test_only(&item.attrs) => item.items.iter().for_each(|member| {
-            if let TraitItem::Const(member) = member
-                && let Some((_, default)) = &member.default
-                && let Some(violation) = raw_declaration(path, &format!("{}::{}", item.ident, member.ident), &member.attrs, &member.ty, default)
-            {
-                violations.push(violation);
-            }
-        }),
-        Item::Const(_)
-        | Item::Enum(_)
-        | Item::ExternCrate(_)
-        | Item::Fn(_)
-        | Item::ForeignMod(_)
-        | Item::Impl(_)
-        | Item::Macro(_)
-        | Item::Mod(_)
-        | Item::Static(_)
-        | Item::Struct(_)
-        | Item::Trait(_)
-        | Item::TraitAlias(_)
-        | Item::Type(_)
-        | Item::Union(_)
-        | Item::Use(_)
-        | Item::Verbatim(_) => {}
-        _ => {}
-    });
+    }
 }
 
 /// Inspect one constant declaration shape.
@@ -163,15 +162,15 @@ mod tests {
 
     /// Parse one fixture declaration.
     fn fixture(source: &str) -> Item {
-        syn::parse_str(source).unwrap_or_else(|error| unreachable!("fixture parses: {error}"))
+        syn::parse_str(source).unwrap_or_else(|error| panic!("fixture parses: {error}"))
     }
 
     #[test]
     fn rejects_raw_iri_and_media_type_constants() {
-        assert!(raw_constant("fixture.rs", fixture("const IRI: &str = \"https://example.com/id\";")).is_some());
-        assert!(raw_constant("fixture.rs", fixture("const MEDIA: &str = \"application/ld+json, application/json\";")).is_some());
-        let syntax = syn::parse_file("impl Relation { const IRI: &str = \"https://example.com/relation\"; }")
-            .unwrap_or_else(|error| unreachable!("fixture parses: {error}"));
+        assert!(raw_constant("fixture.rs", &fixture("const IRI: &str = \"https://example.com/id\";")).is_some());
+        assert!(raw_constant("fixture.rs", &fixture("const MEDIA: &str = \"application/ld+json, application/json\";")).is_some());
+        let syntax =
+            syn::parse_file("impl Relation { const IRI: &str = \"https://example.com/relation\"; }").unwrap_or_else(|error| panic!("fixture parses: {error}"));
         let mut violations = Vec::new();
         scan_items("fixture.rs", &syntax.items, &mut violations);
         assert_eq!(violations.len(), 1);
@@ -179,8 +178,8 @@ mod tests {
 
     #[test]
     fn accepts_typed_constants_and_embedded_documents() {
-        assert!(raw_constant("fixture.rs", fixture("const IRI: Iri<&str> = iri!(\"https://example.com/id\");")).is_none());
-        assert!(raw_constant("fixture.rs", fixture("const MEDIA: MediaType = APPLICATION_JSON;")).is_none());
-        assert!(raw_constant("fixture.rs", fixture("const DOCUMENT: &str = include_str!(\"context.jsonld\");")).is_none());
+        assert!(raw_constant("fixture.rs", &fixture("const IRI: Iri<&str> = iri!(\"https://example.com/id\");")).is_none());
+        assert!(raw_constant("fixture.rs", &fixture("const MEDIA: MediaType = APPLICATION_JSON;")).is_none());
+        assert!(raw_constant("fixture.rs", &fixture("const DOCUMENT: &str = include_str!(\"context.jsonld\");")).is_none());
     }
 }

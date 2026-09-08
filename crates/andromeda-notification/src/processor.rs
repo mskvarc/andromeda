@@ -6,19 +6,23 @@ mod change_payload;
 /// Delivery of a durably queued event through the processor.
 mod durable_delivery;
 pub(crate) mod payload;
+/// Notifying one subscription of one committed entity change.
+mod subscription_notification;
 
-use crate::{error::NotificationError, processor::change_payload::entity_data_for};
+use crate::{
+    error::NotificationError,
+    processor::{change_payload::entity_data_for, payload::cache::NotificationCompactionCache, subscription_notification::NotifiedChange},
+};
 use andromeda_context_commit::{change_event::ChangeEvent, context_change_event::ContextChangeEvent};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::{
     dispatch::{DeliveryResult, TransportDispatcher},
     endpoint::transport::{EndpointTransport, parse_endpoint_transport},
-    request::NotificationDelivery,
 };
-use andromeda_entity::{port::reader::EntityReader, query::EntityQueryService, sys_attrs::inject_sys_attrs};
+use andromeda_entity::{port::reader::EntityReader, query::EntityQueryService};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
-use andromeda_ngsi_ld_model::notification::{Notification, NotificationTrigger, NotificationType};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::notification::{NotificationTrigger, SysAttrsSnapshot};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::{
     cache::SubscriptionCache,
@@ -27,15 +31,12 @@ use andromeda_subscription::{
     matching::matches_entity_filters,
     spatial_narrowing::narrow_by_spatial_index,
     store::SubscriptionStore,
-    throttle::ceiling_for_throttle,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
-use chrono::Utc;
 use futures::{StreamExt, stream};
-use payload::{NotificationBuildParams, build_notification_data, cache::NotificationCompactionCache};
+use serde_json::Value;
 use std::sync::Arc;
-use tracing::{debug, error};
-use uuid::Uuid;
+use tracing::debug;
 
 const NOTIFICATION_CONCURRENCY: usize = 20;
 
@@ -47,6 +48,25 @@ fn compiled_transport(subscription: &CompiledSubscription) -> Option<EndpointTra
             None
         }
     }
+}
+
+/// Fold the endpoint results of one committed change into its aggregate
+/// outcome; a subscription whose throttling window swallowed the notification
+/// contributes nothing.
+fn aggregate_delivery_outcomes(deliveries: Vec<Option<DeliveryResult>>) -> NotificationEvaluationOutcome {
+    deliveries
+        .into_iter()
+        .flatten()
+        .fold(NotificationEvaluationOutcome::default(), |mut outcome, delivery| {
+            if delivery.is_delivered() {
+                outcome.delivered += 1;
+            } else if delivery.should_retry() {
+                outcome.retryable_failures += 1;
+            } else {
+                outcome.terminal_failures += 1;
+            }
+            outcome
+        })
 }
 
 /// Applies subscription and entity changes to entity-notification policy.
@@ -110,6 +130,11 @@ impl NotificationProcessor {
     }
 
     /// Reload compiled subscriptions after startup or an event-stream gap.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NotificationError::Subscription`] when the subscription store
+    /// cannot list the tenant's subscriptions; the cache is then left as it was.
     pub async fn reload_cache(&self) -> Result<(), NotificationError> {
         self.cache.reload(&self.live_target, self.sub_repo.as_ref()).await.map_err(Into::into)
     }
@@ -148,23 +173,70 @@ impl NotificationProcessor {
             "Change event received: id={}, trigger={}, types={:?}, attrs={:?}",
             event.entity_id, event.trigger_reason, event.entity_types, event.changed_attributes
         );
-        // A durably queued delivery may be drained by another instance of this
-        // broker, which shares the store but not the in-memory cache the
-        // subscription's own lifecycle changes refreshed. The subscription it
-        // names is therefore re-read before matching, so a stale cache neither
-        // drops a subscription created elsewhere nor notifies one deleted there.
         if let Some(subscription_id) = subscription_id {
-            self.cache
-                .handle_change(
-                    &SubscriptionChange::Upserted {
-                        target: target.clone(),      // clone: the cache refresh and delivery share the branch target.
-                        id: subscription_id.clone(), // clone: the change names the identifier the delivery carries.
-                    },
-                    self.sub_repo.as_ref(),
-                )
-                .await;
+            self.refresh_cached_subscription(&target, subscription_id).await;
         }
-        let outcome = self.cache.find_matching(&target, &event);
+
+        let candidates = self.candidate_subscriptions(&target, &event, subscription_id);
+        if candidates.is_empty() {
+            debug!("No matching subscriptions for event {} (trigger={})", event.entity_id, event.trigger_reason);
+            return NotificationEvaluationOutcome::default();
+        }
+        debug!("Found {} matching subscriptions for event {}", candidates.len(), event.entity_id);
+
+        // The entity is read once and shared by every notification the change produces.
+        let entity_data = entity_data_for(self.entity_reader.as_ref(), &target, &event).await;
+        let matching = self.narrow_by_entity_filters(&target, &event, candidates, entity_data.as_ref());
+        if matching.is_empty() {
+            return NotificationEvaluationOutcome::default();
+        }
+
+        let sys_attrs = self.sys_attrs_for(&target, &event, &matching).await;
+        let compaction_cache = NotificationCompactionCache::default();
+        let change = NotifiedChange {
+            target: &target,
+            event: &event,
+            sys_attrs: sys_attrs.as_ref(),
+            compaction_cache: &compaction_cache,
+        };
+        let deliveries: Vec<Option<DeliveryResult>> = stream::iter(matching)
+            .map(|compiled_sub| {
+                // clone: each concurrent notification owns the document it injects system attributes into
+                let entity_data = entity_data.clone();
+                let change = &change;
+                async move { self.notify_subscription(&compiled_sub, change, entity_data).await }
+            })
+            .buffer_unordered(NOTIFICATION_CONCURRENCY)
+            .collect()
+            .await;
+        aggregate_delivery_outcomes(deliveries)
+    }
+
+    /// Re-read one subscription from the store before the change is matched
+    /// against it.
+    ///
+    /// A durably queued delivery may be drained by another instance of this
+    /// broker, which shares the store but not the in-memory cache the
+    /// subscription's own lifecycle changes refreshed. Reconciling first means
+    /// a stale cache neither drops a subscription created elsewhere nor
+    /// notifies one deleted there (clause 5.8.6).
+    async fn refresh_cached_subscription(&self, target: &ContextTarget, subscription_id: &Uri) {
+        self.cache
+            .handle_change(
+                &SubscriptionChange::Upserted {
+                    target: target.clone(),      // clone: the cache refresh and the delivery share the branch target.
+                    id: subscription_id.clone(), // clone: the change names the identifier the delivery carries.
+                },
+                self.sub_repo.as_ref(),
+            )
+            .await;
+    }
+
+    /// The compiled subscriptions the change reaches before entity filters are
+    /// evaluated, narrowed to `subscription_id` alone when one durably queued
+    /// delivery is being redelivered.
+    fn candidate_subscriptions(&self, target: &ContextTarget, event: &ChangeEvent, subscription_id: Option<&Uri>) -> Vec<Arc<CompiledSubscription>> {
+        let outcome = self.cache.find_matching(target, event);
         debug!(
             entity = %event.entity_id,
             trigger = %event.trigger_reason,
@@ -180,171 +252,58 @@ impl NotificationProcessor {
         if let Some(subscription_id) = subscription_id {
             matching.retain(|subscription| &subscription.id == subscription_id);
         }
+        matching
+    }
 
-        if matching.is_empty() {
-            debug!("No matching subscriptions for event {} (trigger={})", event.entity_id, event.trigger_reason);
-            return NotificationEvaluationOutcome::default();
-        }
-        debug!("Found {} matching subscriptions for event {}", matching.len(), event.entity_id);
-
-        // Fetch entity data once for all matching subscriptions
-        let entity_data = entity_data_for(self.entity_reader.as_ref(), &target, &event).await;
-
+    /// Narrow the candidates to those whose `q`, `geoQ` and `scopeQ` the
+    /// changed entity satisfies (clause 5.8.6).
+    ///
+    /// A deletion is evaluated against what the entity was, because what it is
+    /// now is nothing; every other trigger is evaluated against the entity the
+    /// write left behind. With neither document available no filter can be
+    /// evaluated, so the candidates stand as they are.
+    fn narrow_by_entity_filters(
+        &self,
+        target: &ContextTarget,
+        event: &ChangeEvent,
+        candidates: Vec<Arc<CompiledSubscription>>,
+        entity_data: Option<&Value>,
+    ) -> Vec<Arc<CompiledSubscription>> {
         let filter_data = if matches!(event.trigger_reason, NotificationTrigger::EntityDeleted | NotificationTrigger::AttributeDeleted) {
             event.previous_attributes.as_ref().or(event.entity_snapshot.as_ref()).map(AsRef::as_ref)
         } else {
-            entity_data.as_ref()
+            entity_data
         };
-        let matching: Vec<Arc<CompiledSubscription>> = if let Some(data) = filter_data {
-            let geo_filtered = narrow_by_spatial_index(&self.cache, &target, matching, data, &event.entity_types);
-            geo_filtered.into_iter().filter(|sub| matches_entity_filters(sub, data)).collect()
-        } else {
-            matching
+        let Some(data) = filter_data else {
+            return candidates;
         };
+        let geo_filtered = narrow_by_spatial_index(&self.cache, target, candidates, data, &event.entity_types);
+        geo_filtered.into_iter().filter(|sub| matches_entity_filters(sub, data)).collect()
+    }
 
-        if matching.is_empty() {
-            return NotificationEvaluationOutcome::default();
+    /// The entity's clause 4.8 system attributes, resolved once when any
+    /// notified subscription asks for them.
+    ///
+    /// A deleted entity cannot be read back, so the snapshot the change
+    /// carries is what the notification is stamped with; a read that finds
+    /// nothing, or fails, falls back to that same snapshot.
+    async fn sys_attrs_for(&self, target: &ContextTarget, event: &ChangeEvent, matching: &[Arc<CompiledSubscription>]) -> Option<SysAttrsSnapshot> {
+        if !matching.iter().any(|sub| sub.notification_sys_attrs == SysAttrsInclusion::Include) {
+            return None;
         }
-
-        let need_sys_attrs = matching.iter().any(|sub| sub.notification_sys_attrs == SysAttrsInclusion::Include);
-
-        let sys_attrs = if need_sys_attrs {
-            let fallback_sys_attrs = event.sys_attrs_snapshot.clone();
-            if matches!(event.trigger_reason, NotificationTrigger::EntityDeleted) {
-                fallback_sys_attrs
-            } else {
-                match self.entity_reader.get_sys_attrs(&target, &event.entity_id).await {
-                    Ok(Some(attrs)) => Some(attrs),
-                    Ok(None) => fallback_sys_attrs,
-                    Err(e) => {
-                        debug!("Failed to fetch sysAttrs for {}: {}", event.entity_id, e);
-                        fallback_sys_attrs
-                    }
-                }
+        // clone: the notification stamps its own copy while the event keeps its snapshot
+        let recorded = event.sys_attrs_snapshot.clone();
+        if matches!(event.trigger_reason, NotificationTrigger::EntityDeleted) {
+            return recorded;
+        }
+        match self.entity_reader.get_sys_attrs(target, &event.entity_id).await {
+            Ok(Some(attrs)) => Some(attrs),
+            Ok(None) => recorded,
+            Err(error) => {
+                debug!("Failed to fetch sysAttrs for {}: {}", event.entity_id, error);
+                recorded
             }
-        } else {
-            None
-        };
-
-        let event = Arc::new(event);
-        let compaction_cache = NotificationCompactionCache::default();
-        let results: Vec<Option<DeliveryResult>> = stream::iter(matching)
-            .map(|compiled_sub| {
-                let event = Arc::clone(&event);
-                let target = target.clone(); // clone: every concurrent notification resolves linked state in the event's branch.
-                let mut entity_data = entity_data.clone();
-                let sys_attrs = sys_attrs.clone();
-                let compaction_cache = &compaction_cache;
-                async move {
-                    let sub_id = compiled_sub.id.clone();
-
-                    match self
-                        .sub_repo
-                        .claim_notification_slot(&target, &sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
-                        .await
-                    {
-                        Ok(true) => {}
-                        Ok(false) => return None,
-                        Err(e) => {
-                            debug!("Failed to claim notification slot for {}: {}", sub_id, e);
-                            return Some(DeliveryResult::RetryableFailure);
-                        }
-                    }
-
-                    if compiled_sub.notification_sys_attrs == SysAttrsInclusion::Include
-                        && let (Some(ref mut data), Some(sa)) = (entity_data.as_mut(), &sys_attrs)
-                    {
-                        inject_sys_attrs(data, sa.created_at, sa.modified_at, sa.expires_at);
-                    }
-
-                    let data = match entity_data {
-                        Some(ref d) => {
-                            build_notification_data(NotificationBuildParams {
-                                target: &target,
-                                engine: &self.engine,
-                                entity_data: d,
-                                previous_attributes: event.previous_attributes.as_deref(),
-                                sub: &compiled_sub,
-                                trigger_reason: &event.trigger_reason,
-                                changed_attributes: &event.changed_attributes,
-                                changed_dataset_id: event.changed_dataset_id.as_ref(),
-                                occurred_at: event.occurred_at,
-                                entity_query: &self.entity_query,
-                                compaction_cache: Some(compaction_cache),
-                            })
-                            .await
-                        }
-                        None => return Some(DeliveryResult::TerminalFailure),
-                    };
-                    if data.is_empty() {
-                        debug!("Subscription {} produced empty notification data for entity {}", sub_id, event.entity_id);
-                        return Some(DeliveryResult::TerminalFailure);
-                    }
-
-                    let notification_id = if let Ok(u) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() { u } else {
-                        error!("Failed to construct notification URN for {}", sub_id);
-                        return Some(DeliveryResult::TerminalFailure);
-                    };
-                    // clone: the builder takes the id by value and `sub_id` is still needed for delivery
-                    let sub_uri = sub_id.clone();
-                    let notification = Notification::builder()
-                        .id(notification_id)
-                        .type_(NotificationType)
-                        .subscription_id(sub_uri)
-                        .notified_at(Utc::now())
-                        .data(data)
-                        .build();
-
-                    let notification_payload = match serde_json::to_value(&notification) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            error!("Failed to serialize notification for {}: {}", sub_id, e);
-                            return Some(DeliveryResult::TerminalFailure);
-                        }
-                    };
-
-                    let Some(endpoint_transport) = compiled_transport(&compiled_sub) else {
-                        return Some(DeliveryResult::TerminalFailure);
-                    };
-                    let request = (NotificationDelivery {
-                        payload: &notification_payload,
-                        endpoint_uri: &compiled_sub.endpoint_uri,
-                        accept: compiled_sub.endpoint_accept.as_ref(),
-                        receiver_info: compiled_sub.endpoint_receiver_info.as_deref(),
-                        jsonld_context: compiled_sub.jsonld_context.as_ref(),
-                        tenant: self.tenant.tenant_name(),
-                        snapshot: target.snapshot().map(andromeda_context_space::snapshot_target::SnapshotTarget::snapshot_id),
-                        subscription_id: &sub_id,
-                    })
-                    .assemble();
-                    let delivery = self.transport.deliver(&endpoint_transport, &request).await;
-
-                    if delivery.is_delivered() {
-                        if let Err(e) = self.sub_repo.mark_success(&target, &sub_id).await {
-                            debug!("Failed to mark notification success for {}: {}", sub_id, e);
-                        }
-                    } else if let Err(e) = self.sub_repo.mark_failure(&target, &sub_id).await {
-                        debug!("Failed to mark notification failure for {}: {}", sub_id, e);
-                    }
-                    Some(delivery)
-                }
-            })
-            .buffer_unordered(NOTIFICATION_CONCURRENCY)
-            .collect()
-            .await;
-        results
-            .into_iter()
-            .flatten()
-            .fold(NotificationEvaluationOutcome::default(), |mut outcome, delivery| {
-                if delivery.is_delivered() {
-                    outcome.delivered += 1;
-                } else if delivery.should_retry() {
-                    outcome.retryable_failures += 1;
-                } else {
-                    outcome.terminal_failures += 1;
-                }
-                outcome
-            })
+        }
     }
 }
 
@@ -359,7 +318,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{filter::parser, projection::compiled::Projection, scope::query::ScopeQuery};
     use andromeda_subscription::{compilation::compile_geo_q, matching::matches_subscription};
-    use chrono::DateTime;
+    use chrono::{DateTime, Utc};
     use serde_json::Value;
     use std::num::NonZeroU32;
     use url::Url;
@@ -628,7 +587,7 @@ mod tests {
             "@id": "urn:ngsi-ld:Vehicle:A1",
             "@type": ["https://example.com/Vehicle"],
             "https://example.com/speed": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 80}]}],
-            "https://uri.etsi.org/ngsi-ld/location": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": {"type": "Point", "coordinates": [8.684783, 49.406132]}}]}],
+            "https://uri.etsi.org/ngsi-ld/location": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": {"type": "Point", "coordinates": [8.684_783, 49.406_132]}}]}],
             "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/Madrid/Gardens"}, {"@value": "/Spain"}]
         }])
     }

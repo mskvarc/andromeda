@@ -49,7 +49,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("relationship");
         let Attribute::Relationship(relationship) = attr else {
-            unreachable!("expected Relationship");
+            panic!("expected Relationship");
         };
         assert!(matches!(relationship.object, OneOrMany::Many(_)));
         assert!(relationship.object_type.is_some());
@@ -65,7 +65,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("relationship");
         let Attribute::Relationship(relationship) = attr else {
-            unreachable!("expected Relationship");
+            panic!("expected Relationship");
         };
         let expanded = relationship.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");

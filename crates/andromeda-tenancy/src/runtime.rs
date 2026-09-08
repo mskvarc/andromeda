@@ -33,7 +33,11 @@ static EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
 
 /// Milliseconds elapsed since the process epoch.
 fn now_millis() -> u64 {
-    EPOCH.elapsed().as_millis() as u64
+    // `Duration::as_millis` answers in `u128`. The whole-second and sub-second
+    // halves are each `u64`-representable on their own, so the stamp is
+    // assembled from them rather than narrowed from a wider integer.
+    let elapsed = EPOCH.elapsed();
+    elapsed.as_secs() * 1_000 + u64::from(elapsed.subsec_millis())
 }
 
 /// One tenant's live runtime, and when it was last reached for.
@@ -109,6 +113,11 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     }
 
     /// Every named tenant currently in the registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever the registry reports, which for a store that cannot be
+    /// reached is [`TenancyError::RegistryUnavailable`].
     pub async fn registered_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {
         self.database.registered_tenants().await
     }
@@ -127,6 +136,15 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     }
 
     /// The state for one tenant, building its runtime if none is open.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenancyError::MultiTenancyDisabled`] when a named tenant is
+    /// addressed on a deployment that serves only the unnamed default, and
+    /// [`TenancyError::UnknownTenant`] when the tenant is not registered and
+    /// `policy` is [`TenantCreationPolicy::MustExist`]. Reading the registry,
+    /// provisioning the tenant and building its runtime each surface the
+    /// failure the store or the factory reported.
     pub async fn resolve_state(&self, tenant: &TenantRef, policy: TenantCreationPolicy) -> Result<Arc<F::State>, TenancyError> {
         if !self.config.enabled && !tenant.is_unnamed_default() {
             return Err(TenancyError::MultiTenancyDisabled);
@@ -252,7 +270,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 // clone: the eviction list outlives the iteration. The last-used
                 // stamp is captured so a request that touches this runtime after
                 // it is judged an orphan spares it from removal.
-                named => Some((named.clone(), entry.value().last_used_instant())),
+                orphan @ TenantRef::Named(_) => Some((orphan.clone(), entry.value().last_used_instant())),
             })
             .collect();
 
@@ -724,7 +742,8 @@ mod tests {
                 .await
                 .expect("resolves");
         }
-        assert!(manager.excess_runtimes().is_empty());
+        let excess = manager.excess_runtimes();
+        assert!(excess.is_empty(), "{excess:?}");
     }
 
     #[tokio::test]

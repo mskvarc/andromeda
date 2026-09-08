@@ -106,7 +106,7 @@ async fn create_from_entity_query(
     state: &Arc<EntityMapRouteServices>,
     query: &EntityQueryParameters,
     forwarded_query: String,
-    rendering: CreationRendering<'_>,
+    rendering: &CreationRendering<'_>,
     triggering: TriggeringRequest<'_>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 5.14.4.4: at least one filter must be provided for EntityMap creation.
@@ -137,7 +137,7 @@ async fn create_from_temporal_query(
     state: &Arc<EntityMapRouteServices>,
     params: &TemporalQueryParameters,
     forwarded_query: String,
-    rendering: CreationRendering<'_>,
+    rendering: &CreationRendering<'_>,
     triggering: TriggeringRequest<'_>,
 ) -> Result<Response, ProblemResponse> {
     validate_temporal_entity_map_query(params, rendering.uri)?;
@@ -187,7 +187,7 @@ pub async fn create_from_query(
         &state,
         &query,
         forwarded_query,
-        CreationRendering {
+        &CreationRendering {
             context: &context,
             accept,
             prefer,
@@ -225,7 +225,7 @@ pub async fn create_from_query_post(
         &state,
         &query,
         forwarded_query,
-        CreationRendering {
+        &CreationRendering {
             context: &context,
             accept,
             prefer,
@@ -257,7 +257,7 @@ pub async fn create_temporal_from_query(
         &state,
         &params,
         forwarded_query,
-        CreationRendering {
+        &CreationRendering {
             context: &context,
             accept,
             prefer,
@@ -296,7 +296,7 @@ pub async fn create_temporal_from_query_post(
         &state,
         &params,
         forwarded_query,
-        CreationRendering {
+        &CreationRendering {
             context: &context,
             accept,
             prefer,

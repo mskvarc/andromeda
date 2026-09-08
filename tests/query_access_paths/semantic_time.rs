@@ -62,7 +62,7 @@ async fn narrow_selection(pool: &PgPool, stream: i64, axis: &Axis, from: &str, t
     .bind(stream)
     .fetch_all(pool)
     .await
-    .unwrap_or_else(|error| unreachable!("the {} window must run: {error}", axis.timeproperty))
+    .unwrap_or_else(|error| panic!("the {} window must run: {error}", axis.timeproperty))
 }
 
 /// Clause 4.11: each axis answers from its own column, so one window selects a
@@ -117,7 +117,7 @@ async fn every_axis_window_stays_exact_over_a_broad_selection() {
         .bind(corpus.entity_key())
         .fetch_one(pool)
         .await
-        .unwrap_or_else(|error| unreachable!("the broad {} selection must run: {error}", axis.timeproperty));
+        .unwrap_or_else(|error| panic!("the broad {} selection must run: {error}", axis.timeproperty));
 
         let column_rows: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM attribute_history AS ah \
@@ -128,7 +128,7 @@ async fn every_axis_window_stays_exact_over_a_broad_selection() {
         .bind(corpus.entity_key())
         .fetch_one(pool)
         .await
-        .unwrap_or_else(|error| unreachable!("the broad {} population must run: {error}", axis.timeproperty));
+        .unwrap_or_else(|error| panic!("the broad {} population must run: {error}", axis.timeproperty));
 
         assert_eq!(
             selected, column_rows,

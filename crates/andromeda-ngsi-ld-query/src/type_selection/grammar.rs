@@ -58,9 +58,10 @@ impl TypeExprRaw {
     #[must_use]
     pub const fn as_single_type(&self) -> Option<&EntityTypeName> {
         match self {
-            TypeExprRaw::Wildcard => None,
             TypeExprRaw::Type(name) => Some(name),
-            TypeExprRaw::And(_) | TypeExprRaw::Or(_) => None,
+            // The wildcard selects every type and a boolean group selects a
+            // combination of them, so neither names one.
+            TypeExprRaw::Wildcard | TypeExprRaw::And(_) | TypeExprRaw::Or(_) => None,
         }
     }
 }
@@ -195,6 +196,11 @@ impl TypeExpr {
     /// Full IRIs satisfy the same clause-4.6.2 name grammar as compact type
     /// names. This conversion lets a stored resource retain the clause-4.17
     /// wire shape after every leaf has crossed the JSON-LD expansion boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::TypeExprInvalidName`] when an expanded leaf IRI
+    /// does not satisfy the clause 4.6.2 type-name grammar.
     pub fn into_raw(self) -> Result<TypeExprRaw, QueryError> {
         match self {
             TypeExpr::Wildcard => Ok(TypeExprRaw::Wildcard),
@@ -218,6 +224,7 @@ impl TypeExpr {
 #[cfg(test)]
 mod tests {
     use crate::type_selection::grammar::{TypeExpr, TypeExprRaw};
+    use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 
     #[test]
     fn a_type_expression_round_trips_through_its_clause_4_17_text() {
@@ -258,10 +265,10 @@ mod tests {
             ("Motorhome,(Home;Vehicle)", "Motorhome,(Home;Vehicle)"),
         ];
         for (input, expected) in shapes {
-            let parsed: TypeExprRaw = input.parse().unwrap_or_else(|error| unreachable!("{input} must parse: {error}"));
+            let parsed: TypeExprRaw = input.parse().unwrap_or_else(|error| panic!("{input} must parse: {error}"));
             let rendered = parsed.to_string();
             pretty_assertions::assert_eq!(rendered, expected, "rendering of {input}");
-            let reparsed: TypeExprRaw = rendered.parse().unwrap_or_else(|error| unreachable!("{rendered} must reparse: {error}"));
+            let reparsed: TypeExprRaw = rendered.parse().unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
             pretty_assertions::assert_eq!(reparsed, parsed, "round trip of {input}");
         }
     }
@@ -276,7 +283,7 @@ mod tests {
     #[test]
     fn only_a_leaf_names_a_single_type() {
         assert_eq!(
-            "Building".parse::<TypeExprRaw>().expect("valid").as_single_type().map(andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName::as_str),
+            "Building".parse::<TypeExprRaw>().expect("valid").as_single_type().map(EntityTypeName::as_str),
             Some("Building")
         );
         assert_eq!("A,B".parse::<TypeExprRaw>().expect("valid").as_single_type(), None);
@@ -288,7 +295,7 @@ mod tests {
     }
 
     fn iri(raw: &str) -> TypeExpr {
-        TypeExpr::Type(raw.parse().unwrap_or_else(|error| unreachable!("{raw} must be an IRI: {error}")))
+        TypeExpr::Type(raw.parse().unwrap_or_else(|error| panic!("{raw} must be an IRI: {error}")))
     }
 
     #[test]

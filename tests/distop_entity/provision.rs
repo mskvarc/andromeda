@@ -70,7 +70,7 @@ async fn distop_entity_create_inclusive_forwards_to_context_source() {
     let (status, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    let count = mock.get_count(Method::POST, "/ngsi-ld/v1/entities").await;
+    let count = mock.get_count(Method::POST, "/ngsi-ld/v1/entities");
     assert!(count > 0, "forwarding should have happened");
 
     let (status, _, body) = query_entities(&c, "type=Vehicle", &jsonld_link_value()).await;
@@ -111,7 +111,7 @@ async fn distop_entity_create_exclusive_forwards_exclusive_attributes() {
     let (status, _) = create_entity(&c, &speed_entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    let count = mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entities").await;
+    let count = mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entities");
     assert!(count > 0, "forwarding should have happened");
 
     // Local entity should NOT have speed (exclusive)
@@ -151,12 +151,12 @@ async fn distop_entity_create_redirect_forwards_to_multiple_sources() {
     let entity1 = vehicle_entity(&entity_id1);
     let (status, _) = create_entity(&c, &entity1).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
-    assert!(mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entities").await > 0);
+    assert!(mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entities") > 0);
 
     let entity2 = vehicle_entity(&entity_id2);
     let (status, _) = create_entity(&c, &entity2).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
-    assert!(mock.get_count(Method::POST, "/broker2/ngsi-ld/v1/entities").await > 0);
+    assert!(mock.get_count(Method::POST, "/broker2/ngsi-ld/v1/entities") > 0);
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
@@ -192,7 +192,7 @@ async fn distop_entity_create_without_redirection_ops_no_forwarding() {
     pretty_assertions::assert_eq!(status, StatusCode::CONFLICT);
 
     // No forwarding should have happened
-    pretty_assertions::assert_eq!(mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entities").await, 0);
+    pretty_assertions::assert_eq!(mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entities"), 0);
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
@@ -222,7 +222,7 @@ async fn distop_entity_create_malformed_id_returns_400() {
     let (status, _, body) = query_entities(&c, "type=Vehicle", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     let entities = body.as_array().expect("response should be array");
-    assert!(entities.is_empty());
+    assert!(entities.is_empty(), "a rejected create leaves no entity behind: {entities:?}");
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
@@ -268,7 +268,7 @@ async fn distop_entity_create_existing_locally_returns_207() {
     pretty_assertions::assert_eq!(errors[0]["error"]["status"], 409);
 
     // Forwarding should still have happened
-    assert!(mock.get_count(Method::POST, "/ngsi-ld/v1/entities").await > 0);
+    assert!(mock.get_count(Method::POST, "/ngsi-ld/v1/entities") > 0);
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
@@ -383,7 +383,7 @@ async fn distop_entity_create_local_true_skips_forwarding() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // No forwarding should have happened
-    pretty_assertions::assert_eq!(mock.get_total_count().await, 0);
+    pretty_assertions::assert_eq!(mock.get_total_count(), 0);
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
@@ -419,7 +419,7 @@ async fn distop_entity_delete_inclusive_forwards_to_context_source() {
     let (status, _) = delete_entity_with_status(&c, &entity_id).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    assert!(mock.get_count(Method::DELETE, &delete_path).await > 0);
+    assert!(mock.get_count(Method::DELETE, &delete_path) > 0);
 
     // Entity should be gone locally
     let (status, _, _) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
@@ -454,7 +454,7 @@ async fn distop_entity_delete_exclusive_forwards_to_context_source() {
     let (status, _) = delete_entity_with_status(&c, &entity_id).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    assert!(mock.get_count(Method::DELETE, &delete_path).await > 0);
+    assert!(mock.get_count(Method::DELETE, &delete_path) > 0);
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
@@ -505,8 +505,8 @@ async fn distop_entity_delete_redirect_forwards_to_multiple_sources() {
     let (status, _) = delete_entity_with_status(&c, &entity_id2).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    assert!(mock.get_count(Method::DELETE, &delete_path1).await > 0);
-    assert!(mock.get_count(Method::DELETE, &delete_path2).await > 0);
+    assert!(mock.get_count(Method::DELETE, &delete_path1) > 0);
+    assert!(mock.get_count(Method::DELETE, &delete_path2) > 0);
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
@@ -605,7 +605,7 @@ async fn distop_entity_delete_exclusive_without_operation_returns_conflict() {
     pretty_assertions::assert_eq!(status, StatusCode::CONFLICT);
 
     // No forwarding should have happened
-    pretty_assertions::assert_eq!(mock.get_count(Method::DELETE, &delete_path).await, 0);
+    pretty_assertions::assert_eq!(mock.get_count(Method::DELETE, &delete_path), 0);
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
@@ -634,7 +634,7 @@ async fn distop_entity_delete_local_true_skips_forwarding() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // No forwarding should have happened
-    pretty_assertions::assert_eq!(mock.get_total_count().await, 0);
+    pretty_assertions::assert_eq!(mock.get_total_count(), 0);
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
@@ -673,7 +673,7 @@ async fn distop_entity_merge_exclusive_forwards_exclusive_attributes() {
     let (status, _) = merge_entity(&c, &entity_id, &merge_payload, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    assert!(mock.get_count(Method::PATCH, &patch_path).await > 0);
+    assert!(mock.get_count(Method::PATCH, &patch_path) > 0);
 
     // Local entity should NOT have speed
     let (status, _, body) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
@@ -718,7 +718,7 @@ async fn distop_entity_merge_inclusive_updates_local_and_forwards() {
     let (status, _) = merge_entity(&c, &entity_id, &merge_payload, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    assert!(mock.get_count(Method::PATCH, &patch_path).await > 0);
+    assert!(mock.get_count(Method::PATCH, &patch_path) > 0);
 
     // Entity should be updated locally
     let (status, _, new_body) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
@@ -762,8 +762,8 @@ async fn distop_entity_merge_redirect_forwards_to_multiple_sources() {
     let (status, _) = merge_entity(&c, &entity_id, &merge_payload, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    assert!(mock.get_count(Method::PATCH, &patch_path1).await > 0);
-    assert!(mock.get_count(Method::PATCH, &patch_path2).await > 0);
+    assert!(mock.get_count(Method::PATCH, &patch_path1) > 0);
+    assert!(mock.get_count(Method::PATCH, &patch_path2) > 0);
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
@@ -803,7 +803,7 @@ async fn distop_entity_replace_exclusive_forwards_exclusive_attributes() {
     let (status, _) = replace_entity(&c, &entity_id, &replacement, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    assert!(mock.get_count(Method::PUT, &put_path).await > 0);
+    assert!(mock.get_count(Method::PUT, &put_path) > 0);
 
     // Local entity should NOT have speed (exclusive)
     let (status, _, body) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
@@ -894,8 +894,8 @@ async fn distop_entity_replace_redirect_forwards_to_multiple_sources() {
     let (status, _) = replace_entity(&c, &entity_id, &replacement, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    pretty_assertions::assert_eq!(mock.get_count(Method::PUT, &put_path1).await, 1);
-    pretty_assertions::assert_eq!(mock.get_count(Method::PUT, &put_path2).await, 1);
+    pretty_assertions::assert_eq!(mock.get_count(Method::PUT, &put_path1), 1);
+    pretty_assertions::assert_eq!(mock.get_count(Method::PUT, &put_path2), 1);
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
@@ -929,7 +929,7 @@ async fn distop_entity_create_auxiliary_creates_locally_only() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Auxiliary should not forward provision operations
-    pretty_assertions::assert_eq!(mock.get_count(Method::POST, "/ngsi-ld/v1/entities").await, 0);
+    pretty_assertions::assert_eq!(mock.get_count(Method::POST, "/ngsi-ld/v1/entities"), 0);
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
@@ -962,7 +962,7 @@ async fn distop_entity_delete_auxiliary_deletes_locally_only() {
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Auxiliary should not forward provision operations
-    pretty_assertions::assert_eq!(mock.get_count(Method::DELETE, &delete_path).await, 0);
+    pretty_assertions::assert_eq!(mock.get_count(Method::DELETE, &delete_path), 0);
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;

@@ -165,9 +165,7 @@ async fn sub_create_watched_attributes_no_entities_spans_all_holders() {
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:span-holders");
     let mut body = subscription(&id, &receiver.endpoint_url());
-    body.as_object_mut()
-        .unwrap_or_else(|| unreachable!("subscription is an object"))
-        .remove("entities");
+    body.as_object_mut().unwrap_or_else(|| panic!("subscription is an object")).remove("entities");
     set_watched_attributes(&mut body, &["speed"]);
     assert_status(
         &topology
@@ -227,7 +225,7 @@ async fn sub_create_time_interval_periodic_regardless_of_change() {
     body["timeInterval"] = json!(1);
     body["notification"]
         .as_object_mut()
-        .unwrap_or_else(|| unreachable!("notification is an object"))
+        .unwrap_or_else(|| panic!("notification is an object"))
         .remove("format");
     assert_status(
         &topology

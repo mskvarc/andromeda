@@ -158,7 +158,7 @@ async fn dist_http_incoming_via_excludes_listed_source_from_matching() {
     assert_status(&response, 200);
 
     assert_eq!(
-        mock.get_count(Method::GET, FORWARDED_ENTITIES_PATH).await,
+        mock.get_count(Method::GET, FORWARDED_ENTITIES_PATH),
         0,
         "a source listed in the incoming Via must be excluded from forwarding"
     );
@@ -210,7 +210,7 @@ async fn dist_http_subscription_create_excludes_via_listed_source() {
     assert_status(&response, 201);
 
     assert_eq!(
-        mock.get_count(Method::POST, FORWARDED_SUBSCRIPTIONS_PATH).await,
+        mock.get_count(Method::POST, FORWARDED_SUBSCRIPTIONS_PATH),
         0,
         "a source listed in the incoming Via must not receive a forwarded companion copy"
     );

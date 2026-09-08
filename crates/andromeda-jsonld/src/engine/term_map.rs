@@ -249,11 +249,7 @@ pub(crate) async fn build_batch_term_map(
                     let table = parse_user_context(item);
                     merge_user_table(&mut terms, &mut prefix_table, &table, &mut eligibility);
                 }
-                Value::Null | Value::Bool(_) | Value::Number(_) => {
-                    eligibility = FastpathEligibility::Ineligible(IneligibilityReason::UnsupportedContextFeature);
-                    break;
-                }
-                Value::Array(_) => {
+                Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => {
                     eligibility = FastpathEligibility::Ineligible(IneligibilityReason::UnsupportedContextFeature);
                     break;
                 }

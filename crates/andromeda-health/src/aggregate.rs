@@ -55,6 +55,7 @@ pub struct HealthBuilder {
 
 impl HealthBuilder {
     /// Register a health indicator.
+    #[must_use]
     pub fn with_indicator(mut self, indicator: impl HealthIndicator) -> HealthBuilder {
         self.indicators.push(Arc::new(indicator));
         self

@@ -142,6 +142,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use iri_rs::IriBuf;
+    use std::future::{Future, ready};
 
     const TERM_PREFIX: &str = "https://example.com/";
     const TYPE_PREFIX: &str = "https://example.com/types/";
@@ -151,12 +152,12 @@ mod tests {
     struct PrefixExpander;
 
     impl TermExpander for PrefixExpander {
-        async fn expand_term(&self, term: &str) -> Result<IriBuf, QueryError> {
-            Ok(IriBuf::new(format!("{TERM_PREFIX}{term}")).expect("valid IRI"))
+        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            ready(Ok(IriBuf::new(format!("{TERM_PREFIX}{term}")).expect("valid IRI")))
         }
 
-        async fn expand_type(&self, term: &str) -> Result<IriBuf, QueryError> {
-            Ok(IriBuf::new(format!("{TYPE_PREFIX}{term}")).expect("valid IRI"))
+        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            ready(Ok(IriBuf::new(format!("{TYPE_PREFIX}{term}")).expect("valid IRI")))
         }
     }
 
@@ -173,12 +174,12 @@ mod tests {
     }
 
     impl TermCompactor for PrefixCompactor {
-        async fn compact_term(&self, name: &AttributeName) -> AttributeName {
-            strip(name, TERM_PREFIX)
+        fn compact_term(&self, name: &AttributeName) -> impl Future<Output = AttributeName> + Send {
+            ready(strip(name, TERM_PREFIX))
         }
 
-        async fn compact_type(&self, name: &AttributeName) -> AttributeName {
-            strip(name, TYPE_PREFIX)
+        fn compact_type(&self, name: &AttributeName) -> impl Future<Output = AttributeName> + Send {
+            ready(strip(name, TYPE_PREFIX))
         }
     }
 
@@ -212,7 +213,7 @@ mod tests {
     #[tokio::test]
     async fn compacting_an_expanded_filter_restores_what_the_client_wrote() {
         for shape in SHAPES {
-            let parsed = parser::parse(shape).unwrap_or_else(|error| unreachable!("{shape} must parse: {error}"));
+            let parsed = parser::parse(shape).unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
             let expanded = expand_q_expr(parsed.clone(), &PrefixExpander).await.expect("expands");
             assert_ne!(serialize(&expanded), shape, "the expansion of {shape} must differ from it");
 
@@ -229,7 +230,7 @@ mod tests {
     #[tokio::test]
     async fn expanding_a_compacted_filter_restores_the_stored_expansion() {
         for shape in SHAPES {
-            let parsed = parser::parse(shape).unwrap_or_else(|error| unreachable!("{shape} must parse: {error}"));
+            let parsed = parser::parse(shape).unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
             let expanded = expand_q_expr(parsed, &PrefixExpander).await.expect("expands");
 
             let compacted = compact_q_expr(expanded.clone(), &PrefixCompactor).await;

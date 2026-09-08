@@ -40,6 +40,11 @@ impl RegistrationHttpClassify for RenderError {
 /// Attach the inbound URI while classifying a typed registration-binding result.
 pub trait RegistrationResultExt<T> {
     /// Map the focused failure and attach `instance`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`ProblemResponse`] the failure classifies to whenever `self`
+    /// is `Err`; an `Ok` result passes through untouched.
     fn with_registration_instance(self, instance: &Uri) -> Result<T, ProblemResponse>;
 }
 

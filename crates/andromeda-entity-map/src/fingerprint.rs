@@ -62,8 +62,8 @@ struct CanonicalField<'a> {
 /// invariant violation of a value the request boundary already validated.
 pub fn fingerprint_of(request: FingerprintedRequest<'_>) -> Result<RequestFingerprint, EntityMapError> {
     let (kind, record) = match request {
-        FingerprintedRequest::QueryEntities(params) => (MapRequestKind::QueryEntities, filter_record(QueryFilters::from(params))?),
-        FingerprintedRequest::QueryTemporal(params) => (MapRequestKind::QueryTemporal, filter_record(QueryFilters::from(params))?),
+        FingerprintedRequest::QueryEntities(params) => (MapRequestKind::QueryEntities, filter_record(&QueryFilters::from(params))?),
+        FingerprintedRequest::QueryTemporal(params) => (MapRequestKind::QueryTemporal, filter_record(&QueryFilters::from(params))?),
         FingerprintedRequest::RetrieveEntity(params) => (MapRequestKind::RetrieveEntity, attrs_record(params.attrs.as_deref())),
         FingerprintedRequest::RetrieveTemporal(params) => (MapRequestKind::RetrieveTemporal, attrs_record(params.attrs.as_deref())),
     };
@@ -128,7 +128,7 @@ struct FilterRecord {
 }
 
 /// The canonical record of a query's filters.
-fn filter_record(filters: QueryFilters<'_>) -> Result<FilterRecord, EntityMapError> {
+fn filter_record(filters: &QueryFilters<'_>) -> Result<FilterRecord, EntityMapError> {
     let geo = filters
         .geo
         .map(|geo| {

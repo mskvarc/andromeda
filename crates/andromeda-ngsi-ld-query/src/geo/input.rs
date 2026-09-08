@@ -50,6 +50,15 @@ impl GeoQueryInput {
     }
 
     /// Decode the three wire components exactly once at request extraction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GeoQueryInputError::GeoRel`] when `georel` names no clause 4.10
+    /// relation, [`GeoQueryInputError::Coordinates`] when a string-encoded
+    /// `coordinates` member is not JSON, [`GeoQueryInputError::GeometryType`]
+    /// when `geometry_type` is not an RFC 7946 type NGSI-LD supports, and
+    /// [`GeoQueryInputError::Geometry`] when the two do not form a valid
+    /// reference geometry.
     pub fn from_wire(
         georel: String,
         geometry_type: String,

@@ -23,6 +23,7 @@ mod geometry;
 mod identifier;
 mod information_expansion;
 mod mode_rules;
+pub mod nullable_member;
 mod payload;
 mod query;
 /// Fully resolved registration update values and merge policy.

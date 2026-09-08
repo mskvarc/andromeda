@@ -165,7 +165,7 @@ mod tests {
 
         let parsed = match MigrationsDigest::try_from(stored.as_str()) {
             Ok(value) => value,
-            Err(error) => unreachable!("a rendered digest parses: {error}"),
+            Err(error) => panic!("a rendered digest parses: {error}"),
         };
         pretty_assertions::assert_eq!(parsed, digest);
     }

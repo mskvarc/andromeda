@@ -72,7 +72,7 @@ async fn retrieve_csr_expands_shorthand_terms_in_result() {
     let expanded = json_body(&expanded);
     let expanded_type = expanded["information"][0]["entities"][0]["type"]
         .as_str()
-        .unwrap_or_else(|| unreachable!("entity type present"));
+        .unwrap_or_else(|| panic!("entity type present"));
     assert!(
         expanded_type.contains("://") && expanded_type != "Vehicle",
         "without a context the entity type is a full IRI, got {expanded_type}"

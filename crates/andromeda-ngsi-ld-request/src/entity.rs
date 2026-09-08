@@ -177,6 +177,17 @@ impl GetEntityParams {
     /// A single-entity GET carries the same representation parameters as a
     /// query, so an unknown `format` (`?format=bananas`) is a client error here
     /// too and must return 400 rather than being silently ignored.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParameterError::AttrsReservedMember`] when `attrs` names an
+    /// Entity member, [`ParameterError::PickOmitExclusive`] when both `pick`
+    /// and `omit` are given, [`ParameterError::PickOmitWithAttrs`] when either
+    /// of them is combined with `attrs`, and
+    /// [`ParameterError::ProjectionLinkedTermsWithoutJoin`] or
+    /// [`ParameterError::ProjectionDepthExceedsJoinLevel`] when a nested
+    /// projection term names a Linked Entity the requested traversal does not
+    /// reach.
     pub fn validate(&self) -> Result<(), ParameterError> {
         validate_attrs(self.attrs.as_deref())?;
         // Clause 4.21: pick and omit select opposite ends of the same
@@ -304,7 +315,7 @@ mod tests {
         pretty_assertions::assert_eq!(terms[0].name.as_str(), "linkedTo");
         pretty_assertions::assert_eq!(terms[0].linked.iter().map(|term| term.name.as_str()).collect::<Vec<_>>(), vec!["category"]);
         pretty_assertions::assert_eq!(terms[1].name.as_str(), "id");
-        assert_eq!(terms[1].linked, [] as [andromeda_ngsi_ld_query::projection::grammar::RawProjectionTerm; 0]);
+        assert_eq!(terms[1].linked, [] as [RawProjectionTerm; 0]);
     }
 
     /// Clause 4.21 declares `pick` and `omit` mutually exclusive on every

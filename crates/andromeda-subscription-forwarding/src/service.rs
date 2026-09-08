@@ -9,13 +9,10 @@ use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::FederationService;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_subscription::{csource::CsrSubscriptionVariant, lifecycle::SubscriptionService, store::SubscriptionStore};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use std::sync::Arc;
 use typed_builder::TypedBuilder;
-use urn_rs::UrnBuilder;
-use uuid::Uuid;
 
 /// The capabilities one tenant's distributed subscription side is built from.
 #[derive(TypedBuilder)]
@@ -42,14 +39,4 @@ pub struct SubscriptionForwardingService {
     pub(crate) transport: Arc<TransportDispatcher>,
     /// JSON-LD processing for the filters applied at re-assembly.
     pub(crate) engine: JsonLdEngine,
-}
-
-impl SubscriptionForwardingService {
-    /// Mint an identifier for a subscription this broker hands to a peer: a
-    /// companion or a forwarded copy. Clause 5.2.12 lets the creator choose
-    /// the identifier, so the broker chooses one it can route back.
-    pub(crate) fn mint_subscription_id(&self) -> Result<Uri, urn_rs::Error> {
-        let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Subscription:forwarded:{}", Uuid::new_v4())).build()?;
-        Ok(Uri::from(urn))
-    }
 }

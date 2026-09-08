@@ -85,7 +85,7 @@ mod tests {
         pretty_assertions::assert_eq!(local.len(), 2);
         pretty_assertions::assert_eq!(local[0].1.len(), 2);
         pretty_assertions::assert_eq!(local[1].0.as_str(), "https://example.com/Aircraft");
-        assert_eq!(local[1].1, [] as [andromeda_ngsi_ld_lexicon::attribute_name::AttributeName; 0]);
+        assert!(local[1].1.is_empty());
     }
 
     #[test]

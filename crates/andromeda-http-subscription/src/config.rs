@@ -56,6 +56,13 @@ pub struct NotificationConfig {
 
 impl NotificationConfig {
     /// Validate SSE and WebSocket delivery limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NotificationConfigError`] when any of the four limits is
+    /// configured as zero: an SSE or WebSocket channel capacity of zero can hold
+    /// no notification, and a keep-alive or ping interval of zero leaves an idle
+    /// connection with no liveness traffic at all.
     pub const fn validate(&self) -> Result<(), NotificationConfigError> {
         if self.sse.channel_buffer_size == 0 {
             return Err(NotificationConfigError::ZeroSseChannelCapacity);

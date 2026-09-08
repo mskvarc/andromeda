@@ -8,6 +8,7 @@ use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
+use std::future::{Future, ready};
 
 /// Axum extractor for the `NGSILD-Tenant` request header.
 ///
@@ -25,20 +26,27 @@ impl TenantHeader {
     }
 }
 
+/// Decode the `NGSILD-Tenant` header into the tenant the request addresses,
+/// rejecting a header that is present but not a tenant name.
+fn resolve_tenant_header(parts: &Parts) -> Result<TenantHeader, ExtractorRejection> {
+    match parts.headers.typed_try_get::<NgsiLdTenant>() {
+        Ok(Some(tenant)) => Ok(TenantHeader(Some(tenant.into_inner()))),
+        Ok(None) => Ok(TenantHeader(None)),
+        Err(_) => Err(ExtractorRejection::bad_request_data(
+            "NGSILD-Tenant header must not be empty",
+            parts.uri.clone(),
+        )),
+    }
+}
+
 impl<S> FromRequestParts<S> for TenantHeader
 where
     S: Send + Sync,
 {
     type Rejection = ExtractorRejection;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let uri = parts.uri.clone();
-
-        match parts.headers.typed_try_get::<NgsiLdTenant>() {
-            Ok(Some(tenant)) => Ok(Self(Some(tenant.into_inner()))),
-            Ok(None) => Ok(Self(None)),
-            Err(_) => Err(ExtractorRejection::bad_request_data("NGSILD-Tenant header must not be empty", uri)),
-        }
+    fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> {
+        ready(resolve_tenant_header(parts))
     }
 }
 
@@ -54,7 +62,7 @@ mod tests {
             .header("NGSILD-Tenant", "my-tenant")
             .body(())
             .expect("valid request");
-        let (mut parts, _) = req.into_parts();
+        let (mut parts, ()) = req.into_parts();
         let result = TenantHeader::from_request_parts(&mut parts, &()).await.expect("should succeed");
         let name = result.into_inner().expect("should have value");
         pretty_assertions::assert_eq!(name.as_str(), "my-tenant");
@@ -63,7 +71,7 @@ mod tests {
     #[tokio::test]
     async fn no_header_returns_none() {
         let req = Request::builder().uri("/test").body(()).expect("valid request");
-        let (mut parts, _) = req.into_parts();
+        let (mut parts, ()) = req.into_parts();
         let result = TenantHeader::from_request_parts(&mut parts, &()).await.expect("should succeed");
         assert!(result.into_inner().is_none());
     }
@@ -71,7 +79,7 @@ mod tests {
     #[tokio::test]
     async fn empty_header_produces_rejection() {
         let req = Request::builder().uri("/test").header("NGSILD-Tenant", "").body(()).expect("valid request");
-        let (mut parts, _) = req.into_parts();
+        let (mut parts, ()) = req.into_parts();
         let result = TenantHeader::from_request_parts(&mut parts, &()).await;
         assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
     }

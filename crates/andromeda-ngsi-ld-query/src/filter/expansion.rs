@@ -22,11 +22,18 @@ use crate::{
     term_expander::TermExpander,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use std::{collections::HashSet, future::Future, pin::Pin};
+use std::{collections::HashSet, future::Future, hash::BuildHasher, pin::Pin};
 
 /// Parse and expand a `q` filter expression.
 ///
 /// Returns `None` when `q` is absent or empty.
+///
+/// # Errors
+///
+/// Returns a `Q*` variant of [`QueryError`] when the expression is outside the
+/// clause 4.9 grammar, and [`QueryError::TermExpansion`],
+/// [`QueryError::TermNotAnIri`] or [`QueryError::AttributeNameInvalid`] when a
+/// term does not expand to a usable attribute name.
 pub async fn expand_q_expression(q: Option<&str>, expander: &impl TermExpander) -> Result<Option<Expr>, QueryError> {
     let Some(q_str) = q.map(str::trim).filter(|trimmed| !trimmed.is_empty()) else {
         return Ok(None);
@@ -39,19 +46,44 @@ pub async fn expand_q_expression(q: Option<&str>, expander: &impl TermExpander) 
 ///
 /// Every attribute path (main attribute plus sub-attributes) in the expression
 /// is expanded to its full IRI form.
+///
+/// # Errors
+///
+/// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
+/// [`QueryError::AttributeNameInvalid`] when a term does not expand to a usable
+/// attribute name.
 pub async fn expand_q_expr(expr: Expr, expander: &impl TermExpander) -> Result<Expr, QueryError> {
     walk_predicates(expr, &|pred| expand_pred_terms(pred, expander)).await
 }
 
 /// Apply `expandValues`: for attributes in `expand_attrs`, expand string scalar
 /// right-hand-side values through the `@context` (clause 6.4.3.2).
-pub async fn apply_expand_values(expr: Expr, expand_attrs: &HashSet<AttributeName>, expander: &impl TermExpander) -> Result<Expr, QueryError> {
+///
+/// # Errors
+///
+/// Returns [`QueryError::TermExpansion`] or [`QueryError::TermNotAnIri`] when a
+/// string operand of an opted-in attribute does not expand.
+pub async fn apply_expand_values<S: BuildHasher + Sync>(
+    expr: Expr,
+    expand_attrs: &HashSet<AttributeName, S>,
+    expander: &impl TermExpander,
+) -> Result<Expr, QueryError> {
     walk_predicates(expr, &|pred| expand_compare_values(pred, expand_attrs, expander)).await
 }
 
 /// Apply `jsonKeys`: for attributes in `json_keys_attrs`, expand sub-path keys
 /// through the `@context` (clause 6.4.3.2).
-pub async fn apply_json_keys(expr: Expr, json_keys_attrs: &HashSet<AttributeName>, expander: &impl TermExpander) -> Result<Expr, QueryError> {
+///
+/// # Errors
+///
+/// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
+/// [`QueryError::AttributeNameInvalid`] when a sub-path key of an opted-in
+/// attribute does not expand to a usable attribute name.
+pub async fn apply_json_keys<S: BuildHasher + Sync>(
+    expr: Expr,
+    json_keys_attrs: &HashSet<AttributeName, S>,
+    expander: &impl TermExpander,
+) -> Result<Expr, QueryError> {
     walk_predicates(expr, &|pred| expand_json_keys_sub_attrs(pred, json_keys_attrs, expander)).await
 }
 
@@ -122,6 +154,12 @@ async fn expand_pred_terms(pred: Predicate, expander: &impl TermExpander) -> Res
 /// The guard names entity types, not attributes, so it expands through
 /// [`TermExpander::expand_type`] — clause 4.9's `EntityType` production, which
 /// clause 4.17 expands the same way a `type` selection is expanded.
+///
+/// # Errors
+///
+/// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
+/// [`QueryError::AttributeNameInvalid`] when a segment, a hop's Relationship or
+/// one of its guard types does not expand to a usable attribute name.
 pub async fn expand_query_path(path: QueryPath, expander: &impl TermExpander) -> Result<QueryPath, QueryError> {
     match path {
         QueryPath::Local(local) => Ok(QueryPath::Local(expand_attr_path(local, expander).await?)),
@@ -162,6 +200,13 @@ where
 /// into IRI-keyed nodes, so `address[city]` addresses the expansion of `city`
 /// under the request `@context`, not the four letters the client typed. Leaving
 /// them compact addressed a member the stored payload does not carry.
+///
+/// # Errors
+///
+/// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
+/// [`QueryError::AttributeNameInvalid`] when the attribute, one of its
+/// sub-attributes or one of its compound-value members does not expand to a
+/// usable attribute name.
 pub async fn expand_attr_path(mut path: AttrPath, expander: &impl TermExpander) -> Result<AttrPath, QueryError> {
     path.attr = expanded_attribute_name(&expander.expand_term(path.attr.as_str()).await?)?;
     path.sub_attrs = expand_all(&path.sub_attrs, expander).await?;
@@ -174,23 +219,27 @@ pub async fn expand_attr_path(mut path: AttrPath, expander: &impl TermExpander) 
 ///
 /// `jsonKeys` names an already-expanded attribute whose *keys* are terms.
 async fn expand_sub_attrs(mut path: QueryPath, expander: &impl TermExpander) -> Result<QueryPath, QueryError> {
-    let expanded = expand_all(&path.terminal().sub_attrs, expander).await?;
-    path.terminal_mut().sub_attrs = expanded;
+    let expanded_sub_attrs = expand_all(&path.terminal().sub_attrs, expander).await?;
+    path.terminal_mut().sub_attrs = expanded_sub_attrs;
     Ok(path)
 }
 
 /// Expand every term in a list.
 async fn expand_all(terms: &[AttributeName], expander: &impl TermExpander) -> Result<Vec<AttributeName>, QueryError> {
-    let mut expanded = Vec::with_capacity(terms.len());
+    let mut expanded_names = Vec::with_capacity(terms.len());
     for term in terms {
-        expanded.push(expanded_attribute_name(&expander.expand_term(term.as_str()).await?)?);
+        expanded_names.push(expanded_attribute_name(&expander.expand_term(term.as_str()).await?)?);
     }
-    Ok(expanded)
+    Ok(expanded_names)
 }
 
 /// Expand the right-hand side of a comparison when its attribute opted in via
 /// `expandValues`.
-async fn expand_compare_values(pred: Predicate, expand_attrs: &HashSet<AttributeName>, expander: &impl TermExpander) -> Result<Predicate, QueryError> {
+async fn expand_compare_values<S: BuildHasher + Sync>(
+    pred: Predicate,
+    expand_attrs: &HashSet<AttributeName, S>,
+    expander: &impl TermExpander,
+) -> Result<Predicate, QueryError> {
     match pred {
         Predicate::Equality { path, membership, rhs } if expand_attrs.contains(path.terminal().attr.as_str()) => Ok(Predicate::Equality {
             path,
@@ -223,11 +272,11 @@ async fn expand_rhs_values(rhs: CompareValue, expander: &impl TermExpander) -> R
     match rhs {
         CompareValue::Scalar(scalar) => Ok(CompareValue::Scalar(expand_scalar(scalar, expander).await?)),
         CompareValue::ValueList(values) => {
-            let mut expanded = Vec::with_capacity(values.len());
+            let mut expanded_values = Vec::with_capacity(values.len());
             for value in values {
-                expanded.push(expand_scalar(value, expander).await?);
+                expanded_values.push(expand_scalar(value, expander).await?);
             }
-            Ok(CompareValue::ValueList(expanded))
+            Ok(CompareValue::ValueList(expanded_values))
         }
         // A range is bounded by two ordered values; neither can be a term.
         CompareValue::Range { .. } => Ok(rhs),
@@ -236,7 +285,11 @@ async fn expand_rhs_values(rhs: CompareValue, expander: &impl TermExpander) -> R
 
 /// Expand the sub-path keys of a predicate whose attribute opted in via
 /// `jsonKeys`.
-async fn expand_json_keys_sub_attrs(pred: Predicate, json_keys_attrs: &HashSet<AttributeName>, expander: &impl TermExpander) -> Result<Predicate, QueryError> {
+async fn expand_json_keys_sub_attrs<S: BuildHasher + Sync>(
+    pred: Predicate,
+    json_keys_attrs: &HashSet<AttributeName, S>,
+    expander: &impl TermExpander,
+) -> Result<Predicate, QueryError> {
     match pred {
         Predicate::Exists(path) if json_keys_attrs.contains(path.terminal().attr.as_str()) => Ok(Predicate::Exists(expand_sub_attrs(path, expander).await?)),
         Predicate::Equality { path, membership, rhs } if json_keys_attrs.contains(path.terminal().attr.as_str()) => Ok(Predicate::Equality {
@@ -268,18 +321,19 @@ mod tests {
     use super::*;
     use crate::filter::{predicate::OrderingOp, serialize::serialize};
     use iri_rs::IriBuf;
+    use std::future::ready;
 
     /// An expander that prefixes every term, so a test can see exactly which
     /// positions were rewritten without standing up a JSON-LD engine.
     struct PrefixExpander;
 
     impl TermExpander for PrefixExpander {
-        async fn expand_term(&self, term: &str) -> Result<IriBuf, QueryError> {
-            Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI"))
+        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            ready(Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI")))
         }
 
-        async fn expand_type(&self, term: &str) -> Result<IriBuf, QueryError> {
-            Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI"))
+        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            ready(Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI")))
         }
     }
 
@@ -289,16 +343,15 @@ mod tests {
 
     fn path_of(expr: &Expr) -> &AttrPath {
         match expr {
-            Expr::Pred(Predicate::Equality { path, .. } | Predicate::Ordering { path, ..
-}) => path.terminal(),
-            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected a comparison, got {other:?}"),
+            Expr::Pred(Predicate::Equality { path, .. } | Predicate::Ordering { path, .. }) => path.terminal(),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => panic!("expected a comparison, got {other:?}"),
         }
     }
 
     fn equality_rhs(expr: &Expr) -> &CompareValue {
         match expr {
             Expr::Pred(Predicate::Equality { rhs, .. }) => rhs,
-            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected an equality comparison, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => panic!("expected an equality comparison, got {other:?}"),
         }
     }
 
@@ -315,7 +368,7 @@ mod tests {
             .expect("expands")
             .expect("present");
         let Expr::And(terms) = expanded else {
-            unreachable!("expected a conjunction");
+            panic!("expected a conjunction");
         };
         let first = path_of(&terms[0]);
         assert_eq!(first.attr.as_str(), "https://example.com/speed");
@@ -353,9 +406,9 @@ mod tests {
                     );
                     assert_eq!(inner.terminal().attr.as_str(), "https://example.com/category");
                 }
-                QueryPath::Local(local) => unreachable!("expected a hop, got {local:?}"),
+                QueryPath::Local(local) => panic!("expected a hop, got {local:?}"),
             },
-            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected an equality predicate, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => panic!("expected an equality predicate, got {other:?}"),
         }
     }
 
@@ -376,7 +429,7 @@ mod tests {
         let opted_in = opted_in(&["colour"]);
         let expanded = apply_expand_values(expr, &opted_in, &PrefixExpander).await.expect("expands");
         let Expr::And(terms) = expanded else {
-            unreachable!("expected a conjunction");
+            panic!("expected a conjunction");
         };
         assert_eq!(
             equality_rhs(&terms[0]),
@@ -491,7 +544,7 @@ mod tests {
                 assert_eq!(path.terminal().attr.as_str(), "https://example.com/name");
                 assert_eq!(pattern.as_str(), "^A.*");
             }
-            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected a pattern predicate, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => panic!("expected a pattern predicate, got {other:?}"),
         }
     }
 
@@ -503,7 +556,7 @@ mod tests {
             .expect("present");
         match expanded {
             Expr::Pred(Predicate::Ordering { op, .. }) => assert_eq!(op, OrderingOp::GreaterEq),
-            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected a comparison, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => panic!("expected a comparison, got {other:?}"),
         }
     }
 }

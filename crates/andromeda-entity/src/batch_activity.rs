@@ -58,8 +58,12 @@ impl BatchActivityTracker {
             return false;
         }
         let now = chrono::Utc::now().timestamp();
-        let elapsed = now.saturating_sub(last);
-        elapsed < self.cooldown.as_secs() as i64
+        match u64::try_from(now.saturating_sub(last)) {
+            Ok(elapsed) => Duration::from_secs(elapsed) < self.cooldown,
+            // The wall clock moved backwards past the recorded activity: hold
+            // the window open rather than releasing every worker at once.
+            Err(_) => true,
+        }
     }
 }
 

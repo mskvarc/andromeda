@@ -54,8 +54,9 @@ fn term_predicate(term: &SnapshotPurgeTerm) -> SimpleExpr {
 /// The `snapshots` column backing a filterable member of the resource.
 const fn snapshot_column(field: SnapshotField) -> Snapshots {
     match field {
-        SnapshotField::Id => Snapshots::Id,
-        SnapshotField::Type => Snapshots::Id,
+        // `type` never reaches a column: `term_predicate` decides it against the
+        // one resource type a snapshot can have before it asks for a column.
+        SnapshotField::Id | SnapshotField::Type => Snapshots::Id,
         SnapshotField::SnapshotPriority => Snapshots::SnapshotPriority,
         SnapshotField::Endpoint => Snapshots::Endpoint,
     }

@@ -18,7 +18,7 @@
 //! itself a failure, so the ratchet can only tighten.
 
 use crate::{
-    source_scan::{is_test_only, workspace_sources},
+    source_scan::{is_test_only, item_is_test_only, workspace_sources},
     sql::looks_like_sql,
 };
 use std::{collections::BTreeSet, path::Path};
@@ -264,48 +264,13 @@ fn first_string_literal(mac: &Macro) -> Option<String> {
     })
 }
 
-/// Whether one inline item is compiled only for tests.
-fn item_is_test_only(item: &Item) -> bool {
-    if let Item::Const(item) = item {
-        return is_test_only(&item.attrs);
-    }
-    if let Item::Enum(item) = item {
-        return is_test_only(&item.attrs);
-    }
-    if let Item::Fn(item) = item {
-        return is_test_only(&item.attrs);
-    }
-    if let Item::Impl(item) = item {
-        return is_test_only(&item.attrs);
-    }
-    if let Item::Mod(item) = item {
-        return is_test_only(&item.attrs);
-    }
-    if let Item::Static(item) = item {
-        return is_test_only(&item.attrs);
-    }
-    if let Item::Struct(item) = item {
-        return is_test_only(&item.attrs);
-    }
-    if let Item::Trait(item) = item {
-        return is_test_only(&item.attrs);
-    }
-    if let Item::Type(item) = item {
-        return is_test_only(&item.attrs);
-    }
-    if let Item::Use(item) = item {
-        return is_test_only(&item.attrs);
-    }
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use crate::raw_sql::{RawSqlVisitor, is_sanctioned};
     use syn::visit::Visit;
 
     fn details(source: &str) -> Vec<String> {
-        let syntax = syn::parse_file(source).unwrap_or_else(|error| unreachable!("fixture parses: {error}"));
+        let syntax = syn::parse_file(source).unwrap_or_else(|error| panic!("fixture parses: {error}"));
         let mut visitor = RawSqlVisitor {
             path: "fixture.rs",
             sites: Vec::new(),
@@ -321,7 +286,7 @@ mod tests {
 
     #[test]
     fn a_built_statement_executed_through_query_with_is_not_a_violation() {
-        assert!(details("fn run() { sqlx::query_with(&sql, values); }").is_empty());
+        assert_eq!(details("fn run() { sqlx::query_with(&sql, values); }"), [] as [String; 0]);
     }
 
     #[test]
@@ -342,7 +307,7 @@ mod tests {
 
     #[test]
     fn a_format_of_ordinary_text_is_not_a_violation() {
-        assert!(details("fn run() { let s = format!(\"hello {name}\"); }").is_empty());
+        assert_eq!(details("fn run() { let s = format!(\"hello {name}\"); }"), [] as [String; 0]);
     }
 
     #[test]
@@ -352,7 +317,10 @@ mod tests {
 
     #[test]
     fn a_test_only_item_is_ignored() {
-        assert!(details("#[cfg(test)] mod tests { fn run() { sqlx::query(\"SELECT 1 FROM t\"); } }").is_empty());
+        assert_eq!(
+            details("#[cfg(test)] mod tests { fn run() { sqlx::query(\"SELECT 1 FROM t\"); } }"),
+            [] as [String; 0]
+        );
     }
 
     #[test]

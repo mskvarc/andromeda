@@ -131,12 +131,11 @@ pub(crate) async fn build_forwarded_payload(
     // default is `application/json`, the one form that can name any URL
     // context in a `Link` header (clause 6.3.5).
     let media_type = match (&target, &info.content_type) {
-        (TargetContext::Configured(_), _) => ResponseMediaType::Json,
+        (TargetContext::Configured(_), Some(_) | None) | (TargetContext::InboundUrls(_) | TargetContext::InboundInline(_), None) => ResponseMediaType::Json,
         (TargetContext::InboundUrls(_) | TargetContext::InboundInline(_), Some(content_type)) => {
             let parsed: mediatype::MediaType<'_> = content_type.into();
             ResponseMediaType::from_media_type(&parsed).unwrap_or_default()
         }
-        (TargetContext::InboundUrls(_) | TargetContext::InboundInline(_), None) => ResponseMediaType::Json,
     };
 
     let Some(body) = body else {
@@ -277,7 +276,7 @@ mod tests {
             .await
             .expect("payload builds");
         pretty_assertions::assert_eq!(payload.media_type, ResponseMediaType::JsonLd);
-        assert_eq!(payload.link_contexts, [] as [iri_rs::IriRef<std::string::String>; 0]);
+        assert_eq!(payload.link_contexts, [] as [iri_rs::IriRef<String>; 0]);
         pretty_assertions::assert_eq!(body_context(payload.body.as_deref().expect("body")), Some(json!(USER_CONTEXT)));
     }
 
@@ -308,7 +307,7 @@ mod tests {
             .await
             .expect("payload builds");
         pretty_assertions::assert_eq!(as_ld.media_type, ResponseMediaType::JsonLd);
-        assert_eq!(as_ld.link_contexts, [] as [iri_rs::IriRef<std::string::String>; 0]);
+        assert_eq!(as_ld.link_contexts, [] as [iri_rs::IriRef<String>; 0]);
         pretty_assertions::assert_eq!(body_context(as_ld.body.as_deref().expect("body")), Some(inline));
 
         let json_pairs = pairs(&[]);
@@ -363,7 +362,7 @@ mod tests {
         let none = build_forwarded_payload(&engine(), &ContextSpec::none(), None, &info, None)
             .await
             .expect("payload builds");
-        assert_eq!(none.link_contexts, [] as [iri_rs::IriRef<std::string::String>; 0]);
+        assert_eq!(none.link_contexts, [] as [iri_rs::IriRef<String>; 0]);
     }
 
     #[tokio::test]

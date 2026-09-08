@@ -28,6 +28,11 @@ pub const fn scoping_eligibility(status: SnapshotStatus) -> ScopingEligibility {
 
 /// Validate that a `preparing -> status` transition is permitted by the
 /// snapshot state machine (ETSI GS CIM 009 clause 5.16.4).
+///
+/// # Errors
+///
+/// Returns [`SnapshotError::Validation`] when the state machine forbids
+/// `preparing -> status`, which is the case for `preparing` itself.
 pub fn validate_preparing_transition(status: SnapshotStatus) -> Result<(), SnapshotError> {
     if SnapshotStatus::Preparing.can_transition_to(status) {
         Ok(())

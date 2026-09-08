@@ -19,6 +19,10 @@ pub struct SerializedEnvironment {
 
 impl SerializedEnvironment {
     /// Read process configuration, acquire exclusive ownership, and reset mutable tenant state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SerializedEnvironmentError::Configuration`] when the process environment is invalid, [`SerializedEnvironmentError::Isolation`] when the pool or the exclusive advisory lock cannot be obtained, and [`SerializedEnvironmentError::Reset`] when the tenant reset fails.
     pub async fn from_environment_reset() -> Result<SerializedEnvironment, SerializedEnvironmentError> {
         let configuration = TestRunConfiguration::from_environment().map_err(SerializedEnvironmentError::Configuration)?;
         let mut environment = SerializedEnvironment::acquire(&configuration).await?;
@@ -27,6 +31,10 @@ impl SerializedEnvironment {
     }
 
     /// Acquire exclusive serialized-state ownership.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SerializedEnvironmentError::Isolation`] when the pool cannot be opened or the exclusive advisory lock cannot be acquired.
     pub async fn acquire(configuration: &TestRunConfiguration) -> Result<SerializedEnvironment, SerializedEnvironmentError> {
         let pool = connect_pool(configuration.database()).await?;
         let lease = SerializedLease::acquire(&pool).await?;
@@ -43,11 +51,19 @@ impl SerializedEnvironment {
     }
 
     /// Reset all mutable tenant tables through the exclusive capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SerializedEnvironmentError::Reset`] when the exclusive lease no longer holds its connection or the reset script fails.
     pub async fn reset(&mut self) -> Result<(), SerializedEnvironmentError> {
         reset_tenant(&mut self.lease).await.map_err(SerializedEnvironmentError::Reset)
     }
 
     /// Release exclusive state ownership.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SerializedEnvironmentError::Isolation`] when the exclusive advisory lock cannot be released.
     pub async fn finish(self) -> Result<(), SerializedEnvironmentError> {
         let result = self.lease.release().await.map_err(SerializedEnvironmentError::Isolation);
         self.pool.close().await;
@@ -55,6 +71,10 @@ impl SerializedEnvironment {
     }
 
     /// Reset mutable tenant state and then release exclusive ownership.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`SerializedEnvironment::reset`] failure or the [`SerializedEnvironment::finish`] failure when exactly one of them fails, and [`SerializedEnvironmentError::ResetAndRelease`] when both do.
     pub async fn reset_and_finish(mut self) -> Result<(), SerializedEnvironmentError> {
         let reset = self.reset().await;
         let finish = self.finish().await;

@@ -54,7 +54,7 @@ impl EntityService {
                 previous,
                 Arc::new(existing),
                 Arc::new(prepared_entity.expanded),
-                groups,
+                &groups,
                 Some(previous),
                 Precondition::MustExist,
             ));

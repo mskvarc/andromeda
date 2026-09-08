@@ -8,6 +8,11 @@ use urlencoding::encode;
 
 impl TestClient {
     /// Create a Temporal Entity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn create_temporal_entity(&self, body: &Value) -> Result<TestResponse, RequestError> {
         let url = self.endpoint().join("temporal/entities")?;
         let request = self
@@ -18,17 +23,34 @@ impl TestClient {
     }
 
     /// Retrieve one Temporal Entity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint,
+    /// [`RequestError::Header`] when `context` is not a valid IRI reference or cannot be encoded as a `Link` header, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn get_temporal_entity(&self, id: &str, query: &str, context: Option<&str>) -> Result<TestResponse, RequestError> {
         self.temporal_get(&format!("temporal/entities/{}{}", encode(id), query_suffix(query)), context)
             .await
     }
 
     /// Query Temporal Entities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint,
+    /// [`RequestError::Header`] when `context` is not a valid IRI reference or cannot be encoded as a `Link` header, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn query_temporal_entities(&self, query: &str, context: Option<&str>) -> Result<TestResponse, RequestError> {
         self.temporal_get(&format!("temporal/entities{}", query_suffix(query)), context).await
     }
 
     /// Delete one Temporal Entity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn delete_temporal_entity(&self, id: &str) -> Result<TestResponse, RequestError> {
         let url = self.endpoint().join(&format!("temporal/entities/{}", encode(id)))?;
         let request = self.request(Method::DELETE, url.clone()); // clone: transport diagnostics retain the request URL.

@@ -37,6 +37,7 @@ pub struct SubscriptionMatch {
 #[cfg(test)]
 mod tests {
     use crate::{subscription_key::SubscriptionKey, subscription_match::SubscriptionMatch};
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 
     #[test]
@@ -48,6 +49,6 @@ mod tests {
             .build();
         assert!(entry.entity_snapshot.is_none());
         assert!(entry.previous_snapshot.is_none());
-        assert_eq!(entry.changed_attrs, [] as [andromeda_ngsi_ld_lexicon::attribute_name::AttributeName; 0]);
+        assert_eq!(entry.changed_attrs, [] as [AttributeName; 0]);
     }
 }

@@ -218,7 +218,7 @@ mod tests {
     use serde_json::{Value, json};
 
     /// A `LanguageProperty` attribute value carrying `map` as its language map.
-    fn language_attr(map: Value) -> AttributeValue {
+    fn language_attr(map: &Value) -> AttributeValue {
         serde_json::from_value(json!({"type": "LanguageProperty", "languageMap": map})).expect("a language property")
     }
 
@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn a_matching_language_is_served_directly() {
-        let attr = language_attr(json!({"fr": "Grand Place", "en": "Great Square"}));
+        let attr = language_attr(&json!({"fr": "Grand Place", "en": "Great Square"}));
         let rendered = render_attribute_value(&attr, Some(&filter("en"))).expect("render");
         pretty_assertions::assert_eq!(rendered["type"], "Property");
         pretty_assertions::assert_eq!(rendered["value"], "Great Square");
@@ -240,7 +240,7 @@ mod tests {
     fn no_matching_language_defaults_to_a_supported_one() {
         // Clause 4.15: the broker shall default to any supported language rather
         // than return the raw language map. The first tagged entry is served.
-        let attr = language_attr(json!({"fr": "Grand Place", "nl": "Grote Markt"}));
+        let attr = language_attr(&json!({"fr": "Grand Place", "nl": "Grote Markt"}));
         let rendered = render_attribute_value(&attr, Some(&filter("de"))).expect("render");
         pretty_assertions::assert_eq!(rendered["type"], "Property");
         pretty_assertions::assert_eq!(rendered["value"], "Grand Place");
@@ -251,7 +251,7 @@ mod tests {
     fn an_extended_range_prefix_matches_a_longer_tag() {
         // RFC 4647 basic filtering places no basic-range restriction, so `fr-CA`
         // matches the longer tag `fr-CA-1994`.
-        let attr = language_attr(json!({"fr-CA-1994": "quebecois"}));
+        let attr = language_attr(&json!({"fr-CA-1994": "quebecois"}));
         let rendered = render_attribute_value(&attr, Some(&filter("fr-CA"))).expect("render");
         pretty_assertions::assert_eq!(rendered["value"], "quebecois");
         pretty_assertions::assert_eq!(rendered["lang"], "fr-CA-1994");
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn no_match_defaults_to_the_none_entry_when_only_it_is_present() {
         // With no tagged entry, the `@none` default is the supported fallback.
-        let attr = language_attr(json!({"@none": "untagged"}));
+        let attr = language_attr(&json!({"@none": "untagged"}));
         let rendered = render_attribute_value(&attr, Some(&filter("de"))).expect("render");
         pretty_assertions::assert_eq!(rendered["value"], "untagged");
         pretty_assertions::assert_eq!(rendered["lang"], "@none");

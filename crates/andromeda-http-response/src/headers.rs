@@ -32,7 +32,7 @@ pub struct CommonHeadersOptions<'a> {
 /// `context_links` is what the rendering already resolved; it is advertised
 /// only when the rendering put the `@context` in the headers rather than in
 /// the body, which is what `options.context_location` reports.
-pub fn apply_common_headers(headers: &mut HeaderMap, context_links: &[IriRefBuf], options: CommonHeadersOptions<'_>) {
+pub fn apply_common_headers(headers: &mut HeaderMap, context_links: &[IriRefBuf], options: &CommonHeadersOptions<'_>) {
     if let Some(loc) = options.location.and_then(Location::new) {
         headers.typed_insert(loc);
     }

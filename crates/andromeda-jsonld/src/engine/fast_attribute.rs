@@ -265,11 +265,15 @@ fn expand_metadata(key: &str, value: &Value, term_map: &BatchTermMap) -> Option<
         Value::String(text) => Some((iri, coerced_scalar(text, coercion, term_map)?)),
         // A coerced non-string has no expansion this walker can state, since
         // the coercion says how to read a lexical form.
-        Value::Number(_) | Value::Bool(_) => if let Some(_declared) = coercion { None } else {
-            let mut node = Map::with_capacity(1);
-            node.insert("@value".to_owned(), value.clone()); // clone: the source document is borrowed and stays valid
-            Some((iri, Value::Array(vec![Value::Object(node)])))
-        },
+        Value::Number(_) | Value::Bool(_) => {
+            if let Some(_declared) = coercion {
+                None
+            } else {
+                let mut node = Map::with_capacity(1);
+                node.insert("@value".to_owned(), value.clone()); // clone: the source document is borrowed and stays valid
+                Some((iri, Value::Array(vec![Value::Object(node)])))
+            }
+        }
         // A nested sub-attribute is an attribute; the same walker applies.
         Value::Object(sub) => Some((iri, Value::Array(vec![expand_sub_attribute(sub, term_map)?]))),
         Value::Array(instances) => {

@@ -132,7 +132,7 @@ impl<'a> NestedProjection<'a> {
         if !self.pick.is_empty() && !self.pick.contains(&ProjectionTerm::Scope) {
             return false;
         }
-        !(!self.omit.is_empty() && self.omit.contains(&ProjectionTerm::Scope))
+        self.omit.is_empty() || !self.omit.contains(&ProjectionTerm::Scope)
     }
 
     /// Remove from a rendered linked entity the attribute members this

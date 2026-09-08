@@ -21,6 +21,11 @@ impl PrometheusText {
     }
 
     /// The `Content-Type` header value this format is served with.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TelemetryHttpError::MediaType`] when the exposition media type does not parse,
+    /// and [`TelemetryHttpError::HeaderValue`] when its rendering is not a valid header value.
     pub fn content_type() -> Result<HeaderValue, TelemetryHttpError> {
         Ok(HeaderValue::from_str(&PrometheusText::media_type()?.to_string())?)
     }

@@ -143,6 +143,7 @@ impl ProblemDetail {
     }
 
     /// Attach the exact inbound request URI as the RFC 7807 `instance` member.
+    #[must_use]
     pub fn with_instance(mut self, instance: Uri) -> ProblemDetail {
         self.instance = Some(instance);
         self

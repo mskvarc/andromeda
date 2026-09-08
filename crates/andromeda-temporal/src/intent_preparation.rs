@@ -751,7 +751,7 @@ mod tests {
     }
 
     /// A member that spells no target is a malformed list, not a shorter one:
-    /// silently dropping it would store a ListRelationship that names fewer
+    /// silently dropping it would store a `ListRelationship` that names fewer
     /// Entities than the client wrote.
     #[test]
     fn an_object_list_member_without_a_target_refuses_the_write() {

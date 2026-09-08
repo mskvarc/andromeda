@@ -339,7 +339,7 @@ async fn dist_http_auxiliary_registration_rejects_unsafe_method() {
         .expect("local create");
     assert_status(&response, 201);
     assert_eq!(
-        mock.get_count(Method::POST, FORWARDED_ENTITIES_PATH).await,
+        mock.get_count(Method::POST, FORWARDED_ENTITIES_PATH),
         0,
         "an auxiliary source must not receive a forwarded unsafe method"
     );
@@ -428,7 +428,7 @@ async fn dist_http_failed_endpoint_skipped_until_cooldown() {
         .expect("second retrieve");
     assert!(has_warning(&second, 199), "the declined source is reported as NGSILD-Warning 199");
     assert_eq!(
-        mock.get_count(Method::GET, &forwarded_entity_path(&entity_id)).await,
+        mock.get_count(Method::GET, &forwarded_entity_path(&entity_id)),
         1,
         "the failed endpoint must be skipped during cooldown"
     );

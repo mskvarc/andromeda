@@ -52,20 +52,22 @@ impl From<TemporalStoreError> for TemporalError {
         match error {
             TemporalStoreError::NotFound(detail) => TemporalError::not_found(detail),
             TemporalStoreError::Validation(detail) => TemporalError::validation(detail),
-            TemporalStoreError::TimestampPrecision(_) => TemporalError::validation(error.to_string()),
             // A unit the client sent is a request fault; an identity already in
             // a row that the catalog no longer registers is catalog drift.
             TemporalStoreError::UnitCode(detail) => match detail {
                 UnitCodeMetadataError::Malformed | UnitCodeMetadataError::Unregistered { .. } => TemporalError::validation(detail.to_string()),
                 UnitCodeMetadataError::UnknownIdentity { .. } | UnitCodeMetadataError::Catalog(_) => TemporalError::persistence(detail.to_string()),
             },
-            // Which units, families and value shapes the selected instances
-            // carry is a property of the request, so an aggregate spanning
-            // several of them is refused as client input.
-            TemporalStoreError::MixedAggregationGroup(_) => TemporalError::validation(error.to_string()),
-            // Two instances claiming the same instanceId is a conflict in the
-            // client's own write, not a broker malfunction (clause 4.5.7).
-            TemporalStoreError::DuplicateInstanceClaim(_) => TemporalError::validation(error.to_string()),
+            // Each of these three is a fault in the client's own request rather
+            // than a broker malfunction: a timestamp at a resolution the store
+            // cannot hold is client input; which units, families and value
+            // shapes the selected instances carry is a property of the request,
+            // so an aggregate spanning several of them is refused as client
+            // input too; and two instances claiming the same instanceId is a
+            // conflict inside the submitted write (clause 4.5.7).
+            TemporalStoreError::TimestampPrecision(_) | TemporalStoreError::MixedAggregationGroup(_) | TemporalStoreError::DuplicateInstanceClaim(_) => {
+                TemporalError::validation(error.to_string())
+            }
             TemporalStoreError::Database(_)
             | TemporalStoreError::Decode(_)
             | TemporalStoreError::Query(_)

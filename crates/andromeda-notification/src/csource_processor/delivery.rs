@@ -65,7 +65,7 @@ impl CsourceNotificationProcessor {
             }
         }
 
-        let notification_id = if let Ok(u) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() { u } else {
+        let Ok(notification_id) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() else {
             error!("Failed to construct notification URN for {}", sub_id);
             return;
         };

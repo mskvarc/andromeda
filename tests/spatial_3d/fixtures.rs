@@ -34,21 +34,21 @@ pub fn p500() -> Value {
 
 /// A `Building` whose `location` is a three-dimensional Point.
 pub fn building_point_3d(id: &str, lon: f64, lat: f64, alt: f64) -> Value {
-    building_with_location(id, json!({"type": "Point", "coordinates": [lon, lat, alt]}))
+    building_with_location(id, &json!({"type": "Point", "coordinates": [lon, lat, alt]}))
 }
 
 /// A `Building` whose `location` is a two-dimensional Point.
 pub fn building_point_2d(id: &str, lon: f64, lat: f64) -> Value {
-    building_with_location(id, json!({"type": "Point", "coordinates": [lon, lat]}))
+    building_with_location(id, &json!({"type": "Point", "coordinates": [lon, lat]}))
 }
 
 /// A `Building` whose `location` is a Polygon built from the supplied rings.
-pub fn building_polygon_3d(id: &str, coordinates: Value) -> Value {
-    building_with_location(id, json!({"type": "Polygon", "coordinates": coordinates}))
+pub fn building_polygon_3d(id: &str, coordinates: &Value) -> Value {
+    building_with_location(id, &json!({"type": "Polygon", "coordinates": coordinates}))
 }
 
 /// A `Building` carrying an arbitrary `GeoJSON` geometry as its `location`.
-pub fn building_with_location(id: &str, geometry: Value) -> Value {
+pub fn building_with_location(id: &str, geometry: &Value) -> Value {
     json!({
         "id": id,
         "type": "Building",

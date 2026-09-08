@@ -6,11 +6,21 @@ use urlencoding::encode;
 
 impl TestClient {
     /// Retrieve an Entity Map.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn retrieve_entity_map(&self, id: &str) -> Result<TestResponse, RequestError> {
         self.entity_map_request(Method::GET, id).await
     }
 
     /// Delete an Entity Map.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::Endpoint`] when the path cannot be resolved against the broker endpoint, and
+    /// [`RequestError::Transport`] when the request cannot be sent or its response body cannot be captured.
     pub async fn delete_entity_map(&self, id: &str) -> Result<TestResponse, RequestError> {
         self.entity_map_request(Method::DELETE, id).await
     }

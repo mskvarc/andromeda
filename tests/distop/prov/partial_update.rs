@@ -92,7 +92,7 @@ async fn partial_update_registration_matches_entity_absent_not_404() {
         "a matched registration must not 404: {}",
         String::from_utf8_lossy(&response.body)
     );
-    assert_eq!(mock.get_count(Method::PATCH, &path).await, 1, "the partial update is forwarded once");
+    assert_eq!(mock.get_count(Method::PATCH, &path), 1, "the partial update is forwarded once");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -182,7 +182,7 @@ async fn partial_update_exclusive_op_unsupported_returns_409() {
         .expect("partial update");
     assert_status(&response, 409);
     assert_problem_details(&response, CONFLICT);
-    assert_eq!(mock.get_count(Method::PATCH, &path).await, 0, "no forward on an unsupported operation");
+    assert_eq!(mock.get_count(Method::PATCH, &path), 0, "no forward on an unsupported operation");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -239,9 +239,9 @@ async fn partial_update_op_unsupported_multi_returns_207() {
             .any(|entry| entry["registrationId"] == json!(reg_unsupported) && entry["error"]["status"] == json!(409)),
         "the unsupported registration surfaces a keyed 409: {body}"
     );
-    assert_eq!(mock.get_count(Method::PATCH, &path_supported).await, 1, "the supporting source is forwarded to");
+    assert_eq!(mock.get_count(Method::PATCH, &path_supported), 1, "the supporting source is forwarded to");
     assert_eq!(
-        mock.get_count(Method::PATCH, &path_unsupported).await,
+        mock.get_count(Method::PATCH, &path_unsupported),
         0,
         "the unsupported source is not forwarded to"
     );
@@ -275,7 +275,7 @@ async fn partial_update_inclusive_forwards_input() {
         .await
         .expect("partial update");
     assert_status(&response, 204);
-    assert_eq!(mock.get_count(Method::PATCH, &path).await, 1, "the partial update is forwarded once");
+    assert_eq!(mock.get_count(Method::PATCH, &path), 1, "the partial update is forwarded once");
 
     let local = client
         .get_entity(&entity_id, "local=true", "application/ld+json", None)

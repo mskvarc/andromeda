@@ -109,7 +109,7 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededHistory {
         .expect("analyze must succeed");
 
     SeededHistory {
-        narrow_stream: *streams.first().unwrap_or_else(|| unreachable!("the corpus writes at least one stream")),
+        narrow_stream: *streams.first().unwrap_or_else(|| panic!("the corpus writes at least one stream")),
         entity_key,
     }
 }

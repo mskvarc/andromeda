@@ -13,6 +13,9 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use futures::{StreamExt, stream};
 use tracing::warn;
 
+/// How many active registrations one discovery pagination round-trip loads.
+const ACTIVE_REGISTRATION_PAGE: u32 = 500;
+
 impl FederationService {
     /// Forward a type or attribute discovery query to every active registration
     /// that advertises the operation.
@@ -37,8 +40,7 @@ impl FederationService {
         // Keyset-paginate through all active CSRs; discovery forwarding must
         // consider every registration, but the repository caps each round-trip
         // so a runaway CSR table cannot blow up memory.
-        const PAGE: u32 = 500;
-        let page_capacity = match usize::try_from(PAGE) {
+        let page_capacity = match usize::try_from(ACTIVE_REGISTRATION_PAGE) {
             Ok(value) => value,
             Err(error) => {
                 warn!(%error, "discovery forwarding page size does not fit this platform");
@@ -48,7 +50,7 @@ impl FederationService {
         let mut csrs = Vec::new();
         let mut cursor: Option<Uri> = None;
         loop {
-            let page = match self.csr_repo.find_all_active(cursor.as_ref(), PAGE).await {
+            let page = match self.csr_repo.find_all_active(cursor.as_ref(), ACTIVE_REGISTRATION_PAGE).await {
                 Ok(page) => page,
                 Err(e) => {
                     warn!("Failed to load active CSRs for discovery forwarding: {}", e);

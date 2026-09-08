@@ -188,7 +188,7 @@ impl RegistrationStore for FixedStore {
 
 /// A registration with the given identifier, mode and `information`, as the
 /// store would hand it back.
-pub(crate) fn registration(id: &str, mode: &str, information: serde_json::Value) -> ContextSourceRegistration {
+pub(crate) fn registration(id: &str, mode: &str, information: &serde_json::Value) -> ContextSourceRegistration {
     serde_json::from_value(json!({
         "id": id,
         "type": "ContextSourceRegistration",

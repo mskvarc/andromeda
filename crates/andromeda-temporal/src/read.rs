@@ -31,6 +31,18 @@ use std::{collections::HashMap, slice::from_ref};
 
 impl TemporalService {
     /// Retrieve and render one temporal entity under the supplied query parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError::Request`] when the parameters do not satisfy
+    /// clause 5.7.3 or name an attribute that is ineligible for a requested
+    /// aggregation method (clause 5.7.4.4),
+    /// [`TemporalError::OperationNotSupported`] when the selected reader
+    /// refuses one of those methods, [`TemporalError::NotFound`] when the
+    /// entity has no Temporal Evolution or an `attrs` filter selects none of
+    /// it (clause 5.7.2), and [`TemporalError::Persistence`] or
+    /// [`TemporalError::Rendering`] when the history cannot be read or
+    /// compacted.
     pub async fn get(
         &self,
         target: &ContextTarget,
@@ -89,6 +101,18 @@ impl TemporalService {
     }
 
     /// Query temporal entities matching the given filter and temporal parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError::Request`] when the parameters do not satisfy
+    /// clause 5.7.4 or name an attribute that is ineligible for a requested
+    /// aggregation method (clause 5.7.4.4),
+    /// [`TemporalError::OperationNotSupported`] when the selected reader
+    /// refuses one of those methods, [`TemporalError::Internal`] when the
+    /// reader reports a stage-one outcome that paginated ahead of a residual
+    /// predicate, and [`TemporalError::Persistence`] when the history cannot
+    /// be read. A single entity that fails to render is reported as a warning
+    /// on the result rather than failing the query.
     pub async fn query(&self, target: &ContextTarget, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<TemporalQueryResult, TemporalError> {
         params.validate(true)?;
 
@@ -271,6 +295,15 @@ impl TemporalService {
     /// Runs only the lightweight stage 1 SQL (entity ID resolution) without fetching
     /// temporal history, ensuring the `EntityMap` captures ALL matching IDs, not just the
     /// current page.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError::Request`] when the parameters do not satisfy
+    /// clause 5.7.4, [`TemporalError::OperationNotSupported`] when the
+    /// selected reader refuses a requested aggregation method,
+    /// [`TemporalError::Internal`] when the reader reports a stage-one outcome
+    /// that paginated ahead of a residual predicate, and
+    /// [`TemporalError::Persistence`] when the identifiers cannot be read.
     pub async fn query_ids(&self, target: &ContextTarget, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<Vec<Uri>, TemporalError> {
         params.validate(true)?;
         let compiled = self.compile_temporal_query(params, context).await?;

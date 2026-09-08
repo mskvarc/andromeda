@@ -9,7 +9,7 @@ use andromeda_ngsi_ld_vocabulary::{
     expanded::{classes as expanded_classes, properties as expanded_properties},
 };
 use chrono::{DateTime, Utc};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 /// The observed time span of a set of history rows.
 pub type TimeRange = (DateTime<Utc>, DateTime<Utc>);
@@ -20,131 +20,141 @@ pub type TimeRange = (DateTime<Utc>, DateTime<Utc>);
 /// The row already carries decoded, strongly typed values. The only work left is the JSON-LD structural expansion that the specification prescribes.
 #[must_use]
 pub fn neutral_row_to_expanded_instance(row: &TemporalHistoryRow, sys_attrs: SysAttrsInclusion) -> Value {
-    let mut instance = serde_json::Map::new();
-    let family = InstanceFamily::of_attribute_name(&row.attribute_name);
-
+    let mut instance = Map::new();
     instance.insert("@type".to_string(), json!([row.attribute_type.iri().as_str()]));
 
-    let value_key = row.attribute_type.value_key_str();
-
-    // Clauses 4.5.7 and 4.5.8: a deleted instance renders the `urn:ngsi-ld:null`
-    // value for its attribute family beside its `deletedAt`. The null URI is
-    // synthesised here from the tombstone itself; storage never holds it, so no
-    // client value spelling it can be mistaken for a deletion.
+    // A tombstone carries no observation of its own: its value member, its
+    // deletion instant and its identity are the whole rendering.
     if let TemporalValue::Tombstone { deleted_at } = &row.value {
-        // Clause 4.18 reserves `urn:ngsi-ld:null` for a deleted scope, and a
-        // LanguageProperty's `@none` key expands to a bare `@value` node — the
-        // language-map convention the expansion engine writes and reads, since
-        // `@none` is not a well-formed language tag (JSON-LD 1.1 clause 9.5).
-        if row.attribute_type == AttributeType::Relationship {
-            instance.insert(value_key.to_string(), json!([{"@id": NULL_URI.as_str()}]));
-        } else {
-            instance.insert(value_key.to_string(), json!([{"@value": NULL_URI.as_str()}]));
-        }
-        instance.insert(
-            expanded_properties::DELETED_AT.as_str().to_string(),
-            json!([{"@value": whole_seconds(*deleted_at), "@type": expanded_classes::DATE_TIME.as_str()}]),
-        );
-        instance.insert(
-            expanded_properties::INSTANCE_ID.as_str().to_string(),
-            json!([{"@id": row.instance.rendered(family).to_string()}]),
-        );
-        if let Some(ds_id) = &row.dataset_id {
-            instance.insert(expanded_properties::DATASET_ID.as_str().to_string(), json!([{"@id": ds_id.as_str()}]));
-        }
+        insert_deleted_value(&mut instance, row);
+        instance.insert(expanded_properties::DELETED_AT.as_str().to_string(), expanded_datetime(*deleted_at));
+        insert_identity_members(&mut instance, row);
         return Value::Object(instance);
     }
 
-    match &row.value {
-        TemporalValue::Number(value) => {
-            instance.insert(value_key.to_string(), json!([{"@value": value.to_json_value()}]));
-        }
-        TemporalValue::String(v) => {
+    insert_observed_value(&mut instance, row);
+    insert_temporal_properties(&mut instance, row, sys_attrs);
+    insert_identity_members(&mut instance, row);
+    insert_stored_sub_attributes(&mut instance, row);
+
+    Value::Object(instance)
+}
+
+/// The expanded node an NGSI-LD `DateTime` renders as.
+fn expanded_datetime(instant: DateTime<Utc>) -> Value {
+    json!([{"@value": whole_seconds(instant), "@type": expanded_classes::DATE_TIME.as_str()}])
+}
+
+/// Insert the value member of a deleted instance.
+///
+/// Clauses 4.5.7 and 4.5.8: a deleted instance renders the `urn:ngsi-ld:null`
+/// value for its attribute family beside its `deletedAt`. The null URI is
+/// synthesised here from the tombstone itself; storage never holds it, so no
+/// client value spelling it can be mistaken for a deletion. Clause 4.18
+/// reserves `urn:ngsi-ld:null` for a deleted scope, and a `LanguageProperty`'s
+/// `@none` key expands to a bare `@value` node -- the language-map convention
+/// the expansion engine writes and reads, since `@none` is not a well-formed
+/// language tag (JSON-LD 1.1 clause 9.5).
+fn insert_deleted_value(instance: &mut Map<String, Value>, row: &TemporalHistoryRow) {
+    let null_value = if row.attribute_type == AttributeType::Relationship {
+        json!([{"@id": NULL_URI.as_str()}])
+    } else {
+        json!([{"@value": NULL_URI.as_str()}])
+    };
+    instance.insert(row.attribute_type.value_key_str().to_string(), null_value);
+}
+
+/// Insert the value member of a live observation, in the expanded shape the
+/// attribute family the row belongs to prescribes.
+fn insert_observed_value(instance: &mut Map<String, Value>, row: &TemporalHistoryRow) {
+    let expanded = match &row.value {
+        TemporalValue::Number(number) => json!([{"@value": number.to_json_value()}]),
+        TemporalValue::String(text) => {
             if row.attribute_type == AttributeType::VocabProperty {
-                instance.insert(value_key.to_string(), json!([{"@id": v}]));
+                json!([{"@id": text}])
             } else {
-                instance.insert(value_key.to_string(), json!([{"@value": v}]));
+                json!([{"@value": text}])
             }
         }
-        TemporalValue::Boolean(v) => {
-            instance.insert(value_key.to_string(), json!([{"@value": v}]));
-        }
-        TemporalValue::Geometry(geo) => {
-            let expanded = expand_geojson(geo);
-            instance.insert(value_key.to_string(), json!([expanded]));
-        }
-        TemporalValue::Object(v) => {
-            if row.attribute_type == AttributeType::JsonProperty {
-                instance.insert(value_key.to_string(), json!([{"@value": v, "@type": "@json"}]));
-            } else if row.attribute_type == AttributeType::LanguageProperty {
-                instance.insert(value_key.to_string(), v.clone());
-            } else if row.attribute_type == AttributeType::VocabProperty {
-                if let Some(arr) = v.as_array() {
-                    let nodes: Vec<Value> = arr.iter().map(|val| json!({"@id": val})).collect();
-                    instance.insert(value_key.to_string(), Value::Array(nodes));
-                } else {
-                    instance.insert(value_key.to_string(), json!([{"@id": v}]));
-                }
-            } else {
-                instance.insert(value_key.to_string(), json!([{"@value": v}]));
-            }
-        }
-        TemporalValue::DateTime(v) => {
-            instance.insert(
-                value_key.to_string(),
-                json!([{"@value": whole_seconds(*v), "@type": expanded_classes::DATE_TIME.as_str()}]),
-            );
-        }
-        TemporalValue::Uri(v) => {
-            instance.insert(value_key.to_string(), json!([{"@id": v}]));
-        }
-        TemporalValue::Tombstone { .. } => {} // handled above
-    }
+        TemporalValue::Boolean(flag) => json!([{"@value": flag}]),
+        TemporalValue::Geometry(geometry) => json!([expand_geojson(geometry)]),
+        TemporalValue::Object(object) => expanded_structured_value(object, row.attribute_type),
+        TemporalValue::DateTime(instant) => expanded_datetime(*instant),
+        TemporalValue::Uri(uri) => json!([{"@id": uri}]),
+        // A deleted instance renders through `insert_deleted_value` instead,
+        // before this is ever reached.
+        TemporalValue::Tombstone { .. } => return,
+    };
+    instance.insert(row.attribute_type.value_key_str().to_string(), expanded);
+}
 
+/// The expanded shape a structured value renders in, which the attribute family
+/// decides: a `JsonProperty` keeps its JSON literal, a `LanguageProperty` is
+/// stored already expanded, and a `VocabProperty` names one or more vocabulary
+/// members by identifier.
+fn expanded_structured_value(object: &Value, attribute_type: AttributeType) -> Value {
+    match attribute_type {
+        AttributeType::JsonProperty => json!([{"@value": object, "@type": "@json"}]),
+        // clone: the rendered instance owns the expanded language map the row holds.
+        AttributeType::LanguageProperty => object.clone(),
+        AttributeType::VocabProperty => object.as_array().map_or_else(
+            || json!([{"@id": object}]),
+            |members| Value::Array(members.iter().map(|member| json!({"@id": member})).collect()),
+        ),
+        AttributeType::Property | AttributeType::Relationship | AttributeType::GeoProperty | AttributeType::ListProperty | AttributeType::ListRelationship => {
+            json!([{"@value": object}])
+        }
+    }
+}
+
+/// Insert the Temporal Properties the observation carries.
+///
+/// Each of these renders from its own instant alone (clause 5.2.21): one that
+/// the observation does not carry is absent from the rendering rather than
+/// filled in from the operational write clock, which is not a Temporal Property
+/// at all.
+fn insert_temporal_properties(instance: &mut Map<String, Value>, row: &TemporalHistoryRow, sys_attrs: SysAttrsInclusion) {
     if let Some(observed_at) = row.observed_at {
-        instance.insert(
-            expanded_properties::OBSERVED_AT.as_str().to_string(),
-            json!([{"@value": whole_seconds(observed_at), "@type": expanded_classes::DATE_TIME.as_str()}]),
-        );
+        instance.insert(expanded_properties::OBSERVED_AT.as_str().to_string(), expanded_datetime(observed_at));
     }
 
-    // Each of the remaining Temporal Properties renders from its own instant
-    // alone (clause 5.2.21): one that the observation does not carry is absent
-    // from the rendering rather than filled in from the operational write
-    // clock, which is not a Temporal Property at all.
-    if sys_attrs == SysAttrsInclusion::Include {
-        if let Some(created_at) = row.created_at {
-            instance.insert(
-                expanded_properties::CREATED_AT.as_str().to_string(),
-                json!([{"@value": whole_seconds(created_at), "@type": expanded_classes::DATE_TIME.as_str()}]),
-            );
+    match sys_attrs {
+        SysAttrsInclusion::Include => {
+            if let Some(created_at) = row.created_at {
+                instance.insert(expanded_properties::CREATED_AT.as_str().to_string(), expanded_datetime(created_at));
+            }
+            if let Some(modified_at) = row.modified_at {
+                instance.insert(expanded_properties::MODIFIED_AT.as_str().to_string(), expanded_datetime(modified_at));
+            }
         }
-        if let Some(modified_at) = row.modified_at {
-            instance.insert(
-                expanded_properties::MODIFIED_AT.as_str().to_string(),
-                json!([{"@value": whole_seconds(modified_at), "@type": expanded_classes::DATE_TIME.as_str()}]),
-            );
-        }
+        SysAttrsInclusion::Strip => {}
     }
+}
 
+/// Insert the members that identify the instance: the `instanceId` clause 4.5.7
+/// hands back, and the `datasetId` it belongs to when it names one.
+fn insert_identity_members(instance: &mut Map<String, Value>, row: &TemporalHistoryRow) {
+    let family = InstanceFamily::of_attribute_name(&row.attribute_name);
     instance.insert(
         expanded_properties::INSTANCE_ID.as_str().to_string(),
         json!([{"@id": row.instance.rendered(family).to_string()}]),
     );
 
-    if let Some(ds_id) = &row.dataset_id {
-        instance.insert(expanded_properties::DATASET_ID.as_str().to_string(), json!([{"@id": ds_id.as_str()}]));
+    if let Some(dataset_id) = &row.dataset_id {
+        instance.insert(expanded_properties::DATASET_ID.as_str().to_string(), json!([{"@id": dataset_id.as_str()}]));
     }
+}
 
-    if let Some(meta) = &row.metadata
-        && let Some(obj) = meta.as_object()
+/// Merge the already-expanded sub-attributes the row stored beside its value.
+fn insert_stored_sub_attributes(instance: &mut Map<String, Value>, row: &TemporalHistoryRow) {
+    if let Some(metadata) = &row.metadata
+        && let Some(members) = metadata.as_object()
     {
-        for (k, v) in obj {
-            instance.insert(k.clone(), v.clone());
+        for (key, value) in members {
+            // clone: the rendered instance owns the members read out of the row.
+            instance.insert(key.clone(), value.clone());
         }
     }
-
-    Value::Object(instance)
 }
 
 #[cfg(test)]

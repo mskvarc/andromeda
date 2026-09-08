@@ -144,6 +144,16 @@ pub struct TemporalConfig {
 
 impl TemporalConfig {
     /// Validate temporal caps, drain limits, and cadences.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`TemporalConfigError`] variant naming the first setting
+    /// that spans no time or no work: a zero `lastN` cap, expiry cadence,
+    /// intent fallback cadence, batch size, lease, retry delay, stuck-attempt
+    /// threshold, chunk interval, columnstore lag, retention horizon or
+    /// retention sweep cadence; a retry ceiling below the retry delay; or a
+    /// columnstore lag below the chunk interval, which would convert a
+    /// partition that is still being written.
     pub const fn validate(&self) -> Result<(), TemporalConfigError> {
         if self.default_last_n == 0 {
             return Err(TemporalConfigError::ZeroDefaultLastN);

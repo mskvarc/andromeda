@@ -140,7 +140,7 @@ async fn handle_ws(
             // Inbound: client frames.
             frame = receiver.next() => {
                 match frame {
-                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(Message::Close(_)) | Err(_)) | None => break,
                     Some(Ok(Message::Pong(_))) => {
                         trace!("WebSocket pong received");
                     }
@@ -153,7 +153,6 @@ async fn handle_ws(
                     Some(Ok(Message::Ping(_))) => {
                         // tungstenite auto-replies with Pong
                     }
-                    Some(Err(_)) => break,
                 }
             }
         }

@@ -84,7 +84,7 @@ pub(crate) async fn batch_update(
 
     // Clause 5.6.9.4: the local phase updates what proxied registrations left.
     let remainder = local_remainder(entities, &forwarded);
-    let mode = service.effective_side_effect_mode(async_preference(&prefer), remainder.len());
+    let mode = service.effective_side_effect_mode(async_preference(prefer), remainder.len());
     let batch = service
         .batch_update(&target, &remainder, &context, overwrite, mode)
         .await

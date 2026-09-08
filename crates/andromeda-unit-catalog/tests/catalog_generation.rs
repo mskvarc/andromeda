@@ -19,6 +19,7 @@ use cefact_units::UnitOfMeasure;
 use std::{
     collections::HashSet,
     env,
+    fmt::{self, Write},
     fs,
     path::{Path, PathBuf},
 };
@@ -71,6 +72,9 @@ enum CatalogGenerationFailure {
         /// The file that no longer matches the generator.
         path: String,
     },
+    /// A rendering could not be assembled in its buffer.
+    #[error("a catalog rendering could not be assembled")]
+    Rendering(#[from] fmt::Error),
 }
 
 /// Return the crate-root-relative `path` as an absolute one.
@@ -118,19 +122,19 @@ fn assignment_over(catalog: &UnitCodeRegistry, codes: &[&'static str]) -> Result
 }
 
 /// Render the committed identity snapshot.
-fn render_snapshot(entries: &[UnitCodeEntry]) -> String {
+fn render_snapshot(entries: &[UnitCodeEntry]) -> Result<String, CatalogGenerationFailure> {
     let mut rendered = String::from(SNAPSHOT_HEADER);
     for entry in entries {
         let retired = entry
             .retired_revision()
             .map_or_else(|| RETIRED_REVISION_UNSET.to_owned(), |revision| revision.get().to_string());
-        rendered.push_str(&format!("{}\t{}\t{}\t{}\n", entry.id(), entry.token(), entry.first_revision(), retired));
+        writeln!(&mut rendered, "{}\t{}\t{}\t{}", entry.id(), entry.token(), entry.first_revision(), retired)?;
     }
-    rendered
+    Ok(rendered)
 }
 
 /// Render the seed migration that loads the catalog into a tenant schema.
-fn render_seed(entries: &[UnitCodeEntry]) -> String {
+fn render_seed(entries: &[UnitCodeEntry]) -> Result<String, CatalogGenerationFailure> {
     let mut rendered = String::new();
     rendered.push_str("-- generated - never hand-edited\n");
     rendered.push_str("-- ============================================================================\n");
@@ -153,19 +157,20 @@ fn render_seed(entries: &[UnitCodeEntry]) -> String {
             .retired_revision()
             .map_or_else(|| String::from("NULL"), |revision| revision.get().to_string());
         let terminator = if rows.peek().is_some() { "," } else { ";" };
-        rendered.push_str(&format!(
-            "    ({}, '{}', {}, {}){}\n",
+        writeln!(
+            &mut rendered,
+            "    ({}, '{}', {}, {}){}",
             entry.id(),
             entry.token(),
             entry.first_revision(),
             retired,
             terminator
-        ));
+        )?;
     }
 
     rendered.push_str("\nINSERT INTO unit_code_catalog_metadata (singleton, rec20_revision, source_sha256, generated_at) VALUES\n");
-    rendered.push_str(&format!("    (TRUE, {REC20_REVISION}, '{SOURCE_SHA256}', '{GENERATED_AT}');\n"));
-    rendered
+    writeln!(&mut rendered, "    (TRUE, {REC20_REVISION}, '{SOURCE_SHA256}', '{GENERATED_AT}');")?;
+    Ok(rendered)
 }
 
 /// Compare `expected` against the committed file at `path`, or rewrite it when
@@ -185,12 +190,12 @@ fn ensure_generated(path: &str, expected: &str) -> Result<(), CatalogGenerationF
 
 #[test]
 fn the_committed_identity_snapshot_matches_a_fresh_rendering() -> Result<(), CatalogGenerationFailure> {
-    ensure_generated(SNAPSHOT_PATH, &render_snapshot(&assignment()?))
+    ensure_generated(SNAPSHOT_PATH, &render_snapshot(&assignment()?)?)
 }
 
 #[test]
 fn the_generated_seed_migration_matches_a_fresh_rendering() -> Result<(), CatalogGenerationFailure> {
-    ensure_generated(SEED_PATH, &render_seed(&assignment()?))
+    ensure_generated(SEED_PATH, &render_seed(&assignment()?)?)
 }
 
 #[test]
@@ -282,7 +287,7 @@ fn every_identity_decodes_back_to_the_code_it_was_assigned_for() -> Result<(), C
     for entry in catalog.entries() {
         let decoded = catalog.entry(entry.id()).map(UnitCodeEntry::token);
         assert_eq!(
-            decoded.map(andromeda_unit_catalog::unit_code_token::UnitCodeToken::as_str),
+            decoded.map(UnitCodeToken::as_str),
             Ok(entry.token().as_str()),
             "identity {} does not decode back to its own code",
             entry.id()

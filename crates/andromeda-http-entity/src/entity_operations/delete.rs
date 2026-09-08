@@ -72,7 +72,7 @@ pub(crate) async fn batch_delete(
 
     // Clause 5.6.10.4: every identifier is also deleted locally; an entity a
     // proxied registration holds is no local failure when it is absent here.
-    let mode = service.effective_side_effect_mode(async_preference(&prefer), entity_ids.len());
+    let mode = service.effective_side_effect_mode(async_preference(prefer), entity_ids.len());
     let mut batch = service.batch_delete(&target, &entity_ids, mode).await.with_entity_instance(&uri)?;
     drop_absent_proxied(&mut batch.errors, &forwarded);
     let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, classify_entity_error);

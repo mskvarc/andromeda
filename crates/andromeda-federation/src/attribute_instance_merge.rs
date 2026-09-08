@@ -131,10 +131,13 @@ fn from_instances(mut instances: Vec<Attribute>) -> AttributeValue {
 #[cfg(test)]
 mod tests {
     use crate::attribute_instance_merge::{MergePolicy, merge_entity_attributes};
-    use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::Entity};
+    use andromeda_ngsi_ld_model::{
+        attribute::instance::{Attribute, AttributeValue},
+        entity::Entity,
+    };
     use serde_json::{Value, json};
 
-    fn entity(attributes: Value) -> Entity {
+    fn entity(attributes: &Value) -> Entity {
         let mut document = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"});
         if let (Some(target), Some(members)) = (document.as_object_mut(), attributes.as_object()) {
             target.extend(members.iter().map(|(key, value)| (key.clone(), value.clone()))); // clone: the fixture owns its members
@@ -149,7 +152,7 @@ mod tests {
             .map(AttributeValue::instances)
             .into_iter()
             .flatten()
-            .map(andromeda_ngsi_ld_model::attribute::instance::Attribute::value)
+            .map(Attribute::value)
             .collect()
     }
 
@@ -157,8 +160,8 @@ mod tests {
     /// instance being the one without.
     #[test]
     fn instances_with_distinct_dataset_ids_coexist() {
-        let mut local = entity(json!({"speed": {"type": "Property", "value": 10}}));
-        let remote = entity(json!({"speed": {"type": "Property", "value": 20, "datasetId": "urn:ngsi-ld:ds:1"}}));
+        let mut local = entity(&json!({"speed": {"type": "Property", "value": 10}}));
+        let remote = entity(&json!({"speed": {"type": "Property", "value": 20, "datasetId": "urn:ngsi-ld:ds:1"}}));
         merge_entity_attributes(&mut local, remote, MergePolicy::Instances);
         assert!(matches!(local.attrs.get("speed"), Some(AttributeValue::Multiple(instances)) if instances.len() == 2));
         pretty_assertions::assert_eq!(speed_values(&local), vec![json!(10), json!(20)]);
@@ -168,12 +171,12 @@ mod tests {
     /// whichever side holds it.
     #[test]
     fn the_same_dataset_id_keeps_the_most_recently_observed_instance() {
-        let mut local = entity(json!({"speed": {"type": "Property", "value": 10, "observedAt": "2021-01-01T00:00:00Z"}}));
-        let newer = entity(json!({"speed": {"type": "Property", "value": 20, "observedAt": "2022-01-01T00:00:00Z"}}));
+        let mut local = entity(&json!({"speed": {"type": "Property", "value": 10, "observedAt": "2021-01-01T00:00:00Z"}}));
+        let newer = entity(&json!({"speed": {"type": "Property", "value": 20, "observedAt": "2022-01-01T00:00:00Z"}}));
         merge_entity_attributes(&mut local, newer, MergePolicy::Instances);
         pretty_assertions::assert_eq!(speed_values(&local), vec![json!(20)]);
 
-        let older = entity(json!({"speed": {"type": "Property", "value": 5, "observedAt": "2020-01-01T00:00:00Z"}}));
+        let older = entity(&json!({"speed": {"type": "Property", "value": 5, "observedAt": "2020-01-01T00:00:00Z"}}));
         merge_entity_attributes(&mut local, older, MergePolicy::Instances);
         pretty_assertions::assert_eq!(speed_values(&local), vec![json!(20)]);
         assert!(
@@ -186,18 +189,18 @@ mod tests {
     /// locally held instance is the base (clause 5.7.1.4).
     #[test]
     fn modified_at_decides_next_and_an_undecided_conflict_keeps_the_local_instance() {
-        let mut local = entity(json!({"speed": {"type": "Property", "value": 10, "modifiedAt": "2021-01-01T00:00:00Z"}}));
-        let newer = entity(json!({"speed": {"type": "Property", "value": 20, "modifiedAt": "2022-01-01T00:00:00Z"}}));
+        let mut local = entity(&json!({"speed": {"type": "Property", "value": 10, "modifiedAt": "2021-01-01T00:00:00Z"}}));
+        let newer = entity(&json!({"speed": {"type": "Property", "value": 20, "modifiedAt": "2022-01-01T00:00:00Z"}}));
         merge_entity_attributes(&mut local, newer, MergePolicy::Instances);
         pretty_assertions::assert_eq!(speed_values(&local), vec![json!(20)]);
 
-        let mut local = entity(json!({"speed": {"type": "Property", "value": 10}}));
-        let undecided = entity(json!({"speed": {"type": "Property", "value": 20}}));
+        let mut local = entity(&json!({"speed": {"type": "Property", "value": 10}}));
+        let undecided = entity(&json!({"speed": {"type": "Property", "value": 20}}));
         merge_entity_attributes(&mut local, undecided, MergePolicy::Instances);
         pretty_assertions::assert_eq!(speed_values(&local), vec![json!(10)]);
 
-        let mut local = entity(json!({"speed": {"type": "Property", "value": 10, "observedAt": "2021-01-01T00:00:00Z"}}));
-        let same_instant = entity(json!({"speed": {"type": "Property", "value": 20, "observedAt": "2021-01-01T00:00:00Z"}}));
+        let mut local = entity(&json!({"speed": {"type": "Property", "value": 10, "observedAt": "2021-01-01T00:00:00Z"}}));
+        let same_instant = entity(&json!({"speed": {"type": "Property", "value": 20, "observedAt": "2021-01-01T00:00:00Z"}}));
         merge_entity_attributes(&mut local, same_instant, MergePolicy::Instances);
         pretty_assertions::assert_eq!(speed_values(&local), vec![json!(10)]);
     }
@@ -206,8 +209,8 @@ mod tests {
     /// supplied; a present attribute is never touched.
     #[test]
     fn an_auxiliary_source_only_supplements_missing_attributes() {
-        let mut local = entity(json!({"speed": {"type": "Property", "value": 10}}));
-        let auxiliary = entity(json!({
+        let mut local = entity(&json!({"speed": {"type": "Property", "value": 10}}));
+        let auxiliary = entity(&json!({
             "speed": {"type": "Property", "value": 99, "observedAt": "2030-01-01T00:00:00Z"},
             "fuel": {"type": "Property", "value": 70}
         }));
@@ -221,8 +224,8 @@ mod tests {
     /// `GeoProperties` merge like any other attribute.
     #[test]
     fn entity_expires_at_and_location_follow_the_conflict_rules() {
-        let mut local = entity(json!({"expiresAt": "2030-01-01T00:00:00Z"}));
-        let remote = entity(json!({
+        let mut local = entity(&json!({"expiresAt": "2030-01-01T00:00:00Z"}));
+        let remote = entity(&json!({
             "expiresAt": "2031-01-01T00:00:00Z",
             "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}}
         }));
@@ -230,8 +233,8 @@ mod tests {
         pretty_assertions::assert_eq!(local.expires_at.map(|at| at.to_rfc3339()), Some("2031-01-01T00:00:00+00:00".to_string()));
         assert!(local.location.is_some());
 
-        let mut without = entity(json!({}));
-        merge_entity_attributes(&mut without, entity(json!({"expiresAt": "2031-01-01T00:00:00Z"})), MergePolicy::Instances);
+        let mut without = entity(&json!({}));
+        merge_entity_attributes(&mut without, entity(&json!({"expiresAt": "2031-01-01T00:00:00Z"})), MergePolicy::Instances);
         assert!(without.expires_at.is_none());
     }
 }

@@ -474,7 +474,7 @@ async fn notification_failed_delivery_sets_failed_status_and_last_failure_timest
         sleep(Duration::from_secs(1)).await;
     }
 
-    unreachable!("subscription notification status did not become failed within retry window");
+    panic!("subscription notification status did not become failed within retry window");
 }
 
 #[serial_test::serial]

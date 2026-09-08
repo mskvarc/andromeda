@@ -21,6 +21,12 @@ pub struct SchemaContract {
 
 impl SchemaContract {
     /// The contract an embedded migrator expresses.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaContractError::NoMigrations`] when the migrator carries
+    /// no up migration, and [`SchemaContractError::SchemaVersionValue`] when a
+    /// migration's version is not a valid schema version.
     pub fn of(migrator: &Migrator) -> Result<SchemaContract, SchemaContractError> {
         SchemaContract::over(migrator.iter())
     }
@@ -67,9 +73,8 @@ impl SchemaContract {
                 Some(highest.map_or(version, |highest: i64| highest.max(version))),
             )
         });
-        let (lowest, highest) = match (lowest, highest) {
-            (Some(lowest), Some(highest)) => (lowest, highest),
-            (None, _) | (_, None) => return Err(SchemaContractError::NoMigrations),
+        let (Some(lowest), Some(highest)) = (lowest, highest) else {
+            return Err(SchemaContractError::NoMigrations);
         };
         Ok(SchemaContract {
             first_version: SchemaVersion::try_from(lowest)?,
@@ -80,6 +85,12 @@ impl SchemaContract {
 }
 
 /// Return the tenant schema contract embedded in the running broker binary.
+///
+/// # Errors
+///
+/// Returns [`SchemaContractError::NoMigrations`] when the embedded tenant
+/// migration set is empty, and [`SchemaContractError::SchemaVersionValue`] when a
+/// migration's version is not a valid schema version.
 pub fn current_tenant_schema_contract() -> Result<SchemaContract, SchemaContractError> {
     let migrator = sqlx::migrate!("../../migrations/tenant");
     SchemaContract::of(&migrator)
@@ -115,7 +126,7 @@ mod tests {
 
         let contract = match SchemaContract::over(&migrations) {
             Ok(value) => value,
-            Err(error) => unreachable!("the set has a contract: {error}"),
+            Err(error) => panic!("the set has a contract: {error}"),
         };
         pretty_assertions::assert_eq!(contract.version().get(), 39);
         pretty_assertions::assert_eq!(contract.digest(), MigrationsDigest::of(&migrations));
@@ -132,7 +143,7 @@ mod tests {
 
         let contract = match SchemaContract::over(&migrations) {
             Ok(value) => value,
-            Err(error) => unreachable!("the set has a contract: {error}"),
+            Err(error) => panic!("the set has a contract: {error}"),
         };
         pretty_assertions::assert_eq!(contract.first_version().get(), 2);
         pretty_assertions::assert_eq!(contract.version().get(), 39);
@@ -159,7 +170,7 @@ mod tests {
 
         let contract = match SchemaContract::over(&migrations) {
             Ok(value) => value,
-            Err(error) => unreachable!("the set has a contract: {error}"),
+            Err(error) => panic!("the set has a contract: {error}"),
         };
         pretty_assertions::assert_eq!(contract.version().get(), 7);
     }

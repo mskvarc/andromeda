@@ -19,7 +19,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use reqwest::StatusCode;
 use serde_json::json;
 use serial_test::serial;
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Row, error::DatabaseError};
 use std::collections::BTreeSet;
 use uuid::Uuid;
 
@@ -84,7 +84,7 @@ async fn temporal_semantics_write_idempotency_replays_collide_instead_of_duplica
         .await;
     let violation = replayed.expect_err("a replayed consequence must not be stored twice");
     assert_eq!(
-        violation.as_database_error().and_then(sqlx::error::DatabaseError::code).as_deref(),
+        violation.as_database_error().and_then(DatabaseError::code).as_deref(),
         Some("23505"),
         "the collision is a uniqueness violation on (recorded_at, write_id, write_ordinal)"
     );

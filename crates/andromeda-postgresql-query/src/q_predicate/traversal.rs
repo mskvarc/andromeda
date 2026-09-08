@@ -42,20 +42,20 @@ use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, JoinType, Query, S
 /// again to render the probe around it.
 pub(crate) struct LinkedHop {
     /// Alias of this hop's `current_attribute_values` scan.
-    attribute_alias: String,
+    attribute_values: String,
     /// Alias of the `entities` row this hop lands on.
-    linked_alias: String,
+    linked_entity: String,
     /// Alias of that entity's `entity_search` row, joined only for a type guard.
-    linked_search_alias: String,
+    linked_search: String,
 }
 
 impl LinkedHop {
     /// The hop `depth` levels into a traversal, counting from one.
     pub(crate) fn at_depth(depth: usize) -> LinkedHop {
         LinkedHop {
-            attribute_alias: format!("cav_ln{depth}"),
-            linked_alias: format!("le{depth}"),
-            linked_search_alias: format!("ls{depth}"),
+            attribute_values: format!("cav_ln{depth}"),
+            linked_entity: format!("le{depth}"),
+            linked_search: format!("ls{depth}"),
         }
     }
 
@@ -63,8 +63,8 @@ impl LinkedHop {
     /// linked identity row, and the payload by key lookup.
     pub(crate) fn inner_rows(&self) -> EntityRowRefs {
         EntityRowRefs::aliased(
-            Alias::new(self.linked_alias.as_str()),
-            Alias::new(self.linked_search_alias.as_str()),
+            Alias::new(self.linked_entity.as_str()),
+            Alias::new(self.linked_search.as_str()),
             DocumentsRef::ByKeyLookup,
         )
     }
@@ -89,8 +89,8 @@ impl LinkedHop {
     ) -> Condition {
         // Fresh alias handles rather than clones: each names the same relation
         // the hop introduced.
-        let hop = || Alias::new(self.attribute_alias.as_str());
-        let linked = || Alias::new(self.linked_alias.as_str());
+        let hop = || Alias::new(self.attribute_values.as_str());
+        let linked = || Alias::new(self.linked_entity.as_str());
 
         // The Relationship's object is the linked Entity's URI (clause 4.5.3), so
         // the projection's `value_uri` joins to `entities.id`.
@@ -112,7 +112,7 @@ impl LinkedHop {
         // The guard is the only reader of the linked entity's search row, so the
         // row is joined only when there is one.
         if !guard_types.is_empty() {
-            let search = || Alias::new(self.linked_search_alias.as_str());
+            let search = || Alias::new(self.linked_search.as_str());
             probe
                 .join_as(
                     JoinType::Join,
@@ -120,7 +120,7 @@ impl LinkedHop {
                     search(),
                     SeaExpr::col((search(), EntitySearch::EntityKey)).equals((linked(), Entities::EntityKey)),
                 )
-                .and_where(type_guard(guard_types, types, self.linked_search_alias.as_str()));
+                .and_where(type_guard(guard_types, types, self.linked_search.as_str()));
         }
         // The inner predicate is added as its own condition for the same reason,
         // before any future compilation of it renders a top-level `OR`.
