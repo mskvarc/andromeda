@@ -4,7 +4,6 @@ use crate::{
     entity_operations::{
         AcceptFormat,
         ContextSpec,
-        ContextUrl,
         CsrModeFilter,
         EntityQueryParameters,
         EntityQueryService,
@@ -16,7 +15,7 @@ use crate::{
         JsonLd,
         NgsiLdCollectionResponse,
         NgsiLdProtocolHeaders,
-        OriginalUri,
+        NgsiLdRequestEnvelope,
         PostQueryParams,
         ProblemResponse,
         Query,
@@ -41,7 +40,6 @@ use andromeda_federation::{
 use andromeda_http_extraction::context_target;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_model::entity::Entity;
-use axum::http::HeaderMap;
 
 /// The entities the matching context sources contributed to a batch query,
 /// merged onto the ones this broker holds itself, with the clause 6.3.17
@@ -92,11 +90,14 @@ pub(crate) async fn query(
         target,
         snapshot: _,
     }: EntityTenantState,
-    OriginalUri(uri): OriginalUri,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     accept: AcceptFormat,
-    context: ContextUrl,
     protocol: NgsiLdProtocolHeaders,
-    headers: HeaderMap,
     ValidatedQuery(qparams): ValidatedQuery<PostQueryParams>,
     JsonLd {
         value: request,
@@ -125,7 +126,6 @@ pub(crate) async fn query(
     params.geometry_property = qparams.geometry_property.or(params.geometry_property);
     protocol.extensions().apply_to_entity_query(&mut params).with_entity_instance(&uri)?;
     let language_filter = qparams.lang.or_else(|| params.lang.take()).or(protocol.language_filter);
-    let incoming_via = protocol.incoming_via;
     let prefer = protocol.prefer;
 
     params.validate().with_entity_instance(&uri)?;

@@ -10,7 +10,10 @@
 //! expressed as a list of [`NotificationGroup`]s, one per change, each
 //! identifying one attribute instance or one entity lifecycle event.
 
-use crate::EntityService;
+use crate::{
+    EntityService,
+    notification_fanout::{ChangedEntity, MutationSnapshots},
+};
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_match::SubscriptionMatch};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
@@ -90,19 +93,19 @@ impl EntityService {
         previous_snapshot: Option<&Value>,
     ) -> NotificationPlan {
         let snapshot_ref = entity_snapshot.map(|snapshot| &**snapshot);
+        let mutated = ChangedEntity {
+            target,
+            id: entity_id,
+            types: entity_types,
+        };
+        let snapshots = MutationSnapshots {
+            current: snapshot_ref,
+            previous: previous_snapshot,
+        };
         let mut matches = Vec::new();
         let mut events = Vec::with_capacity(groups.len());
         for group in groups {
-            matches.extend(self.build_subscription_matches_for_instance(
-                target,
-                entity_id,
-                entity_types,
-                group.trigger,
-                &group.attributes,
-                group.dataset_id.as_ref(),
-                snapshot_ref,
-                previous_snapshot,
-            ));
+            matches.extend(self.build_subscription_matches_for_instance(mutated, group.trigger, &group.attributes, group.dataset_id.as_ref(), snapshots));
             events.push(
                 ChangeEvent::builder()
                     .entity_id(entity_id.clone()) // clone: the event owns its identifier

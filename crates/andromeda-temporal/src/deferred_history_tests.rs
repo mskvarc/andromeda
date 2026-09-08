@@ -1,7 +1,7 @@
 use crate::{
     append_intent::{SequencedTemporalAppendIntent, TemporalAppendEntry, TemporalAppendIntent, TemporalIntentSequence, TemporalObservationIdentity},
     error::TemporalError,
-    intent_drain::TemporalIntentDrain,
+    intent_drain::{TemporalIntentClaim, TemporalIntentDrain},
     intent_retry_policy::{ERROR_SUMMARY_LIMIT, TemporalIntentRetryPolicy},
     outcome::{TemporalEntityCandidate, TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
     pending_overlay::PendingTemporalHistoryOverlay,
@@ -403,10 +403,12 @@ fn drain(queue: Arc<RecordingQueue>, sink: Arc<RecordingSink>) -> TemporalIntent
         Arc::clone(&queue) as Arc<dyn TemporalIntentQueue>,
         queue as Arc<dyn PendingTemporalIntentReader>,
         sink,
-        TemporalIntentLeaseOwner::mint(),
-        TemporalIntentBatchSize::new(NonZeroU32::new(8).expect("non-zero batch")),
-        Duration::from_secs(30),
-        retry_policy(),
+        TemporalIntentClaim {
+            owner: TemporalIntentLeaseOwner::mint(),
+            batch_size: TemporalIntentBatchSize::new(NonZeroU32::new(8).expect("non-zero batch")),
+            lease_duration: Duration::from_secs(30),
+            retry_policy: retry_policy(),
+        },
     )
 }
 

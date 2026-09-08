@@ -1,17 +1,14 @@
 //! HTTP handling for temporal add attributes (clause 5.6.12).
 
 use crate::temporal::{
-    ContextUrl,
     ForwardProvisionRequest,
     ForwardingOperation,
-    HeaderMap,
-    IncomingVia,
     IntoResponse,
     JsonLd,
     LocalOnlyParams,
     LocalOutcome,
     Method,
-    OriginalUri,
+    NgsiLdRequestEnvelope,
     ProblemResponse,
     ProvisionResource,
     Response,
@@ -39,12 +36,14 @@ pub async fn add_attrs(
         target,
         snapshot: _,
     }: TenantState,
-    OriginalUri(uri): OriginalUri,
-    context: ContextUrl,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
-    IncomingVia(incoming_via): IncomingVia,
-    headers: HeaderMap,
     JsonLd {
         value: payload,
         context: body_context,

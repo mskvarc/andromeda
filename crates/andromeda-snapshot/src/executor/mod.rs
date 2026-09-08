@@ -1,21 +1,21 @@
 //! Snapshot query execution for NGSI-LD clause 5.16.1.4.
 
+/// Where a snapshot capture reads the context it freezes.
+pub mod capture_sources;
 mod execution;
 mod status;
 mod translation;
 
 use crate::{
     error::SnapshotError,
+    executor::capture_sources::SnapshotCaptureSources,
     status::validate_preparing_transition,
     store::{SnapshotPreparationJob, SnapshotStore},
 };
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::query::EntityQueryService;
-use andromeda_federation::FederationService;
 use andromeda_jsonld::context_spec::{ContextSpec, CoreContextPolicy};
 use andromeda_ngsi_ld_model::snapshot::{Snapshot, SnapshotStatus};
-use andromeda_temporal::service::TemporalService;
 use chrono::Utc;
 use futures::{StreamExt, future::ready, stream};
 use std::{collections::HashSet, sync::Arc, time::Duration};
@@ -25,12 +25,9 @@ use uuid::Uuid;
 
 /// Executes a snapshot's typed queries and persists their frozen results.
 pub struct SnapshotExecutor {
-    live_target: ContextTarget,
+    sources: SnapshotCaptureSources,
     snapshot_repo: Arc<dyn SnapshotStore>,
     writes: Arc<dyn ContextCommitter>,
-    entity_query: Arc<EntityQueryService>,
-    temporal: Arc<TemporalService>,
-    forwarding: Arc<FederationService>,
     capture_page_size: u32,
     tenant_count_quota: Option<usize>,
     tenant_byte_quota: Option<u64>,
@@ -39,23 +36,17 @@ pub struct SnapshotExecutor {
 impl SnapshotExecutor {
     /// Creates a snapshot executor wired to the query services.
     pub fn new(
-        live_target: ContextTarget,
+        sources: SnapshotCaptureSources,
         snapshot_repo: Arc<dyn SnapshotStore>,
         writes: Arc<dyn ContextCommitter>,
-        entity_query: Arc<EntityQueryService>,
-        temporal: Arc<TemporalService>,
-        forwarding: Arc<FederationService>,
         capture_page_size: usize,
         tenant_count_quota: Option<usize>,
         tenant_byte_quota: Option<u64>,
     ) -> SnapshotExecutor {
         SnapshotExecutor {
-            live_target,
+            sources,
             snapshot_repo,
             writes,
-            entity_query,
-            temporal,
-            forwarding,
             capture_page_size: u32::try_from(capture_page_size).unwrap_or(u32::MAX),
             tenant_count_quota,
             tenant_byte_quota,
@@ -148,22 +139,16 @@ pub struct SnapshotPreparationConfig {
 impl SnapshotPreparation {
     /// Construct preparation from focused policy ports and query operations.
     pub fn new(
-        live_target: ContextTarget,
+        sources: SnapshotCaptureSources,
         store: Arc<dyn SnapshotStore>,
         writes: Arc<dyn ContextCommitter>,
-        entity_query: Arc<EntityQueryService>,
-        temporal: Arc<TemporalService>,
-        forwarding: Arc<FederationService>,
         config: SnapshotPreparationConfig,
     ) -> SnapshotPreparation {
         SnapshotPreparation {
             executor: SnapshotExecutor::new(
-                live_target,
-                Arc::clone(&store),
+                sources,
+                Arc::clone(&store), // clone: the preparation claims the jobs its executor promotes through the same store.
                 writes,
-                entity_query,
-                temporal,
-                forwarding,
                 config.capture_page_size,
                 config.tenant_count_quota,
                 config.tenant_byte_quota,

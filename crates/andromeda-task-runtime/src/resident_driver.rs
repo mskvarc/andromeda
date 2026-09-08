@@ -2,30 +2,24 @@
 
 use crate::{
     control::{ResidentExecution, ResidentReadiness},
+    driver_supervision::DriverSupervision,
     failure::TaskFailure,
     lifecycle_event::{LifecycleEventKind, TaskLifecycleEvent},
     resident_task::ResidentOperation,
-    restart_policy::RestartPolicy,
-    task_health::TaskHealth,
-    task_name::TaskName,
     task_observer::{DriverTerminal, emit},
 };
 use std::{sync::Arc, time::SystemTime};
-use tokio::{
-    sync::{RwLock, broadcast},
-    time::sleep,
-};
-use tokio_util::sync::CancellationToken;
+use tokio::time::sleep;
 
 /// Execute a resident operation, treating unrequested completion as an unexpected transient exit.
-pub(crate) async fn run(
-    name: TaskName,
-    restart_policy: RestartPolicy,
-    operation: Arc<ResidentOperation>,
-    cancellation: CancellationToken,
-    health: Arc<RwLock<TaskHealth>>,
-    lifecycle: broadcast::Sender<TaskLifecycleEvent>,
-) -> DriverTerminal {
+pub(crate) async fn run(supervision: DriverSupervision, operation: Arc<ResidentOperation>) -> DriverTerminal {
+    let DriverSupervision {
+        name,
+        restart_policy,
+        cancellation,
+        health,
+        lifecycle,
+    } = supervision;
     loop {
         health.write().await.running(SystemTime::now());
         emit(&lifecycle, TaskLifecycleEvent::new(name.clone(), LifecycleEventKind::Started)); // clone: restart attempts retain one stable task identity.

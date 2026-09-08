@@ -2,7 +2,10 @@
 
 use crate::{
     error::TemporalError,
-    linked::candidates::{RemoteEligibility, TemporalLinkedCandidate, collect_candidates, identifiers_in},
+    linked::{
+        TemporalJoinRequest,
+        candidates::{RemoteEligibility, TemporalLinkedCandidate, collect_candidates, identifiers_in},
+    },
     outcome::{TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
     port::{
         history_reader::{
@@ -16,6 +19,7 @@ use crate::{
         },
         mutation_barrier::TemporalMutationBarrier,
         mutator::{TemporalDeleteScope, TemporalMutator},
+        service_ports::TemporalServicePorts,
     },
     remote_linked::{RemoteTemporalLinkedEntities, RemoteTemporalLinkedSource, TemporalLinkedWindow},
     service::TemporalService,
@@ -504,11 +508,13 @@ impl ContextCommitter for StubBroker {
 fn service(broker: StubBroker) -> TemporalService {
     let broker = Arc::new(broker);
     TemporalService::new(
-        Arc::clone(&broker) as Arc<dyn EntityReader>, // clone: one test double supplies every focused capability
-        Arc::clone(&broker) as Arc<dyn TemporalHistoryReader>,
-        Arc::clone(&broker) as Arc<dyn TemporalMutationBarrier>,
-        Arc::clone(&broker) as Arc<dyn TemporalMutator>,
-        broker as Arc<dyn ContextCommitter>,
+        TemporalServicePorts {
+            entity_reader: Arc::clone(&broker) as Arc<dyn EntityReader>, // clone: one test double supplies every focused capability
+            reader: Arc::clone(&broker) as Arc<dyn TemporalHistoryReader>,
+            mutation_barrier: Arc::clone(&broker) as Arc<dyn TemporalMutationBarrier>,
+            mutator: Arc::clone(&broker) as Arc<dyn TemporalMutator>,
+            writes: broker as Arc<dyn ContextCommitter>,
+        },
         JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
         100,
         None,
@@ -549,7 +555,17 @@ fn root(id: &str, targets: &[&str]) -> Value {
 
 async fn resolve(broker: StubBroker, roots: &[Value], join_level: NonZeroU32, contained_by: &HashSet<Uri>) -> Vec<String> {
     let resolved = service(broker)
-        .resolve_linked_temporal(&live_target(), roots, &[], &window(), join_level, contained_by, &context())
+        .resolve_linked_temporal(
+            &live_target(),
+            roots,
+            &[],
+            &TemporalJoinRequest {
+                params: &window(),
+                join_level,
+                contained_by,
+                context: &context(),
+            },
+        )
         .await
         .expect("resolves");
     resolved.entities.keys().map(ToString::to_string).collect()
@@ -703,11 +719,13 @@ impl RemoteTemporalLinkedSource for RecordingSource {
 fn service_with_remote(broker: StubBroker, source: &Arc<RecordingSource>) -> TemporalService {
     let broker = Arc::new(broker);
     TemporalService::new(
-        Arc::clone(&broker) as Arc<dyn EntityReader>, // clone: one test double supplies every focused capability
-        Arc::clone(&broker) as Arc<dyn TemporalHistoryReader>,
-        Arc::clone(&broker) as Arc<dyn TemporalMutationBarrier>,
-        Arc::clone(&broker) as Arc<dyn TemporalMutator>,
-        broker as Arc<dyn ContextCommitter>,
+        TemporalServicePorts {
+            entity_reader: Arc::clone(&broker) as Arc<dyn EntityReader>, // clone: one test double supplies every focused capability
+            reader: Arc::clone(&broker) as Arc<dyn TemporalHistoryReader>,
+            mutation_barrier: Arc::clone(&broker) as Arc<dyn TemporalMutationBarrier>,
+            mutator: Arc::clone(&broker) as Arc<dyn TemporalMutator>,
+            writes: broker as Arc<dyn ContextCommitter>,
+        },
         JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
         100,
         Some(Arc::clone(source) as Arc<dyn RemoteTemporalLinkedSource>), // clone: the test keeps its handle on the recording
@@ -734,7 +752,17 @@ async fn an_absent_annotated_candidate_is_fetched_with_the_remaining_depth_and_t
     let roots = [annotated_root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
     let resolved = service_with_remote(StubBroker::new([]), &source)
-        .resolve_linked_temporal(&live_target(), &roots, &[], &window(), level(2), &HashSet::new(), &context())
+        .resolve_linked_temporal(
+            &live_target(),
+            &roots,
+            &[],
+            &TemporalJoinRequest {
+                params: &window(),
+                join_level: level(2),
+                contained_by: &HashSet::new(),
+                context: &context(),
+            },
+        )
         .await
         .expect("resolves");
 
@@ -758,7 +786,17 @@ async fn an_absent_unannotated_candidate_is_never_fetched_remotely() {
     let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
     let resolved = service_with_remote(StubBroker::new([]), &source)
-        .resolve_linked_temporal(&live_target(), &roots, &[], &window(), level(1), &HashSet::new(), &context())
+        .resolve_linked_temporal(
+            &live_target(),
+            &roots,
+            &[],
+            &TemporalJoinRequest {
+                params: &window(),
+                join_level: level(1),
+                contained_by: &HashSet::new(),
+                context: &context(),
+            },
+        )
         .await
         .expect("resolves");
 
@@ -777,7 +815,17 @@ async fn a_failing_remote_source_reports_an_unreachable_failure() {
     let roots = [annotated_root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
     let resolved = service_with_remote(StubBroker::new([]), &source)
-        .resolve_linked_temporal(&live_target(), &roots, &[], &window(), level(1), &HashSet::new(), &context())
+        .resolve_linked_temporal(
+            &live_target(),
+            &roots,
+            &[],
+            &TemporalJoinRequest {
+                params: &window(),
+                join_level: level(1),
+                contained_by: &HashSet::new(),
+                context: &context(),
+            },
+        )
         .await
         .expect("resolves despite the unreachable remainder");
 
@@ -805,7 +853,17 @@ async fn a_remote_brokers_extra_entities_are_neither_re_fetched_nor_expanded() {
     let roots = [annotated_root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
     let resolved = service_with_remote(broker, &source)
-        .resolve_linked_temporal(&live_target(), &roots, &[], &window(), level(2), &HashSet::new(), &context())
+        .resolve_linked_temporal(
+            &live_target(),
+            &roots,
+            &[],
+            &TemporalJoinRequest {
+                params: &window(),
+                join_level: level(2),
+                contained_by: &HashSet::new(),
+                context: &context(),
+            },
+        )
         .await
         .expect("resolves");
 
@@ -837,7 +895,17 @@ async fn a_seed_resolves_links_the_projected_roots_no_longer_carry() {
     }];
 
     let resolved = service(broker)
-        .resolve_linked_temporal(&live_target(), &[projected], &seed, &window(), level(1), &HashSet::new(), &context())
+        .resolve_linked_temporal(
+            &live_target(),
+            &[projected],
+            &seed,
+            &TemporalJoinRequest {
+                params: &window(),
+                join_level: level(1),
+                contained_by: &HashSet::new(),
+                context: &context(),
+            },
+        )
         .await
         .expect("resolves");
 
@@ -873,7 +941,17 @@ async fn a_nested_pick_narrows_the_linked_entity_under_temporal_values() {
     params.pick = Some(parse_projection_list("linksTo{reading}").expect("valid projection list"));
 
     let resolved = service(broker)
-        .resolve_linked_temporal(&live_target(), &[projected], &seed, &params, level(1), &HashSet::new(), &context())
+        .resolve_linked_temporal(
+            &live_target(),
+            &[projected],
+            &seed,
+            &TemporalJoinRequest {
+                params: &params,
+                join_level: level(1),
+                contained_by: &HashSet::new(),
+                context: &context(),
+            },
+        )
         .await
         .expect("resolves");
 
@@ -897,7 +975,17 @@ async fn a_nested_omit_narrows_the_resolved_target() {
     params.omit = Some(parse_projection_list("linksTo{reading}").expect("valid projection list"));
 
     let resolved = service(broker)
-        .resolve_linked_temporal(&live_target(), &roots, &[], &params, level(1), &HashSet::new(), &context())
+        .resolve_linked_temporal(
+            &live_target(),
+            &roots,
+            &[],
+            &TemporalJoinRequest {
+                params: &params,
+                join_level: level(1),
+                contained_by: &HashSet::new(),
+                context: &context(),
+            },
+        )
         .await
         .expect("resolves");
 
@@ -919,7 +1007,17 @@ async fn a_linked_entity_lacking_the_requested_attrs_still_appears_with_its_own(
     narrowed.attrs = Some(vec!["https://example.com/absent".parse().expect("valid attribute name")]);
 
     let resolved = service(broker)
-        .resolve_linked_temporal(&live_target(), &roots, &[], &narrowed, level(1), &HashSet::new(), &context())
+        .resolve_linked_temporal(
+            &live_target(),
+            &roots,
+            &[],
+            &TemporalJoinRequest {
+                params: &narrowed,
+                join_level: level(1),
+                contained_by: &HashSet::new(),
+                context: &context(),
+            },
+        )
         .await
         .expect("resolves");
 

@@ -2,7 +2,7 @@
 
 use crate::{
     linked::candidates::TemporalLinkedCandidate,
-    port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator},
+    port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator, service_ports::TemporalServicePorts},
     remote_linked::RemoteTemporalLinkedSource,
 };
 use andromeda_context_commit::committer::ContextCommitter;
@@ -172,16 +172,20 @@ impl TemporalService {
     /// `remote_temporal_linked` is the clause 4.5.23.1 half of a join that this
     /// broker's own history cannot answer. `None` confines every join to local
     /// history.
+    #[must_use]
     pub fn new(
-        entity_reader: Arc<dyn EntityReader>,
-        reader: Arc<dyn TemporalHistoryReader>,
-        mutation_barrier: Arc<dyn TemporalMutationBarrier>,
-        mutator: Arc<dyn TemporalMutator>,
-        writes: Arc<dyn ContextCommitter>,
+        ports: TemporalServicePorts,
         engine: JsonLdEngine,
         default_last_n: u32,
         remote_temporal_linked: Option<Arc<dyn RemoteTemporalLinkedSource>>,
     ) -> TemporalService {
+        let TemporalServicePorts {
+            entity_reader,
+            reader,
+            mutation_barrier,
+            mutator,
+            writes,
+        } = ports;
         TemporalService {
             reader,
             mutation_barrier,

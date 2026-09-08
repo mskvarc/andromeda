@@ -7,7 +7,13 @@
 //! transaction as the delete, which means they must exist before it runs, so it
 //! reads them first.
 
-use crate::{EntityService, error::EntityError, side_effect::BatchSideEffectMode, sys_attrs::snapshot_with_sys_attrs};
+use crate::{
+    EntityService,
+    error::EntityError,
+    notification_fanout::{ChangedEntity, MutationSnapshots},
+    side_effect::BatchSideEffectMode,
+    sys_attrs::snapshot_with_sys_attrs,
+};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     batch_side_effect_job::BatchSideEffectJob,
@@ -50,28 +56,26 @@ impl EntityService {
         let attr_keys = extract_attribute_names(payload);
         let attribute_changes = classify_attribute_changes(payload, &Value::Null);
         let match_snapshot = sys_attrs.map_or_else(|| payload.clone(), |sys_attrs| snapshot_with_sys_attrs(payload, sys_attrs));
+        let deleted = ChangedEntity {
+            target,
+            id,
+            types: &entity_types,
+        };
+        let snapshots = MutationSnapshots {
+            current: Some(&match_snapshot),
+            previous: Some(payload),
+        };
         let mut matches = Vec::new();
         for change in attribute_changes {
             matches.extend(self.build_subscription_matches_for_instance(
-                target,
-                id,
-                &entity_types,
+                deleted,
                 NotificationTrigger::AttributeDeleted,
                 slice::from_ref(&change.key.attr),
                 change.key.dataset_id.as_ref(),
-                Some(&match_snapshot),
-                Some(payload),
+                snapshots,
             ));
         }
-        matches.extend(self.build_subscription_matches(
-            target,
-            id,
-            &entity_types,
-            NotificationTrigger::EntityDeleted,
-            &attr_keys,
-            Some(&match_snapshot),
-            Some(payload),
-        ));
+        matches.extend(self.build_subscription_matches(deleted, NotificationTrigger::EntityDeleted, &attr_keys, snapshots));
         matches
     }
 

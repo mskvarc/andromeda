@@ -4,7 +4,7 @@ use crate::{
     action,
     candidate::{IndexTarget, MaintenanceTarget},
     error::MaintenanceError,
-    inspection::{self, CapabilityStatus, HeapSample, IndexSize, MutationPrivilege},
+    inspection::{self, CapabilityStatus, HeapSample, IndexSize, InvalidIndex, MutationPrivilege},
     policy::{DeferralReason, PolicyDecision, PolicyProfile, SafetyGates, decide, safety_deferral},
     state::{self, IndexProbeState, RegisteredTenant},
 };
@@ -179,8 +179,8 @@ impl MaintenanceController {
                 warn!(tenant = tenant.log_name(), database = %tenant.database, target = index.name(), decision = "invalid-index-reported", "Invalid non-maintenance index requires operator investigation");
             }
         }
-        if let Some((artifact, kind)) = invalid.iter().find_map(super::inspection::InvalidIndex::recovery_artifact) {
-            return action::recover_artifact(self.config.mode, platform, &mut connection, &tenant, artifact, kind, profile, cancellation).await;
+        if let Some(artifact) = invalid.iter().find_map(InvalidIndex::recovery_artifact) {
+            return action::recover_artifact(self.config.mode, platform, &mut connection, &tenant, artifact, profile, cancellation).await;
         }
         if let Some(target) = pending_before_sampling {
             return action::execute_pending(self.config.mode, platform, &mut connection, &tenant, target, profile, cancellation).await;

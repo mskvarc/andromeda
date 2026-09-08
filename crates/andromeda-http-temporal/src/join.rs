@@ -7,20 +7,15 @@
 //! nest them inside. Neither the shape of the traversal nor the shape of the
 //! two renderings differs between the endpoints, so it is spelled once here.
 
-use andromeda_context_space::context_target::ContextTarget;
+use crate::history_read::TemporalHistoryRead;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::linked_resolution_warning::with_linked_resolution_warnings;
-use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_render::{response::ResponsePayload, temporal::inline_join::apply_temporal_inline_join};
-use andromeda_ngsi_ld_request::{
-    join_traversal::{RetrievingJoin, traversal_bounds},
-    query::temporal::TemporalQueryParameters,
-};
+use andromeda_ngsi_ld_request::join_traversal::{RetrievingJoin, traversal_bounds};
 use andromeda_temporal::{
     error::TemporalError,
-    linked::{ResolvedLinkedTemporalEntities, candidates::TemporalLinkedCandidate},
-    service::TemporalService,
+    linked::{ResolvedLinkedTemporalEntities, TemporalJoinRequest, candidates::TemporalLinkedCandidate},
 };
 use serde_json::Value;
 
@@ -36,6 +31,10 @@ pub(crate) struct AppliedTemporalJoin {
 }
 
 /// Resolve the request's join and fold it into `entities`.
+///
+/// `read` is the history the roots came out of: the traversal reaches the
+/// Linked Entities through the same service, inside the same target, over the
+/// same temporal window and under the same JSON-LD context.
 ///
 /// `seed` is what the roots named, collected while they were rendered and
 /// before any clause 4.5.8 or 4.5.19 projection erased the `object` members;
@@ -56,19 +55,28 @@ pub(crate) struct AppliedTemporalJoin {
 /// Returns [`TemporalError`] when the query cannot be compiled or the base
 /// entity store cannot be read.
 pub(crate) async fn apply_temporal_join(
-    service: &TemporalService,
-    target: &ContextTarget,
+    read: &TemporalHistoryRead<'_>,
     join: RetrievingJoin,
     entities: &mut Vec<Value>,
     seed: &[TemporalLinkedCandidate],
-    params: &TemporalQueryParameters,
-    context: &ContextSpec,
     warnings: Vec<NgsiLdWarning>,
 ) -> Result<AppliedTemporalJoin, TemporalError> {
+    let params = read.params;
     let (join_level, contained_by) = traversal_bounds(params.join_level, params.contained_by.as_deref());
 
-    let resolved = service
-        .resolve_linked_temporal(target, entities, seed, params, join_level, &contained_by, context)
+    let resolved = read
+        .service
+        .resolve_linked_temporal(
+            read.target,
+            entities,
+            seed,
+            &TemporalJoinRequest {
+                params,
+                join_level,
+                contained_by: &contained_by,
+                context: read.context,
+            },
+        )
         .await?;
     let linked_ids: Vec<Uri> = resolved.entities.keys().cloned().collect();
 

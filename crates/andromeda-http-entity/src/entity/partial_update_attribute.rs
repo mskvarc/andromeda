@@ -2,16 +2,14 @@
 
 use crate::entity::{
     AttributeName,
-    ContextUrl,
     EntityResultExt,
     EntityTenantState,
     ForwardProvisionRequest,
     ForwardingOperation,
-    IncomingVia,
     IntoResponse,
     JsonLd,
     LocalOutcome,
-    OriginalUri,
+    NgsiLdRequestEnvelope,
     PartialUpdateAttrParams,
     ProblemResponse,
     ProvisionResource,
@@ -29,7 +27,7 @@ use crate::entity::{
 };
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
-use axum::http::{HeaderMap, Method};
+use axum::http::Method;
 
 pub(crate) async fn partial_update_attr(
     context_target::ExistingTargetedTenantState {
@@ -37,12 +35,14 @@ pub(crate) async fn partial_update_attr(
         target,
         snapshot: _,
     }: EntityTenantState,
-    OriginalUri(uri): OriginalUri,
-    context: ContextUrl,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     TypedPath((id, attr_id)): TypedPath<(Uri, AttributeName)>,
     ValidatedQuery(params): ValidatedQuery<PartialUpdateAttrParams>,
-    IncomingVia(incoming_via): IncomingVia,
-    headers: HeaderMap,
     JsonLd {
         value: fragment,
         context: body_context,

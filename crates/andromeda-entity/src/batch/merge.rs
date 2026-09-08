@@ -4,7 +4,13 @@
 //! fragment is applied with clause 5.6.2 merge semantics rather than by
 //! updating and appending in turn.
 
-use crate::{EntityService, batch::BatchResult, error::EntityError, notification_plan::attribute_change_groups, side_effect::BatchSideEffectMode};
+use crate::{
+    EntityService,
+    batch::{BatchResult, chunk::UpdatedPayloads},
+    error::EntityError,
+    notification_plan::attribute_change_groups,
+    side_effect::BatchSideEffectMode,
+};
 use andromeda_context_commit::precondition::Precondition;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -51,11 +57,12 @@ impl EntityService {
             writes.push(self.chunk_update(
                 target,
                 id,
-                previous,
-                Arc::new(existing),
-                Arc::new(prepared_entity.expanded),
+                UpdatedPayloads {
+                    previous,
+                    merged: Arc::new(existing),
+                    observed: Arc::new(prepared_entity.expanded),
+                },
                 &groups,
-                Some(previous),
                 Precondition::MustExist,
             ));
         }

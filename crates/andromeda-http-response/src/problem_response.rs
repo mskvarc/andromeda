@@ -24,6 +24,7 @@ pub struct ProblemResponse {
 
 impl ProblemResponse {
     /// Wrap a fully classified and request-bound problem detail.
+    #[must_use]
     pub const fn new(problem: ProblemDetail) -> ProblemResponse {
         ProblemResponse {
             problem,
@@ -40,11 +41,13 @@ impl ProblemResponse {
     }
 
     /// Borrow the framework-independent wire value.
+    #[must_use]
     pub const fn problem(&self) -> &ProblemDetail {
         &self.problem
     }
 
     /// The warnings the response carries.
+    #[must_use]
     pub fn warnings(&self) -> &[NgsiLdWarning] {
         &self.warnings
     }

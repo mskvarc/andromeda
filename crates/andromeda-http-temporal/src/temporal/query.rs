@@ -2,11 +2,11 @@
 
 use crate::{
     error::single_source_declined,
+    history_read::TemporalHistoryRead,
     join::apply_temporal_join,
     temporal::{
         AcceptFormatNoGeo,
         ContextSpec,
-        ContextUrl,
         ContextualExpander,
         CsrModeFilter,
         DeferredSplitFilters,
@@ -16,7 +16,7 @@ use crate::{
         IntoResponse,
         NgsiLdCollectionResponse,
         NgsiLdProtocolHeaders,
-        OriginalUri,
+        NgsiLdRequestEnvelope,
         PreferHeader,
         ProblemResponse,
         Response,
@@ -62,9 +62,9 @@ use andromeda_ngsi_ld_request::{join_traversal::RetrievingJoin, query::SharedQue
 use andromeda_temporal::{
     error::TemporalError,
     linked::candidates::TemporalLinkedCandidate,
-    service::{TemporalQueryWarning, TemporalRange, TemporalService},
+    service::{TemporalQueryWarning, TemporalRange},
 };
-use axum::http::{HeaderMap, Uri};
+use axum::http::Uri;
 use serde_json::Value;
 use tracing::warn;
 
@@ -74,17 +74,19 @@ pub async fn query(
         target,
         snapshot: _,
     }: TenantState,
-    OriginalUri(uri): OriginalUri,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     accept: AcceptFormatNoGeo,
-    context: ContextUrl,
     protocol: NgsiLdProtocolHeaders,
-    headers: HeaderMap,
     ValidatedQuery(mut params): ValidatedQuery<TemporalQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     let context: ContextSpec = context.into_inner();
     protocol.extensions().apply_to_temporal_query(&mut params).with_instance(&uri)?;
-    let incoming_via = protocol.incoming_via;
     let entity_map_header = protocol.entity_map;
     let key_values = params.is_simplified();
 
@@ -115,14 +117,16 @@ pub async fn query(
     } else {
         Some(
             forward_temporal_history(
-                &state.forwarding,
+                TemporalForwarding {
+                    forwarding: &state.forwarding,
+                    triggering,
+                    split,
+                    map_use: &map_use,
+                },
                 service.engine(),
                 &target,
                 &params,
-                split,
                 &context,
-                triggering,
-                &map_use,
                 &uri,
             )
             .await?,
@@ -140,12 +144,14 @@ pub async fn query(
     let (mut entities, total_count) = cut_merged_page(
         service.engine(),
         &context,
-        deferred,
         merged.entities,
-        filtering,
+        MergedPageCut {
+            deferred,
+            filtering,
+            bounds: merged_page_bounds,
+            local_total,
+        },
         &params,
-        merged_page_bounds,
-        local_total,
         &uri,
     )
     .await?;
@@ -161,31 +167,16 @@ pub async fn query(
     // 206 decision about the roots alone. The join also resolves before
     // EntityMap creation so a requested map can include the linked ids
     // (spec 5.5.14, 5.7.4.4).
-    let (warnings, linked_ids) = join_linked_entities(
-        service,
-        &target,
-        &mut entities,
-        &local_result.linked_candidates,
-        &params,
-        &context,
-        merged.warnings,
-        &uri,
-    )
-    .await?;
+    let read = TemporalHistoryRead {
+        service: &state.temporal,
+        target: &target,
+        params: &params,
+        context: &context,
+    };
+    let (warnings, linked_ids) = join_linked_entities(&read, &mut entities, &local_result.linked_candidates, merged.warnings, &uri).await?;
 
     let map_created = map_use.mints();
-    let entity_map_uri = record_query_map(
-        &state.entity_maps,
-        service,
-        &target,
-        &params,
-        &context,
-        map_use,
-        merged.contributions,
-        linked_ids,
-        &uri,
-    )
-    .await?;
+    let entity_map_uri = record_query_map(&state.entity_maps, &read, map_use, merged.contributions, linked_ids, &uri).await?;
 
     let values = if key_values { simplified_collection(entities, &uri)? } else { entities };
 
@@ -202,11 +193,13 @@ pub async fn query(
         accept,
         &context,
         values,
-        status,
-        warnings,
-        total_count,
-        local_result.range,
-        entity_map_uri,
+        TemporalCollectionMetadata {
+            status,
+            warnings,
+            total_count,
+            range: local_result.range,
+            entity_map_uri,
+        },
         &uri,
     )
 }
@@ -260,6 +253,23 @@ async fn resolve_query_map(
     Ok(map_use)
 }
 
+/// How a temporal query reaches the context sources that hold the rest of the
+/// history: the federation service that contacts them, the triggering request
+/// every forwarded copy replays (clause 6.3.18), the `splitEntities` mode they
+/// are asked under (clause 5.7.4.4), and the Entity Map that fixes which of
+/// them are contacted (clause 5.5.14).
+struct TemporalForwarding<'a> {
+    /// The service that contacts every matching registration.
+    forwarding: &'a FederationService,
+    /// The triggering request every forwarded copy replays, so a forwarding
+    /// loop is detected rather than followed.
+    triggering: TriggeringRequest<'a>,
+    /// Whether an entity's attributes may be spread over several sources.
+    split: SplitEntities,
+    /// The Entity Map the query runs under.
+    map_use: &'a EntityMapUse,
+}
+
 /// Ask every matching context source for its part of the history.
 ///
 /// The context source filter selects registrations in its expanded form; the
@@ -273,16 +283,19 @@ async fn resolve_query_map(
 /// Table 6.4.3.2-3 `NotImplemented` answer when the one source holding all the
 /// data declined the requested representation.
 async fn forward_temporal_history(
-    forwarding: &FederationService,
+    sources: TemporalForwarding<'_>,
     engine: &JsonLdEngine,
     target: &ContextTarget,
     params: &TemporalQueryParameters,
-    split: SplitEntities,
     context: &ContextSpec,
-    triggering: TriggeringRequest<'_>,
-    map_use: &EntityMapUse,
     instance: &Uri,
 ) -> Result<Vec<ForwardedTemporalEntities>, ProblemResponse> {
+    let TemporalForwarding {
+        forwarding,
+        triggering,
+        split,
+        map_use,
+    } = sources;
     let csf_expr = match &params.csf {
         Some(expr) => {
             let prepared_context = engine.prepare_term_context(context);
@@ -471,17 +484,6 @@ fn merged_page(entities: Vec<Value>, params: &TemporalQueryParameters, limit: u3
     (page, total)
 }
 
-/// Record the Entity Map the query ran under and return its location.
-///
-/// Clause 5.5.14: a reused map records the maps its sources answered with; a
-/// minted one (clause 5.7.4.4 `entityMap=true`) covers every matching entity
-/// rather than only the page, and the Linked Entities a join resolved belong
-/// to the same unitary request.
-///
-/// # Errors
-///
-/// The classified failure of listing the matching identifiers or of writing to
-/// the map store.
 /// Hold the requested page back until after the merge when context sources
 /// contributed entities, returning the bounds the merged collection is cut to.
 ///
@@ -498,6 +500,26 @@ fn hold_page_until_merge(params: &mut TemporalQueryParameters, forwarded: Option
     Some(bounds)
 }
 
+/// What the local query held back until the context sources had answered.
+///
+/// Under `splitEntities` no single source held enough of an entity to decide
+/// `q`, the geoquery or the scope query (clause 5.7.4.4), and clause 5.5.9
+/// cuts the page from the merged collection rather than from the local rows.
+/// Both decisions are therefore taken here, over the aggregation.
+struct MergedPageCut {
+    /// The filters that left the local query and are evaluated over the merge.
+    deferred: DeferredSplitFilters,
+    /// Whether an entity's attributes may be spread over several sources,
+    /// which decides whether the deferred filters apply at all.
+    filtering: SplitEntities,
+    /// The page bounds withheld while the merge was pending, absent when no
+    /// source contributed and the local query already cut the page.
+    bounds: Option<(u32, u32)>,
+    /// The match count the local read reported, which stands when no page was
+    /// withheld.
+    local_total: Option<usize>,
+}
+
 /// Apply the deferred `splitEntities` filters (clause 5.7.4.4) to the merged
 /// collection and cut the page the client asked for.
 ///
@@ -508,14 +530,17 @@ fn hold_page_until_merge(params: &mut TemporalQueryParameters, forwarded: Option
 async fn cut_merged_page(
     engine: &JsonLdEngine,
     context: &ContextSpec,
-    deferred: DeferredSplitFilters,
     merged_entities: Vec<Value>,
-    filtering: SplitEntities,
+    cut: MergedPageCut,
     params: &TemporalQueryParameters,
-    bounds: Option<(u32, u32)>,
-    local_total: Option<usize>,
     instance: &Uri,
 ) -> Result<(Vec<Value>, Option<usize>), ProblemResponse> {
+    let MergedPageCut {
+        deferred,
+        filtering,
+        bounds,
+        local_total,
+    } = cut;
     let entities = match filtering {
         SplitEntities::Split => retain_split_matches(engine, context, deferred, merged_entities, instance).await?,
         SplitEntities::Complete => merged_entities,
@@ -537,30 +562,33 @@ async fn cut_merged_page(
 /// The classified failure when the linked-entity query cannot be compiled or
 /// the base entity store cannot be read.
 async fn join_linked_entities(
-    service: &TemporalService,
-    target: &ContextTarget,
+    read: &TemporalHistoryRead<'_>,
     entities: &mut Vec<Value>,
     seed: &[TemporalLinkedCandidate],
-    params: &TemporalQueryParameters,
-    context: &ContextSpec,
     warnings: Vec<NgsiLdWarning>,
     instance: &Uri,
 ) -> Result<(Vec<NgsiLdWarning>, Vec<NgsiLdUri>), ProblemResponse> {
-    let Some(join) = RetrievingJoin::from_mode(params.join) else {
+    let Some(join) = RetrievingJoin::from_mode(read.params.join) else {
         return Ok((warnings, Vec::new()));
     };
-    let applied = apply_temporal_join(service, target, join, entities, seed, params, context, warnings)
-        .await
-        .with_instance(instance)?;
+    let applied = apply_temporal_join(read, join, entities, seed, warnings).await.with_instance(instance)?;
     Ok((applied.warnings, applied.linked_ids))
 }
 
+/// Record the Entity Map the query ran under and return its location.
+///
+/// Clause 5.5.14: a reused map records the maps its sources answered with; a
+/// minted one (clause 5.7.4.4 `entityMap=true`) covers every matching entity
+/// rather than only the page, and the Linked Entities a join resolved belong
+/// to the same unitary request.
+///
+/// # Errors
+///
+/// The classified failure of listing the matching identifiers or of writing to
+/// the map store.
 async fn record_query_map(
     entity_maps: &EntityMapService,
-    service: &TemporalService,
-    target: &ContextTarget,
-    params: &TemporalQueryParameters,
-    context: &ContextSpec,
+    read: &TemporalHistoryRead<'_>,
     map_use: EntityMapUse,
     contributions: Vec<SourceContribution>,
     linked_ids: Vec<NgsiLdUri>,
@@ -575,7 +603,7 @@ async fn record_query_map(
             Ok(Some(map.id))
         }
         EntityMapUse::Mint(mut map) => {
-            let mut local_ids = service.query_ids(target, params, context).await.with_instance(instance)?;
+            let mut local_ids = read.service.query_ids(read.target, read.params, read.context).await.with_instance(instance)?;
             local_ids.extend(linked_ids);
             local_ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
             local_ids.dedup();
@@ -603,6 +631,21 @@ fn simplified_collection(entities: Vec<Value>, instance: &Uri) -> Result<Vec<Val
         .with_instance(instance)
 }
 
+/// The metadata a temporal query's response carries beside its rendered body.
+struct TemporalCollectionMetadata {
+    /// Table 6.18.3.2-2: 201 when an Entity Map has been (re)created, 206 when
+    /// the local history was cut short, 200 otherwise.
+    status: StatusCode,
+    /// The clause 6.3.17 `NGSILD-Warning` entries the read collected.
+    warnings: Vec<NgsiLdWarning>,
+    /// The clause 6.3.13 `NGSILD-Results-Count` of the matches, when asked for.
+    total_count: Option<usize>,
+    /// The `Content-Range` of a history the local read cut short.
+    range: Option<TemporalRange>,
+    /// The Entity Map the query ran under (clause 5.5.14).
+    entity_map_uri: Option<NgsiLdUri>,
+}
+
 /// Render the queried collection and assemble the response around it.
 ///
 /// # Errors
@@ -613,13 +656,16 @@ fn query_response(
     accept: AcceptFormatNoGeo,
     context: &ContextSpec,
     entities: Vec<Value>,
-    status: StatusCode,
-    warnings: Vec<NgsiLdWarning>,
-    total_count: Option<usize>,
-    range: Option<TemporalRange>,
-    entity_map_uri: Option<NgsiLdUri>,
+    metadata: TemporalCollectionMetadata,
     instance: &Uri,
 ) -> Result<Response, ProblemResponse> {
+    let TemporalCollectionMetadata {
+        status,
+        warnings,
+        total_count,
+        range,
+        entity_map_uri,
+    } = metadata;
     let rendered = start_rendering(accept.media_type(), context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Collection(entities))
         .render()

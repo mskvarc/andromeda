@@ -1,33 +1,27 @@
 //! Failure, health and restart mechanics shared by bounded execution forms.
 
 use crate::{
+    driver_supervision::DriverSupervision,
     failure::TaskFailure,
     lifecycle_event::{LifecycleEventKind, TaskLifecycleEvent},
-    restart_policy::RestartPolicy,
-    task_health::TaskHealth,
-    task_name::TaskName,
     task_observer::{DriverTerminal, emit},
 };
 use std::{future::Future, time::SystemTime};
-use tokio::{
-    sync::{RwLock, broadcast},
-    time::{Instant, sleep},
-};
-use tokio_util::sync::CancellationToken;
+use tokio::time::{Instant, sleep};
 
 /// Execute one bounded trigger, retrying only failures admitted by restart policy.
-pub(crate) async fn execute<O, F, Fut>(
-    name: &TaskName,
-    restart_policy: RestartPolicy,
-    operation: F,
-    cancellation: &CancellationToken,
-    health: &RwLock<TaskHealth>,
-    lifecycle: &broadcast::Sender<TaskLifecycleEvent>,
-) -> Result<O, DriverTerminal>
+pub(crate) async fn execute<O, F, Fut>(supervision: &DriverSupervision, operation: F) -> Result<O, DriverTerminal>
 where
     F: Fn() -> Fut,
     Fut: Future<Output = Result<O, TaskFailure>>,
 {
+    let DriverSupervision {
+        name,
+        restart_policy,
+        cancellation,
+        health,
+        lifecycle,
+    } = supervision;
     loop {
         let started = Instant::now();
         health.write().await.running(SystemTime::now());

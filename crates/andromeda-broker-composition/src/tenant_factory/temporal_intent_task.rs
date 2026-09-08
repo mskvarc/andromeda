@@ -16,7 +16,7 @@ use andromeda_task_runtime::{
 use andromeda_temporal::{
     config::TemporalConfig,
     error::TemporalError,
-    intent_drain::TemporalIntentDrain,
+    intent_drain::{TemporalIntentClaim, TemporalIntentDrain},
     intent_retry_policy::TemporalIntentRetryPolicy,
     port::{
         mutation_barrier::TemporalMutationBarrier,
@@ -85,10 +85,12 @@ pub(super) fn register_temporal_intent_drain(
         queue,
         pending,
         sink,
-        TemporalIntentLeaseOwner::mint(),
-        batch_size,
-        Duration::from_secs(config.intent_lease_secs),
-        retry_policy,
+        TemporalIntentClaim {
+            owner: TemporalIntentLeaseOwner::mint(),
+            batch_size,
+            lease_duration: Duration::from_secs(config.intent_lease_secs),
+            retry_policy,
+        },
     ));
     let scheduled_drain = Arc::clone(&drain);
     let name = TaskName::try_from("temporal-intent-delivery").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;

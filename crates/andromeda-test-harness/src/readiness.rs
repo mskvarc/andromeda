@@ -64,7 +64,10 @@ pub async fn wait_until_ready(client: &TestClient, policy: ReadinessPolicy) -> R
             }
             Ok(_response) => {}
             Err(source) if started.elapsed() >= policy.timeout => {
-                return Err(ReadinessError::Unreachable { attempts, source });
+                return Err(ReadinessError::Unreachable {
+                    attempts,
+                    source: Box::new(source),
+                });
             }
             Err(_source) => {}
         }
@@ -81,7 +84,14 @@ pub enum ReadinessError {
         /// Number of attempted health requests.
         attempts: u32,
         /// Final transport failure.
-        source: RawRequestError,
+        ///
+        /// Boxed because a [`RawRequestError`] carries a whole transport
+        /// failure (an `http::Method`, a `url::Url`, and a `reqwest::Error`,
+        /// 120 bytes together) against the 4 the attempt counter occupies, and
+        /// readiness nests inside every harness environment and topology
+        /// error: carrying it inline made every one of their success paths pay
+        /// for this failure's width.
+        source: Box<RawRequestError>,
     },
     /// The broker kept returning a non-success health status.
     #[error("broker returned health status {status} after {attempts} readiness attempts")]

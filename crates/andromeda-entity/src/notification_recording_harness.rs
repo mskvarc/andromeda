@@ -22,6 +22,7 @@ use crate::{
         blocking_executor::{BlockingExecutor, BlockingTask},
         reader::EntityReader,
         retry_delay::RetryDelay,
+        service_ports::EntityServicePorts,
     },
 };
 use andromeda_context_commit::{
@@ -338,14 +339,16 @@ pub(crate) async fn recording_service() -> (EntityService, Arc<Mutex<Vec<AtomicW
         .expect("the fixture subscription reloads");
 
     let service = EntityService::new(
-        Arc::new(SnapshotReader {
-            payload: building_snapshot(),
-            modified_at: Utc::now(),
-        }) as Arc<dyn EntityReader>,
-        Arc::new(UnusedBlockingExecutor) as Arc<dyn BlockingExecutor>,
-        Arc::new(ImmediateRetry) as Arc<dyn RetryDelay>,
-        Arc::new(UnusedAttributeHistory) as Arc<dyn AttributeDatasetHistory>,
-        Arc::new(committer) as Arc<dyn ContextCommitter>,
+        EntityServicePorts {
+            reader: Arc::new(SnapshotReader {
+                payload: building_snapshot(),
+                modified_at: Utc::now(),
+            }) as Arc<dyn EntityReader>,
+            blocking_executor: Arc::new(UnusedBlockingExecutor) as Arc<dyn BlockingExecutor>,
+            retry_delay: Arc::new(ImmediateRetry) as Arc<dyn RetryDelay>,
+            attribute_history: Arc::new(UnusedAttributeHistory) as Arc<dyn AttributeDatasetHistory>,
+            writes: Arc::new(committer) as Arc<dyn ContextCommitter>,
+        },
         JsonLdEngine::builder().allow_remote(false).build().expect("the offline JSON-LD engine builds"),
         None,
         BatchExecutionConfig {

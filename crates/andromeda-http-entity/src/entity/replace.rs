@@ -1,18 +1,16 @@
 //! HTTP handling for the replace entity operation.
 
 use crate::entity::{
-    ContextUrl,
     EntityPatch,
     EntityResultExt,
     EntityTenantState,
     ForwardProvisionRequest,
     ForwardingOperation,
-    IncomingVia,
     IntoResponse,
     JsonLd,
     LocalOnlyParams,
     LocalOutcome,
-    OriginalUri,
+    NgsiLdRequestEnvelope,
     ProblemResponse,
     ProvisionResource,
     Response,
@@ -27,7 +25,7 @@ use crate::entity::{
 };
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
-use axum::http::{HeaderMap, Method};
+use axum::http::Method;
 
 pub(crate) async fn update(
     context_target::ExistingTargetedTenantState {
@@ -35,12 +33,14 @@ pub(crate) async fn update(
         target,
         snapshot: _,
     }: EntityTenantState,
-    OriginalUri(uri): OriginalUri,
-    context: ContextUrl,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
-    IncomingVia(incoming_via): IncomingVia,
-    headers: HeaderMap,
     JsonLd {
         value: patch,
         context: body_context,

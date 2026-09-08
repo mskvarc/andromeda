@@ -9,23 +9,18 @@ use andromeda_federation::{
 };
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
-    context::ContextUrl,
     context_target,
     prefer::PreferHeader,
     query::ValidatedQuery,
+    request_envelope::NgsiLdRequestEnvelope,
     typed_path::TypedPath,
-    via::IncomingVia,
 };
 use andromeda_http_response::{problem_response::ProblemResponse, render::start_rendering, single::NgsiLdResponse};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{discovery::DiscoveryListParams, local::LocalOnlyParams};
-use axum::{
-    extract::OriginalUri,
-    http::HeaderMap,
-    response::{IntoResponse, Response},
-};
+use axum::response::{IntoResponse, Response};
 
 /// GET /ngsi-ld/v1/attributes -- Query available attributes.
 ///
@@ -40,11 +35,13 @@ pub async fn query(
         target,
         snapshot,
     }: EntityTenantState,
-    OriginalUri(uri): OriginalUri,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     accept: AcceptFormatNoGeo,
-    context: ContextUrl,
-    IncomingVia(incoming_via): IncomingVia,
-    headers: HeaderMap,
     ValidatedQuery(params): ValidatedQuery<DiscoveryListParams>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entity_discovery;
@@ -117,11 +114,13 @@ pub async fn get(
         target,
         snapshot,
     }: EntityTenantState,
-    OriginalUri(uri): OriginalUri,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     accept: AcceptFormatNoGeo,
-    context: ContextUrl,
-    IncomingVia(incoming_via): IncomingVia,
-    headers: HeaderMap,
     TypedPath(attr_id): TypedPath<AttributeName>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
 ) -> Result<Response, ProblemResponse> {

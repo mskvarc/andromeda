@@ -1,7 +1,7 @@
 //! Cancellation-aware execution and recovery for qualified maintenance work.
 
 use crate::{
-    artifact::{ArtifactIndexName, ArtifactKind},
+    artifact::RecoveryArtifact,
     candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
     controller::PassOutcome,
     error::MaintenanceError,
@@ -24,31 +24,30 @@ pub(crate) async fn recover_artifact(
     platform: &mut PgConnection,
     tenant_connection: &mut PgConnection,
     tenant: &RegisteredTenant,
-    artifact: ArtifactIndexName,
-    kind: ArtifactKind,
+    artifact: RecoveryArtifact,
     profile: PolicyProfile,
     cancellation: &CancellationToken,
 ) -> Result<PassOutcome, MaintenanceError> {
-    let target = MaintenanceTarget::Index(artifact.owner());
+    let target = MaintenanceTarget::Index(artifact.name.owner());
     let gates = inspection::safety_gates(tenant_connection, target).await?;
     if let Some(reason) = safety_deferral(profile, gates) {
         state::mark_inspected(platform, tenant, "deferred").await?;
-        info!(tenant = tenant.log_name(), database = %tenant.database, target = artifact.as_str(), artifact_kind = ?kind, decision = "deferred", reason = ?reason, "PostgreSQL maintenance recovery deferred");
+        info!(tenant = tenant.log_name(), database = %tenant.database, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, decision = "deferred", reason = ?reason, "PostgreSQL maintenance recovery deferred");
         return Ok(PassOutcome::Deferred);
     }
     if mode != MaintenanceMode::Automatic {
         state::mark_inspected(platform, tenant, "would-act").await?;
-        info!(tenant = tenant.log_name(), database = %tenant.database, target = artifact.as_str(), artifact_kind = ?kind, decision = "would-drop-artifact", "PostgreSQL maintenance recovery observed");
+        info!(tenant = tenant.log_name(), database = %tenant.database, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, decision = "would-drop-artifact", "PostgreSQL maintenance recovery observed");
         return Ok(PassOutcome::WouldAct);
     }
-    let statement = artifact.drop_statement();
+    let statement = artifact.name.drop_statement();
     let started = Instant::now();
     let result = execute_statement(tenant_connection, &statement, cancellation).await;
     match result {
         StatementOutcome::Succeeded => {
             record_action(MaintenanceAction::Recovery, MaintenanceActionOutcome::Succeeded, started.elapsed(), None);
             state::mark_inspected(platform, tenant, "acted").await?;
-            info!(tenant = tenant.log_name(), database = %tenant.database, target = artifact.as_str(), artifact_kind = ?kind, decision = "dropped-artifact", "PostgreSQL concurrent-index recovery completed");
+            info!(tenant = tenant.log_name(), database = %tenant.database, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, decision = "dropped-artifact", "PostgreSQL concurrent-index recovery completed");
             Ok(PassOutcome::Acted)
         }
         StatementOutcome::Cancelled => {
@@ -58,7 +57,7 @@ pub(crate) async fn recover_artifact(
         StatementOutcome::Failed(error) => {
             record_action(MaintenanceAction::Recovery, MaintenanceActionOutcome::Failed, started.elapsed(), None);
             state::mark_inspected(platform, tenant, "action-failed").await?;
-            warn!(tenant = tenant.log_name(), database = %tenant.database, target = artifact.as_str(), artifact_kind = ?kind, error = %error, decision = "artifact-drop-failed", "PostgreSQL concurrent-index recovery failed");
+            warn!(tenant = tenant.log_name(), database = %tenant.database, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, error = %error, decision = "artifact-drop-failed", "PostgreSQL concurrent-index recovery failed");
             Ok(PassOutcome::ActionFailed)
         }
     }

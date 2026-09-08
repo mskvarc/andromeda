@@ -3,17 +3,15 @@
 use crate::entity::{
     AppendParams,
     AttributeName,
-    ContextUrl,
     EntityResultExt,
     EntityTenantState,
     ForwardProvisionRequest,
     ForwardingOperation,
-    IncomingVia,
     IntoResponse,
     Json,
     JsonLd,
     LocalOutcome,
-    OriginalUri,
+    NgsiLdRequestEnvelope,
     OverwritePolicy,
     ProblemResponse,
     ProvisionResource,
@@ -32,7 +30,7 @@ use crate::entity::{
 };
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
-use axum::http::{HeaderMap, Method};
+use axum::http::Method;
 
 pub(crate) async fn append_attrs(
     context_target::ExistingTargetedTenantState {
@@ -40,12 +38,14 @@ pub(crate) async fn append_attrs(
         target,
         snapshot: _,
     }: EntityTenantState,
-    OriginalUri(uri): OriginalUri,
-    context: ContextUrl,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<AppendParams>,
-    IncomingVia(incoming_via): IncomingVia,
-    headers: HeaderMap,
     JsonLd {
         value: fragment,
         context: body_context,

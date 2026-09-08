@@ -97,20 +97,19 @@ pub(super) fn register_spatial_workers(
     supervisor: &TaskSupervisor,
     config: &TenantFactoryConfig,
     storage: &TenantStorage,
-    tenant: &TenantRef,
     changes: broadcast::Sender<ContextChangeEvent>,
 ) -> Result<(), TenantAssemblyError> {
     let synchronizer = Arc::new(SpatialSynchronizer::new(
         Arc::clone(&storage.spatial_index), // clone: synchronization and reconciliation share one index.
         Arc::clone(&storage.entity_ports.reader),
-        tenant.clone(), // clone: the synchronizer owns its tenant partition.
+        storage.tenant.clone(), // clone: the synchronizer owns its tenant partition.
     ));
     register_spatial_synchronization(supervisor, changes, synchronizer)?;
     register_spatial_reconciliation(
         supervisor,
         Arc::clone(&storage.spatial_index), // clone: synchronization and reconciliation share one index.
         Arc::clone(&storage.entity_ports.spatial_snapshots),
-        tenant.clone(), // clone: the reconciliation pass owns its tenant partition.
+        storage.tenant.clone(), // clone: the reconciliation pass owns its tenant partition.
         Duration::from_secs(config.spatial.rebuild_interval_secs),
     )
 }

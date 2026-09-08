@@ -9,7 +9,7 @@ use crate::{
     forwarded_query::{ClientQuery, ForwardedQuery},
     forwarding_url::{build_temporal_query_url, build_temporal_retrieve_url},
     outcome::{ForwardGetOutcome, ForwardReadOutcome, ForwardedResponse, ForwardedTemporalEntities, MatchedSources},
-    read_fan_out::{ReadSelection, read_outcome, registered_type_of},
+    read_fan_out::{ForwardedGetConditions, ReadSelection, read_outcome, registered_type_of},
     request::{ForwardRetrieveRequest, ForwardTemporalQueryRequest},
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -151,11 +151,13 @@ impl FederationService {
             .fan_out_get(
                 targets,
                 |registration, query| build_temporal_query_url(&registration.access.endpoint, &query.to_query_string()),
-                context,
-                triggering,
-                Cacheability::Uncacheable,
                 FederationService::temporal_entities_of,
-                entity_map,
+                ForwardedGetConditions {
+                    context,
+                    triggering,
+                    cacheability: Cacheability::Uncacheable,
+                    entity_map,
+                },
             )
             .await;
         Ok(read_outcome(answers, matched, None))
@@ -223,11 +225,13 @@ impl FederationService {
             .fan_out_get(
                 targets,
                 |registration, query| build_temporal_retrieve_url(&registration.access.endpoint, entity_id, &query.to_query_string()),
-                context,
-                triggering,
-                Cacheability::Uncacheable,
                 FederationService::temporal_entities_of,
-                entity_map,
+                ForwardedGetConditions {
+                    context,
+                    triggering,
+                    cacheability: Cacheability::Uncacheable,
+                    entity_map,
+                },
             )
             .await;
         Ok(read_outcome(answers, matched, registered_type))

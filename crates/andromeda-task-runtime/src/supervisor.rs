@@ -5,6 +5,7 @@ use crate::{
     criticality::TaskCriticality,
     drain_driver,
     drain_task::DrainTask,
+    driver_supervision::DriverSupervision,
     failure::TaskFailure,
     lifecycle_event::{LifecycleEventKind, TaskLifecycleEvent},
     registration::{TaskRegistration, TaskRegistrationError},
@@ -15,7 +16,7 @@ use crate::{
     startup_task::{StartupTask, StartupTaskError},
     task_health::{TaskHealth, TaskHealthSnapshot, TaskHealthState},
     task_name::TaskName,
-    task_observer::{DriverTerminal, apply_criticality, emit, join_failure, observe_terminal},
+    task_observer::{DriverTerminal, TerminatedTask, apply_criticality, emit, join_failure, observe_terminal},
     wake_trigger::{WakeHandle, wake_channel},
 };
 use dashmap::{DashMap, mapref::entry::Entry};
@@ -206,19 +207,16 @@ impl TaskSupervisor {
         let lifecycle = self.inner.lifecycle.clone(); // clone: each driver publishes into the same completion-ordered channel.
         let driver_name = name.clone(); // clone: the asynchronous driver owns its task identity.
         let restart_policy = registration.restart_policy();
+        let supervision = DriverSupervision {
+            name: driver_name,
+            restart_policy,
+            cancellation,
+            health: driver_health,
+            lifecycle,
+        };
         let driver = self.inner.host.spawn(async move {
             let _run_now_guard = run_now_guard;
-            scheduled_driver::run(
-                driver_name,
-                restart_policy,
-                schedule,
-                operation,
-                receiver,
-                cancellation,
-                driver_health,
-                lifecycle,
-            )
-            .await
+            scheduled_driver::run(supervision, schedule, operation, receiver).await
         });
         self.observe(name, &registration, health, driver);
         Ok(run_now)
@@ -240,19 +238,16 @@ impl TaskSupervisor {
         let lifecycle = self.inner.lifecycle.clone(); // clone: every driver publishes into the same completion-ordered channel.
         let driver_name = name.clone(); // clone: the asynchronous driver owns its task identity.
         let restart_policy = registration.restart_policy();
+        let supervision = DriverSupervision {
+            name: driver_name,
+            restart_policy,
+            cancellation,
+            health: driver_health,
+            lifecycle,
+        };
         let driver = self.inner.host.spawn(async move {
             let _wake_guard = wake_guard;
-            drain_driver::run(
-                driver_name,
-                restart_policy,
-                fallback,
-                operation,
-                receiver,
-                cancellation,
-                driver_health,
-                lifecycle,
-            )
-            .await
+            drain_driver::run(supervision, fallback, operation, receiver).await
         });
         self.observe(name, &registration, health, driver);
         Ok(wake)
@@ -272,10 +267,14 @@ impl TaskSupervisor {
         let lifecycle = self.inner.lifecycle.clone(); // clone: each driver publishes into the same completion-ordered channel.
         let driver_name = name.clone(); // clone: the asynchronous driver owns its task identity.
         let restart_policy = registration.restart_policy();
-        let driver = self
-            .inner
-            .host
-            .spawn(async move { resident_driver::run(driver_name, restart_policy, operation, cancellation, driver_health, lifecycle).await });
+        let supervision = DriverSupervision {
+            name: driver_name,
+            restart_policy,
+            cancellation,
+            health: driver_health,
+            lifecycle,
+        };
+        let driver = self.inner.host.spawn(async move { resident_driver::run(supervision, operation).await });
         self.observe(name, &registration, health, driver);
         Ok(())
     }
@@ -356,10 +355,12 @@ impl TaskSupervisor {
                     &inner.process_cancellation,
                     &inner.lifecycle,
                     &inner.completion,
-                    observer_name,
-                    criticality,
-                    observer_health,
-                    observer_forced,
+                    TerminatedTask {
+                        name: observer_name,
+                        criticality,
+                        health: observer_health,
+                        forced: observer_forced,
+                    },
                     terminal,
                 )
                 .await;

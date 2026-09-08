@@ -7,7 +7,7 @@
 
 use crate::{
     EntityService,
-    batch::BatchResult,
+    batch::{BatchResult, chunk::UpdatedPayloads},
     error::EntityError,
     expanded_member::unwrap_expanded_ref,
     notification_plan::attribute_change_groups,
@@ -104,11 +104,12 @@ impl EntityService {
             writes.push(self.chunk_update(
                 target,
                 id,
-                previous,
-                Arc::new(existing),
-                Arc::new(prepared_entity.expanded),
+                UpdatedPayloads {
+                    previous,
+                    merged: Arc::new(existing),
+                    observed: Arc::new(prepared_entity.expanded),
+                },
                 &groups,
-                Some(previous),
                 Precondition::MustExist,
             ));
         }

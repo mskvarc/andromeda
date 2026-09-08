@@ -5,12 +5,11 @@ use crate::entity_operations::{
     BatchBody,
     BatchOperationResult,
     BatchProvisionOperation,
-    ContextUrl,
     EntityResultExt,
     EntityTenantStateOrCreate,
-    IncomingVia,
+    ForwardedBatch,
     NgsiLdErrorType,
-    OriginalUri,
+    NgsiLdRequestEnvelope,
     PreferHeader,
     ProblemResponse,
     Response,
@@ -34,11 +33,11 @@ pub(crate) async fn batch_create(
         target,
         snapshot: _,
     }: EntityTenantStateOrCreate,
-    OriginalUri(uri): OriginalUri,
+    NgsiLdRequestEnvelope {
+        uri, context, incoming_via, ..
+    }: NgsiLdRequestEnvelope,
     accept: AcceptFormatNoGeo,
-    context: ContextUrl,
     prefer: PreferHeader,
-    IncomingVia(incoming_via): IncomingVia,
     BatchBody { headers, body }: BatchBody,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
@@ -57,7 +56,19 @@ pub(crate) async fn batch_create(
         via: incoming_via.as_ref(),
         headers: Some(&headers),
     };
-    let forwarded = forward_entities(&state, &target, BatchProvisionOperation::Create, &entities, &context, None, triggering, &uri).await?;
+    let forwarded = forward_entities(
+        &state,
+        &target,
+        ForwardedBatch {
+            operation: BatchProvisionOperation::Create,
+            query_string: None,
+            triggering,
+        },
+        &entities,
+        &context,
+        &uri,
+    )
+    .await?;
 
     // Clause 5.6.7.4: the local phase creates what proxied registrations left.
     let remainder = local_remainder(entities, &forwarded);

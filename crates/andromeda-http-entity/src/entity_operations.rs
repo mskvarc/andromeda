@@ -1,6 +1,14 @@
 use crate::{
     entity_error::classify_entity_error,
-    entity_operations::forwarded::{created_remotely, drop_absent_proxied, forward_entities, forward_identifiers, local_remainder, merge_forwarded},
+    entity_operations::forwarded::{
+        ForwardedBatch,
+        created_remotely,
+        drop_absent_proxied,
+        forward_entities,
+        forward_identifiers,
+        local_remainder,
+        merge_forwarded,
+    },
     error::{EntityResultExt, public_error},
     join::ResolvedJoin,
     request_projection::RequestProjection,
@@ -19,13 +27,12 @@ use andromeda_federation::{
 };
 use andromeda_http_extraction::{
     accept::{AcceptFormat, AcceptFormatNoGeo},
-    context::ContextUrl,
     entity_batch::{BatchBody, parse_batch_entities},
     jsonld::JsonLd,
     prefer::PreferHeader,
     protocol::NgsiLdProtocolHeaders,
     query::ValidatedQuery,
-    via::IncomingVia,
+    request_envelope::NgsiLdRequestEnvelope,
 };
 use andromeda_http_headers::{media_type::ResponseMediaType, preference::RespondMode, preference_applied::PreferenceApplied};
 use andromeda_http_response::{
@@ -48,7 +55,6 @@ use andromeda_ngsi_ld_request::{
 };
 use axum::{
     body::Bytes,
-    extract::OriginalUri,
     http::{StatusCode, Uri as HttpUri},
     response::{IntoResponse, Response},
 };

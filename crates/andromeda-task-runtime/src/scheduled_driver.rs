@@ -3,32 +3,25 @@
 use crate::{
     bounded_driver,
     control::ScheduledExecution,
+    driver_supervision::DriverSupervision,
     failure::TaskFailure,
-    lifecycle_event::TaskLifecycleEvent,
     periodic_trigger::PeriodicSchedule,
-    restart_policy::RestartPolicy,
     scheduled_task::ScheduledOperation,
-    task_health::TaskHealth,
-    task_name::TaskName,
     task_observer::DriverTerminal,
 };
 use std::{sync::Arc, time::SystemTime};
-use tokio::sync::{RwLock, broadcast, mpsc};
-use tokio_util::sync::CancellationToken;
+use tokio::sync::mpsc;
 
 /// Execute periodic triggers sequentially with at most one pending signal.
 pub(crate) async fn run(
-    name: TaskName,
-    restart_policy: RestartPolicy,
+    supervision: DriverSupervision,
     schedule: PeriodicSchedule,
     operation: Arc<ScheduledOperation>,
     mut run_now: mpsc::Receiver<()>,
-    cancellation: CancellationToken,
-    health: Arc<RwLock<TaskHealth>>,
-    lifecycle: broadcast::Sender<TaskLifecycleEvent>,
 ) -> DriverTerminal {
-    health.write().await.running(SystemTime::now());
-    let mut interval = schedule.interval(&name);
+    supervision.health.write().await.running(SystemTime::now());
+    let cancellation = &supervision.cancellation;
+    let mut interval = schedule.interval(&supervision.name);
     loop {
         tokio::select! {
             biased;
@@ -40,17 +33,10 @@ pub(crate) async fn run(
                 }
             }
         }
-        let result = bounded_driver::execute(
-            &name,
-            restart_policy,
-            || {
-                let execution = ScheduledExecution::new(cancellation.clone(), SystemTime::now()); // clone: the operation receives a cooperative handle to this task's cancellation state.
-                operation(execution)
-            },
-            &cancellation,
-            &health,
-            &lifecycle,
-        )
+        let result = bounded_driver::execute(&supervision, || {
+            let execution = ScheduledExecution::new(cancellation.clone(), SystemTime::now()); // clone: the operation receives a cooperative handle to this task's cancellation state.
+            operation(execution)
+        })
         .await;
         match result {
             Ok(()) => {}

@@ -87,7 +87,13 @@ use crate::{
     batch_activity::BatchActivityTracker,
     change_sink::EntityChangeSink,
     id_lock::{IdLockMap, acquire_id_locks_in},
-    port::{attribute_history::AttributeDatasetHistory, blocking_executor::BlockingExecutor, reader::EntityReader, retry_delay::RetryDelay},
+    port::{
+        attribute_history::AttributeDatasetHistory,
+        blocking_executor::BlockingExecutor,
+        reader::EntityReader,
+        retry_delay::RetryDelay,
+        service_ports::EntityServicePorts,
+    },
     side_effect::{AsyncPreference, BatchSideEffectMode, resolve_side_effect_mode},
 };
 use andromeda_context_commit::{
@@ -128,18 +134,22 @@ pub struct EntityService {
 
 impl EntityService {
     /// Construct entity policy over caller-owned ports and runtime bindings.
+    #[must_use]
     pub fn new(
-        reader: Arc<dyn EntityReader>,
-        blocking_executor: Arc<dyn BlockingExecutor>,
-        retry_delay: Arc<dyn RetryDelay>,
-        attribute_history: Arc<dyn AttributeDatasetHistory>,
-        writes: Arc<dyn ContextCommitter>,
+        ports: EntityServicePorts,
         engine: JsonLdEngine,
         change_sink: Option<Arc<dyn EntityChangeSink>>,
         batch_config: BatchExecutionConfig,
         batch_activity: BatchActivityTracker,
         notifications: Option<NotificationWriteConfig>,
     ) -> EntityService {
+        let EntityServicePorts {
+            reader,
+            blocking_executor,
+            retry_delay,
+            attribute_history,
+            writes,
+        } = ports;
         let id_locks: Arc<IdLockMap> = Arc::new(DashMap::new());
         let batch_execution = batch_config.clamped_to_usable_limits();
 

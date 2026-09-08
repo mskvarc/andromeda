@@ -58,6 +58,24 @@ pub(super) struct ChunkWrite {
     pub plan: NotificationPlan,
 }
 
+/// The three payloads one entity update is described by.
+///
+/// They belong together because each is read against the others: the tombstones
+/// clause 5.6.6 requires and the per-attribute triggers of clause 5.2.12 both
+/// come from the difference between the stored state and the state replacing
+/// it, and the observation is the payload whose attributes that difference was
+/// requested by.
+pub(super) struct UpdatedPayloads<'a> {
+    /// The entity as the store holds it before the write. It is also the state
+    /// a deletion filter and `showChanges` are evaluated against.
+    pub previous: &'a Value,
+    /// The entity the write stores in its place.
+    pub merged: Arc<Value>,
+    /// The payload whose attributes were observed. For a partial update this
+    /// is the request fragment, not the entity the fragment produced.
+    pub observed: Arc<Value>,
+}
+
 /// What one chunk reports back to its batch.
 #[derive(Debug, Default)]
 pub(super) struct ChunkOutcome {
@@ -143,29 +161,25 @@ impl EntityService {
         }
     }
 
-    /// The write that overwrites an existing entity with `merged`, having
-    /// observed `observed`, under the per-op notification `groups`.
+    /// The write that overwrites an existing entity with the state replacing it,
+    /// under the per-op notification `groups`.
     ///
     /// The build site supplies one precise group per changed attribute instance.
-    /// `previous_snapshot` is the state before the mutation, used for deletion
-    /// filtering and `showChanges`.
     pub(super) fn chunk_update(
         &self,
         target: &ContextTarget,
         id: Uri,
-        previous: &Value,
-        merged: Arc<Value>,
-        observed: Arc<Value>,
+        payloads: UpdatedPayloads<'_>,
         groups: &[NotificationGroup],
-        previous_snapshot: Option<&Value>,
         precondition: Precondition,
     ) -> ChunkWrite {
+        let UpdatedPayloads { previous, merged, observed } = payloads;
         let tombstones = removed_attribute_instances(previous, &merged)
             .into_iter()
             .map(HistoryRecord::Tombstone)
             .collect();
         let types = extract_types(&merged);
-        let plan = self.plan_notifications(target, &id, &types, groups, Some(&merged), previous_snapshot);
+        let plan = self.plan_notifications(target, &id, &types, groups, Some(&merged), Some(previous));
         let record = EntityRecord::from_expanded(merged);
         ChunkWrite {
             id,

@@ -13,6 +13,7 @@ pub mod criticality;
 mod drain_driver;
 /// Wake-triggered durable drain execution.
 pub mod drain_task;
+mod driver_supervision;
 /// Runtime-neutral task failure classification.
 pub mod failure;
 /// Observable task lifecycle events.

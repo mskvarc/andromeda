@@ -28,18 +28,36 @@ pub(crate) enum DriverTerminal {
     Failed(TaskFailure),
 }
 
+/// The task whose driver stopped, as terminal observation needs it: the
+/// registered identity the event is published under, what its exhaustion means
+/// for the scope, the health record to close out, and whether cooperative
+/// shutdown expired and aborted it.
+pub(crate) struct TerminatedTask {
+    /// Registered identity the terminal lifecycle event is published under.
+    pub(crate) name: TaskName,
+    /// Operational effect this task's exhaustion has on its scope.
+    pub(crate) criticality: TaskCriticality,
+    /// Health record moved to its terminal state.
+    pub(crate) health: Arc<RwLock<TaskHealth>>,
+    /// Set when shutdown aborted the driver past its grace period.
+    pub(crate) forced: Arc<AtomicBool>,
+}
+
 /// Attribute one driver's terminal result and apply its criticality.
 pub(crate) async fn observe_terminal(
     scope_cancellation: &CancellationToken,
     process_cancellation: &CancellationToken,
     lifecycle: &broadcast::Sender<TaskLifecycleEvent>,
     completion: &Notify,
-    name: TaskName,
-    criticality: TaskCriticality,
-    health: Arc<RwLock<TaskHealth>>,
-    forced: Arc<AtomicBool>,
+    task: TerminatedTask,
     terminal: DriverTerminal,
 ) {
+    let TerminatedTask {
+        name,
+        criticality,
+        health,
+        forced,
+    } = task;
     let kind = if forced.load(Ordering::Acquire) {
         health.write().await.terminal(TaskHealthState::ForcedTermination);
         LifecycleEventKind::ForcedTermination

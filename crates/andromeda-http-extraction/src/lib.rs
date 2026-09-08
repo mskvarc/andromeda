@@ -19,6 +19,7 @@ pub mod prefer;
 pub mod profile;
 pub mod protocol;
 pub mod query;
+pub mod request_envelope;
 pub mod scoped_response;
 pub mod snapshot;
 pub mod snapshot_purge;

@@ -55,6 +55,23 @@ pub struct TemporalIntentDrain {
     execution_gate: Mutex<()>,
 }
 
+/// How one worker claims deferred intents and reschedules what it cannot deliver.
+///
+/// The four values describe a single claim: who holds it, how much of the queue
+/// it takes, how long it is held before another worker may take it back, and
+/// what happens to an intent the sink rejects.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TemporalIntentClaim {
+    /// Identity recorded against every intent this worker claims.
+    pub owner: TemporalIntentLeaseOwner,
+    /// Upper bound on the intents one pass claims.
+    pub batch_size: TemporalIntentBatchSize,
+    /// How long a claim is held before it may be reclaimed.
+    pub lease_duration: Duration,
+    /// How a rejected intent is rescheduled and when it is reported as stuck.
+    pub retry_policy: TemporalIntentRetryPolicy,
+}
+
 impl TemporalIntentDrain {
     /// Construct one bounded temporal intent delivery operation.
     pub const fn new(
@@ -62,11 +79,14 @@ impl TemporalIntentDrain {
         queue: Arc<dyn TemporalIntentQueue>,
         pending: Arc<dyn PendingTemporalIntentReader>,
         sink: Arc<dyn TemporalHistorySink>,
-        owner: TemporalIntentLeaseOwner,
-        batch_size: TemporalIntentBatchSize,
-        lease_duration: Duration,
-        retry_policy: TemporalIntentRetryPolicy,
+        claim: TemporalIntentClaim,
     ) -> TemporalIntentDrain {
+        let TemporalIntentClaim {
+            owner,
+            batch_size,
+            lease_duration,
+            retry_policy,
+        } = claim;
         TemporalIntentDrain {
             target,
             queue,

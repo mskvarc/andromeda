@@ -1,6 +1,6 @@
 //! POST query handler for the NGSI-LD Temporal API.
 
-use crate::{error::TemporalResultExt, join::apply_temporal_join, state::TemporalTenantState};
+use crate::{error::TemporalResultExt, history_read::TemporalHistoryRead, join::apply_temporal_join, state::TemporalTenantState};
 use andromeda_federation::{
     entity_result::collect_temporal_warnings,
     operation::ForwardingOperation,
@@ -8,7 +8,7 @@ use andromeda_federation::{
     request::{CsrModeFilter, EntityMapInUse, ForwardTemporalQueryRequest, TriggeringRequest},
     temporal_result::merge_temporal_query_results,
 };
-use andromeda_http_extraction::{accept::AcceptFormatNoGeo, context::ContextUrl, context_target, jsonld::JsonLd, prefer::PreferHeader, via::IncomingVia};
+use andromeda_http_extraction::{accept::AcceptFormatNoGeo, context_target, jsonld::JsonLd, prefer::PreferHeader, request_envelope::NgsiLdRequestEnvelope};
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     content_range::build_content_range,
@@ -20,8 +20,7 @@ use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{join_traversal::RetrievingJoin, query::temporal::TemporalQueryParameters};
 use andromeda_temporal::service::TemporalQueryResult;
 use axum::{
-    extract::OriginalUri,
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 
@@ -32,11 +31,13 @@ pub async fn query(
         target,
         snapshot: _,
     }: TemporalTenantState,
-    OriginalUri(uri): OriginalUri,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     accept: AcceptFormatNoGeo,
-    context: ContextUrl,
-    IncomingVia(incoming_via): IncomingVia,
-    headers: HeaderMap,
     JsonLd {
         value: request,
         context: body_context,
@@ -105,19 +106,16 @@ pub async fn query(
     // at all, so neither reaches the traversal.
     let forwarding_warnings = match RetrievingJoin::from_mode(params.join) {
         Some(join) => {
-            apply_temporal_join(
-                service,
-                &target,
-                join,
-                &mut entities,
-                &linked_candidates,
-                &params,
-                &context,
-                forwarding_warnings,
-            )
-            .await
-            .with_instance(&uri)?
-            .warnings
+            let read = TemporalHistoryRead {
+                service: &state.temporal,
+                target: &target,
+                params: &params,
+                context: &context,
+            };
+            apply_temporal_join(&read, join, &mut entities, &linked_candidates, forwarding_warnings)
+                .await
+                .with_instance(&uri)?
+                .warnings
         }
         None => forwarding_warnings,
     };

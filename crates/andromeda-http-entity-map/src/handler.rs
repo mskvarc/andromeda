@@ -16,10 +16,10 @@ use andromeda_http_extraction::{
     json_body::classify_json_body,
     jsonld::JsonLd,
     prefer::PreferHeader,
+    request_envelope::NgsiLdRequestEnvelope,
     temporal_query::TemporalQuery,
     tenant_state,
     typed_path::TypedPath,
-    via::IncomingVia,
 };
 use andromeda_http_response::{problem_response::ProblemResponse, render::start_rendering, single::NgsiLdResponse};
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -33,7 +33,7 @@ use andromeda_ngsi_ld_request::{
 use axum::{
     Json,
     extract::{OriginalUri, rejection::JsonRejection},
-    http::{HeaderMap, StatusCode, Uri as HttpUri},
+    http::{StatusCode, Uri as HttpUri},
     response::{IntoResponse, Response},
 };
 use std::sync::Arc;
@@ -171,12 +171,14 @@ async fn create_from_temporal_query(
 /// GET /ngsi-ld/v1/entityMaps -- Create an entity map from query entities (section 5.14.4, section 6.34.3.1).
 pub async fn create_from_query(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
-    OriginalUri(uri): OriginalUri,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     accept: AcceptFormatNoGeo,
-    context: ContextUrl,
     prefer: PreferHeader,
-    IncomingVia(incoming_via): IncomingVia,
-    headers: HeaderMap,
     EntityQuery(query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
     validate_entity_map_query(&query, &uri)?;
@@ -204,12 +206,14 @@ pub async fn create_from_query(
 /// POST /ngsi-ld/v1/entityMaps -- Create an entity map from query body (section 5.14.4, section 6.34.3.2).
 pub async fn create_from_query_post(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
-    OriginalUri(uri): OriginalUri,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     accept: AcceptFormatNoGeo,
-    context: ContextUrl,
     prefer: PreferHeader,
-    IncomingVia(incoming_via): IncomingVia,
-    headers: HeaderMap,
     JsonLd {
         value: body,
         context: body_context,
@@ -242,12 +246,14 @@ pub async fn create_from_query_post(
 /// GET /ngsi-ld/v1/temporal/entityMaps -- Create an entity map from temporal query (section 5.14.5, section 6.35.3.1).
 pub async fn create_temporal_from_query(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
-    OriginalUri(uri): OriginalUri,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     accept: AcceptFormatNoGeo,
-    context: ContextUrl,
     prefer: PreferHeader,
-    IncomingVia(incoming_via): IncomingVia,
-    headers: HeaderMap,
     TemporalQuery(params): TemporalQuery,
 ) -> Result<Response, ProblemResponse> {
     let context: ContextSpec = context.into_inner();
@@ -274,12 +280,14 @@ pub async fn create_temporal_from_query(
 /// POST /ngsi-ld/v1/temporal/entityMaps -- Create an entity map from temporal query body (section 5.14.5, section 6.35.3.2).
 pub async fn create_temporal_from_query_post(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
-    OriginalUri(uri): OriginalUri,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     accept: AcceptFormatNoGeo,
-    context: ContextUrl,
     prefer: PreferHeader,
-    IncomingVia(incoming_via): IncomingVia,
-    headers: HeaderMap,
     JsonLd {
         value: body,
         context: body_context,

@@ -6,7 +6,7 @@
 use andromeda_test_client::header::jsonld_link_header;
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use andromeda_test_harness::{
-    multi_broker::{BrokerNodeSpec, MultiBrokerError, MultiBrokerTopology},
+    multi_broker::{BrokerEnvironmentKey, BrokerNodeDefaults, BrokerNodeSpec, MultiBrokerError, MultiBrokerTopology},
     readiness::ReadinessPolicy,
 };
 use std::time::Duration;
@@ -31,45 +31,49 @@ fn spec(role: BrokerRole) -> Result<BrokerNodeSpec<BrokerRole>, MultiBrokerError
         BrokerRole::A => BrokerNodeSpec::from_environment(
             role,
             BrokerRole::A,
-            "DIST",
-            "A",
-            "http://127.0.0.1:1061/ngsi-ld/v1/",
-            "http://broker-a:1056",
-            "postgres://postgres:postgres@127.0.0.1:5442/broker_a",
-            "broker-a",
+            BrokerEnvironmentKey::new("DIST", "A"),
+            BrokerNodeDefaults::new(
+                "http://127.0.0.1:1061/ngsi-ld/v1/",
+                "http://broker-a:1056",
+                "postgres://postgres:postgres@127.0.0.1:5442/broker_a",
+                "broker-a",
+            ),
             None,
         ),
         BrokerRole::AReplica => BrokerNodeSpec::from_environment(
             role,
             BrokerRole::A,
-            "DIST",
-            "A_REPLICA",
-            "http://127.0.0.1:1064/ngsi-ld/v1/",
-            "http://broker-a2:1056",
-            "postgres://postgres:postgres@127.0.0.1:5442/broker_a",
-            "broker-a",
+            BrokerEnvironmentKey::new("DIST", "A_REPLICA"),
+            BrokerNodeDefaults::new(
+                "http://127.0.0.1:1064/ngsi-ld/v1/",
+                "http://broker-a2:1056",
+                "postgres://postgres:postgres@127.0.0.1:5442/broker_a",
+                "broker-a",
+            ),
             None,
         ),
         BrokerRole::B => BrokerNodeSpec::from_environment(
             role,
             BrokerRole::B,
-            "DIST",
-            "B",
-            "http://127.0.0.1:1062/ngsi-ld/v1/",
-            "http://broker-b:1056",
-            "postgres://postgres:postgres@127.0.0.1:5443/broker_b",
-            "broker-b",
+            BrokerEnvironmentKey::new("DIST", "B"),
+            BrokerNodeDefaults::new(
+                "http://127.0.0.1:1062/ngsi-ld/v1/",
+                "http://broker-b:1056",
+                "postgres://postgres:postgres@127.0.0.1:5443/broker_b",
+                "broker-b",
+            ),
             None,
         ),
         BrokerRole::C => BrokerNodeSpec::from_environment(
             role,
             BrokerRole::C,
-            "DIST",
-            "C",
-            "http://127.0.0.1:1063/ngsi-ld/v1/",
-            "http://broker-c:1056",
-            "postgres://postgres:postgres@127.0.0.1:5444/broker_c",
-            "broker-c",
+            BrokerEnvironmentKey::new("DIST", "C"),
+            BrokerNodeDefaults::new(
+                "http://127.0.0.1:1063/ngsi-ld/v1/",
+                "http://broker-c:1056",
+                "postgres://postgres:postgres@127.0.0.1:5444/broker_c",
+                "broker-c",
+            ),
             None,
         ),
     }

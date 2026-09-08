@@ -15,47 +15,73 @@ use chrono::Utc;
 use serde_json::Value;
 use tracing::debug;
 
+/// The entity a mutation changed, as subscription matching addresses it.
+///
+/// The three values are one identity rather than three parameters: a
+/// subscription is selected for a mutation by the context branch it watches,
+/// the entity identifier and the entity types (clause 5.2.12), and none of them
+/// selects anything on its own.
+#[derive(Clone, Copy)]
+pub(crate) struct ChangedEntity<'a> {
+    /// The context branch the mutation landed in.
+    pub target: &'a ContextTarget,
+    /// The identifier of the changed entity.
+    pub id: &'a Uri,
+    /// The types a subscription's `entities` selector is matched against.
+    pub types: &'a [EntityTypeName],
+}
+
+/// The entity states a matched subscription is filtered and rendered against.
+///
+/// Both states travel together because which one a filter reads depends on the
+/// trigger: a creation or an update is filtered on the state the mutation
+/// produced, a deletion on the state it removed (clause 5.2.12). The previous
+/// state is also what a `showChanges` notification reports.
+#[derive(Clone, Copy)]
+pub(crate) struct MutationSnapshots<'a> {
+    /// The entity as it stands after the mutation, absent when the mutation
+    /// carries no rendered state.
+    pub current: Option<&'a Value>,
+    /// The entity as it stood before the mutation, absent when there was no
+    /// previous state.
+    pub previous: Option<&'a Value>,
+}
+
 impl EntityService {
     /// Build one record for every subscription this mutation matches.
     ///
     /// Returns an empty vector when notification recording is not configured.
     pub(crate) fn build_subscription_matches(
         &self,
-        target: &ContextTarget,
-        entity_id: &Uri,
-        entity_types: &[EntityTypeName],
+        entity: ChangedEntity<'_>,
         trigger: NotificationTrigger,
         changed_attrs: &[AttributeName],
-        entity_snapshot: Option<&Value>,
-        previous_snapshot: Option<&Value>,
+        snapshots: MutationSnapshots<'_>,
     ) -> Vec<SubscriptionMatch> {
-        self.build_subscription_matches_for_instance(
-            target,
-            entity_id,
-            entity_types,
-            trigger,
-            changed_attrs,
-            None,
-            entity_snapshot,
-            previous_snapshot,
-        )
+        self.build_subscription_matches_for_instance(entity, trigger, changed_attrs, None, snapshots)
     }
 
     /// Build durable matches for one precise attribute-instance change.
     pub(crate) fn build_subscription_matches_for_instance(
         &self,
-        target: &ContextTarget,
-        entity_id: &Uri,
-        entity_types: &[EntityTypeName],
+        entity: ChangedEntity<'_>,
         trigger: NotificationTrigger,
         changed_attrs: &[AttributeName],
         changed_dataset_id: Option<&Uri>,
-        entity_snapshot: Option<&Value>,
-        previous_snapshot: Option<&Value>,
+        snapshots: MutationSnapshots<'_>,
     ) -> Vec<SubscriptionMatch> {
         let Some(NotificationWriteConfig { subscription_cache }) = &self.notifications else {
             return Vec::new();
         };
+        let ChangedEntity {
+            target,
+            id: entity_id,
+            types: entity_types,
+        } = entity;
+        let MutationSnapshots {
+            current: entity_snapshot,
+            previous: previous_snapshot,
+        } = snapshots;
 
         let event = ChangeEvent::builder()
             .entity_id(entity_id.clone()) // clone: owned Uri for ChangeEvent

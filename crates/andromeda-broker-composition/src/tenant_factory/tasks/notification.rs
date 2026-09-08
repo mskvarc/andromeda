@@ -3,7 +3,6 @@
 use crate::{
     linked_entity_forwarding::ForwardedLinkedEntitySource,
     tenant_factory::{
-        TenantFactoryConfig,
         error::TenantAssemblyError,
         storage::TenantStorage,
         tasks::{EntityNotificationDelivery, retention::retention_duration},
@@ -47,15 +46,52 @@ use andromeda_task_runtime::{
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::{DateTime, Utc};
+use sqlx::PgPool;
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::sync::{
     broadcast,
     broadcast::error::{RecvError, TryRecvError},
 };
 
-/// Compose the tenant's notification policy and register the workers that
-/// drive it: the resident processor evaluating subscriptions and, when durable
-/// delivery is configured, the drain that delivers what it queued.
+/// Compose the notification policy operation one tenant evaluates its
+/// subscriptions with.
+///
+/// A notification's join resolves Linked Entities exactly as a request's does,
+/// so the operation owns a query service composed like the request-facing one.
+pub(super) fn compose_notification_processor(
+    storage: &TenantStorage,
+    forwarding: &Arc<FederationService>,
+    transport: &Arc<TransportDispatcher>,
+    subscriptions: &Arc<dyn SubscriptionStore>,
+) -> Arc<NotificationProcessor> {
+    let notification_query = Arc::new(EntityQueryService::new(
+        Arc::clone(&storage.entity_ports.reader),
+        Arc::clone(&storage.entity_ports.query),
+        storage.engine.clone(), // clone: the notification query owns its engine handle.
+        Arc::clone(&storage.spatial_index),
+        storage.tenant.clone(), // clone: the query service owns its tenant partition.
+        // A notification's join resolves Linked Entities exactly as a request's
+        // does, including the ones clause 4.5.23.1 places outside this broker.
+        Some(Arc::new(ForwardedLinkedEntitySource::new(
+            Arc::clone(forwarding),      // clone: request handling and notification joins share one forwarding service.
+            storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
+        )) as Arc<dyn RemoteLinkedEntitySource>),
+    ));
+    Arc::new(NotificationProcessor::new(NotificationProcessorDeps {
+        live_target: storage.live_target.clone(), // clone: worker startup reloads the durable live-branch cache.
+        sub_repo: Arc::clone(subscriptions),      // clone: the processor and the interval worker share one store.
+        entity_reader: Arc::clone(&storage.entity_ports.reader),
+        entity_query: notification_query,
+        engine: storage.engine.clone(),   // clone: notification policy owns its engine handle.
+        transport: Arc::clone(transport), // clone: every worker delivers through one dispatcher.
+        tenant: storage.tenant.clone(),   // clone: notification policy owns its tenant partition.
+        subscription_cache: Arc::clone(&storage.subscription_cache),
+    }))
+}
+
+/// Register the workers driving one tenant's notification policy: the resident
+/// processor evaluating subscriptions and, when durable delivery is configured,
+/// the drain that delivers what it queued.
 ///
 /// The returned wake handle exists only in durable mode; live delivery has no
 /// queue to wake.
@@ -66,39 +102,13 @@ use tokio::sync::{
 /// or when the supervisor refuses a registration.
 pub(super) fn register_notification_workers(
     supervisor: &TaskSupervisor,
-    config: &TenantFactoryConfig,
-    storage: &TenantStorage,
-    forwarding: &Arc<FederationService>,
-    tenant: &TenantRef,
-    transport: &Arc<TransportDispatcher>,
-    subscriptions: &Arc<dyn SubscriptionStore>,
+    pool: &PgPool,
+    config: &DeliveryConfig,
+    processor: Arc<NotificationProcessor>,
     entity_changes: &broadcast::Sender<ContextChangeEvent>,
     subscription_changes: broadcast::Sender<SubscriptionChange>,
 ) -> Result<Option<WakeHandle>, TenantAssemblyError> {
-    let notification_query = Arc::new(EntityQueryService::new(
-        Arc::clone(&storage.entity_ports.reader),
-        Arc::clone(&storage.entity_ports.query),
-        storage.engine.clone(), // clone: the notification query owns its engine handle.
-        Arc::clone(&storage.spatial_index),
-        tenant.clone(), // clone: the query service owns its tenant partition.
-        // A notification's join resolves Linked Entities exactly as a request's
-        // does, including the ones clause 4.5.23.1 places outside this broker.
-        Some(Arc::new(ForwardedLinkedEntitySource::new(
-            Arc::clone(forwarding),      // clone: request handling and notification joins share one forwarding service.
-            storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
-        )) as Arc<dyn RemoteLinkedEntitySource>),
-    ));
-    let processor = Arc::new(NotificationProcessor::new(NotificationProcessorDeps {
-        live_target: storage.live_target.clone(), // clone: worker startup reloads the durable live-branch cache.
-        sub_repo: Arc::clone(subscriptions),      // clone: the processor and the interval worker share one store.
-        entity_reader: Arc::clone(&storage.entity_ports.reader),
-        entity_query: notification_query,
-        engine: storage.engine.clone(),   // clone: notification policy owns its engine handle.
-        transport: Arc::clone(transport), // clone: every worker delivers through one dispatcher.
-        tenant: tenant.clone(),           // clone: notification policy owns its tenant partition.
-        subscription_cache: Arc::clone(&storage.subscription_cache),
-    }));
-    let delivery = if config.notification_delivery.enabled {
+    let delivery = if config.enabled {
         EntityNotificationDelivery::Durable
     } else {
         EntityNotificationDelivery::Live
@@ -110,13 +120,25 @@ pub(super) fn register_notification_workers(
         Arc::clone(&processor), // clone: the resident processor is also the durable delivery transport.
         delivery,
     )?;
-    if !config.notification_delivery.enabled {
+    if !config.enabled {
         return Ok(None);
     }
-    let store = Arc::new(NotificationDeliveryQueue::new(&storage.pool)) as Arc<dyn DeliveryStore>;
-    let drain = NotificationDeliveryDrain::new(store, processor as Arc<dyn NotificationDeliveryTransport>, &config.notification_delivery)
+    let store = Arc::new(NotificationDeliveryQueue::new(pool)) as Arc<dyn DeliveryStore>;
+    let drain = NotificationDeliveryDrain::new(store, processor as Arc<dyn NotificationDeliveryTransport>, config)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    register_notification_delivery(supervisor, Arc::new(drain), &config.notification_delivery).map(Some)
+    register_notification_delivery(supervisor, Arc::new(drain), config).map(Some)
+}
+
+/// The change streams a context-source notification worker reacts to.
+///
+/// The two travel together because one resident worker selects over both:
+/// clause 5.11 notifications are produced from registration changes, evaluated
+/// against the context-source subscriptions the second stream keeps current.
+pub(super) struct CsourceNotificationStreams {
+    /// Registration lifecycle changes evaluated against context-source subscriptions.
+    pub(super) registrations: broadcast::Sender<CsrChangeEvent>,
+    /// Context-source subscription changes keeping the evaluated set current.
+    pub(super) subscriptions: broadcast::Sender<CsourceSubscriptionChange>,
 }
 
 /// Register the time-interval notification workers and the resident processor
@@ -128,12 +150,10 @@ pub(super) fn register_notification_workers(
 pub(super) fn register_interval_workers(
     supervisor: &TaskSupervisor,
     storage: &TenantStorage,
-    tenant: &TenantRef,
     transport: &Arc<TransportDispatcher>,
     subscriptions: Arc<dyn SubscriptionStore>,
     csource_subscriptions: Arc<dyn SubscriptionStore>,
-    registration_changes: broadcast::Sender<CsrChangeEvent>,
-    csource_subscription_changes: broadcast::Sender<CsourceSubscriptionChange>,
+    streams: CsourceNotificationStreams,
 ) -> Result<(), TenantAssemblyError> {
     register_interval_notification(
         supervisor,
@@ -144,18 +164,17 @@ pub(super) fn register_interval_workers(
             Arc::clone(&storage.entity_ports.discovery),
             storage.engine.clone(), // clone: interval policy owns its engine handle.
             Arc::clone(transport),  // clone: every worker delivers through one dispatcher.
-            tenant.clone(),         // clone: interval policy owns its tenant partition.
+            storage.tenant.clone(), // clone: interval policy owns its tenant partition.
         )),
     )?;
     register_csource_notification_processor(
         supervisor,
         storage.live_target.clone(), // clone: the resident processor owns the live branch it evaluates.
-        registration_changes,
-        csource_subscription_changes,
+        streams,
         Arc::clone(&csource_subscriptions),      // clone: the processor and the interval worker share one store.
         Arc::clone(&storage.registration_store), // clone: every registration worker shares one store.
         Arc::clone(transport),                   // clone: every worker delivers through one dispatcher.
-        tenant.clone(),                          // clone: notification policy owns its tenant partition.
+        storage.tenant.clone(),                  // clone: notification policy owns its tenant partition.
     )?;
     register_csource_interval_notification(
         supervisor,
@@ -164,7 +183,7 @@ pub(super) fn register_interval_workers(
             csource_subscriptions,
             Arc::clone(&storage.registration_store), // clone: every registration worker shares one store.
             Arc::clone(transport),                   // clone: every worker delivers through one dispatcher.
-            tenant.clone(),                          // clone: interval policy owns its tenant partition.
+            storage.tenant.clone(),                  // clone: interval policy owns its tenant partition.
         )),
     )
 }
@@ -232,13 +251,16 @@ fn register_notification_processor(
 fn register_csource_notification_processor(
     supervisor: &TaskSupervisor,
     target: ContextTarget,
-    registration_changes: broadcast::Sender<CsrChangeEvent>,
-    subscription_changes: broadcast::Sender<CsourceSubscriptionChange>,
+    streams: CsourceNotificationStreams,
     subscription_store: Arc<dyn SubscriptionStore>,
     registration_store: Arc<dyn RegistrationStore>,
     transport: Arc<TransportDispatcher>,
     tenant: TenantRef,
 ) -> Result<(), TenantAssemblyError> {
+    let CsourceNotificationStreams {
+        registrations: registration_changes,
+        subscriptions: subscription_changes,
+    } = streams;
     let restart_delay = Duration::from_secs(1);
     let name = TaskName::try_from("csource-notification-events").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let registration = TaskRegistration::new(

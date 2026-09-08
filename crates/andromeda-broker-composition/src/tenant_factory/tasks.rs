@@ -7,32 +7,28 @@ mod pool_gauges;
 mod retention;
 mod temporal_retention;
 
-use crate::{
-    tenant_factory::{
-        TenantFactoryConfig,
-        error::TenantAssemblyError,
-        storage::TenantStorage,
-        tasks::{
-            expiry::{register_expiry_workers, register_snapshot_workers},
-            maintenance::{register_entity_side_effects, register_spatial_workers},
-            notification::{register_interval_workers, register_notification_workers},
-            pool_gauges::register_pool_gauges,
-            temporal_retention::register_temporal_retention,
-        },
+use crate::tenant_factory::{
+    TenantFactoryConfig,
+    error::TenantAssemblyError,
+    services::ConstructedServices,
+    storage::TenantStorage,
+    tasks::{
+        expiry::{register_expiry_workers, register_snapshot_workers},
+        maintenance::{register_entity_side_effects, register_spatial_workers},
+        notification::{CsourceNotificationStreams, compose_notification_processor, register_interval_workers, register_notification_workers},
+        pool_gauges::register_pool_gauges,
+        temporal_retention::register_temporal_retention,
     },
-    tenant_state::AndromedaState,
 };
 use andromeda_context_commit::{committer::ContextCommitter, context_change_event::ContextChangeEvent};
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use andromeda_postgresql_context_store::{csource_subscription::repo::CsourceSubscriptionRepository, subscription::repo::SubscriptionRepository};
-use andromeda_snapshot::executor::SnapshotPreparation;
 use andromeda_subscription::{
     change::{CsourceSubscriptionChange, SubscriptionChange},
     store::SubscriptionStore,
 };
 use andromeda_task_runtime::{supervisor::TaskSupervisor, wake_trigger::WakeHandle};
-use andromeda_tenancy::tenant_ref::TenantRef;
 use std::sync::Arc;
 use tokio::{
     sync::{broadcast, watch},
@@ -87,10 +83,8 @@ enum EntityNotificationDelivery {
 pub(super) fn supervise_tasks(
     config: &TenantFactoryConfig,
     storage: &TenantStorage,
-    state: &AndromedaState,
-    tenant: &TenantRef,
+    services: &ConstructedServices,
     signals: TenantSignals,
-    snapshot_preparation: Arc<SnapshotPreparation>,
     writes: &Arc<dyn ContextCommitter>,
     transport: &Arc<TransportDispatcher>,
     task_supervisor: TaskSupervisor,
@@ -103,9 +97,9 @@ pub(super) fn supervise_tasks(
     } = signals;
     let mut handles: Vec<JoinHandle<()>> = Vec::new();
     let mut drain_wakes = Vec::new();
-    register_pool_gauges(&task_supervisor, storage.pool.clone(), tenant)?; // clone: PgPool is a shared handle sampled by the gauge task.
+    register_pool_gauges(&task_supervisor, storage.pool.clone(), &storage.tenant)?; // clone: PgPool is a shared handle sampled by the gauge task.
     drain_wakes.push(register_entity_side_effects(&task_supervisor, config, storage, writes, &entity)?);
-    let health_shutdown = if tenant.is_unnamed_default() {
+    let health_shutdown = if storage.tenant.is_unnamed_default() {
         let (shutdown, receiver) = watch::channel(false);
         handles.push(transport.mqtt_pool().spawn_health_probe(receiver));
         Some(shutdown)
@@ -114,31 +108,36 @@ pub(super) fn supervise_tasks(
     };
     let entity_subscriptions = Arc::new(SubscriptionRepository::new(&storage.pool)) as Arc<dyn SubscriptionStore>;
     let csource_subscriptions = Arc::new(CsourceSubscriptionRepository::new(&storage.pool)) as Arc<dyn SubscriptionStore>;
+    let notification_processor = compose_notification_processor(storage, &services.state.forwarding, transport, &entity_subscriptions);
     drain_wakes.extend(register_notification_workers(
         &task_supervisor,
-        config,
-        storage,
-        &state.forwarding,
-        tenant,
-        transport,
-        &entity_subscriptions,
+        &storage.pool,
+        &config.notification_delivery,
+        notification_processor,
         &entity,
         subscription,
     )?);
-    register_expiry_workers(&task_supervisor, config, storage, state, &registration)?;
+    register_expiry_workers(&task_supervisor, config, storage, &services.state, &registration)?;
     register_interval_workers(
         &task_supervisor,
         storage,
-        tenant,
         transport,
         entity_subscriptions,
         csource_subscriptions,
-        registration,
-        csource_subscription,
+        CsourceNotificationStreams {
+            registrations: registration,
+            subscriptions: csource_subscription,
+        },
     )?;
     register_temporal_retention(&task_supervisor, Arc::clone(&storage.temporal_repo), &config.temporal)?; // clone: the sweep and the read stores share one repository.
-    register_snapshot_workers(&task_supervisor, &storage.pool, snapshot_preparation, transport, &config.notification_delivery)?;
-    register_spatial_workers(&task_supervisor, config, storage, tenant, entity)?;
+    register_snapshot_workers(
+        &task_supervisor,
+        &storage.pool,
+        Arc::clone(&services.snapshot_preparation), // clone: the worker drives the same preparation the snapshot service schedules.
+        transport,
+        &config.notification_delivery,
+    )?;
+    register_spatial_workers(&task_supervisor, config, storage, entity)?;
     Ok(TaskSupervision {
         handles,
         health_shutdown,

@@ -18,6 +18,54 @@ use std::{env, fmt::Debug, net::SocketAddr, slice};
 use thiserror::Error;
 use url::Url;
 
+/// The environment-variable name fragments that select one broker's overrides.
+///
+/// Every setting is read from `ANDROMEDA_{prefix}_{token}_{suffix}`: the prefix
+/// scopes one composed topology, the token names a single broker inside it, and
+/// the suffix is fixed per setting.
+#[derive(Clone, Copy, Debug)]
+pub struct BrokerEnvironmentKey<'a> {
+    prefix: &'a str,
+    token: &'a str,
+}
+
+impl<'a> BrokerEnvironmentKey<'a> {
+    /// Bind a topology-wide prefix to the token naming one broker within it.
+    #[must_use]
+    pub const fn new(prefix: &'a str, token: &'a str) -> BrokerEnvironmentKey<'a> {
+        BrokerEnvironmentKey { prefix, token }
+    }
+
+    /// Read one suffixed setting, falling back to its compiled-in default when the variable is unset or empty.
+    fn value(self, suffix: &str, default: &str) -> String {
+        let name = format!("ANDROMEDA_{}_{}_{suffix}", self.prefix, self.token);
+        match env::var(name) {
+            Ok(value) if !value.is_empty() => value,
+            Ok(_) | Err(_) => default.to_owned(),
+        }
+    }
+}
+
+/// The compiled-in endpoints one broker falls back to when nothing overrides them.
+///
+/// Each field is the default for the matching variable named by a
+/// [`BrokerEnvironmentKey`], in the order the specification reads them.
+#[derive(Clone, Copy, Debug)]
+pub struct BrokerNodeDefaults<'a> {
+    client: &'a str,
+    peer: &'a str,
+    database: &'a str,
+    alias: &'a str,
+}
+
+impl<'a> BrokerNodeDefaults<'a> {
+    /// Collect the host-side client URL, the compose-network peer URL, the database URL, and the source alias.
+    #[must_use]
+    pub const fn new(client: &'a str, peer: &'a str, database: &'a str, alias: &'a str) -> BrokerNodeDefaults<'a> {
+        BrokerNodeDefaults { client, peer, database, alias }
+    }
+}
+
 /// Declarative configuration for one broker role in a composed topology.
 #[derive(Clone)]
 pub struct BrokerNodeSpec<R> {
@@ -42,18 +90,14 @@ where
     pub fn from_environment(
         role: R,
         identity: R,
-        environment_prefix: &str,
-        token: &'static str,
-        client_default: &'static str,
-        peer_default: &'static str,
-        database_default: &'static str,
-        alias_default: &'static str,
+        key: BrokerEnvironmentKey<'_>,
+        defaults: BrokerNodeDefaults<'_>,
         dns_port: Option<u16>,
     ) -> Result<BrokerNodeSpec<R>, MultiBrokerError> {
-        let client_value = environment_value(environment_prefix, token, "URL", client_default);
-        let peer_value = environment_value(environment_prefix, token, "PEER_URL", peer_default);
-        let database_value = environment_value(environment_prefix, token, "DATABASE_URL", database_default);
-        let alias = environment_value(environment_prefix, token, "ALIAS", alias_default);
+        let client_value = key.value("URL", defaults.client);
+        let peer_value = key.value("PEER_URL", defaults.peer);
+        let database_value = key.value("DATABASE_URL", defaults.database);
+        let alias = key.value("ALIAS", defaults.alias);
         let client = BrokerEndpoint::parse(client_value).map_err(|error| MultiBrokerError::Configuration(ConfigurationError::InvalidBrokerEndpoint(error)))?;
         let peer = Url::parse(&peer_value).map_err(|error| MultiBrokerError::Endpoint(error.to_string()))?;
         let database = DatabaseEndpoint::parse(database_value).map_err(MultiBrokerError::Configuration)?;
@@ -269,14 +313,6 @@ where
         } else {
             Err(MultiBrokerError::Cleanup(failures.join("; ")))
         }
-    }
-}
-
-fn environment_value(prefix: &str, token: &str, suffix: &str, default: &str) -> String {
-    let name = format!("ANDROMEDA_{prefix}_{token}_{suffix}");
-    match env::var(name) {
-        Ok(value) if !value.is_empty() => value,
-        Ok(_) | Err(_) => default.to_owned(),
     }
 }
 

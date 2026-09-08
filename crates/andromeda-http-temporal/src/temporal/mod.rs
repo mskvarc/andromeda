@@ -18,6 +18,7 @@ use andromeda_http_extraction::{
     prefer::PreferHeader,
     protocol::NgsiLdProtocolHeaders,
     query::ValidatedQuery,
+    request_envelope::NgsiLdRequestEnvelope,
     typed_path::TypedPath,
     via::IncomingVia,
 };

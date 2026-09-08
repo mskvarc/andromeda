@@ -85,6 +85,25 @@ pub struct ResolvedLinkedTemporalEntities {
     pub failures: Vec<LinkedResolutionFailure>,
 }
 
+/// How every Linked Entity of one traversal is read.
+///
+/// The three values are fixed once for the whole walk and never vary between
+/// levels, because clause 4.5.23 applied to the temporal API renders every
+/// Linked Entity over the same window as the roots: the compiled query is that
+/// window as this broker's own history answers it, the window itself is that
+/// same slice as a remote broker is asked for it (clause 4.5.23.1), and the
+/// context is the one both were derived against.
+#[derive(Clone, Copy)]
+struct LinkedTemporalRead<'a> {
+    /// The window-scoped query every locally held Linked Entity is rendered
+    /// with.
+    compiled: &'a CompiledTemporalQuery,
+    /// The window a remote broker is asked to answer over.
+    window: &'a TemporalLinkedWindow,
+    /// The JSON-LD context the triggering request resolved to.
+    context: &'a ContextSpec,
+}
+
 /// One level of the traversal, as resolved.
 struct ResolvedTemporalLevel {
     /// The level's representations in append order: the locally held ones in
@@ -95,6 +114,22 @@ struct ResolvedTemporalLevel {
     /// What the locally rendered entities of this level named, reported before
     /// any format projection erased it.
     candidates: Vec<TemporalLinkedCandidate>,
+}
+
+/// The bounds and request context one join traversal is fixed to.
+///
+/// Clause 4.5.23 fixes these for the whole walk: every level is read under the
+/// same request, to the same remaining depth, against the same `containedBy`
+/// frontier and the same `@context`.
+pub struct TemporalJoinRequest<'a> {
+    /// The request whose window and representation the traversal reads under.
+    pub params: &'a TemporalQueryParameters,
+    /// Remaining depth the traversal may descend.
+    pub join_level: NonZeroU32,
+    /// Identifiers the traversal must not leave.
+    pub contained_by: &'a HashSet<Uri>,
+    /// Context each level is compiled and rendered against.
+    pub context: &'a ContextSpec,
 }
 
 impl TemporalService {
@@ -138,11 +173,14 @@ impl TemporalService {
         target: &ContextTarget,
         rendered: &[Value],
         seed: &[TemporalLinkedCandidate],
-        params: &TemporalQueryParameters,
-        join_level: NonZeroU32,
-        contained_by: &HashSet<Uri>,
-        context: &ContextSpec,
+        request: &TemporalJoinRequest<'_>,
     ) -> Result<ResolvedLinkedTemporalEntities, TemporalError> {
+        let TemporalJoinRequest {
+            params,
+            join_level,
+            contained_by,
+            context,
+        } = *request;
         let window = TemporalLinkedWindow::of_request(params);
         // A Linked Entity is read over the window alone. The request's `attrs`
         // and `datasetId` narrow what the *roots* show; carrying them into the
@@ -150,6 +188,11 @@ impl TemporalService {
         // never named, and would contradict what the forwarded half already
         // does — a remote broker answers a linked retrieval in full.
         let compiled = self.compile_temporal_query(&window.to_parameters(), context).await?;
+        let linked_read = LinkedTemporalRead {
+            compiled: &compiled,
+            window: &window,
+            context,
+        };
 
         let mut resolved = ResolvedLinkedTemporalEntities::default();
         // The roots and the client-held ids are excluded from the first level
@@ -176,7 +219,7 @@ impl TemporalService {
             && !candidates.is_empty()
         {
             visited.extend(candidates.iter().map(|candidate| candidate.id.clone())); // clone: the guard outlives this level's candidates
-            let level = self.resolve_level(target, &candidates, depth, &visited, &compiled, &window, context).await?;
+            let level = self.resolve_level(target, &candidates, depth, &visited, linked_read).await?;
             // Everything the level produced — including the sub-graph a remote
             // broker returned around a candidate — is now held, so no later
             // level asks for it again.
@@ -238,11 +281,11 @@ impl TemporalService {
         candidates: &[TemporalLinkedCandidate],
         depth: NonZeroU32,
         visited: &IndexSet<Uri>,
-        compiled: &CompiledTemporalQuery,
-        window: &TemporalLinkedWindow,
-        context: &ContextSpec,
+        linked_read: LinkedTemporalRead<'_>,
     ) -> Result<ResolvedTemporalLevel, TemporalError> {
-        let (entities, named) = self.resolve_level_locally(target, candidates, compiled, context).await?;
+        let (entities, named) = self
+            .resolve_level_locally(target, candidates, linked_read.compiled, linked_read.context)
+            .await?;
         let mut level = ResolvedTemporalLevel {
             entities,
             failures: Vec::new(),
@@ -255,7 +298,7 @@ impl TemporalService {
             if candidate.eligibility == RemoteEligibility::LocalOnly || level.entities.contains_key(&candidate.id) {
                 continue;
             }
-            fetch_remote_candidate(source.as_ref(), candidate, depth, visited, window, context, &mut level).await;
+            fetch_remote_candidate(source.as_ref(), candidate, depth, visited, linked_read, &mut level).await;
         }
         Ok(level)
     }
@@ -354,14 +397,16 @@ async fn fetch_remote_candidate(
     candidate: &TemporalLinkedCandidate,
     depth: NonZeroU32,
     visited: &IndexSet<Uri>,
-    window: &TemporalLinkedWindow,
-    context: &ContextSpec,
+    linked_read: LinkedTemporalRead<'_>,
     level: &mut ResolvedTemporalLevel,
 ) {
     // The candidate itself is already in the guard; the remainder of the system
     // is told about everything except the entity it is being asked for.
     let held: Vec<Uri> = visited.iter().filter(|id| **id != candidate.id).cloned().collect(); // clone: the port takes the ids as an owned slice
-    match source.fetch_linked_temporal(&candidate.id, depth, &held, window, context).await {
+    match source
+        .fetch_linked_temporal(&candidate.id, depth, &held, linked_read.window, linked_read.context)
+        .await
+    {
         Ok(fetched) => {
             for entity in fetched.entities {
                 let Some(id) = identifier_of(&entity) else {

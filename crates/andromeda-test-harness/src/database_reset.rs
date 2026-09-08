@@ -19,7 +19,7 @@ pub const RESET_TENANT_SQL: &str = include_str!("../sql/reset-tenant.sql");
 /// Returns [`DatabaseResetError::Isolation`] when the exclusive lease no longer holds its connection, and [`DatabaseResetError::Sqlx`] when the reset script fails.
 pub async fn reset_tenant(lease: &mut SerializedLease) -> Result<(), DatabaseResetError> {
     let connection = lease.connection()?;
-    connection.execute(RESET_TENANT_SQL).await.map_err(DatabaseResetError::Sqlx)?;
+    connection.execute(RESET_TENANT_SQL).await.map_err(DatabaseResetError::from_sqlx)?;
     Ok(())
 }
 
@@ -47,7 +47,7 @@ pub async fn reset_owned_tenant(pool: &PgPool) -> Result<(), DatabaseResetError>
                 attempt += 1;
                 sleep(RESET_DEADLOCK_BACKOFF).await;
             }
-            Err(error) => return Err(DatabaseResetError::Sqlx(error)),
+            Err(error) => return Err(DatabaseResetError::from_sqlx(error)),
         }
     }
 }
@@ -101,16 +101,16 @@ const PREFIX_DELETES: &[&str] = &[
 /// Returns [`DatabaseResetError::Sqlx`] when the transaction cannot be opened, when any prefix-scoped delete fails, or when the commit fails.
 pub async fn cleanup_prefix(pool: &PgPool, identifiers: &TestIdentifiers) -> Result<(), DatabaseResetError> {
     let like = format!("{}%", identifiers.prefix());
-    let mut transaction = pool.begin().await.map_err(DatabaseResetError::Sqlx)?;
+    let mut transaction = pool.begin().await.map_err(DatabaseResetError::from_sqlx)?;
     delete_temporal_intents(&mut transaction, &like).await?;
     for statement in PREFIX_DELETES {
         sqlx::query(*statement)
             .bind(&like)
             .execute(&mut *transaction)
             .await
-            .map_err(DatabaseResetError::Sqlx)?;
+            .map_err(DatabaseResetError::from_sqlx)?;
     }
-    transaction.commit().await.map_err(DatabaseResetError::Sqlx)?;
+    transaction.commit().await.map_err(DatabaseResetError::from_sqlx)?;
     Ok(())
 }
 
@@ -119,12 +119,12 @@ async fn delete_temporal_intents(transaction: &mut Transaction<'_, Postgres>, li
         .bind(like)
         .execute(&mut **transaction)
         .await
-        .map_err(DatabaseResetError::Sqlx)?;
+        .map_err(DatabaseResetError::from_sqlx)?;
     sqlx::query("DELETE FROM temporal_append_intents WHERE entity_id LIKE $1")
         .bind(like)
         .execute(&mut **transaction)
         .await
-        .map_err(DatabaseResetError::Sqlx)?;
+        .map_err(DatabaseResetError::from_sqlx)?;
     Ok(())
 }
 
@@ -135,8 +135,20 @@ pub enum DatabaseResetError {
     #[error(transparent)]
     Isolation(#[from] DatabaseIsolationError),
     /// `SQLx` could not execute the reset or cleanup transaction.
+    ///
+    /// Boxed for the same reason as [`DatabaseIsolationError::Sqlx`]: an
+    /// `sqlx::Error` is 56 bytes, and this enum is the `Err` of every reset and
+    /// prefix cleanup the harness runs.
     #[error("test database reset failed: {0}")]
-    Sqlx(#[source] sqlx::Error),
+    Sqlx(#[source] Box<sqlx::Error>),
+}
+
+impl DatabaseResetError {
+    /// Record an `SQLx` failure, moving it behind the variant's box.
+    #[must_use]
+    pub fn from_sqlx(error: sqlx::Error) -> DatabaseResetError {
+        DatabaseResetError::Sqlx(Box::new(error))
+    }
 }
 
 #[cfg(test)]

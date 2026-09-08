@@ -27,17 +27,36 @@ fn matching_type(entity: &Entity) -> Option<&EntityTypeName> {
     }
 }
 
+/// What a batch operation asks the registrations matching it to do.
+///
+/// The three members travel together because none of them describes the
+/// entities: they say which clause 5.6.7 to 5.6.10 operation the sources
+/// perform, which of the client's options every forwarded copy repeats, and
+/// which request triggered the forwarding (clause 6.3.18).
+pub(crate) struct ForwardedBatch<'a> {
+    /// The operation the matching registrations perform.
+    pub(crate) operation: BatchProvisionOperation,
+    /// The client's options, repeated on every forwarded copy.
+    pub(crate) query_string: Option<&'a str>,
+    /// The triggering request every forwarded copy replays, so a forwarding
+    /// loop is detected rather than followed.
+    pub(crate) triggering: TriggeringRequest<'a>,
+}
+
 /// Forward a batch of entities to every matching registration.
 pub(crate) async fn forward_entities(
     services: &EntityRouteServices,
     target: &ContextTarget,
-    operation: BatchProvisionOperation,
+    request: ForwardedBatch<'_>,
     entities: &[Entity],
     context: &ContextSpec,
-    query_string: Option<&str>,
-    triggering: TriggeringRequest<'_>,
     instance: &HttpUri,
 ) -> Result<Vec<BatchForwardedResult>, ProblemResponse> {
+    let ForwardedBatch {
+        operation,
+        query_string,
+        triggering,
+    } = request;
     let bodies = entities
         .iter()
         .map(serde_json::to_value)

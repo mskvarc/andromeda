@@ -58,7 +58,7 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Op
             None => {
                 return Err(ExpandedEntityError::DatasetNotFound {
                     attribute: attr_iri.clone(),
-                    dataset_id: ds_id.clone(),
+                    dataset_id: Box::new(ds_id.clone()),
                 });
             }
         }
@@ -159,7 +159,7 @@ pub fn delete_attr(entity: &mut Value, attr_iri: &IriBuf, selection: DatasetSele
             } else {
                 Err(ExpandedEntityError::DatasetNotFound {
                     attribute: attr_iri.clone(),
-                    dataset_id: dataset_id.clone(),
+                    dataset_id: Box::new(dataset_id.clone()),
                 })
             }
         }
@@ -223,12 +223,12 @@ pub fn replace_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Option<&U
             return match dataset_id {
                 Some(ds) => Err(ExpandedEntityError::DatasetNotFound {
                     attribute: attr_iri.clone(),
-                    dataset_id: ds.clone(),
+                    dataset_id: Box::new(ds.clone()),
                 }),
                 None => match get_instance_dataset_id(value) {
                     Some(dataset_id) => Err(ExpandedEntityError::DatasetNotFound {
                         attribute: attr_iri.clone(),
-                        dataset_id,
+                        dataset_id: Box::new(dataset_id),
                     }),
                     None => Err(ExpandedEntityError::DefaultInstanceNotFound { attribute: attr_iri.clone() }),
                 },
@@ -332,7 +332,7 @@ mod tests {
             error,
             ExpandedEntityError::DatasetNotFound {
                 attribute: iri("https://example.com/speed"),
-                dataset_id: dataset_uri("urn:ngsi-ld:Dataset:Z")
+                dataset_id: Box::new(dataset_uri("urn:ngsi-ld:Dataset:Z"))
             }
         );
     }
@@ -387,7 +387,7 @@ mod tests {
             error,
             ExpandedEntityError::DatasetNotFound {
                 attribute: iri("https://example.com/speed"),
-                dataset_id: dataset_uri("urn:ngsi-ld:Dataset:Z")
+                dataset_id: Box::new(dataset_uri("urn:ngsi-ld:Dataset:Z"))
             }
         );
     }

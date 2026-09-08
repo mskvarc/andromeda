@@ -25,6 +25,17 @@ use std::sync::Arc;
 pub(super) struct TemporalComposition {
     /// How an entity commit records attribute history for this tenant.
     pub(super) history_mode: TemporalHistoryCommitMode,
+    /// The ports the request-facing temporal path is answered through.
+    pub(super) ports: TemporalPorts,
+}
+
+/// The ports the request-facing temporal path reads history through and gates
+/// its mutations on.
+///
+/// The two belong together because deferred history couples them: the reader
+/// overlays exactly the intents a commit has queued but not yet applied, and
+/// the barrier is what an immediate mutation waits on until they have drained.
+pub(super) struct TemporalPorts {
     /// The reader temporal reads go through; in deferred mode it overlays the
     /// intents that have been committed but not yet applied.
     pub(super) reader: Arc<dyn TemporalHistoryReader>,
@@ -77,7 +88,6 @@ pub(super) fn compose_temporal_history(
     };
     Ok(TemporalComposition {
         history_mode,
-        reader,
-        mutation_barrier,
+        ports: TemporalPorts { reader, mutation_barrier },
     })
 }

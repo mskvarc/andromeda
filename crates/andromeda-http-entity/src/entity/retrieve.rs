@@ -4,7 +4,6 @@ use crate::{
     entity::{
         AcceptFormat,
         ContextSpec,
-        ContextUrl,
         Entity,
         EntityResultExt,
         EntityTenantState,
@@ -15,8 +14,8 @@ use crate::{
         NgsiLdCollectionResponse,
         NgsiLdErrorType,
         NgsiLdProtocolHeaders,
+        NgsiLdRequestEnvelope,
         NgsiLdResponse,
-        OriginalUri,
         ProblemResponse,
         ResolvedJoin,
         Response,
@@ -38,7 +37,6 @@ use crate::{
 use andromeda_federation::request::{EntityMapInUse, TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
-use axum::http::HeaderMap;
 use std::slice::from_ref;
 
 /// What a retrieval writes into the response body.
@@ -81,20 +79,22 @@ pub(crate) async fn get(
         target,
         snapshot: _,
     }: EntityTenantState,
-    OriginalUri(uri): OriginalUri,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     accept: AcceptFormat,
-    context: ContextUrl,
     TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(mut params): ValidatedQuery<GetEntityParams>,
     protocol: NgsiLdProtocolHeaders,
-    headers: HeaderMap,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entity_query;
     let context: ContextSpec = context.into_inner();
     protocol.extensions().apply_to_entity_get(&mut params).with_entity_instance(&uri)?;
     let language_filter = params.lang.take().or(protocol.language_filter);
     let prefer = protocol.prefer;
-    let incoming_via = protocol.incoming_via;
     let entity_map_header = protocol.entity_map;
 
     // Validate the representation parameters before entity lookup so an invalid

@@ -2,19 +2,17 @@
 //! clause 6.5.3.4 with the parameters of Table 6.5.3.4-1).
 
 use crate::entity::{
-    ContextUrl,
     EntityPatch,
     EntityResultExt,
     EntityTenantState,
     ForwardProvisionRequest,
     ForwardingOperation,
-    IncomingVia,
     IntoResponse,
     JsonLd,
     LocalOutcome,
     MergeOptions,
     MergeParams,
-    OriginalUri,
+    NgsiLdRequestEnvelope,
     ProblemResponse,
     ProvisionResource,
     Response,
@@ -29,7 +27,7 @@ use crate::entity::{
 };
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
-use axum::http::{HeaderMap, Method};
+use axum::http::Method;
 
 pub(crate) async fn merge(
     context_target::ExistingTargetedTenantState {
@@ -37,12 +35,14 @@ pub(crate) async fn merge(
         target,
         snapshot: _,
     }: EntityTenantState,
-    OriginalUri(uri): OriginalUri,
-    context: ContextUrl,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<MergeParams>,
-    IncomingVia(incoming_via): IncomingVia,
-    headers: HeaderMap,
     JsonLd {
         value: patch,
         context: body_context,

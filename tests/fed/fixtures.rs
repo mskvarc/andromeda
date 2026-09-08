@@ -8,7 +8,7 @@ use andromeda_test_client::{
 };
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use andromeda_test_harness::{
-    multi_broker::{BrokerHandle, BrokerNodeSpec, MultiBrokerTopology},
+    multi_broker::{BrokerEnvironmentKey, BrokerHandle, BrokerNodeDefaults, BrokerNodeSpec, MultiBrokerTopology},
     readiness::ReadinessPolicy,
 };
 use serde_json::{Value, json};
@@ -229,8 +229,14 @@ pub async fn topology() -> MultiBrokerTopology<FedRole> {
     let specs = specs
         .into_iter()
         .map(|(role, token, client, peer, database, alias, port)| {
-            BrokerNodeSpec::from_environment(role, role, "FED", token, client, peer, database, alias, Some(port))
-                .expect("federation broker specification is valid")
+            BrokerNodeSpec::from_environment(
+                role,
+                role,
+                BrokerEnvironmentKey::new("FED", token),
+                BrokerNodeDefaults::new(client, peer, database, alias),
+                Some(port),
+            )
+            .expect("federation broker specification is valid")
         })
         .collect();
     let context = jsonld_link_header(COMPOUND_CONTEXT.as_str()).expect("compound context is a valid link");

@@ -1,4 +1,3 @@
-large-error-threshold = 256
 absolute-paths-allowed-crates = ["typed_builder"]
 
 # `expect_used`, `unwrap_used` and `panic` are denied for production code, where
@@ -9,10 +8,6 @@ absolute-paths-allowed-crates = ["typed_builder"]
 allow-expect-in-tests = true
 allow-panic-in-tests = true
 allow-unwrap-in-tests = true
-# Axum handlers use one parameter per extractor; the default 7 is too low
-# for routes that legitimately need request body + query + path + several
-# typed headers + tenant state. Keeping warnings on but at a higher bar.
-too-many-arguments-threshold = 10
 
 # Repo-layer contract (no `Value` inspection, no `serde_json::from_value`,
 # no `format!`-built SQL with user values) is enforced by the grep audit in

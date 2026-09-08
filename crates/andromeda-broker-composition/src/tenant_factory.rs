@@ -9,7 +9,7 @@ use crate::{
     tenant_factory::{
         error::TenantAssemblyError,
         runtime::BrokerTenantRuntime,
-        services::{ConstructedServices, construct_services},
+        services::construct_services,
         storage::initialize_storage,
         tasks::{TenantSignals, supervise_tasks},
         temporal_history::compose_temporal_history,
@@ -19,7 +19,7 @@ use crate::{
 };
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_delivery::mqtt::pool::MqttTransportPool;
-use andromeda_entity::{batch_activity::BatchActivityTracker, config::EntityConfig, spatial_config::SpatialConfig};
+use andromeda_entity::{config::EntityConfig, spatial_config::SpatialConfig};
 use andromeda_federation::config::FederationConfig;
 use andromeda_http_source_identity::config::InfoConfig;
 use andromeda_http_subscription::config::NotificationConfig;
@@ -51,6 +51,7 @@ mod error;
 pub mod runtime;
 mod services;
 mod storage;
+mod subscription_services;
 mod tasks;
 mod temporal_history;
 mod temporal_intent_task;
@@ -167,7 +168,6 @@ async fn build_tenant_state(
 ) -> Result<(AndromedaState, BrokerTenantRuntime), TenantAssemblyError> {
     let signals = TenantSignals::new(config.spatial.change_channel_capacity);
     let storage = initialize_storage(config, db_url, tenant).await?;
-    let batch_activity = BatchActivityTracker::new();
     let temporal = compose_temporal_history(&storage.pool, &storage.temporal_repo, &config.temporal, &task_supervisor, &storage.live_target)?;
     // Every write path reaches the `current_attribute_values` projection
     // through this complete atomic commit implementation, which writes it in
@@ -184,31 +184,10 @@ async fn build_tenant_state(
         Arc::clone(&storage.entity_type_names), // clone: the same dictionary, for entity types.
     ));
     let transports = construct_transports()?;
-    let ConstructedServices { state, snapshot_preparation } = construct_services(
-        config,
-        &storage,
-        tenant,
-        &signals,
-        &transports,
-        &temporal.reader,
-        &temporal.mutation_barrier,
-        subscription_router,
-        &writes,
-        &batch_activity,
-    )?;
-    let supervision = supervise_tasks(
-        config,
-        &storage,
-        &state,
-        tenant,
-        signals,
-        snapshot_preparation,
-        &writes,
-        &transports.dispatcher,
-        task_supervisor,
-    )?;
+    let services = construct_services(config, &storage, &signals, &transports, &temporal.ports, &writes, subscription_router)?;
+    let supervision = supervise_tasks(config, &storage, &services, signals, &writes, &transports.dispatcher, task_supervisor)?;
     Ok((
-        state,
+        services.state,
         BrokerTenantRuntime::new(
             storage.context_hit_flush,
             supervision.handles,

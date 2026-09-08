@@ -56,6 +56,27 @@ pub(crate) struct ReadSelection<'a> {
     pub(crate) entity_map: EntityMapInUse<'a>,
 }
 
+/// What every GET of one fan-out carries, whichever registration receives it.
+///
+/// These four are one thing — the triggering request as each context source
+/// sees it — and none of them varies between the sources contacted: the
+/// forwarded requests all resolve against the same JSON-LD context, extend the
+/// same `Via` chain and pass through the same headers (clauses 6.3.18, 6.3.19),
+/// are cacheable on the same terms (clause 6.3.17), and name the same
+/// `EntityMap` (clause 5.5.14).
+#[derive(Clone, Copy)]
+pub(crate) struct ForwardedGetConditions<'a> {
+    /// The JSON-LD context the triggering request resolved to.
+    pub(crate) context: &'a ContextSpec,
+    /// The request that triggered the forwarding.
+    pub(crate) triggering: TriggeringRequest<'a>,
+    /// Whether the answers may be served from, and written to, the cache.
+    pub(crate) cacheability: Cacheability,
+    /// The `EntityMap` the read runs under, which fixes the location each
+    /// source is told.
+    pub(crate) entity_map: EntityMapInUse<'a>,
+}
+
 /// What one contacted registration answered, before the caller folds it.
 pub(crate) struct SourceAnswer<T> {
     /// The registration's forwarding mode.
@@ -149,14 +170,17 @@ impl FederationService {
         &self,
         targets: Vec<(ContextSourceRegistration, ForwardedQuery)>,
         url_of: impl Fn(&ContextSourceRegistration, &ForwardedQuery) -> Result<Url, FederationError> + Sync,
-        context: &ContextSpec,
-        triggering: TriggeringRequest<'_>,
-        cacheability: Cacheability,
         read: impl Fn(&ContextSourceRegistration, ForwardGetOutcome) -> Option<T> + Sync,
-        entity_map: EntityMapInUse<'_>,
+        conditions: ForwardedGetConditions<'_>,
     ) -> Vec<SourceAnswer<T>> {
         let url_of = &url_of;
         let read = &read;
+        let ForwardedGetConditions {
+            context,
+            triggering,
+            cacheability,
+            entity_map,
+        } = conditions;
         stream::iter(targets)
             .map(|(registration, query)| async move {
                 let linked_map = entity_map.location_for(&registration.id);

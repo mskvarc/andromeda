@@ -5,6 +5,8 @@ pub mod mutation_barrier;
 pub mod mutator;
 /// Pending-intent reads used to preserve immediate logical visibility.
 pub mod pending_intent_reader;
+/// The caller-owned ports temporal policy is constructed over.
+pub mod service_ports;
 /// Idempotent temporal-history append capability.
 pub mod temporal_history_sink;
 /// Notification that a commit made deferred temporal work available.

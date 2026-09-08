@@ -2,17 +2,17 @@
 
 use crate::{
     error::{single_source_declined, temporal_problem},
+    history_read::TemporalHistoryRead,
     join::{apply_temporal_join, single_retrieval_payload},
     temporal::{
         AcceptFormatNoGeo,
         ContextSpec,
-        ContextUrl,
         CsrModeFilter,
         ForwardingOperation,
         IntoResponse,
         NgsiLdProtocolHeaders,
+        NgsiLdRequestEnvelope,
         NgsiLdResponse,
-        OriginalUri,
         PreferHeader,
         ProblemResponse,
         Response,
@@ -53,9 +53,9 @@ use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
 use andromeda_temporal::{
     error::TemporalError,
     linked::candidates::TemporalLinkedCandidate,
-    service::{TemporalRange, TemporalReadResult, TemporalService},
+    service::{TemporalRange, TemporalReadResult},
 };
-use axum::http::{HeaderMap, Uri as RequestUri};
+use axum::http::Uri as RequestUri;
 use serde_json::json;
 use tracing::warn;
 
@@ -65,11 +65,14 @@ pub async fn get(
         target,
         snapshot: _,
     }: TenantState,
-    OriginalUri(uri): OriginalUri,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     accept: AcceptFormatNoGeo,
-    context: ContextUrl,
     protocol: NgsiLdProtocolHeaders,
-    headers: HeaderMap,
     TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(mut params): ValidatedQuery<TemporalQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
@@ -99,18 +102,20 @@ pub async fn get(
         }
     } else {
         let triggering = TriggeringRequest {
-            via: protocol.incoming_via.as_ref(),
+            via: incoming_via.as_ref(),
             headers: Some(&headers),
         };
         distributed_retrieval(
-            &state.forwarding,
-            &state.entity_maps,
+            RetrievalSources {
+                forwarding: &state.forwarding,
+                entity_maps: &state.entity_maps,
+                triggering,
+                map_use,
+            },
             &target,
             &id,
             &params,
             &context,
-            triggering,
-            map_use,
             local_result,
             &uri,
         )
@@ -125,7 +130,13 @@ pub async fn get(
     } = retrieved;
 
     let content_range = range.and_then(|range| build_content_range(&range.interval, range.observed, range.partition_total, range.last_n_origin));
-    let (payload, warnings) = retrieval_payload(service, &target, &params, &context, value, &linked_candidates, warnings, &uri).await?;
+    let read = TemporalHistoryRead {
+        service: &state.temporal,
+        target: &target,
+        params: &params,
+        context: &context,
+    };
+    let (payload, warnings) = retrieval_payload(&read, value, &linked_candidates, warnings, &uri).await?;
 
     // Table 6.19.3.1-1: 201 when an EntityMap has been (re)created, 206 when
     // the history was truncated, 200 otherwise.
@@ -208,7 +219,27 @@ async fn resolve_retrieve_map(
         .with_instance(instance)
 }
 
+/// The distributed half of a single-entity temporal retrieval: how it reaches
+/// the registered sources, and the Entity Map that fixes which of them are
+/// contacted and records what they returned.
+struct RetrievalSources<'a> {
+    /// The service that contacts every matching registration.
+    forwarding: &'a FederationService,
+    /// The store the used or minted Entity Map is written to (clause 5.5.14).
+    entity_maps: &'a EntityMapService,
+    /// The triggering request every forwarded copy replays, so a forwarding
+    /// loop is detected rather than followed (clause 6.3.18).
+    triggering: TriggeringRequest<'a>,
+    /// The Entity Map the retrieval runs under: a referenced live map fixes
+    /// the registrations contacted, a minted one is created for this request
+    /// (clause 5.7.3.4).
+    map_use: EntityMapUse,
+}
+
 /// Retrieve the entity's history from every matching source and this broker.
+///
+/// `sources` carries the distributed machinery; `target`, `id`, `params` and
+/// `context` name the history being retrieved.
 ///
 /// # Errors
 ///
@@ -217,17 +248,20 @@ async fn resolve_retrieve_map(
 /// the local read or of the map store, and `ResourceNotFound` when the entity
 /// is held neither locally nor by any matching registration (clause 5.7.3.4).
 async fn distributed_retrieval(
-    forwarding: &FederationService,
-    entity_maps: &EntityMapService,
+    sources: RetrievalSources<'_>,
     target: &ContextTarget,
     id: &Uri,
     params: &TemporalQueryParameters,
     context: &ContextSpec,
-    triggering: TriggeringRequest<'_>,
-    map_use: EntityMapUse,
     local_result: Result<TemporalReadResult, TemporalError>,
     instance: &RequestUri,
 ) -> Result<RetrievedHistory, ProblemResponse> {
+    let RetrievalSources {
+        forwarding,
+        entity_maps,
+        triggering,
+        map_use,
+    } = sources;
     let forwarded = forwarding
         .forward_temporal_retrieve(
             target,
@@ -346,17 +380,14 @@ async fn record_retrieve_map(
 /// and [`TemporalError::Internal`] when a join left the retrieval without its
 /// root, which an inline join rewriting its root in place cannot do.
 async fn retrieval_payload(
-    service: &TemporalService,
-    target: &ContextTarget,
-    params: &TemporalQueryParameters,
-    context: &ContextSpec,
+    read: &TemporalHistoryRead<'_>,
     value: Value,
     linked_candidates: &[TemporalLinkedCandidate],
     warnings: Vec<NgsiLdWarning>,
     instance: &RequestUri,
 ) -> Result<(ResponsePayload, Vec<NgsiLdWarning>), ProblemResponse> {
-    let Some(join) = RetrievingJoin::from_mode(params.join) else {
-        let data: Value = if params.is_simplified() {
+    let Some(join) = RetrievingJoin::from_mode(read.params.join) else {
+        let data: Value = if read.params.is_simplified() {
             TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Single(value))
                 .render()
                 .with_instance(instance)?
@@ -368,7 +399,7 @@ async fn retrieval_payload(
         return Ok((ResponsePayload::Single(data), warnings));
     };
     let mut roots = vec![value];
-    let warnings = apply_temporal_join(service, target, join, &mut roots, linked_candidates, params, context, warnings)
+    let warnings = apply_temporal_join(read, join, &mut roots, linked_candidates, warnings)
         .await
         .with_instance(instance)?
         .warnings;

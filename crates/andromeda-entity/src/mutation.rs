@@ -10,6 +10,7 @@ use crate::{
     geo_property_geometry::validate_geo_property_geometries,
     merge_fragment::{adapt_member, existing_attribute_types},
     merge_options::MergeOptions,
+    notification_fanout::{ChangedEntity, MutationSnapshots},
     notification_plan::{NotificationGroup, attribute_change_groups},
     null_content::reject_null_content,
     sys_attrs::snapshot_with_sys_attrs,
@@ -319,28 +320,26 @@ impl EntityService {
             .as_ref()
             .map_or_else(|| entity_snapshot.clone(), |sys_attrs| snapshot_with_sys_attrs(&entity_snapshot, sys_attrs));
 
+        let deleted = ChangedEntity {
+            target,
+            id: &entity_uri,
+            types: &entity_types,
+        };
+        let snapshots = MutationSnapshots {
+            current: Some(&match_snapshot),
+            previous: Some(&entity_snapshot),
+        };
         let mut subscription_matches = Vec::new();
         for change in &attribute_changes {
             subscription_matches.extend(self.build_subscription_matches_for_instance(
-                target,
-                &entity_uri,
-                &entity_types,
+                deleted,
                 NotificationTrigger::AttributeDeleted,
                 slice::from_ref(&change.key.attr),
                 change.key.dataset_id.as_ref(),
-                Some(&match_snapshot),
-                Some(&entity_snapshot),
+                snapshots,
             ));
         }
-        subscription_matches.extend(self.build_subscription_matches(
-            target,
-            &entity_uri,
-            &entity_types,
-            NotificationTrigger::EntityDeleted,
-            &attr_keys,
-            Some(&match_snapshot),
-            Some(&entity_snapshot),
-        ));
+        subscription_matches.extend(self.build_subscription_matches(deleted, NotificationTrigger::EntityDeleted, &attr_keys, snapshots));
 
         let write = AtomicWrite::builder()
             .entity_id(Arc::new(entity_uri.clone())) // clone: the delete write owns its validated identifier.

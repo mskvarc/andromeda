@@ -44,6 +44,8 @@ use url::Url;
 
 /// Validated repositories, indexes, and storage workers for one tenant.
 pub(super) struct TenantStorage {
+    /// The tenant this storage graph was opened, migrated and warmed for.
+    pub(super) tenant: TenantRef,
     pub(super) pool: PgPool,
     pub(super) live_target: ContextTarget,
     pub(super) engine: JsonLdEngine,
@@ -157,6 +159,7 @@ pub(super) async fn initialize_storage(config: &TenantFactoryConfig, database_ur
         tracing::warn!(%error, "spatial warmup failed");
     }
     Ok(TenantStorage {
+        tenant: tenant.clone(), // clone: the storage graph names the tenant it was opened for.
         pool,
         live_target,
         engine,

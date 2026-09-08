@@ -16,5 +16,7 @@ pub mod reader;
 pub mod registry_types;
 /// Runtime-neutral waiting between contended write attempts.
 pub mod retry_delay;
+/// The caller-owned ports entity policy is constructed over.
+pub mod service_ports;
 /// Typed spatial-index rebuild snapshots.
 pub mod spatial_snapshot;

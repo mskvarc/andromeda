@@ -46,7 +46,7 @@ impl SnapshotExecutor {
             params.limit = Some(self.capture_page_size);
             params.offset = Some(offset);
             params.count = Some(true);
-            let (mut entities, _) = match self.entity_query.query(&self.live_target, &params, context).await {
+            let (mut entities, _) = match self.sources.entity_query.query(&self.sources.live_target, &params, context).await {
                 Ok(result) => result,
                 Err(error) => {
                     warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot entity query failed");
@@ -55,12 +55,13 @@ impl SnapshotExecutor {
             };
             let local_page_len = entities.len();
             let forwarded_result = self
+                .sources
                 .forwarding
                 .forward_query(
-                    &self.live_target,
+                    &self.sources.live_target,
                     ForwardQueryRequest {
                         client_query: ClientQuery::EntityQuery(&params),
-                        split: self.forwarding.split_entities(params.split_entities),
+                        split: self.sources.forwarding.split_entities(params.split_entities),
                         context,
                         operation: ForwardingOperation::QueryEntity,
                         triggering: TriggeringRequest::default(),
@@ -103,7 +104,7 @@ impl SnapshotExecutor {
                     Ok(compact) => compact,
                     Err(error) => return failure_detail(format!("Failed to serialize captured entity: {error}")),
                 };
-                let expanded = match self.entity_query.engine().expand(compact, context).await {
+                let expanded = match self.sources.entity_query.engine().expand(compact, context).await {
                     Ok(expanded) => expanded,
                     Err(error) => return failure_detail(format!("Failed to expand captured entity: {error}")),
                 };
@@ -145,7 +146,7 @@ impl SnapshotExecutor {
             params.limit = Some(self.capture_page_size);
             params.offset = Some(offset);
             params.count = Some(true);
-            let result = match self.temporal.query(&self.live_target, &params, context).await {
+            let result = match self.sources.temporal.query(&self.sources.live_target, &params, context).await {
                 Ok(result) => result,
                 Err(error) => {
                     warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot temporal query failed");
@@ -157,12 +158,13 @@ impl SnapshotExecutor {
             }
             let local_page_len = result.entities.len();
             let forwarded = match self
+                .sources
                 .forwarding
                 .forward_temporal_query(
-                    &self.live_target,
+                    &self.sources.live_target,
                     ForwardTemporalQueryRequest {
                         client_query: &params,
-                        split: self.forwarding.split_entities(params.split_entities),
+                        split: self.sources.forwarding.split_entities(params.split_entities),
                         context,
                         operation: ForwardingOperation::QueryTemporalEntity,
                         triggering: TriggeringRequest::default(),
@@ -236,7 +238,7 @@ impl SnapshotExecutor {
 
     async fn persist_temporal_results(&self, target: &ContextTarget, snapshot_id: &Uri, index: usize, pairs: &[(Uri, Value)]) -> ExecutionResultDetails {
         for (_, data) in pairs {
-            if let Err(error) = self.temporal.create_or_update(target, data.clone(), &ContextSpec::core_only()).await {
+            if let Err(error) = self.sources.temporal.create_or_update(target, data.clone(), &ContextSpec::core_only()).await {
                 error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to materialize temporal Snapshot results");
                 return failure_detail(format!("Failed to store temporal results: {error}"));
             }

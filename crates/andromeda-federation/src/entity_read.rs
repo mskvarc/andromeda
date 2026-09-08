@@ -9,7 +9,7 @@ use crate::{
     forwarded_query::ForwardedQuery,
     forwarding_url::{build_query_url, build_retrieve_url},
     outcome::{ForwardGetOutcome, ForwardReadOutcome, ForwardedEntities, ForwardedResponse, MatchedSources},
-    read_fan_out::{ReadSelection, read_outcome, registered_type_of},
+    read_fan_out::{ForwardedGetConditions, ReadSelection, read_outcome, registered_type_of},
     request::{CsrModeFilter, ForwardQueryRequest, ForwardRetrieveRequest},
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -180,11 +180,13 @@ impl FederationService {
             .fan_out_get(
                 targets,
                 |registration, query| build_query_url(&registration.access.endpoint, &query.to_query_string()),
-                context,
-                triggering,
-                Cacheability::Cacheable,
                 FederationService::entities_of,
-                entity_map,
+                ForwardedGetConditions {
+                    context,
+                    triggering,
+                    cacheability: Cacheability::Cacheable,
+                    entity_map,
+                },
             )
             .await;
         Ok(read_outcome(answers, matched, None))
@@ -253,11 +255,13 @@ impl FederationService {
             .fan_out_get(
                 targets,
                 |registration, query| build_retrieve_url(&registration.access.endpoint, entity_id, &query.to_query_string()),
-                context,
-                triggering,
-                Cacheability::Cacheable,
                 FederationService::entities_of,
-                entity_map,
+                ForwardedGetConditions {
+                    context,
+                    triggering,
+                    cacheability: Cacheability::Cacheable,
+                    entity_map,
+                },
             )
             .await;
         Ok(read_outcome(answers, matched, registered_type))

@@ -5,13 +5,12 @@ use crate::entity_operations::{
     BatchBody,
     BatchOperationResult,
     BatchProvisionOperation,
-    ContextUrl,
     EntityResultExt,
     EntityTenantState,
-    IncomingVia,
+    ForwardedBatch,
     IntoResponse,
     NgsiLdErrorType,
-    OriginalUri,
+    NgsiLdRequestEnvelope,
     PreferHeader,
     ProblemResponse,
     Response,
@@ -36,11 +35,11 @@ pub(crate) async fn batch_merge(
         target,
         snapshot: _,
     }: EntityTenantState,
-    OriginalUri(uri): OriginalUri,
+    NgsiLdRequestEnvelope {
+        uri, context, incoming_via, ..
+    }: NgsiLdRequestEnvelope,
     _accept: AcceptFormatNoGeo,
-    context: ContextUrl,
     prefer: PreferHeader,
-    IncomingVia(incoming_via): IncomingVia,
     BatchBody { headers, body }: BatchBody,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
@@ -59,7 +58,19 @@ pub(crate) async fn batch_merge(
         via: incoming_via.as_ref(),
         headers: Some(&headers),
     };
-    let forwarded = forward_entities(&state, &target, BatchProvisionOperation::Merge, &entities, &context, None, triggering, &uri).await?;
+    let forwarded = forward_entities(
+        &state,
+        &target,
+        ForwardedBatch {
+            operation: BatchProvisionOperation::Merge,
+            query_string: None,
+            triggering,
+        },
+        &entities,
+        &context,
+        &uri,
+    )
+    .await?;
 
     // Clause 5.6.20.4: the local phase merges what proxied registrations left.
     let remainder = local_remainder(entities, &forwarded);

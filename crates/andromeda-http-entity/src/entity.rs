@@ -21,6 +21,7 @@ use andromeda_http_extraction::{
     jsonld::JsonLd,
     protocol::NgsiLdProtocolHeaders,
     query::ValidatedQuery,
+    request_envelope::NgsiLdRequestEnvelope,
     typed_path::TypedPath,
     via::IncomingVia,
 };

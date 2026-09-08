@@ -13,6 +13,11 @@ use thiserror::Error;
 ///
 /// The attribute IRI is an [`IriBuf`] and the `datasetId` a [`Uri`], the domain
 /// types they carry across the API boundary.
+///
+/// A [`Uri`] is 88 bytes against the 56 an [`IriBuf`] occupies, and this enum is
+/// the `Err` of every mutation entry point: carrying the `datasetId` inline made
+/// the widest variant 144 bytes, so every success path paid the failure's width.
+/// [`DatasetNotFound`](Self::DatasetNotFound) therefore boxes it.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ExpandedEntityError {
     /// The entity value was not an expanded JSON-LD node (nor an array wrapping one).
@@ -47,8 +52,9 @@ pub enum ExpandedEntityError {
     DatasetNotFound {
         /// Expanded IRI of the attribute that was looked up.
         attribute: IriBuf,
-        /// The `datasetId` that selected no instance.
-        dataset_id: Uri,
+        /// The `datasetId` that selected no instance, boxed to keep this
+        /// variant from widening the whole enum.
+        dataset_id: Box<Uri>,
     },
     /// The attribute exists but has no default (no-`datasetId`) instance.
     #[error("attribute {attribute} default instance not found")]

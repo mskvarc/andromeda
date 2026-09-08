@@ -4,33 +4,26 @@ use crate::{
     bounded_driver,
     control::DrainExecution,
     drain_task::{DrainOperation, DrainPassOutcome},
+    driver_supervision::DriverSupervision,
     failure::TaskFailure,
-    lifecycle_event::TaskLifecycleEvent,
-    restart_policy::RestartPolicy,
-    task_health::TaskHealth,
-    task_name::TaskName,
     task_observer::DriverTerminal,
     wake_trigger::DrainFallbackCadence,
 };
 use std::{sync::Arc, time::SystemTime};
 use tokio::{
-    sync::{RwLock, broadcast, mpsc},
+    sync::mpsc,
     time::{MissedTickBehavior, interval},
 };
-use tokio_util::sync::CancellationToken;
 
 /// Execute wake and fallback triggers sequentially, retaining at most one wake.
 pub(crate) async fn run(
-    name: TaskName,
-    restart_policy: RestartPolicy,
+    supervision: DriverSupervision,
     fallback: DrainFallbackCadence,
     operation: Arc<DrainOperation>,
     mut wake: mpsc::Receiver<()>,
-    cancellation: CancellationToken,
-    health: Arc<RwLock<TaskHealth>>,
-    lifecycle: broadcast::Sender<TaskLifecycleEvent>,
 ) -> DriverTerminal {
-    health.write().await.running(SystemTime::now());
+    supervision.health.write().await.running(SystemTime::now());
+    let cancellation = &supervision.cancellation;
     let mut interval = interval(fallback.get());
     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
     interval.tick().await;
@@ -46,17 +39,10 @@ pub(crate) async fn run(
             }
         }
         loop {
-            let result = bounded_driver::execute(
-                &name,
-                restart_policy,
-                || {
-                    let execution = DrainExecution::new(cancellation.clone(), SystemTime::now()); // clone: one bounded pass owns a cooperative task-local cancellation handle.
-                    operation(execution)
-                },
-                &cancellation,
-                &health,
-                &lifecycle,
-            )
+            let result = bounded_driver::execute(&supervision, || {
+                let execution = DrainExecution::new(cancellation.clone(), SystemTime::now()); // clone: one bounded pass owns a cooperative task-local cancellation handle.
+                operation(execution)
+            })
             .await;
             match result {
                 Ok(DrainPassOutcome::Idle) => break,

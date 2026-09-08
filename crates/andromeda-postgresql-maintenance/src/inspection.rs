@@ -1,7 +1,7 @@
 //! Cheap catalog sampling, bounded physical probes and execution safety gates.
 
 use crate::{
-    artifact::{ArtifactIndexName, ArtifactKind},
+    artifact::RecoveryArtifact,
     candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
     error::MaintenanceError,
     policy::{DegradationSample, PolicyProfile, SafetyGates},
@@ -55,8 +55,8 @@ pub(crate) struct InvalidIndex {
 
 impl InvalidIndex {
     /// Return a recovery artifact only when the name belongs to the allowlist.
-    pub(crate) fn recovery_artifact(&self) -> Option<(ArtifactIndexName, ArtifactKind)> {
-        ArtifactIndexName::parse(&self.name)
+    pub(crate) fn recovery_artifact(&self) -> Option<RecoveryArtifact> {
+        RecoveryArtifact::parse(&self.name)
     }
 
     /// Borrow the catalog name for structured reporting.

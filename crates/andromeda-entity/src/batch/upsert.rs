@@ -15,7 +15,10 @@
 
 use crate::{
     EntityService,
-    batch::{BatchResult, chunk::ChunkWrite},
+    batch::{
+        BatchResult,
+        chunk::{ChunkWrite, UpdatedPayloads},
+    },
     error::EntityError,
     expanded_member::unwrap_expanded_ref,
     notification_plan::attribute_change_groups,
@@ -195,11 +198,12 @@ impl EntityService {
             writes.push(self.chunk_update(
                 target,
                 id,
-                existing,
-                Arc::new(merged),
-                Arc::new(entity.expanded),
+                UpdatedPayloads {
+                    previous: existing,
+                    merged: Arc::new(merged),
+                    observed: Arc::new(entity.expanded),
+                },
                 &groups,
-                Some(existing),
                 Precondition::MustExist,
             ));
         }
@@ -233,15 +237,16 @@ impl EntityService {
         _changed_attributes: Vec<AttributeName>,
     ) -> ChunkWrite {
         let groups = attribute_change_groups(previous, payload);
-        // clone: `Arc` ref-count bumps; the same payload is stored and observed.
         self.chunk_update(
             target,
             id,
-            previous,
-            Arc::clone(payload),
-            Arc::clone(payload),
+            UpdatedPayloads {
+                previous,
+                // clone: `Arc` ref-count bumps; the same payload is stored and observed.
+                merged: Arc::clone(payload),
+                observed: Arc::clone(payload),
+            },
             &groups,
-            Some(previous),
             Precondition::UnchangedSince(modified_at),
         )
     }

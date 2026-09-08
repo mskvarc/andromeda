@@ -19,12 +19,12 @@ impl IsolatedLease {
     ///
     /// Returns [`DatabaseIsolationError::Sqlx`] when the pool cannot hand out a connection or the `pg_advisory_lock_shared` call fails.
     pub async fn acquire(pool: &PgPool) -> Result<IsolatedLease, DatabaseIsolationError> {
-        let mut connection = pool.acquire().await.map_err(DatabaseIsolationError::Sqlx)?;
+        let mut connection = pool.acquire().await.map_err(DatabaseIsolationError::from_sqlx)?;
         sqlx::query("SELECT pg_advisory_lock_shared($1)")
             .bind(ISOLATION_LOCK_KEY)
             .execute(&mut *connection)
             .await
-            .map_err(DatabaseIsolationError::Sqlx)?;
+            .map_err(DatabaseIsolationError::from_sqlx)?;
         Ok(IsolatedLease { connection: Some(connection) })
     }
 
@@ -39,7 +39,7 @@ impl IsolatedLease {
                 .bind(ISOLATION_LOCK_KEY)
                 .fetch_one(&mut *connection)
                 .await
-                .map_err(DatabaseIsolationError::Sqlx)?;
+                .map_err(DatabaseIsolationError::from_sqlx)?;
             if !released {
                 return Err(DatabaseIsolationError::LockNotHeld);
             }
@@ -68,12 +68,12 @@ impl SerializedLease {
     ///
     /// Returns [`DatabaseIsolationError::Sqlx`] when the pool cannot hand out a connection or the `pg_advisory_lock` call fails.
     pub async fn acquire(pool: &PgPool) -> Result<SerializedLease, DatabaseIsolationError> {
-        let mut connection = pool.acquire().await.map_err(DatabaseIsolationError::Sqlx)?;
+        let mut connection = pool.acquire().await.map_err(DatabaseIsolationError::from_sqlx)?;
         sqlx::query("SELECT pg_advisory_lock($1)")
             .bind(ISOLATION_LOCK_KEY)
             .execute(&mut *connection)
             .await
-            .map_err(DatabaseIsolationError::Sqlx)?;
+            .map_err(DatabaseIsolationError::from_sqlx)?;
         Ok(SerializedLease { connection: Some(connection) })
     }
 
@@ -93,7 +93,7 @@ impl SerializedLease {
                 .bind(ISOLATION_LOCK_KEY)
                 .fetch_one(&mut *connection)
                 .await
-                .map_err(DatabaseIsolationError::Sqlx)?;
+                .map_err(DatabaseIsolationError::from_sqlx)?;
             if !released {
                 return Err(DatabaseIsolationError::LockNotHeld);
             }
@@ -131,16 +131,30 @@ pub async fn connect_pool(endpoint: &DatabaseEndpoint) -> Result<PgPool, Databas
         .acquire_timeout(POOL_ACQUIRE_TIMEOUT)
         .connect(endpoint.url().as_str())
         .await
-        .map_err(DatabaseIsolationError::Sqlx)
+        .map_err(DatabaseIsolationError::from_sqlx)
 }
 
 /// Database connection or advisory-lock failure.
 #[derive(Debug, Error)]
 pub enum DatabaseIsolationError {
     /// `SQLx` could not connect or execute the lock operation.
+    ///
+    /// Boxed because an `sqlx::Error` is 56 bytes, dominated by a config-file
+    /// variant that carries a `PathBuf` and a type-erased source, and this
+    /// variant is the whole width of every harness error that reaches the
+    /// database: an inline copy widened the `Err` of every environment,
+    /// topology, and cleanup operation built on one.
     #[error("test database isolation failed: {0}")]
-    Sqlx(#[source] sqlx::Error),
+    Sqlx(#[source] Box<sqlx::Error>),
     /// The capability attempted to release or use a lock it no longer held.
     #[error("test database advisory lock is not held")]
     LockNotHeld,
+}
+
+impl DatabaseIsolationError {
+    /// Record an `SQLx` failure, moving it behind the variant's box.
+    #[must_use]
+    pub fn from_sqlx(error: sqlx::Error) -> DatabaseIsolationError {
+        DatabaseIsolationError::Sqlx(Box::new(error))
+    }
 }

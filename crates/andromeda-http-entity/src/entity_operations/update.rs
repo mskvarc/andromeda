@@ -5,13 +5,12 @@ use crate::entity_operations::{
     BatchBody,
     BatchOperationResult,
     BatchProvisionOperation,
-    ContextUrl,
     EntityResultExt,
     EntityTenantState,
-    IncomingVia,
+    ForwardedBatch,
     IntoResponse,
     NgsiLdErrorType,
-    OriginalUri,
+    NgsiLdRequestEnvelope,
     OverwritePolicy,
     PreferHeader,
     ProblemResponse,
@@ -40,12 +39,12 @@ pub(crate) async fn batch_update(
         target,
         snapshot: _,
     }: EntityTenantState,
-    OriginalUri(uri): OriginalUri,
+    NgsiLdRequestEnvelope {
+        uri, context, incoming_via, ..
+    }: NgsiLdRequestEnvelope,
     _accept: AcceptFormatNoGeo,
-    context: ContextUrl,
     prefer: PreferHeader,
     ValidatedQuery(params): ValidatedQuery<UpdateParams>,
-    IncomingVia(incoming_via): IncomingVia,
     BatchBody { headers, body }: BatchBody,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
@@ -73,11 +72,13 @@ pub(crate) async fn batch_update(
     let forwarded = forward_entities(
         &state,
         &target,
-        BatchProvisionOperation::Update(overwrite),
+        ForwardedBatch {
+            operation: BatchProvisionOperation::Update(overwrite),
+            query_string: query_string.as_deref(),
+            triggering,
+        },
         &entities,
         &context,
-        query_string.as_deref(),
-        triggering,
         &uri,
     )
     .await?;

@@ -4,13 +4,11 @@ use crate::entity_operations::{
     AcceptFormatNoGeo,
     BatchOperationResult,
     Bytes,
-    ContextUrl,
     EntityResultExt,
     EntityTenantState,
-    IncomingVia,
     IntoResponse,
     NgsiLdErrorType,
-    OriginalUri,
+    NgsiLdRequestEnvelope,
     PreferHeader,
     ProblemResponse,
     Response,
@@ -29,7 +27,6 @@ use crate::entity_operations::{
 };
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::context_spec::ContextSpec;
-use axum::http::HeaderMap;
 
 pub(crate) async fn batch_delete(
     context_target::ExistingTargetedTenantState {
@@ -37,12 +34,14 @@ pub(crate) async fn batch_delete(
         target,
         snapshot: _,
     }: EntityTenantState,
-    OriginalUri(uri): OriginalUri,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     _accept: AcceptFormatNoGeo,
-    context: ContextUrl,
     prefer: PreferHeader,
-    IncomingVia(incoming_via): IncomingVia,
-    headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;

@@ -31,10 +31,10 @@ pub async fn simulate_out_of_band_recreate(pool: &PgPool) -> Result<(), Database
     sqlx::query("TRUNCATE attribute_names RESTART IDENTITY CASCADE")
         .execute(pool)
         .await
-        .map_err(DatabaseResetError::Sqlx)?;
+        .map_err(DatabaseResetError::from_sqlx)?;
     sqlx::query("UPDATE schema_metadata SET applied_at = clock_timestamp()")
         .execute(pool)
         .await
-        .map_err(DatabaseResetError::Sqlx)?;
+        .map_err(DatabaseResetError::from_sqlx)?;
     Ok(())
 }

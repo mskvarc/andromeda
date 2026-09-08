@@ -120,7 +120,11 @@ pub struct ProblemDetail {
     /// Client-visible human-readable explanation.
     detail: String,
     /// Optional request target supplied by the inbound HTTP boundary.
-    instance: Option<Uri>,
+    ///
+    /// Boxed because a `Uri` is 88 bytes against the 32 the rest of the detail
+    /// occupies, and this type is the `Err` of nearly every handler's `Result`:
+    /// carrying it inline made every success path pay for the failure's width.
+    instance: Option<Box<Uri>>,
 }
 
 impl ProblemDetail {
@@ -145,33 +149,38 @@ impl ProblemDetail {
     /// Attach the exact inbound request URI as the RFC 7807 `instance` member.
     #[must_use]
     pub fn with_instance(mut self, instance: Uri) -> ProblemDetail {
-        self.instance = Some(instance);
+        self.instance = Some(Box::new(instance));
         self
     }
 
     /// The typed classification that fixes the payload category and response status.
+    #[must_use]
     pub const fn classification(&self) -> ProblemClassification {
         self.classification
     }
 
     /// The clause 5.5.2 category carried by the payload.
+    #[must_use]
     pub const fn error_type(&self) -> NgsiLdErrorType {
         self.classification.error_type()
     }
 
     /// The HTTP status fixed by the applicable binding.
+    #[must_use]
     pub const fn status_code(&self) -> StatusCode {
         self.classification.status_code()
     }
 
     /// The client-visible detail.
+    #[must_use]
     pub fn detail(&self) -> &str {
         &self.detail
     }
 
     /// The request instance, when the HTTP boundary attached one.
-    pub const fn instance(&self) -> Option<&Uri> {
-        self.instance.as_ref()
+    #[must_use]
+    pub fn instance(&self) -> Option<&Uri> {
+        self.instance.as_deref()
     }
 }
 
@@ -293,7 +302,7 @@ impl<'de> Deserialize<'de> for ProblemDetail {
         }
         let instance = wire
             .instance
-            .map(|instance| instance.as_str().parse::<Uri>().map_err(de::Error::custom))
+            .map(|instance| instance.as_str().parse::<Uri>().map(Box::new).map_err(de::Error::custom))
             .transpose()?;
         Ok(ProblemDetail {
             classification,
