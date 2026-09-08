@@ -1,0 +1,109 @@
+# Supply-chain policy gate for the Andromeda dependency graph, run by
+# `.github/workflows/deny.yaml`. Four independent checks: `advisories` (RustSec
+# vulnerabilities, unmaintained crates, yanked versions), `bans` (duplicate
+# versions, unpinned requirements), `licences` and `sources`.
+#
+# The licence allow list is permissive only: the intersection of licences that
+# are both EUPL-redistributable and safe to relicense into proprietary work.
+# Copyleft of any strength - strong (GPL, AGPL, SSPL) or file-level weak
+# (MPL-2.0, LGPL) - is left off on purpose, so a dependency carrying one fails
+# the build and gets a legal review instead of shipping unnoticed.
+#
+# A crate whose licence is not on the allow list but is still acceptable gets an
+# explicit [[licenses.exceptions]] entry with the reason stated, so the exception
+# stays scoped to that one crate instead of widening the allow list for the whole
+# graph.
+
+[graph]
+# Resolve every optional dependency, so a feature enabled by one consumer cannot
+# smuggle an unreviewed transitive dependency past the gate.
+all-features = true
+
+[licenses]
+confidence-threshold = 0.93
+allow = [
+    # General permissive licences
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    # Andromeda's own licence
+    "EUPL-1.2",
+]
+
+# The `im` persistent-collection family, reached through `ld-core` and the
+# `jsonld` crates. MPL-2.0 is file-level copyleft: the obligation covers only
+# modifications to these crates' own files, which Andromeda does not make, and
+# imposes nothing on the broker's sources. Reviewed and accepted on that basis.
+[[licenses.exceptions]]
+name = "bitmaps"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
+name = "im"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
+name = "sized-chunks"
+allow = ["MPL-2.0"]
+
+# CDLA-Permissive-2.0 covers data, not code, and this crate is the Mozilla root
+# certificate bundle. Permissive, no copyleft, no obligation on our own sources.
+[[licenses.exceptions]]
+name = "webpki-root-certs"
+allow = ["CDLA-Permissive-2.0"]
+
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# A yanked version in the lockfile is a supply-chain smell, not a warning.
+yanked = "deny"
+# Every entry names the advisory, why the broker is not exposed, and what would
+# remove the dependency. Vulnerabilities are never silenced here - they are fixed
+# by moving the lockfile or the dependency.
+ignore = [
+    # Build-time only, and pulled in twice by way of `langtag`: through
+    # str-newtype -> str-newtype-derive, and through static-automata ->
+    # static-automata-macros. Also reached by `static-regular-grammar`, which
+    # generates the lexicon's grammar types. Nothing of it survives into the
+    # broker binary, and no upstream release has dropped it yet.
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained, build-time only, no upstream upgrade path" },
+    # The `im` family below `ld-core`, reached from the `jsonld` crates. Archived
+    # upstream rather than defective; removing it means the `jsonld` crates moving
+    # off `im`, which is a change in that sibling project, not here.
+    { id = "RUSTSEC-2026-0247", reason = "bitmaps unmaintained, transitive through jsonld -> ld-core -> im" },
+    { id = "RUSTSEC-2026-0248", reason = "im unmaintained, transitive through jsonld -> ld-core" },
+    { id = "RUSTSEC-2026-0251", reason = "sized-chunks unmaintained, transitive through jsonld -> ld-core -> im" },
+    # Reached through `jstrict`, which the `jsonld` crates depend on. Same
+    # situation: the replacement has to happen in that sibling project.
+    { id = "RUSTSEC-2026-0215", reason = "smallstr unmaintained, transitive through jsonld -> jstrict" },
+    # Pulled in by `rumqttc` for MQTT-over-TLS. The crate is a thin wrapper around
+    # PEM parsing that has since moved into rustls-pki-types; the migration has to
+    # land in rumqttc.
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained, transitive through rumqttc" },
+]
+
+[bans]
+# Duplicate versions are hygiene, not a licensing or security concern, and in a
+# tree this size they appear and disappear with upstream releases. Warn so they
+# stay visible without turning an upstream bump into a red build.
+multiple-versions = "warn"
+# Every wildcard in this workspace is an in-tree crate depending on a sibling by
+# path, which Cargo records as a wildcard version. That is not the unpinned
+# registry dependency this check exists to catch. `allow-wildcard-paths` does not
+# help: it exempts only crates marked `publish = false`, and these are
+# publishable. Warn so a genuine unpinned registry dependency is still visible
+# without every workspace crate permanently failing the gate.
+#
+# The stricter alternative, if these crates are ever published to crates.io: give
+# each workspace dependency an explicit `version` beside its `path`, then set this
+# back to "deny". crates.io rejects path-only dependencies anyway, so that work is
+# a prerequisite for publishing rather than something this gate should force now.
+wildcards = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
