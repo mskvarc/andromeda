@@ -27,14 +27,14 @@ async-trait = "0.1.92"
 chrono = { version = "0.4.45", features = ["serde"] }
 confique = { version = "0.4.0", features = ["toml"] }
 derive_more = { version = "2.1.1", features = ["display"] }
-indexmap = { version = "2.14.0", features = ["serde"] }
+indexmap = { version = "2.14.2", features = ["serde"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.20"
 tracing = "0.1.44"
-uuid = { version = "1.24.1", features = ["serde", "v4"] }
+uuid = { version = "1.26.0", features = ["serde", "v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

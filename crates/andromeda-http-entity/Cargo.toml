@@ -28,7 +28,7 @@ andromeda-tenancy.workspace = true
 axum = "0.8.9"
 futures = "0.3.34"
 headers = "0.4.1"
-indexmap = { version = "2.14.0", features = ["serde"] }
+indexmap = { version = "2.14.2", features = ["serde"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 thiserror = "2.0.20"
 tracing = "0.1.44"

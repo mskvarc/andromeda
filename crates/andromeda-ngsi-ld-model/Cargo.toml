@@ -15,13 +15,13 @@ andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
-cefact-units = { version = "0.1.0", features = ["serde"] }
+cefact-units = { version = "0.1.2", features = ["serde"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 compact_str = { version = "0.10.0", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "deref", "deref_mut", "display", "from", "into"] }
 geo = "0.33.1"
 hex = "0.4.3"
-indexmap = { version = "2.14.0", features = ["serde"] }
+indexmap = { version = "2.14.2", features = ["serde"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 iso8601-duration = { version = "0.2.0", features = ["chrono", "serde"] }
 jsonld = { version = "0.22.0", features = ["expandable-serde-json", "expandable-chrono", "serde", "serde-json"] }
@@ -30,12 +30,12 @@ langtag = { version = "1.1.0", features = ["serde"] }
 mediatype = { version = "0.23.0", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
-serde_with = "3.22.0"
+serde_with = "3.23.0"
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.20"
 typed-builder = "0.23.2"
 url = { version = "2.5.8", features = ["serde"] }
-uuid = { version = "1.24.1", features = ["fast-rng", "serde", "v4"] }
+uuid = { version = "1.26.0", features = ["fast-rng", "serde", "v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

@@ -19,7 +19,7 @@ strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.20"
 tower = "0.5.3"
 tower-helmet = "0.3.0"
-tower-http = { version = "0.7.0", features = ["compression-full", "cors", "decompression-full", "normalize-path", "request-id", "sensitive-headers", "timeout", "trace"] }
+tower-http = { version = "0.7.1", features = ["compression-full", "cors", "decompression-full", "normalize-path", "request-id", "sensitive-headers", "timeout", "trace"] }
 tracing = "0.1.44"
 
 [dev-dependencies]

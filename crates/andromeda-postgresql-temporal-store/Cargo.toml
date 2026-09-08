@@ -30,7 +30,7 @@ andromeda-temporal.workspace = true
 andromeda-unit-catalog.workspace = true
 async-trait = "0.1.92"
 bigdecimal = "0.4.10"
-cefact-units = "0.1.0"
+cefact-units = "0.1.2"
 chrono = { version = "0.4.45", features = ["serde"] }
 sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "with-bigdecimal", "with-chrono", "with-json", "with-uuid"] }
 sea-query-sqlx = { version = "0.9.1", features = ["postgres-array", "runtime-tokio", "sqlx-postgres", "with-bigdecimal", "with-chrono", "with-json", "with-uuid"] }
@@ -38,7 +38,7 @@ serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 sqlx = { version = "0.9.0", features = ["bigdecimal", "runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.20"
-uuid = { version = "1.24.1", features = ["v4"] }
+uuid = { version = "1.26.0", features = ["v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

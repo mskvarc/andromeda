@@ -9,7 +9,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-cefact-units = "0.1.0"
+cefact-units = "0.1.2"
 derive_more = { version = "2.1.1", features = ["display"] }
 hex = "0.4.3"
 thiserror = "2.0.20"
