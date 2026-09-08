@@ -44,6 +44,7 @@ async fn forwarded_downgrade_body(name: &str, conformance: &str, make_entity: im
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -54,6 +55,7 @@ async fn forwarded_downgrade_body(name: &str, conformance: &str, make_entity: im
     let body = make_entity(&entity_id);
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&body)
         .with_ld_json()

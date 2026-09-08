@@ -101,5 +101,5 @@ pub async fn update_attr_instance(
             &forwarded,
         )
     };
-    provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
+    provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

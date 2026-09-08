@@ -25,6 +25,7 @@ async fn sub_create_provisions_csr_subscription() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
             .await
@@ -54,6 +55,7 @@ async fn sub_create_stores_local_to_csr_subscription_mapping() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
             .await
@@ -66,6 +68,7 @@ async fn sub_create_stores_local_to_csr_subscription_mapping() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .delete_subscription(&id)
             .await
@@ -98,6 +101,7 @@ async fn sub_local_only_false_triggers_per_csr_handling_on_csource_notification(
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
             .await
@@ -122,6 +126,7 @@ async fn sub_csource_notification_branches_on_trigger_reason_per_mode() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
             .await
@@ -151,6 +156,7 @@ async fn sub_newly_matching_supporting_source_builds_reduced_copy() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
             .await
@@ -186,6 +192,7 @@ async fn sub_newly_matching_split_forward_strips_q_geoq_scopeq() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -218,6 +225,7 @@ async fn sub_newly_matching_forward_strips_notification_attributes_pick_omit() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -246,6 +254,7 @@ async fn sub_newly_matching_forward_endpoint_is_local_broker() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
             .await
@@ -276,6 +285,7 @@ async fn sub_newly_matching_forward_stores_remote_to_local_subscription_mapping(
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
             .await
@@ -304,6 +314,7 @@ async fn sub_newly_matching_forward_stores_csr_to_remote_subscription_mapping() 
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
             .await
@@ -315,6 +326,7 @@ async fn sub_newly_matching_forward_stores_csr_to_remote_subscription_mapping() 
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .delete_subscription(&id)
             .await

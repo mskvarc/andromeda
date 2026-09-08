@@ -32,6 +32,7 @@ fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
 async fn assert_redirect_accepted(topology: &MultiBrokerTopology<BrokerRole>, registration: &Value) {
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(registration)
         .await
@@ -60,6 +61,7 @@ async fn distop_entity_redirect_registered_data_obtained_externally() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -69,6 +71,7 @@ async fn distop_entity_redirect_registered_data_obtained_externally() {
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "", "application/ld+json", None)
         .await
@@ -82,6 +85,7 @@ async fn distop_entity_redirect_registered_data_obtained_externally() {
 
     let local = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "local=true", "application/ld+json", None)
         .await
@@ -172,6 +176,7 @@ async fn distop_entity_redirect_whole_entity_by_id_forwards_all_attributes() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -181,6 +186,7 @@ async fn distop_entity_redirect_whole_entity_by_id_forwards_all_attributes() {
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "", "application/ld+json", None)
         .await
@@ -239,6 +245,7 @@ async fn distop_entity_redirect_multiple_overlapping_fan_out_to_all_sources() {
         assert_status(
             &topology
                 .broker(BrokerRole::A)
+                .expect("topology broker A")
                 .client()
                 .create_registration(&registration)
                 .await
@@ -249,6 +256,7 @@ async fn distop_entity_redirect_multiple_overlapping_fan_out_to_all_sources() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
         .await

@@ -127,8 +127,18 @@ mod tests {
     #[test]
     fn a_two_ordinate_position_decodes_without_an_altitude() {
         let position = Position::try_from(&GeoJsonPosition::from([13.38, 52.52])).expect("two ordinates are a valid position");
-        pretty_assertions::assert_eq!(position.longitude(), 13.38);
-        pretty_assertions::assert_eq!(position.latitude(), 52.52);
+        // The ordinates are carried, not computed, so the decoded values are
+        // the very bits the `GeoJSON` position held.
+        assert!(
+            (position.longitude() - 13.38).abs() < f64::EPSILON,
+            "longitude is carried unchanged: {}",
+            position.longitude()
+        );
+        assert!(
+            (position.latitude() - 52.52).abs() < f64::EPSILON,
+            "latitude is carried unchanged: {}",
+            position.latitude()
+        );
         pretty_assertions::assert_eq!(position.altitude(), None);
         pretty_assertions::assert_eq!(position.dimension(), GeometryDimension::TwoD);
     }
@@ -136,7 +146,8 @@ mod tests {
     #[test]
     fn a_three_ordinate_position_decodes_with_an_altitude() {
         let position = Position::try_from(&GeoJsonPosition::from([13.38, 52.52, 34.5])).expect("three ordinates are a valid position");
-        pretty_assertions::assert_eq!(position.altitude(), Some(34.5));
+        let altitude = position.altitude().expect("a three-ordinate position carries an altitude");
+        assert!((altitude - 34.5).abs() < f64::EPSILON, "altitude is carried unchanged: {altitude}");
         pretty_assertions::assert_eq!(position.dimension(), GeometryDimension::ThreeD);
     }
 

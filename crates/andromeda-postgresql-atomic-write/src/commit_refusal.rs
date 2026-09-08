@@ -33,6 +33,7 @@ pub(crate) fn context_store(error: ContextStoreError) -> CommitError {
         ContextStoreError::EntityTypes(detail) => CommitError::Submission { detail: detail.to_string() },
         ContextStoreError::Database(_)
         | ContextStoreError::Encoding(_)
+        | ContextStoreError::CopyField(_)
         | ContextStoreError::UniqueViolation(_)
         | ContextStoreError::InvalidRegex(_)
         | ContextStoreError::Render(_)

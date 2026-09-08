@@ -24,8 +24,8 @@ const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
 #[tokio::test]
 async fn distop_entity_auxiliary_never_overrides_local_attribute() {
     let topology = topology::pair().await.expect("two-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
     let entity_id = topology.id("Vehicle:auxiliary-merge");
 
     assert_status(
@@ -77,6 +77,7 @@ async fn distop_entity_auxiliary_supplementary_attribute_only_included() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 50))
             .with_ld_json()
@@ -96,6 +97,7 @@ async fn distop_entity_auxiliary_supplementary_attribute_only_included() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -105,6 +107,7 @@ async fn distop_entity_auxiliary_supplementary_attribute_only_included() {
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "", "application/ld+json", None)
         .await
@@ -134,6 +137,7 @@ async fn distop_entity_auxiliary_write_not_forwarded() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 10))
             .with_ld_json()
@@ -153,6 +157,7 @@ async fn distop_entity_auxiliary_write_not_forwarded() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -163,6 +168,7 @@ async fn distop_entity_auxiliary_write_not_forwarded() {
     let fragment = attribute_fragment(&[("speed", property(json!(20)))]);
     let appended = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .append_entity_attrs(&entity_id, &fragment)
         .await
@@ -172,6 +178,7 @@ async fn distop_entity_auxiliary_write_not_forwarded() {
 
     let local = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "local=true", "application/ld+json", None)
         .await
@@ -199,6 +206,7 @@ async fn distop_entity_auxiliary_registration_overlapping_exclusive_accepted() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&exclusive)
             .await
@@ -214,6 +222,7 @@ async fn distop_entity_auxiliary_registration_overlapping_exclusive_accepted() {
         .build();
     let accepted = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&auxiliary)
         .await

@@ -59,7 +59,7 @@ async fn seed_local_temporal(client: &TestClient, body: &Value) {
 #[tokio::test]
 async fn temporal_upsert_exclusive_match_forwards_and_strips() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-tupsert-exclusive");
     let reg_id = topology.id("registration:prov-tupsert-exclusive");
@@ -103,7 +103,7 @@ async fn temporal_upsert_exclusive_match_forwards_and_strips() {
 #[tokio::test]
 async fn temporal_upsert_exclusive_create_unsupported_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-tupsert-unsup");
     let reg_id = topology.id("registration:prov-tupsert-unsup");
@@ -134,7 +134,7 @@ async fn temporal_upsert_exclusive_create_unsupported_returns_409() {
 #[tokio::test]
 async fn temporal_upsert_redirect_match_forwards_and_strips() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-tupsert-redirect");
     let reg_id = topology.id("registration:prov-tupsert-redirect");
@@ -177,7 +177,7 @@ async fn temporal_upsert_redirect_match_forwards_and_strips() {
 #[tokio::test]
 async fn temporal_upsert_inclusive_forwards_remainder_and_local() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-tupsert-inclusive");
     let reg_id = topology.id("registration:prov-tupsert-inclusive");
@@ -217,7 +217,7 @@ async fn temporal_upsert_inclusive_forwards_remainder_and_local() {
 #[tokio::test]
 async fn temporal_add_attrs_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let entity_id = topology.id("Vehicle:prov-tadd-absent");
 
     let response = client
@@ -239,7 +239,7 @@ async fn temporal_add_attrs_absent_and_no_registration_returns_404() {
 #[tokio::test]
 async fn temporal_add_attrs_registration_matches_absent_not_404_and_strips() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-tadd-forward");
     let reg_id = topology.id("registration:prov-tadd-forward");
@@ -281,7 +281,7 @@ async fn temporal_add_attrs_registration_matches_absent_not_404_and_strips() {
 #[tokio::test]
 async fn temporal_add_attrs_inclusive_forwards_remainder_and_local() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-tadd-inclusive");
     let reg_id = topology.id("registration:prov-tadd-inclusive");

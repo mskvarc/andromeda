@@ -29,7 +29,7 @@ async fn seed_temporal(client: &TestClient, id: &str, speed: i64) {
 #[tokio::test]
 async fn emt_no_temporal_query_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
-    let response = create_temporal_entity_map(topology.broker(BrokerRole::A).client(), "type=Vehicle").await;
+    let response = create_temporal_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -40,8 +40,17 @@ async fn emt_no_temporal_query_returns_400() {
 #[tokio::test]
 async fn emt_at_least_one_filter_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
-    seed_temporal(topology.broker(BrokerRole::A).client(), &topology.id("Vehicle:temporal-filter"), 20).await;
-    let response = create_temporal_entity_map(topology.broker(BrokerRole::A).client(), &format!("type=Vehicle&{BEFORE_2022}")).await;
+    seed_temporal(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &topology.id("Vehicle:temporal-filter"),
+        20,
+    )
+    .await;
+    let response = create_temporal_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type=Vehicle&{BEFORE_2022}"),
+    )
+    .await;
     assert_status(&response, 201);
     topology.finish().await.expect("topology cleanup");
 }
@@ -51,7 +60,7 @@ async fn emt_at_least_one_filter_accepted() {
 #[tokio::test]
 async fn emt_no_filter_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
-    let response = create_temporal_entity_map(topology.broker(BrokerRole::A).client(), BEFORE_2022).await;
+    let response = create_temporal_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), BEFORE_2022).await;
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -63,7 +72,7 @@ async fn emt_no_filter_returns_400() {
 async fn emt_linked_entity_retrieval_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = create_temporal_entity_map(
-        topology.broker(BrokerRole::A).client(),
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
         &format!("type=Vehicle&join=inline&joinLevel=99&{BEFORE_2022}"),
     )
     .await;
@@ -77,7 +86,11 @@ async fn emt_linked_entity_retrieval_returns_400() {
 #[tokio::test]
 async fn emt_invalid_id_q_geoq_csf_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
-    let response = create_temporal_entity_map(topology.broker(BrokerRole::A).client(), &format!("id=not-a-uri&{BEFORE_2022}")).await;
+    let response = create_temporal_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("id=not-a-uri&{BEFORE_2022}"),
+    )
+    .await;
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -89,8 +102,12 @@ async fn emt_invalid_id_q_geoq_csf_returns_400() {
 async fn emt_expands_type_and_attribute_terms() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:temporal-expand");
-    seed_temporal(topology.broker(BrokerRole::A).client(), &entity_id, 20).await;
-    let created = create_temporal_entity_map(topology.broker(BrokerRole::A).client(), &format!("type=Vehicle&attrs=speed&{BEFORE_2022}")).await;
+    seed_temporal(topology.broker(BrokerRole::A).expect("topology broker A").client(), &entity_id, 20).await;
+    let created = create_temporal_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type=Vehicle&attrs=speed&{BEFORE_2022}"),
+    )
+    .await;
     assert_status(&created, 201);
     assert!(
         json_body(&created)["entityMap"].get(&entity_id).is_some(),
@@ -104,8 +121,17 @@ async fn emt_expands_type_and_attribute_terms() {
 #[tokio::test]
 async fn emt_applies_jsonld_type_coercion() {
     let topology = topology::single().await.expect("single-broker topology");
-    seed_temporal(topology.broker(BrokerRole::A).client(), &topology.id("Vehicle:temporal-coercion"), 20).await;
-    let created = create_temporal_entity_map(topology.broker(BrokerRole::A).client(), &format!("type=Vehicle&{BEFORE_2022}")).await;
+    seed_temporal(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &topology.id("Vehicle:temporal-coercion"),
+        20,
+    )
+    .await;
+    let created = create_temporal_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type=Vehicle&{BEFORE_2022}"),
+    )
+    .await;
     assert_status(&created, 201);
     assert_eq!(
         json_body(&created)["type"].as_str(),
@@ -120,8 +146,12 @@ async fn emt_applies_jsonld_type_coercion() {
 async fn emt_last_n_selects_last_n_instances() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:temporal-lastn");
-    seed_temporal(topology.broker(BrokerRole::A).client(), &entity_id, 20).await;
-    let created = create_temporal_entity_map(topology.broker(BrokerRole::A).client(), &format!("type=Vehicle&lastN=2&{BEFORE_2022}")).await;
+    seed_temporal(topology.broker(BrokerRole::A).expect("topology broker A").client(), &entity_id, 20).await;
+    let created = create_temporal_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type=Vehicle&lastN=2&{BEFORE_2022}"),
+    )
+    .await;
     assert_status(&created, 201);
     assert!(
         json_body(&created)["entityMap"].get(&entity_id).is_some(),
@@ -136,9 +166,9 @@ async fn emt_last_n_selects_last_n_instances() {
 async fn emt_temporal_filtering_removes_out_of_interval_entities() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:temporal-out-of-interval");
-    seed_temporal(topology.broker(BrokerRole::A).client(), &entity_id, 20).await;
+    seed_temporal(topology.broker(BrokerRole::A).expect("topology broker A").client(), &entity_id, 20).await;
     let created = create_temporal_entity_map(
-        topology.broker(BrokerRole::A).client(),
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
         "type=Vehicle&timerel=before&timeAt=2020-01-01T00:00:00Z",
     )
     .await;

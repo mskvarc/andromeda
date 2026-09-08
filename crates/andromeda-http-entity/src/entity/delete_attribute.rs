@@ -110,5 +110,5 @@ pub(crate) async fn delete_attr(
     } else {
         LocalOutcome::processed(service.delete_attr(&target, &id, &attr_id, selection, &context).await, classify_entity_error)
     };
-    provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
+    provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

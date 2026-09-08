@@ -60,7 +60,7 @@ async fn matching_datasetid_only_one_side_specifies_matches() {
 #[tokio::test]
 async fn matching_loop_prevention_excludes_csr_with_alias_in_encountered_listing() {
     let topology = topology::pair().await.expect("two-broker topology");
-    let peer = topology.broker(BrokerRole::B);
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
     let vtype = topology.id("LoopType");
     let id = topology.id("registration:loop");
     let body = CsrBuilder::new(&id, peer.peer_url()).entity_type(&vtype).alias(peer.alias()).build();
@@ -71,6 +71,7 @@ async fn matching_loop_prevention_excludes_csr_with_alias_in_encountered_listing
     let via = format!("1.1 {}", peer.alias());
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/csourceRegistrations?type={}", encode(&vtype)))
         .header("accept", "application/ld+json")
@@ -100,6 +101,7 @@ async fn matching_valid_entitymap_preferred_over_rematching() {
     let map_id = topology.id("entitymap:preferred");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/csourceRegistrations?type={}", encode(&vtype)))
         .header("accept", "application/ld+json")

@@ -36,6 +36,7 @@ async fn distop_entity_local_scope_true_uses_only_directly_held_data() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 12))
             .with_ld_json()
@@ -54,6 +55,7 @@ async fn distop_entity_local_scope_true_uses_only_directly_held_data() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -63,6 +65,7 @@ async fn distop_entity_local_scope_true_uses_only_directly_held_data() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&local=true", "application/ld+json", None)
         .await
@@ -85,6 +88,7 @@ async fn distop_entity_local_scope_type_wildcard_implies_local() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 12))
             .with_ld_json()
@@ -103,6 +107,7 @@ async fn distop_entity_local_scope_type_wildcard_implies_local() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -112,6 +117,7 @@ async fn distop_entity_local_scope_type_wildcard_implies_local() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=*", "application/ld+json", None)
         .await
@@ -133,6 +139,7 @@ async fn distop_entity_local_scope_true_skips_registry_csrs() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 12))
             .with_ld_json()
@@ -152,6 +159,7 @@ async fn distop_entity_local_scope_true_skips_registry_csrs() {
         assert_status(
             &topology
                 .broker(BrokerRole::A)
+                .expect("topology broker A")
                 .client()
                 .create_registration(&registration)
                 .await
@@ -162,6 +170,7 @@ async fn distop_entity_local_scope_true_skips_registry_csrs() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&local=true", "application/ld+json", None)
         .await
@@ -180,8 +189,8 @@ async fn distop_entity_local_scope_true_skips_registry_csrs() {
 #[tokio::test]
 async fn distop_entity_local_scope_subscription_local_only_matches_local_only() {
     let topology = topology::pair().await.expect("two-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
     let receiver = NotificationAdapter::start().await;
 
     let subscription_id = topology.id("Subscription:local-only");
@@ -250,6 +259,7 @@ async fn distop_entity_local_scope_management_local_only_forwards_local_flag() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -259,6 +269,7 @@ async fn distop_entity_local_scope_management_local_only_forwards_local_flag() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -286,6 +297,7 @@ async fn distop_entity_local_scope_snapshot_op_ignores_local_false() {
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/snapshots")
         .json(&body)
@@ -302,6 +314,7 @@ async fn distop_entity_local_scope_snapshot_op_ignores_local_false() {
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/snapshots/{snapshot_id}?local=false"))
         .send()

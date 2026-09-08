@@ -11,7 +11,7 @@ use andromeda_task_runtime::{
     shutdown_policy::ShutdownPolicy,
     supervisor::TaskSupervisor,
     task_name::TaskName,
-    wake_trigger::{DrainFallbackCadence, WakeHandle},
+    wake_trigger::{DrainFallbackCadence, WakeHandle, WakeRequest},
 };
 use andromeda_temporal::{
     config::TemporalConfig,
@@ -37,7 +37,16 @@ struct RuntimeTemporalIntentPublisher {
 
 impl TemporalIntentPublisher for RuntimeTemporalIntentPublisher {
     fn intents_available(&self) {
-        self.wake.wake();
+        match self.wake.wake() {
+            // A wake already queued covers this commit too: the drain reads
+            // every pending intent in one pass, so coalescing loses nothing.
+            WakeRequest::Scheduled | WakeRequest::Coalesced => (),
+            // The drain task is gone, so these intents wait for whatever
+            // restarts it rather than being drained promptly.
+            WakeRequest::Closed => {
+                tracing::warn!(event = "temporal_intent_wake_closed", "the temporal drain no longer receives wakes");
+            }
+        }
     }
 }
 

@@ -20,6 +20,7 @@ async fn dist_http_create_csource_registration_returns_201_location() {
     let reg_id = topology.id("registration:reg-201");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
         .await
@@ -36,6 +37,7 @@ async fn dist_http_create_csource_registration_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&json!({ "type": "ContextSourceRegistration", "@context": context_link() }))
         .await
@@ -54,6 +56,7 @@ async fn dist_http_create_csource_registration_duplicate_returns_409() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
             .await
@@ -63,6 +66,7 @@ async fn dist_http_create_csource_registration_duplicate_returns_409() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
         .await
@@ -87,6 +91,7 @@ async fn dist_http_create_csource_registration_auxiliary_write_operations_return
         .build();
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&registration)
         .await
@@ -105,6 +110,7 @@ async fn dist_http_query_csource_registrations_returns_200_array() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
             .await
@@ -114,6 +120,7 @@ async fn dist_http_query_csource_registrations_returns_200_array() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations("type=Vehicle", None)
         .await
@@ -132,6 +139,7 @@ async fn dist_http_retrieve_csource_registration_returns_200_400_404() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
             .await
@@ -142,6 +150,7 @@ async fn dist_http_retrieve_csource_registration_returns_200_400_404() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .retrieve_registration(&reg_id, None)
             .await
@@ -151,6 +160,7 @@ async fn dist_http_retrieve_csource_registration_returns_200_400_404() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .retrieve_registration("not a uri", None)
             .await
@@ -160,6 +170,7 @@ async fn dist_http_retrieve_csource_registration_returns_200_400_404() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .retrieve_registration(&topology.id("registration:reg-unknown"), None)
             .await
@@ -178,6 +189,7 @@ async fn dist_http_update_csource_registration_returns_204_400_404() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
             .await
@@ -188,6 +200,7 @@ async fn dist_http_update_csource_registration_returns_204_400_404() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .update_registration(&reg_id, &json!({ "description": "updated" }), Some(context_link()))
             .await
@@ -197,6 +210,7 @@ async fn dist_http_update_csource_registration_returns_204_400_404() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .update_registration(&reg_id, &json!({ "mode": "not-a-mode" }), Some(context_link()))
             .await
@@ -206,6 +220,7 @@ async fn dist_http_update_csource_registration_returns_204_400_404() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .update_registration(
                 &topology.id("registration:reg-update-unknown"),
@@ -228,6 +243,7 @@ async fn dist_http_delete_csource_registration_returns_204_400_404() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
             .await
@@ -238,6 +254,7 @@ async fn dist_http_delete_csource_registration_returns_204_400_404() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .delete_registration("not a uri")
             .await
@@ -247,6 +264,7 @@ async fn dist_http_delete_csource_registration_returns_204_400_404() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .delete_registration(&topology.id("registration:reg-delete-unknown"))
             .await
@@ -256,6 +274,7 @@ async fn dist_http_delete_csource_registration_returns_204_400_404() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .delete_registration(&reg_id)
             .await

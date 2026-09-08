@@ -32,7 +32,7 @@ fn prefix_pattern(topology: &MultiBrokerTopology<BrokerRole>) -> String {
 async fn dist_http_non_default_tenant_response_carries_tenant_header() {
     let topology = topology::single().await.expect("single-broker topology");
     let tenant = TenantName::parse("distopTenantA").expect("valid tenant name");
-    let client = topology.broker(BrokerRole::A).tenant_client(tenant);
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").tenant_client(tenant);
     let entity_id = topology.id("Vehicle:tenant-header");
 
     assert_status(
@@ -63,6 +63,7 @@ async fn dist_http_default_tenant_response_omits_tenant_header() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -74,6 +75,7 @@ async fn dist_http_default_tenant_response_omits_tenant_header() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
         .await
@@ -90,7 +92,7 @@ async fn dist_http_default_tenant_response_omits_tenant_header() {
 async fn dist_http_tenant_header_echoed_in_response() {
     let topology = topology::single().await.expect("single-broker topology");
     let tenant = TenantName::parse("distopTenantEcho").expect("valid tenant name");
-    let client = topology.broker(BrokerRole::A).tenant_client(tenant);
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").tenant_client(tenant);
     let entity_id = topology.id("Vehicle:tenant-echo");
 
     let created = client.post_entity(&vehicle(&entity_id, 5)).with_ld_json().send().await.expect("tenant create");
@@ -111,7 +113,7 @@ async fn dist_http_tenant_header_echoed_in_response() {
 async fn dist_http_tenant_scoped_notification_carries_tenant_header() {
     let topology = topology::single().await.expect("single-broker topology");
     let tenant = TenantName::parse("distopTenantNotify").expect("valid tenant name");
-    let client = topology.broker(BrokerRole::A).tenant_client(tenant);
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").tenant_client(tenant);
     let receiver = NotificationAdapter::start().await;
     let sub_id = topology.id("Subscription:tenant-notify");
     let entity_id = topology.id("Vehicle:tenant-notify");
@@ -154,6 +156,7 @@ async fn dist_http_count_param_honoured_on_query() {
         assert_status(
             &topology
                 .broker(BrokerRole::A)
+                .expect("topology broker A")
                 .client()
                 .post_entity(&vehicle(&id, 5))
                 .with_ld_json()
@@ -167,6 +170,7 @@ async fn dist_http_count_param_honoured_on_query() {
     let query = format!("type=Vehicle&idPattern={}&count=true", prefix_pattern(&topology));
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities(&query, "application/ld+json", Some(context_link()))
         .await
@@ -187,6 +191,7 @@ async fn dist_http_count_true_returns_results_count_header_total() {
         assert_status(
             &topology
                 .broker(BrokerRole::A)
+                .expect("topology broker A")
                 .client()
                 .post_entity(&vehicle(&id, 5))
                 .with_ld_json()
@@ -200,6 +205,7 @@ async fn dist_http_count_true_returns_results_count_header_total() {
     let query = format!("type=Vehicle&idPattern={}&count=true&limit=1", prefix_pattern(&topology));
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities(&query, "application/ld+json", Some(context_link()))
         .await
@@ -221,6 +227,7 @@ async fn dist_http_limit_zero_with_count_returns_empty_array_and_count() {
         assert_status(
             &topology
                 .broker(BrokerRole::A)
+                .expect("topology broker A")
                 .client()
                 .post_entity(&vehicle(&id, 5))
                 .with_ld_json()
@@ -234,6 +241,7 @@ async fn dist_http_limit_zero_with_count_returns_empty_array_and_count() {
     let query = format!("type=Vehicle&idPattern={}&count=true&limit=0", prefix_pattern(&topology));
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities(&query, "application/ld+json", Some(context_link()))
         .await
@@ -252,6 +260,7 @@ async fn dist_http_limit_zero_without_count_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&limit=0", "application/ld+json", Some(context_link()))
         .await

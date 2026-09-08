@@ -50,7 +50,7 @@ async fn seed_local(client: &TestClient, id: &str, attributes: &[(&str, Value)])
 #[tokio::test]
 async fn partial_update_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let entity_id = topology.id("Vehicle:prov-partial-absent");
 
     let response = client
@@ -68,7 +68,7 @@ async fn partial_update_absent_and_no_registration_returns_404() {
 #[tokio::test]
 async fn partial_update_registration_matches_entity_absent_not_404() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-partial-reg-absent");
     let reg_id = topology.id("registration:prov-partial-reg-absent");
@@ -105,7 +105,7 @@ async fn partial_update_registration_matches_entity_absent_not_404() {
 #[tokio::test]
 async fn partial_update_exclusive_match_forwards_and_terminates() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-partial-exclusive");
     let reg_id = topology.id("registration:prov-partial-exclusive");
@@ -161,7 +161,7 @@ async fn partial_update_exclusive_match_forwards_and_terminates() {
 #[tokio::test]
 async fn partial_update_exclusive_op_unsupported_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-partial-unsup");
     let reg_id = topology.id("registration:prov-partial-unsup");
@@ -201,7 +201,7 @@ async fn partial_update_exclusive_op_unsupported_returns_409() {
 #[tokio::test]
 async fn partial_update_op_unsupported_multi_returns_207() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-partial-multi");
     let reg_supported = topology.id("registration:prov-partial-multi-ok");
@@ -255,7 +255,7 @@ async fn partial_update_op_unsupported_multi_returns_207() {
 #[tokio::test]
 async fn partial_update_inclusive_forwards_input() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-partial-inclusive");
     let reg_id = topology.id("registration:prov-partial-inclusive");
@@ -293,7 +293,7 @@ async fn partial_update_inclusive_forwards_input() {
 #[tokio::test]
 async fn partial_update_local_present_attr_absent_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let entity_id = topology.id("Vehicle:prov-partial-attr-absent");
 
     seed_local(client, &entity_id, &[("brandName", property(json!("Mercedes")))]).await;

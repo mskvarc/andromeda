@@ -46,7 +46,7 @@ async fn seed_local(client: &TestClient, payload: &Value) {
 #[tokio::test]
 async fn merge_entity_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let entity_id = topology.id("Vehicle:prov-merge-absent");
 
     let merged = client
@@ -64,7 +64,7 @@ async fn merge_entity_absent_and_no_registration_returns_404() {
 #[tokio::test]
 async fn merge_entity_registration_matches_entity_absent_not_404() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-merge-match-absent");
     let reg_id = topology.id("registration:prov-merge-match-absent");
@@ -99,7 +99,7 @@ async fn merge_entity_registration_matches_entity_absent_not_404() {
 #[tokio::test]
 async fn merge_entity_exclusive_match_forwards_and_strips() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-merge-exclusive");
     let reg_id = topology.id("registration:prov-merge-exclusive");
@@ -153,7 +153,7 @@ async fn merge_entity_exclusive_match_forwards_and_strips() {
 #[tokio::test]
 async fn merge_entity_op_unsupported_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-merge-unsup");
     let reg_id = topology.id("registration:prov-merge-unsup");
@@ -185,7 +185,7 @@ async fn merge_entity_op_unsupported_returns_409() {
 #[tokio::test]
 async fn merge_entity_inclusive_forwards_remainder_and_merges_local() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-merge-inclusive");
     let reg_id = topology.id("registration:prov-merge-inclusive");

@@ -31,6 +31,7 @@ async fn reg_without_expiresat_persists_indefinitely() {
     let id = topology.id("registration:no-expiry");
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&csr_basic(&id, PEER_ENDPOINT))
         .await
@@ -39,6 +40,7 @@ async fn reg_without_expiresat_persists_indefinitely() {
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(&id, None)
         .await
@@ -62,6 +64,7 @@ async fn reg_past_expiresat_returns_400() {
     body["expiresAt"] = json!("2000-01-01T00:00:00Z");
     let rejected = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&body)
         .await
@@ -85,6 +88,7 @@ async fn reg_future_expiresat_auto_deleted_when_reached() {
     body["expiresAt"] = json!((Utc::now() + ChronoDuration::seconds(EXPIRY_LEAD_SECONDS)).to_rfc3339());
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&body)
         .await
@@ -93,6 +97,7 @@ async fn reg_future_expiresat_auto_deleted_when_reached() {
 
     let before = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(&id, None)
         .await
@@ -103,6 +108,7 @@ async fn reg_future_expiresat_auto_deleted_when_reached() {
 
     let after = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(&id, None)
         .await
@@ -121,6 +127,7 @@ async fn reg_duplicate_id_returns_409_alreadyexists() {
     let body = csr_basic(&id, PEER_ENDPOINT);
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&body)
         .await
@@ -129,6 +136,7 @@ async fn reg_duplicate_id_returns_409_alreadyexists() {
 
     let duplicate = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&body)
         .await

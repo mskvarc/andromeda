@@ -39,6 +39,7 @@ fn contains_named(list: &Value, name: &str) -> bool {
 async fn get_detail(topology: &MultiBrokerTopology<BrokerRole>, path: &str) -> TestResponse {
     topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, path)
         .header("accept", "application/ld+json")
@@ -54,8 +55,8 @@ async fn get_detail(topology: &MultiBrokerTopology<BrokerRole>, path: &str) -> T
 #[tokio::test]
 async fn distop_available_types_reflects_registrations_system_wide() {
     let topology = topology::pair().await.expect("two-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     let registration_id = topology.id("registration:cons74");
     assert_status(
@@ -90,8 +91,8 @@ async fn distop_available_types_reflects_registrations_system_wide() {
 #[tokio::test]
 async fn distop_entity_type_details_system_wide_attribute_details_may_be_empty() {
     let topology = topology::pair().await.expect("two-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     let registration_id = topology.id("registration:cons75");
     assert_status(
@@ -126,8 +127,8 @@ async fn distop_entity_type_details_system_wide_attribute_details_may_be_empty()
 #[tokio::test]
 async fn distop_entity_type_info_count_may_be_estimate() {
     let topology = topology::pair().await.expect("two-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     for index in 0..2 {
         let aircraft = entity(
@@ -170,8 +171,8 @@ async fn distop_entity_type_info_count_may_be_estimate() {
 #[tokio::test]
 async fn distop_available_attributes_system_wide() {
     let topology = topology::pair().await.expect("two-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     let registration_id = topology.id("registration:cons77");
     assert_status(
@@ -207,8 +208,8 @@ async fn distop_available_attributes_system_wide() {
 #[tokio::test]
 async fn distop_attribute_details_system_wide_may_be_empty() {
     let topology = topology::pair().await.expect("two-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     let registration_id = topology.id("registration:cons78");
     assert_status(
@@ -244,8 +245,8 @@ async fn distop_attribute_details_system_wide_may_be_empty() {
 #[tokio::test]
 async fn distop_attribute_info_count_may_be_estimate() {
     let topology = topology::pair().await.expect("two-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     let aircraft = entity(&topology.id("Aircraft:cons79"), "Aircraft", &[("thrust", property(json!(1000)))]);
     assert_status(&peer.client().post_entity(&aircraft).with_ld_json().send().await.expect("peer aircraft"), 201);
@@ -287,7 +288,7 @@ async fn distop_attribute_info_count_may_be_estimate() {
 #[tokio::test]
 async fn distop_available_types_answered_from_local_and_registry_without_contacting_sources() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons80");
@@ -331,8 +332,8 @@ async fn distop_available_types_answered_from_local_and_registry_without_contact
 #[tokio::test]
 async fn distop_available_types_possibly_available_semantics() {
     let topology = topology::pair().await.expect("two-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     let registration_id = topology.id("registration:cons81");
     assert_status(
@@ -367,8 +368,8 @@ async fn distop_available_types_possibly_available_semantics() {
 #[tokio::test]
 async fn distop_available_types_empty_arrays_permitted_when_registration_lacks_detail() {
     let topology = topology::pair().await.expect("two-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     let registration_id = topology.id("registration:cons82");
     assert_status(
@@ -403,7 +404,7 @@ async fn distop_available_types_empty_arrays_permitted_when_registration_lacks_d
 #[tokio::test]
 async fn distop_available_counts_estimate_permitted() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     for (source, count) in [("/s1", 3), ("/s2", 4)] {

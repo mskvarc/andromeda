@@ -51,6 +51,7 @@ async fn distop_entity_exclusive_registered_attrs_served_only_from_source_none_l
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -60,6 +61,7 @@ async fn distop_entity_exclusive_registered_attrs_served_only_from_source_none_l
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&entity_id, 88))
         .with_ld_json()
@@ -71,6 +73,7 @@ async fn distop_entity_exclusive_registered_attrs_served_only_from_source_none_l
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "", "application/ld+json", None)
         .await
@@ -84,6 +87,7 @@ async fn distop_entity_exclusive_registered_attrs_served_only_from_source_none_l
 
     let local = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "local=true", "application/ld+json", None)
         .await
@@ -118,6 +122,7 @@ async fn distop_entity_exclusive_unregistered_attrs_may_be_held_locally() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -128,6 +133,7 @@ async fn distop_entity_exclusive_unregistered_attrs_may_be_held_locally() {
     let body = entity(&entity_id, "Vehicle", &[("speed", property(json!(40))), ("fuel", property(json!(50)))]);
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&body)
         .with_ld_json()
@@ -146,6 +152,7 @@ async fn distop_entity_exclusive_unregistered_attrs_may_be_held_locally() {
 
     let local = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "local=true", "application/ld+json", None)
         .await
@@ -175,6 +182,7 @@ async fn distop_entity_exclusive_second_overlapping_exclusive_rejected_conflict(
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&first)
             .await
@@ -189,6 +197,7 @@ async fn distop_entity_exclusive_second_overlapping_exclusive_rejected_conflict(
         .build();
     let conflict = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&second)
         .await
@@ -215,6 +224,7 @@ async fn distop_entity_exclusive_then_redirect_same_id_attrs_rejected() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&exclusive)
             .await
@@ -229,6 +239,7 @@ async fn distop_entity_exclusive_then_redirect_same_id_attrs_rejected() {
         .build();
     let conflict = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&redirect)
         .await
@@ -251,6 +262,7 @@ async fn distop_entity_exclusive_registration_with_id_pattern_rejected() {
         .build();
     let rejected = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&registration)
         .await
@@ -272,6 +284,7 @@ async fn distop_entity_exclusive_registration_type_only_rejected() {
         .build();
     let rejected = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&registration)
         .await
@@ -293,6 +306,7 @@ async fn distop_entity_exclusive_registration_without_attributes_rejected() {
         .build();
     let rejected = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&registration)
         .await
@@ -323,6 +337,7 @@ async fn distop_entity_exclusive_relevance_inferred_without_entity_map() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -332,6 +347,7 @@ async fn distop_entity_exclusive_relevance_inferred_without_entity_map() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
         .await

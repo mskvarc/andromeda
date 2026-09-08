@@ -20,6 +20,7 @@ async fn dist_http_append_attrs_local_returns_204() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -32,6 +33,7 @@ async fn dist_http_append_attrs_local_returns_204() {
     let fragment = attribute_fragment(&[("fuel", property(json!("diesel")))]);
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .append_entity_attrs(&entity_id, &fragment)
         .await
@@ -55,6 +57,7 @@ async fn dist_http_append_attrs_partial_failure_returns_207_update_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -66,6 +69,7 @@ async fn dist_http_append_attrs_partial_failure_returns_207_update_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["appendAttrs"]))
             .await
@@ -77,6 +81,7 @@ async fn dist_http_append_attrs_partial_failure_returns_207_update_result() {
     let fragment = attribute_fragment(&[("speed", property(json!(50)))]);
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .append_entity_attrs(&entity_id, &fragment)
         .await
@@ -96,6 +101,7 @@ async fn dist_http_append_attrs_invalid_returns_400() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -107,6 +113,7 @@ async fn dist_http_append_attrs_invalid_returns_400() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .append_entity_attrs(
             &entity_id,
@@ -126,6 +133,7 @@ async fn dist_http_append_attrs_entity_absent_returns_404() {
     let fragment = attribute_fragment(&[("fuel", property(json!("diesel")))]);
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .append_entity_attrs(&entity_id, &fragment)
         .await
@@ -142,6 +150,7 @@ async fn dist_http_update_attrs_local_returns_204() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -154,6 +163,7 @@ async fn dist_http_update_attrs_local_returns_204() {
     let fragment = attribute_fragment(&[("speed", property(json!(50)))]);
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_entity_attrs(&entity_id, &fragment)
         .await
@@ -176,6 +186,7 @@ async fn dist_http_update_attrs_partial_failure_returns_207_update_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -187,6 +198,7 @@ async fn dist_http_update_attrs_partial_failure_returns_207_update_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["updateEntity"]))
             .await
@@ -198,6 +210,7 @@ async fn dist_http_update_attrs_partial_failure_returns_207_update_result() {
     let fragment = attribute_fragment(&[("speed", property(json!(50)))]);
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_entity_attrs(&entity_id, &fragment)
         .await
@@ -217,6 +230,7 @@ async fn dist_http_update_attrs_invalid_returns_400() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -228,6 +242,7 @@ async fn dist_http_update_attrs_invalid_returns_400() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_entity_attrs(
             &entity_id,
@@ -247,6 +262,7 @@ async fn dist_http_update_attrs_entity_absent_returns_404() {
     let fragment = attribute_fragment(&[("speed", property(json!(50)))]);
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_entity_attrs(&entity_id, &fragment)
         .await
@@ -264,6 +280,7 @@ async fn dist_http_partial_update_attr_local_returns_204() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -275,6 +292,7 @@ async fn dist_http_partial_update_attr_local_returns_204() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .partial_update_attr(&entity_id, "speed", &json!({ "value": 60, "@context": context_link() }))
         .await
@@ -295,6 +313,7 @@ async fn dist_http_partial_update_attr_partial_failure_returns_207_update_result
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -306,6 +325,7 @@ async fn dist_http_partial_update_attr_partial_failure_returns_207_update_result
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["updateAttrs"]))
             .await
@@ -316,6 +336,7 @@ async fn dist_http_partial_update_attr_partial_failure_returns_207_update_result
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .partial_update_attr(&entity_id, "speed", &json!({ "value": 60, "@context": context_link() }))
         .await
@@ -335,6 +356,7 @@ async fn dist_http_partial_update_attr_invalid_returns_400() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -346,6 +368,7 @@ async fn dist_http_partial_update_attr_invalid_returns_400() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .partial_update_attr(
             &entity_id,
@@ -367,6 +390,7 @@ async fn dist_http_partial_update_attr_absent_returns_404() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -378,6 +402,7 @@ async fn dist_http_partial_update_attr_absent_returns_404() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .partial_update_attr(&entity_id, "color", &json!({ "value": "red", "@context": context_link() }))
         .await

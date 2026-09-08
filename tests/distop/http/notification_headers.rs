@@ -21,6 +21,7 @@ use std::time::Duration;
 async fn create_csource_subscription(topology: &MultiBrokerTopology<BrokerRole>, body: &Value) -> TestResponse {
     topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/csourceSubscriptions")
         .header("content-type", "application/ld+json")
@@ -56,6 +57,7 @@ async fn dist_http_csource_notification_posted_to_endpoint_uri() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
             .await
@@ -110,6 +112,7 @@ async fn dist_http_csource_notification_mime_defaults_json_and_ld_json_via_accep
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
             .await
@@ -161,6 +164,7 @@ async fn dist_http_csource_notification_json_target_carries_link_context() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
             .await
@@ -196,6 +200,7 @@ async fn dist_http_csource_notification_receiver_info_becomes_custom_headers() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
             .await

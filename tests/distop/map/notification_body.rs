@@ -42,6 +42,7 @@ async fn notif_body_conforms_to_notification_structure() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, &receiver.endpoint_url()))
             .await
@@ -51,6 +52,7 @@ async fn notif_body_conforms_to_notification_structure() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&topology.id("Vehicle:structure"), 20))
             .with_ld_json()
@@ -80,6 +82,7 @@ async fn notif_context_from_subscription_jsonld_context() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -89,6 +92,7 @@ async fn notif_context_from_subscription_jsonld_context() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&topology.id("Vehicle:context"), 20))
             .with_ld_json()
@@ -119,6 +123,7 @@ async fn notif_attributes_limited_to_notification_attributes() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -130,6 +135,7 @@ async fn notif_attributes_limited_to_notification_attributes() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&with_two)
             .with_ld_json()
@@ -156,6 +162,7 @@ async fn notif_absent_notification_attributes_includes_all() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, &receiver.endpoint_url()))
             .await
@@ -167,6 +174,7 @@ async fn notif_absent_notification_attributes_includes_all() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&with_two)
             .with_ld_json()
@@ -195,6 +203,7 @@ async fn notif_deletion_show_changes_off_only_deleted_at() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 20))
             .with_ld_json()
@@ -209,6 +218,7 @@ async fn notif_deletion_show_changes_off_only_deleted_at() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -216,7 +226,13 @@ async fn notif_deletion_show_changes_off_only_deleted_at() {
         201,
     );
     assert_status(
-        &topology.broker(BrokerRole::A).client().delete_entity(&entity_id).await.expect("delete entity"),
+        &topology
+            .broker(BrokerRole::A)
+            .expect("topology broker A")
+            .client()
+            .delete_entity(&entity_id)
+            .await
+            .expect("delete entity"),
         204,
     );
     let notification = receiver.wait_for_subscription_notification(&id, DELIVER).await;
@@ -241,6 +257,7 @@ async fn notif_sys_attrs_true_includes_created_and_modified() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -251,6 +268,7 @@ async fn notif_sys_attrs_true_includes_created_and_modified() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 20))
             .with_ld_json()
@@ -278,6 +296,7 @@ async fn notif_deleted_attribute_rendered_as_null_uri() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&with_two)
             .with_ld_json()
@@ -293,6 +312,7 @@ async fn notif_deleted_attribute_rendered_as_null_uri() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -302,6 +322,7 @@ async fn notif_deleted_attribute_rendered_as_null_uri() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .delete_entity_attr(&entity_id, "colour", None, DatasetSelection::Default, Some(COMPOUND_CONTEXT.as_str()))
             .await
@@ -330,6 +351,7 @@ async fn notif_deleted_attribute_full_object_null_uri_when_more_info_needed() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&with_two)
             .with_ld_json()
@@ -345,6 +367,7 @@ async fn notif_deleted_attribute_full_object_null_uri_when_more_info_needed() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -354,6 +377,7 @@ async fn notif_deleted_attribute_full_object_null_uri_when_more_info_needed() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .delete_entity_attr(&entity_id, "speed", None, DatasetSelection::Default, Some(COMPOUND_CONTEXT.as_str()))
             .await
@@ -382,6 +406,7 @@ async fn notif_deleted_language_property_language_map_null_uri() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&with_language)
             .with_ld_json()
@@ -397,6 +422,7 @@ async fn notif_deleted_language_property_language_map_null_uri() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -406,6 +432,7 @@ async fn notif_deleted_language_property_language_map_null_uri() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .delete_entity_attr(&entity_id, "street", None, DatasetSelection::Default, Some(COMPOUND_CONTEXT.as_str()))
             .await

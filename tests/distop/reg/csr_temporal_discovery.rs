@@ -54,6 +54,7 @@ async fn reg_managementinterval_overlap_matched_on_temporal_query() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&body)
             .await
@@ -63,6 +64,7 @@ async fn reg_managementinterval_overlap_matched_on_temporal_query() {
 
     let overlapping = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations(
             &temporal_query(&entity_id, "2020-06-01T00:00:00Z", "2020-06-30T00:00:00Z", Some("modifiedAt")),
@@ -78,6 +80,7 @@ async fn reg_managementinterval_overlap_matched_on_temporal_query() {
 
     let disjoint = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations(
             &temporal_query(&entity_id, "2025-01-01T00:00:00Z", "2025-12-31T00:00:00Z", Some("modifiedAt")),
@@ -107,6 +110,7 @@ async fn reg_observationinterval_overlap_matched_on_observedat_query() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&body)
             .await
@@ -116,6 +120,7 @@ async fn reg_observationinterval_overlap_matched_on_observedat_query() {
 
     let overlapping = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations(
             &temporal_query(&entity_id, "2020-06-01T00:00:00Z", "2020-06-30T00:00:00Z", Some("observedAt")),
@@ -131,6 +136,7 @@ async fn reg_observationinterval_overlap_matched_on_observedat_query() {
 
     let disjoint = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations(
             &temporal_query(&entity_id, "2025-01-01T00:00:00Z", "2025-12-31T00:00:00Z", Some("observedAt")),
@@ -160,6 +166,7 @@ async fn reg_no_temporal_query_returns_only_latest_csrs() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&latest)
             .await
@@ -171,6 +178,7 @@ async fn reg_no_temporal_query_returns_only_latest_csrs() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&temporal)
             .await
@@ -180,6 +188,7 @@ async fn reg_no_temporal_query_returns_only_latest_csrs() {
 
     let result = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations(&format!("type=Vehicle&id={}", encode(&entity_id)), None)
         .await
@@ -205,6 +214,7 @@ async fn reg_temporal_query_returns_only_interval_csrs() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&latest)
             .await
@@ -216,6 +226,7 @@ async fn reg_temporal_query_returns_only_interval_csrs() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&temporal)
             .await
@@ -225,6 +236,7 @@ async fn reg_temporal_query_returns_only_interval_csrs() {
 
     let result = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations(
             &temporal_query(&entity_id, "2020-06-01T00:00:00Z", "2020-06-30T00:00:00Z", Some("modifiedAt")),
@@ -256,6 +268,7 @@ async fn reg_csr_combining_latest_and_temporal_single_purpose() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&body)
             .await
@@ -265,6 +278,7 @@ async fn reg_csr_combining_latest_and_temporal_single_purpose() {
 
     let non_temporal = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations(&format!("type=Vehicle&id={}", encode(&entity_id)), None)
         .await
@@ -272,6 +286,7 @@ async fn reg_csr_combining_latest_and_temporal_single_purpose() {
     assert_status(&non_temporal, 200);
     let temporal = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations(
             &temporal_query(&entity_id, "2020-06-01T00:00:00Z", "2020-06-30T00:00:00Z", Some("modifiedAt")),

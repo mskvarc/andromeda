@@ -126,6 +126,14 @@ pub(crate) async fn insert_history_batch_via_copy_in_tx(
 }
 
 /// Encode one binary COPY stream for the staged history rows.
+///
+/// # Errors
+///
+/// Returns [`TemporalStoreError::CopyField`] when a staged value is longer
+/// than the format's 32-bit field prefix can announce or does not serialise,
+/// [`TemporalStoreError::Encoding`] when a geometry has no EWKB form, and
+/// [`TemporalStoreError::Validation`] when a row's write ordinal exceeds the
+/// width of its column.
 pub(crate) fn encode_history_copy_stream(rows: &[AttributeHistoryRow]) -> Result<Vec<u8>, TemporalStoreError> {
     let mut buf = Vec::with_capacity(estimated_stream_bytes(rows.len()));
     write_header(&mut buf);
@@ -146,13 +154,13 @@ pub(crate) fn encode_history_copy_stream(rows: &[AttributeHistoryRow]) -> Result
         write_uuid_opt(&mut buf, generated_instance_uuid(&row.instance));
         write_i16_opt(&mut buf, row.unit_code_id.map(UnitCodeId::get));
         write_bool_opt(&mut buf, row.value.boolean());
-        write_text_opt(&mut buf, verbatim_instance_id(&row.instance));
-        write_text_opt(&mut buf, numeric.as_deref());
-        write_text_opt(&mut buf, row.value.string());
-        write_bytea_opt(&mut buf, geometry_bytes(row.value.geometry())?.as_deref());
-        write_jsonb_opt(&mut buf, row.value.object());
-        write_text_opt(&mut buf, row.value.uri().map(Uri::as_str));
-        write_jsonb_opt(&mut buf, row.metadata.as_ref());
+        write_text_opt(&mut buf, verbatim_instance_id(&row.instance))?;
+        write_text_opt(&mut buf, numeric.as_deref())?;
+        write_text_opt(&mut buf, row.value.string())?;
+        write_bytea_opt(&mut buf, geometry_bytes(row.value.geometry())?.as_deref())?;
+        write_jsonb_opt(&mut buf, row.value.object())?;
+        write_text_opt(&mut buf, row.value.uri().map(Uri::as_str))?;
+        write_jsonb_opt(&mut buf, row.metadata.as_ref())?;
     }
     write_trailer(&mut buf);
     Ok(buf)

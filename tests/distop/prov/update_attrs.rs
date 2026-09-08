@@ -30,7 +30,7 @@ fn brand_only(id: &str) -> Value {
 #[tokio::test]
 async fn update_attrs_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let entity_id = topology.id("Vehicle:prov-update-absent");
 
     let fragment = attribute_fragment(&[("speed", property(json!(99)))]);
@@ -46,7 +46,7 @@ async fn update_attrs_absent_and_no_registration_returns_404() {
 #[tokio::test]
 async fn update_attrs_registration_matches_entity_absent_not_404() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-update-match-absent");
     let reg_id = topology.id("registration:prov-update-match-absent");
@@ -79,7 +79,7 @@ async fn update_attrs_registration_matches_entity_absent_not_404() {
 #[tokio::test]
 async fn update_attrs_exclusive_match_forwards_and_strips() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-update-exclusive");
     let reg_id = topology.id("registration:prov-update-exclusive");
@@ -142,7 +142,7 @@ async fn update_attrs_exclusive_match_forwards_and_strips() {
 #[tokio::test]
 async fn update_attrs_exclusive_op_unsupported_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-update-unsup");
     let reg_id = topology.id("registration:prov-update-unsup");
@@ -181,7 +181,7 @@ async fn update_attrs_exclusive_op_unsupported_returns_409() {
 #[tokio::test]
 async fn update_attrs_op_unsupported_with_remainder_returns_207() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-update-remainder");
     let reg_id = topology.id("registration:prov-update-remainder");
@@ -233,7 +233,7 @@ async fn update_attrs_op_unsupported_with_remainder_returns_207() {
 #[tokio::test]
 async fn update_attrs_inclusive_forwards_remainder_and_patches_local() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-update-inclusive");
     let reg_id = topology.id("registration:prov-update-inclusive");
@@ -297,8 +297,8 @@ async fn update_attrs_inclusive_forwards_remainder_and_patches_local() {
 #[tokio::test]
 async fn update_attrs_pair_exclusive_end_to_end() {
     let topology = topology::pair().await.expect("two-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
     let entity_id = topology.id("Vehicle:prov-update-pair");
     let reg_id = topology.id("registration:prov-update-pair");
 

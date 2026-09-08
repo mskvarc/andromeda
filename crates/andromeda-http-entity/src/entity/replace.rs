@@ -96,5 +96,5 @@ pub(crate) async fn update(
     } else {
         LocalOutcome::NothingRemained
     };
-    provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
+    provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

@@ -28,7 +28,7 @@ fn ids(body: &Value) -> Vec<String> {
 #[tokio::test]
 async fn distop_query_entities_too_wide_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons19");
@@ -52,7 +52,7 @@ async fn distop_query_entities_too_wide_returns_400() {
 #[tokio::test]
 async fn distop_query_entities_orderby_without_local_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons20");
@@ -87,7 +87,7 @@ async fn distop_query_entities_orderby_without_local_returns_400() {
 #[tokio::test]
 async fn distop_query_entities_forwards_matching_queryentity_csrs_local_none() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     for (source, operations) in [("/s1", &["queryEntity"][..]), ("/s2", &["retrieveEntity"][..])] {
@@ -136,7 +136,7 @@ async fn distop_query_entities_forwards_matching_queryentity_csrs_local_none() {
 #[tokio::test]
 async fn distop_query_entities_forwards_all_modes_returns_entity_arrays() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let mut expected = Vec::new();
@@ -172,7 +172,7 @@ async fn distop_query_entities_forwards_all_modes_returns_entity_arrays() {
 #[tokio::test]
 async fn distop_query_entities_discards_expired_entities_in_remote_array() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let expired_id = topology.id("Vehicle:cons30-expired");
@@ -209,9 +209,9 @@ async fn distop_query_entities_merges_arrays_per_4_5_5() {
     let topology = topology::chain().await.expect("three-broker topology");
     let shared_id = topology.id("Vehicle:cons31-shared");
     let extra_id = topology.id("Vehicle:cons31-extra");
-    let front = topology.broker(BrokerRole::A);
-    let holder_b = topology.broker(BrokerRole::B);
-    let holder_c = topology.broker(BrokerRole::C);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let holder_b = topology.broker(BrokerRole::B).expect("topology broker B");
+    let holder_c = topology.broker(BrokerRole::C).expect("topology broker C");
 
     assert_status(
         &front
@@ -262,7 +262,7 @@ async fn distop_query_entities_merges_arrays_per_4_5_5() {
     );
 
     for role in [BrokerRole::B, BrokerRole::C] {
-        let peer = topology.broker(role);
+        let peer = topology.broker(role).expect("topology broker for role");
         let registration_id = topology.id(&format!("registration:cons31-{role:?}"));
         let registration = CsrBuilder::new(&registration_id, peer.peer_url())
             .mode("inclusive")

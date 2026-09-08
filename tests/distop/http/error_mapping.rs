@@ -28,7 +28,7 @@ const BLACKHOLE_ENDPOINT: &str = "http://10.255.255.1:9";
 #[tokio::test]
 async fn dist_http_single_source_loop_back_returns_508() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let entity_id = topology.id("Vehicle:loop");
     let reg_id = topology.id("registration:loop");
 
@@ -79,6 +79,7 @@ async fn dist_http_single_source_timeout_returns_504() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -88,6 +89,7 @@ async fn dist_http_single_source_timeout_returns_504() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&entity_id, 5))
         .with_ld_json()
@@ -119,6 +121,7 @@ async fn dist_http_single_source_resource_absent_returns_404() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -129,6 +132,7 @@ async fn dist_http_single_source_resource_absent_returns_404() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&entity_id, 5))
         .with_ld_json()
@@ -154,6 +158,7 @@ async fn dist_http_single_source_other_failure_returns_502() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -164,6 +169,7 @@ async fn dist_http_single_source_other_failure_returns_502() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&entity_id, 5))
         .with_ld_json()
@@ -189,7 +195,7 @@ async fn dist_http_single_source_other_failure_returns_502() {
 #[tokio::test]
 async fn dist_http_get_loop_back_returns_199_warning_not_508() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let entity_id = topology.id("Vehicle:get-loop");
     let reg_id = topology.id("registration:get-loop");
 
@@ -236,6 +242,7 @@ async fn dist_http_get_timeout_returns_199_warning_not_504() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -245,6 +252,7 @@ async fn dist_http_get_timeout_returns_199_warning_not_504() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
         .await
@@ -274,6 +282,7 @@ async fn dist_http_multi_endpoint_source_error_returns_207() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&ok)
             .await
@@ -284,6 +293,7 @@ async fn dist_http_multi_endpoint_source_error_returns_207() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&fail)
             .await
@@ -295,6 +305,7 @@ async fn dist_http_multi_endpoint_source_error_returns_207() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&entity_id, 7))
         .with_ld_json()
@@ -321,6 +332,7 @@ async fn dist_http_auxiliary_registration_rejects_unsafe_method() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -331,6 +343,7 @@ async fn dist_http_auxiliary_registration_rejects_unsafe_method() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&entity_id, 11))
         .with_ld_json()
@@ -361,6 +374,7 @@ async fn dist_http_unsafe_method_source_error_is_informative() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -372,6 +386,7 @@ async fn dist_http_unsafe_method_source_error_is_informative() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&entity_id, 13))
         .with_ld_json()
@@ -405,6 +420,7 @@ async fn dist_http_failed_endpoint_skipped_until_cooldown() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -415,6 +431,7 @@ async fn dist_http_failed_endpoint_skipped_until_cooldown() {
 
     let first = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
         .await
@@ -422,6 +439,7 @@ async fn dist_http_failed_endpoint_skipped_until_cooldown() {
     assert!(has_warning(&first, 299), "the failing source is reported as NGSILD-Warning 299");
     let second = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
         .await

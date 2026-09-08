@@ -25,6 +25,7 @@ pub async fn register_subscription_source(topology: &MultiBrokerTopology<BrokerR
         .build();
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&registration)
         .await

@@ -20,6 +20,7 @@ async fn dist_http_replace_entity_local_returns_204() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -31,6 +32,7 @@ async fn dist_http_replace_entity_local_returns_204() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .replace_entity(&entity_id, &vehicle(&entity_id, 9), "application/ld+json", None)
         .await
@@ -51,6 +53,7 @@ async fn dist_http_replace_entity_partial_failure_returns_207_batch_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -62,6 +65,7 @@ async fn dist_http_replace_entity_partial_failure_returns_207_batch_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["replaceEntity"]))
             .await
@@ -72,6 +76,7 @@ async fn dist_http_replace_entity_partial_failure_returns_207_batch_result() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .replace_entity(&entity_id, &vehicle(&entity_id, 9), "application/ld+json", None)
         .await
@@ -91,6 +96,7 @@ async fn dist_http_replace_entity_invalid_returns_400() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -102,6 +108,7 @@ async fn dist_http_replace_entity_invalid_returns_400() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .replace_entity(&entity_id, &json!({ "id": entity_id, "@context": context_link() }), "application/ld+json", None)
         .await
@@ -117,6 +124,7 @@ async fn dist_http_replace_entity_unknown_returns_404() {
     let entity_id = topology.id("Vehicle:replace-unknown");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .replace_entity(&entity_id, &vehicle(&entity_id, 9), "application/ld+json", None)
         .await
@@ -137,6 +145,7 @@ async fn dist_http_merge_entity_new_type_name_added_returns_204() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -148,6 +157,7 @@ async fn dist_http_merge_entity_new_type_name_added_returns_204() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .merge_entity(&entity_id, &json!({ "type": "Car", "@context": context_link() }), None)
         .await
@@ -156,6 +166,7 @@ async fn dist_http_merge_entity_new_type_name_added_returns_204() {
 
     let merged = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "local=true", "application/ld+json", Some(context_link()))
         .await
@@ -183,6 +194,7 @@ async fn dist_http_merge_entity_local_returns_204() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -195,6 +207,7 @@ async fn dist_http_merge_entity_local_returns_204() {
     let fragment = attribute_fragment(&[("speed", property(json!(88)))]);
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .merge_entity(&entity_id, &fragment, None)
         .await
@@ -215,6 +228,7 @@ async fn dist_http_merge_entity_partial_failure_returns_207_batch_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -226,6 +240,7 @@ async fn dist_http_merge_entity_partial_failure_returns_207_batch_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["mergeEntity"]))
             .await
@@ -237,6 +252,7 @@ async fn dist_http_merge_entity_partial_failure_returns_207_batch_result() {
     let fragment = attribute_fragment(&[("speed", property(json!(88)))]);
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .merge_entity(&entity_id, &fragment, None)
         .await
@@ -256,6 +272,7 @@ async fn dist_http_merge_entity_invalid_returns_400() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -267,6 +284,7 @@ async fn dist_http_merge_entity_invalid_returns_400() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .merge_entity(
             &entity_id,
@@ -287,6 +305,7 @@ async fn dist_http_merge_entity_unknown_returns_404() {
     let fragment = attribute_fragment(&[("speed", property(json!(88)))]);
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .merge_entity(&entity_id, &fragment, None)
         .await

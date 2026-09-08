@@ -45,8 +45,8 @@ fn attribute_instances(body: &Value, id: &str, attribute: &str) -> Vec<Value> {
 async fn distop_query_entities_auxiliary_added_only_where_attr_absent() {
     let topology = topology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons32");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     assert_status(
         &front.client().post_entity(&vehicle(&entity_id, 50)).with_ld_json().send().await.expect("local"),
@@ -86,7 +86,7 @@ async fn distop_query_entities_auxiliary_added_only_where_attr_absent() {
 #[tokio::test]
 async fn distop_query_entities_pagination_over_mapped_candidates() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let candidates: Vec<String> = (0..5).map(|index| topology.id(&format!("Vehicle:cons34-{index}"))).collect();
@@ -133,8 +133,8 @@ async fn distop_query_entities_pagination_over_mapped_candidates() {
 #[tokio::test]
 async fn distop_query_entities_csf_forwarded_unchanged_to_discovery() {
     let topology = topology::chain().await.expect("three-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let middle = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let middle = topology.broker(BrokerRole::B).expect("topology broker B");
     let mock = ContextSourceAdapter::start().await;
 
     let downstream_id = topology.id("registration:cons35-downstream");
@@ -181,8 +181,8 @@ async fn distop_query_entities_datasetid_per_attribute_filtering() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons36");
     let dataset_id = topology.id("dataset:2");
-    let front = topology.broker(BrokerRole::A);
-    let holder = topology.broker(BrokerRole::C);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let holder = topology.broker(BrokerRole::C).expect("topology broker C");
 
     assert_status(
         &front.client().post_entity(&vehicle(&entity_id, 10)).with_ld_json().send().await.expect("local"),
@@ -241,8 +241,8 @@ async fn distop_query_entities_datasetid_per_attribute_filtering() {
 async fn distop_query_entities_datasetid_no_match_omits_attribute() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons37");
-    let front = topology.broker(BrokerRole::A);
-    let holder = topology.broker(BrokerRole::C);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let holder = topology.broker(BrokerRole::C).expect("topology broker C");
 
     assert_status(
         &front.client().post_entity(&vehicle(&entity_id, 10)).with_ld_json().send().await.expect("local"),
@@ -288,7 +288,7 @@ async fn distop_query_entities_datasetid_no_match_omits_attribute() {
 #[tokio::test]
 async fn distop_query_entities_orderby_local_orders_by_member() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let low = topology.id("Vehicle:cons38-low");
     let mid = topology.id("Vehicle:cons38-mid");
     let high = topology.id("Vehicle:cons38-high");

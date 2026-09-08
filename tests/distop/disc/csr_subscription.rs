@@ -43,7 +43,7 @@ pub async fn create(client: &TestClient, body: &Value) -> TestResponse {
 /// Create a Context Source Subscription on the front broker and assert the
 /// `201 Created` acknowledgement.
 pub async fn create_and_assert(topology: &MultiBrokerTopology<BrokerRole>, body: &Value) {
-    let created = create(topology.broker(BrokerRole::A).client(), body).await;
+    let created = create(topology.broker(BrokerRole::A).expect("topology broker A").client(), body).await;
     assert_status(&created, 201);
 }
 

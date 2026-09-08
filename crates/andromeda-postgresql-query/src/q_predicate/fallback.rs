@@ -217,7 +217,7 @@ mod tests {
 
     fn render(q: &str) -> String {
         let expr = parser::parse(q).expect("parse q");
-        render_condition(compile(&expr, &EntityRowRefs::unaliased(), &names()).expect("compile q"))
+        render_condition(compile(&expr, &EntityRowRefs::unaliased(), &names()))
     }
 
     #[test]
@@ -309,7 +309,7 @@ mod tests {
             membership: SetMembership::Within,
             rhs: CompareValue::Scalar(Scalar::Str("x".to_string())),
         });
-        let condition = compile(&expr, &EntityRowRefs::unaliased(), &names()).expect("compile");
+        let condition = compile(&expr, &EntityRowRefs::unaliased(), &names());
         let sql = render_condition(condition);
         assert!(sql.contains("o''brien"), "apostrophe must be doubled inside the SQL literal: {sql}");
     }

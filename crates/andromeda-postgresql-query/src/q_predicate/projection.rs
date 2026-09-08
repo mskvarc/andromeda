@@ -5,7 +5,6 @@ use crate::{
     attribute_name_id::AttributeNameId,
     dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
-    error::RenderError,
     operator::{compare, pattern as pattern_predicate},
     q_predicate::{
         fallback::{fallback_equality, fallback_exists, fallback_ordering, fallback_pattern},
@@ -38,24 +37,22 @@ fn probe_column(column: CurrentAttributeValues) -> SimpleExpr {
 
 /// Compile a parsed `q` expression into a sea-query [`Condition`].
 ///
-/// # Errors
-///
-/// Returns [`RenderError`] when a term of the expression cannot be rendered.
-/// No shape clause 4.9 admits reaches that: an attribute or entity type name
-/// the dictionary does not hold compiles to a constant `FALSE` rather than
-/// failing, and every operand is bound as a parameter rather than converted, so
-/// the result is `Ok` for every expression the `q` parser accepts.
-pub fn compile(expr: &Expr, rows: &EntityRowRefs, names: &QueryNames) -> Result<Condition, RenderError> {
+/// Compilation cannot fail: an attribute or entity type name the dictionary
+/// does not hold compiles to a constant `FALSE` rather than erroring, and every
+/// operand is bound as a parameter rather than converted, so every expression
+/// clause 4.9 admits has a condition.
+#[must_use]
+pub fn compile(expr: &Expr, rows: &EntityRowRefs, names: &QueryNames) -> Condition {
     match expr {
-        Expr::And(terms) => terms.iter().try_fold(Condition::all(), |cond, term| Ok(cond.add(compile(term, rows, names)?))),
-        Expr::Or(terms) => terms.iter().try_fold(Condition::any(), |cond, term| Ok(cond.add(compile(term, rows, names)?))),
+        Expr::And(terms) => terms.iter().fold(Condition::all(), |cond, term| cond.add(compile(term, rows, names))),
+        Expr::Or(terms) => terms.iter().fold(Condition::any(), |cond, term| cond.add(compile(term, rows, names))),
         Expr::Pred(pred) => compile_predicate(pred, rows, names),
     }
 }
 
 /// Compile one leaf predicate, descending any linked-entity hops its axis
 /// carries before compiling the comparison against the entity it lands on.
-fn compile_predicate(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> Result<Condition, RenderError> {
+fn compile_predicate(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> Condition {
     compile_along_path(pred, pred.path(), rows, names, 0)
 }
 
@@ -63,9 +60,9 @@ fn compile_predicate(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames)
 ///
 /// `depth` is the number of hops already descended; it suffixes the aliases so
 /// a nested traversal's probes cannot shadow an enclosing one's.
-fn compile_along_path(pred: &Predicate, path: &QueryPath, rows: &EntityRowRefs, names: &QueryNames, depth: usize) -> Result<Condition, RenderError> {
+fn compile_along_path(pred: &Predicate, path: &QueryPath, rows: &EntityRowRefs, names: &QueryNames, depth: usize) -> Condition {
     match path {
-        QueryPath::Local(local) => Ok(compile_local_predicate(pred, local, rows, names)),
+        QueryPath::Local(local) => compile_local_predicate(pred, local, rows, names),
         QueryPath::Linked {
             relationship,
             guard_types,
@@ -75,11 +72,11 @@ fn compile_along_path(pred: &Predicate, path: &QueryPath, rows: &EntityRowRefs, 
                 // No `attribute_names` row means no instance of the
                 // Relationship was ever written, so no entity can be reached
                 // through it.
-                return Ok(unsatisfiable());
+                return unsatisfiable();
             };
             let hop = LinkedHop::at_depth(depth + 1);
-            let inner_condition = compile_along_path(pred, inner, &hop.inner_rows(), names, depth + 1)?;
-            Ok(hop.probe(relationship_id, guard_types, &names.types, rows, inner_condition))
+            let inner_condition = compile_along_path(pred, inner, &hop.inner_rows(), names, depth + 1);
+            hop.probe(relationship_id, guard_types, &names.types, rows, inner_condition)
         }
     }
 }
@@ -411,7 +408,7 @@ mod tests {
 
     fn render_with(q: &str, names: &QueryNames, rows: &EntityRowRefs) -> (String, Vec<Value>) {
         let expr = parser::parse(q).expect("parse q");
-        let condition = compile(&expr, rows, names).expect("compile q");
+        let condition = compile(&expr, rows, names);
         let (sql, values) = Query::select()
             .column(Entities::Id)
             .from(Entities::Table)

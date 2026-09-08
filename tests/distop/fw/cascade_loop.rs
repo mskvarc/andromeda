@@ -38,6 +38,7 @@ async fn distop_entity_via_local_scope_signaled_to_registered_endpoint() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -47,6 +48,7 @@ async fn distop_entity_via_local_scope_signaled_to_registered_endpoint() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -56,7 +58,9 @@ async fn distop_entity_via_local_scope_signaled_to_registered_endpoint() {
     let forwarded = mock.next_request(CAPTURE_TIMEOUT).await;
     let pseudonyms = via_pseudonyms(&forwarded);
     assert!(
-        pseudonyms.iter().any(|alias| alias == topology.broker(BrokerRole::A).alias()),
+        pseudonyms
+            .iter()
+            .any(|alias| alias == topology.broker(BrokerRole::A).expect("topology broker A").alias()),
         "the forwarded Via carries the broker's alias: {pseudonyms:?}"
     );
 
@@ -83,6 +87,7 @@ async fn distop_entity_via_header_carries_encountered_source_aliases() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -92,6 +97,7 @@ async fn distop_entity_via_header_carries_encountered_source_aliases() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -101,7 +107,9 @@ async fn distop_entity_via_header_carries_encountered_source_aliases() {
     let forwarded = mock.next_request(CAPTURE_TIMEOUT).await;
     let pseudonyms = via_pseudonyms(&forwarded);
     assert!(
-        pseudonyms.iter().any(|alias| alias == topology.broker(BrokerRole::A).alias()),
+        pseudonyms
+            .iter()
+            .any(|alias| alias == topology.broker(BrokerRole::A).expect("topology broker A").alias()),
         "the forwarded Via lists the forwarding broker's alias: {pseudonyms:?}"
     );
 
@@ -128,6 +136,7 @@ async fn distop_entity_via_csr_alias_in_header_skips_csr() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -137,6 +146,7 @@ async fn distop_entity_via_csr_alias_in_header_skips_csr() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("Via", "1.1 cs-broker-A")
@@ -156,8 +166,8 @@ async fn distop_entity_via_csr_alias_in_header_skips_csr() {
 #[tokio::test]
 async fn distop_entity_via_chain_appends_alias_and_excludes_loop() {
     let topology = topology::pair().await.expect("two-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let middle = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let middle = topology.broker(BrokerRole::B).expect("topology broker B");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &serde_json::json!([])).await;
 
@@ -204,8 +214,8 @@ async fn distop_entity_via_chain_appends_alias_and_excludes_loop() {
 #[tokio::test]
 async fn distop_entity_loop_single_exclusive_returns_199_warning() {
     let topology = topology::pair().await.expect("two-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
     let entity_id = topology.id("Vehicle:loop-508");
 
     let front_registration = CsrBuilder::new(&topology.id("registration:loop-front"), peer.peer_url())
@@ -240,8 +250,8 @@ async fn distop_entity_loop_single_exclusive_returns_199_warning() {
 #[tokio::test]
 async fn distop_entity_loop_multi_source_returns_199_warning() {
     let topology = topology::pair().await.expect("two-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     assert_status(
         &front
@@ -304,8 +314,8 @@ async fn distop_entity_via_multi_tenant_each_tenant_considered_separately() {
 
     let first_tenant = TenantName::parse("distopTenantAlpha").expect("valid tenant name");
     let second_tenant = TenantName::parse("distopTenantBeta").expect("valid tenant name");
-    let first_client = topology.broker(BrokerRole::A).tenant_client(first_tenant);
-    let second_client = topology.broker(BrokerRole::A).tenant_client(second_tenant);
+    let first_client = topology.broker(BrokerRole::A).expect("topology broker A").tenant_client(first_tenant);
+    let second_client = topology.broker(BrokerRole::A).expect("topology broker A").tenant_client(second_tenant);
 
     assert_status(&first_client.create_registration(&registration).await.expect("first tenant registration"), 201);
     assert_status(

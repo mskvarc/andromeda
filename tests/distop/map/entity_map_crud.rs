@@ -19,6 +19,7 @@ async fn create_map(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -> 
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 20))
             .with_ld_json()
@@ -27,7 +28,7 @@ async fn create_map(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -> 
             .expect("create entity"),
         201,
     );
-    let created = create_entity_map(topology.broker(BrokerRole::A).client(), "type=Vehicle").await;
+    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
     assert_status(&created, 201);
     json_body(&created)["id"].as_str().expect("created entity map carries an id").to_owned()
 }
@@ -39,6 +40,7 @@ async fn entity_map_retrieve_missing_or_invalid_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_entity_map("not-a-valid-uri")
         .await
@@ -55,6 +57,7 @@ async fn entity_map_retrieve_unknown_id_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_entity_map(&topology.id("EntityMap:unknown"))
         .await
@@ -72,6 +75,7 @@ async fn entity_map_retrieve_valid_returns_200_entity_map() {
     let map_id = create_map(&topology, "Vehicle:retrieve-valid").await;
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_entity_map(&map_id)
         .await
@@ -93,6 +97,7 @@ async fn entity_map_update_partial_changes_only_provided() {
     let before = json_body(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .retrieve_entity_map(&map_id)
             .await
@@ -100,7 +105,7 @@ async fn entity_map_update_partial_changes_only_provided() {
     )["entityMap"]
         .clone();
     let response = update_entity_map(
-        topology.broker(BrokerRole::A).client(),
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
         &map_id,
         &json!({ "expiresAt": "2999-01-01T00:00:00Z" }),
     )
@@ -109,6 +114,7 @@ async fn entity_map_update_partial_changes_only_provided() {
     let after = json_body(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .retrieve_entity_map(&map_id)
             .await
@@ -125,7 +131,7 @@ async fn entity_map_update_partial_changes_only_provided() {
 async fn entity_map_update_missing_or_invalid_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = update_entity_map(
-        topology.broker(BrokerRole::A).client(),
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
         "not-a-valid-uri",
         &json!({ "expiresAt": "2999-01-01T00:00:00Z" }),
     )
@@ -141,7 +147,7 @@ async fn entity_map_update_missing_or_invalid_id_returns_400() {
 async fn entity_map_update_unknown_id_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = update_entity_map(
-        topology.broker(BrokerRole::A).client(),
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
         &topology.id("EntityMap:update-unknown"),
         &json!({ "expiresAt": "2999-01-01T00:00:00Z" }),
     )
@@ -160,6 +166,7 @@ async fn entity_map_update_ignores_output_only_fields() {
     let before = json_body(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .retrieve_entity_map(&map_id)
             .await
@@ -171,11 +178,12 @@ async fn entity_map_update_ignores_output_only_fields() {
         "entityMap": { "urn:ngsi-ld:Vehicle:fake": ["@none"] },
         "linkedMaps": { "urn:ngsi-ld:csr:fake": "urn:ngsi-ld:EntityMap:fake" }
     });
-    let response = update_entity_map(topology.broker(BrokerRole::A).client(), &map_id, &patch).await;
+    let response = update_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), &map_id, &patch).await;
     assert_status(&response, 204);
     let after = json_body(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .retrieve_entity_map(&map_id)
             .await
@@ -191,7 +199,7 @@ async fn entity_map_update_success_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
     let map_id = create_map(&topology, "Vehicle:update-204").await;
     let response = update_entity_map(
-        topology.broker(BrokerRole::A).client(),
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
         &map_id,
         &json!({ "expiresAt": "2999-01-01T00:00:00Z" }),
     )
@@ -207,6 +215,7 @@ async fn entity_map_delete_missing_or_invalid_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_entity_map("not-a-valid-uri")
         .await
@@ -223,6 +232,7 @@ async fn entity_map_delete_unknown_id_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_entity_map(&topology.id("EntityMap:delete-unknown"))
         .await
@@ -241,6 +251,7 @@ async fn entity_map_delete_removes_and_returns_204() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .delete_entity_map(&map_id)
             .await
@@ -249,6 +260,7 @@ async fn entity_map_delete_removes_and_returns_204() {
     );
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_entity_map(&map_id)
         .await
@@ -266,6 +278,7 @@ async fn entity_map_durability_survives_restart() {
     let map_id = create_map(&topology, "Vehicle:durability").await;
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_entity_map(&map_id)
         .await
@@ -283,6 +296,7 @@ async fn entity_map_visible_on_replica_of_same_broker() {
     let map_id = create_map(&topology, "Vehicle:replica").await;
     let on_replica = topology
         .broker(BrokerRole::AReplica)
+        .expect("topology broker A replica")
         .client()
         .retrieve_entity_map(&map_id)
         .await
@@ -291,6 +305,7 @@ async fn entity_map_visible_on_replica_of_same_broker() {
     assert_eq!(json_body(&on_replica)["id"], json!(map_id));
     let on_peer = topology
         .broker(BrokerRole::B)
+        .expect("topology broker B")
         .client()
         .retrieve_entity_map(&map_id)
         .await
@@ -307,6 +322,7 @@ async fn entity_map_cross_instance_not_visible_on_peer() {
     let map_id = create_map(&topology, "Vehicle:cross-instance").await;
     let on_peer = topology
         .broker(BrokerRole::B)
+        .expect("topology broker B")
         .client()
         .retrieve_entity_map(&map_id)
         .await

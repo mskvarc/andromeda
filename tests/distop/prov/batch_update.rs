@@ -44,7 +44,7 @@ fn error_keyed(body: &Value, registration: &str, status: u64) -> bool {
 #[tokio::test]
 async fn batch_update_per_csr_filtering_drops_attrless_entities() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-update-filter-v1");
     let v2 = topology.id("Vehicle:batch-update-filter-v2");
@@ -92,7 +92,7 @@ async fn batch_update_per_csr_filtering_drops_attrless_entities() {
 #[tokio::test]
 async fn batch_update_supported_forwards_and_merges() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-update-merge-v1");
     let v2 = topology.id("Vehicle:batch-update-merge-v2");
@@ -130,7 +130,7 @@ async fn batch_update_supported_forwards_and_merges() {
 #[tokio::test]
 async fn batch_update_fallback_per_entity_update_overwrite() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-update-fbupdate-v1");
     let v2 = topology.id("Vehicle:batch-update-fbupdate-v2");
@@ -170,7 +170,7 @@ async fn batch_update_fallback_per_entity_update_overwrite() {
 #[tokio::test]
 async fn batch_update_fallback_per_entity_append_no_overwrite() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-update-fbappend-v1");
     let v2 = topology.id("Vehicle:batch-update-fbappend-v2");
@@ -211,7 +211,7 @@ async fn batch_update_fallback_per_entity_append_no_overwrite() {
 #[tokio::test]
 async fn batch_update_redirect_no_viable_op_conflict_per_entity() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-update-noviable-v1");
     let v2 = topology.id("Vehicle:batch-update-noviable-v2");
@@ -249,7 +249,7 @@ async fn batch_update_redirect_no_viable_op_conflict_per_entity() {
 #[tokio::test]
 async fn batch_update_local_phase_populates_results() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-update-local-v1");
     let v2 = topology.id("Vehicle:batch-update-local-v2");

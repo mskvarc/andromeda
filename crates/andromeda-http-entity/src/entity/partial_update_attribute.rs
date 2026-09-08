@@ -101,5 +101,5 @@ pub(crate) async fn partial_update_attr(
             classify_entity_error,
         )
     };
-    provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
+    provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

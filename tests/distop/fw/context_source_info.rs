@@ -42,6 +42,7 @@ async fn distop_entity_csi_static_header_conveyed_on_forward() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -51,6 +52,7 @@ async fn distop_entity_csi_static_header_conveyed_on_forward() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -87,6 +89,7 @@ async fn distop_entity_csi_urn_request_copies_from_triggering_request() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -96,6 +99,7 @@ async fn distop_entity_csi_urn_request_copies_from_triggering_request() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("user", "abcd")
@@ -125,7 +129,7 @@ async fn distop_entity_csi_tenant_never_placed_inside_context_source_info() {
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
     let tenant = TenantName::parse("distopTenantCsi").expect("valid tenant name");
-    let tenant_client = topology.broker(BrokerRole::A).tenant_client(tenant);
+    let tenant_client = topology.broker(BrokerRole::A).expect("topology broker A").tenant_client(tenant);
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:csi-tenant"), &endpoint)
         .mode("inclusive")
@@ -170,6 +174,7 @@ async fn distop_entity_csi_cannot_override_content_length() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -179,6 +184,7 @@ async fn distop_entity_csi_cannot_override_content_length() {
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&entity_id, 30))
         .with_ld_json()
@@ -216,6 +222,7 @@ async fn distop_entity_csi_accept_ld_json_sets_forwarded_accept() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -225,6 +232,7 @@ async fn distop_entity_csi_accept_ld_json_sets_forwarded_accept() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -257,6 +265,7 @@ async fn distop_entity_csi_accept_plain_json_sets_forwarded_accept() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -266,6 +275,7 @@ async fn distop_entity_csi_accept_plain_json_sets_forwarded_accept() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -292,6 +302,7 @@ async fn distop_entity_csi_accept_invalid_rejected_at_registration() {
         .build();
     let rejected = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&registration)
         .await
@@ -322,6 +333,7 @@ async fn distop_entity_csi_source_response_converted_to_client_type() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -331,6 +343,7 @@ async fn distop_entity_csi_source_response_converted_to_client_type() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
         .await
@@ -366,6 +379,7 @@ async fn distop_entity_csi_content_type_json_constrains_forwarded_content_type()
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -375,6 +389,7 @@ async fn distop_entity_csi_content_type_json_constrains_forwarded_content_type()
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&entity_id, 30))
         .with_ld_json()
@@ -415,6 +430,7 @@ async fn distop_entity_csi_content_type_ld_json_constrains_forwarded_content_typ
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -424,6 +440,7 @@ async fn distop_entity_csi_content_type_ld_json_constrains_forwarded_content_typ
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&entity_id, 30))
         .with_ld_json()

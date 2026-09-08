@@ -35,6 +35,7 @@ fn speed_node(value: i64) -> Value {
 async fn replace_speed(topology: &MultiBrokerTopology<BrokerRole>, entity_id: &str, value: i64) -> TestResponse {
     topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::PUT, &format!("/ngsi-ld/v1/entities/{entity_id}/attrs/speed"))
         .header("content-type", "application/ld+json")
@@ -77,6 +78,7 @@ async fn replace_attr_registration_matches_entity_absent_not_404_and_forwards() 
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -103,7 +105,7 @@ async fn replace_attr_registration_matches_entity_absent_not_404_and_forwards() 
 #[tokio::test]
 async fn replace_attr_op_unsupported_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-replaceattr-unsup");
     let reg_id = topology.id("registration:prov-replaceattr-unsup");
@@ -139,7 +141,7 @@ async fn replace_attr_op_unsupported_returns_409() {
 #[tokio::test]
 async fn replace_attr_exclusive_match_terminates_after_forwarding() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-replaceattr-terminate");
     let reg_id = topology.id("registration:prov-replaceattr-terminate");
@@ -196,7 +198,7 @@ async fn replace_attr_exclusive_match_terminates_after_forwarding() {
 #[tokio::test]
 async fn replace_attr_inclusive_forwards_remainder() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-replaceattr-inclusive");
     let reg_id = topology.id("registration:prov-replaceattr-inclusive");
@@ -243,7 +245,7 @@ async fn replace_attr_inclusive_forwards_remainder() {
 #[tokio::test]
 async fn replace_attr_local_present_attr_absent_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let entity_id = topology.id("Vehicle:prov-replaceattr-missing");
 
     let seeded = client

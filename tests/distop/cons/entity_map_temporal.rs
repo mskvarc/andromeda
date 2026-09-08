@@ -29,6 +29,7 @@ const BEFORE_2030: &str = "timerel=before&timeAt=2030-01-01T00:00:00Z";
 async fn retrieve_temporal_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, entity_id: &str, map: &str) -> TestResponse {
     topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/temporal/entities/{}?{BEFORE_2030}", encode(entity_id)))
         .header("accept", "application/ld+json")
@@ -42,6 +43,7 @@ async fn retrieve_temporal_reusing_map(topology: &MultiBrokerTopology<BrokerRole
 async fn query_temporal_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, map: &str) -> TestResponse {
     topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/temporal/entities?type=Vehicle&{BEFORE_2030}"))
         .header("accept", "application/ld+json")
@@ -60,7 +62,7 @@ async fn query_temporal_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, 
 async fn distop_retrieve_temporal_map_reused_or_recreated() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons42");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let first_id = topology.id("registration:cons42-s1");
@@ -142,7 +144,7 @@ async fn distop_retrieve_temporal_map_reused_or_recreated() {
 async fn distop_retrieve_temporal_return_flag_creates_new_map() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons43");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons43");
@@ -185,7 +187,7 @@ async fn distop_retrieve_temporal_return_flag_creates_new_map() {
 async fn distop_retrieve_temporal_map_linked_entry_forwards_linked_location() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons45");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons45");
@@ -236,7 +238,7 @@ async fn distop_retrieve_temporal_map_linked_entry_forwards_linked_location() {
 async fn distop_retrieve_temporal_map_linkedmaps_updated() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons48");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons48");
@@ -289,7 +291,7 @@ async fn distop_retrieve_temporal_map_linkedmaps_updated() {
 #[tokio::test]
 async fn distop_query_temporal_map_reused_or_recreated() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let first_id = topology.id("registration:cons58-s1");
@@ -367,7 +369,7 @@ async fn distop_query_temporal_map_reused_or_recreated() {
 async fn distop_query_temporal_return_flag_creates_new_map() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons59");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     assert_status(
         &front
             .client()
@@ -393,7 +395,7 @@ async fn distop_query_temporal_return_flag_creates_new_map() {
 #[tokio::test]
 async fn distop_query_temporal_map_linked_entry_forwards_linked_location() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons61");

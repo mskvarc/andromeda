@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 #[tokio::test]
 async fn batch_delete_per_csr_filtering() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:prov-batch-delete-filter-v1");
     let v2 = topology.id("Vehicle:prov-batch-delete-filter-v2");
@@ -72,7 +72,7 @@ async fn batch_delete_per_csr_filtering() {
 #[tokio::test]
 async fn batch_delete_supported_forwards_and_merges() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:prov-batch-delete-merge-v1");
     let v2 = topology.id("Vehicle:prov-batch-delete-merge-v2");
@@ -109,7 +109,7 @@ async fn batch_delete_supported_forwards_and_merges() {
 #[tokio::test]
 async fn batch_delete_fallback_per_entity_delete() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:prov-batch-delete-fallback-v1");
     let v2 = topology.id("Vehicle:prov-batch-delete-fallback-v2");
@@ -142,7 +142,7 @@ async fn batch_delete_fallback_per_entity_delete() {
 #[tokio::test]
 async fn batch_delete_redirect_neither_op_conflict_per_entity() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:prov-batch-delete-neither-v1");
     let v2 = topology.id("Vehicle:prov-batch-delete-neither-v2");
@@ -186,7 +186,7 @@ async fn batch_delete_redirect_neither_op_conflict_per_entity() {
 #[tokio::test]
 async fn batch_delete_local_phase_removes_ids() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:prov-batch-delete-local-v1");
     let v2 = topology.id("Vehicle:prov-batch-delete-local-v2");

@@ -175,7 +175,7 @@ fn current_state_probe(
     let mut current_conditions = Condition::all();
 
     if let Some(q_expr) = &compiled.entities.q_expr {
-        current_conditions = current_conditions.add(q_filter::compile(q_expr, &rows, names)?);
+        current_conditions = current_conditions.add(q_filter::compile(q_expr, &rows, names));
     }
 
     let mut probe = SelectStatement::new();

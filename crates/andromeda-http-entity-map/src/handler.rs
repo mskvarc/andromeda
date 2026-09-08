@@ -67,7 +67,7 @@ pub async fn update(
     body: Result<Json<UpdateEntityMapBody>, JsonRejection>,
 ) -> Result<Response, ProblemResponse> {
     let Json(body) =
-        body.map_err(|rejection| classify_json_body(rejection).map(|detail| invalid_request(detail, &uri), |detail| bad_request_data(detail, &uri)))?;
+        body.map_err(|rejection| classify_json_body(&rejection).map(|detail| invalid_request(detail, &uri), |detail| bad_request_data(detail, &uri)))?;
     let expires_at = body.expires_at.ok_or_else(|| bad_request_data("expiresAt is required", &uri))?;
 
     if expires_at <= chrono::Utc::now() {

@@ -46,9 +46,9 @@ fn location_node() -> Value {
 async fn distop_split_entity_query_split_local_applies_id_type_pattern_only() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons21");
-    let front = topology.broker(BrokerRole::A);
-    let holder_b = topology.broker(BrokerRole::B);
-    let holder_c = topology.broker(BrokerRole::C);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let holder_b = topology.broker(BrokerRole::B).expect("topology broker B");
+    let holder_c = topology.broker(BrokerRole::C).expect("topology broker C");
 
     assert_status(
         &front
@@ -76,7 +76,7 @@ async fn distop_split_entity_query_split_local_applies_id_type_pattern_only() {
     );
 
     for role in [BrokerRole::B, BrokerRole::C] {
-        let peer = topology.broker(role);
+        let peer = topology.broker(role).expect("topology broker for role");
         let registration_id = topology.id(&format!("registration:cons21-{role:?}"));
         assert_status(
             &front
@@ -114,7 +114,7 @@ async fn distop_split_entity_query_split_local_applies_id_type_pattern_only() {
 async fn distop_split_entity_query_non_split_applies_full_local_filter() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons22");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
 
     assert_status(
         &front
@@ -146,7 +146,7 @@ async fn distop_split_entity_query_non_split_applies_full_local_filter() {
 #[tokio::test]
 async fn distop_split_entity_query_split_strips_filters_before_forward() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     for source in ["/sb", "/sc"] {
@@ -200,9 +200,9 @@ async fn distop_split_entity_query_split_reapplies_filters_post_aggregation() {
     let topology = topology::chain().await.expect("three-broker topology");
     let matching_id = topology.id("Vehicle:cons28-match");
     let below_id = topology.id("Vehicle:cons28-below");
-    let front = topology.broker(BrokerRole::A);
-    let holder_b = topology.broker(BrokerRole::B);
-    let holder_c = topology.broker(BrokerRole::C);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let holder_b = topology.broker(BrokerRole::B).expect("topology broker B");
+    let holder_c = topology.broker(BrokerRole::C).expect("topology broker C");
 
     assert_status(
         &holder_b
@@ -236,7 +236,7 @@ async fn distop_split_entity_query_split_reapplies_filters_post_aggregation() {
     );
 
     for role in [BrokerRole::B, BrokerRole::C] {
-        let peer = topology.broker(role);
+        let peer = topology.broker(role).expect("topology broker for role");
         let registration_id = topology.id(&format!("registration:cons28-{role:?}"));
         assert_status(
             &front
@@ -276,9 +276,9 @@ async fn distop_split_entity_query_split_reapplies_filters_post_aggregation() {
 async fn distop_split_entity_query_split_nonlocal_removes_non_matching_after_recheck() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons33");
-    let front = topology.broker(BrokerRole::A);
-    let holder_b = topology.broker(BrokerRole::B);
-    let holder_c = topology.broker(BrokerRole::C);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let holder_b = topology.broker(BrokerRole::B).expect("topology broker B");
+    let holder_c = topology.broker(BrokerRole::C).expect("topology broker C");
 
     assert_status(
         &front
@@ -306,7 +306,7 @@ async fn distop_split_entity_query_split_nonlocal_removes_non_matching_after_rec
     );
 
     for role in [BrokerRole::B, BrokerRole::C] {
-        let peer = topology.broker(role);
+        let peer = topology.broker(role).expect("topology broker for role");
         let registration_id = topology.id(&format!("registration:cons33-{role:?}"));
         assert_status(
             &front
@@ -343,7 +343,7 @@ async fn distop_split_entity_query_split_nonlocal_removes_non_matching_after_rec
 #[tokio::test]
 async fn distop_split_entity_query_non_split_forwards_filters_remotely() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     for source in ["/sb", "/sc"] {

@@ -2,7 +2,7 @@
 
 use crate::{duplicate_instance_claim::DuplicateInstanceClaimError, unit_code_metadata::UnitCodeMetadataError};
 use andromeda_ngsi_ld_lexicon::ngsi_ld_date_time::NgsiLdDateTimeError;
-use andromeda_postgresql_encoding::ewkb::EwkbError;
+use andromeda_postgresql_encoding::{copy::CopyFieldError, ewkb::EwkbError};
 use andromeda_postgresql_temporal_query::aggregation_group::MixedAggregationGroup;
 use andromeda_temporal::error::TemporalError;
 
@@ -26,6 +26,11 @@ pub enum TemporalStoreError {
     /// A geometry value could not be encoded for persistence.
     #[error("temporal store encoding: {0}")]
     Encoding(#[from] EwkbError),
+    /// A value could not be staged as a binary COPY field: it is longer than
+    /// the format's 32-bit field prefix can announce, or it does not
+    /// serialise.
+    #[error("temporal store COPY field: {0}")]
+    CopyField(#[from] CopyFieldError),
     /// An attribute name could not be resolved in the dictionary.
     #[error("temporal store attribute lookup: {0}")]
     NameLookup(String),
@@ -72,6 +77,7 @@ impl From<TemporalStoreError> for TemporalError {
             | TemporalStoreError::Decode(_)
             | TemporalStoreError::Query(_)
             | TemporalStoreError::Encoding(_)
+            | TemporalStoreError::CopyField(_)
             | TemporalStoreError::NameLookup(_) => TemporalError::persistence(error.to_string()),
         }
     }

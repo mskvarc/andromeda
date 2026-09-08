@@ -43,6 +43,7 @@ async fn register_inclusive(topology: &MultiBrokerTopology<BrokerRole>, endpoint
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&builder.build())
             .await
@@ -66,6 +67,7 @@ async fn distop_entity_bc_broker_rejects_malformed_source_payload() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -90,6 +92,7 @@ async fn distop_entity_bc_broker_requests_target_version_source_amends() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -120,6 +123,7 @@ async fn distop_entity_bc_version_values_are_major_minor() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -153,6 +157,7 @@ async fn distop_entity_bc_source_indicates_returned_version() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
         .await
@@ -192,6 +197,7 @@ async fn distop_entity_bc_broker_uses_version_info_when_collating() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await

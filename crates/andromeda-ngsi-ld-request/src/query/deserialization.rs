@@ -57,7 +57,7 @@ impl<'de> Deserialize<'de> for OptionalGeoQuery {
                 return Err(DeserializeError::custom(INCOMPLETE_GEOQUERY));
             }
         };
-        decode_geo_query(georel, geometry_type, coordinates, parameters.geoproperty)
+        decode_geo_query(&georel, &geometry_type, coordinates, parameters.geoproperty)
             .map(Some)
             .map(OptionalGeoQuery)
             .map_err(DeserializeError::custom)
@@ -71,8 +71,8 @@ impl<'de> Deserialize<'de> for OptionalGeoQuery {
 /// Returns [`GeoQueryDecodeError::Decode`] when the relationship token, the
 /// geometry type or the coordinates do not form a clause 4.10 geoquery.
 pub fn decode_geo_query(
-    georel: String,
-    geometry_type: String,
+    georel: &str,
+    geometry_type: &str,
     coordinates: serde_json::Value,
     geoproperty: Option<NgsiLdReference>,
 ) -> Result<GeoQueryInput, GeoQueryDecodeError> {

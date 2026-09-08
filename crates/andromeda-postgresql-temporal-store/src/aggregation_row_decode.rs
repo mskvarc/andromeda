@@ -143,7 +143,7 @@ fn boolean_extremum(counted: &JsonNumber, column: &str) -> Result<AggregationMin
 /// Read one `NUMERIC` aggregate as the exact JSON number it is.
 fn decode_exact_aggregate(row: &PgRow, column: &str) -> Result<Option<JsonNumber>, TemporalStoreError> {
     match projected_column::<BigDecimal>(row, column)? {
-        Some(decimal) => Ok(Some(json_number_of(decimal, column)?)),
+        Some(decimal) => Ok(Some(json_number_of(&decimal, column)?)),
         None => Ok(None),
     }
 }

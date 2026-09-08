@@ -51,8 +51,8 @@ async fn distop_query_temporal_datasetid_filters_s7_empty_removed() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons67");
     let dataset_id = topology.id("dataset:2");
-    let front = topology.broker(BrokerRole::A);
-    let holder = topology.broker(BrokerRole::C);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let holder = topology.broker(BrokerRole::C).expect("topology broker C");
 
     assert_status(
         &front
@@ -132,8 +132,8 @@ async fn distop_query_temporal_no_datasetid_s8_equals_s7() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons68");
     let dataset_id = topology.id("dataset:2");
-    let front = topology.broker(BrokerRole::A);
-    let holder = topology.broker(BrokerRole::C);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let holder = topology.broker(BrokerRole::C).expect("topology broker C");
 
     assert_status(
         &front
@@ -186,7 +186,7 @@ async fn distop_query_temporal_no_datasetid_s8_equals_s7() {
 #[tokio::test]
 async fn distop_query_temporal_pagination_over_candidates() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let candidates: Vec<String> = (0..5).map(|index| topology.id(&format!("Vehicle:cons71-{index}"))).collect();
@@ -233,8 +233,8 @@ async fn distop_query_temporal_pagination_over_candidates() {
 #[tokio::test]
 async fn distop_query_temporal_csf_forwarded_unchanged() {
     let topology = topology::chain().await.expect("three-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let middle = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let middle = topology.broker(BrokerRole::B).expect("topology broker B");
     let mock = ContextSourceAdapter::start().await;
 
     let downstream_id = topology.id("registration:cons72-downstream");
@@ -278,7 +278,7 @@ async fn distop_query_temporal_csf_forwarded_unchanged() {
 #[tokio::test]
 async fn distop_query_temporal_orderby_id_local_orders_result() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let first = topology.id("Vehicle:cons73-a");
     let second = topology.id("Vehicle:cons73-b");
     let third = topology.id("Vehicle:cons73-c");

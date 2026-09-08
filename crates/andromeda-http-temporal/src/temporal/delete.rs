@@ -84,5 +84,5 @@ pub async fn delete(
         Err(TemporalError::NotFound { .. }) if proxied => LocalOutcome::NothingRemained,
         other => LocalOutcome::processed(other, classify_temporal_error),
     };
-    provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
+    provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

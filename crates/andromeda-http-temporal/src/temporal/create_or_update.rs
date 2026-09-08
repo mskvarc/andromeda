@@ -113,5 +113,5 @@ pub async fn create_or_update(
     } else {
         (LocalOutcome::NothingRemained, StatusCode::NO_CONTENT.into_response())
     };
-    provision_response(&entity_id, &forwarded, local, success, &uri)
+    provision_response(&entity_id, &forwarded, &local, success, &uri)
 }

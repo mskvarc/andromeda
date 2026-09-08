@@ -30,6 +30,7 @@ async fn dist_http_local_param_honoured_on_all_listed_resources() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -42,6 +43,7 @@ async fn dist_http_local_param_honoured_on_all_listed_resources() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -53,6 +55,7 @@ async fn dist_http_local_param_honoured_on_all_listed_resources() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .query_entities("type=Vehicle&local=true", "application/ld+json", Some(context_link()))
             .await
@@ -62,6 +65,7 @@ async fn dist_http_local_param_honoured_on_all_listed_resources() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .get_entity(&entity_id, "local=true", "application/ld+json", Some(context_link()))
             .await
@@ -88,6 +92,7 @@ async fn dist_http_local_true_bypasses_all_csrs() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -99,6 +104,7 @@ async fn dist_http_local_true_bypasses_all_csrs() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&first_reg, &first.url(""), &entity_id, "inclusive"))
             .await
@@ -108,6 +114,7 @@ async fn dist_http_local_true_bypasses_all_csrs() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&second_reg, &second.url(""), &entity_id, "inclusive"))
             .await
@@ -118,6 +125,7 @@ async fn dist_http_local_true_bypasses_all_csrs() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .query_entities("type=Vehicle&local=true", "application/ld+json", Some(context_link()))
             .await
@@ -144,6 +152,7 @@ async fn dist_http_registry_api_operations_always_local() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -154,6 +163,7 @@ async fn dist_http_registry_api_operations_always_local() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .query_registrations("type=Vehicle", None)
             .await
@@ -183,6 +193,7 @@ async fn dist_http_snapshot_op_ignores_local_false() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -194,6 +205,7 @@ async fn dist_http_snapshot_op_ignores_local_false() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -208,11 +220,12 @@ async fn dist_http_snapshot_op_ignores_local_false() {
         "snapshotQueries": [ { "type": "Query", "entities": [ { "type": "Vehicle" } ] } ],
         "@context": context_link()
     });
-    let snapshot_id = create_prepared_snapshot(topology.broker(BrokerRole::A).client(), &snapshot).await;
+    let snapshot_id = create_prepared_snapshot(topology.broker(BrokerRole::A).expect("topology broker A").client(), &snapshot).await;
     let forwarded_during_preparation = mock.get_total_count();
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/entityOperations/query?local=false")
         .header("content-type", "application/ld+json")
@@ -240,6 +253,7 @@ async fn dist_http_incompatible_params_return_invalid_request() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&georel=near%3BmaxDistance%3D%3D1000", "application/ld+json", Some(context_link()))
         .await
@@ -259,6 +273,7 @@ async fn dist_http_query_entities_supports_query_url_params() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&fast, 80))
             .with_ld_json()
@@ -270,6 +285,7 @@ async fn dist_http_query_entities_supports_query_url_params() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&slow, 20))
             .with_ld_json()
@@ -281,6 +297,7 @@ async fn dist_http_query_entities_supports_query_url_params() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&q=speed%3E50", "application/ld+json", Some(context_link()))
         .await
@@ -310,6 +327,7 @@ async fn dist_http_query_type_star_implies_local_and_rejects_local_false() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -321,6 +339,7 @@ async fn dist_http_query_type_star_implies_local_and_rejects_local_false() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -331,6 +350,7 @@ async fn dist_http_query_type_star_implies_local_and_rejects_local_false() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .query_entities("type=*", "application/ld+json", Some(context_link()))
             .await
@@ -341,6 +361,7 @@ async fn dist_http_query_type_star_implies_local_and_rejects_local_false() {
 
     let rejected = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=*&local=false", "application/ld+json", Some(context_link()))
         .await
@@ -366,6 +387,7 @@ async fn dist_http_query_split_entities_param_forwards_and_reapplies_filters() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&first_reg, &first.url(""), &entity_id, "inclusive"))
             .await
@@ -375,6 +397,7 @@ async fn dist_http_query_split_entities_param_forwards_and_reapplies_filters() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&second_reg, &second.url(""), &entity_id, "inclusive"))
             .await
@@ -390,6 +413,7 @@ async fn dist_http_query_split_entities_param_forwards_and_reapplies_filters() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&splitEntities=true", "application/ld+json", Some(context_link()))
         .await
@@ -415,6 +439,7 @@ async fn dist_http_query_csf_param_forwarded_unchanged() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -425,6 +450,7 @@ async fn dist_http_query_csf_param_forwarded_unchanged() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&csf=mode%3D%3Dinclusive", "application/ld+json", Some(context_link()))
         .await
@@ -450,6 +476,7 @@ async fn dist_http_query_contained_by_param_honoured() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -462,6 +489,7 @@ async fn dist_http_query_contained_by_param_honoured() {
     let query = format!("type=Vehicle&containedBy={}", urlencoding::encode(&entity_id));
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities(&query, "application/ld+json", Some(context_link()))
         .await
@@ -485,6 +513,7 @@ async fn dist_http_query_entity_map_lifetime_param_sets_expiry() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -495,6 +524,7 @@ async fn dist_http_query_entity_map_lifetime_param_sets_expiry() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities(
             "type=Vehicle&entityMap=true&entityMapLifetime=PT5M",
@@ -525,6 +555,7 @@ async fn dist_http_purge_entities_supports_table_params_and_type_star_local() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -536,6 +567,7 @@ async fn dist_http_purge_entities_supports_table_params_and_type_star_local() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["purgeEntity"]))
             .await
@@ -545,6 +577,7 @@ async fn dist_http_purge_entities_supports_table_params_and_type_star_local() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_entities_by_query("type=*", Some(context_link()))
         .await
@@ -565,6 +598,7 @@ async fn dist_http_retrieve_entity_supports_table_params() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 42))
             .with_ld_json()
@@ -576,6 +610,7 @@ async fn dist_http_retrieve_entity_supports_table_params() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "attrs=speed&options=keyValues", "application/ld+json", Some(context_link()))
         .await
@@ -601,6 +636,7 @@ async fn dist_http_merge_entity_supports_format_lang_observedat_options_type_par
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -612,6 +648,7 @@ async fn dist_http_merge_entity_supports_format_lang_observedat_options_type_par
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(
             Method::PATCH,
@@ -641,6 +678,7 @@ async fn dist_http_query_csource_registrations_supports_table_params() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -650,6 +688,7 @@ async fn dist_http_query_csource_registrations_supports_table_params() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations("type=Vehicle&limit=5", None)
         .await
@@ -672,6 +711,7 @@ async fn dist_http_get_entity_maps_supports_query_url_params() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -682,6 +722,7 @@ async fn dist_http_get_entity_maps_supports_query_url_params() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entityMaps?type=Vehicle&limit=5")
         .header("accept", "application/ld+json")

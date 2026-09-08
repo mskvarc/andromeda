@@ -21,6 +21,7 @@ async fn provision_map(topology: &MultiBrokerTopology<BrokerRole>, mock: &Contex
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -30,6 +31,7 @@ async fn provision_map(topology: &MultiBrokerTopology<BrokerRole>, mock: &Contex
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", Some(context_link()))
         .await
@@ -46,6 +48,7 @@ async fn dist_http_get_entity_map_by_id_returns_200() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_entity_map(&map_id)
         .await
@@ -63,6 +66,7 @@ async fn dist_http_get_entity_map_by_id_invalid_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_entity_map("not a uri")
         .await
@@ -79,6 +83,7 @@ async fn dist_http_get_entity_map_by_id_unknown_returns_404() {
     let map_id = topology.id("EntityMap:unknown-get");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_entity_map(&map_id)
         .await
@@ -96,6 +101,7 @@ async fn dist_http_patch_entity_map_expiry_returns_204() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::PATCH, &format!("/ngsi-ld/v1/entityMaps/{}", urlencoding::encode(&map_id)))
         .header("content-type", "application/json")
@@ -119,6 +125,7 @@ async fn dist_http_patch_entity_map_invalid_returns_400() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::PATCH, &format!("/ngsi-ld/v1/entityMaps/{}", urlencoding::encode(&map_id)))
         .header("content-type", "application/json")
@@ -139,6 +146,7 @@ async fn dist_http_patch_entity_map_unknown_returns_404() {
     let map_id = topology.id("EntityMap:unknown-patch");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::PATCH, &format!("/ngsi-ld/v1/entityMaps/{}", urlencoding::encode(&map_id)))
         .header("content-type", "application/json")
@@ -159,6 +167,7 @@ async fn dist_http_delete_entity_map_returns_204() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_entity_map(&map_id)
         .await
@@ -176,6 +185,7 @@ async fn dist_http_delete_entity_map_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_entity_map("not a uri")
         .await
@@ -192,6 +202,7 @@ async fn dist_http_delete_entity_map_unknown_returns_404() {
     let map_id = topology.id("EntityMap:unknown-delete");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_entity_map(&map_id)
         .await
@@ -211,6 +222,7 @@ async fn dist_http_get_entity_maps_create_returns_201_and_map_header() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -221,6 +233,7 @@ async fn dist_http_get_entity_maps_create_returns_201_and_map_header() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entityMaps?type=Vehicle")
         .header("accept", "application/ld+json")
@@ -246,6 +259,7 @@ async fn dist_http_get_entity_maps_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entityMaps?type=Vehicle&q=speed%3E")
         .header("accept", "application/ld+json")
@@ -268,6 +282,7 @@ async fn dist_http_post_entity_maps_query_body_returns_201_and_map_header() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -278,6 +293,7 @@ async fn dist_http_post_entity_maps_query_body_returns_201_and_map_header() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/entityMaps")
         .header("content-type", "application/ld+json")
@@ -310,6 +326,7 @@ async fn dist_http_get_temporal_entity_maps_create_returns_201_and_map_header() 
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -320,6 +337,7 @@ async fn dist_http_get_temporal_entity_maps_create_returns_201_and_map_header() 
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(
             Method::GET,
@@ -354,6 +372,7 @@ async fn dist_http_post_temporal_entity_maps_query_body_returns_201_and_map_head
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -364,6 +383,7 @@ async fn dist_http_post_temporal_entity_maps_query_body_returns_201_and_map_head
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/temporal/entityMaps")
         .header("content-type", "application/ld+json")

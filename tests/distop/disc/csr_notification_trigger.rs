@@ -139,6 +139,7 @@ async fn csr_notification_non_matching_csr_updated_to_match_is_newly_matching() 
     let fragment = json!({ "information": [ { "entities": [ { "type": vtype } ] } ] });
     let updated = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_registration(&registration_id, &fragment, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -171,6 +172,7 @@ async fn csr_notification_matching_csr_updated_still_matching_is_updated() {
     let fragment = json!({ "endpoint": "http://broker-b:1056/updated" });
     let updated = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_registration(&registration_id, &fragment, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -204,6 +206,7 @@ async fn csr_notification_update_makes_csr_no_longer_match_is_no_longer_matching
     let fragment = json!({ "information": [ { "entities": [ { "type": other_type } ] } ] });
     let updated = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_registration(&registration_id, &fragment, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -235,6 +238,7 @@ async fn csr_notification_matching_csr_deletion_is_no_longer_matching() {
 
     let deleted = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_registration(&registration_id)
         .await

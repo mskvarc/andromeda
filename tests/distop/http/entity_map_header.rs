@@ -25,6 +25,7 @@ async fn dist_http_query_entity_map_requested_returns_map_header_200_or_201() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -35,6 +36,7 @@ async fn dist_http_query_entity_map_requested_returns_map_header_200_or_201() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", Some(context_link()))
         .await
@@ -62,6 +64,7 @@ async fn dist_http_query_with_entity_map_request_header_uses_named_map() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -72,6 +75,7 @@ async fn dist_http_query_with_entity_map_request_header_uses_named_map() {
 
     let first = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", Some(context_link()))
         .await
@@ -80,6 +84,7 @@ async fn dist_http_query_with_entity_map_request_header_uses_named_map() {
 
     let second = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle&entityMap=true")
         .header("accept", "application/ld+json")
@@ -107,6 +112,7 @@ async fn dist_http_purge_supports_entity_map_request_header() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -116,6 +122,7 @@ async fn dist_http_purge_supports_entity_map_request_header() {
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
     let map = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", Some(context_link()))
         .await
@@ -124,6 +131,7 @@ async fn dist_http_purge_supports_entity_map_request_header() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::DELETE, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("link", context_link_header())
@@ -149,6 +157,7 @@ async fn dist_http_retrieve_with_entity_map_request_header_uses_named_map() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -160,6 +169,7 @@ async fn dist_http_retrieve_with_entity_map_request_header_uses_named_map() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -169,6 +179,7 @@ async fn dist_http_retrieve_with_entity_map_request_header_uses_named_map() {
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
     let map = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", Some(context_link()))
         .await
@@ -177,6 +188,7 @@ async fn dist_http_retrieve_with_entity_map_request_header_uses_named_map() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/entities/{}", urlencoding::encode(&entity_id)))
         .header("accept", "application/ld+json")
@@ -203,6 +215,7 @@ async fn dist_http_retrieve_entity_map_requested_returns_200_and_map_header() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -214,6 +227,7 @@ async fn dist_http_retrieve_entity_map_requested_returns_200_and_map_header() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -224,6 +238,7 @@ async fn dist_http_retrieve_entity_map_requested_returns_200_and_map_header() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "entityMap=true", "application/ld+json", Some(context_link()))
         .await

@@ -31,7 +31,7 @@ const BEFORE_2030: &str = "timerel=before&timeAt=2030-01-01T00:00:00Z";
 async fn distop_retrieve_temporal_no_local_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons39");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
 
     let no_registration = front.client().get_temporal_entity(&entity_id, BEFORE_2030, None).await.expect("retrieve");
     assert_status(&no_registration, 404);
@@ -70,8 +70,8 @@ async fn distop_retrieve_temporal_no_local_no_registration_returns_404() {
 async fn distop_retrieve_temporal_local_evolution_is_base_s() {
     let topology = topology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons40");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     let local = entity(
         &entity_id,
@@ -118,7 +118,7 @@ async fn distop_retrieve_temporal_local_evolution_is_base_s() {
 async fn distop_retrieve_temporal_local_temporal_filtering_produces_s1() {
     let topology = topology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons41");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
 
     let local = entity(
         &entity_id,
@@ -159,7 +159,7 @@ async fn distop_retrieve_temporal_local_temporal_filtering_produces_s1() {
 async fn distop_retrieve_temporal_forwards_only_retrievetemporal_capable() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons44");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     for (source, operations) in [("/s1", &["retrieveTemporal"][..]), ("/s2", &["queryTemporal"][..])] {
@@ -201,9 +201,9 @@ async fn distop_retrieve_temporal_forwards_only_retrievetemporal_capable() {
 async fn distop_retrieve_temporal_merges_modes_into_s1() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons46");
-    let front = topology.broker(BrokerRole::A);
-    let holder_b = topology.broker(BrokerRole::B);
-    let holder_c = topology.broker(BrokerRole::C);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let holder_b = topology.broker(BrokerRole::B).expect("topology broker B");
+    let holder_c = topology.broker(BrokerRole::C).expect("topology broker C");
 
     assert_status(
         &holder_b
@@ -234,7 +234,7 @@ async fn distop_retrieve_temporal_merges_modes_into_s1() {
     );
 
     for (role, names) in [(BrokerRole::B, &["speed"][..]), (BrokerRole::C, &["location"][..])] {
-        let peer = topology.broker(role);
+        let peer = topology.broker(role).expect("topology broker for role");
         let registration_id = topology.id(&format!("registration:cons46-{role:?}"));
         let registration = CsrBuilder::new(&registration_id, peer.peer_url())
             .mode("inclusive")

@@ -17,7 +17,7 @@ async fn topology_pair_reports_distinct_source_identities() {
     let topology = topology::pair().await.expect("two-broker topology is available");
 
     for role in [BrokerRole::A, BrokerRole::B] {
-        let broker = topology.broker(role);
+        let broker = topology.broker(role).expect("topology broker for role");
         let response = broker
             .client()
             .source_identity(Some("application/ld+json"))
@@ -42,8 +42,8 @@ async fn topology_pair_reports_distinct_source_identities() {
 #[tokio::test]
 async fn topology_pair_exclusive_retrieve_forwards_to_peer() {
     let topology = topology::pair().await.expect("two-broker topology is available");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     let entity_id = topology.id("Vehicle:smoke-exclusive");
     let registration_id = topology.id("registration:smoke-exclusive");

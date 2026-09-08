@@ -46,7 +46,7 @@ use andromeda_ngsi_ld_query::{
     scope::query::ScopeQuery,
     temporal::{
         aggregation_period::{AggregationPeriod, optional},
-        window::TimeInterval,
+        window::{BoundPresence, TimeInterval},
     },
     type_selection::grammar::TypeExprRaw,
 };
@@ -350,10 +350,9 @@ impl TemporalQueryParameters {
         // The `timerel`/`timeAt`/`endTimeAt` combination rule is owned by the
         // query crate, so the request seam asks rather than re-deriving it.
         TimeInterval::check_time_bounds(
-            self.timerel.is_some(),
-            self.time_at.is_some(),
-            self.timerel == Some(TimeRel::Between),
-            self.end_time_at.is_some(),
+            self.timerel,
+            BoundPresence::of(self.time_at.as_ref()),
+            BoundPresence::of(self.end_time_at.as_ref()),
         )
         .map_err(ParameterError::Query)?;
         if self.parse_format() == TemporalFormat::AggregatedValues && self.aggr_methods.is_none() {

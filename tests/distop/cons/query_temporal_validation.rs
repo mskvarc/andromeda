@@ -20,6 +20,7 @@ async fn distop_query_temporal_no_temporal_query_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_temporal_entities("type=Vehicle", None)
         .await
@@ -36,6 +37,7 @@ async fn distop_query_temporal_too_wide_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_temporal_entities(BEFORE_2030, None)
         .await
@@ -52,6 +54,7 @@ async fn distop_query_temporal_orderby_non_local_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_temporal_entities(&format!("type=Vehicle&{BEFORE_2030}&orderBy=id"), None)
         .await
@@ -68,6 +71,7 @@ async fn distop_query_temporal_orderby_non_id_member_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_temporal_entities(&format!("type=Vehicle&{BEFORE_2030}&local=true&orderBy=speed"), None)
         .await
@@ -85,6 +89,7 @@ async fn distop_query_temporal_aggregated_ineligible_attribute_returns_invalidre
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_temporal_entities(
             &format!("type=Vehicle&{BEFORE_2030}&options=aggregatedValues&aggrMethods=sum&attrs=brandName"),

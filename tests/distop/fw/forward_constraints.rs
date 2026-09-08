@@ -44,6 +44,7 @@ async fn forward_scopes_request_to_registered_type_only() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -53,6 +54,7 @@ async fn forward_scopes_request_to_registered_type_only() {
 
     let query = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle,Device", "application/ld+json", None)
         .await
@@ -98,6 +100,7 @@ async fn forward_narrows_to_registered_ids_attrs_geofence() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -108,6 +111,7 @@ async fn forward_narrows_to_registered_ids_attrs_geofence() {
     let query = format!("type=Vehicle&id={covered},{other}&attrs=speed,fuel");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities(&query, "application/ld+json", None)
         .await
@@ -144,6 +148,7 @@ async fn forward_constraint_enforced_at_broker_not_source() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -153,6 +158,7 @@ async fn forward_constraint_enforced_at_broker_not_source() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle,Device", "application/ld+json", None)
         .await
@@ -199,6 +205,7 @@ async fn forward_mode_governs_distribution_and_local_hold() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&inclusive_registration)
             .await
@@ -208,6 +215,7 @@ async fn forward_mode_governs_distribution_and_local_hold() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&auxiliary_registration)
             .await
@@ -217,6 +225,7 @@ async fn forward_mode_governs_distribution_and_local_hold() {
 
     let inclusive_created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&inclusive_id, 40))
         .with_ld_json()
@@ -226,6 +235,7 @@ async fn forward_mode_governs_distribution_and_local_hold() {
     assert!(inclusive_created.status.is_success(), "inclusive create succeeds: {}", inclusive_created.status);
     let auxiliary_created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&auxiliary_id, 41))
         .with_ld_json()
@@ -239,6 +249,7 @@ async fn forward_mode_governs_distribution_and_local_hold() {
 
     let inclusive_local = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&inclusive_id, "local=true", "application/ld+json", None)
         .await
@@ -251,6 +262,7 @@ async fn forward_mode_governs_distribution_and_local_hold() {
     );
     let auxiliary_local = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&auxiliary_id, "local=true", "application/ld+json", None)
         .await
@@ -302,6 +314,7 @@ async fn forward_same_attribute_two_sources_distinguished_by_dataset_id() {
         assert_status(
             &topology
                 .broker(BrokerRole::A)
+                .expect("topology broker A")
                 .client()
                 .create_registration(&registration)
                 .await
@@ -312,6 +325,7 @@ async fn forward_same_attribute_two_sources_distinguished_by_dataset_id() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
         .await
@@ -343,6 +357,7 @@ async fn forward_omits_operation_not_supported_by_source() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -352,6 +367,7 @@ async fn forward_omits_operation_not_supported_by_source() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -385,6 +401,7 @@ async fn forward_default_representation_is_normalized() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -394,6 +411,7 @@ async fn forward_default_representation_is_normalized() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -437,6 +455,7 @@ async fn forward_non_normalized_format_optional_no_failure() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -446,6 +465,7 @@ async fn forward_non_normalized_format_optional_no_failure() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&options=keyValues", "application/ld+json", None)
         .await
@@ -480,6 +500,7 @@ async fn forward_system_attrs_absent_without_error() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -489,6 +510,7 @@ async fn forward_system_attrs_absent_without_error() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&options=sysAttrs", "application/ld+json", None)
         .await

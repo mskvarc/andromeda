@@ -42,6 +42,7 @@ async fn dist_http_query_cached_result_returns_warning_110() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -52,6 +53,7 @@ async fn dist_http_query_cached_result_returns_warning_110() {
 
     let first = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -65,6 +67,7 @@ async fn dist_http_query_cached_result_returns_warning_110() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -94,6 +97,7 @@ async fn dist_http_query_abnormal_source_sets_warning_header() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -104,6 +108,7 @@ async fn dist_http_query_abnormal_source_sets_warning_header() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -128,6 +133,7 @@ async fn dist_http_query_invalid_payload_within_timeout_returns_warning_111() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -139,6 +145,7 @@ async fn dist_http_query_invalid_payload_within_timeout_returns_warning_111() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -171,6 +178,7 @@ async fn dist_http_query_source_timeout_returns_warning_199() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -180,6 +188,7 @@ async fn dist_http_query_source_timeout_returns_warning_199() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -207,6 +216,7 @@ async fn dist_http_query_source_error_within_timeout_returns_warning_299() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -217,6 +227,7 @@ async fn dist_http_query_source_error_within_timeout_returns_warning_299() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -245,6 +256,7 @@ async fn dist_http_query_non_ngsi_payload_rejected_and_excluded() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -256,6 +268,7 @@ async fn dist_http_query_non_ngsi_payload_rejected_and_excluded() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -287,6 +300,7 @@ async fn dist_http_query_source_404_no_data_not_flagged() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -297,6 +311,7 @@ async fn dist_http_query_source_404_no_data_not_flagged() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await

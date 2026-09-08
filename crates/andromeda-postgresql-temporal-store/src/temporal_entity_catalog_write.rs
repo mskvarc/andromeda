@@ -220,7 +220,7 @@ fn temporal_entity_upsert_batch_sql() -> Result<String, TemporalStoreError> {
         (&columns[2], external_placeholder(3)),
     ]);
     let type_ids = array_subquery(
-        Query::select()
+        &Query::select()
             .expr(cast(
                 jsonb_array_elements_text(Expr::col((D, EntityStaged::TypeIdsJson))).into(),
                 PostgresType::Integer,

@@ -100,5 +100,5 @@ pub(crate) async fn create(
         LocalOutcome::NothingRemained
     };
     let created = with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{entity_id}"));
-    provision_response(&entity_id, &forwarded, local, created, &uri)
+    provision_response(&entity_id, &forwarded, &local, created, &uri)
 }

@@ -19,6 +19,7 @@ async fn query_csr_applies_jsonld_validation() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/csourceRegistrations?type=Vehicle")
         .header("accept", "application/ld+json")
@@ -39,6 +40,7 @@ async fn query_csr_without_type_attrs_q_geoq_returns_400_too_wide() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations("limit=5", None)
         .await
@@ -57,6 +59,7 @@ async fn query_csr_ids_only_without_type_attrs_q_geoq_returns_400() {
     let id = topology.id("Vehicle:only");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations(&format!("id={}", encode(&id)), None)
         .await
@@ -73,6 +76,7 @@ async fn query_csr_invalid_entity_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations("type=Vehicle&id=not-a-uri", Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -95,6 +99,7 @@ async fn query_csr_malformed_q_geoq_temporalq_return_400() {
     for query in malformed {
         let response = topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .query_registrations(query, Some(COMPOUND_CONTEXT.as_str()))
             .await
@@ -117,6 +122,7 @@ async fn query_csr_pagination_limit_offset() {
         let body = CsrBuilder::new(&id, PEER_ENDPOINT).entity_type(&vtype).build();
         let created = topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&body)
             .await
@@ -127,6 +133,7 @@ async fn query_csr_pagination_limit_offset() {
 
     let full = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations(&type_filter, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -140,6 +147,7 @@ async fn query_csr_pagination_limit_offset() {
 
     let page = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations(&format!("{type_filter}&limit=2"), Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -159,6 +167,7 @@ async fn query_csr_returns_jsonld_array_of_matching_csrs() {
     let body = CsrBuilder::new(&id, PEER_ENDPOINT).entity_type(&vtype).build();
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&body)
         .await
@@ -167,6 +176,7 @@ async fn query_csr_returns_jsonld_array_of_matching_csrs() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations(&format!("type={}", encode(&vtype)), Some(COMPOUND_CONTEXT.as_str()))
         .await

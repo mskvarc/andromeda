@@ -57,13 +57,19 @@ async fn notif_only_sent_when_status_active() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
             .expect("create subscription"),
         201,
     );
-    create_vehicle(topology.broker(BrokerRole::A).client(), &topology.id("Vehicle:status-gate"), 40).await;
+    create_vehicle(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &topology.id("Vehicle:status-gate"),
+        40,
+    )
+    .await;
     receiver.wait_for_no_subscription_notification(&id, SILENCE).await;
     receiver.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -75,11 +81,17 @@ async fn notif_only_sent_when_status_active() {
 async fn notif_time_interval_periodic_regardless_of_change() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
-    create_vehicle(topology.broker(BrokerRole::A).client(), &topology.id("Vehicle:periodic-any"), 40).await;
+    create_vehicle(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &topology.id("Vehicle:periodic-any"),
+        40,
+    )
+    .await;
     let id = topology.id("Subscription:periodic-any");
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&periodic(&id, &receiver.endpoint_url(), None))
             .await
@@ -104,12 +116,13 @@ async fn notif_periodic_includes_only_filter_matching_entities() {
     let receiver = NotificationAdapter::start().await;
     let fast = topology.id("Vehicle:periodic-fast");
     let slow = topology.id("Vehicle:periodic-slow");
-    create_vehicle(topology.broker(BrokerRole::A).client(), &fast, 100).await;
-    create_vehicle(topology.broker(BrokerRole::A).client(), &slow, 20).await;
+    create_vehicle(topology.broker(BrokerRole::A).expect("topology broker A").client(), &fast, 100).await;
+    create_vehicle(topology.broker(BrokerRole::A).expect("topology broker A").client(), &slow, 20).await;
     let id = topology.id("Subscription:periodic-filter");
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&periodic(&id, &receiver.endpoint_url(), Some("speed>50")))
             .await
@@ -131,12 +144,13 @@ async fn notif_periodic_no_filters_includes_all_subscribed() {
     let receiver = NotificationAdapter::start().await;
     let first = topology.id("Vehicle:periodic-all-1");
     let second = topology.id("Vehicle:periodic-all-2");
-    create_vehicle(topology.broker(BrokerRole::A).client(), &first, 10).await;
-    create_vehicle(topology.broker(BrokerRole::A).client(), &second, 20).await;
+    create_vehicle(topology.broker(BrokerRole::A).expect("topology broker A").client(), &first, 10).await;
+    create_vehicle(topology.broker(BrokerRole::A).expect("topology broker A").client(), &second, 20).await;
     let id = topology.id("Subscription:periodic-all");
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&periodic(&id, &receiver.endpoint_url(), None))
             .await
@@ -172,6 +186,7 @@ async fn notif_periodic_includes_only_subscription_dataset_id_instances() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&entity)
             .with_ld_json()
@@ -186,6 +201,7 @@ async fn notif_periodic_includes_only_subscription_dataset_id_instances() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -207,11 +223,17 @@ async fn notif_periodic_includes_only_subscription_dataset_id_instances() {
 async fn notif_periodic_zero_matches_sends_nothing() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
-    create_vehicle(topology.broker(BrokerRole::A).client(), &topology.id("Vehicle:periodic-zero"), 10).await;
+    create_vehicle(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &topology.id("Vehicle:periodic-zero"),
+        10,
+    )
+    .await;
     let id = topology.id("Subscription:periodic-zero");
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&periodic(&id, &receiver.endpoint_url(), Some("speed>9999")))
             .await
@@ -230,13 +252,14 @@ async fn notif_no_time_interval_change_driven_on_watched_change() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let entity_id = topology.id("Vehicle:change-watched");
-    create_vehicle(topology.broker(BrokerRole::A).client(), &entity_id, 10).await;
+    create_vehicle(topology.broker(BrokerRole::A).expect("topology broker A").client(), &entity_id, 10).await;
     let id = topology.id("Subscription:change-watched");
     let mut body = subscription(&id, &receiver.endpoint_url());
     set_watched_attributes(&mut body, &["speed"]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -247,6 +270,7 @@ async fn notif_no_time_interval_change_driven_on_watched_change() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .update_entity_attrs(&entity_id, &fragment)
             .await
@@ -266,13 +290,14 @@ async fn notif_change_only_on_actual_value_difference() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let entity_id = topology.id("Vehicle:change-diff");
-    create_vehicle(topology.broker(BrokerRole::A).client(), &entity_id, 50).await;
+    create_vehicle(topology.broker(BrokerRole::A).expect("topology broker A").client(), &entity_id, 50).await;
     let id = topology.id("Subscription:change-diff");
     let mut body = subscription(&id, &receiver.endpoint_url());
     set_watched_attributes(&mut body, &["speed"]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -284,6 +309,7 @@ async fn notif_change_only_on_actual_value_difference() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .update_entity_attrs(&entity_id, &same)
             .await
@@ -296,6 +322,7 @@ async fn notif_change_only_on_actual_value_difference() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .update_entity_attrs(&entity_id, &different)
             .await
@@ -320,6 +347,7 @@ async fn notif_change_driven_includes_changed_filter_matching() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -327,7 +355,7 @@ async fn notif_change_driven_includes_changed_filter_matching() {
         201,
     );
     let entity_id = topology.id("Vehicle:change-filter");
-    create_vehicle(topology.broker(BrokerRole::A).client(), &entity_id, 100).await;
+    create_vehicle(topology.broker(BrokerRole::A).expect("topology broker A").client(), &entity_id, 100).await;
     let notification = receiver.wait_for_subscription_notification(&id, DELIVER).await;
     assert!(notifies_entity(&notification, &entity_id), "the changed, filter-matching entity is notified");
     receiver.shutdown().await;
@@ -344,6 +372,7 @@ async fn notif_change_driven_no_filters_includes_all_changed() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, &receiver.endpoint_url()))
             .await
@@ -351,7 +380,7 @@ async fn notif_change_driven_no_filters_includes_all_changed() {
         201,
     );
     let entity_id = topology.id("Vehicle:change-nofilter");
-    create_vehicle(topology.broker(BrokerRole::A).client(), &entity_id, 15).await;
+    create_vehicle(topology.broker(BrokerRole::A).expect("topology broker A").client(), &entity_id, 15).await;
     let notification = receiver.wait_for_subscription_notification(&id, DELIVER).await;
     assert!(notifies_entity(&notification, &entity_id), "the changed entity is notified");
     receiver.shutdown().await;
@@ -370,6 +399,7 @@ async fn notif_multi_instance_geoproperty_any_matching_instance_qualifies() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -389,6 +419,7 @@ async fn notif_multi_instance_geoproperty_any_matching_instance_qualifies() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&entity)
             .with_ld_json()
@@ -418,6 +449,7 @@ async fn notif_change_driven_includes_only_dataset_id_instances() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -434,6 +466,7 @@ async fn notif_change_driven_includes_only_dataset_id_instances() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&entity)
             .with_ld_json()

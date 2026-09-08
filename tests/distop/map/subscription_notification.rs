@@ -30,6 +30,7 @@ async fn sub_create_valid_persists_and_is_notification_eligible() {
     let id = topology.id("Subscription:eligible");
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_subscription(&subscription(&id, &receiver.endpoint_url()))
         .await
@@ -40,6 +41,7 @@ async fn sub_create_valid_persists_and_is_notification_eligible() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 40))
             .with_ld_json()
@@ -70,6 +72,7 @@ async fn sub_create_entity_selector_restricts_subscription() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, &receiver.endpoint_url()))
             .await
@@ -82,6 +85,7 @@ async fn sub_create_entity_selector_restricts_subscription() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&device)
             .with_ld_json()
@@ -96,6 +100,7 @@ async fn sub_create_entity_selector_restricts_subscription() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&vehicle_id, 40))
             .with_ld_json()
@@ -125,6 +130,7 @@ async fn sub_create_absent_watched_attributes_watches_all() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, &receiver.endpoint_url()))
             .await
@@ -137,6 +143,7 @@ async fn sub_create_absent_watched_attributes_watches_all() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&body)
             .with_ld_json()
@@ -170,6 +177,7 @@ async fn sub_create_watched_attributes_no_entities_spans_all_holders() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -181,6 +189,7 @@ async fn sub_create_watched_attributes_no_entities_spans_all_holders() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 33))
             .with_ld_json()
@@ -211,6 +220,7 @@ async fn sub_create_time_interval_periodic_regardless_of_change() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 22))
             .with_ld_json()
@@ -230,6 +240,7 @@ async fn sub_create_time_interval_periodic_regardless_of_change() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -258,6 +269,7 @@ async fn sub_create_no_time_interval_change_driven() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, &receiver.endpoint_url()))
             .await
@@ -271,6 +283,7 @@ async fn sub_create_no_time_interval_change_driven() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 55))
             .with_ld_json()
@@ -302,6 +315,7 @@ async fn sub_expiration_reached_sets_status_expired_and_stops_notifications() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -315,6 +329,7 @@ async fn sub_expiration_reached_sets_status_expired_and_stops_notifications() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 60))
             .with_ld_json()
@@ -327,6 +342,7 @@ async fn sub_expiration_reached_sets_status_expired_and_stops_notifications() {
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_subscription(&id, None)
         .await
@@ -351,6 +367,7 @@ async fn sub_delete_removes_and_stops_notifications() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, &receiver.endpoint_url()))
             .await
@@ -362,6 +379,7 @@ async fn sub_delete_removes_and_stops_notifications() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&first_entity, 10))
             .with_ld_json()
@@ -380,6 +398,7 @@ async fn sub_delete_removes_and_stops_notifications() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .delete_subscription(&id)
             .await
@@ -392,6 +411,7 @@ async fn sub_delete_removes_and_stops_notifications() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&second_entity, 20))
             .with_ld_json()

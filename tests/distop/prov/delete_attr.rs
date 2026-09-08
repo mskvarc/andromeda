@@ -51,7 +51,7 @@ async fn delete_speed(client: &TestClient, id: &str) -> TestResponse {
 #[tokio::test]
 async fn delete_attr_exclusive_match_forwards_and_terminates() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-delattr-exclusive");
     let reg_id = topology.id("registration:prov-delattr-exclusive");
@@ -94,7 +94,7 @@ async fn delete_attr_exclusive_match_forwards_and_terminates() {
 #[tokio::test]
 async fn delete_attr_exclusive_op_unsupported_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-delattr-unsup");
     let reg_id = topology.id("registration:prov-delattr-unsup");
@@ -129,7 +129,7 @@ async fn delete_attr_exclusive_op_unsupported_returns_409() {
 #[tokio::test]
 async fn delete_attr_op_unsupported_multi_returns_207() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-delattr-multi");
     let reg_supported = topology.id("registration:prov-delattr-multi-ok");
@@ -180,7 +180,7 @@ async fn delete_attr_op_unsupported_multi_returns_207() {
 #[tokio::test]
 async fn delete_attr_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let entity_id = topology.id("Vehicle:prov-delattr-absent");
 
     let response = delete_speed(client, &entity_id).await;
@@ -195,7 +195,7 @@ async fn delete_attr_absent_and_no_registration_returns_404() {
 #[tokio::test]
 async fn delete_attr_registration_matches_entity_absent_not_404() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-delattr-reg-absent");
     let reg_id = topology.id("registration:prov-delattr-reg-absent");
@@ -227,7 +227,7 @@ async fn delete_attr_registration_matches_entity_absent_not_404() {
 #[tokio::test]
 async fn delete_attr_inclusive_forwards_input() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-delattr-inclusive");
     let reg_id = topology.id("registration:prov-delattr-inclusive");
@@ -267,7 +267,7 @@ async fn delete_attr_inclusive_forwards_input() {
 #[tokio::test]
 async fn delete_attr_local_present_attr_absent_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let entity_id = topology.id("Vehicle:prov-delattr-attr-absent");
 
     seed_local(client, &entity_id, &[("brandName", property(json!("Mercedes")))]).await;

@@ -91,5 +91,5 @@ pub async fn delete_attr_instance(
     } else {
         local_temporal_outcome(service.delete_attr_instance(&target, &id, &attr_id, &instance, &context).await, &forwarded)
     };
-    provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
+    provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

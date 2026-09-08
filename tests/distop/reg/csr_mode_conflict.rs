@@ -22,6 +22,7 @@ use serde_json::json;
 async fn create_local_vehicle(topology: &MultiBrokerTopology<BrokerRole>, id: &str, speed: i64) {
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(id, speed))
         .with_ld_json()
@@ -47,6 +48,7 @@ async fn reg_exclusive_over_existing_exclusive_returns_409() {
         .build();
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&first)
         .await
@@ -60,6 +62,7 @@ async fn reg_exclusive_over_existing_exclusive_returns_409() {
         .build();
     let conflict = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&second)
         .await
@@ -86,6 +89,7 @@ async fn reg_exclusive_over_existing_redirect_returns_409() {
         .build();
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&redirect)
         .await
@@ -99,6 +103,7 @@ async fn reg_exclusive_over_existing_redirect_returns_409() {
         .build();
     let conflict = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&exclusive)
         .await
@@ -125,6 +130,7 @@ async fn reg_exclusive_over_local_entity_with_attr_returns_409() {
         .build();
     let conflict = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&exclusive)
         .await
@@ -147,6 +153,7 @@ async fn reg_redirect_over_existing_entity_returns_409() {
     let redirect = CsrBuilder::new(&registration_id, PEER_ENDPOINT).mode("redirect").entity_id(&entity_id).build();
     let conflict = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&redirect)
         .await
@@ -170,6 +177,7 @@ async fn reg_auxiliary_with_write_operation_returns_400() {
         .build();
     let rejected = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&auxiliary)
         .await
@@ -193,6 +201,7 @@ async fn reg_auxiliary_with_valid_consumption_ops_accepted() {
         .build();
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&auxiliary)
         .await
@@ -219,6 +228,7 @@ async fn update_producing_exclusive_overlap_returns_409() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&first)
             .await
@@ -233,6 +243,7 @@ async fn update_producing_exclusive_overlap_returns_409() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&second)
             .await
@@ -243,6 +254,7 @@ async fn update_producing_exclusive_overlap_returns_409() {
     let fragment = json!({ "information": [ { "entities": [ { "type": "Vehicle", "id": entity_id } ], "propertyNames": ["fuel", "speed"] } ] });
     let conflict = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_registration(&second_id, &fragment, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -270,6 +282,7 @@ async fn update_exclusive_onto_existing_entity_attr_returns_409() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&exclusive)
             .await
@@ -280,6 +293,7 @@ async fn update_exclusive_onto_existing_entity_attr_returns_409() {
     let fragment = json!({ "information": [ { "entities": [ { "type": "Vehicle", "id": entity_id } ], "propertyNames": ["fuel", "speed"] } ] });
     let conflict = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_registration(&registration_id, &fragment, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -304,6 +318,7 @@ async fn update_redirect_matching_existing_entity_returns_409() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&redirect)
             .await
@@ -314,6 +329,7 @@ async fn update_redirect_matching_existing_entity_returns_409() {
     let fragment = json!({ "information": [ { "entities": [ { "type": "Vehicle", "id": local_id } ] } ] });
     let conflict = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_registration(&registration_id, &fragment, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -338,6 +354,7 @@ async fn update_auxiliary_with_write_operation_returns_400() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&auxiliary)
             .await
@@ -348,6 +365,7 @@ async fn update_auxiliary_with_write_operation_returns_400() {
     let fragment = json!({ "operations": ["updateEntity"] });
     let rejected = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_registration(&registration_id, &fragment, None)
         .await

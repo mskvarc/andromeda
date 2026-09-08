@@ -17,6 +17,7 @@ async fn delete_missing_id_returns_400_or_405() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_registration("")
         .await
@@ -34,6 +35,7 @@ async fn delete_invalid_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_registration("not a uri")
         .await
@@ -52,6 +54,7 @@ async fn delete_unknown_registration_returns_404() {
     let unknown = topology.id("registration:delete-unknown");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_registration(&unknown)
         .await
@@ -70,6 +73,7 @@ async fn delete_known_registration_returns_204() {
     let id = topology.id("registration:delete-known");
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&csr_basic(&id, PEER_ENDPOINT))
         .await
@@ -78,6 +82,7 @@ async fn delete_known_registration_returns_204() {
 
     let deleted = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_registration(&id)
         .await
@@ -87,6 +92,7 @@ async fn delete_known_registration_returns_204() {
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(&id, None)
         .await

@@ -43,6 +43,7 @@ async fn distop_entity_map_no_split_param_forwards_filters_remotely() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -52,6 +53,7 @@ async fn distop_entity_map_no_split_param_forwards_filters_remotely() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&q=speed%3E50&splitEntities=false", "application/ld+json", None)
         .await
@@ -81,9 +83,9 @@ async fn distop_entity_map_no_split_param_forwards_filters_remotely() {
 #[tokio::test]
 async fn distop_entity_map_split_entities_assembled_before_filtering() {
     let topology = topology::chain().await.expect("three-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let speed_source = topology.broker(BrokerRole::B);
-    let fuel_source = topology.broker(BrokerRole::C);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let speed_source = topology.broker(BrokerRole::B).expect("topology broker B");
+    let fuel_source = topology.broker(BrokerRole::C).expect("topology broker C");
     let entity_id = topology.id("Vehicle:split-assemble");
 
     assert_status(
@@ -145,8 +147,8 @@ async fn distop_entity_map_split_entities_assembled_before_filtering() {
 #[tokio::test]
 async fn distop_entity_map_unitary_sequence_creates_and_caches_map() {
     let topology = topology::chain().await.expect("three-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let source = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let source = topology.broker(BrokerRole::B).expect("topology broker B");
     let entity_id = topology.id("Vehicle:unitary-map");
     assert_status(
         &source
@@ -187,6 +189,7 @@ async fn distop_entity_map_suggested_expiry_honoured() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 15))
             .with_ld_json()
@@ -198,6 +201,7 @@ async fn distop_entity_map_suggested_expiry_honoured() {
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&entityMap=true&entityMapLifetime=PT1H", "application/ld+json", None)
         .await
@@ -207,6 +211,7 @@ async fn distop_entity_map_suggested_expiry_honoured() {
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_entity_map(&map_id)
         .await
@@ -239,6 +244,7 @@ async fn distop_entity_map_source_may_decline_location() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -248,6 +254,7 @@ async fn distop_entity_map_source_may_decline_location() {
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
         .await

@@ -28,7 +28,7 @@ const INTERVAL_END: &str = "2021-01-01T00:00:00Z";
 
 /// Create a Context Source Subscription and assert the `201` acknowledgement.
 async fn create_subscription(topology: &MultiBrokerTopology<BrokerRole>, body: &serde_json::Value) {
-    let created = csr_subscription::create(topology.broker(BrokerRole::A).client(), body).await;
+    let created = csr_subscription::create(topology.broker(BrokerRole::A).expect("topology broker A").client(), body).await;
     assert_status(&created, 201);
 }
 

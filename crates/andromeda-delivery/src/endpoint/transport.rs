@@ -298,7 +298,7 @@ mod tests {
     fn credentials_in_the_uri_userinfo_reach_the_broker_configuration() {
         let both = mqtt_config("mqtt://myuser:mypass@broker:1883/topic", None);
         pretty_assertions::assert_eq!(both.username.as_deref(), Some("myuser"));
-        pretty_assertions::assert_eq!(both.password.as_ref().map(secrecy::ExposeSecret::expose_secret), Some("mypass"));
+        pretty_assertions::assert_eq!(both.password.as_ref().map(ExposeSecret::expose_secret), Some("mypass"));
         pretty_assertions::assert_eq!(both.authority.to_string(), "broker:1883");
 
         let username_only = mqtt_config("mqtt://myuser@broker/topic", None);

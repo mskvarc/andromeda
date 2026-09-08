@@ -21,6 +21,7 @@ async fn dist_http_delete_attr_local_returns_204() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -32,6 +33,7 @@ async fn dist_http_delete_attr_local_returns_204() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_entity_attr(&entity_id, "speed", None, DatasetSelection::Default, Some(context_link()))
         .await
@@ -52,6 +54,7 @@ async fn dist_http_delete_attr_partial_failure_returns_207_update_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -63,6 +66,7 @@ async fn dist_http_delete_attr_partial_failure_returns_207_update_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["deleteAttrs"]))
             .await
@@ -73,6 +77,7 @@ async fn dist_http_delete_attr_partial_failure_returns_207_update_result() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_entity_attr(&entity_id, "speed", None, DatasetSelection::Default, Some(context_link()))
         .await
@@ -90,6 +95,7 @@ async fn dist_http_delete_attr_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_entity_attr("not a uri", "speed", None, DatasetSelection::Default, Some(context_link()))
         .await
@@ -106,6 +112,7 @@ async fn dist_http_delete_attr_absent_returns_404() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -117,6 +124,7 @@ async fn dist_http_delete_attr_absent_returns_404() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_entity_attr(&entity_id, "color", None, DatasetSelection::Default, Some(context_link()))
         .await
@@ -133,6 +141,7 @@ async fn dist_http_replace_attr_local_returns_204() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -144,6 +153,7 @@ async fn dist_http_replace_attr_local_returns_204() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::PUT, &format!("/ngsi-ld/v1/entities/{}/attrs/speed", urlencoding::encode(&entity_id)))
         .header("content-type", "application/ld+json")
@@ -168,6 +178,7 @@ async fn dist_http_replace_attr_partial_failure_returns_207_update_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -179,6 +190,7 @@ async fn dist_http_replace_attr_partial_failure_returns_207_update_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["replaceAttrs"]))
             .await
@@ -189,6 +201,7 @@ async fn dist_http_replace_attr_partial_failure_returns_207_update_result() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::PUT, &format!("/ngsi-ld/v1/entities/{}/attrs/speed", urlencoding::encode(&entity_id)))
         .header("content-type", "application/ld+json")
@@ -211,6 +224,7 @@ async fn dist_http_replace_attr_invalid_returns_400() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -222,6 +236,7 @@ async fn dist_http_replace_attr_invalid_returns_400() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::PUT, &format!("/ngsi-ld/v1/entities/{}/attrs/speed", urlencoding::encode(&entity_id)))
         .header("content-type", "application/ld+json")
@@ -241,6 +256,7 @@ async fn dist_http_replace_attr_absent_returns_404() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -252,6 +268,7 @@ async fn dist_http_replace_attr_absent_returns_404() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::PUT, &format!("/ngsi-ld/v1/entities/{}/attrs/color", urlencoding::encode(&entity_id)))
         .header("content-type", "application/ld+json")
@@ -271,6 +288,7 @@ async fn dist_http_batch_merge_local_returns_204() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -281,7 +299,13 @@ async fn dist_http_batch_merge_local_returns_204() {
     );
 
     let body = json!([ { "id": entity_id, "type": "Vehicle", "speed": { "type": "Property", "value": 99 }, "@context": context_link() } ]);
-    let response = topology.broker(BrokerRole::A).client().batch_merge(&body).await.expect("local batch merge");
+    let response = topology
+        .broker(BrokerRole::A)
+        .expect("topology broker A")
+        .client()
+        .batch_merge(&body)
+        .await
+        .expect("local batch merge");
     assert_status(&response, 204);
     topology.finish().await.expect("topology cleanup");
 }
@@ -301,6 +325,7 @@ async fn dist_http_batch_merge_partial_failure_returns_207_batch_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -312,6 +337,7 @@ async fn dist_http_batch_merge_partial_failure_returns_207_batch_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["mergeBatch"]))
             .await
@@ -321,7 +347,13 @@ async fn dist_http_batch_merge_partial_failure_returns_207_batch_result() {
     mock.set_stub(Method::POST, FORWARDED_BATCH_MERGE_PATH, 500).await;
 
     let body = json!([ { "id": entity_id, "type": "Vehicle", "speed": { "type": "Property", "value": 99 }, "@context": context_link() } ]);
-    let response = topology.broker(BrokerRole::A).client().batch_merge(&body).await.expect("forwarded batch merge");
+    let response = topology
+        .broker(BrokerRole::A)
+        .expect("topology broker A")
+        .client()
+        .batch_merge(&body)
+        .await
+        .expect("forwarded batch merge");
     assert_status(&response, 207);
 
     mock.shutdown().await;
@@ -334,7 +366,13 @@ async fn dist_http_batch_merge_partial_failure_returns_207_batch_result() {
 async fn dist_http_batch_merge_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let body = json!([ { "speed": { "type": "Property", "value": 1 }, "@context": context_link() } ]);
-    let response = topology.broker(BrokerRole::A).client().batch_merge(&body).await.expect("invalid batch merge");
+    let response = topology
+        .broker(BrokerRole::A)
+        .expect("topology broker A")
+        .client()
+        .batch_merge(&body)
+        .await
+        .expect("invalid batch merge");
     assert_status(&response, 400);
     topology.finish().await.expect("topology cleanup");
 }

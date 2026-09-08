@@ -110,8 +110,10 @@ SELECT entity_key, id FROM ins
 ///
 /// Returns [`ContextStoreError`] when the batch names an entity type the
 /// dictionary has not interned, when the staging table cannot be created, when
-/// the binary COPY stream is rejected, when the materialising insert fails, or
-/// when a returned surrogate key or identifier is not a valid written entity.
+/// a staged value is too long for the binary COPY length prefix or does not
+/// serialise, when the binary COPY stream is rejected, when the materialising
+/// insert fails, or when a returned surrogate key or identifier is not a valid
+/// written entity.
 pub async fn create_batch_via_copy_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     target: &ContextTarget,
@@ -124,7 +126,7 @@ pub async fn create_batch_via_copy_in_tx(
 
     tx.execute(CREATE_STAGE_ENTITIES_SQL).await?;
 
-    let payload = encode_entities_copy_stream(columns);
+    let payload = encode_entities_copy_stream(columns)?;
     {
         let mut copy = tx.copy_in_raw(COPY_INTO_STAGE_SQL).await?;
         copy.send(payload.as_slice()).await?;
@@ -140,25 +142,31 @@ pub async fn create_batch_via_copy_in_tx(
 }
 
 /// Encode a set of entity columns into the Postgres binary COPY format.
-fn encode_entities_copy_stream(columns: &PreparedEntityColumns) -> Vec<u8> {
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::CopyField`] when a staged value is longer than
+/// the format's 32-bit field prefix can announce, or when a staged JSON value
+/// does not serialise.
+fn encode_entities_copy_stream(columns: &PreparedEntityColumns) -> Result<Vec<u8>, ContextStoreError> {
     let mut buf = Vec::with_capacity(estimated_stream_bytes(columns));
     write_header(&mut buf);
     for index in 0..columns.ids.len() {
         write_field_count(&mut buf, STAGE_ENTITIES_FIELD_COUNT);
-        write_text(&mut buf, columns.ids[index].as_str());
-        write_jsonb(&mut buf, &columns.type_ids_json[index]);
-        write_jsonb(&mut buf, &columns.attribute_name_ids_json[index]);
-        write_jsonb(&mut buf, &columns.scope_paths_json[index]);
-        write_jsonb_text(&mut buf, &columns.payload_json[index]);
-        write_bytea_opt(&mut buf, columns.locations[index].as_deref());
-        write_bytea_opt(&mut buf, columns.obs_spaces[index].as_deref());
-        write_bytea_opt(&mut buf, columns.op_spaces[index].as_deref());
+        write_text(&mut buf, columns.ids[index].as_str())?;
+        write_jsonb(&mut buf, &columns.type_ids_json[index])?;
+        write_jsonb(&mut buf, &columns.attribute_name_ids_json[index])?;
+        write_jsonb(&mut buf, &columns.scope_paths_json[index])?;
+        write_jsonb_text(&mut buf, &columns.payload_json[index])?;
+        write_bytea_opt(&mut buf, columns.locations[index].as_deref())?;
+        write_bytea_opt(&mut buf, columns.obs_spaces[index].as_deref())?;
+        write_bytea_opt(&mut buf, columns.op_spaces[index].as_deref())?;
         write_timestamptz_opt(&mut buf, columns.location_expires_ats[index]);
         write_timestamptz_opt(&mut buf, columns.expires_ats[index]);
         write_timestamptz_opt(&mut buf, columns.min_attribute_expires_ats[index]);
     }
     write_trailer(&mut buf);
-    buf
+    Ok(buf)
 }
 
 /// Rough byte estimate for pre-sizing the COPY buffer.
@@ -205,7 +213,7 @@ mod tests {
 
     #[test]
     fn stream_starts_with_signature_and_zero_flags() {
-        let stream = encode_entities_copy_stream(&sample_columns());
+        let stream = encode_entities_copy_stream(&sample_columns()).expect("the sample columns encode");
         assert!(stream.starts_with(COPY_HEADER_SIGNATURE));
         let flags = &stream[11..15];
         pretty_assertions::assert_eq!(flags, &[0, 0, 0, 0]);
@@ -213,13 +221,13 @@ mod tests {
 
     #[test]
     fn stream_terminates_with_trailer_sentinel() {
-        let stream = encode_entities_copy_stream(&sample_columns());
+        let stream = encode_entities_copy_stream(&sample_columns()).expect("the sample columns encode");
         pretty_assertions::assert_eq!(&stream[stream.len() - 2..], &[0xff, 0xff]);
     }
 
     #[test]
     fn every_row_carries_the_eleven_staged_fields() {
-        let stream = encode_entities_copy_stream(&sample_columns());
+        let stream = encode_entities_copy_stream(&sample_columns()).expect("the sample columns encode");
         // The first tuple's field count follows the 19-byte header.
         let field_count = u8::try_from(STAGE_ENTITIES_FIELD_COUNT).expect("the staged field count fits one byte");
         pretty_assertions::assert_eq!(&stream[19..21], &[0, field_count]);
@@ -228,7 +236,7 @@ mod tests {
     #[test]
     fn empty_input_still_emits_header_and_trailer() {
         let empty = PreparedEntityColumns::with_capacity(0);
-        let stream = encode_entities_copy_stream(&empty);
+        let stream = encode_entities_copy_stream(&empty).expect("an empty column set encodes");
         // 11 (signature) + 4 (flags) + 4 (ext len) + 2 (trailer)
         pretty_assertions::assert_eq!(stream.len(), 21);
     }

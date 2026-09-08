@@ -104,6 +104,7 @@ async fn query_csr_geometry_property_selects_geometry() {
     let link = jsonld_link_header(COMPOUND_CONTEXT.as_str()).expect("valid compound-context link header");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/csourceRegistrations?type=Vehicle&geometryProperty=location")
         .header("accept", "application/geo+json")

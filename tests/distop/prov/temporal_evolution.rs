@@ -42,7 +42,7 @@ async fn seed_local_temporal(client: &TestClient, body: &Value) {
 #[tokio::test]
 async fn temporal_delete_evolution_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let entity_id = topology.id("Vehicle:prov-tdelevo-absent");
 
     let response = client.delete_temporal_entity(&entity_id).await.expect("delete temporal entity");
@@ -57,7 +57,7 @@ async fn temporal_delete_evolution_absent_and_no_registration_returns_404() {
 #[tokio::test]
 async fn temporal_delete_evolution_exclusive_match_forwards_and_terminates() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-tdelevo-excl");
     let reg_id = topology.id("registration:prov-tdelevo-excl");
@@ -96,7 +96,7 @@ async fn temporal_delete_evolution_exclusive_match_forwards_and_terminates() {
 #[tokio::test]
 async fn temporal_delete_evolution_inclusive_forwards_and_removes_local() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-tdelevo-incl");
     let reg_id = topology.id("registration:prov-tdelevo-incl");

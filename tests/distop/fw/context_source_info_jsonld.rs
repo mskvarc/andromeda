@@ -49,6 +49,7 @@ async fn distop_entity_csi_context_provided_per_mime_requirement() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -58,6 +59,7 @@ async fn distop_entity_csi_context_provided_per_mime_requirement() {
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&entity_id, 30))
         .with_ld_json()
@@ -93,6 +95,7 @@ async fn distop_entity_csi_jsonld_context_must_be_url_validated() {
         .build();
     let rejected = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&malformed)
         .await
@@ -108,6 +111,7 @@ async fn distop_entity_csi_jsonld_context_must_be_url_validated() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&valid)
             .await
@@ -137,6 +141,7 @@ async fn distop_entity_csi_jsonld_context_compacts_payload_and_params() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -146,6 +151,7 @@ async fn distop_entity_csi_jsonld_context_compacts_payload_and_params() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -184,6 +190,7 @@ async fn distop_entity_csi_jsonld_context_with_payload_sets_json_and_strips_cont
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -193,6 +200,7 @@ async fn distop_entity_csi_jsonld_context_with_payload_sets_json_and_strips_cont
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&entity_id, 30))
         .with_ld_json()
@@ -230,6 +238,7 @@ async fn distop_entity_csi_ngsild_conformance_value_form_major_minor() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&accepted)
             .await
@@ -245,6 +254,7 @@ async fn distop_entity_csi_ngsild_conformance_value_form_major_minor() {
             .build();
         let rejected = topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -276,6 +286,7 @@ async fn distop_entity_csi_ngsild_conformance_triggers_backwards_compat_transfor
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -287,6 +298,7 @@ async fn distop_entity_csi_ngsild_conformance_triggers_backwards_compat_transfor
     body["scope"] = json!("/Madrid");
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&body)
         .with_ld_json()

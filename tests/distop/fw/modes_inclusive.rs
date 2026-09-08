@@ -27,8 +27,8 @@ fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
 #[tokio::test]
 async fn distop_entity_inclusive_distributes_despite_local_data_and_integrates() {
     let topology = topology::pair().await.expect("two-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
     let entity_id = topology.id("Vehicle:inclusive-merge");
 
     let local = entity(&entity_id, "Vehicle", &[("brandName", property(json!("Mercedes")))]);
@@ -71,6 +71,7 @@ async fn distop_entity_inclusive_additive_provision_serviced_locally_and_distrib
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 20))
             .with_ld_json()
@@ -90,6 +91,7 @@ async fn distop_entity_inclusive_additive_provision_serviced_locally_and_distrib
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -100,6 +102,7 @@ async fn distop_entity_inclusive_additive_provision_serviced_locally_and_distrib
     let fragment = attribute_fragment(&[("fuel", property(json!(45)))]);
     let appended = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .append_entity_attrs(&entity_id, &fragment)
         .await
@@ -109,6 +112,7 @@ async fn distop_entity_inclusive_additive_provision_serviced_locally_and_distrib
     assert_eq!(mock.get_total_count(), 1, "the append is distributed to the source");
     let local = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "local=true", "application/ld+json", None)
         .await
@@ -153,6 +157,7 @@ async fn distop_entity_inclusive_multiple_sources_equal_priority() {
         assert_status(
             &topology
                 .broker(BrokerRole::A)
+                .expect("topology broker A")
                 .client()
                 .create_registration(&registration)
                 .await
@@ -163,6 +168,7 @@ async fn distop_entity_inclusive_multiple_sources_equal_priority() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -206,6 +212,7 @@ async fn distop_entity_inclusive_is_default_mode_when_unspecified() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 10))
             .with_ld_json()
@@ -224,6 +231,7 @@ async fn distop_entity_inclusive_is_default_mode_when_unspecified() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -233,6 +241,7 @@ async fn distop_entity_inclusive_is_default_mode_when_unspecified() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
         .await

@@ -25,6 +25,7 @@ async fn map_over_vehicle(topology: &MultiBrokerTopology<BrokerRole>, local: &st
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 20))
             .with_ld_json()
@@ -33,7 +34,7 @@ async fn map_over_vehicle(topology: &MultiBrokerTopology<BrokerRole>, local: &st
             .expect("create entity"),
         201,
     );
-    let created = create_entity_map(topology.broker(BrokerRole::A).client(), "type=Vehicle").await;
+    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
     assert_status(&created, 201);
     (entity_id, json_body(&created))
 }
@@ -42,6 +43,7 @@ async fn map_over_vehicle(topology: &MultiBrokerTopology<BrokerRole>, local: &st
 async fn identity(topology: &MultiBrokerTopology<BrokerRole>) -> Value {
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .source_identity(Some("application/ld+json"))
         .await
@@ -90,10 +92,14 @@ async fn entity_map_output_only_fields_ignored_on_input() {
     let map_id = map["id"].as_str().unwrap_or_else(|| panic!("map has an id")).to_owned();
     let before = map["entityMap"].clone();
     let patch = json!({ "expiresAt": "2999-01-01T00:00:00Z", "entityMap": { "urn:fake": ["@none"] } });
-    assert_status(&update_entity_map(topology.broker(BrokerRole::A).client(), &map_id, &patch).await, 204);
+    assert_status(
+        &update_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), &map_id, &patch).await,
+        204,
+    );
     let after = json_body(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .retrieve_entity_map(&map_id)
             .await
@@ -146,6 +152,7 @@ async fn entity_map_linked_maps_shape_csr_to_map_id() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -155,6 +162,7 @@ async fn entity_map_linked_maps_shape_csr_to_map_id() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&topology.id("Vehicle:linked-shape"), 20))
             .with_ld_json()
@@ -163,7 +171,7 @@ async fn entity_map_linked_maps_shape_csr_to_map_id() {
             .expect("create entity"),
         201,
     );
-    let created = create_entity_map(topology.broker(BrokerRole::A).client(), "type=Vehicle").await;
+    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
     assert_status(&created, 201);
     assert!(json_body(&created)["linkedMaps"].is_object(), "linkedMaps maps CSR ids to map ids");
     mock.shutdown().await;
@@ -202,6 +210,7 @@ async fn identity_context_source_alias_non_empty() {
     for role in [BrokerRole::A, BrokerRole::B, BrokerRole::C] {
         let response = topology
             .broker(role)
+            .expect("topology broker for role")
             .client()
             .source_identity(Some("application/ld+json"))
             .await

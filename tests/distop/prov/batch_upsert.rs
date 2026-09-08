@@ -52,7 +52,7 @@ fn error_keyed(body: &Value, registration: &str, status: u64) -> bool {
 #[tokio::test]
 async fn batch_upsert_per_csr_filtering() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-upsert-filter-v1");
     let reg_speed = topology.id("registration:batch-upsert-filter-speed");
@@ -118,7 +118,7 @@ async fn batch_upsert_per_csr_filtering() {
 #[tokio::test]
 async fn batch_upsert_supported_forwards_and_merges() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-upsert-merge-v1");
     let v2 = topology.id("Vehicle:batch-upsert-merge-v2");
@@ -159,7 +159,7 @@ async fn batch_upsert_supported_forwards_and_merges() {
 #[tokio::test]
 async fn batch_upsert_fallback_per_entity_create() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-upsert-fbcreate-v1");
     let v2 = topology.id("Vehicle:batch-upsert-fbcreate-v2");
@@ -190,7 +190,7 @@ async fn batch_upsert_fallback_per_entity_create() {
 #[tokio::test]
 async fn batch_upsert_already_exists_replace_mode_forwards_replace() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-upsert-replace-v1");
     let reg_id = topology.id("registration:batch-upsert-replace");
@@ -226,7 +226,7 @@ async fn batch_upsert_already_exists_replace_mode_forwards_replace() {
 #[tokio::test]
 async fn batch_upsert_already_exists_update_mode_forwards_update() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-upsert-updmode-v1");
     let reg_id = topology.id("registration:batch-upsert-updmode");
@@ -266,7 +266,7 @@ async fn batch_upsert_already_exists_update_mode_forwards_update() {
 #[tokio::test]
 async fn batch_upsert_already_exists_no_path_operation_not_supported() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-upsert-nopath-v1");
     let reg_id = topology.id("registration:batch-upsert-nopath");
@@ -295,7 +295,7 @@ async fn batch_upsert_already_exists_no_path_operation_not_supported() {
 #[tokio::test]
 async fn batch_upsert_fallback_per_entity_replace() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-upsert-fbreplace-v1");
     let v2 = topology.id("Vehicle:batch-upsert-fbreplace-v2");
@@ -336,7 +336,7 @@ async fn batch_upsert_fallback_per_entity_replace() {
 #[tokio::test]
 async fn batch_upsert_fallback_per_entity_update() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-upsert-fbupdate-v1");
     let v2 = topology.id("Vehicle:batch-upsert-fbupdate-v2");
@@ -377,7 +377,7 @@ async fn batch_upsert_fallback_per_entity_update() {
 #[tokio::test]
 async fn batch_upsert_redirect_no_viable_op_conflict_per_entity() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-upsert-noviable-v1");
     let v2 = topology.id("Vehicle:batch-upsert-noviable-v2");
@@ -417,7 +417,7 @@ async fn batch_upsert_redirect_no_viable_op_conflict_per_entity() {
 #[tokio::test]
 async fn batch_upsert_local_phase_per_mode() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-upsert-local-v1");
     let reg_id = topology.id("registration:batch-upsert-local");

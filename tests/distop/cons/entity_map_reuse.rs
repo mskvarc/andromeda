@@ -23,6 +23,7 @@ use urlencoding::encode;
 async fn retrieve_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, entity_id: &str, map: &str) -> TestResponse {
     topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/entities/{}", encode(entity_id)))
         .header("accept", "application/ld+json")
@@ -39,7 +40,7 @@ async fn retrieve_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, entity
 async fn distop_retrieve_entity_map_location_present_retrieves_map() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons3");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let first_id = topology.id("registration:cons3-s1");
@@ -107,7 +108,7 @@ async fn distop_retrieve_entity_map_location_present_retrieves_map() {
 async fn distop_retrieve_entity_map_unreachable_or_expired_creates_new() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons4");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons4");
@@ -146,7 +147,7 @@ async fn distop_retrieve_entity_map_unreachable_or_expired_creates_new() {
 async fn distop_retrieve_entity_valid_map_uses_only_mapped_csrs() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons5");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let first_id = topology.id("registration:cons5-s1");
@@ -212,7 +213,7 @@ async fn distop_retrieve_entity_valid_map_uses_only_mapped_csrs() {
 async fn distop_retrieve_entity_return_flag_no_existing_map_creates_new() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons6");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons6");
@@ -250,7 +251,7 @@ async fn distop_retrieve_entity_return_flag_no_existing_map_creates_new() {
 async fn distop_retrieve_entity_map_location_returned_when_supplied() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons18");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons18");
@@ -297,7 +298,7 @@ async fn distop_retrieve_entity_map_location_returned_when_supplied() {
 async fn distop_retrieve_entity_map_linked_entry_forwards_linked_location() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons8");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons8");
@@ -344,7 +345,7 @@ async fn distop_retrieve_entity_map_linked_entry_forwards_linked_location() {
 async fn distop_retrieve_entity_map_linkedmaps_updated() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons13");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons13");

@@ -22,8 +22,8 @@ use urlencoding::encode;
 async fn distop_retrieve_entity_auxiliary_added_only_when_absent() {
     let topology = topology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons12");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     assert_status(
         &front.client().post_entity(&vehicle(&entity_id, 42)).with_ld_json().send().await.expect("local"),
@@ -62,7 +62,7 @@ async fn distop_retrieve_entity_auxiliary_added_only_when_absent() {
 async fn distop_retrieve_entity_expands_shorthand_attribute_names() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons14");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons14");
@@ -101,8 +101,8 @@ async fn distop_retrieve_entity_datasetid_keeps_matching_instances() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons15");
     let dataset_id = topology.id("dataset:2");
-    let front = topology.broker(BrokerRole::A);
-    let holder = topology.broker(BrokerRole::C);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let holder = topology.broker(BrokerRole::C).expect("topology broker C");
 
     assert_status(
         &front.client().post_entity(&vehicle(&entity_id, 10)).with_ld_json().send().await.expect("local"),
@@ -156,8 +156,8 @@ async fn distop_retrieve_entity_datasetid_keeps_matching_instances() {
 async fn distop_retrieve_entity_datasetid_no_match_omits_attribute() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons16");
-    let front = topology.broker(BrokerRole::A);
-    let holder = topology.broker(BrokerRole::C);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let holder = topology.broker(BrokerRole::C).expect("topology broker C");
 
     assert_status(
         &front.client().post_entity(&vehicle(&entity_id, 10)).with_ld_json().send().await.expect("local"),
@@ -204,8 +204,8 @@ async fn distop_retrieve_entity_datasetid_no_match_omits_attribute() {
 async fn distop_retrieve_entity_projection_lacking_all_attrs_404_after_aggregation() {
     let topology = topology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons17");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     assert_status(
         &front.client().post_entity(&vehicle(&entity_id, 42)).with_ld_json().send().await.expect("local"),

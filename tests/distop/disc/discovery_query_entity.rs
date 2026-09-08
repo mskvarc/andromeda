@@ -62,6 +62,7 @@ async fn query_csr_expands_shorthand_type_and_attr_terms_before_matching() {
 
     let without_context = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .without_default_context()
         .query_registrations("type=Vehicle", None)

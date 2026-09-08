@@ -37,6 +37,7 @@ async fn notify_with_format(topology: &MultiBrokerTopology<BrokerRole>, receiver
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -47,6 +48,7 @@ async fn notify_with_format(topology: &MultiBrokerTopology<BrokerRole>, receiver
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 20))
             .with_ld_json()
@@ -100,6 +102,7 @@ async fn notif_default_format_normalized() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -110,6 +113,7 @@ async fn notif_default_format_normalized() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 20))
             .with_ld_json()
@@ -141,6 +145,7 @@ async fn notif_pick_reduces_entities_to_picked_members() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -152,6 +157,7 @@ async fn notif_pick_reduces_entities_to_picked_members() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&with_two)
             .with_ld_json()
@@ -179,6 +185,7 @@ async fn notif_omit_removes_listed_members() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -190,6 +197,7 @@ async fn notif_omit_removes_listed_members() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&with_two)
             .with_ld_json()
@@ -215,6 +223,7 @@ async fn notif_join_includes_linked_entities() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&target_id, 5))
             .with_ld_json()
@@ -230,6 +239,7 @@ async fn notif_join_includes_linked_entities() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -241,6 +251,7 @@ async fn notif_join_includes_linked_entities() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&source)
             .with_ld_json()
@@ -272,6 +283,7 @@ async fn notif_ngsild_conformance_amends_body_to_version() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -281,6 +293,7 @@ async fn notif_ngsild_conformance_amends_body_to_version() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&topology.id("Vehicle:conformance"), 20))
             .with_ld_json()

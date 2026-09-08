@@ -17,6 +17,7 @@ async fn seed_vehicle(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 20))
             .with_ld_json()
@@ -34,7 +35,7 @@ async fn seed_vehicle(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -
 async fn emq_returns_candidate_ids_not_entities() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = seed_vehicle(&topology, "Vehicle:candidate-ids").await;
-    let created = create_entity_map(topology.broker(BrokerRole::A).client(), "type=Vehicle").await;
+    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
     assert_status(&created, 201);
     let map = json_body(&created)["entityMap"].clone();
     let entry = map.get(&entity_id).unwrap_or_else(|| panic!("the created entity is a candidate"));
@@ -50,7 +51,7 @@ async fn emq_returns_candidate_ids_not_entities() {
 async fn emq_ignores_irrelevant_query_params() {
     let topology = topology::single().await.expect("single-broker topology");
     seed_vehicle(&topology, "Vehicle:irrelevant-params").await;
-    let created = create_entity_map(topology.broker(BrokerRole::A).client(), "type=Vehicle&lang=en").await;
+    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle&lang=en").await;
     assert_status(&created, 201);
     topology.finish().await.expect("topology cleanup");
 }
@@ -60,7 +61,7 @@ async fn emq_ignores_irrelevant_query_params() {
 async fn emq_at_least_one_filter_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
     seed_vehicle(&topology, "Vehicle:one-filter").await;
-    let created = create_entity_map(topology.broker(BrokerRole::A).client(), "type=Vehicle").await;
+    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
     assert_status(&created, 201);
     topology.finish().await.expect("topology cleanup");
 }
@@ -69,7 +70,7 @@ async fn emq_at_least_one_filter_accepted() {
 #[tokio::test]
 async fn emq_no_filter_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
-    let response = create_entity_map(topology.broker(BrokerRole::A).client(), "local=true").await;
+    let response = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "local=true").await;
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -80,7 +81,7 @@ async fn emq_no_filter_returns_400() {
 #[tokio::test]
 async fn emq_invalid_id_q_geoq_csf_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
-    let response = create_entity_map(topology.broker(BrokerRole::A).client(), "id=not-a-uri").await;
+    let response = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "id=not-a-uri").await;
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -98,7 +99,11 @@ async fn emq_invalid_id_q_geoq_csf_returns_400() {
 #[tokio::test]
 async fn emq_projection_linked_entity_unspecified_or_deep_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
-    let response = create_entity_map(topology.broker(BrokerRole::A).client(), "type=Vehicle&pick=linkedTo%7Bspeed%7D").await;
+    let response = create_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        "type=Vehicle&pick=linkedTo%7Bspeed%7D",
+    )
+    .await;
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -114,7 +119,11 @@ async fn emq_projection_linked_entity_unspecified_or_deep_returns_400() {
 #[tokio::test]
 async fn emq_query_linked_entity_attrs_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
-    let response = create_entity_map(topology.broker(BrokerRole::A).client(), "type=Vehicle&q=linkedTo%7Bspeed%3E5%7D").await;
+    let response = create_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        "type=Vehicle&q=linkedTo%7Bspeed%3E5%7D",
+    )
+    .await;
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -128,6 +137,7 @@ async fn emq_geometry_property_non_geojson_accept_returns_400() {
     let link = jsonld_link();
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entityMaps?type=Vehicle&geometryProperty=location")
         .header("Link", link.as_str())
@@ -146,7 +156,7 @@ async fn emq_geometry_property_non_geojson_accept_returns_400() {
 async fn emq_expands_type_and_attribute_terms() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = seed_vehicle(&topology, "Vehicle:expand-terms").await;
-    let created = create_entity_map(topology.broker(BrokerRole::A).client(), "type=Vehicle&attrs=speed").await;
+    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle&attrs=speed").await;
     assert_status(&created, 201);
     assert!(
         json_body(&created)["entityMap"].get(&entity_id).is_some(),
@@ -161,7 +171,7 @@ async fn emq_expands_type_and_attribute_terms() {
 async fn emq_applies_jsonld_type_coercion_for_expand_list() {
     let topology = topology::single().await.expect("single-broker topology");
     seed_vehicle(&topology, "Vehicle:type-coercion").await;
-    let created = create_entity_map(topology.broker(BrokerRole::A).client(), "type=Vehicle").await;
+    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
     assert_status(&created, 201);
     assert_eq!(json_body(&created)["type"].as_str(), Some("EntityMap"), "the coerced query yields an EntityMap");
     topology.finish().await.expect("topology cleanup");

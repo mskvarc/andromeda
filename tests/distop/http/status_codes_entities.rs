@@ -30,6 +30,7 @@ async fn dist_http_create_entity_local_returns_201_location() {
     let entity_id = topology.id("Vehicle:create-201");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&entity_id, 5))
         .with_ld_json()
@@ -54,6 +55,7 @@ async fn dist_http_create_entity_forwarded_partial_failure_returns_207_batch_res
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["createEntity"]))
             .await
@@ -64,6 +66,7 @@ async fn dist_http_create_entity_forwarded_partial_failure_returns_207_batch_res
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&entity_id, 5))
         .with_ld_json()
@@ -88,6 +91,7 @@ async fn dist_http_create_entity_invalid_body_returns_400_problem_details() {
     let entity_id = topology.id("Vehicle:create-400");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&json!({ "id": entity_id, "@context": context_link() }))
         .with_ld_json()
@@ -108,6 +112,7 @@ async fn dist_http_create_entity_already_exists_local_returns_409() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -119,6 +124,7 @@ async fn dist_http_create_entity_already_exists_local_returns_409() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&entity_id, 5))
         .with_ld_json()
@@ -147,6 +153,7 @@ async fn dist_http_create_entity_exclusive_registration_owns_id_returns_409() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "exclusive", &["createEntity"]))
             .await
@@ -157,6 +164,7 @@ async fn dist_http_create_entity_exclusive_registration_owns_id_returns_409() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&entity_id, 5))
         .with_ld_json()
@@ -184,6 +192,7 @@ async fn dist_http_create_entity_operation_unavailable_returns_409_conflict() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "exclusive", &["retrieveEntity"]))
             .await
@@ -193,6 +202,7 @@ async fn dist_http_create_entity_operation_unavailable_returns_409_conflict() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .post_entity(&vehicle(&entity_id, 5))
         .with_ld_json()
@@ -213,6 +223,7 @@ async fn dist_http_query_entities_invalid_returns_400_problem_details() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&q=speed%3E", "application/ld+json", Some(context_link()))
         .await
@@ -234,6 +245,7 @@ async fn dist_http_query_entities_source_unsupported_format_returns_501() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "exclusive"))
             .await
@@ -244,6 +256,7 @@ async fn dist_http_query_entities_source_unsupported_format_returns_501() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -262,6 +275,7 @@ async fn dist_http_purge_entities_local_returns_204() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -274,6 +288,7 @@ async fn dist_http_purge_entities_local_returns_204() {
     let query = format!("type=Vehicle&idPattern={}", urlencoding::encode(topology.id_prefix()));
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_entities_by_query(&query, Some(context_link()))
         .await
@@ -295,6 +310,7 @@ async fn dist_http_purge_entities_partial_failure_returns_207_batch_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -306,6 +322,7 @@ async fn dist_http_purge_entities_partial_failure_returns_207_batch_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["purgeEntity"]))
             .await
@@ -317,6 +334,7 @@ async fn dist_http_purge_entities_partial_failure_returns_207_batch_result() {
     let query = format!("type=Vehicle&idPattern={}&local=false", urlencoding::encode(topology.id_prefix()));
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_entities_by_query(&query, Some(context_link()))
         .await
@@ -334,6 +352,7 @@ async fn dist_http_purge_entities_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_entities_by_query("q=speed%3E", Some(context_link()))
         .await
@@ -351,6 +370,7 @@ async fn dist_http_retrieve_entity_attrs_absent_returns_404() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -362,6 +382,7 @@ async fn dist_http_retrieve_entity_attrs_absent_returns_404() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "attrs=color", "application/ld+json", Some(context_link()))
         .await

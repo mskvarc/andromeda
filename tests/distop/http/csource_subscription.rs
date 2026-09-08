@@ -30,6 +30,7 @@ fn subscription_body(id: &str) -> Value {
 async fn create_sub(topology: &MultiBrokerTopology<BrokerRole>, body: &Value) -> TestResponse {
     topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/csourceSubscriptions")
         .header("content-type", "application/ld+json")
@@ -43,6 +44,7 @@ async fn create_sub(topology: &MultiBrokerTopology<BrokerRole>, body: &Value) ->
 async fn get_sub(topology: &MultiBrokerTopology<BrokerRole>, id: &str) -> TestResponse {
     topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/csourceSubscriptions/{}", urlencoding::encode(id)))
         .header("accept", "application/ld+json")
@@ -56,6 +58,7 @@ async fn get_sub(topology: &MultiBrokerTopology<BrokerRole>, id: &str) -> TestRe
 async fn patch_sub(topology: &MultiBrokerTopology<BrokerRole>, id: &str, fragment: &Value) -> TestResponse {
     topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::PATCH, &format!("/ngsi-ld/v1/csourceSubscriptions/{}", urlencoding::encode(id)))
         .header("content-type", "application/json")
@@ -70,6 +73,7 @@ async fn patch_sub(topology: &MultiBrokerTopology<BrokerRole>, id: &str, fragmen
 async fn delete_sub(topology: &MultiBrokerTopology<BrokerRole>, id: &str) -> TestResponse {
     topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::DELETE, &format!("/ngsi-ld/v1/csourceSubscriptions/{}", urlencoding::encode(id)))
         .send()
@@ -122,6 +126,7 @@ async fn dist_http_query_csource_subscriptions_returns_200_array() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/csourceSubscriptions")
         .header("accept", "application/ld+json")
@@ -190,6 +195,7 @@ async fn dist_http_source_identity_returns_200_or_501() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .source_identity(Some("application/ld+json"))
         .await

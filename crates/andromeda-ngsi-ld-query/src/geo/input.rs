@@ -60,8 +60,8 @@ impl GeoQueryInput {
     /// [`GeoQueryInputError::Geometry`] when the two do not form a valid
     /// reference geometry.
     pub fn from_wire(
-        georel: String,
-        geometry_type: String,
+        georel: &str,
+        geometry_type: &str,
         coordinates: serde_json::Value,
         geoproperty: Option<NgsiLdReference>,
     ) -> Result<GeoQueryInput, GeoQueryInputError> {
@@ -88,7 +88,7 @@ impl<'de> Deserialize<'de> for GeoQueryInput {
         D: Deserializer<'de>,
     {
         let wire = GeoQueryInputWire::deserialize(deserializer)?;
-        GeoQueryInput::from_wire(wire.georel.to_string(), wire.geometry, wire.coordinates, wire.geoproperty).map_err(DeserializeError::custom)
+        GeoQueryInput::from_wire(&wire.georel.to_string(), &wire.geometry, wire.coordinates, wire.geoproperty).map_err(DeserializeError::custom)
     }
 }
 

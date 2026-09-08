@@ -49,6 +49,7 @@ async fn dist_http_query_format_key_values_returns_simplified_representation() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 42))
             .with_ld_json()
@@ -60,6 +61,7 @@ async fn dist_http_query_format_key_values_returns_simplified_representation() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&options=keyValues", "application/ld+json", Some(context_link()))
         .await
@@ -90,6 +92,7 @@ async fn dist_http_forwarded_query_defaults_to_normalized_representation() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -101,6 +104,7 @@ async fn dist_http_forwarded_query_defaults_to_normalized_representation() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .query_entities("type=Vehicle&options=keyValues", "application/ld+json", Some(context_link()))
             .await
@@ -130,6 +134,7 @@ async fn dist_http_forwarded_query_unsupported_representation_returns_501() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "exclusive"))
             .await
@@ -140,6 +145,7 @@ async fn dist_http_forwarded_query_unsupported_representation_returns_501() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -159,6 +165,7 @@ async fn dist_http_query_geojson_accept_returns_feature_collection() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&located_vehicle(&entity_id))
             .with_ld_json()
@@ -170,6 +177,7 @@ async fn dist_http_query_geojson_accept_returns_feature_collection() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/geo+json", Some(context_link()))
         .await
@@ -193,6 +201,7 @@ async fn dist_http_retrieve_geojson_accept_returns_feature() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&located_vehicle(&entity_id))
             .with_ld_json()
@@ -204,6 +213,7 @@ async fn dist_http_retrieve_geojson_accept_returns_feature() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "", "application/geo+json", Some(context_link()))
         .await
@@ -231,6 +241,7 @@ async fn dist_http_query_version_amended_returns_203_preference_applied() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -241,6 +252,7 @@ async fn dist_http_query_version_amended_returns_203_preference_applied() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("accept", "application/ld+json")
@@ -275,6 +287,7 @@ async fn dist_http_retrieve_version_amended_returns_203_preference_applied() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "exclusive"))
             .await
@@ -286,6 +299,7 @@ async fn dist_http_retrieve_version_amended_returns_203_preference_applied() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/entities/{}", urlencoding::encode(&entity_id)))
         .header("accept", "application/ld+json")
@@ -314,6 +328,7 @@ async fn dist_http_entity_maps_version_amended_returns_203_preference_applied() 
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entityMaps?type=Vehicle")
         .header("accept", "application/ld+json")
@@ -347,6 +362,7 @@ async fn dist_http_profile_link_header_version_accepted_with_fallbacks() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -358,6 +374,7 @@ async fn dist_http_profile_link_header_version_accepted_with_fallbacks() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("accept", "application/ld+json")

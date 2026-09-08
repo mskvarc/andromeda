@@ -84,7 +84,12 @@ async fn csr_notification_success_increments_times_sent_and_updates_last_timesta
     let _notification = adapter.wait_for_subscription_notification(&subscription_id, PRESENT).await;
     sleep(BOOKKEEPING).await;
 
-    let retrieved = csr_subscription::retrieve(topology.broker(BrokerRole::A).client(), &subscription_id, Some("sysAttrs")).await;
+    let retrieved = csr_subscription::retrieve(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &subscription_id,
+        Some("sysAttrs"),
+    )
+    .await;
     assert_status(&retrieved, 200);
     let body = json_body(&retrieved);
     assert!(
@@ -116,7 +121,12 @@ async fn csr_notification_failed_delivery_updates_last_failure_and_status() {
     .await;
     sleep(Duration::from_secs(3)).await;
 
-    let retrieved = csr_subscription::retrieve(topology.broker(BrokerRole::A).client(), &subscription_id, Some("sysAttrs")).await;
+    let retrieved = csr_subscription::retrieve(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &subscription_id,
+        Some("sysAttrs"),
+    )
+    .await;
     assert_status(&retrieved, 200);
     let body = json_body(&retrieved);
     assert_eq!(body["notification"]["status"].as_str(), Some("failed"), "the notification status is failed");
@@ -142,7 +152,7 @@ async fn csr_notification_paused_and_expired_subscriptions_do_not_emit() {
     let expired_id = topology.id("subscription:expired");
     csr_subscription::create_and_assert(&topology, &CsrSubscriptionBuilder::new(&expired_id, &adapter.endpoint_url(), &vtype).build()).await;
     let expired = csr_subscription::update(
-        topology.broker(BrokerRole::A).client(),
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
         &expired_id,
         &json!({ "expiresAt": "2018-08-01T22:07:00Z" }),
     )

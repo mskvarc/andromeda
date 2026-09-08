@@ -42,6 +42,7 @@ async fn dist_http_forwarded_request_carries_via_header_on_all_distributed_resou
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -52,6 +53,7 @@ async fn dist_http_forwarded_request_carries_via_header_on_all_distributed_resou
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -74,8 +76,8 @@ async fn dist_http_forwarded_request_carries_via_header_on_all_distributed_resou
 #[tokio::test]
 async fn dist_http_chain_forward_appends_broker_host_alias_to_via() {
     let topology = topology::chain().await.expect("three-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let middle = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let middle = topology.broker(BrokerRole::B).expect("topology broker B");
     let entity_id = topology.id("Vehicle:via-chain");
     let front_reg = topology.id("registration:via-chain-front");
     let middle_reg = topology.id("registration:via-chain-middle");
@@ -136,6 +138,7 @@ async fn dist_http_incoming_via_excludes_listed_source_from_matching() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -147,6 +150,7 @@ async fn dist_http_incoming_via_excludes_listed_source_from_matching() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("accept", "application/ld+json")
@@ -189,6 +193,7 @@ async fn dist_http_subscription_create_excludes_via_listed_source() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -199,6 +204,7 @@ async fn dist_http_subscription_create_excludes_via_listed_source() {
     let sub_id = topology.id("Subscription:sub-via-excluded");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/subscriptions")
         .header("content-type", "application/ld+json")
@@ -236,6 +242,7 @@ async fn dist_http_subscription_create_without_via_forwards_to_source() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -246,6 +253,7 @@ async fn dist_http_subscription_create_without_via_forwards_to_source() {
     let sub_id = topology.id("Subscription:sub-via-selected");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/subscriptions")
         .header("content-type", "application/ld+json")

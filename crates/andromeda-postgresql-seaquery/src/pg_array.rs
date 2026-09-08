@@ -62,7 +62,7 @@ pub fn array_append(array: SimpleExpr, element: SimpleExpr) -> SimpleExpr {
 /// case for `ARRAY(SELECT jsonb_array_elements_text(col))`: no request value
 /// crosses this boundary, only columns of the enclosing statement.
 #[must_use]
-pub fn array_subquery(subquery: SelectStatement) -> SimpleExpr {
+pub fn array_subquery(subquery: &SelectStatement) -> SimpleExpr {
     Expr::cust(format!("ARRAY({})", subquery.to_string(PostgresQueryBuilder)))
 }
 
@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn an_array_subquery_wraps_a_select_in_the_array_constructor() {
         let subquery = Query::select().expr(Expr::col(Alias::new("value"))).to_owned();
-        let sql = render_expr(array_subquery(subquery));
+        let sql = render_expr(array_subquery(&subquery));
         assert!(sql.contains(r#"ARRAY(SELECT "value")"#), "{sql}");
     }
 

@@ -122,7 +122,7 @@ fn geometry(column: StagedColumn) -> SimpleExpr {
 /// `ARRAY(SELECT jsonb_array_elements_text(d.<col>)::element_type)`.
 fn array_of(column: StagedColumn, element_type: PostgresType) -> SimpleExpr {
     let element: SimpleExpr = jsonb_array_elements_text(staged(column)).into();
-    array_subquery(Query::select().expr(cast(element, element_type)).to_owned())
+    array_subquery(&Query::select().expr(cast(element, element_type)).to_owned())
 }
 
 /// The eleven staging columns every insert and update stages, in bind order.

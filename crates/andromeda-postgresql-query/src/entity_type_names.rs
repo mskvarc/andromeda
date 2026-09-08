@@ -21,7 +21,7 @@ pub fn type_names_of(type_ids: SimpleExpr) -> SimpleExpr {
         .from(EntityTypeNames::Table)
         .and_where(Expr::col((EntityTypeNames::Table, EntityTypeNames::Id)).eq(any(type_ids.clone()))) // clone: the array is named twice in one subquery
         .order_by_expr(array_position(type_ids, Expr::col((EntityTypeNames::Table, EntityTypeNames::Id))), Order::Asc);
-    array_subquery(names)
+    array_subquery(&names)
 }
 
 #[cfg(test)]

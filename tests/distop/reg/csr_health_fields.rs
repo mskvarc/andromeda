@@ -35,6 +35,7 @@ async fn reg_client_supplied_health_fields_ignored() {
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&body)
         .await
@@ -42,6 +43,7 @@ async fn reg_client_supplied_health_fields_ignored() {
     assert_status(&created, 201);
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(&id, None)
         .await
@@ -64,6 +66,7 @@ async fn reg_fresh_registration_counters_nonnegative() {
     let id = topology.id("registration:health-fresh");
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&csr_basic(&id, PEER_ENDPOINT))
         .await
@@ -71,6 +74,7 @@ async fn reg_fresh_registration_counters_nonnegative() {
     assert_status(&created, 201);
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(&id, None)
         .await
@@ -108,6 +112,7 @@ async fn reg_health_status_transitions_to_failed_on_forward_error() {
         .build();
     let registered = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&registration)
         .await
@@ -116,6 +121,7 @@ async fn reg_health_status_transitions_to_failed_on_forward_error() {
 
     let _forward = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "", "application/ld+json", None)
         .await
@@ -123,6 +129,7 @@ async fn reg_health_status_transitions_to_failed_on_forward_error() {
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(&registration_id, None)
         .await
@@ -159,6 +166,7 @@ async fn reg_health_counters_increment_on_forward_attempt() {
         .build();
     let registered = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&registration)
         .await
@@ -167,12 +175,14 @@ async fn reg_health_counters_increment_on_forward_attempt() {
 
     let _ok = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&ok_entity, "", "application/ld+json", None)
         .await
         .expect("forwarded success");
     let _bad = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&fail_entity, "", "application/ld+json", None)
         .await
@@ -180,6 +190,7 @@ async fn reg_health_counters_increment_on_forward_attempt() {
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(&registration_id, None)
         .await

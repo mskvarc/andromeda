@@ -24,6 +24,7 @@ async fn subscription_over_source(topology: &MultiBrokerTopology<BrokerRole>, re
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(subscription_id, "http://127.0.0.1:9/notify"))
             .await
@@ -48,6 +49,7 @@ async fn sub_updated_supporting_source_builds_reduced_update() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .update_subscription(&id, &json!({ "description": "changed" }), None)
             .await
@@ -80,6 +82,7 @@ async fn sub_updated_split_forward_strips_q_geoq_scopeq() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .update_subscription(&id, &json!({ "q": "speed>10", "splitEntities": true }), None)
             .await
@@ -109,6 +112,7 @@ async fn sub_updated_forward_strips_notification_attributes_pick_omit() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .update_subscription(
                 &id,
@@ -141,6 +145,7 @@ async fn sub_updated_forward_uses_mapped_subscription_id() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .update_subscription(&id, &json!({ "description": "mapped" }), None)
             .await
@@ -170,6 +175,7 @@ async fn sub_updated_forward_only_on_relevant_change() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .update_subscription(&id, &json!({ "description": "irrelevant" }), None)
             .await
@@ -196,6 +202,7 @@ async fn sub_no_longer_matching_forwards_delete_via_mapped_id() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .update_subscription(&id, &fragment, Some(CORE_CONTEXT.as_str()))
             .await
@@ -224,6 +231,7 @@ async fn sub_update_propagates_to_mapped_csr_subscription() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .update_subscription(&id, &json!({ "description": "propagated" }), None)
             .await
@@ -258,6 +266,7 @@ async fn sub_delete_forwards_delete_to_each_supporting_source() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
             .await
@@ -278,6 +287,7 @@ async fn sub_delete_forwards_delete_to_each_supporting_source() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .delete_subscription(&id)
             .await
@@ -310,6 +320,7 @@ async fn sub_delete_propagates_to_mapped_csr_subscription() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .delete_subscription(&id)
             .await

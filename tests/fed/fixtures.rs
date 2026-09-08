@@ -299,7 +299,7 @@ pub fn discovered_client(endpoint: &str, port: u16) -> TestClient {
 
 /// Return a broker handle or fail the test with a useful role name.
 pub fn broker(topology: &MultiBrokerTopology<FedRole>, role: FedRole) -> &BrokerHandle<FedRole> {
-    topology.broker(role)
+    topology.broker(role).expect("topology broker for role")
 }
 
 /// Assert an HTTP status code and include the response body on failure.

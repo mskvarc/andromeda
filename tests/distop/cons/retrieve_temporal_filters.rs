@@ -44,8 +44,8 @@ const BEFORE_2030: &str = "timerel=before&timeAt=2030-01-01T00:00:00Z";
 async fn distop_retrieve_temporal_auxiliary_added_only_if_timeproperty_absent() {
     let topology = topology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons47");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     assert_status(
         &front
@@ -108,8 +108,8 @@ async fn distop_retrieve_temporal_datasetid_filters_s1() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons49");
     let dataset_id = topology.id("dataset:2");
-    let front = topology.broker(BrokerRole::A);
-    let holder = topology.broker(BrokerRole::C);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let holder = topology.broker(BrokerRole::C).expect("topology broker C");
 
     assert_status(
         &front
@@ -183,7 +183,7 @@ async fn distop_retrieve_temporal_datasetid_no_match_removes_attribute() {
     let topology = topology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons50");
     let dataset_id = topology.id("dataset:2");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
 
     let local = entity(
         &entity_id,
@@ -217,9 +217,9 @@ async fn distop_retrieve_temporal_datasetid_no_match_removes_attribute() {
 async fn distop_retrieve_temporal_lastn_limits_projected_instances() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons51");
-    let front = topology.broker(BrokerRole::A);
-    let holder_b = topology.broker(BrokerRole::B);
-    let holder_c = topology.broker(BrokerRole::C);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let holder_b = topology.broker(BrokerRole::B).expect("topology broker B");
+    let holder_c = topology.broker(BrokerRole::C).expect("topology broker C");
 
     assert_status(
         &front
@@ -255,7 +255,7 @@ async fn distop_retrieve_temporal_lastn_limits_projected_instances() {
     );
 
     for role in [BrokerRole::B, BrokerRole::C] {
-        let peer = topology.broker(role);
+        let peer = topology.broker(role).expect("topology broker for role");
         let registration_id = topology.id(&format!("registration:cons51-{role:?}"));
         let registration = CsrBuilder::new(&registration_id, peer.peer_url())
             .mode("inclusive")

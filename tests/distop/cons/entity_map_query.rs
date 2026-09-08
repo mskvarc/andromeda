@@ -20,6 +20,7 @@ use std::time::Duration;
 async fn query_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, query: &str, map: &str) -> TestResponse {
     topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/entities?{query}"))
         .header("accept", "application/ld+json")
@@ -37,7 +38,7 @@ async fn query_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, query: &s
 #[tokio::test]
 async fn distop_query_entities_map_location_reused_or_recreated() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let first_id = topology.id("registration:cons23-s1");
@@ -109,7 +110,7 @@ async fn distop_query_entities_map_location_reused_or_recreated() {
 #[tokio::test]
 async fn distop_query_entities_return_flag_creates_map_and_header() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let entity_id = topology.id("Vehicle:cons24");
     assert_status(
         &front.client().post_entity(&vehicle(&entity_id, 10)).with_ld_json().send().await.expect("local"),
@@ -132,7 +133,7 @@ async fn distop_query_entities_return_flag_creates_map_and_header() {
 #[tokio::test]
 async fn distop_query_entities_map_linked_entry_forwards_linked_location() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons26");

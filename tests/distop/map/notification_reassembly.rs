@@ -26,7 +26,7 @@ const DELIVER: Duration = Duration::from_secs(12);
 
 /// Register an inclusive `Vehicle` source on the front broker pointing at `role`.
 async fn register_source(topology: &MultiBrokerTopology<BrokerRole>, role: BrokerRole, registration_local: &str) {
-    let peer = topology.broker(role);
+    let peer = topology.broker(role).expect("topology broker for role");
     let registration = CsrBuilder::new(&topology.id(registration_local), peer.peer_url())
         .mode("inclusive")
         .entity_type("Vehicle")
@@ -35,6 +35,7 @@ async fn register_source(topology: &MultiBrokerTopology<BrokerRole>, role: Broke
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -58,6 +59,7 @@ async fn setup_split(topology: &MultiBrokerTopology<BrokerRole>, receiver: &Noti
     assert_status(
         &topology
             .broker(BrokerRole::B)
+            .expect("topology broker B")
             .client()
             .post_entity(&on_b)
             .with_ld_json()
@@ -70,6 +72,7 @@ async fn setup_split(topology: &MultiBrokerTopology<BrokerRole>, receiver: &Noti
     assert_status(
         &topology
             .broker(BrokerRole::C)
+            .expect("topology broker C")
             .client()
             .post_entity(&on_c)
             .with_ld_json()
@@ -83,6 +86,7 @@ async fn setup_split(topology: &MultiBrokerTopology<BrokerRole>, receiver: &Noti
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&split_subscription)
             .await
@@ -97,6 +101,7 @@ async fn trigger_on_b(topology: &MultiBrokerTopology<BrokerRole>, entity_id: &st
     assert_status(
         &topology
             .broker(BrokerRole::B)
+            .expect("topology broker B")
             .client()
             .append_entity_attrs(entity_id, &fragment)
             .await
@@ -207,6 +212,7 @@ async fn reassembly_removes_non_matching_after_merge() {
     assert_status(
         &topology
             .broker(BrokerRole::B)
+            .expect("topology broker B")
             .client()
             .post_entity(&on_b)
             .with_ld_json()
@@ -220,6 +226,7 @@ async fn reassembly_removes_non_matching_after_merge() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await

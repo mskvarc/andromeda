@@ -100,5 +100,5 @@ pub(crate) async fn update_attrs(
     } else {
         LocalOutcome::processed(service.update_attrs(&target, &id, local_fragment, &context).await, classify_entity_error)
     };
-    provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
+    provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

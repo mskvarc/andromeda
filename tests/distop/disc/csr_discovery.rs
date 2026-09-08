@@ -23,6 +23,7 @@ use serde_json::{Value, json};
 pub async fn register(topology: &MultiBrokerTopology<BrokerRole>, body: &Value) {
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(body)
         .await
@@ -51,6 +52,7 @@ pub async fn register_interval(topology: &MultiBrokerTopology<BrokerRole>, id: &
 pub async fn query(topology: &MultiBrokerTopology<BrokerRole>, query: &str) -> Value {
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations(query, Some(COMPOUND_CONTEXT.as_str()))
         .await

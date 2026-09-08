@@ -68,7 +68,7 @@ impl JsonNumber {
     ///
     /// Returns [`JsonNumberError::OutOfSupportedRange`] when the normalized
     /// value cannot be stored in PostgreSQL `NUMERIC`.
-    pub fn from_decimal(value: BigDecimal) -> Result<JsonNumber, JsonNumberError> {
+    pub fn from_decimal(value: &BigDecimal) -> Result<JsonNumber, JsonNumberError> {
         let value = value.normalized();
         validate_decimal_range(&value, &value.to_string())?;
         Ok(JsonNumber(value))
@@ -145,7 +145,7 @@ impl TryFrom<BigDecimal> for JsonNumber {
     type Error = JsonNumberError;
 
     fn try_from(value: BigDecimal) -> Result<JsonNumber, JsonNumberError> {
-        JsonNumber::from_decimal(value)
+        JsonNumber::from_decimal(&value)
     }
 }
 

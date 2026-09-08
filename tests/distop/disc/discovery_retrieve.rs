@@ -19,6 +19,7 @@ async fn retrieve_csr_invalid_uri_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration("not a uri", None)
         .await
@@ -36,6 +37,7 @@ async fn retrieve_csr_unknown_id_returns_404() {
     let unknown = topology.id("registration:absent");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(&unknown, None)
         .await
@@ -55,6 +57,7 @@ async fn retrieve_csr_expands_shorthand_terms_in_result() {
     let body = CsrBuilder::new(&id, PEER_ENDPOINT).entity_type("Vehicle").property_names(&["speed"]).build();
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&body)
         .await
@@ -63,6 +66,7 @@ async fn retrieve_csr_expands_shorthand_terms_in_result() {
 
     let expanded = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .without_default_context()
         .retrieve_registration(&id, None)
@@ -80,6 +84,7 @@ async fn retrieve_csr_expands_shorthand_terms_in_result() {
 
     let compacted = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(&id, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -104,6 +109,7 @@ async fn retrieve_csr_existing_returns_200_jsonld_object() {
     let body = CsrBuilder::new(&id, PEER_ENDPOINT).build();
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&body)
         .await
@@ -112,6 +118,7 @@ async fn retrieve_csr_existing_returns_200_jsonld_object() {
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(&id, Some(COMPOUND_CONTEXT.as_str()))
         .await

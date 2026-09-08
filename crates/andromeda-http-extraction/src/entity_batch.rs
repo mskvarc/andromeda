@@ -212,32 +212,35 @@ fn batch_entity_id(item: &Value, uri: &Uri) -> Result<EntityId, ProblemResponse>
 
 /// Decode one batch array item into its entity.
 ///
+/// The per-entity failure is boxed: it is three times the size of the decoded
+/// entity, and the batch is dominated by items that decode.
+///
 /// # Errors
 ///
 /// Returns a [`BatchEntityError`] against `entity_id` when the item carries a
 /// number the model cannot represent, carries an `@context` its representation
 /// forbids or lacks one it requires (clause 6.3.5), or is not an entity.
 /// Clause 5.6.7 reports these per entity, leaving the rest of the batch intact.
-fn decode_batch_item(mut item: Value, entity_id: EntityId, content_kind: ContentKind) -> Result<Entity, BatchEntityError> {
+fn decode_batch_item(mut item: Value, entity_id: EntityId, content_kind: ContentKind) -> Result<Entity, Box<BatchEntityError>> {
     if let Err(error) = canonicalize_numbers(&mut item) {
-        return Err(BatchEntityError::new(entity_id, NgsiLdErrorType::BadRequestData, &error.to_string()));
+        return Err(Box::new(BatchEntityError::new(entity_id, NgsiLdErrorType::BadRequestData, &error.to_string())));
     }
 
     let has_context = item.as_object().is_some_and(|o| o.contains_key("@context"));
     match content_kind {
         ContentKind::Json if has_context => {
-            return Err(BatchEntityError::new(
+            return Err(Box::new(BatchEntityError::new(
                 entity_id,
                 NgsiLdErrorType::BadRequestData,
                 "application/json body must not contain @context",
-            ));
+            )));
         }
         ContentKind::LdJson if !has_context => {
-            return Err(BatchEntityError::new(
+            return Err(Box::new(BatchEntityError::new(
                 entity_id,
                 NgsiLdErrorType::BadRequestData,
                 "application/ld+json body must contain @context",
-            ));
+            )));
         }
         ContentKind::Json | ContentKind::LdJson => {}
     }
@@ -247,7 +250,13 @@ fn decode_batch_item(mut item: Value, entity_id: EntityId, content_kind: Content
         obj.remove("@context");
     }
 
-    deserialize_exact::<Entity>(&item).map_err(|error| BatchEntityError::new(entity_id, NgsiLdErrorType::BadRequestData, &format!("Invalid entity: {error}")))
+    deserialize_exact::<Entity>(&item).map_err(|error| {
+        Box::new(BatchEntityError::new(
+            entity_id,
+            NgsiLdErrorType::BadRequestData,
+            &format!("Invalid entity: {error}"),
+        ))
+    })
 }
 
 /// Parse a batch request body with per-entity error handling.
@@ -284,7 +293,7 @@ pub fn parse_batch_entities(
         let entity_id = batch_entity_id(&item, uri)?;
         match decode_batch_item(item, entity_id, content_kind) {
             Ok(entity) => entities.push(entity),
-            Err(error) => parse_errors.push(error),
+            Err(error) => parse_errors.push(*error),
         }
     }
 

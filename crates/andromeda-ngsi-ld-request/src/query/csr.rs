@@ -26,7 +26,7 @@ use andromeda_ngsi_ld_query::{
     pattern::Pattern,
     projection::grammar::RawProjectionTerm,
     scope::query::ScopeQuery,
-    temporal::window::TimeInterval,
+    temporal::window::{BoundPresence, TimeInterval},
     type_selection::grammar::TypeExprRaw,
 };
 use chrono::{DateTime, Utc};
@@ -157,10 +157,9 @@ impl CsrQueryParameters {
         // The `timerel`/`timeAt`/`endTimeAt` combination rule is owned by the
         // query crate, so the request seam asks rather than re-deriving it.
         TimeInterval::check_time_bounds(
-            self.timerel.is_some(),
-            self.time_at.is_some(),
-            self.timerel == Some(TimeRel::Between),
-            self.end_time_at.is_some(),
+            self.timerel,
+            BoundPresence::of(self.time_at.as_ref()),
+            BoundPresence::of(self.end_time_at.as_ref()),
         )
         .map_err(ParameterError::Query)?;
 

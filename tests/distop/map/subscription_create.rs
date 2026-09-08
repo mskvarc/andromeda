@@ -27,6 +27,7 @@ async fn sub_create_malformed_body_returns_400() {
     let body = json!({ "id": id, "type": "Subscription", "@context": COMPOUND_CONTEXT.as_str() });
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_subscription(&body)
         .await
@@ -43,9 +44,21 @@ async fn sub_create_duplicate_id_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("Subscription:duplicate");
     let body = subscription(&id, INERT_ENDPOINT);
-    let first = topology.broker(BrokerRole::A).client().create_subscription(&body).await.expect("first create");
+    let first = topology
+        .broker(BrokerRole::A)
+        .expect("topology broker A")
+        .client()
+        .create_subscription(&body)
+        .await
+        .expect("first create");
     assert_status(&first, 201);
-    let second = topology.broker(BrokerRole::A).client().create_subscription(&body).await.expect("second create");
+    let second = topology
+        .broker(BrokerRole::A)
+        .expect("topology broker A")
+        .client()
+        .create_subscription(&body)
+        .await
+        .expect("second create");
     assert_status(&second, 409);
     assert_problem_details(&second, ALREADY_EXISTS);
     topology.finish().await.expect("topology cleanup");
@@ -62,6 +75,7 @@ async fn sub_create_without_id_returns_generated_uri() {
         .remove("id");
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_subscription(&body)
         .await
@@ -75,6 +89,7 @@ async fn sub_create_without_id_returns_generated_uri() {
     assert!(generated.starts_with("urn:"), "generated subscription id is a URI: {generated}");
     topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_subscription(&generated)
         .await
@@ -91,6 +106,7 @@ async fn sub_create_with_expires_at_stores_expiration() {
     body["expiresAt"] = json!("2999-01-01T00:00:00Z");
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_subscription(&body)
         .await
@@ -98,6 +114,7 @@ async fn sub_create_with_expires_at_stores_expiration() {
     assert_status(&created, 201);
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .without_default_context()
         .retrieve_subscription(&id, None)
@@ -121,6 +138,7 @@ async fn sub_create_past_expires_at_returns_400() {
     body["expiresAt"] = json!("2000-01-01T00:00:00Z");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_subscription(&body)
         .await
@@ -139,6 +157,7 @@ async fn sub_create_without_expires_at_is_perpetual() {
     let body = subscription(&id, INERT_ENDPOINT);
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_subscription(&body)
         .await
@@ -146,6 +165,7 @@ async fn sub_create_without_expires_at_is_perpetual() {
     assert_status(&created, 201);
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_subscription(&id, None)
         .await
@@ -162,6 +182,7 @@ async fn sub_create_is_active_absent_or_true_status_active() {
     let body = subscription(&id, INERT_ENDPOINT);
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_subscription(&body)
         .await
@@ -169,6 +190,7 @@ async fn sub_create_is_active_absent_or_true_status_active() {
     assert_status(&created, 201);
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_subscription(&id, None)
         .await
@@ -190,6 +212,7 @@ async fn sub_create_is_active_false_status_paused() {
     body["isActive"] = json!(false);
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_subscription(&body)
         .await
@@ -197,6 +220,7 @@ async fn sub_create_is_active_false_status_paused() {
     assert_status(&created, 201);
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_subscription(&id, None)
         .await
@@ -222,6 +246,7 @@ async fn sub_create_watched_attributes_expanded_and_stored() {
     set_watched_attributes(&mut body, &["speed"]);
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_subscription(&body)
         .await
@@ -229,6 +254,7 @@ async fn sub_create_watched_attributes_expanded_and_stored() {
     assert_status(&created, 201);
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .without_default_context()
         .retrieve_subscription(&id, None)
@@ -257,6 +283,7 @@ async fn sub_create_notification_context_resolves_from_jsonld_context() {
     body["jsonldContext"] = json!(COMPOUND_CONTEXT.as_str());
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_subscription(&body)
         .await
@@ -264,6 +291,7 @@ async fn sub_create_notification_context_resolves_from_jsonld_context() {
     assert_status(&created, 201);
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_subscription(&id, None)
         .await
@@ -287,6 +315,7 @@ async fn sub_create_unreachable_jsonld_context_returns_504() {
     body["jsonldContext"] = json!("http://127.0.0.1:9/context.jsonld");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_subscription(&body)
         .await
@@ -306,6 +335,7 @@ async fn sub_create_invalid_jsonld_context_returns_400() {
     body["jsonldContext"] = json!(42);
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_subscription(&body)
         .await

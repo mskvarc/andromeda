@@ -37,7 +37,7 @@ fn error_keyed(body: &Value, registration: &str, status: u64) -> bool {
 #[tokio::test]
 async fn batch_merge_per_csr_filtering_drops_attrless() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-merge-filter-v1");
     let v2 = topology.id("Vehicle:batch-merge-filter-v2");
@@ -84,7 +84,7 @@ async fn batch_merge_per_csr_filtering_drops_attrless() {
 #[tokio::test]
 async fn batch_merge_supported_forwards_and_merges() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-merge-merge-v1");
     let v2 = topology.id("Vehicle:batch-merge-merge-v2");
@@ -122,7 +122,7 @@ async fn batch_merge_supported_forwards_and_merges() {
 #[tokio::test]
 async fn batch_merge_fallback_per_entity_merge() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-merge-fb-v1");
     let v2 = topology.id("Vehicle:batch-merge-fb-v2");
@@ -160,7 +160,7 @@ async fn batch_merge_fallback_per_entity_merge() {
 #[tokio::test]
 async fn batch_merge_redirect_neither_op_conflict_per_entity() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-merge-noviable-v1");
     let v2 = topology.id("Vehicle:batch-merge-noviable-v2");
@@ -199,7 +199,7 @@ async fn batch_merge_redirect_neither_op_conflict_per_entity() {
 #[tokio::test]
 async fn batch_merge_local_phase_populates_results() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-merge-local-v1");
     let reg_id = topology.id("registration:batch-merge-local");

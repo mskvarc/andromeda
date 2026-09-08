@@ -30,6 +30,12 @@ const HYPERTABLES: &[(&str, &str)] = &[
     ("scope_history", "context_space_key,temporal_entity_key"),
 ];
 
+/// Assert a policy day count, which Timescale reports as a float built from an
+/// interval rather than as the integer the policy declared.
+fn assert_days(actual: f64, expected: f64, context: &str) {
+    assert!((actual - expected).abs() < f64::EPSILON, "{context}: {actual}");
+}
+
 /// The chunk interval of `hypertable`, in whole days.
 async fn chunk_interval_days(pool: &PgPool, hypertable: &str) -> f64 {
     sqlx::query_scalar(
@@ -93,8 +99,16 @@ async fn a_fresh_tenant_carries_the_declared_chunk_interval_columnstore_settings
     assert!(outcome.is_unchanged(), "a fresh tenant already carries the defaults: {outcome:?}");
 
     for (hypertable, segmentby) in HYPERTABLES {
-        assert_eq!(chunk_interval_days(pool, hypertable).await, 7.0, "{hypertable} chunks span seven days");
-        assert_eq!(columnstore_after_days(pool, hypertable).await, 30.0, "{hypertable} converts after thirty days");
+        assert_days(
+            chunk_interval_days(pool, hypertable).await,
+            7.0,
+            &format!("{hypertable} chunks span seven days"),
+        );
+        assert_days(
+            columnstore_after_days(pool, hypertable).await,
+            30.0,
+            &format!("{hypertable} converts after thirty days"),
+        );
 
         let (stored_segmentby, stored_orderby): (String, String) =
             sqlx::query_as("SELECT segmentby, orderby FROM timescaledb_information.hypertable_columnstore_settings WHERE hypertable = $1::regclass")
@@ -143,11 +157,15 @@ async fn an_override_moves_both_hypertables_once_and_the_defaults_move_them_back
         vec![HypertableName::AttributeHistory, HypertableName::ScopeHistory]
     );
     for (hypertable, _) in HYPERTABLES {
-        assert_eq!(chunk_interval_days(pool, hypertable).await, 1.0, "{hypertable} chunks now span one day");
-        assert_eq!(
+        assert_days(
+            chunk_interval_days(pool, hypertable).await,
+            1.0,
+            &format!("{hypertable} chunks now span one day"),
+        );
+        assert_days(
             columnstore_after_days(pool, hypertable).await,
             3.0,
-            "{hypertable} now converts after three days"
+            &format!("{hypertable} now converts after three days"),
         );
     }
 
@@ -157,11 +175,15 @@ async fn an_override_moves_both_hypertables_once_and_the_defaults_move_them_back
     let restored = repository.reconcile_storage_policy(&policy(7, 30)).await.expect("the defaults reconcile");
     assert!(!restored.is_unchanged(), "restoring the defaults is a write: {restored:?}");
     for (hypertable, _) in HYPERTABLES {
-        assert_eq!(chunk_interval_days(pool, hypertable).await, 7.0, "{hypertable} chunks span seven days again");
-        assert_eq!(
+        assert_days(
+            chunk_interval_days(pool, hypertable).await,
+            7.0,
+            &format!("{hypertable} chunks span seven days again"),
+        );
+        assert_days(
             columnstore_after_days(pool, hypertable).await,
             30.0,
-            "{hypertable} converts after thirty days again"
+            &format!("{hypertable} converts after thirty days again"),
         );
     }
 

@@ -221,11 +221,15 @@ where
     }
 
     /// Borrow a broker by its typed role.
-    pub fn broker(&self, role: R) -> &BrokerHandle<R> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MultiBrokerError::MissingRole`] when the topology was not built with a broker for `role`.
+    pub fn broker(&self, role: R) -> Result<&BrokerHandle<R>, MultiBrokerError> {
         self.brokers
             .iter()
             .find(|broker| broker.role == role)
-            .unwrap_or_else(|| unreachable!("topology does not contain broker role {role:?}"))
+            .ok_or_else(|| MultiBrokerError::MissingRole(format!("{role:?}")))
     }
 
     /// Compose an isolated identifier for any participating broker.

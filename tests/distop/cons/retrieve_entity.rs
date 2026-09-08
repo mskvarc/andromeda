@@ -33,7 +33,7 @@ fn observed_dataset(value: i64, observed_at: &str, dataset_id: &str) -> Value {
 async fn distop_retrieve_entity_no_local_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons1");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
 
     let no_registration = front.client().get_entity(&entity_id, "", "application/ld+json", None).await.expect("retrieve");
     assert_status(&no_registration, 404);
@@ -66,8 +66,8 @@ async fn distop_retrieve_entity_no_local_no_registration_returns_404() {
 async fn distop_retrieve_entity_local_data_is_merge_base() {
     let topology = topology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons2");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     assert_status(
         &front
@@ -107,7 +107,7 @@ async fn distop_retrieve_entity_local_data_is_merge_base() {
 async fn distop_retrieve_entity_forwards_only_retrieveentity_capable_csrs() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons7");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     for (source, operations) in [
@@ -155,7 +155,7 @@ async fn distop_retrieve_entity_forwards_only_retrieveentity_capable_csrs() {
 #[tokio::test]
 async fn distop_retrieve_entity_forwards_exclusive_redirect_inclusive() {
     let topology = topology::single().await.expect("single-broker topology");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     for mode in ["exclusive", "redirect", "inclusive"] {
@@ -195,7 +195,7 @@ async fn distop_retrieve_entity_forwards_exclusive_redirect_inclusive() {
 async fn distop_retrieve_entity_discards_expired_remote_attribute() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons10");
-    let front = topology.broker(BrokerRole::A);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons10");
@@ -234,9 +234,9 @@ async fn distop_retrieve_entity_discards_expired_remote_attribute() {
 async fn distop_retrieve_entity_merges_per_4_5_5() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons11");
-    let front = topology.broker(BrokerRole::A);
-    let holder_b = topology.broker(BrokerRole::B);
-    let holder_c = topology.broker(BrokerRole::C);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let holder_b = topology.broker(BrokerRole::B).expect("topology broker B");
+    let holder_c = topology.broker(BrokerRole::C).expect("topology broker C");
 
     assert_status(
         &front
@@ -273,7 +273,7 @@ async fn distop_retrieve_entity_merges_per_4_5_5() {
     assert_status(&holder_c.client().post_entity(&c_entity).with_ld_json().send().await.expect("c"), 201);
 
     for (role, names) in [(BrokerRole::B, &["speed"][..]), (BrokerRole::C, &["speed", "location"][..])] {
-        let peer = topology.broker(role);
+        let peer = topology.broker(role).expect("topology broker for role");
         let registration_id = topology.id(&format!("registration:cons11-{role:?}"));
         let registration = CsrBuilder::new(&registration_id, peer.peer_url())
             .mode("inclusive")

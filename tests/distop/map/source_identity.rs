@@ -16,6 +16,7 @@ async fn identity_retrieve_returns_context_source_identity() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .source_identity(Some("application/ld+json"))
         .await
@@ -37,6 +38,7 @@ async fn identity_per_tenant_alias_obtainable() {
     let tenant = TenantName::parse("distopTenantMap").expect("valid tenant name");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .tenant_client(tenant)
         .source_identity(Some("application/ld+json"))
         .await
@@ -56,6 +58,7 @@ async fn identity_input_takes_no_body_or_params() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/info/sourceIdentity?ignored=value")
         .header("Accept", "application/ld+json")
@@ -80,6 +83,7 @@ async fn identity_unsupported_returns_501() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .source_identity(Some("application/ld+json"))
         .await
@@ -95,6 +99,7 @@ async fn identity_body_conforms_to_data_model() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .source_identity(Some("application/ld+json"))
         .await
@@ -121,6 +126,7 @@ async fn identity_success_returns_200_jsonld() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .source_identity(Some("application/ld+json"))
         .await

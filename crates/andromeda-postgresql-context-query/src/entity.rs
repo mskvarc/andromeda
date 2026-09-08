@@ -200,7 +200,7 @@ fn build_entity_conditions(target: &ContextTarget, query: &CompiledEntityQuery, 
     }
 
     if let Some(q_expr) = &query.selection.q_expr {
-        condition = condition.add(q_filter::compile(q_expr, rows, names)?);
+        condition = condition.add(q_filter::compile(q_expr, rows, names));
     }
 
     if let Some(geo) = &query.selection.geo {

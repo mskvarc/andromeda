@@ -88,7 +88,7 @@ async fn matching_subscription_empty_notification_attributes_all_match() {
     let vtype = topology.id("EmptyAttrsSubType");
     let subscription_id = topology.id("subscription:empty-attrs");
     let subscription = CsrSubscriptionBuilder::new(&subscription_id, &adapter.endpoint_url(), &vtype).build();
-    let created = csr_subscription::create(topology.broker(BrokerRole::A).client(), &subscription).await;
+    let created = csr_subscription::create(topology.broker(BrokerRole::A).expect("topology broker A").client(), &subscription).await;
     assert_status(&created, 201);
 
     let registration_id = topology.id("registration:empty-attrs");
@@ -127,7 +127,7 @@ async fn matching_subscription_union_of_watched_and_notification_attributes() {
         .watched_attributes(&[watched.as_str()])
         .notification_attributes(&[notified.as_str()])
         .build();
-    let created = csr_subscription::create(topology.broker(BrokerRole::A).client(), &subscription).await;
+    let created = csr_subscription::create(topology.broker(BrokerRole::A).expect("topology broker A").client(), &subscription).await;
     assert_status(&created, 201);
 
     let registration_id = topology.id("registration:union");

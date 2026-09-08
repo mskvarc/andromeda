@@ -32,6 +32,7 @@ async fn register_inclusive_query(topology: &MultiBrokerTopology<BrokerRole>, en
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -61,6 +62,7 @@ async fn distop_entity_map_broad_request_to_each_matching_source() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
         .await
@@ -93,6 +95,7 @@ async fn distop_entity_map_query_pins_ids_only_mapped_paginated() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&first_id, 10))
             .with_ld_json()
@@ -104,6 +107,7 @@ async fn distop_entity_map_query_pins_ids_only_mapped_paginated() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&second_id, 20))
             .with_ld_json()
@@ -115,6 +119,7 @@ async fn distop_entity_map_query_pins_ids_only_mapped_paginated() {
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
         .await
@@ -124,6 +129,7 @@ async fn distop_entity_map_query_pins_ids_only_mapped_paginated() {
 
     let page = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle&limit=1")
         .header("NGSILD-EntityMap", map_id.as_str())
@@ -150,6 +156,7 @@ async fn distop_entity_map_filters_remove_non_matching_ids_during_pagination() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&matching, 60))
             .with_ld_json()
@@ -161,6 +168,7 @@ async fn distop_entity_map_filters_remove_non_matching_ids_during_pagination() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&non_matching, 40))
             .with_ld_json()
@@ -172,6 +180,7 @@ async fn distop_entity_map_filters_remove_non_matching_ids_during_pagination() {
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&q=speed%3E50&entityMap=true", "application/ld+json", None)
         .await
@@ -181,6 +190,7 @@ async fn distop_entity_map_filters_remove_non_matching_ids_during_pagination() {
 
     let reused = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle&q=speed%3E50")
         .header("NGSILD-EntityMap", map_id.as_str())
@@ -214,6 +224,7 @@ async fn distop_entity_map_location_returned_when_requested() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 15))
             .with_ld_json()
@@ -225,6 +236,7 @@ async fn distop_entity_map_location_returned_when_requested() {
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
         .await
@@ -234,6 +246,7 @@ async fn distop_entity_map_location_returned_when_requested() {
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_entity_map(&map_id)
         .await
@@ -266,6 +279,7 @@ async fn distop_entity_map_retrieve_records_holding_sources_single_instance() {
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities(&format!("type=Vehicle&id={entity_id}&entityMap=true"), "application/ld+json", None)
         .await
@@ -276,6 +290,7 @@ async fn distop_entity_map_retrieve_records_holding_sources_single_instance() {
 
     let reused = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type=Vehicle&id={entity_id}"))
         .header("NGSILD-EntityMap", map_id.as_str())
@@ -303,8 +318,8 @@ async fn distop_entity_map_retrieve_records_holding_sources_single_instance() {
 #[tokio::test]
 async fn distop_entity_map_retrieve_cross_instance_reuse() {
     let topology = topology::pair().await.expect("two-broker topology");
-    let front = topology.broker(BrokerRole::A);
-    let peer = topology.broker(BrokerRole::B);
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let peer = topology.broker(BrokerRole::B).expect("topology broker B");
     let entity_id = topology.id("Vehicle:map-cross");
     assert_status(
         &front
@@ -361,6 +376,7 @@ async fn distop_entity_map_reused_when_field_passed_back() {
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
         .await
@@ -372,6 +388,7 @@ async fn distop_entity_map_reused_when_field_passed_back() {
 
     let reused = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("NGSILD-EntityMap", map_id.as_str())
@@ -403,6 +420,7 @@ async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&mapped, 10))
             .with_ld_json()
@@ -414,6 +432,7 @@ async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
         .await
@@ -424,6 +443,7 @@ async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&added_later, 20))
             .with_ld_json()
@@ -435,6 +455,7 @@ async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
 
     let reused = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("NGSILD-EntityMap", map_id.as_str())
@@ -464,6 +485,7 @@ async fn distop_entity_map_subsequent_request_rejects_changed_filter_params() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 60))
             .with_ld_json()
@@ -475,6 +497,7 @@ async fn distop_entity_map_subsequent_request_rejects_changed_filter_params() {
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
         .await
@@ -484,6 +507,7 @@ async fn distop_entity_map_subsequent_request_rejects_changed_filter_params() {
 
     let rejected = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle&q=speed%3E99")
         .header("NGSILD-EntityMap", map_id.as_str())
@@ -513,6 +537,7 @@ async fn distop_entity_map_expired_or_inaccessible_creates_new() {
     let unknown_map = topology.id("EntityMap:does-not-exist");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("NGSILD-EntityMap", unknown_map.as_str())
@@ -541,6 +566,7 @@ async fn distop_entity_map_only_expiry_updatable_by_other_components() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 15))
             .with_ld_json()
@@ -552,6 +578,7 @@ async fn distop_entity_map_only_expiry_updatable_by_other_components() {
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
         .await
@@ -561,6 +588,7 @@ async fn distop_entity_map_only_expiry_updatable_by_other_components() {
 
     let patched = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::PATCH, &format!("/ngsi-ld/v1/entityMaps/{map_id}"))
         .json(&json!({ "expiresAt": "2099-01-01T00:00:00Z" }))
@@ -571,6 +599,7 @@ async fn distop_entity_map_only_expiry_updatable_by_other_components() {
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_entity_map(&map_id)
         .await

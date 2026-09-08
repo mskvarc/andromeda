@@ -53,13 +53,13 @@ impl LocalOutcome {
 pub fn provision_response(
     entity_id: &Uri,
     forwarded: &[ForwardedWriteResult],
-    local: LocalOutcome,
+    local: &LocalOutcome,
     success: Response,
     instance: &HttpUri,
 ) -> Result<Response, ProblemResponse> {
     let remote_failed = forwarded.iter().any(ForwardedWriteResult::is_failure);
     let remote_succeeded = forwarded.iter().any(|result| !result.is_failure());
-    match &local {
+    match local {
         LocalOutcome::NothingRemained => {
             if !remote_failed {
                 return Ok(success);
@@ -67,18 +67,18 @@ pub fn provision_response(
             if let Some(error) = single_source_failure(forwarded) {
                 return Err(classify_forwarding_error(&error).with_instance(instance.clone()));
             }
-            Ok(multi_status(multi_status_result(entity_id, &local, forwarded)))
+            Ok(multi_status(multi_status_result(entity_id, local, forwarded)))
         }
         LocalOutcome::Processed(Ok(())) => {
             if remote_failed {
-                Ok(multi_status(multi_status_result(entity_id, &local, forwarded)))
+                Ok(multi_status(multi_status_result(entity_id, local, forwarded)))
             } else {
                 Ok(success)
             }
         }
         LocalOutcome::Processed(Err(report)) => {
             if remote_succeeded {
-                Ok(multi_status(multi_status_result(entity_id, &local, forwarded)))
+                Ok(multi_status(multi_status_result(entity_id, local, forwarded)))
             } else {
                 Err(report.clone().with_instance(instance.clone())) // clone: the report is owned by the outcome the caller still holds
             }
@@ -208,7 +208,7 @@ mod tests {
             let response = provision_response(
                 &uri("urn:test:1"),
                 &forwarded,
-                LocalOutcome::NothingRemained,
+                &LocalOutcome::NothingRemained,
                 StatusCode::NO_CONTENT.into_response(),
                 &instance(),
             );
@@ -223,7 +223,7 @@ mod tests {
         let response = provision_response(
             &uri("urn:test:1"),
             &[single],
-            LocalOutcome::NothingRemained,
+            &LocalOutcome::NothingRemained,
             StatusCode::NO_CONTENT.into_response(),
             &instance(),
         );
@@ -236,7 +236,7 @@ mod tests {
         let response = provision_response(
             &uri("urn:test:1"),
             &forwarded,
-            LocalOutcome::NothingRemained,
+            &LocalOutcome::NothingRemained,
             StatusCode::NO_CONTENT.into_response(),
             &instance(),
         );
@@ -249,7 +249,7 @@ mod tests {
         let response = provision_response(
             &uri("urn:test:1"),
             &forwarded,
-            LocalOutcome::Processed(Ok(())),
+            &LocalOutcome::Processed(Ok(())),
             StatusCode::CREATED.into_response(),
             &instance(),
         );
@@ -262,7 +262,7 @@ mod tests {
         let created = provision_response(
             &uri("urn:test:1"),
             &forwarded,
-            LocalOutcome::Processed(Ok(())),
+            &LocalOutcome::Processed(Ok(())),
             StatusCode::CREATED.into_response(),
             &instance(),
         );
@@ -270,7 +270,7 @@ mod tests {
         let remote_only = provision_response(
             &uri("urn:test:1"),
             &forwarded,
-            LocalOutcome::NothingRemained,
+            &LocalOutcome::NothingRemained,
             StatusCode::NO_CONTENT.into_response(),
             &instance(),
         );
@@ -282,7 +282,7 @@ mod tests {
         let partial = provision_response(
             &uri("urn:test:1"),
             &[result(ForwardingMode::Inclusive, 204)],
-            LocalOutcome::Processed(Err(not_found())),
+            &LocalOutcome::Processed(Err(not_found())),
             StatusCode::NO_CONTENT.into_response(),
             &instance(),
         );
@@ -290,7 +290,7 @@ mod tests {
         let complete_failure = provision_response(
             &uri("urn:test:1"),
             &[result(ForwardingMode::Inclusive, 500)],
-            LocalOutcome::Processed(Err(not_found())),
+            &LocalOutcome::Processed(Err(not_found())),
             StatusCode::NO_CONTENT.into_response(),
             &instance(),
         );

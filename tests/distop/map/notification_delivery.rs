@@ -37,6 +37,7 @@ async fn notif_sent_to_endpoint_uri_with_receiver_info() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -46,6 +47,7 @@ async fn notif_sent_to_endpoint_uri_with_receiver_info() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&topology.id("Vehicle:receiver-info"), 20))
             .with_ld_json()
@@ -79,6 +81,7 @@ async fn notif_content_type_follows_endpoint_accept() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&body)
             .await
@@ -88,6 +91,7 @@ async fn notif_content_type_follows_endpoint_accept() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&topology.id("Vehicle:content-type"), 20))
             .with_ld_json()
@@ -117,6 +121,7 @@ async fn notification_state(topology: &MultiBrokerTopology<BrokerRole>, id: &str
     sleep(SETTLE).await;
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_subscription(id, None)
         .await
@@ -136,6 +141,7 @@ async fn notif_times_sent_and_last_notification_updated() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, &sink.url("/notify")))
             .await
@@ -145,6 +151,7 @@ async fn notif_times_sent_and_last_notification_updated() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&topology.id("Vehicle:times-sent"), 20))
             .with_ld_json()
@@ -177,6 +184,7 @@ async fn notif_success_sets_status_ok_and_last_success() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, &sink.url("/notify")))
             .await
@@ -186,6 +194,7 @@ async fn notif_success_sets_status_ok_and_last_success() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&topology.id("Vehicle:success-state"), 20))
             .with_ld_json()
@@ -219,6 +228,7 @@ async fn notif_failure_sets_status_failed_and_last_failure() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_subscription(&subscription(&id, &sink.url("/notify")))
             .await
@@ -228,6 +238,7 @@ async fn notif_failure_sets_status_failed_and_last_failure() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&topology.id("Vehicle:failure-state"), 20))
             .with_ld_json()

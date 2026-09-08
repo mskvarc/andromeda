@@ -18,7 +18,7 @@ use bigdecimal::BigDecimal;
 ///
 /// Returns [`TemporalStoreError::Decode`] when the database contains a value
 /// outside the broker's documented numeric range.
-pub(crate) fn json_number_of(decimal: BigDecimal, column: &str) -> Result<JsonNumber, TemporalStoreError> {
+pub(crate) fn json_number_of(decimal: &BigDecimal, column: &str) -> Result<JsonNumber, TemporalStoreError> {
     JsonNumber::from_decimal(decimal).map_err(|error| TemporalStoreError::Decode(format!("{column}: {error}")))
 }
 
@@ -37,7 +37,7 @@ mod tests {
     /// double: reading it through the JSON numeric model keeps it whole.
     #[test]
     fn a_sum_beyond_the_exact_double_range_keeps_its_integer_shape() {
-        let number = json_number_of(decimal("9007199254740993"), "agg_sum").expect("an integer aggregate");
+        let number = json_number_of(&decimal("9007199254740993"), "agg_sum").expect("an integer aggregate");
         pretty_assertions::assert_eq!(number, JsonNumber::from(9_007_199_254_740_993_i64));
         pretty_assertions::assert_eq!(serde_json::to_string(&number).expect("a JSON number"), "9007199254740993");
     }
@@ -46,7 +46,7 @@ mod tests {
     /// double nearest to it.
     #[test]
     fn an_integer_above_the_signed_range_keeps_its_unsigned_shape() {
-        let number = json_number_of(decimal("18446744073709551615"), "agg_sum").expect("an integer aggregate");
+        let number = json_number_of(&decimal("18446744073709551615"), "agg_sum").expect("an integer aggregate");
         pretty_assertions::assert_eq!(number, JsonNumber::from(u64::MAX));
     }
 
@@ -54,13 +54,13 @@ mod tests {
     /// decode rather than being truncated to the integer around it.
     #[test]
     fn a_fractional_average_keeps_its_fraction() {
-        let number = json_number_of(decimal("2.5"), "agg_avg").expect("a fractional aggregate");
+        let number = json_number_of(&decimal("2.5"), "agg_avg").expect("a fractional aggregate");
         pretty_assertions::assert_eq!(number, "2.5".parse::<JsonNumber>().expect("an exact decimal"));
     }
 
     #[test]
     fn a_negative_aggregate_keeps_its_sign() {
-        let number = json_number_of(decimal("-273.15"), "agg_min").expect("a negative aggregate");
+        let number = json_number_of(&decimal("-273.15"), "agg_min").expect("a negative aggregate");
         pretty_assertions::assert_eq!(number, "-273.15".parse::<JsonNumber>().expect("an exact decimal"));
     }
 
@@ -69,7 +69,7 @@ mod tests {
     /// column reported it at.
     #[test]
     fn a_scaled_zero_is_a_number_like_any_other() {
-        let number = json_number_of(decimal("0.000"), "agg_stddev").expect("a zero aggregate");
+        let number = json_number_of(&decimal("0.000"), "agg_stddev").expect("a zero aggregate");
         pretty_assertions::assert_eq!(number, JsonNumber::from(0));
         pretty_assertions::assert_eq!(serde_json::to_string(&number).expect("a JSON number"), "0");
     }
@@ -79,7 +79,7 @@ mod tests {
     /// was unreadable.
     #[test]
     fn a_decode_failure_names_the_column_it_came_from() {
-        let error = json_number_of(decimal("1e131072"), "agg_sumsq").expect_err("an unrepresentable magnitude is refused");
+        let error = json_number_of(&decimal("1e131072"), "agg_sumsq").expect_err("an unrepresentable magnitude is refused");
         assert!(error.to_string().contains("agg_sumsq"), "got {error}");
     }
 }

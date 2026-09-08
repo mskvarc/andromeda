@@ -314,8 +314,8 @@ mod tests {
         .ok_or_else(|| SubscriptionError::internal("the subscription geoQ fixture did not compile"))?;
 
         let request_geo = GeoQueryInput::from_wire(
-            "near;maxDistance==1000".to_string(),
-            "Point".to_string(),
+            "near;maxDistance==1000",
+            "Point",
             serde_json::json!([13.4, 52.5]),
             Some(parse_fixture("location", "geoproperty")?),
         )

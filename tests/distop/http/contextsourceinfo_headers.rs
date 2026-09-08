@@ -36,6 +36,7 @@ async fn dist_http_forwarded_jsonld_context_sets_link_and_json_content_type() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -47,6 +48,7 @@ async fn dist_http_forwarded_jsonld_context_sets_link_and_json_content_type() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 9))
             .with_ld_json()
@@ -88,6 +90,7 @@ async fn dist_http_forwarded_context_source_info_keys_become_custom_headers() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -99,6 +102,7 @@ async fn dist_http_forwarded_context_source_info_keys_become_custom_headers() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
             .await
@@ -135,6 +139,7 @@ async fn dist_http_forwarded_context_source_info_request_value_copied_from_reque
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -145,6 +150,7 @@ async fn dist_http_forwarded_context_source_info_request_value_copied_from_reque
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("accept", "application/ld+json")
@@ -184,6 +190,7 @@ async fn dist_http_forwarded_context_source_info_cannot_override_tenant_or_conte
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&registration)
             .await
@@ -195,6 +202,7 @@ async fn dist_http_forwarded_context_source_info_cannot_override_tenant_or_conte
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
             .await

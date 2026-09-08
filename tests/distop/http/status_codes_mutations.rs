@@ -18,6 +18,7 @@ async fn dist_http_retrieve_entity_invalid_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity("not a uri", "", "application/ld+json", Some(context_link()))
         .await
@@ -33,6 +34,7 @@ async fn dist_http_retrieve_entity_unknown_returns_404() {
     let entity_id = topology.id("Vehicle:retrieve-unknown");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
         .await
@@ -53,6 +55,7 @@ async fn dist_http_retrieve_entity_source_unsupported_format_returns_501() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "exclusive"))
             .await
@@ -63,6 +66,7 @@ async fn dist_http_retrieve_entity_source_unsupported_format_returns_501() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
         .await
@@ -81,6 +85,7 @@ async fn dist_http_delete_entity_local_returns_204() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -90,7 +95,13 @@ async fn dist_http_delete_entity_local_returns_204() {
         201,
     );
 
-    let response = topology.broker(BrokerRole::A).client().delete_entity(&entity_id).await.expect("local delete");
+    let response = topology
+        .broker(BrokerRole::A)
+        .expect("topology broker A")
+        .client()
+        .delete_entity(&entity_id)
+        .await
+        .expect("local delete");
     assert_status(&response, 204);
     topology.finish().await.expect("topology cleanup");
 }
@@ -107,6 +118,7 @@ async fn dist_http_delete_entity_partial_failure_returns_207_batch_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -118,6 +130,7 @@ async fn dist_http_delete_entity_partial_failure_returns_207_batch_result() {
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["deleteEntity"]))
             .await
@@ -128,6 +141,7 @@ async fn dist_http_delete_entity_partial_failure_returns_207_batch_result() {
 
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_entity(&entity_id)
         .await
@@ -145,6 +159,7 @@ async fn dist_http_delete_entity_invalid_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_entity("not a uri")
         .await
@@ -158,7 +173,13 @@ async fn dist_http_delete_entity_invalid_id_returns_400() {
 async fn dist_http_delete_entity_unknown_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:delete-unknown");
-    let response = topology.broker(BrokerRole::A).client().delete_entity(&entity_id).await.expect("unknown delete");
+    let response = topology
+        .broker(BrokerRole::A)
+        .expect("topology broker A")
+        .client()
+        .delete_entity(&entity_id)
+        .await
+        .expect("unknown delete");
     assert_status(&response, 404);
     topology.finish().await.expect("topology cleanup");
 }

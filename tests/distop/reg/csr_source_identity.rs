@@ -23,6 +23,7 @@ async fn source_identity_returns_conformant_identity() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .source_identity(Some("application/ld+json"))
         .await
@@ -61,6 +62,7 @@ async fn source_identity_preserves_extras_verbatim() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .source_identity(Some("application/ld+json"))
         .await
@@ -95,10 +97,10 @@ macro_rules! source_identity_rejection_cases {
                     .mode("auxiliary")
                     .operations(&["retrieveEntity", "queryEntity"])
                     .build();
-                let registered = topology.broker(BrokerRole::A).client().create_registration(&registration).await.expect("register mock source");
+                let registered = topology.broker(BrokerRole::A).expect("topology broker A").client().create_registration(&registration).await.expect("register mock source");
                 assert_status(&registered, 201);
 
-                let own = topology.broker(BrokerRole::A).client().source_identity(Some("application/ld+json")).await.expect("broker source identity");
+                let own = topology.broker(BrokerRole::A).expect("topology broker A").client().source_identity(Some("application/ld+json")).await.expect("broker source identity");
                 assert_status(&own, 200);
                 assert_eq!(
                     json_body(&own)["type"].as_str(),

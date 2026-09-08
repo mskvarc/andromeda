@@ -28,7 +28,7 @@ fn brand_and_speed(id: &str, brand: &str, speed: i64) -> Value {
 #[tokio::test]
 async fn replace_entity_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let entity_id = topology.id("Vehicle:prov-replace-absent");
 
     let replaced = client
@@ -46,7 +46,7 @@ async fn replace_entity_absent_and_no_registration_returns_404() {
 #[tokio::test]
 async fn replace_entity_registration_matches_entity_absent_not_404() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-replace-absent-reg");
     let reg_id = topology.id("registration:prov-replace-absent-reg");
@@ -82,7 +82,7 @@ async fn replace_entity_registration_matches_entity_absent_not_404() {
 #[tokio::test]
 async fn replace_entity_exclusive_match_forwards_and_strips() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-replace-exclusive");
     let reg_id = topology.id("registration:prov-replace-exclusive");
@@ -138,7 +138,7 @@ async fn replace_entity_exclusive_match_forwards_and_strips() {
 #[tokio::test]
 async fn replace_entity_op_unsupported_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-replace-unsup");
     let reg_id = topology.id("registration:prov-replace-unsup");
@@ -182,7 +182,7 @@ async fn replace_entity_op_unsupported_returns_409() {
 #[tokio::test]
 async fn replace_entity_inclusive_forwards_remainder_replaces_local_preserves_createdat() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-replace-inclusive");
     let reg_id = topology.id("registration:prov-replace-inclusive");

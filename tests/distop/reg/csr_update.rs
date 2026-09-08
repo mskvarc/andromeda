@@ -22,6 +22,7 @@ use urlencoding::encode;
 async fn create_baseline(topology: &MultiBrokerTopology<BrokerRole>, id: &str) {
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&csr_basic(id, PEER_ENDPOINT))
         .await
@@ -40,6 +41,7 @@ async fn update_valid_fragment_returns_204() {
     let fragment = json!({ "description": "updated telemetry source" });
     let updated = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_registration(&id, &fragment, None)
         .await
@@ -49,6 +51,7 @@ async fn update_valid_fragment_returns_204() {
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(&id, None)
         .await
@@ -76,6 +79,7 @@ async fn update_cannot_change_id() {
     let fragment = json!({ "id": id_b });
     let _patched = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_registration(&id_a, &fragment, None)
         .await
@@ -83,6 +87,7 @@ async fn update_cannot_change_id() {
 
     let under_a = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(&id_a, None)
         .await
@@ -91,6 +96,7 @@ async fn update_cannot_change_id() {
     assert_eq!(json_body(&under_a)["id"].as_str(), Some(id_a.as_str()), "the original id is unmodified");
     let under_b = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(&id_b, None)
         .await
@@ -108,6 +114,7 @@ async fn update_invalid_target_id_returns_400() {
     let fragment = json!({ "description": "irrelevant" });
     let rejected = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_registration("not-a-uri", &fragment, None)
         .await
@@ -127,6 +134,7 @@ async fn update_unknown_registration_returns_404() {
     let fragment = json!({ "description": "irrelevant" });
     let not_found = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_registration(&unknown, &fragment, None)
         .await
@@ -148,6 +156,7 @@ async fn update_bad_contextsourceinfo_returns_400() {
     let fragment = json!({ "contextSourceInfo": [ { "key": "accept", "value": "text/plain" } ] });
     let rejected = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_registration(&id, &fragment, None)
         .await
@@ -169,6 +178,7 @@ async fn update_invalid_jsonld_returns_400() {
     let path = format!("/ngsi-ld/v1/csourceRegistrations/{}", encode(&id));
     let rejected = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::PATCH, &path)
         .header("content-type", "application/ld+json")
@@ -193,6 +203,7 @@ async fn update_fragment_violates_529_returns_400() {
     let fragment = json!({ "mode": "foo" });
     let rejected = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_registration(&id, &fragment, None)
         .await
@@ -214,6 +225,7 @@ async fn update_shorthand_names_expanded() {
     let fragment = json!({ "information": [ { "entities": [ { "type": "Vehicle" } ], "propertyNames": ["speed"] } ] });
     let updated = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_registration(&id, &fragment, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -222,6 +234,7 @@ async fn update_shorthand_names_expanded() {
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .without_default_context()
         .retrieve_registration(&id, None)

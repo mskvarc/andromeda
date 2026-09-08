@@ -23,6 +23,7 @@ async fn create_baseline(topology: &MultiBrokerTopology<BrokerRole>, local: &str
     let id = topology.id(local);
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_subscription(&subscription(&id, INERT_ENDPOINT))
         .await
@@ -35,6 +36,7 @@ async fn create_baseline(topology: &MultiBrokerTopology<BrokerRole>, local: &str
 async fn stored(topology: &MultiBrokerTopology<BrokerRole>, id: &str) -> Value {
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_subscription(id, None)
         .await
@@ -50,6 +52,7 @@ async fn sub_update_missing_or_invalid_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_subscription("not a uri", &json!({ "description": "x" }), None)
         .await
@@ -67,6 +70,7 @@ async fn sub_update_unknown_target_returns_404() {
     let id = topology.id("Subscription:unknown-update");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_subscription(&id, &json!({ "description": "x" }), None)
         .await
@@ -84,6 +88,7 @@ async fn sub_update_performs_jsonld_validation() {
     let id = create_baseline(&topology, "Subscription:jsonld-valid").await;
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_subscription(&id, &json!({ "q": "speed>10" }), Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -100,6 +105,7 @@ async fn sub_update_fragment_violating_data_model_returns_400() {
     let id = create_baseline(&topology, "Subscription:bad-model").await;
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_subscription(&id, &json!({ "entities": "not-an-array" }), None)
         .await
@@ -120,6 +126,7 @@ async fn sub_update_expands_attribute_terms() {
     let id = create_baseline(&topology, "Subscription:expand-update").await;
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_subscription(&id, &json!({ "watchedAttributes": ["speed"] }), Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -127,6 +134,7 @@ async fn sub_update_expands_attribute_terms() {
     assert_status(&response, 204);
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .without_default_context()
         .retrieve_subscription(&id, None)
@@ -152,6 +160,7 @@ async fn sub_update_unreachable_jsonld_context_returns_504() {
     let body = json!({ "watchedAttributes": ["speed"], "@context": "http://127.0.0.1:9/context.jsonld" });
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::PATCH, &format!("/ngsi-ld/v1/subscriptions/{}", urlencoding::encode(&id)))
         .header("Content-Type", "application/ld+json")
@@ -173,6 +182,7 @@ async fn sub_update_invalid_jsonld_context_returns_400() {
     let body = json!({ "watchedAttributes": ["speed"], "@context": 42 });
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .raw(Method::PATCH, &format!("/ngsi-ld/v1/subscriptions/{}", urlencoding::encode(&id)))
         .header("Content-Type", "application/ld+json")
@@ -196,6 +206,7 @@ async fn sub_update_partial_merge_per_558() {
     body["q"] = json!("speed>10");
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_subscription(&body)
         .await
@@ -203,6 +214,7 @@ async fn sub_update_partial_merge_per_558() {
     assert_status(&created, 201);
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_subscription(&id, &json!({ "description": "changed" }), None)
         .await
@@ -223,6 +235,7 @@ async fn sub_update_is_active_true_no_expires_at_status_active_unless_expired() 
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .update_subscription(&id, &json!({ "isActive": false }), None)
             .await
@@ -232,6 +245,7 @@ async fn sub_update_is_active_true_no_expires_at_status_active_unless_expired() 
     assert_status(
         &topology
             .broker(BrokerRole::A)
+            .expect("topology broker A")
             .client()
             .update_subscription(&id, &json!({ "isActive": true }), None)
             .await
@@ -254,6 +268,7 @@ async fn sub_update_is_active_true_future_expires_at_status_active() {
     let id = create_baseline(&topology, "Subscription:future-active").await;
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_subscription(&id, &json!({ "isActive": true, "expiresAt": "2999-01-01T00:00:00Z" }), None)
         .await
@@ -275,6 +290,7 @@ async fn sub_update_is_active_false_no_expires_at_status_paused_unless_expired()
     let id = create_baseline(&topology, "Subscription:pause").await;
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_subscription(&id, &json!({ "isActive": false }), None)
         .await
@@ -296,6 +312,7 @@ async fn sub_update_future_expires_at_only_reactivates_expired() {
     let id = create_baseline(&topology, "Subscription:future-expiry").await;
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_subscription(&id, &json!({ "expiresAt": "2999-01-01T00:00:00Z" }), None)
         .await
@@ -317,6 +334,7 @@ async fn sub_update_past_expires_at_returns_400() {
     let id = create_baseline(&topology, "Subscription:past-update").await;
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_subscription(&id, &json!({ "expiresAt": "2000-01-01T00:00:00Z" }), None)
         .await
@@ -333,6 +351,7 @@ async fn sub_update_success_returns_204() {
     let id = create_baseline(&topology, "Subscription:update-204").await;
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .update_subscription(&id, &json!({ "description": "updated" }), None)
         .await
@@ -348,6 +367,7 @@ async fn sub_delete_missing_or_invalid_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_subscription("not a uri")
         .await
@@ -365,6 +385,7 @@ async fn sub_delete_unknown_id_returns_404() {
     let id = topology.id("Subscription:unknown-delete");
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_subscription(&id)
         .await
@@ -381,6 +402,7 @@ async fn sub_delete_success_returns_204() {
     let id = create_baseline(&topology, "Subscription:delete-204").await;
     let response = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .delete_subscription(&id)
         .await

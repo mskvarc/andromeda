@@ -26,7 +26,7 @@ use serde_json::{Value, json};
 #[tokio::test]
 async fn batch_create_per_csr_filters_input_copy() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:prov-batch-create-filter-v1");
     let d1 = topology.id("Device:prov-batch-create-filter-d1");
@@ -98,7 +98,7 @@ async fn batch_create_per_csr_filters_input_copy() {
 #[tokio::test]
 async fn batch_create_strips_redirect_owned_attrs_for_other_csr() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:prov-batch-create-redir-v1");
     let reg_speed = topology.id("registration:prov-batch-create-redir-speed");
@@ -152,7 +152,7 @@ async fn batch_create_strips_redirect_owned_attrs_for_other_csr() {
 #[tokio::test]
 async fn batch_create_empty_in_skips_csr() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:prov-batch-create-skip-v1");
     let reg_colour = topology.id("registration:prov-batch-create-skip-colour");
@@ -198,7 +198,7 @@ async fn batch_create_empty_in_skips_csr() {
 #[tokio::test]
 async fn batch_create_supported_forwards_and_merges_results() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:prov-batch-create-merge-v1");
     let v2 = topology.id("Vehicle:prov-batch-create-merge-v2");
@@ -239,7 +239,7 @@ async fn batch_create_supported_forwards_and_merges_results() {
 #[tokio::test]
 async fn batch_create_fallback_per_entity_create() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:prov-batch-create-fallback-v1");
     let v2 = topology.id("Vehicle:prov-batch-create-fallback-v2");
@@ -275,7 +275,7 @@ async fn batch_create_fallback_per_entity_create() {
 #[tokio::test]
 async fn batch_create_redirect_neither_op_conflict_per_entity() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:prov-batch-create-neither-v1");
     let v2 = topology.id("Vehicle:prov-batch-create-neither-v2");
@@ -314,7 +314,7 @@ async fn batch_create_redirect_neither_op_conflict_per_entity() {
 #[tokio::test]
 async fn batch_create_local_phase_populates_success_and_errors() {
     let topology = topology::single().await.expect("single-broker topology");
-    let client = topology.broker(BrokerRole::A).client();
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:prov-batch-create-local-v1");
     let v2 = topology.id("Vehicle:prov-batch-create-local-v2");

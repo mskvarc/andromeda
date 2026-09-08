@@ -9,6 +9,7 @@
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use thiserror::Error;
 
 /// Postgres binary-COPY header signature (`PGCOPY\n\377\r\n\0`).
 pub const COPY_HEADER_SIGNATURE: &[u8] = b"PGCOPY\n\xff\r\n\0";
@@ -16,6 +17,26 @@ pub const COPY_HEADER_SIGNATURE: &[u8] = b"PGCOPY\n\xff\r\n\0";
 /// Offset (microseconds) between the Unix epoch and Postgres's
 /// timestamptz epoch of 2000-01-01 00:00:00 UTC.
 pub const POSTGRES_EPOCH_MICROS: i64 = 946_684_800_000_000;
+
+/// Version byte that opens every `jsonb` binary payload. `PostgreSQL` has
+/// defined only version 1 of that layout.
+const JSONB_VERSION: u8 = 0x01;
+
+/// Errors raised while encoding a single binary-COPY field.
+#[derive(Debug, Error)]
+pub enum CopyFieldError {
+    /// The payload is longer than the signed 32-bit prefix that announces
+    /// every field, so the field cannot be described by the format at all.
+    #[error("binary COPY field is {length} bytes, more than the 32-bit length prefix can describe")]
+    FieldTooLong {
+        /// Length, in bytes, of the payload that was refused.
+        length: usize,
+    },
+    /// A [`Value`] could not be serialised into the bytes a `jsonb` field
+    /// carries.
+    #[error("binary COPY jsonb field does not serialise: {0}")]
+    Json(#[from] serde_json::Error),
+}
 
 /// Append the binary-COPY stream header: signature, zero flags, zero
 /// extension length.
@@ -36,28 +57,43 @@ pub fn write_field_count(buf: &mut Vec<u8>, count: i16) {
 }
 
 /// Append a non-null `text` field as a length-prefixed UTF-8 payload.
-pub fn write_text(buf: &mut Vec<u8>, value: &str) {
+///
+/// # Errors
+///
+/// Returns [`CopyFieldError::FieldTooLong`] when the string's UTF-8 length
+/// exceeds [`i32::MAX`], the widest payload a field prefix can announce.
+pub fn write_text(buf: &mut Vec<u8>, value: &str) -> Result<(), CopyFieldError> {
     let bytes = value.as_bytes();
-    write_length(buf, bytes.len() as i32);
+    write_payload_length(buf, bytes.len())?;
     buf.extend_from_slice(bytes);
+    Ok(())
 }
 
 /// Append an optional `text` field, encoding `None` as a NULL.
-pub fn write_text_opt(buf: &mut Vec<u8>, value: Option<&str>) {
-    match value {
-        Some(text) => write_text(buf, text),
-        None => write_null(buf),
-    }
+///
+/// # Errors
+///
+/// Returns [`CopyFieldError::FieldTooLong`] when a present string is longer
+/// than a field prefix can announce.
+pub fn write_text_opt(buf: &mut Vec<u8>, value: Option<&str>) -> Result<(), CopyFieldError> {
+    let Some(text) = value else {
+        write_null(buf);
+        return Ok(());
+    };
+    write_text(buf, text)
 }
 
 /// Append a `jsonb` field — length prefix, version byte 0x01, then the
 /// serialised JSON bytes.
-pub fn write_jsonb(buf: &mut Vec<u8>, value: &Value) {
-    let json = serde_json::to_vec(value).unwrap_or_else(|_| b"null".to_vec());
-    let total_len = json.len() as i32 + 1;
-    write_length(buf, total_len);
-    buf.push(0x01);
-    buf.extend_from_slice(&json);
+///
+/// # Errors
+///
+/// Returns [`CopyFieldError::Json`] when the value does not serialise, and
+/// [`CopyFieldError::FieldTooLong`] when its serialised form is longer than a
+/// field prefix can announce.
+pub fn write_jsonb(buf: &mut Vec<u8>, value: &Value) -> Result<(), CopyFieldError> {
+    let json = serde_json::to_vec(value)?;
+    write_jsonb_payload(buf, &json)
 }
 
 /// Append a `jsonb` field from JSON already serialised to text — length
@@ -66,31 +102,60 @@ pub fn write_jsonb(buf: &mut Vec<u8>, value: &Value) {
 /// The text is written as given, so it must be valid JSON; a caller that
 /// serialised a [`Value`] once for another bind path hands the same bytes here
 /// instead of re-serialising the DOM.
-pub fn write_jsonb_text(buf: &mut Vec<u8>, json: &str) {
-    let bytes = json.as_bytes();
-    let total_len = bytes.len() as i32 + 1;
-    write_length(buf, total_len);
-    buf.push(0x01);
-    buf.extend_from_slice(bytes);
+///
+/// # Errors
+///
+/// Returns [`CopyFieldError::FieldTooLong`] when the text is longer than a
+/// field prefix can announce.
+pub fn write_jsonb_text(buf: &mut Vec<u8>, json: &str) -> Result<(), CopyFieldError> {
+    write_jsonb_payload(buf, json.as_bytes())
+}
+
+/// Append the body both `jsonb` forms share: a length prefix covering the
+/// version byte together with `json`, that version byte, then the JSON bytes.
+///
+/// # Errors
+///
+/// Returns [`CopyFieldError::FieldTooLong`] when the version byte and the JSON
+/// bytes together are longer than a field prefix can announce.
+fn write_jsonb_payload(buf: &mut Vec<u8>, json: &[u8]) -> Result<(), CopyFieldError> {
+    let json_len = json.len();
+    let total_len = json_len.checked_add(1).ok_or(CopyFieldError::FieldTooLong { length: json_len })?;
+    write_payload_length(buf, total_len)?;
+    buf.push(JSONB_VERSION);
+    buf.extend_from_slice(json);
+    Ok(())
 }
 
 /// Append an optional `jsonb` field, encoding `None` as a NULL.
-pub fn write_jsonb_opt(buf: &mut Vec<u8>, value: Option<&Value>) {
-    match value {
-        Some(json) => write_jsonb(buf, json),
-        None => write_null(buf),
-    }
+///
+/// # Errors
+///
+/// Returns [`CopyFieldError::Json`] when a present value does not serialise,
+/// and [`CopyFieldError::FieldTooLong`] when its serialised form is longer
+/// than a field prefix can announce.
+pub fn write_jsonb_opt(buf: &mut Vec<u8>, value: Option<&Value>) -> Result<(), CopyFieldError> {
+    let Some(json) = value else {
+        write_null(buf);
+        return Ok(());
+    };
+    write_jsonb(buf, json)
 }
 
 /// Append an optional `bytea` field, encoding `None` as a NULL.
-pub fn write_bytea_opt(buf: &mut Vec<u8>, value: Option<&[u8]>) {
-    match value {
-        Some(bytes) => {
-            write_length(buf, bytes.len() as i32);
-            buf.extend_from_slice(bytes);
-        }
-        None => write_null(buf),
-    }
+///
+/// # Errors
+///
+/// Returns [`CopyFieldError::FieldTooLong`] when present bytes are longer than
+/// a field prefix can announce.
+pub fn write_bytea_opt(buf: &mut Vec<u8>, value: Option<&[u8]>) -> Result<(), CopyFieldError> {
+    let Some(bytes) = value else {
+        write_null(buf);
+        return Ok(());
+    };
+    write_payload_length(buf, bytes.len())?;
+    buf.extend_from_slice(bytes);
+    Ok(())
 }
 
 /// Append a non-null `timestamptz` field as 8 bytes of microseconds
@@ -176,8 +241,24 @@ pub fn write_bool_opt(buf: &mut Vec<u8>, value: Option<bool>) {
 }
 
 /// Append a 4-byte big-endian length prefix.
+///
+/// Fixed-width encoders pass their own constant width here; a payload whose
+/// length is only known at runtime is announced through the checked path,
+/// which refuses a length the prefix cannot carry.
 pub fn write_length(buf: &mut Vec<u8>, len: i32) {
     buf.extend_from_slice(&len.to_be_bytes());
+}
+
+/// Append the length prefix for a payload sized at runtime.
+///
+/// # Errors
+///
+/// Returns [`CopyFieldError::FieldTooLong`] when the length does not fit the
+/// signed 32-bit prefix the binary-COPY format defines.
+fn write_payload_length(buf: &mut Vec<u8>, len: usize) -> Result<(), CopyFieldError> {
+    let prefix = i32::try_from(len).map_err(|_| CopyFieldError::FieldTooLong { length: len })?;
+    write_length(buf, prefix);
+    Ok(())
 }
 
 /// Append a NULL marker (length = -1 as i32 big-endian).
@@ -223,7 +304,7 @@ mod tests {
     #[test]
     fn text_field_carries_length_prefix() {
         let mut buf = Vec::new();
-        write_text(&mut buf, "abc");
+        write_text(&mut buf, "abc").expect("a short text field encodes");
         assert_eq!(buf, vec![0, 0, 0, 3, b'a', b'b', b'c']);
     }
 
@@ -231,9 +312,9 @@ mod tests {
     fn jsonb_text_carries_the_version_byte_and_the_same_bytes_as_the_dom_form() {
         let value = serde_json::json!({"a": [1, 2]});
         let mut from_dom = Vec::new();
-        write_jsonb(&mut from_dom, &value);
+        write_jsonb(&mut from_dom, &value).expect("the DOM form encodes");
         let mut from_text = Vec::new();
-        write_jsonb_text(&mut from_text, &serde_json::to_string(&value).expect("serialises"));
+        write_jsonb_text(&mut from_text, &serde_json::to_string(&value).expect("serialises")).expect("the text form encodes");
         assert_eq!(from_text, from_dom);
         assert_eq!(from_text[4], 0x01);
     }
@@ -241,14 +322,14 @@ mod tests {
     #[test]
     fn text_opt_none_is_null() {
         let mut buf = Vec::new();
-        write_text_opt(&mut buf, None);
+        write_text_opt(&mut buf, None).expect("a null text field encodes");
         assert_eq!(buf, vec![0xff, 0xff, 0xff, 0xff]);
     }
 
     #[test]
     fn jsonb_prepends_version_byte_after_length() {
         let mut buf = Vec::new();
-        write_jsonb(&mut buf, &serde_json::json!({"a": 1}));
+        write_jsonb(&mut buf, &serde_json::json!({"a": 1})).expect("the object encodes");
         assert_eq!(buf[4], 0x01);
         let payload = &buf[5..];
         assert_eq!(payload, br#"{"a":1}"#);
@@ -257,7 +338,7 @@ mod tests {
     #[test]
     fn jsonb_opt_none_is_null() {
         let mut buf = Vec::new();
-        write_jsonb_opt(&mut buf, None);
+        write_jsonb_opt(&mut buf, None).expect("a null jsonb field encodes");
         assert_eq!(buf, vec![0xff, 0xff, 0xff, 0xff]);
     }
 
@@ -328,14 +409,25 @@ mod tests {
     #[test]
     fn bytea_opt_some_carries_length_prefix() {
         let mut buf = Vec::new();
-        write_bytea_opt(&mut buf, Some(&[0xaa, 0xbb][..]));
+        write_bytea_opt(&mut buf, Some(&[0xaa, 0xbb][..])).expect("the bytes encode");
         assert_eq!(buf, vec![0, 0, 0, 2, 0xaa, 0xbb]);
     }
 
     #[test]
     fn bytea_opt_none_is_null() {
         let mut buf = Vec::new();
-        write_bytea_opt(&mut buf, None);
+        write_bytea_opt(&mut buf, None).expect("a null bytea field encodes");
         assert_eq!(buf, vec![0xff, 0xff, 0xff, 0xff]);
+    }
+
+    #[test]
+    fn a_payload_longer_than_the_length_prefix_can_describe_is_refused() {
+        let mut buf = Vec::new();
+        let error = write_payload_length(&mut buf, usize::MAX).expect_err("a length past i32::MAX has no prefix");
+        match error {
+            CopyFieldError::FieldTooLong { length } => assert_eq!(length, usize::MAX),
+            CopyFieldError::Json(source) => panic!("expected a length refusal, got {source}"),
+        }
+        assert!(buf.is_empty(), "a refused field leaves no partial prefix in the stream");
     }
 }

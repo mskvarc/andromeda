@@ -30,7 +30,7 @@ macro_rules! rejection_cases {
                 let mut body = csr_basic(&id, PEER_ENDPOINT);
                 let mutate: fn(&mut Value) = $mutate;
                 mutate(&mut body);
-                let response = topology.broker(BrokerRole::A).client().create_registration(&body).await.expect("create registration");
+                let response = topology.broker(BrokerRole::A).expect("topology broker A").client().create_registration(&body).await.expect("create registration");
                 assert_status(&response, 400);
                 assert_problem_details(&response, BAD_REQUEST_DATA);
                 topology.finish().await.expect("topology cleanup");
@@ -90,6 +90,7 @@ async fn reg_entityinfo_type_as_array_accepted() {
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&body)
         .await
@@ -98,6 +99,7 @@ async fn reg_entityinfo_type_as_array_accepted() {
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(&id, None)
         .await
@@ -131,6 +133,7 @@ async fn reg_entityinfo_id_and_idpattern_prefers_id() {
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&body)
         .await
@@ -139,6 +142,7 @@ async fn reg_entityinfo_id_and_idpattern_prefers_id() {
 
     let by_exact = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations(&format!("type=Vehicle&id={}", urlencoding::encode(&exact)), None)
         .await
@@ -152,6 +156,7 @@ async fn reg_entityinfo_id_and_idpattern_prefers_id() {
 
     let by_other = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .query_registrations(&format!("type=Vehicle&id={}", urlencoding::encode(&other)), None)
         .await

@@ -193,7 +193,7 @@ where
 /// exact neutral observation domain without a text or binary64 round trip.
 fn decode_number(row: &PgRow) -> Result<JsonNumber, TemporalStoreError> {
     let stored: BigDecimal = required_column(row, "value_number")?;
-    json_number_of(stored, "attribute_history.value_number")
+    json_number_of(&stored, "attribute_history.value_number")
 }
 
 /// Read the geometry column, which the query layer selects as EWKB.

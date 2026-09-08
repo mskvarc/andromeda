@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 async fn create_and_retrieve(topology: &MultiBrokerTopology<BrokerRole>, id: &str, body: &Value) -> Value {
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(body)
         .await
@@ -23,6 +24,7 @@ async fn create_and_retrieve(topology: &MultiBrokerTopology<BrokerRole>, id: &st
     assert_status(&created, 201);
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(id, None)
         .await
@@ -173,6 +175,7 @@ async fn reg_timeinterval_startat_only_open_ended_accepted() {
     body["managementInterval"] = json!({ "startAt": "2020-01-01T00:00:00Z" });
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&body)
         .await
@@ -192,6 +195,7 @@ async fn reg_missing_id_generates_uri() {
 
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&body)
         .await
@@ -203,6 +207,7 @@ async fn reg_missing_id_generates_uri() {
 
     let retrieved = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(generated, None)
         .await
@@ -233,6 +238,7 @@ async fn reg_success_returns_location_with_csr_uri() {
     let body = csr_basic(&id, PEER_ENDPOINT);
     let created = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&body)
         .await
@@ -255,7 +261,7 @@ async fn reg_success_returns_location_with_csr_uri() {
 async fn reg_tenant_scopes_registration() {
     let topology = topology::single().await.expect("single-broker topology");
     let tenant = TenantName::parse("distopTenantA").expect("valid tenant name");
-    let tenant_client = topology.broker(BrokerRole::A).tenant_client(tenant);
+    let tenant_client = topology.broker(BrokerRole::A).expect("topology broker A").tenant_client(tenant);
     let id = topology.id("registration:tenant-scoped");
     let body = csr_basic(&id, PEER_ENDPOINT);
 
@@ -267,6 +273,7 @@ async fn reg_tenant_scopes_registration() {
 
     let under_default = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .retrieve_registration(&id, None)
         .await
@@ -275,6 +282,7 @@ async fn reg_tenant_scopes_registration() {
 
     let created_default = topology
         .broker(BrokerRole::A)
+        .expect("topology broker A")
         .client()
         .create_registration(&body)
         .await
