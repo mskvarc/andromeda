@@ -668,7 +668,10 @@ mod tests {
     fn the_claim_insert_lets_a_duplicate_triple_fail_the_statement() {
         let sql = claim_verbatim_instances_sql().expect("the fixed claim insert builds");
         assert!(sql.starts_with(r#"INSERT INTO "attribute_history_instance_claims""#), "{sql}");
-        assert!(sql.contains(r#"("temporal_entity_key", "attribute_name_id", "verbatim_instance_id")"#), "{sql}");
+        assert!(
+            sql.contains(r#"("context_space_key", "temporal_entity_key", "attribute_name_id", "verbatim_instance_id")"#),
+            "{sql}"
+        );
         assert!(!sql.contains("ON CONFLICT"), "{sql}");
     }
 
@@ -687,13 +690,19 @@ mod tests {
     #[test]
     fn the_insert_carries_the_partition_column_and_the_whole_write_identity() {
         let sql = attribute_history_insert_sql().expect("the fixed attribute-history insert builds");
-        assert!(sql.contains(r#"("recorded_at", "write_id", "stream_key", "write_ordinal""#), "{sql}");
+        assert!(
+            sql.contains(r#"("recorded_at", "context_space_key", "write_id", "stream_key", "write_ordinal""#),
+            "{sql}"
+        );
     }
 
     #[test]
     fn a_row_replayed_under_its_original_write_identity_is_not_duplicated() {
         let sql = attribute_history_insert_sql().expect("the fixed attribute-history insert builds");
-        assert!(sql.contains(r#"ON CONFLICT ("recorded_at", "write_id", "write_ordinal") DO NOTHING"#), "{sql}");
+        assert!(
+            sql.contains(r#"ON CONFLICT ("recorded_at", "context_space_key", "write_id", "write_ordinal") DO NOTHING"#),
+            "{sql}"
+        );
     }
 
     #[test]

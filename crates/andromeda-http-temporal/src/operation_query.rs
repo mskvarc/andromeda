@@ -85,6 +85,7 @@ pub async fn query(
                     csf_expr: None,
                     mode_filter: CsrModeFilter::All,
                     entity_map: EntityMapInUse::None,
+                    source_page: None,
                 },
             )
             .await

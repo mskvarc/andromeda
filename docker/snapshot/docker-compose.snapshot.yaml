@@ -29,9 +29,13 @@ x-broker-base: &broker-base
     ANDROMEDA_TENANCY_ENABLED: "true"
     ANDROMEDA_NOTIFICATION_DELIVERY_ENABLED: "true"
     ANDROMEDA_OBSERVABILITY_LOG_LEVEL: "info"
-    ANDROMEDA_DATABASE_MAX_CONNECTIONS: "24"
-    ANDROMEDA_TENANCY_TENANT_MAX_CONNECTIONS: "12"
+    ANDROMEDA_DATABASE_MAX_CONNECTIONS: "8"
+    ANDROMEDA_TENANCY_TENANT_MAX_CONNECTIONS: "2"
+    ANDROMEDA_TENANCY_RUNTIME_IDLE_TTL_SECONDS: "60"
+    ANDROMEDA_TENANCY_RUNTIME_MAX_CACHED: "4"
+    ANDROMEDA_TENANCY_JANITOR_INTERVAL_SECONDS: "1"
     ANDROMEDA_TEMPORAL_EXPIRATION_CHECK_INTERVAL_SECS: "1"
+    ANDROMEDA_TEMPORAL_DEFAULT_LAST_N: "1000"
     ANDROMEDA_SNAPSHOT_DEFAULT_LIFETIME_SECS: "3600"
     ANDROMEDA_SNAPSHOT_MAXIMUM_LIFETIME_SECS: "2592000"
     ANDROMEDA_SNAPSHOT_CAPTURE_PAGE_SIZE: "250"
@@ -76,6 +80,7 @@ services:
     environment:
       <<: *primary-env
       ANDROMEDA_SERVER_PORT: "1081"
+      ANDROMEDA_SNAPSHOT_SCOPED_OPERATION_WAIT_SECS: "2"
       ANDROMEDA_INFO_ADVERTISED_URL: "http://snapshot-primary:1081"
     ports:
       - "1081:1081"
@@ -108,6 +113,39 @@ services:
       ANDROMEDA_INFO_ADVERTISED_URL: "http://snapshot-remote:1083"
     ports:
       - "1083:1083"
+
+  snapshot-nonmultitenant:
+    <<: *broker-base
+    depends_on:
+      snapshot-postgres-primary:
+        condition: service_healthy
+    environment:
+      <<: *broker-env
+      ANDROMEDA_SERVER_PORT: "1084"
+      ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@snapshot-postgres-primary:5432/snapshot_nonmultitenant"
+      ANDROMEDA_TENANCY_ENABLED: "false"
+      ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:snapshot-nonmultitenant"
+      ANDROMEDA_INFO_SOURCE_ALIAS: "snapshot-nonmultitenant"
+      ANDROMEDA_INFO_ADVERTISED_URL: "http://snapshot-nonmultitenant:1084"
+    ports:
+      - "1084:1084"
+
+  snapshot-quota:
+    <<: *broker-base
+    depends_on:
+      snapshot-postgres-primary:
+        condition: service_healthy
+    environment:
+      <<: *broker-env
+      ANDROMEDA_SERVER_PORT: "1085"
+      ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@snapshot-postgres-primary:5432/snapshot_quota"
+      ANDROMEDA_TENANCY_ENABLED: "false"
+      ANDROMEDA_SNAPSHOT_TENANT_COUNT_QUOTA: "3"
+      ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:snapshot-quota"
+      ANDROMEDA_INFO_SOURCE_ALIAS: "snapshot-quota"
+      ANDROMEDA_INFO_ADVERTISED_URL: "http://snapshot-quota:1085"
+    ports:
+      - "1085:1085"
 
 volumes:
   snapshot-postgres-primary-data:

@@ -10,20 +10,15 @@ use serde::{Deserialize, Deserializer, de::IgnoredAny};
 use url::Url;
 
 /// Presence-aware JSON merge-patch member.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum MergePatchValue<T> {
     /// The member was omitted and must remain unchanged.
+    #[default]
     Absent,
     /// The member was present as JSON null and must be removed.
     Null,
     /// The member was present with a replacement value.
     Value(T),
-}
-
-impl<T> Default for MergePatchValue<T> {
-    fn default() -> MergePatchValue<T> {
-        MergePatchValue::Absent
-    }
 }
 
 impl<'de, T> Deserialize<'de> for MergePatchValue<T>
@@ -41,6 +36,7 @@ where
     }
 }
 
+/// Deserializes a required non-null value wrapped for an optional patch member.
 fn deserialize_present_non_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
@@ -77,18 +73,25 @@ pub struct SnapshotPatch {
     /// Temporal query definitions are recognized so policy can reject attempts to mutate them.
     #[serde(default)]
     pub snapshot_temporal_queries: MergePatchValue<IgnoredAny>,
+    /// Recognized output-only status, discarded on input.
     #[serde(default, rename = "snapshotStatus")]
     _snapshot_status: Option<IgnoredAny>,
+    /// Recognized output-only entity execution details, discarded on input.
     #[serde(default, rename = "snapshotQueriesDetails")]
     _snapshot_queries_details: Option<IgnoredAny>,
+    /// Recognized output-only temporal execution details, discarded on input.
     #[serde(default, rename = "snapshotTemporalQueriesDetails")]
     _snapshot_temporal_queries_details: Option<IgnoredAny>,
+    /// Recognized output-only creation timestamp, discarded on input.
     #[serde(default)]
     _created_at: Option<IgnoredAny>,
+    /// Recognized output-only modification timestamp, discarded on input.
     #[serde(default)]
     _modified_at: Option<IgnoredAny>,
+    /// Recognized output-only expiry timestamp, discarded on input.
     #[serde(default)]
     _expires_at: Option<IgnoredAny>,
+    /// Recognized output-only usage timestamp, discarded on input.
     #[serde(default)]
     _last_used_at: Option<IgnoredAny>,
 }

@@ -215,9 +215,11 @@ impl FederationService {
         if method == reqwest::Method::GET {
             typed_headers.typed_insert(conformance_preference(&info));
         }
-        if payload.body.is_some() {
-            typed_headers.typed_insert(payload.media_type);
-        }
+        // Clause 6.3.19 maps the registration's `contentType` instruction to
+        // the forwarded request header independently of whether this
+        // operation carries a body. Context sources can use that declared
+        // representation contract for body-less consumption requests too.
+        typed_headers.typed_insert(payload.media_type);
 
         let mut request = self.http_client.request(method, url).headers(typed_headers);
         request = apply_custom_headers(request, &info, triggering.headers)?;

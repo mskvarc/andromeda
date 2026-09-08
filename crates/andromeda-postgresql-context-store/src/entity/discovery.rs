@@ -497,13 +497,13 @@ mod tests {
     #[test]
     fn the_summary_is_keyset_paged_on_the_attribute_iri() {
         let (summary, values) = attribute_summary_statement(context_space_key(), Some("https://example.org/a"), 10).build_sqlx(PostgresQueryBuilder);
-        assert!(summary.contains(r#"HAVING ($10::text) IS NULL OR "attrs"."attr_key" > $11"#), "{summary}");
+        assert!(summary.contains(r#"HAVING ($11::text) IS NULL OR "attrs"."attr_key" > $12"#), "{summary}");
         assert!(summary.contains(r#"ORDER BY "attrs"."attr_key" ASC"#), "{summary}");
-        assert!(summary.contains("LIMIT $12"), "{summary}");
+        assert!(summary.contains("LIMIT $13"), "{summary}");
         // Every literal the statement carries binds rather than interpolating —
         // the keyword-skip pattern, the container index and key, the join
         // conditions, the cursor (twice) and the limit.
-        assert_eq!(values.0.0.len(), 12, "{summary}");
+        assert_eq!(values.0.0.len(), 13, "{summary}");
     }
 
     #[test]
@@ -544,7 +544,7 @@ mod tests {
     #[test]
     fn the_types_in_use_are_the_dictionary_rows_some_entity_carries() {
         let sql = types_in_use_statement(context_space_key()).to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#""entity_search"."context_space_key" = 1"#), "{sql}");
+        assert!(sql.contains(r#""context_space_key" = 1"#), "{sql}");
         assert!(sql.contains(r#""entity_search"."type_ids" @> ARRAY(SELECT "n"."id"::integer)"#), "{sql}");
     }
 }

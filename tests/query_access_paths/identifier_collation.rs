@@ -78,7 +78,7 @@ async fn identifier_patterns_plan_as_a_range_scan_when_anchored_and_a_trigram_sc
 
     let anchored = explain(pool, &format!("SELECT e.id FROM entities AS e WHERE e.id LIKE '{prefix}:seed:0001%'")).await;
     assert!(
-        anchored.contains("entities_id_key"),
+        anchored.contains("uq_entities_context_id"),
         "an anchored pattern must range-scan the identifier B-tree: {anchored}"
     );
     assert!(

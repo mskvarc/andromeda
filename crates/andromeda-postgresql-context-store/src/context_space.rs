@@ -7,6 +7,10 @@ use andromeda_context_space::{
     snapshot_target::SnapshotTarget,
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_postgresql_schema::{context_space::ContextSpaces, snapshot::Snapshots};
+use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
+use sea_query::{Alias, DeleteStatement, Expr, ExprTrait, PostgresQueryBuilder, Query};
+use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Row};
 use thiserror::Error;
 
@@ -26,9 +30,13 @@ pub enum ContextSpacePersistenceError {
 
 /// Resolve the exactly-one live context space installed by tenant migrations.
 pub async fn resolve_live_target(pool: &PgPool) -> Result<ContextTarget, ContextSpacePersistenceError> {
-    let row = sqlx::query("SELECT context_space_key FROM context_spaces WHERE kind = 'live'::context_space_kind")
-        .fetch_one(pool)
-        .await?;
+    let statement = Query::select()
+        .column(ContextSpaces::ContextSpaceKey)
+        .from(ContextSpaces::Table)
+        .and_where(Expr::col(ContextSpaces::Kind).eq(cast(Expr::val("live"), PostgresType::ContextSpaceKind)))
+        .to_owned();
+    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(pool).await?;
     let raw = row.try_get::<i64, _>("context_space_key")?;
     let key = ContextSpaceKey::try_from(raw).map_err(|error| ContextSpacePersistenceError::InvalidKey(error.to_string()))?;
     ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).map_err(|error| ContextSpacePersistenceError::InvalidTarget(error.to_string()))
@@ -36,12 +44,20 @@ pub async fn resolve_live_target(pool: &PgPool) -> Result<ContextTarget, Context
 
 /// Resolve any persisted branch by its durable key, including the owning Snapshot URI.
 pub async fn resolve_context_target(pool: &PgPool, key: ContextSpaceKey) -> Result<ContextTarget, ContextSpacePersistenceError> {
-    let row = sqlx::query(
-        "SELECT cs.kind::text AS kind, s.id AS snapshot_id FROM context_spaces cs LEFT JOIN snapshots s USING (context_space_key) WHERE cs.context_space_key = $1",
-    )
-    .bind(key.as_i64())
-    .fetch_one(pool)
-    .await?;
+    let kind = Alias::new("kind");
+    let snapshot_id = Alias::new("snapshot_id");
+    let statement = Query::select()
+        .expr_as(cast(Expr::col((ContextSpaces::Table, ContextSpaces::Kind)), PostgresType::Text), kind)
+        .expr_as(Expr::col((Snapshots::Table, Snapshots::Id)), snapshot_id)
+        .from(ContextSpaces::Table)
+        .left_join(
+            Snapshots::Table,
+            Expr::col((Snapshots::Table, Snapshots::ContextSpaceKey)).equals((ContextSpaces::Table, ContextSpaces::ContextSpaceKey)),
+        )
+        .and_where(Expr::col((ContextSpaces::Table, ContextSpaces::ContextSpaceKey)).eq(key.as_i64()))
+        .to_owned();
+    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(pool).await?;
     let kind = row.try_get::<String, _>("kind")?;
     let space = match kind.as_str() {
         "live" => ContextSpace::new(key, ContextSpaceKind::Live),
@@ -62,4 +78,12 @@ pub async fn resolve_context_target(pool: &PgPool, key: ContextSpaceKey) -> Resu
                 .map_err(|error| ContextSpacePersistenceError::InvalidTarget(error.to_string()))
         }
     }
+}
+
+/// Build deletion of one branch parent so database cascades reclaim all owned state.
+pub(crate) fn delete_context_space_statement(key: i64) -> DeleteStatement {
+    Query::delete()
+        .from_table(ContextSpaces::Table)
+        .and_where(Expr::col(ContextSpaces::ContextSpaceKey).eq(key))
+        .to_owned()
 }

@@ -1,8 +1,11 @@
 //! Entity, subscription, registration, and snapshot lifecycle task registration.
 
-use crate::tenant_factory::{
-    error::TenantAssemblyError,
-    tasks::maintenance::{classify_entity_expiry_failure, classify_registration_expiry_failure, classify_subscription_expiry_failure},
+use crate::{
+    event::snapshot_notification_sink::SnapshotStatusDeliveryDrain,
+    tenant_factory::{
+        error::TenantAssemblyError,
+        tasks::maintenance::{classify_entity_expiry_failure, classify_registration_expiry_failure, classify_subscription_expiry_failure},
+    },
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
@@ -173,6 +176,40 @@ pub(super) fn register_snapshot_preparation(supervisor: &TaskSupervisor, prepara
             match preparation.execute().await.map_err(classify_snapshot_failure)? {
                 SnapshotPreparationOutcome::Idle => {}
                 SnapshotPreparationOutcome::Prepared { count } => tracing::info!(count, "snapshot preparation completed"),
+            }
+            Ok(())
+        }
+    });
+    supervisor
+        .register_scheduled(task)
+        .map(drop)
+        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+}
+
+/// Register durable Snapshot lifecycle notification delivery.
+pub(super) fn register_snapshot_status_delivery(
+    supervisor: &TaskSupervisor,
+    drain: Arc<SnapshotStatusDeliveryDrain>,
+    cadence: Duration,
+) -> Result<(), TenantAssemblyError> {
+    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
+        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let name = TaskName::try_from("snapshot-status-delivery").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let registration = TaskRegistration::new(
+        name,
+        TaskCriticality::Observed,
+        RestartPolicy::transient(u32::MAX, cadence, cadence),
+        ShutdownPolicy::new(cadence),
+    );
+    let task = ScheduledTask::new(registration, schedule, move |execution| {
+        let drain = Arc::clone(&drain);
+        async move {
+            let delivered = drain
+                .execute(DateTime::<Utc>::from(execution.cutoff()))
+                .await
+                .map_err(classify_snapshot_failure)?;
+            if delivered > 0 {
+                tracing::info!(claimed = delivered, "snapshot status notification delivery completed");
             }
             Ok(())
         }

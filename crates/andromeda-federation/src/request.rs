@@ -14,6 +14,20 @@ use andromeda_ngsi_ld_query::filter::expression::Expr;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use http::HeaderMap;
 
+/// An explicit page to request independently from every matching context source.
+///
+/// Ordinary distributed reads leave this absent because the broker obtains a
+/// merge window and applies the client's page after aggregation. Durable range
+/// consumers use it to walk every source without repeatedly reading that first
+/// merge window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourcePage {
+    /// Maximum number of results requested from each source.
+    pub limit: u32,
+    /// Number of source-local results skipped before this page.
+    pub offset: u32,
+}
+
 /// The headers of the request that triggered a forwarding, read for the
 /// `contextSourceInfo` pairs whose value is `urn:ngsi-ld:request` (clause
 /// 6.3.19) and for the `Via` chain to extend (clause 6.3.18).
@@ -118,6 +132,8 @@ pub struct ForwardTemporalQueryRequest<'a> {
     pub mode_filter: CsrModeFilter,
     /// The EntityMap the request runs under (clause 5.5.14).
     pub entity_map: EntityMapInUse<'a>,
+    /// Explicit per-source range, or `None` for the ordinary post-merge page policy.
+    pub source_page: Option<SourcePage>,
 }
 
 /// Parameters for forwarding an entity query.
@@ -141,6 +157,8 @@ pub struct ForwardQueryRequest<'a> {
     pub mode_filter: CsrModeFilter,
     /// The EntityMap the request runs under (clause 5.5.14).
     pub entity_map: EntityMapInUse<'a>,
+    /// Explicit per-source range, or `None` for the ordinary post-merge page policy.
+    pub source_page: Option<SourcePage>,
 }
 
 /// Parameters for forwarding a single-entity retrieval, current or temporal.

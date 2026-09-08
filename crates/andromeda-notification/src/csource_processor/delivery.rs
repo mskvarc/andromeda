@@ -41,6 +41,7 @@ impl CsourceNotificationProcessor {
             receiver_info: compiled_sub.endpoint_receiver_info.as_deref(),
             jsonld_context: compiled_sub.jsonld_context.as_ref(),
             tenant: self.tenant.tenant_name(),
+            snapshot: None,
             subscription_id: &compiled_sub.id,
         }
     }

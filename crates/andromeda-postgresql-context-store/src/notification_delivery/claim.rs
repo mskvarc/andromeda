@@ -224,7 +224,7 @@ fn claimed_projection_statement(claimed_ids: &[i64]) -> SelectStatement {
             JoinType::LeftJoin,
             Snapshots::Table,
             snapshot.clone(),
-            Expr::col((snapshot, Snapshots::ContextSpaceKey)).equals((event.clone(), NotificationEvents::ContextSpaceKey)),
+            Expr::col((snapshot, Snapshots::ContextSpaceKey)).equals((event, NotificationEvents::ContextSpaceKey)),
         )
         .join_as(
             JoinType::InnerJoin,

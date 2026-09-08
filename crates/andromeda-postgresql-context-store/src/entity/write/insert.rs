@@ -15,7 +15,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
-use andromeda_postgresql_seaquery::unnest::apply_column_alias;
+use andromeda_postgresql_seaquery::{placeholder::external_placeholder, unnest::apply_column_alias};
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use sea_query::{CommonTableExpression, Expr, ExprTrait, JoinType, OnConflict, PostgresQueryBuilder, Query, SelectStatement, WithClause};
 use sqlx::{Postgres, Transaction};
@@ -58,7 +58,7 @@ pub(super) fn entity_insert_sql() -> Result<String, ContextStoreError> {
         .columns([Entities::ContextSpaceKey, Entities::Id, Entities::ExpiresAt, Entities::MinAttributeExpiresAt])
         .select_from(
             Query::select()
-                .expr(Expr::cust("$12"))
+                .expr(external_placeholder(12))
                 .expr(projected(Entities::Id))
                 .expr(projected(Entities::ExpiresAt))
                 .expr(projected(Entities::MinAttributeExpiresAt))
@@ -76,7 +76,7 @@ pub(super) fn entity_insert_sql() -> Result<String, ContextStoreError> {
         .columns([EntityDocuments::ContextSpaceKey, EntityDocuments::EntityKey, EntityDocuments::Payload])
         .select_from(
             from_inserted()
-                .expr(Expr::cust("$12"))
+                .expr(external_placeholder(12))
                 .expr(Expr::col((Ins, Entities::EntityKey)))
                 .expr(projected(EntityDocuments::Payload))
                 .take(),
@@ -99,7 +99,7 @@ pub(super) fn entity_insert_sql() -> Result<String, ContextStoreError> {
         ])
         .select_from(
             from_inserted()
-                .expr(Expr::cust("$12"))
+                .expr(external_placeholder(12))
                 .expr(Expr::col((Ins, Entities::EntityKey)))
                 .expr(projected(EntitySearch::LocationExpiresAt))
                 .expr(projected(EntitySearch::TypeIds))
@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn the_insert_binds_contiguous_placeholders_and_names_its_staging_columns() {
         let sql = insert();
-        pretty_assertions::assert_eq!(placeholders(&sql), (1..=11).collect::<BTreeSet<u32>>());
+        pretty_assertions::assert_eq!(placeholders(&sql), (1..=12).collect::<BTreeSet<u32>>());
         assert!(
             sql.contains(
                 "AS d(id, type_ids_json, attribute_name_ids_json, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at)"
@@ -196,11 +196,14 @@ mod tests {
         let sql = insert();
         assert!(sql.starts_with(r#"WITH "proj" AS ("#), "{sql}");
         assert!(
-            sql.contains(r#""ins" AS (INSERT INTO "entities" ("id", "expires_at", "min_attribute_expires_at")"#),
+            sql.contains(r#""ins" AS (INSERT INTO "entities" ("context_space_key", "id", "expires_at", "min_attribute_expires_at")"#),
             "{sql}"
         );
-        assert!(sql.contains(r#""docs" AS (INSERT INTO "entity_documents" ("entity_key", "payload")"#), "{sql}");
-        assert!(sql.contains(r#""srch" AS (INSERT INTO "entity_search" ("entity_key", "location_expires_at", "type_ids", "attribute_name_ids", "scope_paths", "location", "observation_space", "operation_space")"#), "{sql}");
+        assert!(
+            sql.contains(r#""docs" AS (INSERT INTO "entity_documents" ("context_space_key", "entity_key", "payload")"#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#""srch" AS (INSERT INTO "entity_search" ("context_space_key", "entity_key", "location_expires_at", "type_ids", "attribute_name_ids", "scope_paths", "location", "observation_space", "operation_space")"#), "{sql}");
         assert!(sql.ends_with(r#"SELECT "entity_key", "id" FROM "ins""#), "{sql}");
         pretty_assertions::assert_eq!(
             sql.matches("ST_MakeValid").count(),
@@ -238,7 +241,10 @@ mod tests {
     #[test]
     fn the_insert_keeps_its_conflict_clause_and_writes_no_version_token() {
         let sql = insert();
-        assert!(sql.contains(r#"ON CONFLICT ("id") DO NOTHING RETURNING "entity_key", "id""#), "{sql}");
+        assert!(
+            sql.contains(r#"ON CONFLICT ("context_space_key", "id") DO NOTHING RETURNING "entity_key", "id""#),
+            "{sql}"
+        );
         assert!(!sql.contains("modified_at"), "the token defaults in the database: {sql}");
         assert!(!sql.contains("location_geo"), "the geography is generated: {sql}");
     }

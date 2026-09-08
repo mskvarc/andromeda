@@ -65,13 +65,15 @@ mod tests {
             "notifiedAt": "2024-01-01T00:00:00Z",
             "data": []
         });
+        let body = body.to_string();
         let response = NotificationReceiverRoutes::new(Arc::new(UnknownResolver))
             .into_router()
             .oneshot(
                 Request::post("/notifications")
                     .header("content-type", "application/json")
+                    .header("content-length", body.len())
                     .header("NGSILD-Tenant", "peer")
-                    .body(Body::from(body.to_string()))?,
+                    .body(Body::from(body))?,
             )
             .await?;
         let status = response.status();
@@ -82,12 +84,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_document_that_is_not_a_notification_is_400() -> Result<(), Box<dyn Error>> {
+        let body = r#"{"type": "Entity", "id": "urn:a"}"#;
         let response = NotificationReceiverRoutes::new(Arc::new(UnknownResolver))
             .into_router()
             .oneshot(
                 Request::post("/notifications")
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"type": "Entity", "id": "urn:a"}"#))?,
+                    .header("content-length", body.len())
+                    .body(Body::from(body))?,
             )
             .await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST);

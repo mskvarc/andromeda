@@ -20,7 +20,7 @@ impl TryFrom<Query> for TemporalQueryParameters {
             Some(aggregation) => (Some(aggregation.aggr_methods), aggregation.aggr_period_duration),
             None => (temporal.aggr_methods, temporal.aggr_period_duration),
         };
-        let entity_selectors = query
+        let entity_selectors: Vec<EntitySelectorParams> = query
             .entities
             .unwrap_or_default()
             .into_iter()
@@ -30,11 +30,15 @@ impl TryFrom<Query> for TemporalQueryParameters {
                 type_: Some(selector.type_),
             })
             .collect();
+        let (id, entity_type, id_pattern) = match entity_selectors.as_slice() {
+            [selector] => (selector.id.clone(), selector.type_.clone(), selector.id_pattern.clone()),
+            [] | [_, _, ..] => (None, None, None),
+        };
 
         let parameters = TemporalQueryParameters {
-            id: None,
-            entity_type: None,
-            id_pattern: None,
+            id,
+            entity_type,
+            id_pattern,
             entity_selectors,
             attrs: query.attrs,
             q: query.q,
@@ -117,6 +121,16 @@ mod tests {
             params.contained_by.as_deref().map(|ids| ids.iter().map(Uri::as_str).collect::<Vec<_>>()),
             Some(vec!["urn:ngsi-ld:T:1"])
         );
+    }
+
+    #[test]
+    fn one_temporal_body_selector_populates_the_federation_summary() {
+        let request = canonical(
+            r#"{"type":"Query","entities":[{"type":"Vehicle","id":"urn:ngsi-ld:Vehicle:1"}],"temporalQ":{"timerel":"after","timeAt":"2024-01-01T00:00:00Z"}}"#,
+        );
+        let params = TemporalQueryParameters::try_from(request).expect("applicable temporal query");
+        pretty_assertions::assert_eq!(params.id.as_deref().map(|ids| ids[0].as_str()), Some("urn:ngsi-ld:Vehicle:1"));
+        pretty_assertions::assert_eq!(params.entity_type.as_ref().map(ToString::to_string).as_deref(), Some("Vehicle"));
     }
 
     #[test]

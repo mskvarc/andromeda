@@ -27,6 +27,11 @@ impl NgsiLdSnapshot {
     pub fn into_inner(self) -> Uri {
         self.0
     }
+
+    /// Return the Snapshot identifier as its wire representation.
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
 }
 
 impl headers::Header for NgsiLdSnapshot {
@@ -44,7 +49,7 @@ impl headers::Header for NgsiLdSnapshot {
             Err(_) => return Err(headers::Error::invalid()),
         };
         let trimmed = s.trim();
-        if trimmed.is_empty() {
+        if trimmed.is_empty() || trimmed != s || trimmed.chars().any(char::is_whitespace) {
             return Err(headers::Error::invalid());
         }
         let snapshot_id = match trimmed.parse::<Uri>() {
@@ -80,9 +85,8 @@ mod tests {
     }
 
     #[test]
-    fn decode_trims_whitespace() {
-        let header = decode_from("  urn:ngsi-ld:Snapshot:1  ").expect("should decode");
-        pretty_assertions::assert_eq!(header.into_inner().as_str(), "urn:ngsi-ld:Snapshot:1");
+    fn decode_rejects_surrounding_whitespace() {
+        assert!(decode_from("  urn:ngsi-ld:Snapshot:1  ").is_err());
     }
 
     #[test]
@@ -98,6 +102,11 @@ mod tests {
     #[test]
     fn decode_rejects_non_urn() {
         assert!(decode_from("not-a-urn").is_err());
+    }
+
+    #[test]
+    fn decode_rejects_internal_uri_whitespace() {
+        assert!(decode_from("urn:ngsi-ld:Snapshot:header matrix").is_err());
     }
 
     #[test]

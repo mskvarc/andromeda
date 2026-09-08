@@ -7,7 +7,7 @@
 
 use crate::{
     notification_fixture::{entity_id, entity_snapshot, subscription_id},
-    queue_database::{deliveries_of, queue_database, record_events, subscription, subscription_key},
+    queue_database::{deliveries_of, live_target, queue_database, record_events, subscription, subscription_key},
 };
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
@@ -64,20 +64,25 @@ async fn durable_queue_deleting_a_subscription_reclaims_its_deliveries_through_t
         .fetch_one(&pool)
         .await
         .expect("event identifier");
+    let target = live_target(&pool).await;
 
     // Production-shaped cardinality: the deleted Subscription owns a small
     // fraction of a queue dominated by deliveries that must survive.
     sqlx::query(
-        "INSERT INTO notification_deliveries (event_id, subscription_key, next_attempt_at) \
-         SELECT $1, s.subscription_key, NOW() FROM subscriptions s, generate_series(1, $2) WHERE s.subscription_key <> $3",
+        "INSERT INTO notification_deliveries (context_space_key, event_id, subscription_key, next_attempt_at) \
+         SELECT $1, $2, s.subscription_key, NOW() FROM subscriptions s, generate_series(1, $3) WHERE s.context_space_key = $1 AND s.subscription_key <> $4",
     )
+    .bind(target.key().as_i64())
     .bind(event)
     .bind(OTHER_DELIVERIES)
     .bind(owner_key)
     .execute(&pool)
     .await
     .expect("queue the unaffected deliveries");
-    sqlx::query("INSERT INTO notification_deliveries (event_id, subscription_key, next_attempt_at) SELECT $1, $2, NOW() FROM generate_series(1, $3)")
+    sqlx::query(
+        "INSERT INTO notification_deliveries (context_space_key, event_id, subscription_key, next_attempt_at) SELECT $1, $2, $3, NOW() FROM generate_series(1, $4)",
+    )
+        .bind(target.key().as_i64())
         .bind(event)
         .bind(owner_key)
         .bind(OWNED_DELIVERIES - 1)

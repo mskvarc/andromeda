@@ -21,6 +21,7 @@ use andromeda_test_fixtures::{
     context::COMPOUND_CONTEXT,
     problem_detail::{CONFLICT, RESOURCE_NOT_FOUND},
 };
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
 use serde_json::{Value, json};
 
@@ -31,7 +32,7 @@ fn speed_node(value: i64) -> Value {
 }
 
 /// Issue the replace-attribute request against broker A for the `speed` attribute.
-async fn replace_speed(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, entity_id: &str, value: i64) -> TestResponse {
+async fn replace_speed(topology: &MultiBrokerTopology<BrokerRole>, entity_id: &str, value: i64) -> TestResponse {
     topology
         .broker(BrokerRole::A)
         .client()

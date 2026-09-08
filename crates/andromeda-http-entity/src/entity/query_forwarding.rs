@@ -126,6 +126,7 @@ impl QueryForwarding<'_> {
                     csf_expr,
                     mode_filter,
                     entity_map: self.entity_map,
+                    source_page: None,
                 },
             )
             .await

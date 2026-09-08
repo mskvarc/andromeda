@@ -12,12 +12,13 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_client::response::TestResponse;
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use reqwest::Method;
 use serde_json::{Value, json};
 use std::time::Duration;
 
 /// POST a csource subscription body to the front broker.
-async fn create_csource_subscription(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, body: &Value) -> TestResponse {
+async fn create_csource_subscription(topology: &MultiBrokerTopology<BrokerRole>, body: &Value) -> TestResponse {
     topology
         .broker(BrokerRole::A)
         .client()

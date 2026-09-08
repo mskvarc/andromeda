@@ -4,6 +4,7 @@
 //! empty array at the API boundary, and `chk_entity_search_types_present`
 //! refuses it again for any writer that bypasses the API.
 
+use crate::projection_rows::live_context_space_key;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
@@ -40,13 +41,15 @@ async fn current_projection_rejects_an_entity_with_an_empty_type_array() {
 async fn current_projection_database_refuses_a_typeless_entity_row() {
     let scope = TestEnvironment::from_suite("current-projection").await.expect("isolated test environment");
     let id = scope.id("Building:empty-type-sql");
+    let context_space_key = live_context_space_key(scope.database_pool()).await;
 
     let payload = json!([{ "@id": id }]);
     let failure = sqlx::query(
-        "WITH ins AS (INSERT INTO entities (id) VALUES ($1) RETURNING entity_key), \
-              doc AS (INSERT INTO entity_documents (entity_key, payload) SELECT entity_key, $2 FROM ins) \
-         INSERT INTO entity_search (entity_key, type_ids, attribute_name_ids) SELECT entity_key, ARRAY[]::integer[], ARRAY[]::integer[] FROM ins",
+        "WITH ins AS (INSERT INTO entities (context_space_key, id) VALUES ($1, $2) RETURNING entity_key), \
+              doc AS (INSERT INTO entity_documents (context_space_key, entity_key, payload) SELECT $1, entity_key, $3 FROM ins) \
+         INSERT INTO entity_search (context_space_key, entity_key, type_ids, attribute_name_ids) SELECT $1, entity_key, ARRAY[]::integer[], ARRAY[]::integer[] FROM ins",
     )
+    .bind(context_space_key)
     .bind(&id)
     .bind(&payload)
     .execute(scope.database_pool())

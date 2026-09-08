@@ -8,7 +8,7 @@ use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use serde_json::json;
 use serial_test::serial;
 use std::time::Duration;
-use tokio::time::timeout;
+use tokio::{task::yield_now, time::timeout};
 
 fn subscription(id: &str, endpoint: &str, entity_type: &str) -> serde_json::Value {
     json!({
@@ -65,7 +65,7 @@ async fn fed_subscription_two_domain_lifecycle_delivers_original_id() {
             .expect("watched entity"),
         201,
     );
-    let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(20)).await;
+    let notification = receiver.wait_for_notification(Duration::from_secs(20)).await;
     assert_eq!(notification.body["subscriptionId"].as_str(), Some(subscription_id.as_str()));
     assert!(notification.headers.contains_key("content-type"));
     assert_status(
@@ -119,7 +119,7 @@ async fn fed_subscription_discovers_domain_registered_after_creation() {
             if response.status.is_success() && body(&response).as_array().is_some_and(|items| !items.is_empty()) {
                 break;
             }
-            tokio::task::yield_now().await;
+            yield_now().await;
         }
     })
     .await

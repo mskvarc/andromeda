@@ -11,12 +11,13 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_client::response::TestResponse;
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
 use serde_json::json;
 use std::time::Duration;
 
 /// Query the front broker reusing a supplied entity map.
-async fn query_reusing_map(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, query: &str, map: &str) -> TestResponse {
+async fn query_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, query: &str, map: &str) -> TestResponse {
     topology
         .broker(BrokerRole::A)
         .client()

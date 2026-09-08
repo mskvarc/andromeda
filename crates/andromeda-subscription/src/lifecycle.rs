@@ -156,9 +156,9 @@ impl<V> SubscriptionService<V>
 where
     V: SubscriptionVariant,
 {
-    fn emit_change(&self, change: V::Change) {
+    async fn emit_change(&self, change: V::Change) {
         if let Some(ref sink) = self.change_sink {
-            sink.publish(change);
+            sink.publish(change).await;
         }
     }
 
@@ -250,7 +250,7 @@ where
         );
 
         self.repo.create_subscription(target, &id, &fields, status).await?;
-        self.emit_change(self.variant.make_upserted(target.clone(), id.clone())); // clone: the caller and change event each own the branch and identifier.
+        self.emit_change(self.variant.make_upserted(target.clone(), id.clone())).await; // clone: the caller and change event each own the branch and identifier.
         if self.forwarding_hook.is_some() && target.permits_federation() {
             let created = self.get(target, &id).await?;
             self.run_hook(&id, |hook| hook.created(&created, context, encountered_sources)).await;
@@ -332,7 +332,7 @@ where
             return Err(SubscriptionError::not_found(id));
         }
 
-        self.emit_change(self.variant.make_upserted(target.clone(), id.clone())); // clone: the change event owns the branch and identifier.
+        self.emit_change(self.variant.make_upserted(target.clone(), id.clone())).await; // clone: the change event owns the branch and identifier.
         if self.forwarding_hook.is_some() && target.permits_federation() {
             let merged = self.get(target, id).await?;
             self.run_hook(id, |hook| hook.updated(&merged, context)).await;
@@ -347,7 +347,7 @@ where
             return Err(SubscriptionError::not_found(id));
         }
 
-        self.emit_change(self.variant.make_deleted(target.clone(), id.clone())); // clone: the change event owns the branch and identifier.
+        self.emit_change(self.variant.make_deleted(target.clone(), id.clone())).await; // clone: the change event owns the branch and identifier.
         if target.permits_federation() {
             self.run_hook(id, |hook| hook.deleted(id)).await;
         }
@@ -358,7 +358,7 @@ where
     pub(crate) async fn expire_due(&self, target: &ContextTarget, cutoff: DateTime<Utc>) -> Result<Vec<Uri>, SubscriptionError> {
         let identifiers = self.repo.expire_due(target, cutoff).await?;
         for identifier in &identifiers {
-            self.emit_change(self.variant.make_deleted(target.clone(), identifier.clone())); // clone: the policy outcome and change sink each own the branch and identifier.
+            self.emit_change(self.variant.make_deleted(target.clone(), identifier.clone())).await; // clone: the policy outcome and change sink each own the branch and identifier.
         }
         Ok(identifiers)
     }

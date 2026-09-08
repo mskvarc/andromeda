@@ -378,15 +378,15 @@ mod tests {
     fn the_batched_stream_insert_carries_the_entity_key_as_an_array_column() {
         let sql = stream_insert_batch_sql().expect("the batched stream insert builds");
         assert!(
-            sql.contains(r#"INSERT INTO "temporal_attribute_streams" ("temporal_entity_key", "attribute_name_id", "dataset_id")"#),
+            sql.contains(r#"INSERT INTO "temporal_attribute_streams" ("context_space_key", "temporal_entity_key", "attribute_name_id", "dataset_id")"#),
             "{sql}"
         );
         assert!(
-            sql.contains("$1::bigint[]") && sql.contains("$2::integer[]") && sql.contains("$3::text[]") && !sql.contains("$4"),
+            sql.contains("$1::bigint[]") && sql.contains("$2::integer[]") && sql.contains("$3::text[]") && sql.contains("$4"),
             "{sql}"
         );
         assert!(
-            sql.contains(r#"ON CONFLICT ("temporal_entity_key", "attribute_name_id", "dataset_id") DO NOTHING"#),
+            sql.contains(r#"ON CONFLICT ("context_space_key", "temporal_entity_key", "attribute_name_id", "dataset_id") DO NOTHING"#),
             "{sql}"
         );
         assert!(!sql.contains("stream_key") && !sql.contains("uuid"), "{sql}");

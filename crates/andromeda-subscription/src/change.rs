@@ -2,6 +2,7 @@
 
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use futures::future::BoxFuture;
 
 /// Signals entity-subscription lifecycle changes.
 #[derive(Clone, Debug)]
@@ -43,6 +44,7 @@ pub enum CsourceSubscriptionChange {
 
 /// Publishes a lifecycle change without coupling subscription policy to a runtime channel.
 pub trait SubscriptionChangeSink<C>: Send + Sync + 'static {
-    /// Publish one completed lifecycle change.
-    fn publish(&self, change: C);
+    /// Publish one completed lifecycle change and finish any coherence work
+    /// required before a subsequent mutation may observe the new policy.
+    fn publish<'a>(&'a self, change: C) -> BoxFuture<'a, ()>;
 }

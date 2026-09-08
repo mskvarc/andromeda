@@ -12,6 +12,7 @@ use crate::{
     registration::CsrBuilder,
     topology::{self, BrokerRole},
 };
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
 use chrono::DateTime;
 use serde_json::{Value, json};
@@ -19,7 +20,7 @@ use std::collections::BTreeSet;
 
 /// Create a `Vehicle` and an EntityMap over it, returning the entity id and the
 /// created map body.
-async fn map_over_vehicle(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, local: &str) -> (String, Value) {
+async fn map_over_vehicle(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -> (String, Value) {
     let entity_id = topology.id(local);
     assert_status(
         &topology
@@ -38,7 +39,7 @@ async fn map_over_vehicle(topology: &andromeda_test_harness::multi_broker::Multi
 }
 
 /// The retrieved source identity body.
-async fn identity(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>) -> Value {
+async fn identity(topology: &MultiBrokerTopology<BrokerRole>) -> Value {
     let response = topology
         .broker(BrokerRole::A)
         .client()

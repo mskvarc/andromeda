@@ -12,6 +12,7 @@ use crate::{
     registration::CsrBuilder,
     topology::{self, BrokerRole},
 };
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -28,7 +29,7 @@ fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
 }
 
 /// Register a redirect CSR and assert it is accepted with 201.
-async fn assert_redirect_accepted(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, registration: &Value) {
+async fn assert_redirect_accepted(topology: &MultiBrokerTopology<BrokerRole>, registration: &Value) {
     let created = topology
         .broker(BrokerRole::A)
         .client()

@@ -8,7 +8,11 @@ mod retention;
 mod temporal_retention;
 
 use crate::{
-    event::{entity_change_sink::BroadcastEntityChangeSink, registration_change_sink::BroadcastRegistrationChangeSink},
+    event::{
+        entity_change_sink::BroadcastEntityChangeSink,
+        registration_change_sink::BroadcastRegistrationChangeSink,
+        snapshot_notification_sink::{DeliverySnapshotNotificationSink, SnapshotStatusDeliveryDrain},
+    },
     linked_entity_forwarding::ForwardedLinkedEntitySource,
     tenant_factory::{
         error::TenantAssemblyError,
@@ -19,6 +23,7 @@ use crate::{
                 register_registration_expiry,
                 register_snapshot_expiry,
                 register_snapshot_preparation,
+                register_snapshot_status_delivery,
                 register_subscription_expiry,
             },
             maintenance::{
@@ -77,6 +82,7 @@ use andromeda_postgresql_context_store::{
     csource_subscription::repo::CsourceSubscriptionRepository,
     notification_delivery::queue::NotificationDeliveryQueue,
     pending_side_effects::repo::PendingSideEffectsRepository,
+    snapshot::status_outbox::SnapshotStatusOutbox,
     subscription::repo::SubscriptionRepository,
 };
 use andromeda_postgresql_temporal_store::repo::TemporalRepository;
@@ -349,6 +355,17 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
     )?;
     register_temporal_retention(&task_supervisor, temporal_repo, temporal_config)?;
     register_snapshot_preparation(&task_supervisor, snapshot_preparation)?;
+    let snapshot_status_drain = SnapshotStatusDeliveryDrain::new(
+        Arc::new(SnapshotStatusOutbox::new(pool)),
+        Arc::new(DeliverySnapshotNotificationSink::new(Arc::clone(&transport))),
+        delivery_config,
+    )
+    .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    register_snapshot_status_delivery(
+        &task_supervisor,
+        Arc::new(snapshot_status_drain),
+        Duration::from_secs(delivery_config.poll_interval_secs),
+    )?;
     register_snapshot_expiry(&task_supervisor, snapshot_store, expiration_interval)?;
     register_entity_map_expiry(&task_supervisor, entity_map_store, expiration_interval)?;
     register_spatial_synchronization(

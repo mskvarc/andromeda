@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::notification_adapter::NotificationAdapter;
+use tokio::{task::yield_now, time::timeout};
 
 const SNAPSHOT_ID: &str = "urn:ngsi-ld:Snapshot:test-model";
 
@@ -228,25 +229,158 @@ async fn snapshot_execution_details_encode_success_empty_and_problem_failure() {
 #[serial(snapshot)]
 async fn snapshot_notification_model_uses_exact_terminal_wire_shape() {
     let _serialized_environment = clean_database().await;
-    let receiver = NotificationAdapter::start().await;
-    let id = "urn:ngsi-ld:Snapshot:terminal-notification";
-    let body = json!({
+    let first_receiver = NotificationAdapter::start().await;
+    let second_receiver = NotificationAdapter::start().await;
+    let entity = json!({
+        "id": "urn:ngsi-ld:Vehicle:notification-result",
+        "type": "https://example.org/NotificationResultVehicle",
+        "@context": "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"
+    });
+    pretty_assertions::assert_eq!(create_entity(&client(), &entity).await, StatusCode::CREATED);
+    let registration = json!({
+        "id": "urn:ngsi-ld:ContextSourceRegistration:snapshot-notification-failure",
+        "type": "ContextSourceRegistration",
+        "endpoint": "http://host.docker.internal:1",
+        "information": [{"entities": [{"type": "https://example.org/NotificationFailureType"}]}],
+        "operations": ["queryEntity"],
+        "@context": "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"
+    });
+    pretty_assertions::assert_eq!(
+        client()
+            .post(broker_url("/csourceRegistrations"))
+            .header("Content-Type", "application/ld+json")
+            .json(&registration)
+            .send()
+            .await
+            .expect("notification failure registration")
+            .status(),
+        StatusCode::CREATED
+    );
+    let cases = [
+        (
+            "urn:ngsi-ld:Snapshot:terminal-success",
+            json!([{"type": "Query", "entities": [{"type": "https://example.org/NotificationResultVehicle"}]}]),
+            &first_receiver,
+            "first",
+            "success",
+        ),
+        (
+            "urn:ngsi-ld:Snapshot:terminal-empty",
+            json!([{"type": "Query", "entities": [{"type": "https://example.org/NotificationAbsentType"}]}]),
+            &second_receiver,
+            "second",
+            "empty",
+        ),
+        (
+            "urn:ngsi-ld:Snapshot:terminal-partial",
+            json!([
+                {"type": "Query", "entities": [{"type": "https://example.org/NotificationResultVehicle"}]},
+                {"type": "Query", "entities": [{"type": "https://example.org/NotificationFailureType"}]}
+            ]),
+            &first_receiver,
+            "first",
+            "partial",
+        ),
+        (
+            "urn:ngsi-ld:Snapshot:terminal-failure",
+            json!([{"type": "Query", "entities": [{"type": "https://example.org/NotificationFailureType"}]}]),
+            &second_receiver,
+            "second",
+            "failure",
+        ),
+    ];
+    for (id, queries, receiver, receiver_name, expected_status) in cases {
+        let body = json!({
         "id": id,
         "type": "Snapshot",
-        "snapshotQueries": [],
+        "snapshotQueries": queries,
         "endpoint": receiver.endpoint_url(),
-        "receiverInfo": [{"key": "X-Snapshot-Test", "value": "terminal"}]
-    });
-    pretty_assertions::assert_eq!(create_snapshot_raw(&client(), &body).await.0, StatusCode::CREATED);
-    let terminal = wait_for_snapshot_terminal(&client(), id, Duration::from_secs(5)).await;
-    let notification = receiver.wait_for_notification(Duration::from_secs(10)).await;
-    pretty_assertions::assert_eq!(notification.body["id"], id);
-    pretty_assertions::assert_eq!(notification.body["type"], "Snapshot");
-    pretty_assertions::assert_eq!(notification.body["snapshotStatus"], terminal["snapshotStatus"]);
-    assert!(notification.body.get("snapshotReady").is_none());
-    pretty_assertions::assert_eq!(notification.headers["X-Snapshot-Test"], "terminal");
-    assert!(notification.headers.get("NGSILD-Tenant").is_none());
-    receiver.shutdown().await;
+        "receiverInfo": [{"key": "X-Snapshot-Test", "value": receiver_name}]
+        });
+        pretty_assertions::assert_eq!(create_snapshot_raw(&client(), &body).await.0, StatusCode::CREATED);
+        let terminal = wait_for_snapshot_terminal(&client(), id, Duration::from_secs(8)).await;
+        pretty_assertions::assert_eq!(terminal["snapshotStatus"], expected_status);
+        let notification = receiver.wait_for_notification_matching("snapshotId", id, Duration::from_secs(10)).await;
+        assert!(
+            notification.body["id"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("urn:ngsi-ld:SnapshotNotification:"))
+        );
+        pretty_assertions::assert_eq!(notification.body["type"], "SnapshotNotification");
+        pretty_assertions::assert_eq!(notification.body["snapshotId"], id);
+        pretty_assertions::assert_eq!(notification.body["snapshotPriority"], terminal["snapshotPriority"]);
+        pretty_assertions::assert_eq!(notification.body["snapshotStatus"], expected_status);
+        pretty_assertions::assert_eq!(notification.body["expiresAt"], terminal["expiresAt"]);
+        assert!(notification.body["notifiedAt"].as_str().is_some());
+        assert!(notification.body.get("snapshotReady").is_none());
+        assert!(notification.body.get("@context").is_some());
+        pretty_assertions::assert_eq!(notification.headers["content-type"], "application/ld+json");
+        pretty_assertions::assert_eq!(notification.headers["X-Snapshot-Test"], receiver_name);
+        assert!(notification.headers.get("NGSILD-Tenant").is_none());
+    }
+
+    let updated_id = "urn:ngsi-ld:Snapshot:terminal-success";
+    let (patch_status, updated) = update_snapshot(&client(), updated_id, &json!({"snapshotPriority": 9, "snapshotLifetime": "PT2H"})).await;
+    pretty_assertions::assert_eq!(patch_status, StatusCode::OK);
+    let update_notification = first_receiver
+        .wait_for_notification_matching("snapshotId", updated_id, Duration::from_secs(10))
+        .await;
+    pretty_assertions::assert_eq!(update_notification.body["snapshotPriority"], 9);
+    pretty_assertions::assert_eq!(update_notification.body["expiresAt"], updated["expiresAt"]);
+    pretty_assertions::assert_eq!(delete_snapshot_raw(&client(), updated_id).await.0, StatusCode::NO_CONTENT);
+    first_receiver
+        .wait_for_no_notification_matching("snapshotId", updated_id, Duration::from_millis(500))
+        .await;
+
+    let purged_id = "urn:ngsi-ld:Snapshot:terminal-empty";
+    pretty_assertions::assert_eq!(
+        client()
+            .delete(broker_url(&format!("/snapshots?q={}", urlencoding::encode(&format!("id=={purged_id}")))))
+            .send()
+            .await
+            .expect("purge endpoint-bearing Snapshot")
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    second_receiver
+        .wait_for_no_notification_matching("snapshotId", purged_id, Duration::from_millis(500))
+        .await;
+
+    let expiring_id = "urn:ngsi-ld:Snapshot:terminal-expiry";
+    pretty_assertions::assert_eq!(
+        create_snapshot_raw(
+            &client(),
+            &json!({
+                "id": expiring_id,
+                "type": "Snapshot",
+                "snapshotQueries": [],
+                "snapshotLifetime": "PT1S",
+                "endpoint": second_receiver.endpoint_url()
+            })
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+    wait_for_snapshot_terminal(&client(), expiring_id, Duration::from_secs(5)).await;
+    second_receiver
+        .wait_for_notification_matching("snapshotId", expiring_id, Duration::from_secs(10))
+        .await;
+    timeout(Duration::from_secs(8), async {
+        loop {
+            if get_snapshot(&client(), expiring_id).await.0 == StatusCode::NOT_FOUND {
+                break;
+            }
+            yield_now().await;
+        }
+    })
+    .await
+    .expect("short-lived endpoint-bearing Snapshot expires");
+    second_receiver
+        .wait_for_no_notification_matching("snapshotId", expiring_id, Duration::from_millis(500))
+        .await;
+    first_receiver.shutdown().await;
+    second_receiver.shutdown().await;
 }
 
 #[tokio::test]
@@ -254,21 +388,53 @@ async fn snapshot_notification_model_uses_exact_terminal_wire_shape() {
 async fn snapshot_header_validates_uri_and_echoes_exact_value_on_all_response_classes() {
     let _serialized_environment = clean_database().await;
     let id = "urn:ngsi-ld:Snapshot:header-matrix";
-    pretty_assertions::assert_eq!(create_snapshot_raw(&client(), &json!({"id": id, "type": "Snapshot", "snapshotQueries": []})).await.0, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(
+        create_snapshot_raw(&client(), &json!({"id": id, "type": "Snapshot", "snapshotQueries": []}))
+            .await
+            .0,
+        StatusCode::CREATED
+    );
     wait_for_snapshot_terminal(&client(), id, Duration::from_secs(5)).await;
-    let success = client().get(broker_url("/entities?type=https%3A%2F%2Fexample.org%2FAbsent")).header("NGSILD-Snapshot", id).send().await.expect("scoped success");
+    let success = client()
+        .get(broker_url("/entities?type=https%3A%2F%2Fexample.org%2FAbsent"))
+        .header("NGSILD-Snapshot", id)
+        .send()
+        .await
+        .expect("scoped success");
     pretty_assertions::assert_eq!(success.status(), StatusCode::OK);
     pretty_assertions::assert_eq!(success.headers()["NGSILD-Snapshot"], id);
-    let no_content = client().delete(broker_url("/entities/urn:ngsi-ld:Entity:absent")).header("NGSILD-Snapshot", id).send().await.expect("scoped delete error");
+    let no_content = client()
+        .delete(broker_url("/entities/urn:ngsi-ld:Entity:absent"))
+        .header("NGSILD-Snapshot", id)
+        .send()
+        .await
+        .expect("scoped delete error");
     pretty_assertions::assert_eq!(no_content.headers()["NGSILD-Snapshot"], id);
-    for malformed in ["", "not a URI", " urn:ngsi-ld:Snapshot:header-matrix "] {
+    // HTTP/1 recipients remove field-value OWS before application header
+    // decoding (RFC 7230 section 3.2.4), so exercise significant whitespace
+    // inside the URI here. The typed-header unit test separately rejects raw
+    // leading/trailing whitespace when decoding is invoked before transport
+    // normalisation.
+    for malformed in ["", "not a URI", "urn:ngsi-ld:Snapshot:header matrix"] {
         pretty_assertions::assert_eq!(
-            client().get(broker_url("/entities?type=Entity")).header("NGSILD-Snapshot", malformed).send().await.expect("malformed Snapshot header").status(),
+            client()
+                .get(broker_url("/entities?type=Entity"))
+                .header("NGSILD-Snapshot", malformed)
+                .send()
+                .await
+                .expect("malformed Snapshot header")
+                .status(),
             StatusCode::BAD_REQUEST
         );
     }
     pretty_assertions::assert_eq!(
-        client().get(broker_url("/entities?type=Entity")).header("NGSILD-Snapshot", "urn:ngsi-ld:Snapshot:unknown").send().await.expect("unknown Snapshot header").status(),
+        client()
+            .get(broker_url("/entities?type=Entity"))
+            .header("NGSILD-Snapshot", "urn:ngsi-ld:Snapshot:unknown")
+            .send()
+            .await
+            .expect("unknown Snapshot header")
+            .status(),
         StatusCode::NOT_FOUND
     );
 }
@@ -285,7 +451,10 @@ async fn snapshot_protocol_distinguishes_invalid_json_from_bad_snapshot() {
         .await
         .expect("invalid Snapshot JSON");
     pretty_assertions::assert_eq!(invalid_json.status(), StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(invalid_json.json::<Value>().await.expect("invalid request problem")["type"], "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest");
+    pretty_assertions::assert_eq!(
+        invalid_json.json::<Value>().await.expect("invalid request problem")["type"],
+        "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest"
+    );
     let bad_model = client()
         .post(broker_url("/snapshots"))
         .header("Content-Type", "application/json")
@@ -294,7 +463,10 @@ async fn snapshot_protocol_distinguishes_invalid_json_from_bad_snapshot() {
         .await
         .expect("bad Snapshot model");
     pretty_assertions::assert_eq!(bad_model.status(), StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(bad_model.json::<Value>().await.expect("bad model problem")["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
+    pretty_assertions::assert_eq!(
+        bad_model.json::<Value>().await.expect("bad model problem")["type"],
+        "https://uri.etsi.org/ngsi-ld/errors/BadRequestData"
+    );
 }
 
 #[tokio::test]
@@ -313,7 +485,12 @@ async fn snapshot_protocol_enforces_content_preconditions() {
         .expect("unsupported media request");
     pretty_assertions::assert_eq!(unsupported.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
     pretty_assertions::assert_eq!(unsupported.bytes().await.expect("empty 415 body").len(), 0);
-    let zero = client().post(broker_url("/snapshots")).header("Content-Length", "0").send().await.expect("zero body request");
+    let zero = client()
+        .post(broker_url("/snapshots"))
+        .header("Content-Length", "0")
+        .send()
+        .await
+        .expect("zero body request");
     pretty_assertions::assert_eq!(zero.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -325,19 +502,53 @@ async fn snapshot_protocol_resolves_context_by_media_type() {
     let link = format!("<{core}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"");
     let json_body = json!({"id": "urn:ngsi-ld:Snapshot:json-link", "type": "Snapshot", "snapshotQueries": []});
     pretty_assertions::assert_eq!(
-        client().post(broker_url("/snapshots")).header("Content-Type", "application/json").header("Link", &link).json(&json_body).send().await.expect("JSON+Link create").status(),
+        client()
+            .post(broker_url("/snapshots"))
+            .header("Content-Type", "application/json")
+            .header("Link", &link)
+            .json(&json_body)
+            .send()
+            .await
+            .expect("JSON+Link create")
+            .status(),
         StatusCode::CREATED
     );
     let ld_body = json!({"id": "urn:ngsi-ld:Snapshot:jsonld-inline", "type": "Snapshot", "snapshotQueries": [], "@context": core});
     pretty_assertions::assert_eq!(
-        client().post(broker_url("/snapshots")).header("Content-Type", "application/ld+json").json(&ld_body).send().await.expect("JSON-LD create").status(),
+        client()
+            .post(broker_url("/snapshots"))
+            .header("Content-Type", "application/ld+json")
+            .json(&ld_body)
+            .send()
+            .await
+            .expect("JSON-LD create")
+            .status(),
         StatusCode::CREATED
     );
-    let json_inline = client().post(broker_url("/snapshots")).header("Content-Type", "application/json").json(&ld_body).send().await.expect("illegal JSON inline context");
+    let json_inline = client()
+        .post(broker_url("/snapshots"))
+        .header("Content-Type", "application/json")
+        .json(&ld_body)
+        .send()
+        .await
+        .expect("illegal JSON inline context");
     pretty_assertions::assert_eq!(json_inline.status(), StatusCode::BAD_REQUEST);
-    let ld_missing = client().post(broker_url("/snapshots")).header("Content-Type", "application/ld+json").json(&json_body).send().await.expect("missing JSON-LD context");
+    let ld_missing = client()
+        .post(broker_url("/snapshots"))
+        .header("Content-Type", "application/ld+json")
+        .json(&json_body)
+        .send()
+        .await
+        .expect("missing JSON-LD context");
     pretty_assertions::assert_eq!(ld_missing.status(), StatusCode::BAD_REQUEST);
-    let ld_mixed = client().post(broker_url("/snapshots")).header("Content-Type", "application/ld+json").header("Link", &link).json(&ld_body).send().await.expect("mixed JSON-LD context");
+    let ld_mixed = client()
+        .post(broker_url("/snapshots"))
+        .header("Content-Type", "application/ld+json")
+        .header("Link", &link)
+        .json(&ld_body)
+        .send()
+        .await
+        .expect("mixed JSON-LD context");
     pretty_assertions::assert_eq!(ld_mixed.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -346,19 +557,48 @@ async fn snapshot_protocol_resolves_context_by_media_type() {
 async fn snapshot_protocol_negotiates_response_context_and_errors() {
     let _serialized_environment = clean_database().await;
     let id = "urn:ngsi-ld:Snapshot:negotiation-matrix";
-    pretty_assertions::assert_eq!(create_snapshot_raw(&client(), &json!({"id": id, "type": "Snapshot", "snapshotQueries": []})).await.0, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(
+        create_snapshot_raw(&client(), &json!({"id": id, "type": "Snapshot", "snapshotQueries": []}))
+            .await
+            .0,
+        StatusCode::CREATED
+    );
     for (accept, content_type, inline_context) in [
         ("application/json", "application/json", false),
         ("application/ld+json", "application/ld+json", true),
     ] {
-        let response = client().get(broker_url(&format!("/snapshots/{id}"))).header("Accept", accept).send().await.expect("negotiated Snapshot GET");
+        let response = client()
+            .get(broker_url(&format!("/snapshots/{id}")))
+            .header("Accept", accept)
+            .send()
+            .await
+            .expect("negotiated Snapshot GET");
         pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
         assert!(response.headers()["Content-Type"].to_str().expect("content type").starts_with(content_type));
         let has_context = response.json::<Value>().await.expect("Snapshot representation").get("@context").is_some();
         pretty_assertions::assert_eq!(has_context, inline_context);
     }
-    pretty_assertions::assert_eq!(client().get(broker_url(&format!("/snapshots/{id}"))).header("Accept", "text/plain").send().await.expect("unacceptable Snapshot GET").status(), StatusCode::NOT_ACCEPTABLE);
-    let error = client().get(broker_url("/snapshots/urn:ngsi-ld:Snapshot:absent")).header("Accept", "application/ld+json").send().await.expect("Snapshot error representation");
+    pretty_assertions::assert_eq!(
+        client()
+            .get(broker_url(&format!("/snapshots/{id}")))
+            .header("Accept", "text/plain")
+            .send()
+            .await
+            .expect("unacceptable Snapshot GET")
+            .status(),
+        StatusCode::NOT_ACCEPTABLE
+    );
+    let error = client()
+        .get(broker_url("/snapshots/urn:ngsi-ld:Snapshot:absent"))
+        .header("Accept", "application/ld+json")
+        .send()
+        .await
+        .expect("Snapshot error representation");
     pretty_assertions::assert_eq!(error.status(), StatusCode::NOT_FOUND);
-    assert!(error.headers()["Content-Type"].to_str().expect("error content type").starts_with("application/json"));
+    assert!(
+        error.headers()["Content-Type"]
+            .to_str()
+            .expect("error content type")
+            .starts_with("application/json")
+    );
 }

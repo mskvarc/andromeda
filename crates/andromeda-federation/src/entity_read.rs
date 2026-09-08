@@ -137,6 +137,7 @@ impl FederationService {
             csf_expr,
             mode_filter,
             entity_map,
+            source_page,
         } = request;
         if self.is_loop_detected(triggering.via) {
             return Ok(own_loop_outcome());
@@ -158,7 +159,9 @@ impl FederationService {
             .await?;
         let targets = registrations
             .into_iter()
-            .filter_map(|registration| ForwardedQuery::for_registration(client_query, &registration, split).map(|query| (registration, query)))
+            .filter_map(|registration| {
+                ForwardedQuery::for_registration_on_page(client_query, &registration, split, source_page).map(|query| (registration, query))
+            })
             .collect::<Vec<_>>();
         if targets.is_empty() {
             return Ok(ForwardReadOutcome::empty());

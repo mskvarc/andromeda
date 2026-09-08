@@ -5,8 +5,7 @@ use crate::{
     event::{
         entity_change_sink::BroadcastEntityChangeSink,
         registration_change_sink::BroadcastRegistrationChangeSink,
-        snapshot_notification_sink::DeliverySnapshotNotificationSink,
-        subscription_change_sink::BroadcastSubscriptionChangeSink,
+        subscription_change_sink::{BroadcastSubscriptionChangeSink, CoherentSubscriptionChangeSink},
         subscription_endpoint_validator::DeliverySubscriptionEndpointValidator,
     },
     linked_entity_forwarding::ForwardedLinkedEntitySource,
@@ -53,8 +52,7 @@ use andromeda_postgresql_temporal_store::repo::TemporalRepository;
 use andromeda_registration::{RegistrationService, entity_probe::RegisteredEntityProbe, store::RegistrationStore};
 use andromeda_snapshot::{
     config::SnapshotConfig,
-    executor::SnapshotPreparation,
-    notification::SnapshotNotificationSink,
+    executor::{SnapshotPreparation, SnapshotPreparationConfig},
     service::SnapshotService,
     store::SnapshotStore,
 };
@@ -223,7 +221,6 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
     ));
     let context_store = Arc::new(JsonLdContextRepository::new(pool)) as Arc<dyn ContextRegistryStore>;
     let contexts = Arc::new(ContextRegistryService::new(context_store, engine.clone()));
-    let snapshot_notifications: Arc<dyn SnapshotNotificationSink> = Arc::new(DeliverySnapshotNotificationSink::new(Arc::clone(&transports.dispatcher)));
     let snapshot_preparation = Arc::new(SnapshotPreparation::new(
         live_target.clone(), // clone: capture queries execute against the tenant's ordinary live branch.
         Arc::clone(snapshot_store),
@@ -231,18 +228,22 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         Arc::clone(&entity_query),
         Arc::clone(&temporal),
         Arc::clone(&forwarding),
-        Some(Arc::clone(&snapshot_notifications)),
-        snapshot_config.capture_page_size,
-        snapshot_config.preparation_concurrency,
-        Duration::from_secs(snapshot_config.preparation_lease_secs),
+        SnapshotPreparationConfig {
+            capture_page_size: snapshot_config.capture_page_size,
+            max_per_pass: snapshot_config.preparation_concurrency,
+            lease_duration: Duration::from_secs(snapshot_config.preparation_lease_secs),
+            tenant_count_quota: snapshot_config.tenant_count_quota,
+            tenant_byte_quota: snapshot_config.tenant_byte_quota,
+        },
     ));
     let snapshots = Arc::new(SnapshotService::new(
         Arc::clone(snapshot_store),
-        Some(snapshot_notifications),
         Some(Arc::clone(&snapshot_preparation)),
         Duration::from_secs(snapshot_config.default_lifetime_secs),
         Duration::from_secs(snapshot_config.maximum_lifetime_secs),
         Duration::from_secs(snapshot_config.scoped_operation_wait_secs),
+        snapshot_config.tenant_count_quota,
+        snapshot_config.tenant_byte_quota,
     ));
 
     let subscription_endpoint_validator: Arc<dyn SubscriptionEndpointValidator> = Arc::new(DeliverySubscriptionEndpointValidator);
@@ -279,10 +280,14 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         }
     };
     let mut subscriptions = SubscriptionService::new(
-        subscription_store,
+        Arc::clone(&subscription_store),
         engine.clone(),
         EntitySubscriptionVariant::new(engine.clone(), Arc::clone(&contexts)),
-        Some(Arc::new(BroadcastSubscriptionChangeSink::new(signals.subscription.clone()))),
+        Some(Arc::new(CoherentSubscriptionChangeSink::new(
+            signals.subscription.clone(),
+            Arc::clone(subscription_cache),
+            subscription_store,
+        ))),
         Arc::clone(&subscription_endpoint_validator),
     );
     if let Some(forwarding_service) = &subscription_forwarding {

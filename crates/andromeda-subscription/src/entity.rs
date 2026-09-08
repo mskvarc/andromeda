@@ -6,6 +6,7 @@ use crate::{
     validation,
 };
 use andromeda_context_registry::service::ContextRegistryService;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::subscription::Subscription;
@@ -98,11 +99,11 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
         DatasetIdPolicy::Retain
     }
 
-    fn make_upserted(&self, target: andromeda_context_space::context_target::ContextTarget, id: Uri) -> SubscriptionChange {
+    fn make_upserted(&self, target: ContextTarget, id: Uri) -> SubscriptionChange {
         SubscriptionChange::Upserted { target, id }
     }
 
-    fn make_deleted(&self, target: andromeda_context_space::context_target::ContextTarget, id: Uri) -> SubscriptionChange {
+    fn make_deleted(&self, target: ContextTarget, id: Uri) -> SubscriptionChange {
         SubscriptionChange::Deleted { target, id }
     }
 }

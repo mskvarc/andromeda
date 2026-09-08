@@ -10,10 +10,11 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::{BAD_REQUEST_DATA, RESOURCE_NOT_FOUND};
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use serde_json::json;
 
 /// Create a `Vehicle` and an EntityMap over it, returning the map id.
-async fn create_map(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, local: &str) -> String {
+async fn create_map(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -> String {
     let entity_id = topology.id(local);
     assert_status(
         &topology

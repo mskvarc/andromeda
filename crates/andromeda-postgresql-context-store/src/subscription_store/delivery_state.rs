@@ -190,10 +190,10 @@ mod tests {
     }
 
     #[test]
-    fn the_state_row_is_inserted_under_the_returned_surrogate_key_alone() {
+    fn the_state_row_is_inserted_under_the_returned_surrogate_key_and_context_space() {
         assert_eq!(
             state_insert_sql().expect("builds"),
-            r#"INSERT INTO "subscription_delivery_state" ("subscription_key") VALUES ($1)"#
+            r#"INSERT INTO "subscription_delivery_state" ("context_space_key", "subscription_key") VALUES ($1, $2)"#
         );
     }
 
@@ -206,7 +206,7 @@ mod tests {
         );
         assert!(
             sql.contains(
-                r#"WHERE "subscription_key" = (SELECT "subscriptions"."subscription_key" FROM "subscriptions" WHERE "subscriptions"."id" = 'urn:ngsi-ld:Subscription:one' AND "subscriptions"."kind" = ('entity') AND "subscriptions"."status" = ('active'))"#
+                r#"WHERE "context_space_key" = 1 AND "subscription_key" = (SELECT "subscriptions"."subscription_key" FROM "subscriptions" WHERE "subscriptions"."id" = 'urn:ngsi-ld:Subscription:one' AND "subscriptions"."context_space_key" = 1 AND "subscriptions"."kind" = ('entity') AND "subscriptions"."status" = ('active'))"#
             ),
             "{sql}"
         );

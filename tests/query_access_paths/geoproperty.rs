@@ -43,7 +43,7 @@ fn dock_only_building(id: &str) -> Value {
 
 /// Identifiers selected by one geo-query restricted to the two fixtures.
 async fn selected(client: &TestClient, id_filter: &str, filter: &str) -> Vec<String> {
-    let query = format!("type=Building&id={id_filter}&{filter}");
+    let query = format!("type=Building&id={id_filter}&local=true&{filter}");
     let response = client
         .query_entities(&query, "application/json", Some(TEST_SUITE_CONTEXT))
         .await

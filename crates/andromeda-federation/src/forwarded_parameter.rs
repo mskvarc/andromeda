@@ -15,6 +15,8 @@ pub enum ForwardedParameter {
     IdPattern,
     /// The source-side page limit used while the broker aggregates results.
     Limit,
+    /// The source-local offset used by an explicit range walk.
+    Offset,
     /// The attribute list.
     Attrs,
     /// The clause 4.9 query.
@@ -72,6 +74,7 @@ mod tests {
             (ForwardedParameter::Id, "id"),
             (ForwardedParameter::Type, "type"),
             (ForwardedParameter::IdPattern, "idPattern"),
+            (ForwardedParameter::Offset, "offset"),
             (ForwardedParameter::ScopeQ, "scopeQ"),
             (ForwardedParameter::DatasetId, "datasetId"),
             (ForwardedParameter::Geoproperty, "geoproperty"),

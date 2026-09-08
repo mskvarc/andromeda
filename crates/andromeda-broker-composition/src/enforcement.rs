@@ -17,6 +17,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-component-report",
         "andromeda-context-commit",
         "andromeda-context-registry",
+        "andromeda-context-space",
         "andromeda-delivery",
         "andromeda-entity",
         "andromeda-entity-map",

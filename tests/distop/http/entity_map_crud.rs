@@ -9,12 +9,13 @@ use crate::{
     oracle::{assert_status, entity_map_header},
     topology::{self, BrokerRole},
 };
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use reqwest::Method;
 use serde_json::json;
 
 /// Provision an entity map by running a distributed `entityMap=true` query
 /// against a registered mock source, returning the created map id.
-async fn provision_map(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, mock: &ContextSourceAdapter, tag: &str) -> String {
+async fn provision_map(topology: &MultiBrokerTopology<BrokerRole>, mock: &ContextSourceAdapter, tag: &str) -> String {
     let entity_id = topology.id(&format!("Vehicle:{tag}"));
     let reg_id = topology.id(&format!("registration:{tag}"));
     assert_status(

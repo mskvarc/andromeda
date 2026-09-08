@@ -203,6 +203,7 @@ impl SubscriptionForwardingService {
             receiver_info: endpoint.receiver_info.as_deref(),
             jsonld_context: subscription.delivery.jsonld_context.as_ref(),
             tenant: self.tenant.tenant_name(),
+            snapshot: None,
             subscription_id: &local,
         }
         .assemble();

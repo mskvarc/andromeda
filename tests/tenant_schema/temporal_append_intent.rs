@@ -48,7 +48,7 @@ async fn temporal_append_intents_exposes_write_identity_and_preserves_its_dedupl
     .fetch_one(pool)
     .await
     .expect("the temporal append intent uniqueness constraint must exist");
-    assert_eq!(constraint_columns, ["write_id", "entity_id", "base"]);
+    assert_eq!(constraint_columns, ["context_space_key", "write_id", "entity_id", "base"]);
 
     let bounded_error: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pg_constraint \

@@ -1,7 +1,6 @@
 use crate::{
     error::SnapshotError,
     executor::{SnapshotPreparation, SnapshotPreparationOutcome},
-    notification::SnapshotNotificationSink,
     prepare::to_insert_params,
     query_validation::validate_snapshot_query_shapes,
     status::{ScopingEligibility, scoping_eligibility},
@@ -26,11 +25,12 @@ use tracing::{info, warn};
 /// Service for managing NGSI-LD entity snapshots.
 pub struct SnapshotService {
     repo: Arc<dyn SnapshotStore>,
-    notification_sink: Option<Arc<dyn SnapshotNotificationSink>>,
     preparation: Option<Arc<SnapshotPreparation>>,
     default_lifetime: Duration,
     maximum_lifetime: Duration,
     scoped_operation_wait: Duration,
+    tenant_count_quota: Option<usize>,
+    tenant_byte_quota: Option<u64>,
 }
 
 impl SnapshotService {
@@ -39,19 +39,21 @@ impl SnapshotService {
     /// freshly created snapshot does not wait for the next scheduled sweep.
     pub const fn new(
         repo: Arc<dyn SnapshotStore>,
-        notification_sink: Option<Arc<dyn SnapshotNotificationSink>>,
         preparation: Option<Arc<SnapshotPreparation>>,
         default_lifetime: Duration,
         maximum_lifetime: Duration,
         scoped_operation_wait: Duration,
+        tenant_count_quota: Option<usize>,
+        tenant_byte_quota: Option<u64>,
     ) -> SnapshotService {
         SnapshotService {
             repo,
-            notification_sink,
             preparation,
             default_lifetime,
             maximum_lifetime,
             scoped_operation_wait,
+            tenant_count_quota,
+            tenant_byte_quota,
         }
     }
 
@@ -126,6 +128,7 @@ impl SnapshotService {
             .to_context_value()
             .ok_or_else(|| SnapshotError::internal("Snapshot request context could not be materialized"))?;
         self.repo.create(to_insert_params(&snapshot, query_context)?).await?;
+        self.enforce_quotas().await?;
 
         Ok(snapshot)
     }
@@ -185,11 +188,7 @@ impl SnapshotService {
             .update_metadata(id, persisted_lifetime, patch_priority, endpoint, receiver_info, new_expires_at)
             .await?;
 
-        let updated = self.get(id).await?;
-        if updated.status != SnapshotStatus::Preparing {
-            self.send_notification_if_configured(&updated).await;
-        }
-        Ok(updated)
+        self.get(id).await
     }
 
     /// Delete a snapshot by its identifier.
@@ -336,21 +335,17 @@ impl SnapshotService {
         let mut params = to_insert_params(&cloned, query_context)?;
         params.clone_source_id = Some(source_id);
         self.repo.create(params).await?;
+        self.enforce_quotas().await?;
 
         Ok(cloned)
     }
 
-    /// Dispatch a snapshot notification to the snapshot's endpoint, if configured.
-    ///
-    /// Per ETSI GS CIM 009 clause 5.16.6, notifications are sent when the
-    /// `endpoint` member is present. Delivery is fire-and-forget: errors are
-    /// logged but never propagated.
-    async fn send_notification_if_configured(&self, snapshot: &Snapshot) {
-        if snapshot.endpoint.is_some()
-            && let Some(ref sink) = self.notification_sink
-        {
-            sink.deliver(snapshot).await;
+    async fn enforce_quotas(&self) -> Result<(), SnapshotError> {
+        let evicted = self.repo.enforce_quotas(self.tenant_count_quota, self.tenant_byte_quota).await?;
+        for id in evicted {
+            info!(snapshot_id = %id, "Snapshot evicted by tenant resource quota");
         }
+        Ok(())
     }
 }
 

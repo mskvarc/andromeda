@@ -475,6 +475,7 @@ async fn create_temporal_entity_raw(c: &Client, bytes: &[u8], content_type: &str
     let resp = c
         .post(format!("{BASE_URL}/temporal/entities"))
         .header("Content-Type", content_type)
+        .header("Content-Length", bytes.len())
         .body(bytes.to_vec())
         .send()
         .await

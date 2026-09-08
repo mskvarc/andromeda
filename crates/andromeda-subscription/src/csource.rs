@@ -5,6 +5,7 @@ use crate::{
     normalization,
     validation,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::subscription::Subscription;
@@ -73,11 +74,11 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
         DatasetIdPolicy::Discard
     }
 
-    fn make_upserted(&self, target: andromeda_context_space::context_target::ContextTarget, id: Uri) -> CsourceSubscriptionChange {
+    fn make_upserted(&self, target: ContextTarget, id: Uri) -> CsourceSubscriptionChange {
         CsourceSubscriptionChange::Upserted { target, id }
     }
 
-    fn make_deleted(&self, target: andromeda_context_space::context_target::ContextTarget, id: Uri) -> CsourceSubscriptionChange {
+    fn make_deleted(&self, target: ContextTarget, id: Uri) -> CsourceSubscriptionChange {
         CsourceSubscriptionChange::Deleted { target, id }
     }
 }

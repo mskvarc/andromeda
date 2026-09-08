@@ -145,6 +145,7 @@ async fn add_temporal_attrs_raw(c: &Client, id: &str, bytes: &[u8], content_type
     let resp = c
         .post(format!("{BASE_URL}/temporal/entities/{id}/attrs"))
         .header("Content-Type", content_type)
+        .header("Content-Length", bytes.len())
         .body(bytes.to_vec())
         .send()
         .await

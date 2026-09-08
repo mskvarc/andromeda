@@ -39,4 +39,10 @@ TRUNCATE
     entity_documents,
     entities,
     jsonld_contexts
-RESTART IDENTITY CASCADE
+RESTART IDENTITY CASCADE;
+
+-- The live context space is migration-owned tenant state. Snapshot context
+-- spaces are test-owned branch parents and cannot be reached by truncating the
+-- child control table, so remove them explicitly after every dependent table
+-- is empty.
+DELETE FROM context_spaces WHERE kind = 'snapshot';

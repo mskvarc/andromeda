@@ -14,6 +14,8 @@ pub enum Snapshots {
     SnapshotKey,
     /// The role-neutral branch containing this Snapshot's data.
     ContextSpaceKey,
+    /// Private context branch populated before atomic capture promotion.
+    StagingContextSpaceKey,
     /// The snapshot's URI identifier.
     Id,
     /// The entity queries the snapshot materialised.
@@ -54,9 +56,44 @@ pub enum Snapshots {
     LastUsedAt,
 }
 
+/// The durable Snapshot lifecycle-notification delivery queue.
+#[derive(Iden, Clone, Copy)]
+pub enum SnapshotNotificationOutbox {
+    /// Table name: `snapshot_notification_outbox`.
+    Table,
+    /// Durable delivery identity.
+    Id,
+    /// Parent Snapshot surrogate key.
+    SnapshotKey,
+    /// Creation instant.
+    CreatedAt,
+    /// Earliest instant at which another attempt is due.
+    NextAttemptAt,
+    /// Instant the current lease was acquired.
+    ClaimedAt,
+    /// Current lease deadline.
+    LeaseUntil,
+    /// Current worker identity.
+    ClaimedBy,
+    /// Completed attempt count.
+    AttemptCount,
+    /// Successful delivery instant.
+    DeliveredAt,
+    /// Dead-letter instant.
+    ExhaustedAt,
+    /// Callback endpoint.
+    Endpoint,
+    /// Receiver-provided HTTP metadata.
+    ReceiverInfo,
+    /// Standards-shaped notification body.
+    Payload,
+    /// Most recent transport error.
+    LastError,
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::snapshot::Snapshots;
+    use crate::snapshot::{SnapshotNotificationOutbox, Snapshots};
     use sea_query::Iden;
 
     #[test]
@@ -64,9 +101,11 @@ mod tests {
         assert_eq!(Snapshots::Table.to_string(), "snapshots");
         assert_eq!(Snapshots::SnapshotKey.to_string(), "snapshot_key");
         assert_eq!(Snapshots::ContextSpaceKey.to_string(), "context_space_key");
+        assert_eq!(Snapshots::StagingContextSpaceKey.to_string(), "staging_context_space_key");
         assert_eq!(Snapshots::LastUsedAt.to_string(), "last_used_at");
         assert_eq!(Snapshots::ClaimedAt.to_string(), "claimed_at");
         assert_eq!(Snapshots::ClaimedBy.to_string(), "claimed_by");
         assert_eq!(Snapshots::LeaseUntil.to_string(), "lease_until");
+        assert_eq!(SnapshotNotificationOutbox::Table.to_string(), "snapshot_notification_outbox");
     }
 }

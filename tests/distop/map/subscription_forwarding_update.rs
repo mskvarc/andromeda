@@ -13,16 +13,13 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::context::CORE_CONTEXT;
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
 use serde_json::{Value, json};
 
 /// Create a subscription against a source and drain the initial forwarded create,
 /// returning the mock ready to capture the next forward.
-async fn subscription_over_source(
-    topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>,
-    registration_local: &str,
-    subscription_id: &str,
-) -> ContextSourceAdapter {
+async fn subscription_over_source(topology: &MultiBrokerTopology<BrokerRole>, registration_local: &str, subscription_id: &str) -> ContextSourceAdapter {
     let mock = subscription_source(topology, registration_local).await;
     assert_status(
         &topology

@@ -11,6 +11,7 @@ use crate::{
     oracle::{assert_status, forwarded_header, json_body},
     topology::{self, BrokerRole},
 };
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
 use serde_json::json;
 use std::time::Duration;
@@ -112,7 +113,7 @@ async fn notif_content_type_follows_endpoint_accept() {
 }
 
 /// Retrieve the subscription's `notification` sub-object after a delivery attempt.
-async fn notification_state(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, id: &str) -> serde_json::Value {
+async fn notification_state(topology: &MultiBrokerTopology<BrokerRole>, id: &str) -> serde_json::Value {
     sleep(SETTLE).await;
     let retrieved = topology
         .broker(BrokerRole::A)

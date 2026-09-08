@@ -445,14 +445,17 @@ mod tests {
     #[test]
     fn a_commit_replayed_under_its_original_identity_enqueues_no_second_intent_per_entity_and_base() {
         let sql = enqueue_sql();
-        assert!(sql.contains(r#"ON CONFLICT ("write_id", "entity_id", "base") DO NOTHING"#), "{sql}");
+        assert!(
+            sql.contains(r#"ON CONFLICT ("context_space_key", "write_id", "entity_id", "base") DO NOTHING"#),
+            "{sql}"
+        );
     }
 
     #[test]
     fn the_deduplicating_key_names_the_write_the_entity_and_the_ordinal_base() {
         let sql = enqueue_sql();
         assert!(
-            sql.contains(r#"INTO "temporal_append_intents" ("write_id", "entity_id", "base", "intent")"#),
+            sql.contains(r#"INTO "temporal_append_intents" ("context_space_key", "write_id", "entity_id", "base", "intent")"#),
             "{sql}"
         );
     }

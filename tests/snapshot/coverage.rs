@@ -73,6 +73,16 @@ fn catalog_requirement_identifiers() -> BTreeSet<String> {
 fn register_has_exact_normative_and_policy_counts() {
     pretty_assertions::assert_eq!(identifiers(REGISTER, r"REQ-SNAP-[A-Z]+-[0-9]+").len(), EXPECTED_REQUIREMENTS);
     pretty_assertions::assert_eq!(identifiers(REGISTER, r"POLICY-SNAP-[0-9]+").len(), EXPECTED_POLICIES);
+    let incomplete = REGISTER
+        .lines()
+        .filter(|line| line.starts_with("[REQ-SNAP-"))
+        .filter(|line| !line.ends_with("STATUS: COVERED") && !line.starts_with("[REQ-SNAP-RESULT-5] SPEC-CONFLICT"))
+        .collect::<Vec<_>>();
+    assert!(
+        incomplete.is_empty(),
+        "Snapshot obligations with unresolved implementation status: {incomplete:#?}"
+    );
+    pretty_assertions::assert_eq!(REGISTER.lines().filter(|line| line.ends_with("STATUS: SPEC-CONFLICT")).count(), 1);
 }
 
 #[test]

@@ -5,7 +5,7 @@ use crate::{
     state::{RegistrationTenantState, RegistrationTenantStateOrCreate},
 };
 use andromeda_http_extraction::{
-    accept::AcceptFormat,
+    accept::{AcceptFormat, AcceptFormatNoGeo},
     context::ContextUrl,
     jsonld::JsonLd,
     prefer::PreferHeader,
@@ -57,7 +57,7 @@ pub(crate) async fn create(
 pub(crate) async fn get(
     ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
-    accept: AcceptFormat,
+    accept: AcceptFormatNoGeo,
     context: ContextUrl,
     TypedPath(registration_id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,

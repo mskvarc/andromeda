@@ -133,6 +133,13 @@ struct ChurnOutcome {
 /// what makes this a measurement instead of a race.
 async fn churn(pool: &PgPool, relation: &str, statement: &str, entity_key: i64) -> ChurnOutcome {
     let mut transaction = pool.begin().await.expect("the churn transaction must open");
+    let before: (i64, i64) = sqlx::query_as(
+        "SELECT pg_stat_get_xact_tuples_updated(c.oid), pg_stat_get_xact_tuples_hot_updated(c.oid) FROM pg_class AS c WHERE c.oid = $1::regclass",
+    )
+    .bind(relation)
+    .fetch_one(&mut *transaction)
+    .await
+    .expect("the transaction-local tuple counters must be readable before churn");
     for round in 1..=CHURN_UPDATES {
         sqlx::query(sqlx::AssertSqlSafe(statement))
             .bind(entity_key)
@@ -151,8 +158,8 @@ async fn churn(pool: &PgPool, relation: &str, statement: &str, entity_key: i64) 
     .fetch_one(&mut *transaction)
     .await
     .map(|row| ChurnOutcome {
-        updated: row.get::<i64, _>("updated"),
-        heap_only: row.get::<i64, _>("heap_only"),
+        updated: row.get::<i64, _>("updated") - before.0,
+        heap_only: row.get::<i64, _>("heap_only") - before.1,
         pages: row.get::<i64, _>("pages"),
     })
     .expect("the transaction-local tuple counters must be readable");
@@ -216,11 +223,13 @@ async fn sustained_projection_churn_stays_heap_only_and_leaves_bounded_dead_tupl
     .expect("attribute dictionary insert must succeed");
 
     let entity_key = churn_entity(pool, prefix).await;
+    let context_space_key = crate::live_context_space_key(pool).await;
 
     sqlx::query(
-        "INSERT INTO current_attribute_values (entity_key, attribute_name_id, attribute_kind, value_kind, value_number) \
-         VALUES ($1, $2, 1, 1, 0::numeric)",
+        "INSERT INTO current_attribute_values (context_space_key, entity_key, attribute_name_id, attribute_kind, value_kind, value_number) \
+         VALUES ($1, $2, $3, 1, 1, 0::numeric)",
     )
+    .bind(context_space_key)
     .bind(entity_key)
     .bind(attribute_name_id)
     .execute(pool)
@@ -291,16 +300,18 @@ async fn sustained_projection_churn_stays_heap_only_and_leaves_bounded_dead_tupl
 /// Insert one bare entity in all three current-state relations under `prefix`
 /// and return its surrogate key.
 async fn churn_entity(pool: &PgPool, prefix: &str) -> i64 {
+    let context_space_key = crate::live_context_space_key(pool).await;
     sqlx::query_scalar(
         "WITH type_name AS ( \
              INSERT INTO entity_type_names (name) VALUES ('https://example.test/tenant-schema/Churn') \
              ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id), \
-         ins AS (INSERT INTO entities (id) VALUES ($1::text || ':churn') RETURNING entity_key), \
-         doc AS (INSERT INTO entity_documents (entity_key, payload) SELECT entity_key, '[]'::jsonb FROM ins) \
-         INSERT INTO entity_search (entity_key, type_ids, attribute_name_ids) \
-         SELECT ins.entity_key, ARRAY[type_name.id], ARRAY[]::integer[] FROM ins, type_name \
+         ins AS (INSERT INTO entities (context_space_key, id) VALUES ($1, $2::text || ':churn') RETURNING entity_key), \
+         doc AS (INSERT INTO entity_documents (context_space_key, entity_key, payload) SELECT $1, entity_key, '[]'::jsonb FROM ins) \
+         INSERT INTO entity_search (context_space_key, entity_key, type_ids, attribute_name_ids) \
+         SELECT $1, ins.entity_key, ARRAY[type_name.id], ARRAY[]::integer[] FROM ins, type_name \
          RETURNING entity_key",
     )
+    .bind(context_space_key)
     .bind(prefix)
     .fetch_one(pool)
     .await
@@ -479,11 +490,13 @@ async fn the_delivery_claim_index_is_the_claimable_expression_so_vacuum_cadence_
 async fn sustained_side_effect_claims_stay_heap_only() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let pool = scope.database_pool();
+    let context_space_key = crate::live_context_space_key(pool).await;
 
     sqlx::query(
-        "INSERT INTO pending_side_effects (id, write_id, recorded_at, consequence_base, payload) \
-         VALUES (gen_random_uuid(), gen_random_uuid(), NOW(), 0, '{\"temporal_entities\": [], \"change_events\": []}'::jsonb)",
+        "INSERT INTO pending_side_effects (context_space_key, id, write_id, recorded_at, consequence_base, payload) \
+         VALUES ($1, gen_random_uuid(), gen_random_uuid(), NOW(), 0, '{\"temporal_entities\": [], \"change_events\": []}'::jsonb)",
     )
+    .bind(context_space_key)
     .execute(pool)
     .await
     .expect("the churn job must be seeded");
@@ -522,14 +535,18 @@ async fn sustained_side_effect_claims_stay_heap_only() {
 async fn sustained_delivery_state_churn_stays_heap_only() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let pool = scope.database_pool();
+    let context_space_key = crate::live_context_space_key(pool).await;
 
-    let subscription_key: i64 =
-        sqlx::query_scalar("INSERT INTO subscriptions (id, kind, notification) VALUES ($1, 'entity', '{}'::jsonb) RETURNING subscription_key")
-            .bind(scope.id("urn:ngsi-ld:Subscription:delivery-state-churn"))
-            .fetch_one(pool)
-            .await
-            .expect("the churn subscription must be seeded");
-    sqlx::query("INSERT INTO subscription_delivery_state (subscription_key) VALUES ($1)")
+    let subscription_key: i64 = sqlx::query_scalar(
+        "INSERT INTO subscriptions (context_space_key, id, kind, notification) VALUES ($1, $2, 'entity', '{}'::jsonb) RETURNING subscription_key",
+    )
+    .bind(context_space_key)
+    .bind(scope.id("urn:ngsi-ld:Subscription:delivery-state-churn"))
+    .fetch_one(pool)
+    .await
+    .expect("the churn subscription must be seeded");
+    sqlx::query("INSERT INTO subscription_delivery_state (context_space_key, subscription_key) VALUES ($1, $2)")
+        .bind(context_space_key)
         .bind(subscription_key)
         .execute(pool)
         .await

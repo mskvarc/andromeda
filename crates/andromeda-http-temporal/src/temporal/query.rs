@@ -159,6 +159,7 @@ pub async fn query(
                     csf_expr: csf_expr.as_ref(),
                     mode_filter: CsrModeFilter::All,
                     entity_map: EntityMapInUse::from(&map_use),
+                    source_page: None,
                 },
             )
             .await

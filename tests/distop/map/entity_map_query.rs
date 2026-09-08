@@ -8,10 +8,11 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::BAD_REQUEST_DATA;
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
 
 /// Create a `Vehicle` on the front broker.
-async fn seed_vehicle(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, local: &str) -> String {
+async fn seed_vehicle(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -> String {
     let entity_id = topology.id(local);
     assert_status(
         &topology

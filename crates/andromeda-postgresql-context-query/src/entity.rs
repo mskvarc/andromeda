@@ -416,7 +416,7 @@ mod tests {
         let built = build(&empty_query(), &known_types());
         assert!(
             built.sql.starts_with(
-                r#"SELECT (SELECT "payload" FROM "entity_documents" WHERE "entity_key" = "entities"."entity_key") AS "payload" FROM "entities" WHERE TRUE ORDER BY"#
+                r#"SELECT (SELECT "payload" FROM "entity_documents" WHERE "entity_key" = "entities"."entity_key") AS "payload" FROM "entities" WHERE "entities"."context_space_key" = $1 ORDER BY"#
             ),
             "{}",
             built.sql
@@ -554,7 +554,7 @@ mod tests {
                 .build(),
         ];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("WHERE FALSE"), "{}", built.sql);
+        assert!(built.sql.contains("AND (FALSE)"), "{}", built.sql);
         assert!(!built.sql.contains("type_ids"), "no probe is rendered for an unresolved type: {}", built.sql);
     }
 
@@ -701,7 +701,11 @@ mod tests {
         let main = placeholders(&built.sql);
         let counted = placeholders(&count_sql);
         assert_eq!(counted, main[..counted.len()], "count query must reuse the leading binds verbatim");
-        assert_eq!(counted, vec!["1".to_string(), "2".to_string()], "attribute id then value: {count_sql}");
+        assert_eq!(
+            counted,
+            vec!["1".to_string(), "2".to_string(), "3".to_string()],
+            "context space, attribute id, then value: {count_sql}"
+        );
     }
 
     #[test]

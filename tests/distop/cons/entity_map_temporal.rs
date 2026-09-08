@@ -12,6 +12,7 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_client::response::TestResponse;
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -25,11 +26,7 @@ fn observed(value: i64, observed_at: &str) -> Value {
 const BEFORE_2030: &str = "timerel=before&timeAt=2030-01-01T00:00:00Z";
 
 /// Retrieve one temporal entity reusing a supplied map.
-async fn retrieve_temporal_reusing_map(
-    topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>,
-    entity_id: &str,
-    map: &str,
-) -> TestResponse {
+async fn retrieve_temporal_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, entity_id: &str, map: &str) -> TestResponse {
     topology
         .broker(BrokerRole::A)
         .client()
@@ -42,7 +39,7 @@ async fn retrieve_temporal_reusing_map(
 }
 
 /// Query temporal entities reusing a supplied map.
-async fn query_temporal_reusing_map(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, map: &str) -> TestResponse {
+async fn query_temporal_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, map: &str) -> TestResponse {
     topology
         .broker(BrokerRole::A)
         .client()

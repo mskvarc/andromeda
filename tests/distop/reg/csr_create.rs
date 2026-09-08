@@ -9,10 +9,11 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_client::tenant_name::TenantName;
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use serde_json::{Value, json};
 
 /// Create the registration and return its retrieved representation.
-async fn create_and_retrieve(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, id: &str, body: &Value) -> Value {
+async fn create_and_retrieve(topology: &MultiBrokerTopology<BrokerRole>, id: &str, body: &Value) -> Value {
     let created = topology
         .broker(BrokerRole::A)
         .client()

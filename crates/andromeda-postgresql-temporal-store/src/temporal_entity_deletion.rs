@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn the_addressed_temporal_entity_is_locked_before_anything_is_removed() {
         let sql = lock_temporal_entity_statement(context_space_key(), "urn:ngsi-ld:Vehicle:1").to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#"FROM "temporal_entities" WHERE "id" ="#), "{sql}");
+        assert!(sql.contains(r#"FROM "temporal_entities" WHERE "context_space_key" = 1 AND "id" ="#), "{sql}");
         assert!(sql.contains("FOR UPDATE"), "{sql}");
     }
 

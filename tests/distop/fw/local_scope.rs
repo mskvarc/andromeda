@@ -8,7 +8,7 @@ use crate::{
     context_source_adapter::ContextSourceAdapter,
     entity::vehicle,
     notification_adapter::NotificationAdapter,
-    oracle::{assert_status, json_body},
+    oracle::{assert_status, json_body, location},
     registration::CsrBuilder,
     topology::{self, BrokerRole},
 };
@@ -293,7 +293,12 @@ async fn distop_entity_local_scope_snapshot_op_ignores_local_false() {
         .await
         .expect("create snapshot");
     assert_status(&created, 201);
-    let snapshot_id = json_body(&created)["id"].as_str().expect("snapshot has an id").to_owned();
+    let snapshot_id = location(&created)
+        .rsplit('/')
+        .next()
+        .filter(|identifier| !identifier.is_empty())
+        .expect("Snapshot Location ends in an identifier")
+        .to_owned();
 
     let retrieved = topology
         .broker(BrokerRole::A)

@@ -139,7 +139,7 @@ fn delete_instances_sql() -> String {
         .column((Staging, CurrentAttributeValues::EntityKey))
         .from_function(call, Staging)
         .and_where(Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::EntityKey)).equals((Staging, CurrentAttributeValues::EntityKey)))
-        .and_where(Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::ContextSpaceKey)).eq(Expr::cust("$4")))
+        .and_where(Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::ContextSpaceKey)).eq(external_placeholder(4)))
         .and_where(
             Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::AttributeNameId)).equals((Staging, CurrentAttributeValues::AttributeNameId)),
         )
@@ -190,7 +190,8 @@ mod tests {
             assert!(sql.contains(cast), "missing {cast} in {sql}");
         }
         assert!(sql.contains("AS d(entity_key, attribute_name_id, dataset_id)"), "{sql}");
-        assert!(!sql.contains("$4"), "only the three grain arrays are bound: {sql}");
+        assert!(sql.contains("$4"), "the context-space key follows the three grain arrays: {sql}");
+        assert!(!sql.contains("$5"), "only the grain arrays and context-space key are bound: {sql}");
     }
 
     #[test]

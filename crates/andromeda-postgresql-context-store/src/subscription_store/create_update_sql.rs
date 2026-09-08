@@ -372,10 +372,10 @@ mod tests {
         assert!(!sql.contains("'Subscription'"), "the constant type token is no longer a column: {sql}");
         assert!(sql.contains("$16::subscription_status"), "{sql}");
         assert!(sql.contains("NOW()"), "created_at and modified_at stamp the transaction clock: {sql}");
-        for marker in 1..=21 {
+        for marker in 1..=22 {
             assert!(sql.contains(&format!("${marker}")), "missing ${marker}: {sql}");
         }
-        assert!(!sql.contains("$22"), "the create binds exactly twenty-one values: {sql}");
+        assert!(!sql.contains("$23"), "the create binds exactly twenty-two values: {sql}");
         assert!(!sql.contains("is_active"), "the redundant is_active column is gone: {sql}");
     }
 
@@ -391,7 +391,7 @@ mod tests {
         let sql = csource_create_sql().expect("the fixed context-source insert builds");
         assert!(sql.contains("'csource'"), "{sql}");
         assert!(sql.contains("$15::subscription_status"), "{sql}");
-        assert!(!sql.contains("$19"), "the context-source create binds eighteen values: {sql}");
+        assert!(!sql.contains("$20"), "the context-source create binds nineteen values: {sql}");
         assert!(!sql.contains("dataset_id"), "a context-source subscription stores no datasetId: {sql}");
     }
 

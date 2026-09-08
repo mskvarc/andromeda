@@ -102,6 +102,13 @@ pub trait SnapshotStore: Send + Sync + 'static {
         'life1: 'async_trait,
         Self: 'async_trait;
 
+    /// Resolve the private context branch populated during query capture.
+    fn staging_target<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<SnapshotTarget>, SnapshotError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
+
     /// Return the next snapshot awaiting bounded preparation, if one exists.
     fn next_preparing<'life0, 'async_trait>(
         &'life0 self,
@@ -149,10 +156,27 @@ pub trait SnapshotStore: Send + Sync + 'static {
     fn update_status<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
         id: &'life1 Uri,
+        claimed_by: Uuid,
         status: SnapshotStatus,
         queries_details: Option<&'life2 [ExecutionResultDetails]>,
         temporal_queries_details: Option<&'life3 [ExecutionResultDetails]>,
     ) -> BoxFuture<'async_trait, Result<u64, SnapshotError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        'life3: 'async_trait,
+        Self: 'async_trait;
+
+    /// Atomically publish staged current and temporal rows and leave preparation.
+    fn promote_capture<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+        &'life0 self,
+        id: &'life1 Uri,
+        claimed_by: Uuid,
+        status: SnapshotStatus,
+        queries_details: Option<&'life2 [ExecutionResultDetails]>,
+        temporal_queries_details: Option<&'life3 [ExecutionResultDetails]>,
+    ) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -189,6 +213,7 @@ pub trait SnapshotStore: Send + Sync + 'static {
         &'life0 self,
         source_id: &'life1 Uri,
         target_id: &'life2 Uri,
+        claimed_by: Uuid,
     ) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
     where
         'life0: 'async_trait,
@@ -198,6 +223,19 @@ pub trait SnapshotStore: Send + Sync + 'static {
 
     /// Delete snapshots due at or before an explicit cutoff, returning the count removed.
     fn delete_expired<'life0, 'async_trait>(&'life0 self, cutoff: DateTime<Utc>) -> BoxFuture<'async_trait, Result<u64, SnapshotError>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
+
+    /// Enforce optional tenant-wide Snapshot count and materialized-byte quotas.
+    ///
+    /// Victims are removed in deterministic policy order: lower priority,
+    /// earlier expiry, older last use, then lexicographically smaller URI.
+    fn enforce_quotas<'life0, 'async_trait>(
+        &'life0 self,
+        count_quota: Option<usize>,
+        byte_quota: Option<u64>,
+    ) -> BoxFuture<'async_trait, Result<Vec<Uri>, SnapshotError>>
     where
         'life0: 'async_trait,
         Self: 'async_trait;

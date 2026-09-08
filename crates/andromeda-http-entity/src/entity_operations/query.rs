@@ -110,6 +110,7 @@ pub(crate) async fn query(
                     csf_expr: None, // csf not supported on batch query endpoint
                     mode_filter: CsrModeFilter::All,
                     entity_map: EntityMapInUse::None,
+                    source_page: None,
                 },
             )
             .await

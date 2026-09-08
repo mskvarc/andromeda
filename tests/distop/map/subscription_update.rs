@@ -11,6 +11,7 @@ use andromeda_test_fixtures::{
     context::COMPOUND_CONTEXT,
     problem_detail::{BAD_REQUEST_DATA, LD_CONTEXT_NOT_AVAILABLE, RESOURCE_NOT_FOUND},
 };
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
 use serde_json::{Value, json};
 
@@ -18,7 +19,7 @@ use serde_json::{Value, json};
 const INERT_ENDPOINT: &str = "http://127.0.0.1:9/notify";
 
 /// Create a baseline subscription and return its id.
-async fn create_baseline(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, local: &str) -> String {
+async fn create_baseline(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -> String {
     let id = topology.id(local);
     let created = topology
         .broker(BrokerRole::A)
@@ -31,7 +32,7 @@ async fn create_baseline(topology: &andromeda_test_harness::multi_broker::MultiB
 }
 
 /// The stored representation of a subscription retrieved under the core context.
-async fn stored(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, id: &str) -> Value {
+async fn stored(topology: &MultiBrokerTopology<BrokerRole>, id: &str) -> Value {
     let retrieved = topology
         .broker(BrokerRole::A)
         .client()

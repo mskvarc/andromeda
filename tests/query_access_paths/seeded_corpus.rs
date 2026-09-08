@@ -134,15 +134,15 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
         "WITH seeded AS ( \
              SELECT g, $1::text || ':seed:' || lpad(g::text, 6, '0') AS id FROM generate_series(1, $4::bigint) AS g), \
          ins AS ( \
-             INSERT INTO entities (id) SELECT id FROM seeded RETURNING entity_key, id), \
+             INSERT INTO entities (context_space_key, id) SELECT (SELECT context_space_key FROM context_spaces WHERE kind = 'live'), id FROM seeded RETURNING entity_key, id), \
          docs AS ( \
-             INSERT INTO entity_documents (entity_key, payload) \
-             SELECT ins.entity_key, \
+             INSERT INTO entity_documents (context_space_key, entity_key, payload) \
+             SELECT (SELECT context_space_key FROM context_spaces WHERE kind = 'live'), ins.entity_key, \
                     jsonb_build_array(jsonb_build_object('@id', ins.id, $7::text, to_jsonb('city-' || (seeded.g % 1000)::text)) \
                                       || CASE WHEN seeded.g % 1000 = 0 THEN jsonb_build_object($8::text, to_jsonb(true)) ELSE '{}'::jsonb END) \
              FROM ins JOIN seeded ON seeded.id = ins.id) \
-         INSERT INTO entity_search (entity_key, type_ids, attribute_name_ids, scope_paths, location) \
-         SELECT ins.entity_key, \
+         INSERT INTO entity_search (context_space_key, entity_key, type_ids, attribute_name_ids, scope_paths, location) \
+         SELECT (SELECT context_space_key FROM context_spaces WHERE kind = 'live'), ins.entity_key, \
                 ARRAY[CASE WHEN seeded.g % 997 = 0 THEN $2::integer ELSE $3::integer END], \
                 CASE WHEN seeded.g % 1000 = 0 THEN ARRAY[$5::integer, $6::integer] ELSE ARRAY[$5::integer] END, \
                 ARRAY[('seed.' || (seeded.g % 997)::text)::ltree], \
@@ -164,9 +164,9 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
     let like = format!("{prefix}:seed:%");
     sqlx::query(
         "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_id, attribute_kind, value_kind, value_number) \
-         SELECT e.entity_key, $1, 1, 1, (e.entity_key % 20000)::numeric \
-         FROM entities AS e WHERE e.id LIKE $2::text",
+         (context_space_key, entity_key, attribute_name_id, attribute_kind, value_kind, value_number) \
+         SELECT e.context_space_key, e.entity_key, $1, 1, 1, (e.entity_key % 20000)::numeric \
+         FROM entities AS e WHERE e.id LIKE $2::text AND e.context_space_key = (SELECT context_space_key FROM context_spaces WHERE kind = 'live')",
     )
     .bind(reading)
     .bind(&like)
@@ -176,10 +176,10 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
 
     sqlx::query(
         "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_id, attribute_kind, value_kind, value_geo) \
-         SELECT e.entity_key, $1, 3, 4, \
+         (context_space_key, entity_key, attribute_name_id, attribute_kind, value_kind, value_geo) \
+         SELECT e.context_space_key, e.entity_key, $1, 3, 4, \
                 ST_SetSRID(ST_MakePoint(13.0 + (e.entity_key % 1000) * 0.001, 52.0 + (e.entity_key % 1000) * 0.001), 4326) \
-         FROM entities AS e WHERE e.id LIKE $2::text",
+         FROM entities AS e WHERE e.id LIKE $2::text AND e.context_space_key = (SELECT context_space_key FROM context_spaces WHERE kind = 'live')",
     )
     .bind(entrance)
     .bind(&like)
@@ -189,9 +189,9 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
 
     sqlx::query(
         "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_id, attribute_kind, value_kind, value_string) \
-         SELECT e.entity_key, $1, 1, 2, 'city-' || (e.entity_key % 1000)::text \
-         FROM entities AS e WHERE e.id LIKE $2::text",
+         (context_space_key, entity_key, attribute_name_id, attribute_kind, value_kind, value_string) \
+         SELECT e.context_space_key, e.entity_key, $1, 1, 2, 'city-' || (e.entity_key % 1000)::text \
+         FROM entities AS e WHERE e.id LIKE $2::text AND e.context_space_key = (SELECT context_space_key FROM context_spaces WHERE kind = 'live')",
     )
     .bind(city)
     .bind(&like)

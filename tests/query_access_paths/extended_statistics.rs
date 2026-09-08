@@ -46,8 +46,8 @@ async fn declared_statistics_objects_exist_and_hold_collected_data() {
     analyze(pool).await;
 
     for (name, columns) in [
-        ("stx_cav_attribute_value_kind", vec!["attribute_name_id", "value_kind"]),
-        ("stx_cav_entity_attribute", vec!["entity_key", "attribute_name_id"]),
+        ("stx_cav_attribute_value_kind", vec!["context_space_key", "attribute_name_id", "value_kind"]),
+        ("stx_cav_entity_attribute", vec!["context_space_key", "entity_key", "attribute_name_id"]),
     ] {
         let (relation, kinds, over): (String, Vec<String>, Vec<String>) = sqlx::query_as(
             "SELECT c.relname, s.stxkind::text[], \

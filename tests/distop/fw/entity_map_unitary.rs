@@ -11,6 +11,7 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::INVALID_REQUEST;
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
 use serde_json::json;
 use std::time::Duration;
@@ -22,7 +23,7 @@ const FORWARD_WAIT: Duration = Duration::from_secs(5);
 const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
 
 /// Register an inclusive query CSR at the mock and assert acceptance.
-async fn register_inclusive_query(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, endpoint: &str, name: &str) {
+async fn register_inclusive_query(topology: &MultiBrokerTopology<BrokerRole>, endpoint: &str, name: &str) {
     let registration = CsrBuilder::new(&topology.id(name), endpoint)
         .mode("inclusive")
         .entity_type("Vehicle")

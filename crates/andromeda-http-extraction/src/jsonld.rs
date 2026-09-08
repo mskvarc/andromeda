@@ -179,7 +179,10 @@ where
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let uri = req.uri().clone();
-        let content_length = req.headers().get(CONTENT_LENGTH).ok_or(ExtractorRejection::Empty(StatusCode::LENGTH_REQUIRED))?;
+        let content_length = req
+            .headers()
+            .get(CONTENT_LENGTH)
+            .ok_or(ExtractorRejection::Empty(StatusCode::LENGTH_REQUIRED))?;
         let content_length = content_length
             .to_str()
             .ok()
@@ -285,10 +288,20 @@ where
 mod tests {
     use super::*;
     use axum::{
-        body::Body,
-        http::{Request, header::CONTENT_TYPE},
+        body::{Body, HttpBody},
+        http::{HeaderValue, Request, header::CONTENT_TYPE},
     };
     use serde_json::Value;
+
+    async fn extract<T>(mut request: Request<Body>) -> Result<JsonLd<T>, ExtractorRejection>
+    where
+        T: DeserializeOwned,
+    {
+        let length = request.body().size_hint().exact().expect("a fixed test body length");
+        let value = HeaderValue::from_str(&length.to_string()).expect("a valid content length");
+        request.headers_mut().insert(CONTENT_LENGTH, value);
+        JsonLd::<T>::from_request(request, &()).await
+    }
 
     #[tokio::test]
     async fn rejects_unsupported_media_type() {
@@ -298,7 +311,7 @@ mod tests {
             .body(Body::from("{}"))
             .unwrap();
 
-        let result = JsonLd::<Value>::from_request(req, &()).await;
+        let result = extract::<Value>(req).await;
         match result {
             Err(ExtractorRejection::Empty(status)) => {
                 pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
@@ -316,7 +329,7 @@ mod tests {
             .body(Body::from("{}"))
             .unwrap();
 
-        let result = JsonLd::<Value>::from_request(req, &()).await;
+        let result = extract::<Value>(req).await;
         match result {
             Err(ExtractorRejection::Empty(status)) => {
                 pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
@@ -334,7 +347,7 @@ mod tests {
             .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
 
-        let result = JsonLd::<Value>::from_request(req, &()).await;
+        let result = extract::<Value>(req).await;
         assert!(result.is_ok(), "merge-patch+json should be accepted");
     }
 
@@ -346,7 +359,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let result = JsonLd::<Value>::from_request(req, &()).await;
+        let result = extract::<Value>(req).await;
         assert!(matches!(result, Err(ExtractorRejection::InvalidRequest { .. })));
     }
 
@@ -358,7 +371,7 @@ mod tests {
             .body(Body::from("[]"))
             .unwrap();
 
-        let result = JsonLd::<Value>::from_request(req, &()).await;
+        let result = extract::<Value>(req).await;
         assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
     }
 
@@ -375,7 +388,7 @@ mod tests {
             .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
 
-        let result = JsonLd::<Value>::from_request(req, &()).await.unwrap();
+        let result = extract::<Value>(req).await.unwrap();
         pretty_assertions::assert_eq!(result.context.body_context(), Some(&serde_json::json!("http://example.org/context")));
         assert!(result.value.as_object().unwrap().get("@context").is_none());
     }
@@ -401,7 +414,7 @@ mod tests {
             .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
 
-        let result = JsonLd::<Value>::from_request(req, &()).await.unwrap();
+        let result = extract::<Value>(req).await.unwrap();
         pretty_assertions::assert_eq!(
             result.context.body_context(),
             Some(&serde_json::json!(["https://example.org/a", "https://example.org/b"]))
@@ -423,7 +436,7 @@ mod tests {
                 .header(CONTENT_TYPE, "application/ld+json")
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
                 .unwrap();
-            let result = JsonLd::<Value>::from_request(req, &()).await;
+            let result = extract::<Value>(req).await;
             assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })), "{context}");
         }
     }
@@ -437,7 +450,7 @@ mod tests {
             .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
 
-        let result = JsonLd::<Value>::from_request(req, &()).await;
+        let result = extract::<Value>(req).await;
         assert!(result.is_ok());
     }
 
@@ -451,7 +464,7 @@ mod tests {
             ))
             .expect("request builds");
 
-        let extracted = JsonLd::<Value>::from_request(req, &()).await.expect("supported exact numbers");
+        let extracted = extract::<Value>(req).await.expect("supported exact numbers");
         let encoded = serde_json::to_string(&extracted.value).expect("exact JSON");
         assert!(encoded.contains("0.100000000000000005"), "{encoded}");
         assert!(encoded.contains("18446744073709551616"), "{encoded}");
@@ -469,7 +482,7 @@ mod tests {
             ))
             .expect("request builds");
 
-        match JsonLd::<Value>::from_request(req, &()).await {
+        match extract::<Value>(req).await {
             Err(ExtractorRejection::BadRequestData { detail, .. }) => {
                 assert!(detail.contains("/property/value/nested/0"), "{detail}");
             }

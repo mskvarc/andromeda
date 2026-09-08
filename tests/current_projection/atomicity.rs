@@ -4,7 +4,7 @@
 //! write is visible to every later reader with no barrier, and a projection
 //! failure takes the Entity row down with it.
 
-use crate::projection_rows::{ProjectionRow, rows_for_attribute};
+use crate::projection_rows::{ProjectionRow, live_context_space_key, rows_for_attribute};
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
@@ -71,6 +71,7 @@ async fn current_projection_update_is_visible_to_a_new_connection_without_a_barr
 async fn current_projection_constraint_violation_rolls_back_the_entity_row() {
     let scope = TestEnvironment::from_suite("current-projection").await.expect("isolated test environment");
     let id = scope.id("Building:atomicity-rollback");
+    let context_space_key = live_context_space_key(scope.database_pool()).await;
 
     let mut transaction = scope.database_pool().begin().await.expect("transaction must start");
     let payload = json!([{ "@id": id, "@type": [BUILDING_TYPE] }]);
@@ -81,10 +82,11 @@ async fn current_projection_constraint_violation_rolls_back_the_entity_row() {
             .await
             .expect("type dictionary insert must succeed");
     let entity_key: i64 = sqlx::query_scalar(
-        "WITH ins AS (INSERT INTO entities (id) VALUES ($1) RETURNING entity_key), \
-              doc AS (INSERT INTO entity_documents (entity_key, payload) SELECT entity_key, $3 FROM ins) \
-         INSERT INTO entity_search (entity_key, type_ids, attribute_name_ids) SELECT entity_key, ARRAY[$2], ARRAY[]::integer[] FROM ins RETURNING entity_key",
+        "WITH ins AS (INSERT INTO entities (context_space_key, id) VALUES ($1, $2) RETURNING entity_key), \
+              doc AS (INSERT INTO entity_documents (context_space_key, entity_key, payload) SELECT $1, entity_key, $4 FROM ins) \
+         INSERT INTO entity_search (context_space_key, entity_key, type_ids, attribute_name_ids) SELECT $1, entity_key, ARRAY[$3], ARRAY[]::integer[] FROM ins RETURNING entity_key",
     )
+    .bind(context_space_key)
     .bind(&id)
     .bind(type_id)
     .bind(&payload)
@@ -102,9 +104,10 @@ async fn current_projection_constraint_violation_rolls_back_the_entity_row() {
         .expect("dictionary insert must succeed");
     let failure = sqlx::query(
         "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_id, attribute_kind, value_kind, value_string) \
-         VALUES ($1, $2, 1, 1, 'not a number')",
+         (context_space_key, entity_key, attribute_name_id, attribute_kind, value_kind, value_string) \
+         VALUES ($1, $2, $3, 1, 1, 'not a number')",
     )
+    .bind(context_space_key)
     .bind(entity_key)
     .bind(name_id)
     .execute(&mut *transaction)

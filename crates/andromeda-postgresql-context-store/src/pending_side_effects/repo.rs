@@ -157,6 +157,6 @@ mod tests {
     #[test]
     fn a_replayed_write_enqueues_no_second_job() {
         let sql = rendered();
-        assert!(sql.contains(r#"ON CONFLICT ("write_id") DO NOTHING"#), "{sql}");
+        assert!(sql.contains(r#"ON CONFLICT ("context_space_key", "write_id") DO NOTHING"#), "{sql}");
     }
 }

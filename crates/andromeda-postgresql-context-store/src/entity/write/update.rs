@@ -15,7 +15,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
-use andromeda_postgresql_seaquery::{clock::now, pg_operator::PgBinaryOperator, unnest::apply_column_alias};
+use andromeda_postgresql_seaquery::{clock::now, pg_operator::PgBinaryOperator, placeholder::external_placeholder, unnest::apply_column_alias};
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use chrono::{DateTime, Utc};
 use sea_query::{CommonTableExpression, Cond, Expr, ExprTrait, Func, PostgresQueryBuilder, Query, SimpleExpr, WithClause};
@@ -73,8 +73,8 @@ pub(super) fn entity_update_sql() -> String {
         .cond_where(
             Cond::all()
                 .add(Expr::col((Entities::Table, Entities::Id)).equals((Proj, Entities::Id)))
-                .add(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(Expr::cust("$13")))
-                .add(Expr::col((EntityDocuments::Table, EntityDocuments::ContextSpaceKey)).eq(Expr::cust("$13")))
+                .add(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(external_placeholder(13)))
+                .add(Expr::col((EntityDocuments::Table, EntityDocuments::ContextSpaceKey)).eq(external_placeholder(13)))
                 .add(Expr::col((EntityDocuments::Table, EntityDocuments::EntityKey)).equals((Entities::Table, Entities::EntityKey)))
                 .add(expectation(projected(StagedColumn::ExpectedModifiedAt), EntityDocuments::Table)),
         )
@@ -92,7 +92,7 @@ pub(super) fn entity_update_sql() -> String {
         Cond::all()
             .add(Expr::col((Proj, Entities::Id)).equals((Docs, Entities::Id)))
             .add(Expr::col((EntitySearch::Table, EntitySearch::EntityKey)).equals((Docs, EntityDocuments::EntityKey)))
-            .add(Expr::col((EntitySearch::Table, EntitySearch::ContextSpaceKey)).eq(Expr::cust("$13")))
+            .add(Expr::col((EntitySearch::Table, EntitySearch::ContextSpaceKey)).eq(external_placeholder(13)))
             .add(SEARCH_COLUMNS.into_iter().fold(Cond::any(), |changed, column| {
                 changed.add(SimpleExpr::from(Expr::col((EntitySearch::Table, column))).distinct_from(projected(column)))
             })),
@@ -115,7 +115,7 @@ pub(super) fn entity_update_sql() -> String {
             Cond::all()
                 .add(Expr::col((Proj, Entities::Id)).equals((Docs, Entities::Id)))
                 .add(Expr::col((Entities::Table, Entities::EntityKey)).equals((Docs, EntityDocuments::EntityKey)))
-                .add(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(Expr::cust("$13")))
+                .add(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(external_placeholder(13)))
                 .add(
                     Cond::any()
                         .add(SimpleExpr::from(Expr::col((Entities::Table, Entities::ExpiresAt))).distinct_from(coalesced_expiry()))
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn the_update_binds_twelve_placeholders_and_names_its_staging_columns() {
         let sql = entity_update_sql();
-        pretty_assertions::assert_eq!(placeholders(&sql), (1..=12).collect::<BTreeSet<u32>>());
+        pretty_assertions::assert_eq!(placeholders(&sql), (1..=13).collect::<BTreeSet<u32>>());
         assert!(
             sql.contains(
                 "AS d(id, type_ids_json, attribute_name_ids_json, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at, expected_modified_at)"

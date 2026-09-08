@@ -4,7 +4,7 @@
 //! enforcing the filter requirement from ETSI GS CIM 009 clause 5.7.2.4:
 //! at least one filter or `local=true` must be present.
 
-use crate::{classification::classify_parameter_error, query::classify_query_parse_error};
+use crate::query::classify_query_parse_error;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use axum::{extract::FromRequestParts, http::request::Parts};
@@ -32,11 +32,6 @@ where
             let error_text = error.to_string();
             let message = format!("Invalid query parameters: {error_text}");
             classify_query_parse_error(&error_text, message, uri.clone())
-        })?;
-
-        params.validate().map_err(|error| {
-            let report = classify_parameter_error(&error);
-            ExtractorRejection::Classified(report.with_instance(uri.clone()))
         })?;
 
         // Per NGSI-LD spec 5.7.2.4: at least one filter OR local=true must be provided

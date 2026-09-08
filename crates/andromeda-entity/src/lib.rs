@@ -193,6 +193,7 @@ impl EntityService {
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-context-space",
         "andromeda-context-commit",
         "andromeda-federation",
         "andromeda-jsonld",

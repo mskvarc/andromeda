@@ -4,16 +4,21 @@ mod execution;
 mod status;
 mod translation;
 
-use crate::{error::SnapshotError, notification::SnapshotNotificationSink, status::validate_preparing_transition, store::SnapshotStore};
+use crate::{
+    error::SnapshotError,
+    status::validate_preparing_transition,
+    store::{SnapshotPreparationJob, SnapshotStore},
+};
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::FederationService;
 use andromeda_jsonld::context_spec::{ContextSpec, CoreContextPolicy};
-use andromeda_ngsi_ld_model::snapshot::Snapshot;
+use andromeda_ngsi_ld_model::snapshot::{Snapshot, SnapshotStatus};
 use andromeda_temporal::service::TemporalService;
 use chrono::Utc;
-use std::{sync::Arc, time::Duration};
+use futures::{StreamExt, future::ready, stream};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::{Instant, MissedTickBehavior, interval_at};
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -27,6 +32,8 @@ pub struct SnapshotExecutor {
     temporal: Arc<TemporalService>,
     forwarding: Arc<FederationService>,
     capture_page_size: u32,
+    tenant_count_quota: Option<usize>,
+    tenant_byte_quota: Option<u64>,
 }
 
 impl SnapshotExecutor {
@@ -39,6 +46,8 @@ impl SnapshotExecutor {
         temporal: Arc<TemporalService>,
         forwarding: Arc<FederationService>,
         capture_page_size: usize,
+        tenant_count_quota: Option<usize>,
+        tenant_byte_quota: Option<u64>,
     ) -> SnapshotExecutor {
         SnapshotExecutor {
             live_target,
@@ -48,25 +57,30 @@ impl SnapshotExecutor {
             temporal,
             forwarding,
             capture_page_size: u32::try_from(capture_page_size).unwrap_or(u32::MAX),
+            tenant_count_quota,
+            tenant_byte_quota,
         }
     }
 
     /// Execute all queries for a snapshot and record its final status.
-    pub async fn execute(&self, snapshot: Snapshot, query_context: serde_json::Value) -> Result<(), SnapshotError> {
+    pub async fn execute(&self, snapshot: Snapshot, query_context: serde_json::Value, claimed_by: Uuid) -> Result<(), SnapshotError> {
         info!(snapshot_id = %snapshot.id, "Starting snapshot query execution");
         let target = self
             .snapshot_repo
-            .target(&snapshot.id)
+            .staging_target(&snapshot.id)
             .await?
             .map(ContextTarget::Snapshot)
-            .ok_or_else(|| SnapshotError::internal(format!("Snapshot {} has no durable context target", snapshot.id)))?;
+            .ok_or_else(|| SnapshotError::internal(format!("Snapshot {} has no durable staging context target", snapshot.id)))?;
         let mut aggregate = status::ExecutionAggregate::default();
         let context = ContextSpec::none()
             .with_body_context(Some(query_context))
             .with_core_policy(CoreContextPolicy::Omit);
 
+        let mut materialized_entities = HashSet::new();
         for (index, query) in snapshot.snapshot_queries.unwrap_or_default().into_iter().enumerate() {
-            let detail = self.run_entity_query(&target, &snapshot.id, query, index, &context).await;
+            let detail = self
+                .run_entity_query(&target, &snapshot.id, query, index, &context, &mut materialized_entities)
+                .await;
             aggregate.push_entity(detail);
         }
         for (index, query) in snapshot.snapshot_temporal_queries.unwrap_or_default().into_iter().enumerate() {
@@ -80,8 +94,9 @@ impl SnapshotExecutor {
 
         let (query_details, temporal_query_details) = aggregate.detail_slices();
         self.snapshot_repo
-            .update_status(&snapshot.id, final_status, query_details, temporal_query_details)
+            .promote_capture(&snapshot.id, claimed_by, final_status, query_details, temporal_query_details)
             .await?;
+        self.snapshot_repo.enforce_quotas(self.tenant_count_quota, self.tenant_byte_quota).await?;
         Ok(())
     }
 }
@@ -102,10 +117,23 @@ pub enum SnapshotPreparationOutcome {
 pub struct SnapshotPreparation {
     store: Arc<dyn SnapshotStore>,
     executor: SnapshotExecutor,
-    notification_sink: Option<Arc<dyn SnapshotNotificationSink>>,
     max_per_pass: usize,
     worker_id: Uuid,
     lease_duration: Duration,
+}
+
+/// Bounded execution and resource policies for Snapshot preparation.
+pub struct SnapshotPreparationConfig {
+    /// Maximum source page size used during capture.
+    pub capture_page_size: usize,
+    /// Maximum preparations executed concurrently by one worker pass.
+    pub max_per_pass: usize,
+    /// Renewable durable-claim lifetime.
+    pub lease_duration: Duration,
+    /// Optional per-tenant Snapshot count quota.
+    pub tenant_count_quota: Option<usize>,
+    /// Optional per-tenant Snapshot byte quota.
+    pub tenant_byte_quota: Option<u64>,
 }
 
 impl SnapshotPreparation {
@@ -117,38 +145,49 @@ impl SnapshotPreparation {
         entity_query: Arc<EntityQueryService>,
         temporal: Arc<TemporalService>,
         forwarding: Arc<FederationService>,
-        notification_sink: Option<Arc<dyn SnapshotNotificationSink>>,
-        capture_page_size: usize,
-        max_per_pass: usize,
-        lease_duration: Duration,
+        config: SnapshotPreparationConfig,
     ) -> SnapshotPreparation {
         SnapshotPreparation {
-            executor: SnapshotExecutor::new(live_target, Arc::clone(&store), writes, entity_query, temporal, forwarding, capture_page_size),
+            executor: SnapshotExecutor::new(
+                live_target,
+                Arc::clone(&store),
+                writes,
+                entity_query,
+                temporal,
+                forwarding,
+                config.capture_page_size,
+                config.tenant_count_quota,
+                config.tenant_byte_quota,
+            ),
             store,
-            notification_sink,
-            max_per_pass: max_per_pass.max(1),
+            max_per_pass: config.max_per_pass.max(1),
             worker_id: Uuid::new_v4(),
-            lease_duration,
+            lease_duration: config.lease_duration,
         }
     }
 
     /// Execute one bounded group of pending preparations.
     pub async fn execute(&self) -> Result<SnapshotPreparationOutcome, SnapshotError> {
-        let mut count = 0;
-        while count < self.max_per_pass {
+        let mut jobs = Vec::with_capacity(self.max_per_pass);
+        while jobs.len() < self.max_per_pass {
             let Some(job) = self.store.next_preparing(self.worker_id, self.lease_deadline()?).await? else {
                 break;
             };
-            let identifier = job.snapshot.id.clone(); // clone: execution consumes the job while notification retains its identifier.
-            self.execute_with_lease_renewal(job).await?;
-            if let Some(ref sink) = self.notification_sink
-                && let Some(prepared) = self.store.get(&identifier).await?
-                && prepared.endpoint.is_some()
-            {
-                sink.deliver(&prepared).await;
-            }
-            count += 1;
+            jobs.push(job);
         }
+        let count = stream::iter(jobs)
+            .map(|job| async move {
+                let identifier = job.snapshot.id.clone(); // clone: execution consumes the job while diagnostics retain its identifier.
+                if let Err(error) = self.execute_with_lease_renewal(job).await {
+                    tracing::warn!(snapshot_id = %identifier, %error, "Snapshot preparation failed; its renewable claim remains reclaimable");
+                    return false;
+                }
+                true
+            })
+            .buffer_unordered(self.max_per_pass)
+            .filter(|completed| ready(*completed))
+            .count()
+            .await;
         if count == 0 {
             Ok(SnapshotPreparationOutcome::Idle)
         } else {
@@ -157,22 +196,23 @@ impl SnapshotPreparation {
     }
 
     /// Execute one capture while periodically extending this replica's durable claim.
-    async fn execute_with_lease_renewal(&self, job: crate::store::SnapshotPreparationJob) -> Result<(), SnapshotError> {
+    async fn execute_with_lease_renewal(&self, job: SnapshotPreparationJob) -> Result<(), SnapshotError> {
         let identifier = job.snapshot.id.clone(); // clone: lease renewal and execution need independent ownership.
         let execution = async {
             if let Some(source_id) = job.clone_source_id {
-                match self.store.promote_clone(&source_id, &job.snapshot.id).await {
-                    Ok(()) => Ok(()),
-                    Err(error) => {
-                        self.store
-                            .update_status(&job.snapshot.id, andromeda_ngsi_ld_model::snapshot::SnapshotStatus::Failure, None, None)
-                            .await?;
-                        tracing::warn!(snapshot_id = %job.snapshot.id, %error, "Snapshot clone failed atomically");
-                        Ok(())
-                    }
+                if let Err(error) = self.store.promote_clone(&source_id, &job.snapshot.id, self.worker_id).await {
+                    self.store
+                        .update_status(&job.snapshot.id, self.worker_id, SnapshotStatus::Failure, None, None)
+                        .await?;
+                    tracing::warn!(snapshot_id = %job.snapshot.id, %error, "Snapshot clone failed atomically");
+                    return Ok(());
                 }
+                self.store
+                    .enforce_quotas(self.executor.tenant_count_quota, self.executor.tenant_byte_quota)
+                    .await?;
+                Ok(())
             } else {
-                self.executor.execute(job.snapshot, job.query_context).await
+                self.executor.execute(job.snapshot, job.query_context, self.worker_id).await
             }
         };
         tokio::pin!(execution);

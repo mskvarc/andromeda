@@ -14,11 +14,12 @@ use crate::{
     config::SplitEntities,
     forwarded_parameter::ForwardedParameter,
     registration_selection::{compact_attribute_name, information_matches_entity},
+    request::SourcePage,
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, temporal_format::TemporalFormat, uri::Uri};
 use andromeda_ngsi_ld_model::{entity_info::EntityTypeSelection, registration::ContextSourceRegistration};
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, geo::input::GeoQueryInput, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, geo::input::GeoQueryInput, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::{
     entity::GetEntityParams,
@@ -68,7 +69,7 @@ impl ClientQuery<'_> {
 
     /// The scope query used to preselect registrations by their declared
     /// coverage footprint.
-    pub const fn scope_q(&self) -> Option<&andromeda_ngsi_ld_query::scope::query::ScopeQuery> {
+    pub const fn scope_q(&self) -> Option<&ScopeQuery> {
         match self {
             ClientQuery::EntityQuery(params) => params.scope_q.as_ref(),
             ClientQuery::Temporal(params) => params.scope_q.as_ref(),
@@ -91,12 +92,23 @@ impl ForwardedQuery {
     /// covers none of the types, identifiers or attributes the client asked
     /// for, in which case it has nothing to answer and is not contacted.
     pub fn for_registration(client: ClientQuery<'_>, registration: &ContextSourceRegistration, split: SplitEntities) -> Option<ForwardedQuery> {
+        Self::for_registration_on_page(client, registration, split, None)
+    }
+
+    /// Narrow `client` to `registration`, requesting `source_page` when a
+    /// durable range consumer must walk the complete source result set.
+    pub fn for_registration_on_page(
+        client: ClientQuery<'_>,
+        registration: &ContextSourceRegistration,
+        split: SplitEntities,
+        source_page: Option<SourcePage>,
+    ) -> Option<ForwardedQuery> {
         let mut query = ForwardedQuery::default();
         match client {
             ClientQuery::EntityQuery(params) => {
                 query.push_selection(params.id.as_deref(), params.entity_type.as_ref(), registration)?;
                 query.push_optional(ForwardedParameter::IdPattern, params.id_pattern.as_ref().map(ToString::to_string));
-                query.push(ForwardedParameter::Limit, SOURCE_PAGE_LIMIT.to_owned());
+                query.push_source_page(source_page);
                 match split {
                     SplitEntities::Complete => {
                         query.push_attrs(params.attrs.as_deref(), registration)?;
@@ -123,7 +135,7 @@ impl ForwardedQuery {
             ClientQuery::Temporal(params) => {
                 query.push_selection(params.id.as_deref(), params.entity_type.as_ref(), registration)?;
                 query.push_optional(ForwardedParameter::IdPattern, params.id_pattern.as_ref().map(ToString::to_string));
-                query.push(ForwardedParameter::Limit, SOURCE_PAGE_LIMIT.to_owned());
+                query.push_source_page(source_page);
                 match split {
                     SplitEntities::Complete => {
                         query.push_attrs(params.attrs.as_deref(), registration)?;
@@ -170,6 +182,18 @@ impl ForwardedQuery {
             }
         }
         Some(query)
+    }
+
+    fn push_source_page(&mut self, source_page: Option<SourcePage>) {
+        match source_page {
+            Some(page) => {
+                self.push(ForwardedParameter::Limit, page.limit.to_string());
+                if page.offset > 0 {
+                    self.push(ForwardedParameter::Offset, page.offset.to_string());
+                }
+            }
+            None => self.push(ForwardedParameter::Limit, SOURCE_PAGE_LIMIT.to_owned()),
+        }
     }
 
     /// The value of one parameter, when it is written.
@@ -420,6 +444,7 @@ mod tests {
         config::SplitEntities,
         forwarded_parameter::ForwardedParameter,
         forwarded_query::{ClientQuery, ForwardedQuery},
+        request::SourcePage,
     };
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use andromeda_ngsi_ld_request::{
@@ -555,6 +580,20 @@ mod tests {
         let query = entity_query("type=Vehicle&format=keyValues&options=concise");
         let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&query), &unrestricted, SplitEntities::Complete).expect("covered");
         pretty_assertions::assert_eq!(forwarded.to_query_string(), "type=Vehicle&limit=1000");
+    }
+
+    #[test]
+    fn an_explicit_source_page_replaces_the_post_merge_window() {
+        let unrestricted = registration(json!([{"entities": [{"type": VEHICLE}]}]));
+        let query = entity_query("type=Vehicle&limit=20&offset=10");
+        let forwarded = ForwardedQuery::for_registration_on_page(
+            ClientQuery::EntityQuery(&query),
+            &unrestricted,
+            SplitEntities::Complete,
+            Some(SourcePage { limit: 250, offset: 750 }),
+        )
+        .expect("covered");
+        pretty_assertions::assert_eq!(forwarded.to_query_string(), "type=Vehicle&limit=250&offset=750");
     }
 
     /// Clause 5.7.4.4: a split temporal query keeps its temporal window, and a

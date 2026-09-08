@@ -13,7 +13,7 @@ use andromeda_context_commit::{
     write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
 };
-use andromeda_context_space::context_space_key::ContextSpaceKey;
+use andromeda_context_space::{context_space_key::ContextSpaceKey, context_target::ContextTarget};
 use andromeda_entity::{
     error::EntityError,
     side_effect_queue::{LeasedSideEffect, SideEffectLeaseOwner, SideEffectQueue},
@@ -158,7 +158,7 @@ const fn lease_acknowledgement(rows_affected: u64) -> LeaseAcknowledgement {
 }
 
 /// Decode one claimed row into the leased job the entity policy consumes.
-fn leased_effect(id: SideEffectJobId, target: andromeda_context_space::context_target::ContextTarget, row: &PgRow) -> Result<LeasedSideEffect, EntityError> {
+fn leased_effect(id: SideEffectJobId, target: ContextTarget, row: &PgRow) -> Result<LeasedSideEffect, EntityError> {
     let job = decode_job(target, row.get("payload"))?;
     let write_id = WriteId::from_uuid(row.get("write_id"));
     let recorded_at: DateTime<Utc> = row.get("recorded_at");
@@ -287,13 +287,13 @@ fn purge_dead_statement(cutoff: DateTime<Utc>) -> DeleteStatement {
 }
 
 /// Decode one persisted queue payload into the semantic side-effect job.
-fn decode_job(target: andromeda_context_space::context_target::ContextTarget, payload: Value) -> Result<BatchSideEffectJob, EntityError> {
+fn decode_job(target: ContextTarget, payload: Value) -> Result<BatchSideEffectJob, EntityError> {
     let persisted = PersistedBatchSideEffectJob::decode(payload).map_err(|error| EntityError::persistence(error.to_string()))?;
     Ok(persisted_to_domain(target, persisted))
 }
 
 /// Move a validated persisted payload into the policy-owned job representation.
-fn persisted_to_domain(target: andromeda_context_space::context_target::ContextTarget, persisted: PersistedBatchSideEffectJob) -> BatchSideEffectJob {
+fn persisted_to_domain(target: ContextTarget, persisted: PersistedBatchSideEffectJob) -> BatchSideEffectJob {
     let temporal_entities = persisted
         .temporal_entities
         .into_iter()

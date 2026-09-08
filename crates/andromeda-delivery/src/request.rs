@@ -1,6 +1,6 @@
 //! One notification, ready to hand to a transport.
 
-use andromeda_http_headers::{link::header::Link, media_type::ResponseMediaType, ngsild_tenant::NgsiLdTenant};
+use andromeda_http_headers::{link::header::Link, media_type::ResponseMediaType, ngsild_snapshot::NgsiLdSnapshot, ngsild_tenant::NgsiLdTenant};
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
 use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
@@ -33,6 +33,8 @@ pub struct DeliveryRequest {
     pub context_url: Option<Url>,
     /// Tenant the notification originates from (clause 6.3.14).
     pub tenant: Option<NgsiLdTenant>,
+    /// Snapshot branch the notification originates from (clause 6.3.22).
+    pub snapshot: Option<NgsiLdSnapshot>,
     /// Additional key-value pairs from the subscription's `receiverInfo`.
     pub receiver_info: Vec<KeyValuePair>,
     /// Subscription identifier, for logging and stream routing.
@@ -80,6 +82,8 @@ pub struct NotificationDelivery<'a> {
     pub jsonld_context: Option<&'a Url>,
     /// The tenant the subscription belongs to.
     pub tenant: Option<&'a TenantName>,
+    /// The Snapshot branch the subscription belongs to, when scoped.
+    pub snapshot: Option<&'a Uri>,
     /// The subscription's identifier.
     pub subscription_id: &'a Uri,
 }
@@ -113,6 +117,8 @@ impl NotificationDelivery<'_> {
             context_url: self.jsonld_context.cloned(), // clone: same
             // clone: `NgsiLdTenant` owns its name and the request outlives this borrow
             tenant: self.tenant.map(|name| NgsiLdTenant::new(name.clone())),
+            // clone: `NgsiLdSnapshot` owns its URI and the request outlives this borrow
+            snapshot: self.snapshot.map(|id| NgsiLdSnapshot::new(id.clone())),
             receiver_info: self.receiver_info.unwrap_or_default().to_vec(),
             subscription_id: self.subscription_id.clone(), // clone: the request outlives this borrow of the subscription
         }
@@ -172,6 +178,7 @@ mod tests {
             receiver_info: None,
             jsonld_context: context.as_ref(),
             tenant: None,
+            snapshot: None,
             subscription_id: &subscription,
         }
         .assemble()
@@ -276,6 +283,7 @@ mod tests {
             receiver_info: Some(&pairs),
             jsonld_context: None,
             tenant: None,
+            snapshot: None,
             subscription_id: &subscription,
         }
         .assemble();
@@ -294,9 +302,29 @@ mod tests {
             receiver_info: None,
             jsonld_context: None,
             tenant: Some(&name),
+            snapshot: None,
             subscription_id: &subscription,
         }
         .assemble();
         pretty_assertions::assert_eq!(request.tenant.as_ref().map(NgsiLdTenant::as_str), Some("acme"));
+    }
+
+    #[test]
+    fn the_snapshot_reaches_the_request_as_the_header_that_carries_it() {
+        let snapshot = Uri::from_str("urn:ngsi-ld:Snapshot:branch").expect("a valid Snapshot id");
+        let endpoint = endpoint();
+        let subscription = subscription();
+        let request = NotificationDelivery {
+            payload: &json!({}),
+            endpoint_uri: &endpoint,
+            accept: None,
+            receiver_info: None,
+            jsonld_context: None,
+            tenant: None,
+            snapshot: Some(&snapshot),
+            subscription_id: &subscription,
+        }
+        .assemble();
+        pretty_assertions::assert_eq!(request.snapshot.as_ref().map(|header| header.as_str()), Some(snapshot.as_str()));
     }
 }

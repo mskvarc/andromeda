@@ -58,7 +58,7 @@ impl SpatialSynchronizer {
             Some(payload) => Arc::clone(payload),
             None => {
                 let identifier = Uri::from(urn.clone()); // clone: the fallback read owns a URI while the index retains the URN.
-                match self.reader.get(&target, &identifier).await {
+                match self.reader.get(target, &identifier).await {
                     Ok(Some(payload)) => Arc::new(payload),
                     Ok(None) => {
                         self.index.remove(urn);

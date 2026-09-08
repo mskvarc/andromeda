@@ -63,7 +63,10 @@ mod tests {
 
     #[tokio::test]
     async fn valid_q_parses_filter() {
-        let req = Request::builder().uri("/ngsi-ld/v1/snapshots?q=status%3D%3Dsuccess").body(()).expect("request");
+        let req = Request::builder()
+            .uri("/ngsi-ld/v1/snapshots?q=snapshotPriority%3D%3D5")
+            .body(())
+            .expect("request");
         let (mut parts, _) = req.into_parts();
         let SnapshotPurgeQ(filter) = SnapshotPurgeQ::from_request_parts(&mut parts, &()).await.expect("should parse");
         pretty_assertions::assert_eq!(filter.terms.len(), 1);

@@ -281,7 +281,7 @@ fn projection_upsert_sql() -> Result<String, ContextStoreError> {
             (Staging, CurrentAttributeValues::AttributeNameId),
             (Staging, CurrentAttributeValues::DatasetId),
         ])
-        .expr(Expr::cust("$14"))
+        .expr(external_placeholder(14))
         .expr(staged(CurrentAttributeValues::EntityKey))
         .expr(staged(CurrentAttributeValues::AttributeNameId))
         .expr(staged(CurrentAttributeValues::AttributeKind))
@@ -412,7 +412,7 @@ mod tests {
 
     #[test]
     fn the_upsert_binds_one_contiguous_array_per_column() {
-        pretty_assertions::assert_eq!(placeholders(&rendered()), (1..=13).collect::<BTreeSet<u32>>());
+        pretty_assertions::assert_eq!(placeholders(&rendered()), (1..=14).collect::<BTreeSet<u32>>());
     }
 
     #[test]
@@ -450,7 +450,7 @@ mod tests {
     fn the_upsert_conflicts_on_the_instance_grain() {
         let sql = rendered();
         assert!(
-            sql.contains(r#"ON CONFLICT ("entity_key", "attribute_name_id", "dataset_id") DO UPDATE SET"#),
+            sql.contains(r#"ON CONFLICT ("context_space_key", "entity_key", "attribute_name_id", "dataset_id") DO UPDATE SET"#),
             "{sql}"
         );
     }
@@ -499,7 +499,7 @@ mod tests {
             "matched changes and matched no-ops must both bypass insertion: {sql}"
         );
         assert!(
-            sql.contains(r#"ON CONFLICT ("entity_key", "attribute_name_id", "dataset_id") DO UPDATE SET"#),
+            sql.contains(r#"ON CONFLICT ("context_space_key", "entity_key", "attribute_name_id", "dataset_id") DO UPDATE SET"#),
             "a concurrent creator of an unmatched grain still requires an atomic fallback: {sql}"
         );
     }

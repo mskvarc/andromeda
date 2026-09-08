@@ -57,8 +57,8 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededHistory {
         "WITH type_name AS ( \
              INSERT INTO entity_type_names (name) VALUES ('https://example.test/query-access-paths/Historic') \
              ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id) \
-         INSERT INTO temporal_entities (created_at, modified_at, id, type_ids) \
-         SELECT now(), now(), $1::text || ':history', ARRAY[type_name.id] FROM type_name \
+         INSERT INTO temporal_entities (context_space_key, created_at, modified_at, id, type_ids) \
+         SELECT (SELECT context_space_key FROM context_spaces WHERE kind = 'live'), now(), now(), $1::text || ':history', ARRAY[type_name.id] FROM type_name \
          RETURNING entity_key",
     )
     .bind(prefix)
@@ -67,8 +67,8 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededHistory {
     .expect("temporal catalogue insert must succeed");
 
     let streams: Vec<i64> = sqlx::query_scalar(
-        "INSERT INTO temporal_attribute_streams (temporal_entity_key, attribute_name_id, dataset_id) \
-         SELECT $1, $2, 'urn:ngsi-ld:Dataset:' || lpad(g::text, 4, '0') \
+        "INSERT INTO temporal_attribute_streams (context_space_key, temporal_entity_key, attribute_name_id, dataset_id) \
+         SELECT (SELECT context_space_key FROM temporal_entities WHERE entity_key = $1), $1, $2, 'urn:ngsi-ld:Dataset:' || lpad(g::text, 4, '0') \
          FROM generate_series(1, $3::bigint) AS g \
          RETURNING stream_key",
     )
@@ -81,10 +81,10 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededHistory {
 
     sqlx::query(
         "INSERT INTO attribute_history \
-         (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind, \
+         (recorded_at, context_space_key, write_id, stream_key, write_ordinal, attribute_kind, value_kind, \
           observed_at, created_at, modified_at, deleted_at, generated_instance_uuid, value_number) \
          SELECT now() - (g || ' hours')::interval, \
-                gen_random_uuid(), s.stream_key, 0, 1, \
+                s.context_space_key, gen_random_uuid(), s.stream_key, 0, 1, \
                 CASE WHEN g = 1 THEN 0 ELSE 1 END, \
                 TIMESTAMPTZ '2026-01-01 00:00:00Z' + (g || ' hours')::interval, \
                 TIMESTAMPTZ '2026-01-01 00:00:00Z' + (g || ' hours')::interval - INTERVAL '1 day', \

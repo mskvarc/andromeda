@@ -56,15 +56,19 @@ pub(crate) async fn delete_by_query(
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
-    EntityQuery(query): EntityQuery,
+    EntityQuery(mut query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
+    if !target.permits_federation() {
+        query.local = Some(true);
+    }
+    query.validate().with_entity_instance(&uri)?;
     // Clause 5.6.21.4 gives this operation no `join`: it renders nothing and
     // retrieves nothing, so a Linked Entity reference in `q` or in `pick`/`omit`
     // can never be satisfied and is rejected outright rather than measured
     // against a traversal that does not exist here.
     reject_linked_retrieval(query.pick.as_deref(), query.omit.as_deref(), query.q.as_ref()).with_entity_instance(&uri)?;
 
-    let is_local = query.is_local();
+    let is_local = !target.permits_federation() || query.is_local();
     let context: ContextSpec = context.into_inner();
 
     // Determine purge mode from drop/keep parameters (S5.6.21)

@@ -17,6 +17,7 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use serde_json::{Value, json};
 use std::time::Duration;
 
@@ -24,7 +25,7 @@ use std::time::Duration;
 const DELIVER: Duration = Duration::from_secs(12);
 
 /// Register an inclusive `Vehicle` source on the front broker pointing at `role`.
-async fn register_source(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, role: BrokerRole, registration_local: &str) {
+async fn register_source(topology: &MultiBrokerTopology<BrokerRole>, role: BrokerRole, registration_local: &str) {
     let peer = topology.broker(role);
     let registration = CsrBuilder::new(&topology.id(registration_local), peer.peer_url())
         .mode("inclusive")
@@ -50,12 +51,7 @@ async fn register_source(topology: &andromeda_test_harness::multi_broker::MultiB
 /// default setting of the deployment allows split entities", and the
 /// deployment default is complete. Returns nothing; the caller triggers a
 /// change and asserts.
-async fn setup_split(
-    topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>,
-    receiver: &NotificationAdapter,
-    entity_id: &str,
-    subscription_id: &str,
-) {
+async fn setup_split(topology: &MultiBrokerTopology<BrokerRole>, receiver: &NotificationAdapter, entity_id: &str, subscription_id: &str) {
     register_source(topology, BrokerRole::B, "registration:split-b").await;
     register_source(topology, BrokerRole::C, "registration:split-c").await;
     let on_b = entity(entity_id, "Vehicle", &[("speed", property(json!(40)))]);
@@ -96,7 +92,7 @@ async fn setup_split(
 }
 
 /// Append an attribute to the B-held part so B notifies the front broker.
-async fn trigger_on_b(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, entity_id: &str) {
+async fn trigger_on_b(topology: &MultiBrokerTopology<BrokerRole>, entity_id: &str) {
     let fragment = json!({ "mileage": property(json!(1000)), "@context": COMPOUND_CONTEXT.as_str() });
     assert_status(
         &topology

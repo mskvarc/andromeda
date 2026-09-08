@@ -87,8 +87,8 @@ WITH type_name AS (
     ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
     RETURNING id
 )
-INSERT INTO temporal_entities (created_at, modified_at, id, type_ids)
-SELECT NOW(), NOW(), $1, ARRAY[type_name.id] FROM type_name
+INSERT INTO temporal_entities (context_space_key, created_at, modified_at, id, type_ids)
+SELECT (SELECT context_space_key FROM context_spaces WHERE kind = 'live'), NOW(), NOW(), $1, ARRAY[type_name.id] FROM type_name
 RETURNING entity_key
 "#;
 
@@ -99,8 +99,8 @@ RETURNING id
 "#;
 
 const SEED_STREAM_SQL: &str = r#"
-INSERT INTO temporal_attribute_streams (temporal_entity_key, attribute_name_id)
-VALUES ($1, $2)
+INSERT INTO temporal_attribute_streams (context_space_key, temporal_entity_key, attribute_name_id)
+SELECT context_space_key, entity_key, $2 FROM temporal_entities WHERE entity_key = $1
 RETURNING stream_key
 "#;
 
@@ -110,7 +110,8 @@ INSERT INTO write_records (write_id, recorded_at, accepted_at) VALUES ($1, $2, $
 
 const SEED_HISTORY_ROW_SQL: &str = r#"
 INSERT INTO attribute_history
-    (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind,
+    (recorded_at, context_space_key, write_id, stream_key, write_ordinal, attribute_kind, value_kind,
      generated_instance_uuid, observed_at, created_at, modified_at, value_number)
-VALUES ($1, $2, $3, 0, 1, 1, $4, $5, $1, $1, $6)
+SELECT $1, context_space_key, $2, stream_key, 0, 1, 1, $4, $5, $1, $1, $6
+FROM temporal_attribute_streams WHERE stream_key = $3
 "#;

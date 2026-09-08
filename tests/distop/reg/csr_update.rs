@@ -13,12 +13,13 @@ use andromeda_test_fixtures::{
     context::COMPOUND_CONTEXT,
     problem_detail::{BAD_REQUEST_DATA, RESOURCE_NOT_FOUND},
 };
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use reqwest::Method;
 use serde_json::{Value, json};
 use urlencoding::encode;
 
 /// Create the baseline registration under the given id.
-async fn create_baseline(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, id: &str) {
+async fn create_baseline(topology: &MultiBrokerTopology<BrokerRole>, id: &str) {
     let created = topology
         .broker(BrokerRole::A)
         .client()

@@ -79,7 +79,7 @@ mod tests {
         response::{IntoResponse, Response},
     };
     use serde_json::Value;
-    use std::io::Error as IoError;
+    use std::{io::Error as IoError, time::Duration};
 
     async fn body(response: ProblemResponse) -> Result<(Response, Value), serde_json::Error> {
         let response = response.into_response();
@@ -112,7 +112,7 @@ mod tests {
     #[tokio::test]
     async fn recoverable_response_carries_retry_after_delay() -> Result<(), serde_json::Error> {
         let response = ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, "Snapshot promotion is still pending")
-            .with_retry_after(std::time::Duration::from_secs(1))
+            .with_retry_after(Duration::from_secs(1))
             .with_instance(Uri::from_static("/ngsi-ld/v1/entities"));
         let (response, value) = body(response).await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);

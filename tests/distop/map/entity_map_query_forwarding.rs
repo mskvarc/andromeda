@@ -14,6 +14,7 @@ use crate::{
 };
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
 use serde_json::{Value, json};
 
@@ -27,11 +28,7 @@ async fn seed_vehicle(client: &TestClient, id: &str, speed: i64) {
 
 /// Register an inclusive `Vehicle` source on the front broker and stub the map
 /// and entity endpoints the forwarded query may hit.
-async fn query_source(
-    topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>,
-    registration_local: &str,
-    remote_entity_id: &str,
-) -> ContextSourceAdapter {
+async fn query_source(topology: &MultiBrokerTopology<BrokerRole>, registration_local: &str, remote_entity_id: &str) -> ContextSourceAdapter {
     let mock = ContextSourceAdapter::start().await;
     let remote_map = json!({
         "id": "urn:ngsi-ld:EntityMap:remote",

@@ -12,6 +12,7 @@ use crate::{
     oracle::assert_status,
     topology::{self, BrokerRole},
 };
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -29,12 +30,7 @@ fn notified_entity(notification: &CapturedNotification, entity_id: &str) -> Valu
 
 /// Create a subscription with a `notification.format` and return the notified
 /// representation of a freshly created `Vehicle`.
-async fn notify_with_format(
-    topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>,
-    receiver: &NotificationAdapter,
-    local: &str,
-    format: &str,
-) -> Value {
+async fn notify_with_format(topology: &MultiBrokerTopology<BrokerRole>, receiver: &NotificationAdapter, local: &str, format: &str) -> Value {
     let id = topology.id(&format!("Subscription:{local}"));
     let mut body = subscription(&id, &receiver.endpoint_url());
     body["notification"]["format"] = json!(format);

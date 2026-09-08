@@ -6,21 +6,22 @@
 //! ([`crate::snapshot::introspection`]).
 
 use crate::snapshot::{
-    clone_context::promote_context_clone,
+    clone_context::{promote_context_clone, promote_staged_capture},
     lifecycle::{
         create_snapshot,
         delete_expired_snapshots,
         delete_snapshot,
         match_snapshots_by_filter,
-        next_preparing_snapshot,
         read_snapshot,
-        renew_preparation_lease,
+        resolve_snapshot_staging_target,
         resolve_snapshot_target,
         snapshot_exists,
         touch_last_used,
         update_snapshot_metadata,
         update_status,
     },
+    preparation_claim::{next_preparing_snapshot, renew_preparation_lease},
+    quota::enforce_snapshot_quotas,
     repo::SnapshotRepository,
 };
 use andromeda_context_space::snapshot_target::SnapshotTarget;
@@ -57,6 +58,10 @@ impl SnapshotStore for SnapshotRepository {
         resolve_snapshot_target(self.pool(), id).await
     }
 
+    async fn staging_target(&self, id: &Uri) -> Result<Option<SnapshotTarget>, SnapshotError> {
+        resolve_snapshot_staging_target(self.pool(), id).await
+    }
+
     async fn next_preparing(&self, claimed_by: Uuid, lease_until: DateTime<Utc>) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
         next_preparing_snapshot(self.pool(), claimed_by, lease_until).await
     }
@@ -80,11 +85,23 @@ impl SnapshotStore for SnapshotRepository {
     async fn update_status(
         &self,
         id: &Uri,
+        claimed_by: Uuid,
         status: SnapshotStatus,
         queries_details: Option<&[ExecutionResultDetails]>,
         temporal_queries_details: Option<&[ExecutionResultDetails]>,
     ) -> Result<u64, SnapshotError> {
-        update_status(self.pool(), id, status, queries_details, temporal_queries_details).await
+        update_status(self.pool(), id, claimed_by, status, queries_details, temporal_queries_details).await
+    }
+
+    async fn promote_capture(
+        &self,
+        id: &Uri,
+        claimed_by: Uuid,
+        status: SnapshotStatus,
+        queries_details: Option<&[ExecutionResultDetails]>,
+        temporal_queries_details: Option<&[ExecutionResultDetails]>,
+    ) -> Result<(), SnapshotError> {
+        promote_staged_capture(self.pool(), id, claimed_by, status, queries_details, temporal_queries_details).await
     }
 
     async fn delete(&self, id: &Uri) -> Result<u64, SnapshotError> {
@@ -99,12 +116,16 @@ impl SnapshotStore for SnapshotRepository {
         delete_snapshot(self.pool(), id).await
     }
 
-    async fn promote_clone(&self, source_id: &Uri, target_id: &Uri) -> Result<(), SnapshotError> {
-        promote_context_clone(self.pool(), source_id, target_id).await
+    async fn promote_clone(&self, source_id: &Uri, target_id: &Uri, claimed_by: Uuid) -> Result<(), SnapshotError> {
+        promote_context_clone(self.pool(), source_id, target_id, claimed_by).await
     }
 
     async fn delete_expired(&self, cutoff: DateTime<Utc>) -> Result<u64, SnapshotError> {
         delete_expired_snapshots(self.pool(), cutoff).await
+    }
+
+    async fn enforce_quotas(&self, count_quota: Option<usize>, byte_quota: Option<u64>) -> Result<Vec<Uri>, SnapshotError> {
+        enforce_snapshot_quotas(self.pool(), count_quota, byte_quota).await
     }
 
     async fn touch_last_used(&self, id: &Uri) -> Result<(), SnapshotError> {

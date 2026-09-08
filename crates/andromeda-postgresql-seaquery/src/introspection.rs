@@ -72,6 +72,22 @@ pub fn transaction_has_not_written() -> SimpleExpr {
     SimpleExpr::from(Func::cust(PgCurrentXactIdIfAssigned)).is_null()
 }
 
+/// `pg_column_size(to_jsonb(row))` - deterministic logical size of one relation row.
+pub fn jsonb_row_size(row: SimpleExpr) -> SimpleExpr {
+    let json = SimpleExpr::from(Func::cust(ToJsonb).arg(row));
+    Func::cust(PgColumnSize).arg(json).into()
+}
+
+/// The `to_jsonb` PostgreSQL conversion function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "to_jsonb"]
+struct ToJsonb;
+
+/// The `pg_column_size` PostgreSQL sizing function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "pg_column_size"]
+struct PgColumnSize;
+
 #[cfg(test)]
 mod tests {
     use crate::introspection::{current_setting, current_setting_missing_ok, extension_version, transaction_has_not_written};

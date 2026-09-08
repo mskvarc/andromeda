@@ -13,6 +13,7 @@ use crate::{
     registration::CsrBuilder,
     topology::{self, BrokerRole},
 };
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use serde_json::json;
 use std::time::Duration;
 
@@ -26,7 +27,7 @@ const INTERVAL_START: &str = "2020-01-01T00:00:00Z";
 const INTERVAL_END: &str = "2021-01-01T00:00:00Z";
 
 /// Create a Context Source Subscription and assert the `201` acknowledgement.
-async fn create_subscription(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, body: &serde_json::Value) {
+async fn create_subscription(topology: &MultiBrokerTopology<BrokerRole>, body: &serde_json::Value) {
     let created = csr_subscription::create(topology.broker(BrokerRole::A).client(), body).await;
     assert_status(&created, 201);
 }

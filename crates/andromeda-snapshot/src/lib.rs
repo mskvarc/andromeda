@@ -8,7 +8,6 @@ pub mod config;
 pub mod error;
 pub mod executor;
 pub mod expiry;
-pub mod notification;
 pub mod prepare;
 pub mod query_validation;
 /// Snapshot lifecycle service and purge outcomes.
@@ -19,6 +18,8 @@ pub mod store;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-context-commit",
+        "andromeda-context-space",
         "andromeda-entity",
         "andromeda-federation",
         "andromeda-jsonld",
@@ -26,6 +27,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-request",
+        "andromeda-ngsi-ld-vocabulary",
         "andromeda-temporal",
     ],
     allow_workspace_dev_dependencies: [],

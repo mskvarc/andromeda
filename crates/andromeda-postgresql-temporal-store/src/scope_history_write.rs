@@ -330,7 +330,7 @@ mod tests {
     fn the_insert_carries_the_partition_column_and_the_whole_write_identity() {
         let insert = scope_history_insert_sql().expect("the fixed scope-history insert builds");
         assert!(
-            insert.contains(r#""recorded_at", "temporal_entity_key", "write_id", "write_ordinal""#),
+            insert.contains(r#""recorded_at", "context_space_key", "temporal_entity_key", "write_id", "write_ordinal""#),
             "{insert}"
         );
         assert!(insert.contains(r#""d"."scope_path"::ltree"#), "{insert}");
@@ -343,7 +343,7 @@ mod tests {
     fn a_row_replayed_under_its_original_write_identity_is_not_duplicated() {
         let insert = scope_history_insert_sql().expect("the fixed scope-history insert builds");
         assert!(
-            insert.contains(r#"ON CONFLICT ("recorded_at", "write_id", "write_ordinal") DO NOTHING"#),
+            insert.contains(r#"ON CONFLICT ("recorded_at", "context_space_key", "write_id", "write_ordinal") DO NOTHING"#),
             "{insert}"
         );
     }

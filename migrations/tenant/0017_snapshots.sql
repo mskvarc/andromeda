@@ -37,6 +37,11 @@ CREATE TABLE snapshots (
     -- First-class context branch owned by this control record.
     context_space_key BIGINT NOT NULL UNIQUE REFERENCES context_spaces (context_space_key) ON DELETE CASCADE,
 
+    -- Private branch populated by capture and clone workers. Promotion atomically makes
+    -- it the Snapshot's `context_space_key` and deletes the original empty
+    -- branch. It is never resolved by HTTP scoping before that swap.
+    staging_context_space_key BIGINT UNIQUE REFERENCES context_spaces (context_space_key) ON DELETE SET NULL,
+
     -- System-managed temporal properties
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -52,6 +57,12 @@ CREATE TABLE snapshots (
 
     -- Snapshot lifecycle state
     status snapshot_status NOT NULL DEFAULT 'preparing',
+
+    -- Renewable preparation lease. All three values are present together or
+    -- absent together; an expired lease is reclaimable by another replica.
+    claimed_by UUID,
+    claimed_at TIMESTAMPTZ,
+    lease_until TIMESTAMPTZ,
 
     -- Source URI for an asynchronous clone job; NULL for query capture.
     clone_source_id TEXT COMPRESSION lz4 COLLATE "C",
@@ -83,7 +94,10 @@ CREATE TABLE snapshots (
     queries_details JSONB COMPRESSION lz4,
 
     -- Per-query result details for temporal queries
-    temporal_queries_details JSONB COMPRESSION lz4
+    temporal_queries_details JSONB COMPRESSION lz4,
+
+    CONSTRAINT chk_snapshot_claim_coherent
+        CHECK (num_nonnulls(claimed_by, claimed_at, lease_until) IN (0, 3))
 ) WITH (
     -- The control row is updated in place on every status transition and on
     -- `last_used_at`, so leave half of every page free for heap-only tuple
@@ -99,3 +113,40 @@ CREATE TABLE snapshots (
 
 -- Efficient periodic cleanup of expired snapshots
 CREATE INDEX idx_snapshots_expires_at ON snapshots (expires_at);
+
+CREATE INDEX idx_snapshots_preparation_claim
+    ON snapshots (lease_until, snapshot_priority DESC, created_at)
+    WHERE status = 'preparing';
+
+-- Snapshot status notifications are lifecycle events, not subscription
+-- deliveries. Keeping their own outbox avoids inventing a Subscription FK and
+-- lets state promotion commit independently of endpoint availability.
+CREATE TABLE snapshot_notification_outbox (
+    id UUID PRIMARY KEY,
+    snapshot_key BIGINT NOT NULL REFERENCES snapshots(snapshot_key) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    claimed_at TIMESTAMPTZ,
+    lease_until TIMESTAMPTZ,
+    claimed_by UUID,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    delivered_at TIMESTAMPTZ,
+    exhausted_at TIMESTAMPTZ,
+    endpoint TEXT NOT NULL,
+    receiver_info JSONB COMPRESSION lz4,
+    payload JSONB COMPRESSION lz4 NOT NULL,
+    last_error TEXT COMPRESSION lz4,
+    CONSTRAINT chk_snapshot_notification_claim_coherent
+        CHECK (num_nonnulls(claimed_at, lease_until, claimed_by) IN (0, 3)),
+    CONSTRAINT chk_snapshot_notification_terminal_coherent
+        CHECK (num_nonnulls(delivered_at, exhausted_at) <= 1)
+) WITH (
+    fillfactor = 50,
+    autovacuum_vacuum_scale_factor = 0.005,
+    autovacuum_vacuum_threshold = 100
+);
+
+CREATE INDEX idx_snapshot_notification_claimable
+    ON snapshot_notification_outbox
+        (GREATEST(next_attempt_at, COALESCE(lease_until, '-infinity'::timestamptz)), id)
+    WHERE delivered_at IS NULL AND exhausted_at IS NULL;

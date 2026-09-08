@@ -12,7 +12,7 @@ use andromeda_federation::{
     entity_result::collect_warnings,
     forwarded_query::ClientQuery,
     operation::ForwardingOperation,
-    request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, ForwardTemporalQueryRequest, TriggeringRequest},
+    request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, ForwardTemporalQueryRequest, SourcePage, TriggeringRequest},
     temporal_result::merge_temporal_query_results,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -30,6 +30,7 @@ impl SnapshotExecutor {
         query: Query,
         index: usize,
         context: &ContextSpec,
+        materialized_entities: &mut HashSet<Uri>,
     ) -> ExecutionResultDetails {
         let mut params = match entity_parameters(query) {
             Ok(params) => params,
@@ -66,6 +67,10 @@ impl SnapshotExecutor {
                         csf_expr: None,
                         mode_filter: CsrModeFilter::All,
                         entity_map: EntityMapInUse::None,
+                        source_page: Some(SourcePage {
+                            limit: self.capture_page_size,
+                            offset,
+                        }),
                     },
                 )
                 .await;
@@ -104,11 +109,13 @@ impl SnapshotExecutor {
                 };
                 pairs.push((identifier, expanded));
             }
-            let detail = self.persist_current_results(target, snapshot_id, index, &pairs).await;
+            let new_pairs = pairs.iter().filter(|(id, _)| !materialized_entities.contains(id)).cloned().collect::<Vec<_>>();
+            let detail = self.persist_current_results(target, snapshot_id, index, &new_pairs).await;
             if detail.problem_details.is_some() {
                 return detail;
             }
-            captured.extend(pairs.into_iter().map(|(id, _)| id));
+            captured.extend(pairs.iter().map(|(id, _)| id.clone()));
+            materialized_entities.extend(new_pairs.into_iter().map(|(id, _)| id));
             if local_page_len < self.capture_page_size as usize && !remote_page_full {
                 break;
             }
@@ -162,6 +169,10 @@ impl SnapshotExecutor {
                         csf_expr: None,
                         mode_filter: CsrModeFilter::All,
                         entity_map: EntityMapInUse::None,
+                        source_page: Some(SourcePage {
+                            limit: self.capture_page_size,
+                            offset,
+                        }),
                     },
                 )
                 .await

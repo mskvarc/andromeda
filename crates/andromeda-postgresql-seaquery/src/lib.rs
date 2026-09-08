@@ -35,6 +35,7 @@ pub mod placeholder;
 pub mod postgis;
 pub mod queue;
 pub mod timescale;
+pub mod transaction;
 pub mod unnest;
 
 #[cfg(test)]

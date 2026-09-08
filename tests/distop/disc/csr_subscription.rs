@@ -11,6 +11,7 @@
 use crate::{oracle::assert_status, topology::BrokerRole};
 use andromeda_test_client::{response::TestResponse, test_client::TestClient};
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use reqwest::Method;
 use serde_json::{Map, Value, json};
 use urlencoding::encode;
@@ -41,7 +42,7 @@ pub async fn create(client: &TestClient, body: &Value) -> TestResponse {
 
 /// Create a Context Source Subscription on the front broker and assert the
 /// `201 Created` acknowledgement.
-pub async fn create_and_assert(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, body: &Value) {
+pub async fn create_and_assert(topology: &MultiBrokerTopology<BrokerRole>, body: &Value) {
     let created = create(topology.broker(BrokerRole::A).client(), body).await;
     assert_status(&created, 201);
 }

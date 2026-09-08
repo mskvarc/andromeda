@@ -45,7 +45,7 @@ pub async fn reset_owned_tenant(pool: &PgPool) -> Result<(), DatabaseResetError>
 }
 
 /// How many times a reset is retried after PostgreSQL reports a deadlock.
-const RESET_DEADLOCK_RETRIES: u32 = 5;
+const RESET_DEADLOCK_RETRIES: u32 = 20;
 
 /// Pause between deadlock retries, long enough for a broker's short
 /// maintenance transaction to complete.
@@ -221,6 +221,12 @@ mod tests {
         // `current_attribute_values.unit_code_id` references it.
         assert!(!truncated_relations().contains("unit_codes"));
         assert!(!truncated_relations().contains("unit_code_catalog_metadata"));
+    }
+
+    #[test]
+    fn reset_script_removes_snapshot_context_spaces_and_preserves_the_live_space() {
+        assert!(RESET_TENANT_SQL.contains("DELETE FROM context_spaces WHERE kind = 'snapshot'"));
+        assert!(!RESET_TENANT_SQL.contains("TRUNCATE context_spaces"));
     }
 
     #[test]

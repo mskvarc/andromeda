@@ -65,6 +65,7 @@ mod tests {
             receiver_info,
             jsonld_context: None,
             tenant,
+            snapshot: None,
             subscription_id: &subscription,
         }
         .assemble()

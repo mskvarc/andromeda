@@ -289,7 +289,10 @@ mod tests {
         let sql = insert_events_statement(&target(), Utc::now(), Uuid::nil(), &events)
             .expect("a representable event")
             .to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#"ON CONFLICT ("write_id", "event_ordinal") DO NOTHING"#), "{sql}");
+        assert!(
+            sql.contains(r#"ON CONFLICT ("context_space_key", "write_id", "event_ordinal") DO NOTHING"#),
+            "{sql}"
+        );
         assert!(sql.contains(r#"RETURNING "id", "event_ordinal""#), "{sql}");
     }
 
@@ -323,7 +326,7 @@ mod tests {
         let (alias, columns) = pair_source();
         let sql = apply_column_alias(sql, &alias, &columns);
         assert!(
-            sql.contains(r#"INSERT INTO "notification_deliveries" ("event_id", "subscription_key", "next_attempt_at")"#),
+            sql.contains(r#"INSERT INTO "notification_deliveries" ("context_space_key", "event_id", "subscription_key", "next_attempt_at")"#),
             "{sql}"
         );
         assert!(
@@ -331,10 +334,10 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#"INNER JOIN "subscriptions" AS "s" ON "s"."subscription_key" = "p"."subscription_key""#),
+            sql.contains(r#"INNER JOIN "subscriptions" AS "s" ON "s"."subscription_key" = "p"."subscription_key" AND "s"."context_space_key" = 1"#),
             "{sql}"
         );
-        assert!(sql.contains(r#"SELECT "p"."event_id", "s"."subscription_key""#), "{sql}");
+        assert!(sql.contains(r#"SELECT 1, "p"."event_id", "s"."subscription_key""#), "{sql}");
     }
 
     #[test]

@@ -25,7 +25,10 @@ use sqlx::PgPool;
 use std::{num::NonZeroU32, sync::Arc};
 
 /// The two hypertables and the column each segments its columnstore by.
-const HYPERTABLES: &[(&str, &str)] = &[("attribute_history", "stream_key"), ("scope_history", "temporal_entity_key")];
+const HYPERTABLES: &[(&str, &str)] = &[
+    ("attribute_history", "context_space_key,stream_key"),
+    ("scope_history", "context_space_key,temporal_entity_key"),
+];
 
 /// The chunk interval of `hypertable`, in whole days.
 async fn chunk_interval_days(pool: &PgPool, hypertable: &str) -> f64 {

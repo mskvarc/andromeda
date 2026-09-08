@@ -22,7 +22,7 @@ pub mod query;
 pub mod scoped_response;
 pub mod snapshot;
 pub mod snapshot_purge;
-pub mod snapshot_write_guard;
+pub mod snapshot_scope_guard;
 pub mod temporal_query;
 pub mod tenant;
 pub mod tenant_state;
@@ -32,6 +32,7 @@ pub mod via;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-context-space",
         "andromeda-http-headers",
         "andromeda-http-response",
         "andromeda-jsonld",

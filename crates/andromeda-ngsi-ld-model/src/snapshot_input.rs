@@ -38,18 +38,25 @@ pub struct SnapshotInput {
     /// Receiver metadata used by the configured notification binding.
     #[serde(default)]
     pub receiver_info: Option<Vec<KeyValuePair>>,
+    /// Recognized output-only status, discarded on input.
     #[serde(default, rename = "snapshotStatus")]
     _snapshot_status: Option<IgnoredAny>,
+    /// Recognized output-only entity execution details, discarded on input.
     #[serde(default, rename = "snapshotQueriesDetails")]
     _snapshot_queries_details: Option<IgnoredAny>,
+    /// Recognized output-only temporal execution details, discarded on input.
     #[serde(default, rename = "snapshotTemporalQueriesDetails")]
     _snapshot_temporal_queries_details: Option<IgnoredAny>,
+    /// Recognized output-only creation timestamp, discarded on input.
     #[serde(default)]
     _created_at: Option<IgnoredAny>,
+    /// Recognized output-only modification timestamp, discarded on input.
     #[serde(default)]
     _modified_at: Option<IgnoredAny>,
+    /// Recognized output-only expiry timestamp, discarded on input.
     #[serde(default)]
     _expires_at: Option<IgnoredAny>,
+    /// Recognized output-only usage timestamp, discarded on input.
     #[serde(default)]
     _last_used_at: Option<IgnoredAny>,
 }

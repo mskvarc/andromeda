@@ -170,6 +170,7 @@ dependencies = [
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-request",
+ "andromeda-ngsi-ld-vocabulary",
  "andromeda-notification",
  "andromeda-postgresql-atomic-write",
  "andromeda-postgresql-context-store",

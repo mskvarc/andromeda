@@ -15,11 +15,12 @@ use crate::{
     topology::BrokerRole,
 };
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use serde_json::{Value, json};
 
 /// Create a Context Source Registration on the front broker and assert the
 /// `201 Created` acknowledgement.
-pub async fn register(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, body: &Value) {
+pub async fn register(topology: &MultiBrokerTopology<BrokerRole>, body: &Value) {
     let created = topology
         .broker(BrokerRole::A)
         .client()
@@ -31,12 +32,7 @@ pub async fn register(topology: &andromeda_test_harness::multi_broker::MultiBrok
 
 /// Register a CSR of the given type carrying a `location` Point, so geo-queries
 /// have a GeoProperty to match against.
-pub async fn register_located(
-    topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>,
-    id: &str,
-    entity_type: &str,
-    coordinates: [f64; 2],
-) {
+pub async fn register_located(topology: &MultiBrokerTopology<BrokerRole>, id: &str, entity_type: &str, coordinates: [f64; 2]) {
     let mut body = CsrBuilder::new(id, PEER_ENDPOINT).entity_type(entity_type).build();
     body["location"] = json!({ "type": "Point", "coordinates": coordinates });
     register(topology, &body).await;
@@ -44,14 +40,7 @@ pub async fn register_located(
 
 /// Register a CSR of the given type carrying a temporal interval field
 /// (`observationInterval` or `managementInterval`).
-pub async fn register_interval(
-    topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>,
-    id: &str,
-    entity_type: &str,
-    field: &str,
-    start: &str,
-    end: &str,
-) {
+pub async fn register_interval(topology: &MultiBrokerTopology<BrokerRole>, id: &str, entity_type: &str, field: &str, start: &str, end: &str) {
     let mut body = CsrBuilder::new(id, PEER_ENDPOINT).entity_type(entity_type).build();
     body[field] = json!({ "startAt": start, "endAt": end });
     register(topology, &body).await;
@@ -59,7 +48,7 @@ pub async fn register_interval(
 
 /// Run a Query-CSR with the compound test context applied, assert `200 OK`, and
 /// return the decoded JSON-LD array body.
-pub async fn query(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, query: &str) -> Value {
+pub async fn query(topology: &MultiBrokerTopology<BrokerRole>, query: &str) -> Value {
     let response = topology
         .broker(BrokerRole::A)
         .client()

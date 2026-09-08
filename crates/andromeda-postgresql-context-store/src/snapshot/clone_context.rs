@@ -1,60 +1,171 @@
 //! Atomic point-in-time copying of one Snapshot context branch into another.
 
-use crate::snapshot::persistence_error;
+use crate::{
+    context_space::delete_context_space_statement,
+    snapshot::{clone_statements::clone_statements, persistence_error, status_outbox::enqueue_terminal_notification},
+};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, SnapshotStatus};
+use andromeda_postgresql_schema::snapshot::Snapshots;
+use andromeda_postgresql_seaquery::{cast::cast, clock::now, pg_type::PostgresType, transaction::repeatable_read};
 use andromeda_snapshot::error::SnapshotError;
+use sea_query::{Expr, ExprTrait, Iden, Keyword, LockType, PostgresQueryBuilder, Query, SimpleExpr};
+use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Postgres, Transaction};
+use uuid::Uuid;
+
+#[derive(Clone, Copy, Iden)]
+#[iden = "source"]
+/// Source Snapshot control-row alias.
+struct Source;
+
+#[derive(Clone, Copy, Iden)]
+#[iden = "target"]
+/// Target Snapshot control-row alias.
+struct Target;
 
 /// Copy every current and temporal relation in one repeatable-read transaction.
-pub(crate) async fn promote_context_clone(pool: &PgPool, source_id: &Uri, target_id: &Uri) -> Result<(), SnapshotError> {
+pub(crate) async fn promote_context_clone(pool: &PgPool, source_id: &Uri, target_id: &Uri, claimed_by: Uuid) -> Result<(), SnapshotError> {
     let mut transaction = pool.begin().await.map_err(persistence_error)?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+    sqlx::query(sqlx::AssertSqlSafe(repeatable_read()))
         .execute(&mut *transaction)
         .await
         .map_err(persistence_error)?;
-    let (source_key, target_key): (i64, i64) = sqlx::query_as(
-        "SELECT source.context_space_key, target.context_space_key FROM snapshots source CROSS JOIN snapshots target WHERE source.id = $1 AND target.id = $2 FOR UPDATE OF target",
-    )
-    .bind(source_id.as_str())
-    .bind(target_id.as_str())
-    .fetch_one(&mut *transaction)
-    .await
-    .map_err(persistence_error)?;
+    let source_and_staging = Query::select()
+        .column((Source, Snapshots::ContextSpaceKey))
+        .column((Target, Snapshots::StagingContextSpaceKey))
+        .from_as(Snapshots::Table, Source)
+        .from_as(Snapshots::Table, Target)
+        .and_where(Expr::col((Source, Snapshots::Id)).eq(source_id.as_str()))
+        .and_where(Expr::col((Target, Snapshots::Id)).eq(target_id.as_str()))
+        .and_where(Expr::col((Target, Snapshots::ClaimedBy)).eq(claimed_by))
+        .and_where(preparing(Target))
+        .to_owned();
+    let (sql, values) = source_and_staging.build_sqlx(PostgresQueryBuilder);
+    let (source_key, staging_key): (i64, i64) = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(persistence_error)?;
 
-    for statement in CLONE_STATEMENTS {
-        sqlx::query(statement)
-            .bind(source_key)
-            .bind(target_key)
-            .execute(&mut *transaction)
-            .await
-            .map_err(persistence_error)?;
+    for statement in clone_statements(source_key, staging_key)? {
+        execute(&mut transaction, statement).await?;
     }
-    promote_control_row(&mut transaction, target_id).await?;
+    transaction.commit().await.map_err(persistence_error)?;
+    promote_control_row(pool, target_id, claimed_by, staging_key).await
+}
+
+/// Publish one query capture from its private context space in a single transaction.
+pub(crate) async fn promote_staged_capture(
+    pool: &PgPool,
+    id: &Uri,
+    claimed_by: Uuid,
+    status: SnapshotStatus,
+    queries_details: Option<&[ExecutionResultDetails]>,
+    temporal_queries_details: Option<&[ExecutionResultDetails]>,
+) -> Result<(), SnapshotError> {
+    let mut transaction = pool.begin().await.map_err(persistence_error)?;
+    let locked = Query::select()
+        .columns([Snapshots::ContextSpaceKey, Snapshots::StagingContextSpaceKey])
+        .from(Snapshots::Table)
+        .and_where(Expr::col(Snapshots::Id).eq(id.as_str()))
+        .and_where(Expr::col(Snapshots::ClaimedBy).eq(claimed_by))
+        .and_where(preparing(Snapshots::Table))
+        .lock(LockType::Update)
+        .to_owned();
+    let (sql, values) = locked.build_sqlx(PostgresQueryBuilder);
+    let row: (i64, Option<i64>) = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(persistence_error)?;
+    let staging_key = row
+        .1
+        .ok_or_else(|| SnapshotError::internal(format!("Snapshot {id} has no staging context space")))?;
+
+    let published_key = if status == SnapshotStatus::Failure { row.0 } else { staging_key };
+    let discarded_key = if status == SnapshotStatus::Failure { staging_key } else { row.0 };
+    let statement = Query::update()
+        .table(Snapshots::Table)
+        .value(Snapshots::ContextSpaceKey, published_key)
+        .value(Snapshots::Status, cast(Expr::val(<&str>::from(status)), PostgresType::SnapshotStatus))
+        .value(Snapshots::QueriesDetails, queries_details.map(serde_json::to_value).transpose()?)
+        .value(
+            Snapshots::TemporalQueriesDetails,
+            temporal_queries_details.map(serde_json::to_value).transpose()?,
+        )
+        .value(Snapshots::ModifiedAt, now())
+        .value(Snapshots::StagingContextSpaceKey, Keyword::Null)
+        .value(Snapshots::ClaimedBy, Keyword::Null)
+        .value(Snapshots::ClaimedAt, Keyword::Null)
+        .value(Snapshots::LeaseUntil, Keyword::Null)
+        .and_where(Expr::col(Snapshots::Id).eq(id.as_str()))
+        .and_where(Expr::col(Snapshots::ClaimedBy).eq(claimed_by))
+        .and_where(preparing(Snapshots::Table))
+        .to_owned();
+    let rows_affected = execute(&mut transaction, statement).await?;
+    if rows_affected != 1 {
+        return Err(SnapshotError::internal(format!("Snapshot {id} is no longer preparing")));
+    }
+    enqueue_terminal_notification(&mut transaction, id).await?;
+    execute(&mut transaction, delete_context_space_statement(discarded_key)).await?;
     transaction.commit().await.map_err(persistence_error)
 }
 
-const CLONE_STATEMENTS: [&str; 9] = [
-    "INSERT INTO entities (context_space_key, created_at, expires_at, min_attribute_expires_at, id) SELECT $2, created_at, expires_at, min_attribute_expires_at, id FROM entities WHERE context_space_key = $1",
-    "INSERT INTO entity_documents (context_space_key, entity_key, modified_at, payload) SELECT $2, target.entity_key, document.modified_at, document.payload FROM entity_documents document JOIN entities source ON source.context_space_key = $1 AND source.entity_key = document.entity_key JOIN entities target ON target.context_space_key = $2 AND target.id = source.id WHERE document.context_space_key = $1",
-    "INSERT INTO entity_search (context_space_key, entity_key, location_expires_at, type_ids, attribute_name_ids, scope_paths, location, observation_space, operation_space) SELECT $2, target.entity_key, search.location_expires_at, search.type_ids, search.attribute_name_ids, search.scope_paths, search.location, search.observation_space, search.operation_space FROM entity_search search JOIN entities source ON source.context_space_key = $1 AND source.entity_key = search.entity_key JOIN entities target ON target.context_space_key = $2 AND target.id = source.id WHERE search.context_space_key = $1",
-    "INSERT INTO current_attribute_values (context_space_key, entity_key, attribute_name_id, attribute_kind, value_kind, value_datetime, unit_code_id, value_bool, dataset_id, value_number, value_string, value_geo, value_object, value_uri) SELECT $2, target.entity_key, value.attribute_name_id, value.attribute_kind, value.value_kind, value.value_datetime, value.unit_code_id, value.value_bool, value.dataset_id, value.value_number, value.value_string, value.value_geo, value.value_object, value.value_uri FROM current_attribute_values value JOIN entities source ON source.context_space_key = $1 AND source.entity_key = value.entity_key JOIN entities target ON target.context_space_key = $2 AND target.id = source.id WHERE value.context_space_key = $1",
-    "INSERT INTO temporal_entities (context_space_key, created_at, modified_at, id, type_ids) SELECT $2, created_at, modified_at, id, type_ids FROM temporal_entities WHERE context_space_key = $1",
-    "INSERT INTO temporal_attribute_streams (context_space_key, temporal_entity_key, attribute_name_id, dataset_id) SELECT $2, target.entity_key, stream.attribute_name_id, stream.dataset_id FROM temporal_attribute_streams stream JOIN temporal_entities source ON source.context_space_key = $1 AND source.entity_key = stream.temporal_entity_key JOIN temporal_entities target ON target.context_space_key = $2 AND target.id = source.id WHERE stream.context_space_key = $1",
-    "INSERT INTO attribute_history (recorded_at, context_space_key, write_id, stream_key, write_ordinal, attribute_kind, value_kind, observed_at, created_at, modified_at, deleted_at, value_datetime, generated_instance_uuid, unit_code_id, value_bool, verbatim_instance_id, value_number, value_string, value_geo, value_object, value_uri, metadata) SELECT history.recorded_at, $2, history.write_id, target_stream.stream_key, history.write_ordinal, history.attribute_kind, history.value_kind, history.observed_at, history.created_at, history.modified_at, history.deleted_at, history.value_datetime, history.generated_instance_uuid, history.unit_code_id, history.value_bool, history.verbatim_instance_id, history.value_number, history.value_string, history.value_geo, history.value_object, history.value_uri, history.metadata FROM attribute_history history JOIN temporal_attribute_streams source_stream ON source_stream.context_space_key = $1 AND source_stream.stream_key = history.stream_key JOIN temporal_entities source_entity ON source_entity.context_space_key = $1 AND source_entity.entity_key = source_stream.temporal_entity_key JOIN temporal_entities target_entity ON target_entity.context_space_key = $2 AND target_entity.id = source_entity.id JOIN temporal_attribute_streams target_stream ON target_stream.context_space_key = $2 AND target_stream.temporal_entity_key = target_entity.entity_key AND target_stream.attribute_name_id = source_stream.attribute_name_id AND target_stream.dataset_id IS NOT DISTINCT FROM source_stream.dataset_id WHERE history.context_space_key = $1",
-    "INSERT INTO scope_history (recorded_at, context_space_key, temporal_entity_key, write_id, write_ordinal, value_kind, observed_at, created_at, modified_at, deleted_at, generated_instance_uuid, verbatim_instance_id, scope_path) SELECT history.recorded_at, $2, target.entity_key, history.write_id, history.write_ordinal, history.value_kind, history.observed_at, history.created_at, history.modified_at, history.deleted_at, history.generated_instance_uuid, history.verbatim_instance_id, history.scope_path FROM scope_history history JOIN temporal_entities source ON source.context_space_key = $1 AND source.entity_key = history.temporal_entity_key JOIN temporal_entities target ON target.context_space_key = $2 AND target.id = source.id WHERE history.context_space_key = $1",
-    "INSERT INTO attribute_history_instance_claims (context_space_key, temporal_entity_key, attribute_name_id, verbatim_instance_id) SELECT $2, target.entity_key, claim.attribute_name_id, claim.verbatim_instance_id FROM attribute_history_instance_claims claim JOIN temporal_entities source ON source.context_space_key = $1 AND source.entity_key = claim.temporal_entity_key JOIN temporal_entities target ON target.context_space_key = $2 AND target.id = source.id WHERE claim.context_space_key = $1",
-];
-
-async fn promote_control_row(transaction: &mut Transaction<'_, Postgres>, target_id: &Uri) -> Result<(), SnapshotError> {
-    let result = sqlx::query(
-        "UPDATE snapshots SET status = 'success', modified_at = NOW(), claimed_by = NULL, claimed_at = NULL, lease_until = NULL WHERE id = $1 AND status = 'preparing'",
-    )
-    .bind(target_id.as_str())
-    .execute(&mut **transaction)
-    .await
-    .map_err(persistence_error)?;
-    if result.rows_affected() != 1 {
+/// Atomically publish the staged clone and discard its original empty branch.
+async fn promote_control_row(pool: &PgPool, target_id: &Uri, claimed_by: Uuid, staging_key: i64) -> Result<(), SnapshotError> {
+    let mut transaction = pool.begin().await.map_err(persistence_error)?;
+    let locked = Query::select()
+        .column(Snapshots::ContextSpaceKey)
+        .from(Snapshots::Table)
+        .and_where(Expr::col(Snapshots::Id).eq(target_id.as_str()))
+        .and_where(Expr::col(Snapshots::ClaimedBy).eq(claimed_by))
+        .and_where(Expr::col(Snapshots::StagingContextSpaceKey).eq(staging_key))
+        .and_where(preparing(Snapshots::Table))
+        .lock(LockType::Update)
+        .to_owned();
+    let (sql, values) = locked.build_sqlx(PostgresQueryBuilder);
+    let original_key: i64 = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(persistence_error)?;
+    let statement = Query::update()
+        .table(Snapshots::Table)
+        .value(Snapshots::ContextSpaceKey, staging_key)
+        .value(Snapshots::StagingContextSpaceKey, Keyword::Null)
+        .value(
+            Snapshots::Status,
+            cast(Expr::val(<&str>::from(SnapshotStatus::Success)), PostgresType::SnapshotStatus),
+        )
+        .value(Snapshots::ModifiedAt, now())
+        .value(Snapshots::ClaimedBy, Keyword::Null)
+        .value(Snapshots::ClaimedAt, Keyword::Null)
+        .value(Snapshots::LeaseUntil, Keyword::Null)
+        .and_where(Expr::col(Snapshots::Id).eq(target_id.as_str()))
+        .and_where(Expr::col(Snapshots::ClaimedBy).eq(claimed_by))
+        .and_where(preparing(Snapshots::Table))
+        .to_owned();
+    let rows_affected = execute(&mut transaction, statement).await?;
+    if rows_affected != 1 {
         return Err(SnapshotError::internal(format!("Clone target {target_id} is no longer preparing")));
     }
-    Ok(())
+    enqueue_terminal_notification(&mut transaction, target_id).await?;
+    execute(&mut transaction, delete_context_space_statement(original_key)).await?;
+    transaction.commit().await.map_err(persistence_error)
+}
+
+/// Match a Snapshot control row whose typed status is `preparing`.
+fn preparing<T>(table: T) -> SimpleExpr
+where
+    T: Iden + 'static,
+{
+    Expr::col((table, Snapshots::Status)).eq(cast(Expr::val(<&str>::from(SnapshotStatus::Preparing)), PostgresType::SnapshotStatus))
+}
+
+/// Execute one generated statement inside the clone-promotion transaction.
+async fn execute(transaction: &mut Transaction<'_, Postgres>, statement: impl SqlxBinder) -> Result<u64, SnapshotError> {
+    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .execute(&mut **transaction)
+        .await
+        .map_err(persistence_error)?;
+    Ok(result.rows_affected())
 }

@@ -7,7 +7,7 @@
 //! dataset_id)`, so a second default write updates the one grain instead of
 //! adding a second.
 
-use crate::projection_rows::{attribute_name_id, entity_key, rows_for_attribute};
+use crate::projection_rows::{attribute_name_id, entity_key, live_context_space_key, rows_for_attribute};
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
@@ -74,15 +74,17 @@ async fn current_projection_refuses_a_second_default_row_for_one_attribute() {
         .await
         .expect("the created Entity must have a surrogate key");
     let name_id = attribute_name_id(scope.database_pool(), &id, "temperature").await;
+    let context_space_key = live_context_space_key(scope.database_pool()).await;
 
     // A writer bypassing the broker still cannot create a second default
     // instance: `NULLS NOT DISTINCT` makes two absent dataset identifiers the
     // same grain, which a plain unique constraint would not.
     let failure = sqlx::query(
         "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_id, attribute_kind, value_kind, value_number) \
-         VALUES ($1, $2, 1, 1, 9)",
+         (context_space_key, entity_key, attribute_name_id, attribute_kind, value_kind, value_number) \
+         VALUES ($1, $2, $3, 1, 1, 9)",
     )
+    .bind(context_space_key)
     .bind(key)
     .bind(name_id)
     .execute(scope.database_pool())

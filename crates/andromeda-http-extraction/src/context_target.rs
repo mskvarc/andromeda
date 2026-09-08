@@ -38,6 +38,7 @@ pub enum ContextTargetResolutionError {
 }
 
 impl ContextTargetResolutionError {
+    /// Convert a target-resolution failure into its request-bound HTTP problem.
     fn into_problem(self, instance: Uri) -> ProblemResponse {
         match self {
             ContextTargetResolutionError::NotFound { .. } => {
@@ -101,6 +102,7 @@ pub struct ProvisionableTargetedTenantState<T> {
     pub snapshot: Option<NgsiLdUri>,
 }
 
+/// Resolve tenant state and its live or Snapshot context target as one boundary operation.
 async fn resolve<S, T>(
     parts: &mut Parts,
     state: &S,

@@ -309,7 +309,7 @@ mod tests {
         let sql = temporal_entity_upsert_batch_sql().expect("the batched entity upsert builds");
         assert!(sql.contains(r#"RETURNING "entity_key", "id""#), "{sql}");
         assert!(
-            sql.contains("$1::text[]") && sql.contains("$2::timestamptz[]") && sql.contains("$3::jsonb[]") && !sql.contains("$4"),
+            sql.contains("$1::text[]") && sql.contains("$2::timestamptz[]") && sql.contains("$3::jsonb[]") && sql.contains("$4"),
             "{sql}"
         );
         assert!(sql.contains("AS d(id, recorded_at, type_ids_json)"), "{sql}");
@@ -329,7 +329,9 @@ mod tests {
     fn a_repeated_write_never_moves_the_instant_the_evolution_began() {
         let sql = temporal_entity_upsert_batch_sql().expect("the batched entity upsert builds");
         assert!(
-            sql.contains(r#"ON CONFLICT ("id") DO UPDATE SET "modified_at" = "excluded"."modified_at", "type_ids" = "excluded"."type_ids""#),
+            sql.contains(
+                r#"ON CONFLICT ("context_space_key", "id") DO UPDATE SET "modified_at" = "excluded"."modified_at", "type_ids" = "excluded"."type_ids""#
+            ),
             "{sql}"
         );
         assert!(!sql.contains(r#""created_at" = "excluded""#), "{sql}");
@@ -339,7 +341,7 @@ mod tests {
     fn the_typeless_lookup_matches_every_requested_identifier_in_one_array() {
         let sql = temporal_entity_keys_lookup_sql();
         assert!(
-            sql.starts_with(r#"SELECT "entity_key", "id" FROM "temporal_entities" WHERE "id" = ANY($1::text[])"#),
+            sql.starts_with(r#"SELECT "entity_key", "id" FROM "temporal_entities" WHERE "context_space_key" = ($2) AND "id" = ANY($1::text[])"#),
             "{sql}"
         );
     }

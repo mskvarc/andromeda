@@ -38,7 +38,7 @@ async fn entity_access_paths_reach_their_intended_index_for_every_query_shape() 
         PlannedShape {
             shape: "anchored id pattern",
             statement: format!("SELECT e.id FROM entities AS e WHERE e.id LIKE '{prefix}:seed:0001%'"),
-            index: "entities_id_key",
+            index: "uq_entities_context_id",
         },
         PlannedShape {
             shape: "unanchored id pattern",
@@ -244,7 +244,7 @@ async fn the_document_row_carries_no_index_but_its_key_and_no_payload_column_is_
             .fetch_all(pool)
             .await
             .expect("the index catalogue must be readable");
-    assert_eq!(document_indexes, vec!["entity_documents_pkey".to_owned()]);
+    assert_eq!(document_indexes, vec!["pk_entity_documents".to_owned()]);
 
     let indexed_definitions: Vec<String> =
         sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename IN ('entities', 'entity_documents', 'entity_search')")

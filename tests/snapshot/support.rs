@@ -4,6 +4,7 @@ use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, ser
 use reqwest::{Client, StatusCode, header::HeaderMap};
 use serde_json::Value;
 use std::time::Duration;
+use tokio::time::{MissedTickBehavior, interval, timeout};
 
 pub(crate) fn client() -> Client {
     Client::new()
@@ -117,9 +118,9 @@ pub(crate) async fn delete_snapshot_raw(client: &Client, id: &str) -> (StatusCod
 }
 
 pub(crate) async fn wait_for_snapshot_terminal(client: &Client, id: &str, deadline: Duration) -> Value {
-    tokio::time::timeout(deadline, async {
-        let mut changes = tokio::time::interval(Duration::from_millis(20));
-        changes.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    timeout(deadline, async {
+        let mut changes = interval(Duration::from_millis(20));
+        changes.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             changes.tick().await;
             let (status, snapshot) = get_snapshot(client, id).await;
@@ -136,5 +137,13 @@ pub(crate) async fn wait_for_snapshot_terminal(client: &Client, id: &str, deadli
 pub(crate) async fn assert_snapshot_create_rejected(client: &Client, body: Value) {
     let (status, _, problem) = create_snapshot_raw(client, &body).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
+    assert_problem_details(&problem, "https://uri.etsi.org/ngsi-ld/errors/BadRequestData", StatusCode::BAD_REQUEST);
+}
+
+pub(crate) fn assert_problem_details(problem: &Value, problem_type: &str, status: StatusCode) {
+    pretty_assertions::assert_eq!(problem["type"], problem_type);
+    pretty_assertions::assert_eq!(problem["status"], status.as_u16());
+    assert!(problem["title"].as_str().is_some_and(|title| !title.is_empty()));
+    assert!(problem["detail"].as_str().is_some_and(|detail| !detail.is_empty()));
+    assert!(problem["instance"].as_str().is_some_and(|instance| !instance.is_empty()));
 }

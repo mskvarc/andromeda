@@ -13,7 +13,7 @@ use andromeda_context_commit::deleted_entity::DeletedEntity;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_schema::current::{E, Entities, EntityDocuments};
-use andromeda_postgresql_seaquery::unnest::apply_column_alias;
+use andromeda_postgresql_seaquery::{placeholder::external_placeholder, unnest::apply_column_alias};
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use chrono::{DateTime, Utc};
 use sea_query::{CommonTableExpression, Expr, ExprTrait, Iden, IntoIden, JoinType, LockType, PostgresQueryBuilder, Query, WithClause};
@@ -83,8 +83,8 @@ pub(super) fn entity_delete_sql() -> String {
             Doc,
             Expr::col((Doc, EntityDocuments::EntityKey)).equals((E, Entities::EntityKey)),
         )
-        .and_where(Expr::col((E, Entities::ContextSpaceKey)).eq(Expr::cust("$3")))
-        .and_where(Expr::col((Doc, EntityDocuments::ContextSpaceKey)).eq(Expr::cust("$3")))
+        .and_where(Expr::col((E, Entities::ContextSpaceKey)).eq(external_placeholder(3)))
+        .and_where(Expr::col((Doc, EntityDocuments::ContextSpaceKey)).eq(external_placeholder(3)))
         .cond_where(expectation(staged(StagedColumn::ExpectedModifiedAt), Doc))
         .lock_with_tables(LockType::Update, [E.into_iden(), Doc.into_iden()]);
 
@@ -174,7 +174,7 @@ mod tests {
     #[test]
     fn the_delete_locks_its_candidates_and_honours_the_expectation() {
         let sql = entity_delete_sql();
-        pretty_assertions::assert_eq!(placeholders(&sql), (1..=2).collect::<BTreeSet<u32>>());
+        pretty_assertions::assert_eq!(placeholders(&sql), (1..=3).collect::<BTreeSet<u32>>());
         assert!(
             sql.starts_with(
                 r#"WITH "doomed" AS (SELECT "e"."entity_key", "e"."id", "doc"."payload", "e"."created_at", "doc"."modified_at", "e"."expires_at" FROM UNNEST("#

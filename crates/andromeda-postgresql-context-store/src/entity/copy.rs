@@ -243,8 +243,11 @@ mod tests {
             assert!(CREATE_STAGE_ENTITIES_SQL.contains(column), "{column}");
             assert!(COPY_INTO_STAGE_SQL.contains(column), "{column}");
         }
-        assert!(INSERT_FROM_STAGE_CREATE_SQL.contains("INSERT INTO entities (id, expires_at, min_attribute_expires_at)"));
-        assert!(INSERT_FROM_STAGE_CREATE_SQL.contains("INSERT INTO entity_documents (entity_key, payload)"));
-        assert!(INSERT_FROM_STAGE_CREATE_SQL.contains("INSERT INTO entity_search (entity_key, location_expires_at, type_ids, attribute_name_ids"));
+        assert!(INSERT_FROM_STAGE_CREATE_SQL.contains("INSERT INTO entities (context_space_key, id, expires_at, min_attribute_expires_at)"));
+        assert!(INSERT_FROM_STAGE_CREATE_SQL.contains("INSERT INTO entity_documents (context_space_key, entity_key, payload)"));
+        assert!(
+            INSERT_FROM_STAGE_CREATE_SQL
+                .contains("INSERT INTO entity_search (context_space_key, entity_key, location_expires_at, type_ids, attribute_name_ids")
+        );
     }
 }

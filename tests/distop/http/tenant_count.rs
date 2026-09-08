@@ -11,6 +11,7 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_client::{response::TestResponse, tenant_name::TenantName};
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use serde_json::json;
 use std::time::Duration;
 
@@ -21,7 +22,7 @@ fn tenant_header(response: &TestResponse) -> Option<String> {
 
 /// A regex that isolates this run's entities by their shared id prefix, so a
 /// `type=Vehicle` query counts only what the test created.
-fn prefix_pattern(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>) -> String {
+fn prefix_pattern(topology: &MultiBrokerTopology<BrokerRole>) -> String {
     urlencoding::encode(topology.id_prefix()).into_owned()
 }
 

@@ -13,6 +13,9 @@ const LINK_KEY: &str = "Link";
 /// MQTT user property and a JSON object member are both case-sensitive.
 const TENANT_KEY: &str = "NGSILD-Tenant";
 
+/// The Snapshot branch member (clause 6.3.22).
+const SNAPSHOT_KEY: &str = "NGSILD-Snapshot";
+
 /// The metadata an MQTT notification carries because MQTT has no headers.
 ///
 /// Read once for both protocol versions. `Content-Type` is deliberately absent:
@@ -35,6 +38,10 @@ pub fn transported_headers(request: &DeliveryRequest) -> Vec<(String, String)> {
 
     if let Some(tenant) = request.tenant.as_ref() {
         headers.push((TENANT_KEY.to_string(), tenant.as_str().to_string()));
+    }
+
+    if let Some(snapshot) = request.snapshot.as_ref() {
+        headers.push((SNAPSHOT_KEY.to_string(), snapshot.as_str().to_string()));
     }
 
     headers

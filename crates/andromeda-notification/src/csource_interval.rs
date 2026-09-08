@@ -125,6 +125,7 @@ impl CsourceIntervalNotificationOperation {
                 receiver_info: sub.notification.endpoint.receiver_info.as_deref(),
                 jsonld_context: sub.delivery.jsonld_context.as_ref(),
                 tenant: self.tenant.tenant_name(),
+                snapshot: None,
                 subscription_id: &sub.id,
             })
             .assemble();

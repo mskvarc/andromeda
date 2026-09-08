@@ -1,6 +1,8 @@
 //! Snapshot purge, expiry, and resource-pressure acceptance cases.
 
 use super::*;
+use sqlx::PgPool;
+use std::env;
 
 fn snapshot(id: &str, priority: u8, endpoint: Option<&str>) -> Value {
     let mut value = json!({
@@ -51,17 +53,11 @@ async fn snapshot_purge_q_accepts_only_unambiguous_table_5_2_41_1_members() {
         purge(&client, "endpoint==\"https://example.org/purge-target\"").await.status(),
         StatusCode::NO_CONTENT
     );
+    pretty_assertions::assert_eq!(purge(&client, "type==Snapshot;snapshotPriority==3").await.status(), StatusCode::NO_CONTENT);
     pretty_assertions::assert_eq!(
-        purge(&client, "type==Snapshot;snapshotPriority==3").await.status(),
-        StatusCode::NO_CONTENT
-    );
-    pretty_assertions::assert_eq!(
-        purge(
-            &client,
-            &format!("id=={}|id==urn:ngsi-ld:Snapshot:does-not-exist", ids[3]),
-        )
-        .await
-        .status(),
+        purge(&client, &format!("id=={}|id==urn:ngsi-ld:Snapshot:does-not-exist", ids[3]),)
+            .await
+            .status(),
         StatusCode::NO_CONTENT
     );
     pretty_assertions::assert_eq!(purge(&client, "type!=Snapshot").await.status(), StatusCode::NOT_FOUND);
@@ -92,11 +88,16 @@ async fn snapshot_purge_q_accepts_only_unambiguous_table_5_2_41_1_members() {
         pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST, "expression: {invalid}");
         pretty_assertions::assert_eq!(response.headers()["content-type"], "application/json");
         let problem: Value = response.json().await.expect("purge ProblemDetails");
-        pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
+        assert_problem_details(&problem, "https://uri.etsi.org/ngsi-ld/errors/BadRequestData", StatusCode::BAD_REQUEST);
     }
 
     let missing = client.delete(broker_url("/snapshots")).send().await.expect("purge without q");
     pretty_assertions::assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+    assert_problem_details(
+        &missing.json::<Value>().await.expect("missing purge q ProblemDetails"),
+        "https://uri.etsi.org/ngsi-ld/errors/BadRequestData",
+        StatusCode::BAD_REQUEST,
+    );
 }
 
 #[tokio::test]
@@ -124,5 +125,54 @@ async fn snapshot_purge_full_success_and_no_match_have_exact_http_results() {
     pretty_assertions::assert_eq!(no_match.status(), StatusCode::NOT_FOUND);
     pretty_assertions::assert_eq!(no_match.headers()["content-type"], "application/json");
     let problem: Value = no_match.json().await.expect("purge no-match ProblemDetails");
-    pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound");
+    assert_problem_details(&problem, "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound", StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[serial(snapshot)]
+async fn snapshot_purge_partial_and_all_failed_return_exact_207_results() {
+    let _serialized_environment = clean_database().await;
+    let client = client();
+    let pool = PgPool::connect(&env::var("ANDROMEDA_TEST_DATABASE_URL").expect("Snapshot database URL"))
+        .await
+        .expect("Snapshot database connection");
+    sqlx::query(
+        "CREATE OR REPLACE FUNCTION snapshot_purge_failure_injection() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF EXISTS (SELECT 1 FROM snapshots WHERE context_space_key = OLD.context_space_key AND id LIKE '%:fault') THEN RAISE EXCEPTION 'deterministic purge fault'; END IF; RETURN OLD; END $$",
+    )
+    .execute(&pool)
+    .await
+    .expect("purge failure function");
+    sqlx::query("CREATE TRIGGER snapshot_purge_failure BEFORE DELETE ON context_spaces FOR EACH ROW EXECUTE FUNCTION snapshot_purge_failure_injection()")
+        .execute(&pool)
+        .await
+        .expect("purge failure trigger");
+
+    for id in ["urn:ngsi-ld:Snapshot:partial-ok", "urn:ngsi-ld:Snapshot:partial:fault"] {
+        pretty_assertions::assert_eq!(create_snapshot_raw(&client, &snapshot(id, 8, None)).await.0, StatusCode::CREATED);
+    }
+    let partial = purge(&client, "snapshotPriority==8").await;
+    pretty_assertions::assert_eq!(partial.status(), StatusCode::MULTI_STATUS);
+    pretty_assertions::assert_eq!(partial.headers()["content-type"], "application/json");
+    let partial_body: Value = partial.json().await.expect("partial purge result");
+    pretty_assertions::assert_eq!(partial_body["success"], json!(["urn:ngsi-ld:Snapshot:partial-ok"]));
+    pretty_assertions::assert_eq!(partial_body["errors"].as_array().expect("partial errors").len(), 1);
+    pretty_assertions::assert_eq!(partial_body["errors"][0]["entityId"], "urn:ngsi-ld:Snapshot:partial:fault");
+
+    for id in ["urn:ngsi-ld:Snapshot:all-a:fault", "urn:ngsi-ld:Snapshot:all-b:fault"] {
+        pretty_assertions::assert_eq!(create_snapshot_raw(&client, &snapshot(id, 9, None)).await.0, StatusCode::CREATED);
+    }
+    let all_failed = purge(&client, "snapshotPriority==9").await;
+    pretty_assertions::assert_eq!(all_failed.status(), StatusCode::MULTI_STATUS);
+    let all_failed_body: Value = all_failed.json().await.expect("all-failed purge result");
+    pretty_assertions::assert_eq!(all_failed_body["success"], json!([]));
+    pretty_assertions::assert_eq!(all_failed_body["errors"].as_array().expect("all-failed errors").len(), 2);
+
+    sqlx::query("DROP TRIGGER snapshot_purge_failure ON context_spaces")
+        .execute(&pool)
+        .await
+        .expect("drop purge failure trigger");
+    sqlx::query("DROP FUNCTION snapshot_purge_failure_injection()")
+        .execute(&pool)
+        .await
+        .expect("drop purge failure function");
 }

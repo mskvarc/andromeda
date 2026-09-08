@@ -175,6 +175,7 @@ impl IntervalNotificationOperation {
                     receiver_info: sub.notification.endpoint.receiver_info.as_deref(),
                     jsonld_context: sub.delivery.jsonld_context.as_ref(),
                     tenant: this.tenant.tenant_name(),
+                    snapshot: this.target.snapshot().map(|snapshot| snapshot.snapshot_id()),
                     subscription_id: &sub.id,
                 })
                 .assemble();

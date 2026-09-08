@@ -25,3 +25,11 @@ mod toast_compression;
 
 /// The suite name every environment in this suite is allocated under.
 pub const SUITE: &str = "tenant_schema";
+
+/// Resolve the durable live context-space key installed by the tenant schema.
+pub async fn live_context_space_key(pool: &sqlx::PgPool) -> i64 {
+    sqlx::query_scalar("SELECT context_space_key FROM context_spaces WHERE kind = 'live'")
+        .fetch_one(pool)
+        .await
+        .expect("tenant live context space must exist")
+}

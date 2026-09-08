@@ -34,7 +34,7 @@ fn term_predicate(term: &SnapshotPurgeTerm) -> SimpleExpr {
             SnapshotOp::Neq => !type_matches,
             SnapshotOp::Lt | SnapshotOp::Lte | SnapshotOp::Gt | SnapshotOp::Gte => false,
         };
-        return SeaExpr::cust(if predicate_matches { "TRUE" } else { "FALSE" });
+        return SeaExpr::val(predicate_matches);
     }
 
     let column = SeaExpr::expr(SeaExpr::col(snapshot_column(term.field)));
@@ -115,10 +115,8 @@ mod tests {
 
     #[test]
     fn placeholders_are_contiguous_from_one() {
-        let (sql, values) = build_match_query(
-            &parse_snapshot_q("snapshotPriority==5;endpoint==https://example.org/status").expect("valid purge filter"),
-        )
-        .build(PostgresQueryBuilder);
+        let (sql, values) = build_match_query(&parse_snapshot_q("snapshotPriority==5;endpoint==https://example.org/status").expect("valid purge filter"))
+            .build(PostgresQueryBuilder);
         assert_eq!(values.0.len(), 2);
         assert!(sql.contains("$1"));
         assert!(sql.contains("$2"));

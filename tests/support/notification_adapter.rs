@@ -45,9 +45,13 @@ impl NotificationAdapter {
     }
 
     pub async fn wait_for_subscription_notification(&self, subscription_id: &str, timeout: Duration) -> CapturedNotification {
+        self.wait_for_notification_matching("subscriptionId", subscription_id, timeout).await
+    }
+
+    pub async fn wait_for_notification_matching(&self, member: &str, value: &str, timeout: Duration) -> CapturedNotification {
         let deadline = Instant::now() + timeout;
         loop {
-            if let Some(notification) = self.take_matching(subscription_id).await {
+            if let Some(notification) = self.take_matching(member, value).await {
                 return notification;
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -60,12 +64,12 @@ impl NotificationAdapter {
         }
     }
 
-    pub async fn wait_for_no_subscription_notification(&self, subscription_id: &str, duration: Duration) {
+    pub async fn wait_for_no_notification_matching(&self, member: &str, value: &str, duration: Duration) {
         let deadline = Instant::now() + duration;
         loop {
             assert!(
-                self.take_matching(subscription_id).await.is_none(),
-                "unexpected notification for subscription {subscription_id}"
+                self.take_matching(member, value).await.is_none(),
+                "unexpected notification with {member}={value}"
             );
             let remaining = deadline.saturating_duration_since(Instant::now());
             match self.server.next_request(remaining).await {
@@ -82,6 +86,10 @@ impl NotificationAdapter {
         }
     }
 
+    pub async fn wait_for_no_subscription_notification(&self, subscription_id: &str, duration: Duration) {
+        self.wait_for_no_notification_matching("subscriptionId", subscription_id, duration).await;
+    }
+
     pub async fn wait_for_no_notification_for_subscription(&self, subscription_id: &str, duration: Duration) {
         self.wait_for_no_subscription_notification(subscription_id, duration).await;
     }
@@ -90,11 +98,11 @@ impl NotificationAdapter {
         self.server.shutdown().await.expect("notification server shuts down");
     }
 
-    async fn take_matching(&self, subscription_id: &str) -> Option<CapturedNotification> {
+    async fn take_matching(&self, member: &str, value: &str) -> Option<CapturedNotification> {
         let mut pending = self.pending.lock().await;
         pending
             .iter()
-            .position(|notification| notification.body["subscriptionId"].as_str() == Some(subscription_id))
+            .position(|notification| notification.body[member].as_str() == Some(value))
             .map(|index| pending.remove(index))
     }
 }

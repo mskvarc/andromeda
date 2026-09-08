@@ -7,7 +7,7 @@ use crate::{
     subscription,
     ws,
 };
-use andromeda_http_extraction::{scoped_response::echo_scope_headers, snapshot_write_guard::reject_snapshot_scope};
+use andromeda_http_extraction::{scoped_response::echo_scope_headers, snapshot_scope_guard::reject_snapshot_scope};
 use axum::{
     Router,
     middleware::from_fn,

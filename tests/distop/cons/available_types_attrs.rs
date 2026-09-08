@@ -13,6 +13,7 @@ use crate::{
 };
 use andromeda_test_client::response::TestResponse;
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
 use serde_json::{Value, json};
 
@@ -35,7 +36,7 @@ fn contains_named(list: &Value, name: &str) -> bool {
 }
 
 /// A GET against a details resource on the front broker, carrying the context.
-async fn get_detail(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, path: &str) -> TestResponse {
+async fn get_detail(topology: &MultiBrokerTopology<BrokerRole>, path: &str) -> TestResponse {
     topology
         .broker(BrokerRole::A)
         .client()

@@ -141,26 +141,20 @@ mod tests {
         Ok(())
     }
 
-    /// Clause 5.5.15: a Snapshot scopes reads; a write into one is refused as
-    /// `OperationNotSupported` before any tenant state is resolved, while the
-    /// consumption operations under a Snapshot reach their handlers.
+    /// Snapshot-scoped Core operations, including writes, reach the ordinary
+    /// handlers with the branch target resolved at the HTTP boundary.
     #[tokio::test]
-    async fn snapshot_scoped_writes_are_refused_and_reads_pass_through() -> Result<(), Box<dyn Error>> {
+    async fn snapshot_scoped_core_operations_reach_their_handlers() -> Result<(), Box<dyn Error>> {
         let routes = EntityRoutes::new(Arc::new(RejectingResolver)).into_router();
         for (method, path) in [
             (Method::POST, "/entities"),
             (Method::PATCH, "/entities/urn:ngsi-ld:Entity:1"),
             (Method::DELETE, "/entities/urn:ngsi-ld:Entity:1/attrs/speed"),
             (Method::POST, "/entityOperations/upsert"),
+            (Method::GET, "/entities"),
+            (Method::POST, "/entityOperations/query"),
+            (Method::GET, "/types"),
         ] {
-            let mut scoped = request(method.clone(), path)?;
-            scoped
-                .headers_mut()
-                .insert("ngsild-snapshot", http::HeaderValue::from_static("urn:ngsi-ld:Snapshot:1"));
-            let response = routes.clone().oneshot(scoped).await?;
-            pretty_assertions::assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY, "{method} {path}");
-        }
-        for (method, path) in [(Method::GET, "/entities"), (Method::POST, "/entityOperations/query"), (Method::GET, "/types")] {
             let mut scoped = request(method.clone(), path)?;
             scoped
                 .headers_mut()

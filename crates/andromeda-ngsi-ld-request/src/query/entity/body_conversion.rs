@@ -16,7 +16,7 @@ impl TryFrom<Query> for EntityQueryParameters {
             return Err(ParameterError::EntityQueryTemporalMembers);
         }
 
-        let entity_selectors = query
+        let entity_selectors: Vec<EntitySelectorParams> = query
             .entities
             .unwrap_or_default()
             .into_iter()
@@ -26,11 +26,15 @@ impl TryFrom<Query> for EntityQueryParameters {
                 type_: Some(selector.type_),
             })
             .collect();
+        let (id, entity_type, id_pattern) = match entity_selectors.as_slice() {
+            [selector] => (selector.id.clone(), selector.type_.clone(), selector.id_pattern.clone()),
+            [] | [_, _, ..] => (None, None, None),
+        };
 
         let parameters = EntityQueryParameters {
-            id: None,
-            entity_type: None,
-            id_pattern: None,
+            id,
+            entity_type,
+            id_pattern,
             entity_selectors,
             attrs: query.attrs,
             q: query.q,
@@ -97,12 +101,30 @@ mod tests {
 
         let parameters = EntityQueryParameters::try_from(query).expect("entity-applicable query");
         pretty_assertions::assert_eq!(parameters.entity_selectors.len(), 1);
+        pretty_assertions::assert_eq!(parameters.id.as_deref().map(|ids| ids[0].as_str()), Some("urn:ngsi-ld:Vehicle:1"));
+        pretty_assertions::assert_eq!(parameters.entity_type.as_ref().map(ToString::to_string).as_deref(), Some("Vehicle"));
         pretty_assertions::assert_eq!(parameters.ordering.order_by.len(), 1);
         pretty_assertions::assert_eq!(parameters.dataset_id.as_ref().map(Vec::len), Some(2));
         assert!(parameters.scope_q.is_some());
         assert!(parameters.csf.is_some());
         assert!(parameters.entity_map_lifetime.is_some());
         assert!(parameters.lang.is_some());
+    }
+
+    #[test]
+    fn multiple_body_selectors_are_not_flattened_into_a_cross_product() {
+        let query: Query = serde_json::from_value(serde_json::json!({
+            "type": "Query",
+            "entities": [
+                {"type": "Vehicle", "id": "urn:ngsi-ld:Vehicle:1"},
+                {"type": "Building", "id": "urn:ngsi-ld:Building:1"}
+            ]
+        }))
+        .expect("valid Query");
+        let parameters = EntityQueryParameters::try_from(query).expect("entity-applicable query");
+        assert!(parameters.id.is_none());
+        assert!(parameters.entity_type.is_none());
+        pretty_assertions::assert_eq!(parameters.entity_selectors.len(), 2);
     }
 
     /// Clause 5.2.23: `pick`/`omit` are `String[]`, each member its own

@@ -183,7 +183,8 @@ fn reconciled_snapshot(id: &str) -> Value {
     json!({
         "id": id,
         "type": "Snapshot",
-        "snapshotQueries": [{"type": "Query", "entities": [{"type": "Device"}]}]
+        "snapshotQueries": [{"type": "Query", "entities": [{"type": "Device"}]}],
+        "@context": [CORE_CONTEXT]
     })
 }
 
@@ -264,6 +265,7 @@ async fn an_invariant_violation_is_actually_counted_rather_than_silently_passing
     let orphan_history = "SELECT COUNT(*) FROM attribute_history ah \
                           WHERE ah.write_id = $1 AND NOT EXISTS (SELECT 1 FROM temporal_attribute_streams s WHERE s.stream_key = ah.stream_key)";
     let write_id = uuid::Uuid::new_v4();
+    let context_space_key = crate::live_context_space_key(pool).await;
     let before: i64 = sqlx::query_scalar(orphan_history)
         .bind(write_id)
         .fetch_one(pool)
@@ -273,9 +275,10 @@ async fn an_invariant_violation_is_actually_counted_rather_than_silently_passing
 
     sqlx::query(
         "INSERT INTO attribute_history \
-         (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind, generated_instance_uuid, value_number) \
-         VALUES (now(), $1, 9223372036854775807, 0, 1, 1, gen_random_uuid(), 1::numeric)",
+         (recorded_at, context_space_key, write_id, stream_key, write_ordinal, attribute_kind, value_kind, generated_instance_uuid, value_number) \
+         VALUES (now(), $1, $2, 9223372036854775807, 0, 1, 1, gen_random_uuid(), 1::numeric)",
     )
+    .bind(context_space_key)
     .bind(write_id)
     .execute(pool)
     .await

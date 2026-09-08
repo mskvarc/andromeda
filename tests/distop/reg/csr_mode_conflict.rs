@@ -15,10 +15,11 @@ use andromeda_test_fixtures::{
     context::COMPOUND_CONTEXT,
     problem_detail::{BAD_REQUEST_DATA, CONFLICT},
 };
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use serde_json::json;
 
 /// Create a local `Vehicle` entity holding a `speed` property on the front broker.
-async fn create_local_vehicle(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, id: &str, speed: i64) {
+async fn create_local_vehicle(topology: &MultiBrokerTopology<BrokerRole>, id: &str, speed: i64) {
     let created = topology
         .broker(BrokerRole::A)
         .client()

@@ -11,6 +11,7 @@ use crate::{
     registration::CsrBuilder,
     topology::{self, BrokerRole},
 };
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -31,12 +32,7 @@ fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
 }
 
 /// Register an inclusive query CSR at the mock and assert acceptance.
-async fn register_inclusive(
-    topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>,
-    endpoint: &str,
-    name: &str,
-    conformance: Option<&str>,
-) {
+async fn register_inclusive(topology: &MultiBrokerTopology<BrokerRole>, endpoint: &str, name: &str, conformance: Option<&str>) {
     let mut builder = CsrBuilder::new(&topology.id(name), endpoint)
         .mode("inclusive")
         .entity_type("Vehicle")

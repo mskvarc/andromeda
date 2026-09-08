@@ -31,6 +31,7 @@ pub mod service;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-context-space",
         "andromeda-delivery",
         "andromeda-entity",
         "andromeda-federation",

@@ -16,6 +16,7 @@ use crate::{
 };
 use andromeda_test_client::{tenant_name::TenantName, test_client::TestClient};
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
@@ -42,20 +43,24 @@ async fn create_snapshot(client: &TestClient) -> String {
 
 /// Create a snapshot from `body` and poll `GET /snapshots/{id}` until its
 /// `snapshotStatus` has left the pending state, returning the snapshot
-/// identifier. Table 5.2.41-2 names the initial status `preparing` (and the
-/// terminal ones `success`, `partial`, `failure`, `empty`) while the prose of
-/// clause 5.16.1.4 spells it `preparation`; both spellings are treated as
-/// pending so the poll follows the table without contradicting the prose.
+/// identifier. Table 5.2.41-2 names the initial status `preparing`; the
+/// `preparation` spelling in clause 5.16.1.4 is an editorial error reconciled
+/// by the Snapshot conformance register and is never accepted or emitted.
 pub async fn create_prepared_snapshot(client: &TestClient, body: &Value) -> String {
     let created = client.create_snapshot(body).await.expect("create snapshot");
     assert_status(&created, 201);
-    let snapshot_id = json_body(&created)["id"].as_str().expect("snapshot has an id").to_owned();
+    let snapshot_id = location(&created)
+        .rsplit('/')
+        .next()
+        .filter(|identifier| !identifier.is_empty())
+        .expect("Snapshot Location ends in an identifier")
+        .to_owned();
     let started = Instant::now();
     loop {
         let status = client.retrieve_snapshot(&snapshot_id, None).await.expect("retrieve snapshot status");
         assert_status(&status, 200);
         let snapshot_status = json_body(&status)["snapshotStatus"].as_str().map(str::to_owned).unwrap_or_default();
-        if !matches!(snapshot_status.as_str(), "preparing" | "preparation") {
+        if snapshot_status != "preparing" {
             return snapshot_id;
         }
         assert!(
@@ -67,7 +72,7 @@ pub async fn create_prepared_snapshot(client: &TestClient, body: &Value) -> Stri
 }
 
 /// Register an inclusive query CSR at the mock and assert acceptance.
-async fn register_inclusive_query(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, endpoint: &str, name: &str) {
+async fn register_inclusive_query(topology: &MultiBrokerTopology<BrokerRole>, endpoint: &str, name: &str) {
     let registration = CsrBuilder::new(&topology.id(name), endpoint)
         .mode("inclusive")
         .entity_type("Vehicle")
@@ -96,8 +101,10 @@ async fn distop_entity_snapshot_creation_returns_identifier() {
         .await
         .expect("create snapshot");
     assert_status(&created, 201);
-    assert!(json_body(&created)["id"].as_str().is_some(), "snapshot creation returns an identifier");
-    assert!(location(&created).contains("/snapshots/"), "snapshot creation returns a location");
+    assert!(created.body.is_empty(), "Snapshot creation returns an empty 201 response");
+    let created_location = location(&created);
+    assert!(created_location.contains("/snapshots/"), "snapshot creation returns a location");
+    assert!(!created_location.ends_with('/'), "Snapshot Location ends in the generated identifier");
     topology.finish().await.expect("topology cleanup");
 }
 
@@ -150,8 +157,8 @@ async fn distop_entity_snapshot_op_scoped_to_snapshot_information() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A snapshot permits Core (and Temporal) operations while other operations are
-/// rejected (clause 5.16). Confirms REQ-FW-81.
+/// A snapshot permits both Core and Temporal operations against its isolated
+/// local branch (clause 5.16). Confirms REQ-FW-81.
 #[tokio::test]
 async fn distop_entity_snapshot_permitted_ops_core_plus_temporal() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -178,7 +185,7 @@ async fn distop_entity_snapshot_permitted_ops_core_plus_temporal() {
         .send()
         .await
         .expect("snapshot write");
-    assert!(write.status.as_u16() >= 400, "a write against a snapshot is rejected: {}", write.status);
+    assert_status(&write, 201);
 
     topology.finish().await.expect("topology cleanup");
 }
@@ -192,6 +199,7 @@ async fn distop_entity_snapshot_ops_implicitly_local() {
     let endpoint = mock.url("");
     register_inclusive_query(&topology, &endpoint, "registration:snapshot-local").await;
     let snapshot_id = create_snapshot(topology.broker(BrokerRole::A).client()).await;
+    let forwarded_during_capture = mock.get_total_count().await;
 
     let response = topology
         .broker(BrokerRole::A)
@@ -203,7 +211,11 @@ async fn distop_entity_snapshot_ops_implicitly_local() {
         .await
         .expect("snapshot query");
     assert_status(&response, 200);
-    assert_eq!(mock.get_total_count().await, 0, "a snapshot operation contacts no source");
+    assert_eq!(
+        mock.get_total_count().await,
+        forwarded_during_capture,
+        "a scoped operation contacts no source after capture"
+    );
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -219,6 +231,7 @@ async fn distop_entity_snapshot_implicit_local_skips_registry_csrs() {
     register_inclusive_query(&topology, &endpoint, "registration:snapshot-skip-a").await;
     register_inclusive_query(&topology, &endpoint, "registration:snapshot-skip-b").await;
     let snapshot_id = create_snapshot(topology.broker(BrokerRole::A).client()).await;
+    let forwarded_during_capture = mock.get_total_count().await;
 
     let response = topology
         .broker(BrokerRole::A)
@@ -230,7 +243,11 @@ async fn distop_entity_snapshot_implicit_local_skips_registry_csrs() {
         .await
         .expect("snapshot query");
     assert_status(&response, 200);
-    assert_eq!(mock.get_total_count().await, 0, "no registration is consulted for a snapshot operation");
+    assert_eq!(
+        mock.get_total_count().await,
+        forwarded_during_capture,
+        "no registration is consulted for a scoped operation after capture"
+    );
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -245,6 +262,7 @@ async fn distop_entity_snapshot_local_false_ignored() {
     let endpoint = mock.url("");
     register_inclusive_query(&topology, &endpoint, "registration:snapshot-localfalse").await;
     let snapshot_id = create_snapshot(topology.broker(BrokerRole::A).client()).await;
+    let forwarded_during_capture = mock.get_total_count().await;
 
     let response = topology
         .broker(BrokerRole::A)
@@ -256,7 +274,11 @@ async fn distop_entity_snapshot_local_false_ignored() {
         .await
         .expect("snapshot query");
     assert_status(&response, 200);
-    assert_eq!(mock.get_total_count().await, 0, "local=false is ignored, a snapshot operation stays local");
+    assert_eq!(
+        mock.get_total_count().await,
+        forwarded_during_capture,
+        "local=false is ignored, so the scoped operation stays local after capture"
+    );
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

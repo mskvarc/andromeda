@@ -208,6 +208,9 @@ impl NotificationTransport for HttpTransport {
         if let Some(tenant) = req.tenant.as_ref() {
             header_map.typed_insert(tenant.clone());
         }
+        if let Some(snapshot) = req.snapshot.as_ref() {
+            header_map.typed_insert(snapshot.clone());
+        }
         let mut request = self
             .client
             // clone: `reqwest` takes the `Url` by value, and cloning a parsed URL is cheaper than reparsing the string
