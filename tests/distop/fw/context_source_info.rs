@@ -450,8 +450,7 @@ async fn distop_entity_csi_content_type_ld_json_constrains_forwarded_content_typ
 
 /// Decode a captured request body as JSON, failing with the raw bytes on error.
 fn json_body_from_bytes(body: &[u8]) -> serde_json::Value {
-    match serde_json::from_slice(body) {
-        Ok(value) => value,
-        Err(error) => panic!("forwarded body is not JSON ({error}); raw: {}", String::from_utf8_lossy(body)),
-    }
+    serde_json::from_slice(body)
+        .map_err(|error| format!("{error}; raw: {}", String::from_utf8_lossy(body)))
+        .expect("the forwarded body is JSON")
 }

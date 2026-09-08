@@ -289,7 +289,8 @@ mod tests {
     #[test]
     fn vanished_and_superseded_entities_are_not_reported() -> Result<(), UriParseError> {
         let outcomes = vec![WriteOutcome::NotFound, WriteOutcome::Superseded];
-        assert!(landed_ids(identifiers(&["urn:ngsi-ld:A", "urn:ngsi-ld:B"])?, &outcomes).is_empty());
+        let landed = landed_ids(identifiers(&["urn:ngsi-ld:A", "urn:ngsi-ld:B"])?, &outcomes);
+        assert!(landed.is_empty(), "no identifier lands when every outcome failed: {landed:?}");
         Ok(())
     }
 

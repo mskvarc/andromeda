@@ -32,22 +32,19 @@ pub fn assert_problem_details(response: &TestResponse, expected_type: &Iri<&str>
 
 /// Decode the response body as JSON, failing with the raw body on error.
 pub fn json_body(response: &TestResponse) -> Value {
-    match response.json_value() {
-        Ok(value) => value,
-        Err(error) => panic!("response body is not JSON ({error}); raw: {}", String::from_utf8_lossy(&response.body)),
-    }
+    response
+        .json_value()
+        .map_err(|error| format!("{error}; raw: {}", String::from_utf8_lossy(&response.body)))
+        .expect("the response body is JSON")
 }
 
 /// The `Location` header value, required to be present (used after a 201).
 pub fn location(response: &TestResponse) -> String {
-    let header = match response.location() {
-        Ok(header) => header,
-        Err(error) => panic!("Location header is not valid text: {error}"),
-    };
-    match header {
-        Some(value) => value.to_owned(),
-        None => panic!("response has no Location header"),
-    }
+    response
+        .location()
+        .expect("Location header is valid text")
+        .expect("response carries a Location header")
+        .to_owned()
 }
 
 /// The `NGSILD-Results-Count` header, if present.

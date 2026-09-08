@@ -107,7 +107,7 @@ mod tests {
                 },
             ]
         );
-        assert!(compiled.omit.is_empty());
+        assert!(compiled.omit.is_empty(), "the compiled projection omits nothing: {:?}", compiled.omit);
     }
 
     /// An `omit`-only request compiles to a projection whose `pick` is empty,
@@ -122,7 +122,7 @@ mod tests {
             .expect("compiles")
             .expect("a named omit compiles to a projection");
 
-        assert!(compiled.pick.is_empty());
+        assert!(compiled.pick.is_empty(), "the compiled projection picks nothing: {:?}", compiled.pick);
         pretty_assertions::assert_eq!(
             compiled.omit,
             vec![ProjectionTerm::Attribute {

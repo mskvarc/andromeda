@@ -193,7 +193,7 @@ async fn offending(pool: &PgPool, invariant: &Invariant) -> i64 {
     sqlx::query_scalar(invariant.count)
         .fetch_one(pool)
         .await
-        .unwrap_or_else(|error| panic!("the reconciliation query must run: {error}"))
+        .expect("the reconciliation query must run")
 }
 
 /// The number of rows one relation holds.
@@ -201,7 +201,7 @@ async fn population(pool: &PgPool, relation: &str) -> i64 {
     sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {relation}")))
         .fetch_one(pool)
         .await
-        .unwrap_or_else(|error| panic!("{relation} must be readable: {error}"))
+        .expect("the counted relation must be readable")
 }
 
 #[tokio::test]

@@ -61,6 +61,7 @@ use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
 use andromeda_ngsi_ld_request::{join_traversal::RetrievingJoin, query::SharedQueryParams};
 use andromeda_temporal::{
     error::TemporalError,
+    linked::candidates::TemporalLinkedCandidate,
     service::{TemporalQueryWarning, TemporalRange, TemporalService},
 };
 use axum::http::{HeaderMap, Uri};
@@ -105,13 +106,13 @@ pub async fn query(
     // local=true. Forwarding reads the query as the client wrote it, so it
     // runs before the split-entities filters are held back from the local
     // query below.
+    let triggering = TriggeringRequest {
+        via: incoming_via.as_ref(),
+        headers: Some(&headers),
+    };
     let forwarded = if is_local {
         None
     } else {
-        let triggering = TriggeringRequest {
-            via: incoming_via.as_ref(),
-            headers: Some(&headers),
-        };
         Some(
             forward_temporal_history(
                 &state.forwarding,
@@ -129,36 +130,25 @@ pub async fn query(
     };
 
     let deferred = defer_split_filters(&mut params, filtering);
-
-    // Clause 5.5.9: once sources contribute entities, the page is cut from
-    // the merged collection rather than from the local rows, so the local
-    // query runs unpaged and the requested page is applied after the merge.
-    let page_limit = params.effective_limit();
-    let page_offset = params.effective_offset();
-    let paginate_after_merge = forwarded
-        .as_ref()
-        .is_some_and(|results| results.iter().any(|result| !result.entities.is_empty()));
-    if paginate_after_merge {
-        params.limit = Some(u32::MAX);
-        params.offset = Some(0);
-    }
+    let merged_page_bounds = hold_page_until_merge(&mut params, forwarded.as_deref());
 
     let local_result = service.query(&target, &params, &context).await.with_instance(&uri)?;
     log_query_warnings(&local_result.warnings);
     let local_total = local_match_count(local_result.total_count).with_instance(&uri)?;
     let merged = merge_forwarded_history(local_result.entities, forwarded, filtering);
 
-    // splitEntities post-merge filtering: apply deferred q/geoQ/scopeQ (spec 5.7.4.4)
-    let entities = match filtering {
-        SplitEntities::Split => retain_split_matches(service.engine(), &context, deferred, merged.entities, &uri).await?,
-        SplitEntities::Complete => merged.entities,
-    };
-
-    let (mut entities, total_count) = if paginate_after_merge {
-        merged_page(entities, &params, page_limit, page_offset)
-    } else {
-        (entities, local_total)
-    };
+    let (mut entities, total_count) = cut_merged_page(
+        service.engine(),
+        &context,
+        deferred,
+        merged.entities,
+        filtering,
+        &params,
+        merged_page_bounds,
+        local_total,
+        &uri,
+    )
+    .await?;
 
     // Join mode (clause 4.5.23) is parsed at the query boundary. `@none` and an
     // absent `join` retrieve no linked entity at all, so neither reaches the
@@ -171,24 +161,17 @@ pub async fn query(
     // 206 decision about the roots alone. The join also resolves before
     // EntityMap creation so a requested map can include the linked ids
     // (spec 5.5.14, 5.7.4.4).
-    let (warnings, linked_ids) = match RetrievingJoin::from_mode(params.join) {
-        None => (merged.warnings, Vec::new()),
-        Some(join) => {
-            let applied = apply_temporal_join(
-                service,
-                &target,
-                join,
-                &mut entities,
-                &local_result.linked_candidates,
-                &params,
-                &context,
-                merged.warnings,
-            )
-            .await
-            .with_instance(&uri)?;
-            (applied.warnings, applied.linked_ids)
-        }
-    };
+    let (warnings, linked_ids) = join_linked_entities(
+        service,
+        &target,
+        &mut entities,
+        &local_result.linked_candidates,
+        &params,
+        &context,
+        merged.warnings,
+        &uri,
+    )
+    .await?;
 
     let map_created = map_use.mints();
     let entity_map_uri = record_query_map(
@@ -216,7 +199,7 @@ pub async fn query(
         StatusCode::OK
     };
     query_response(
-        &accept,
+        accept,
         &context,
         values,
         status,
@@ -499,6 +482,79 @@ fn merged_page(entities: Vec<Value>, params: &TemporalQueryParameters, limit: u3
 ///
 /// The classified failure of listing the matching identifiers or of writing to
 /// the map store.
+/// Hold the requested page back until after the merge when context sources
+/// contributed entities, returning the bounds the merged collection is cut to.
+///
+/// Clause 5.5.9 cuts the page from the merged collection rather than from the
+/// local rows, so the local query has to run unpaged.
+fn hold_page_until_merge(params: &mut TemporalQueryParameters, forwarded: Option<&[ForwardedTemporalEntities]>) -> Option<(u32, u32)> {
+    let contributed = forwarded.is_some_and(|results| results.iter().any(|result| !result.entities.is_empty()));
+    if !contributed {
+        return None;
+    }
+    let bounds = (params.effective_limit(), params.effective_offset());
+    params.limit = Some(u32::MAX);
+    params.offset = Some(0);
+    Some(bounds)
+}
+
+/// Apply the deferred `splitEntities` filters (clause 5.7.4.4) to the merged
+/// collection and cut the page the client asked for.
+///
+/// # Errors
+///
+/// The classified failure when a deferred filter cannot be compiled or
+/// evaluated against a merged entity.
+async fn cut_merged_page(
+    engine: &JsonLdEngine,
+    context: &ContextSpec,
+    deferred: DeferredSplitFilters,
+    merged_entities: Vec<Value>,
+    filtering: SplitEntities,
+    params: &TemporalQueryParameters,
+    bounds: Option<(u32, u32)>,
+    local_total: Option<usize>,
+    instance: &Uri,
+) -> Result<(Vec<Value>, Option<usize>), ProblemResponse> {
+    let entities = match filtering {
+        SplitEntities::Split => retain_split_matches(engine, context, deferred, merged_entities, instance).await?,
+        SplitEntities::Complete => merged_entities,
+    };
+    match bounds {
+        Some((limit, offset)) => Ok(merged_page(entities, params, limit, offset)),
+        None => Ok((entities, local_total)),
+    }
+}
+
+/// Walk the join (clause 4.5.23) the query asked for, appending or inlining the
+/// linked entities and reporting what the traversal could not reach.
+///
+/// `@none` and an absent `join` retrieve nothing, so neither reaches the
+/// traversal and the merged warnings pass through untouched.
+///
+/// # Errors
+///
+/// The classified failure when the linked-entity query cannot be compiled or
+/// the base entity store cannot be read.
+async fn join_linked_entities(
+    service: &TemporalService,
+    target: &ContextTarget,
+    entities: &mut Vec<Value>,
+    seed: &[TemporalLinkedCandidate],
+    params: &TemporalQueryParameters,
+    context: &ContextSpec,
+    warnings: Vec<NgsiLdWarning>,
+    instance: &Uri,
+) -> Result<(Vec<NgsiLdWarning>, Vec<NgsiLdUri>), ProblemResponse> {
+    let Some(join) = RetrievingJoin::from_mode(params.join) else {
+        return Ok((warnings, Vec::new()));
+    };
+    let applied = apply_temporal_join(service, target, join, entities, seed, params, context, warnings)
+        .await
+        .with_instance(instance)?;
+    Ok((applied.warnings, applied.linked_ids))
+}
+
 async fn record_query_map(
     entity_maps: &EntityMapService,
     service: &TemporalService,
@@ -554,7 +610,7 @@ fn simplified_collection(entities: Vec<Value>, instance: &Uri) -> Result<Vec<Val
 /// The classified rendering failure when the negotiated representation cannot
 /// be produced.
 fn query_response(
-    accept: &AcceptFormatNoGeo,
+    accept: AcceptFormatNoGeo,
     context: &ContextSpec,
     entities: Vec<Value>,
     status: StatusCode,

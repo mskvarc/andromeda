@@ -192,7 +192,7 @@ async fn dist_http_csource_notification_receiver_info_becomes_custom_headers() {
         "accept": "application/json",
         "receiverInfo": [ { "key": "X-Custom-Token", "value": "secret-value" } ]
     });
-    assert_status(&create_csource_subscription(&topology, &csource_subscription(&sub_id, endpoint)).await, 201);
+    assert_status(&create_csource_subscription(&topology, &csource_subscription(&sub_id, &endpoint)).await, 201);
     assert_status(
         &topology
             .broker(BrokerRole::A)

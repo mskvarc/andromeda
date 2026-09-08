@@ -85,7 +85,7 @@ mod tests {
         pretty_assertions::assert_eq!(local.len(), 2);
         pretty_assertions::assert_eq!(local[0].1.len(), 2);
         pretty_assertions::assert_eq!(local[1].0.as_str(), "https://example.com/Aircraft");
-        assert!(local[1].1.is_empty());
+        assert!(local[1].1.is_empty(), "the second local group carries no registrations: {:?}", local[1].1);
     }
 
     #[test]

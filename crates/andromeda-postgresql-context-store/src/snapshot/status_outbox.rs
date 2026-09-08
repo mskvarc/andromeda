@@ -78,7 +78,7 @@ impl SnapshotStatusOutbox {
             .order_by(SnapshotNotificationOutbox::Id, Order::Asc)
             // A batch of at most zero rows would spin the worker, so the floor is
             // one row rather than the caller's number.
-            .limit(u64::try_from(limit).unwrap_or(1).max(1))
+            .limit(Ord::max(u64::try_from(limit).unwrap_or(1), 1))
             .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
             .to_owned();
         let claim = Query::update()

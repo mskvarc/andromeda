@@ -770,7 +770,7 @@ mod tests {
             .expect("resolves");
 
         assert!(resolved.entities.is_empty());
-        assert!(resolved.failures.is_empty());
+        assert!(resolved.failures.is_empty(), "resolution reported failures: {:?}", resolved.failures);
         assert!(source.calls().is_empty());
     }
 

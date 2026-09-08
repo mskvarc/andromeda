@@ -23,7 +23,7 @@ use axum::http::Uri as HttpUri;
 
 /// Take the attribute-reading filters out of the query, leaving it selecting
 /// on identity alone so every source answers with what it holds.
-pub(crate) fn defer_filters(query: &mut EntityQueryParameters) -> DeferredSplitFilters {
+pub(crate) const fn defer_filters(query: &mut EntityQueryParameters) -> DeferredSplitFilters {
     DeferredSplitFilters {
         q: query.q.take(),
         geo: query.geo.0.take(),

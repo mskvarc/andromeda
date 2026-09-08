@@ -12,12 +12,13 @@ use tokio::time::timeout;
 async fn seed_entities(topology: &MultiBrokerTopology<FedRole>, role: FedRole, prefix: &str) {
     let domain = broker(topology, role);
     let scope = match role {
-        FedRole::Madrid => "/Europe/Madrid",
-        FedRole::Berlin => "/Europe/Berlin",
-        FedRole::Nordic => "/Europe/Nordic",
-        FedRole::North => "/Europe/North",
-        FedRole::Hub => panic!("stress data is seeded only in data domains"),
-    };
+        FedRole::Madrid => Some("/Europe/Madrid"),
+        FedRole::Berlin => Some("/Europe/Berlin"),
+        FedRole::Nordic => Some("/Europe/Nordic"),
+        FedRole::North => Some("/Europe/North"),
+        FedRole::Hub => None,
+    }
+    .expect("stress data is seeded only in data domains");
     let entities: Vec<_> = (0..1000)
         .map(|value| entity_with_scope(&topology.id(&format!("{prefix}:{value}")), "Building", value, scope))
         .collect();

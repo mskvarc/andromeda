@@ -28,7 +28,7 @@ pub(super) struct Pushdown<'a> {
 
 /// Split a compiled query into the part this store can answer and the part it
 /// cannot.
-pub(super) fn plan<'a>(compiled: &'a CompiledEntityQuery, profile: StorageProfile) -> Pushdown<'a> {
+pub(super) fn plan(compiled: &CompiledEntityQuery, profile: StorageProfile) -> Pushdown<'_> {
     let residual = profile.unapplied(&compiled.selection);
     if residual.is_empty() {
         return Pushdown {

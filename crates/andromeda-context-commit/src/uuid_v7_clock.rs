@@ -69,7 +69,7 @@ mod tests {
         for generator in generators {
             match generator.join() {
                 Ok(batch) => batches.push(batch),
-                Err(_) => panic!("a minting generator panicked"),
+                Err(payload) => panic!("a minting generator panicked: {payload:?}"),
             }
         }
 

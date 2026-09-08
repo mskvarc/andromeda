@@ -133,7 +133,7 @@ impl TemporalAppendIntent {
     /// attribute the NGSI-LD data model does not admit -- an unparsable
     /// attribute name, `datasetId`, `observedAt` or `instanceId`, a
     /// Relationship or `ListRelationship` member that names no target URI, a
-    /// GeoProperty whose value is not a geometry, or a Property whose typed
+    /// `GeoProperty` whose value is not a geometry, or a Property whose typed
     /// value cannot be carried -- and [`TemporalError::Internal`] when an
     /// interpreted geometry cannot be serialised back to JSON.
     pub fn from_history(

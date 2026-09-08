@@ -302,8 +302,8 @@ fn report_ctrl_c(result: Result<(), IoError>) {
 #[cfg(unix)]
 fn report_sigterm(received: Option<()>) {
     if let Some(()) = received {
-        tracing::info!(signal = "sigterm", event = "shutdown_signal_received")
+        tracing::info!(signal = "sigterm", event = "shutdown_signal_received");
     } else {
-        tracing::error!("SIGTERM signal stream ended before receiving a signal")
+        tracing::error!("SIGTERM signal stream ended before receiving a signal");
     }
 }

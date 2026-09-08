@@ -62,7 +62,7 @@ async fn narrow_selection(pool: &PgPool, stream: i64, axis: &Axis, from: &str, t
     .bind(stream)
     .fetch_all(pool)
     .await
-    .unwrap_or_else(|error| panic!("the {} window must run: {error}", axis.timeproperty))
+    .expect("the time-property window must run")
 }
 
 /// Clause 4.11: each axis answers from its own column, so one window selects a

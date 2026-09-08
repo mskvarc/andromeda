@@ -359,7 +359,7 @@ mod tests {
             .as_ref()
             .expect("nested projection");
         assert_eq!(nested.pick, vec![leaf("temperature")]);
-        assert!(nested.omit.is_empty());
+        assert!(nested.omit.is_empty(), "the nested projection omits nothing: {:?}", nested.omit);
     }
 
     /// The same relationship, keyed by its already-expanded IRI, matches
@@ -481,7 +481,7 @@ mod tests {
             .expect("target has an entry")
             .as_ref()
             .expect("nested projection");
-        assert!(nested.pick.is_empty());
+        assert!(nested.pick.is_empty(), "the nested projection picks nothing: {:?}", nested.pick);
         assert_eq!(nested.omit, vec![leaf("temperature")]);
     }
 

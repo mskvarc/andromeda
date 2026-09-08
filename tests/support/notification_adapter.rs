@@ -114,17 +114,16 @@ impl NotificationAdapter {
                 "unexpected notification with {member}={value}"
             );
             let remaining = deadline.saturating_duration_since(Instant::now());
-            match self.server.next_request(remaining).await {
-                Ok(request) => {
-                    let body = request.json().expect("notification body is valid JSON");
-                    self.pending.lock().await.push(CapturedNotification {
-                        headers: request.headers,
-                        body,
-                    });
-                }
-                Err(CallbackServerError::RequestTimeout(_)) => return,
-                Err(error) => panic!("notification server failed while checking absence: {error}"),
+            let outcome = self.server.next_request(remaining).await;
+            if matches!(outcome, Err(CallbackServerError::RequestTimeout(_))) {
+                return;
             }
+            let request = outcome.expect("notification server failed while checking absence");
+            let body = request.json().expect("notification body is valid JSON");
+            self.pending.lock().await.push(CapturedNotification {
+                headers: request.headers,
+                body,
+            });
         }
     }
 

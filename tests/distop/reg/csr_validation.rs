@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 /// Remove a top-level key from a CSR body, panicking if the shape is unexpected.
 fn remove(body: &mut Value, key: &str) {
-    body.as_object_mut().unwrap_or_else(|| panic!("CSR baseline is an object")).remove(key);
+    body.as_object_mut().expect("CSR baseline is an object").remove(key);
 }
 
 /// Generate one `#[tokio::test]` per validation row. Each arm builds the

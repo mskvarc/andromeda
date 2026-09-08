@@ -244,7 +244,7 @@ impl EntityService {
                 }
                 hit_pending.push((idx, id, value));
             } else {
-                miss_pending.push((idx, id, value))
+                miss_pending.push((idx, id, value));
             }
         }
 

@@ -66,7 +66,7 @@ async fn column_compression(pool: &PgPool, relation: &str, column: &str) -> Stri
     .bind(column)
     .fetch_one(pool)
     .await
-    .unwrap_or_else(|error| panic!("{relation}.{column} must exist: {error}"))
+    .expect("the inspected column must exist")
 }
 
 #[tokio::test]

@@ -24,14 +24,15 @@ struct PhysicalColumn {
 }
 
 impl PhysicalColumn {
-    /// Alignment boundary in bytes implied by the alignment class.
-    fn alignment(&self) -> usize {
+    /// Alignment boundary in bytes implied by the alignment class, or `None`
+    /// when `pg_attribute` reports a class outside the four PostgreSQL defines.
+    fn alignment(&self) -> Option<usize> {
         match self.attalign.as_str() {
-            "c" => 1,
-            "s" => 2,
-            "i" => 4,
-            "d" => 8,
-            other => panic!("unknown alignment class {other}"),
+            "c" => Some(1),
+            "s" => Some(2),
+            "i" => Some(4),
+            "d" => Some(8),
+            _ => None,
         }
     }
 
@@ -72,7 +73,7 @@ async fn rebuilt_relations_declare_a_not_null_fixed_prefix_without_alignment_pad
 
         let mut offset = 0_usize;
         for column in &prefix {
-            let alignment = column.alignment();
+            let alignment = column.alignment().expect("pg_attribute reports one of the four alignment classes");
             assert_eq!(
                 offset % alignment,
                 0,

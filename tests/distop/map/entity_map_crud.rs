@@ -29,10 +29,7 @@ async fn create_map(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -> 
     );
     let created = create_entity_map(topology.broker(BrokerRole::A).client(), "type=Vehicle").await;
     assert_status(&created, 201);
-    json_body(&created)["id"]
-        .as_str()
-        .unwrap_or_else(|| panic!("created entity map carries an id"))
-        .to_owned()
+    json_body(&created)["id"].as_str().expect("created entity map carries an id").to_owned()
 }
 
 /// Retrieving an invalid `EntityMap` id is rejected `400 BadRequestData`

@@ -150,9 +150,9 @@ impl headers::Header for Link {
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         if let Some(value) = self.to_header_value() {
-            values.extend(iter::once(value))
+            values.extend(iter::once(value));
         } else {
-            tracing::warn!(link = %self, "failed to encode Link header")
+            tracing::warn!(link = %self, "failed to encode Link header");
         }
     }
 }
