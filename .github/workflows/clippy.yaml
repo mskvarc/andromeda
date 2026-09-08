@@ -1,0 +1,27 @@
+name: clippy
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: clippy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  clippy:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # rust-toolchain.toml pins the nightly and names the components; there is no
+      # stable lint run, because `.cargo/config.toml` passes
+      # `-Zhigher-ranked-assumptions` on every build.
+      - name: Install pinned toolchain
+        run: rustup toolchain install --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings

@@ -1,0 +1,27 @@
+name: fmt
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: fmt-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fmt:
+    name: cargo fmt --check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The workspace pins a dated nightly and lists its components in
+      # rust-toolchain.toml. Installing from that file rather than naming a
+      # toolchain here keeps the pin in one place; `cargo fmt` is then the pinned
+      # nightly rustfmt, which rustfmt.toml's unstable options require.
+      - name: Install pinned toolchain
+        run: rustup toolchain install --profile minimal
+      - run: cargo fmt --all --check

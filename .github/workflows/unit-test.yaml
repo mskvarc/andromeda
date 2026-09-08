@@ -1,0 +1,34 @@
+name: unit-test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: unit-test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  unit-test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # rust-toolchain.toml pins the nightly the workspace builds on.
+      - name: Install pinned toolchain
+        run: rustup toolchain install --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      # Everything below the root package: in-crate `#[cfg(test)]` modules plus the
+      # self-contained `tests/` targets of andromeda-http-extraction and
+      # andromeda-unit-catalog. None of these need a broker or a database.
+      - name: Workspace crates
+        run: cargo test --workspace --exclude andromeda --lib --bins --tests --all-features --locked
+      # The root package's `tests/` directory is the end-to-end suite: it needs a
+      # running broker and Postgres, and belongs to a separate workflow. Only the
+      # binary's own unit tests run here.
+      - name: Broker binary
+        run: cargo test --package andromeda --bins --all-features --locked
