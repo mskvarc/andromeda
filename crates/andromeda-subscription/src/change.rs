@@ -46,5 +46,5 @@ pub enum CsourceSubscriptionChange {
 pub trait SubscriptionChangeSink<C>: Send + Sync + 'static {
     /// Publish one completed lifecycle change and finish any coherence work
     /// required before a subsequent mutation may observe the new policy.
-    fn publish<'a>(&'a self, change: C) -> BoxFuture<'a, ()>;
+    fn publish(&self, change: C) -> BoxFuture<'_, ()>;
 }

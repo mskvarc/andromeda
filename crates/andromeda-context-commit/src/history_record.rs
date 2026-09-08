@@ -23,6 +23,7 @@ pub enum HistoryRecord {
 /// The family travels with the record because a deletion renders the
 /// `urn:ngsi-ld:null` member of the family the instance belonged to (clauses
 /// 4.5.7 and 4.5.8), and current state no longer holds the instance to ask.
+#[must_use]
 pub fn tombstone(attr: &AttributeName, dataset_id: Option<&Uri>, attribute_type: AttributeType) -> HistoryRecord {
     HistoryRecord::Tombstone(RemovedAttributeInstance {
         key: AttributeInstanceKey {

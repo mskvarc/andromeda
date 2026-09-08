@@ -56,16 +56,19 @@ const fn trigger_slot(trigger: NotificationTrigger) -> usize {
 
 impl CandidateIndex {
     /// Number of indexed subscriptions.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Whether no subscription is indexed.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// The indexed subscription with this identifier.
+    #[must_use]
     pub fn get(&self, id: &Uri) -> Option<&Arc<CompiledSubscription>> {
         self.keys_by_id.get(id).and_then(|key| self.entries.get(key))
     }
@@ -93,17 +96,14 @@ impl CandidateIndex {
         for trigger in &compiled.triggers {
             self.by_trigger[trigger_slot(*trigger)].insert(key);
         }
-        let watched_attributes = match &compiled.watched_attrs {
-            Some(watched) => {
-                for name in watched {
-                    self.by_watched_attribute.entry(name.clone()).or_default().insert(key); // clone: bucket key
-                }
-                watched.iter().cloned().collect() // clone: the reverse map owns its bucket names
+        let watched_attributes = if let Some(watched) = &compiled.watched_attrs {
+            for name in watched {
+                self.by_watched_attribute.entry(name.clone()).or_default().insert(key); // clone: bucket key
             }
-            None => {
-                self.watch_all.insert(key);
-                Vec::new()
-            }
+            watched.iter().cloned().collect() // clone: the reverse map owns its bucket names
+        } else {
+            self.watch_all.insert(key);
+            Vec::new()
         };
         self.membership.insert(
             key,

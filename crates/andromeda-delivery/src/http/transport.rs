@@ -92,13 +92,10 @@ impl HttpTransport {
         let port = endpoint_uri.port_or_known_default().unwrap_or(DEFAULT_HTTP_PORT);
         let authority = HostPort::new(host, port);
 
-        let outcome = match self.dns_cache.get(&authority).await {
-            Some(cached) => cached,
-            None => {
-                let computed = resolve_private_ip_outcome(&authority).await;
-                self.dns_cache.insert(authority, computed.clone()).await; // clone: the cache takes one and the caller reads the other
-                computed
-            }
+        let outcome = if let Some(cached) = self.dns_cache.get(&authority).await { cached } else {
+            let computed = resolve_private_ip_outcome(&authority).await;
+            self.dns_cache.insert(authority, computed.clone()).await; // clone: the cache takes one and the caller reads the other
+            computed
         };
 
         match outcome {

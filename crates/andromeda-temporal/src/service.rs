@@ -102,7 +102,7 @@ pub struct TemporalService {
     pub(crate) remote_temporal_linked: Option<Arc<dyn RemoteTemporalLinkedSource>>,
 }
 
-/// Result of create_or_update operation.
+/// Result of `create_or_update` operation.
 #[derive(Debug)]
 pub enum CreateOrUpdateResult {
     /// A new temporal entity was created, carrying the assigned entity ID.
@@ -195,6 +195,7 @@ impl TemporalService {
     }
 
     /// Return a reference to the underlying JSON-LD engine.
+    #[must_use]
     pub const fn engine(&self) -> &JsonLdEngine {
         &self.engine
     }

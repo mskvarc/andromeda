@@ -38,11 +38,13 @@ impl BatchContextHandle {
     ///
     /// When `false`, every entity takes the processor's path regardless of
     /// its own shape.
+    #[must_use]
     pub fn fast_eligible(&self) -> bool {
         self.term_map.is_eligible()
     }
 
     /// The [`ContextSpec`] this handle resolved.
+    #[must_use]
     pub const fn spec(&self) -> &ContextSpec {
         &self.spec
     }
@@ -123,6 +125,7 @@ impl JsonLdEngine {
     /// Answers `None` when the handle or the document is outside the
     /// supported subset, so the caller can route the entity to the
     /// asynchronous path. Safe to call from a blocking pool.
+    #[must_use]
     pub fn try_fast_expand(&self, document: &Value, handle: &BatchContextHandle) -> Option<Value> {
         if !handle.term_map.is_eligible() {
             return None;
@@ -134,6 +137,7 @@ impl JsonLdEngine {
     ///
     /// Read by the batch classifier to route entities between the
     /// synchronous and asynchronous pools without touching the document.
+    #[must_use]
     pub fn entity_context_matches_handle(&self, document: &Value, handle: &BatchContextHandle) -> bool {
         match document {
             Value::Object(object) => context_agrees(object, handle),

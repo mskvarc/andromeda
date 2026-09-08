@@ -1,6 +1,6 @@
 //! Query-CSR entity and attribute selection (clause 5.10.2 over the 5.12
 //! matching rules): term expansion, the entity spec, attribute-name matching,
-//! the unconstrained sub-cases, conjunction of conditions, and RegistrationInfo
+//! the unconstrained sub-cases, conjunction of conditions, and `RegistrationInfo`
 //! trimming. All `T-LOCAL`.
 
 use crate::{
@@ -101,7 +101,7 @@ async fn query_csr_returns_only_csrs_meeting_all_conditions() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The entity spec matches EntityInfo on type and idPattern: an id covered by
+/// The entity spec matches `EntityInfo` on type and idPattern: an id covered by
 /// the registered pattern matches, an id outside it does not (clause 5.12).
 /// Confirms REQ-DISC-24.
 #[tokio::test]
@@ -128,7 +128,7 @@ async fn query_csr_entity_spec_matches_entityinfo() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A registration with no EntityInfo is unconstrained on the entity part and
+/// A registration with no `EntityInfo` is unconstrained on the entity part and
 /// matches any entity condition (clause 5.12). Confirms REQ-DISC-25.
 #[tokio::test]
 async fn query_csr_no_entityinfo_entity_spec_considered_matching() {
@@ -186,7 +186,7 @@ async fn query_csr_no_registered_attrs_attribute_names_considered_matching() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A returned registration is trimmed to only the RegistrationInfo entries that
+/// A returned registration is trimmed to only the `RegistrationInfo` entries that
 /// match the query (clause 5.10.2, SHOULD). Confirms REQ-DISC-41.
 #[tokio::test]
 async fn query_csr_returns_registrationinfo_trimmed_to_matching() {

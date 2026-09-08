@@ -144,7 +144,7 @@ mod tests {
     fn the_types_of_a_wrapped_snapshot_are_read_back() {
         let snapshot = json!([{"@id": "urn:ngsi-ld:Vehicle:1", "@type": ["https://example.com/Vehicle"]}]);
         let types = entity_types_from_snapshot(Some(&snapshot));
-        pretty_assertions::assert_eq!(types.iter().map(|name| name.as_str()).collect::<Vec<_>>(), vec!["https://example.com/Vehicle"]);
-        assert!(entity_types_from_snapshot(None).is_empty());
+        pretty_assertions::assert_eq!(types.iter().map(andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName::as_str).collect::<Vec<_>>(), vec!["https://example.com/Vehicle"]);
+        assert_eq!(entity_types_from_snapshot(None), [] as [andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName; 0]);
     }
 }

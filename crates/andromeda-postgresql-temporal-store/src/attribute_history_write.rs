@@ -422,7 +422,7 @@ struct AttributeHistoryBinds<'a> {
 }
 
 /// Spread one attribute-history batch into its column-major binds.
-fn attribute_history_binds<'a>(rows: &'a [AttributeHistoryRow]) -> Result<AttributeHistoryBinds<'a>, TemporalStoreError> {
+fn attribute_history_binds(rows: &[AttributeHistoryRow]) -> Result<AttributeHistoryBinds<'_>, TemporalStoreError> {
     let mut binds = AttributeHistoryBinds {
         recorded_ats: Vec::with_capacity(rows.len()),
         write_ids: Vec::with_capacity(rows.len()),
@@ -708,7 +708,7 @@ mod tests {
     #[test]
     fn the_numeric_value_reaches_storage_through_a_numeric_array_bind() {
         let sql = attribute_history_insert_sql().expect("the fixed attribute-history insert builds");
-        assert!(sql.contains(r#"$16::numeric[]"#), "{sql}");
+        assert!(sql.contains(r"$16::numeric[]"), "{sql}");
         assert!(!sql.contains(r#""d"."value_number"::numeric"#), "{sql}");
         assert!(!sql.contains("double precision"), "{sql}");
     }

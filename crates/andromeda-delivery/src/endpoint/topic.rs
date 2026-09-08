@@ -20,6 +20,7 @@ pub struct MqttTopic(String);
 
 impl MqttTopic {
     /// The topic as a string slice, for the publish API that takes one.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }

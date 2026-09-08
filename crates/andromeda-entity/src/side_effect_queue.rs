@@ -29,6 +29,7 @@ pub struct SideEffectLeaseOwner(String);
 
 impl SideEffectLeaseOwner {
     /// Construct a unique lease owner for one tenant worker process.
+    #[must_use]
     pub fn for_tenant(source_id: &Uri, nonce: Uuid) -> SideEffectLeaseOwner {
         SideEffectLeaseOwner(format!("{source_id}-{nonce}"))
     }

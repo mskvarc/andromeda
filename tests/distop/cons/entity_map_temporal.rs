@@ -54,7 +54,7 @@ async fn query_temporal_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, 
 /// A temporal retrieve map fixes the CSR set on reuse and is recreated on a bogus
 /// map (clause 5.5.14). Reusing the live map answers `200`; the bogus-map leg
 /// mints a replacement and answers `201` (Table 6.4.3.2-3 applies the same
-/// "201 Created (in case an EntityMap has been (re)created)" rule to every
+/// "201 Created (in case an `EntityMap` has been (re)created)" rule to every
 /// map-bearing read). Confirms REQ-CONS-42.
 #[tokio::test]
 async fn distop_retrieve_temporal_map_reused_or_recreated() {
@@ -285,7 +285,7 @@ async fn distop_retrieve_temporal_map_linkedmaps_updated() {
 /// A temporal query map fixes the CSR set on reuse and is recreated on a bogus map
 /// (clause 5.5.14). Reusing the live map answers `200`; the bogus-map leg mints
 /// a replacement and answers `201` (Table 6.4.3.2-3: "201 Created (in case an
-/// EntityMap has been (re)created)"). Confirms REQ-CONS-58.
+/// `EntityMap` has been (re)created)"). Confirms REQ-CONS-58.
 #[tokio::test]
 async fn distop_query_temporal_map_reused_or_recreated() {
     let topology = topology::single().await.expect("single-broker topology");

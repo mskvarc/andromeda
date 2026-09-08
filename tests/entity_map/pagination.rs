@@ -1,4 +1,4 @@
-//! Paging a query against a frozen EntityMap (NGSI-LD 5.2.32, 6.3.19).
+//! Paging a query against a frozen `EntityMap` (NGSI-LD 5.2.32, 6.3.19).
 //!
 //! The map fixes the result set at creation time, so later writes cannot make a
 //! page overlap another or skip an entity.

@@ -46,7 +46,7 @@ mod tests {
 
     #[test]
     fn an_empty_parameter_is_no_filter() {
-        assert!(parse_id_list(&[]).expect("parses").is_empty());
+        assert_eq!(parse_id_list(&[]).expect("parses"), [] as [andromeda_ngsi_ld_lexicon::uri::Uri; 0]);
     }
 
     #[test]

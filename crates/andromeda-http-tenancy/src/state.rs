@@ -19,11 +19,13 @@ impl TenancyRouteState {
     }
 
     /// Borrow the registered-tenant query capability.
+    #[must_use]
     pub fn directory(&self) -> &dyn TenantDirectory {
         self.directory.as_ref()
     }
 
     /// Borrow the orphan-runtime eviction capability.
+    #[must_use]
     pub fn evictor(&self) -> &dyn OrphanTenantEvictor {
         self.evictor.as_ref()
     }

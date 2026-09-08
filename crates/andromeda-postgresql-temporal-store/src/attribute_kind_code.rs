@@ -11,6 +11,7 @@ use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 
 /// The code a history row records for an attribute of this family.
+#[must_use]
 pub const fn stored_attribute_kind(attribute_type: AttributeType) -> AttributeKind {
     match attribute_type {
         AttributeType::Property => AttributeKind::Property,
@@ -25,6 +26,7 @@ pub const fn stored_attribute_kind(attribute_type: AttributeType) -> AttributeKi
 }
 
 /// The attribute family a stored code names.
+#[must_use]
 pub const fn attribute_type_of(kind: AttributeKind) -> AttributeType {
     match kind {
         AttributeKind::Property => AttributeType::Property,

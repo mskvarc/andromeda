@@ -24,12 +24,14 @@ enum LockFunction {
 }
 
 /// `pg_try_advisory_lock(hashtext(key))` - obtain a session lock without waiting.
+#[must_use]
 pub fn try_advisory_lock(key: SimpleExpr) -> SimpleExpr {
     let hashed = SimpleExpr::from(Func::cust(LockFunction::Hashtext).args([key]));
     Func::cust(LockFunction::TryAdvisoryLock).args([hashed]).into()
 }
 
 /// `pg_advisory_unlock(hashtext(key))` - release a held session lock.
+#[must_use]
 pub fn advisory_unlock(key: SimpleExpr) -> SimpleExpr {
     let hashed = SimpleExpr::from(Func::cust(LockFunction::Hashtext).args([key]));
     Func::cust(LockFunction::AdvisoryUnlock).args([hashed]).into()
@@ -37,6 +39,7 @@ pub fn advisory_unlock(key: SimpleExpr) -> SimpleExpr {
 
 /// `pg_advisory_xact_lock(hashtext(key))` - take a transaction advisory lock
 /// keyed on the hash of `key`, released when the transaction ends.
+#[must_use]
 pub fn advisory_xact_lock(key: SimpleExpr) -> SimpleExpr {
     let hashed = SimpleExpr::from(Func::cust(LockFunction::Hashtext).args([key]));
     Func::cust(LockFunction::AdvisoryXactLock).args([hashed]).into()

@@ -39,7 +39,7 @@ use crate::engine::term_map::vocabulary::CoreVocabulary;
 static XSD_PREFIX: Iri<&'static str> = iri!("http://www.w3.org/2001/XMLSchema#");
 /// The NGSI-LD namespace, available as `ngsi-ld:`.
 static NGSI_LD_PREFIX: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/");
-/// The GeoJSON vocabulary namespace, available as `geojson:`.
+/// The `GeoJSON` vocabulary namespace, available as `geojson:`.
 static GEOJSON_PREFIX: Iri<&'static str> = iri!("https://purl.org/geojson/vocab#");
 
 /// Term resolution for one batch, covering the core context and the
@@ -88,6 +88,7 @@ enum IneligibilityReason {
 
 impl BatchTermMap {
     /// Whether the fastpath may run against this table.
+    #[must_use]
     pub const fn is_eligible(&self) -> bool {
         matches!(self.eligibility, FastpathEligibility::Eligible)
     }
@@ -429,7 +430,7 @@ mod tests {
     #[tokio::test]
     async fn a_context_document_importing_another_context_uses_the_processor_path() {
         let (nested_path, nested_url) = preloaded_context("nested-context", r#"{"@context":{"mySpeed":"http://ex.com/speed"}}"#);
-        let (outer_path, outer_url) = preloaded_context("outer-context", &format!(r#"{{"@context":["{}"]}}"#, nested_url));
+        let (outer_path, outer_url) = preloaded_context("outer-context", &format!(r#"{{"@context":["{nested_url}"]}}"#));
         let mut preloads = HashMap::new();
         preloads.insert(nested_url.clone(), nested_path.clone());
         preloads.insert(outer_url.clone(), outer_path.clone());

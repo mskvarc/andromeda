@@ -20,11 +20,11 @@ pub struct OptionalGeoQuery(pub Option<GeoQueryInput>);
 struct GeoQueryParameters {
     /// Spatial relationship token.
     georel: Option<String>,
-    /// GeoJSON geometry type.
+    /// `GeoJSON` geometry type.
     geometry: Option<String>,
-    /// GeoJSON coordinates.
+    /// `GeoJSON` coordinates.
     coordinates: Option<serde_json::Value>,
-    /// Optional GeoProperty reference.
+    /// Optional `GeoProperty` reference.
     geoproperty: Option<NgsiLdReference>,
 }
 

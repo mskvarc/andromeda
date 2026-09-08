@@ -21,8 +21,8 @@ pub(crate) fn validate_entity_map_has_filter(query: &EntityQueryParameters, uri:
 /// Validate the parameters of an entity map creation (clause 5.14.4.4): the
 /// query's own constraints, including the Linked Entity projection and filter
 /// depth rules, and `geometryProperty`, which the clause admits only with a
-/// GeoJSON `Accept`; the map resources render no GeoJSON (clause 6.34.3.1),
-/// so its presence is always an error of type BadRequestData.
+/// `GeoJSON` `Accept`; the map resources render no `GeoJSON` (clause 6.34.3.1),
+/// so its presence is always an error of type `BadRequestData`.
 pub(crate) fn validate_entity_map_query(query: &EntityQueryParameters, uri: &Uri) -> Result<(), ProblemResponse> {
     query.validate().with_entity_map_instance(uri)?;
     if query.geometry_property.is_some() {
@@ -37,7 +37,7 @@ pub(crate) fn validate_entity_map_query(query: &EntityQueryParameters, uri: &Uri
 /// Validate the parameters of a temporal entity map creation (clause
 /// 5.14.5.4): Linked Entity retrieval is not available on the operation, so
 /// `join`/`joinLevel`, a nested projection term and a `q` hop into a Linked
-/// Entity are each an error of type BadRequestData.
+/// Entity are each an error of type `BadRequestData`.
 pub(crate) fn validate_temporal_entity_map_query(params: &TemporalQueryParameters, uri: &Uri) -> Result<(), ProblemResponse> {
     if params.join.is_some() || params.join_level.is_some() {
         return Err(bad_request_data(
@@ -90,7 +90,7 @@ mod tests {
         assert!(validate_entity_map_has_filter(&entity_query("type=Vehicle"), &uri()).is_ok());
     }
 
-    /// Clause 5.14.4.4: `geometryProperty` needs a GeoJSON `Accept`, which
+    /// Clause 5.14.4.4: `geometryProperty` needs a `GeoJSON` `Accept`, which
     /// the map resource never renders.
     #[test]
     fn a_geometry_property_is_refused_on_entity_map_creation() {

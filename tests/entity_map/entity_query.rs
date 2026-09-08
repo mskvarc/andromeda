@@ -1,4 +1,4 @@
-//! Querying entities with an EntityMap alongside (NGSI-LD 5.5.14, 6.3.19).
+//! Querying entities with an `EntityMap` alongside (NGSI-LD 5.5.14, 6.3.19).
 
 use crate::{
     clean_database,
@@ -54,7 +54,7 @@ async fn entity_map_query_entities_without_entity_map_returns_200_without_header
     delete_entity(&c, &id).await;
 }
 
-/// Clause 5.5.14: an EntityMap created alongside a joined query records the
+/// Clause 5.5.14: an `EntityMap` created alongside a joined query records the
 /// entities the traversal reached as well as the ones the query matched, so a
 /// later page against the frozen map still resolves the same graph.
 #[tokio::test]

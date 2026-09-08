@@ -26,17 +26,20 @@ pub struct HostPort {
 
 impl HostPort {
     /// An authority for the given host and port.
+    #[must_use]
     pub const fn new(host: Host, port: u16) -> HostPort {
         HostPort { host, port }
     }
 
     /// The host, in the parsed form that distinguishes a domain from an IP
     /// literal.
+    #[must_use]
     pub const fn host(&self) -> &Host {
         &self.host
     }
 
     /// The port the host is reached on.
+    #[must_use]
     pub const fn port(&self) -> u16 {
         self.port
     }
@@ -46,6 +49,7 @@ impl HostPort {
     ///
     /// Borrows for a domain and allocates only for an IP literal, whose textual
     /// form the parsed address does not keep.
+    #[must_use]
     pub fn host_str(&self) -> Cow<'_, str> {
         match &self.host {
             Host::Domain(domain) => Cow::Borrowed(domain.as_str()),

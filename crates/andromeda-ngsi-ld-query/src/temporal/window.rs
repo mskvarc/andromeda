@@ -79,6 +79,7 @@ impl TimeInterval {
     }
 
     /// The reference instant, which every bounded interval carries.
+    #[must_use]
     pub const fn reference(&self) -> Option<&DateTime<Utc>> {
         match self {
             TimeInterval::Unbounded => None,
@@ -87,6 +88,7 @@ impl TimeInterval {
     }
 
     /// The closing instant, which only `between` carries.
+    #[must_use]
     pub const fn end(&self) -> Option<&DateTime<Utc>> {
         match self {
             TimeInterval::Unbounded | TimeInterval::Before(_) | TimeInterval::After(_) => None,
@@ -95,6 +97,7 @@ impl TimeInterval {
     }
 
     /// Whether the interval narrows the time axis at all.
+    #[must_use]
     pub const fn is_bounded(&self) -> bool {
         !matches!(self, TimeInterval::Unbounded)
     }

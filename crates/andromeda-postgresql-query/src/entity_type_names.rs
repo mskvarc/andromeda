@@ -13,6 +13,7 @@ use sea_query::{Expr, ExprTrait, Order, Query, SimpleExpr};
 /// its row by that count. `array_position` keeps the stored order, which is
 /// the order the entity declared its types in and the order clause 4.5.1 hands
 /// them back in.
+#[must_use]
 pub fn type_names_of(type_ids: SimpleExpr) -> SimpleExpr {
     let mut names = Query::select();
     names

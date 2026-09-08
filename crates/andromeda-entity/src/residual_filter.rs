@@ -29,6 +29,7 @@ use serde_json::Value;
 ///
 /// Every predicate must hold at once, which is the clause 4.9 conjunction
 /// the store would have rendered as `AND`.
+#[must_use]
 pub fn matches(residual: &ResidualFilter, expanded: &Value) -> bool {
     let EntitySelection {
         selectors,

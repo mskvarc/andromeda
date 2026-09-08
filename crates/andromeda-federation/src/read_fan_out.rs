@@ -52,7 +52,7 @@ pub(crate) struct ReadSelection<'a> {
     pub(crate) operation: ForwardingOperation,
     /// The modes this forwarding phase admits (clause 4.3.6.2).
     pub(crate) mode_filter: CsrModeFilter,
-    /// The EntityMap the read runs under (clause 5.5.14).
+    /// The `EntityMap` the read runs under (clause 5.5.14).
     pub(crate) entity_map: EntityMapInUse<'a>,
 }
 
@@ -68,7 +68,7 @@ pub(crate) struct SourceAnswer<T> {
 }
 
 impl FederationService {
-    /// The registrations a forwarded read contacts: those a live EntityMap
+    /// The registrations a forwarded read contacts: those a live `EntityMap`
     /// names, or those clause 5.12 matches, narrowed to the ones advertising
     /// the operation, passing the context source filter and admitted by the
     /// phase's mode filter.
@@ -114,7 +114,7 @@ impl FederationService {
     /// Whether a registration passes the context source filter.
     ///
     /// Clause 4.9: the filter's target is "the name of a Context Source
-    /// Property member of the CSourceRegistration, see Table 5.2.9-1", so the
+    /// Property member of the `CSourceRegistration`, see Table 5.2.9-1", so the
     /// filter reads the whole registration: its clause 5.2.9 members such as
     /// `mode` and the Context Source Properties it adds. The filter was
     /// expanded against the request context, so every member name is expanded

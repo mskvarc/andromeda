@@ -28,6 +28,7 @@ pub struct CommitReplay {
 
 impl CommitReplay {
     /// Construct a replay continuation from its record and next free ordinal.
+    #[must_use]
     pub const fn new(record: WriteRecord, consequence_base: WriteOrdinal) -> CommitReplay {
         CommitReplay { record, consequence_base }
     }

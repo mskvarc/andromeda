@@ -2,7 +2,7 @@
 //!
 //! Tests entity query and retrieve operations:
 //! - Query: by id, type, id pattern, attrs, geoquery, scope, pagination, count, q filter
-//! - Retrieve: by id, attrs filter, representations, GeoJSON, linked entities
+//! - Retrieve: by id, attrs filter, representations, `GeoJSON`, linked entities
 //!
 //! Standalone test suite using `tokio::test` and `reqwest` directly.
 //!
@@ -820,7 +820,7 @@ async fn batch_query(client: &Client, body: &Value, accept: &str, link: Option<&
     (status, body)
 }
 
-/// Create entity and return (status, location_header, body)
+/// Create entity and return (status, `location_header`, body)
 async fn create_entity_full(client: &Client, entity: &Value, content_type: &str, link: Option<&str>) -> (StatusCode, Option<String>, Value) {
     let mut req = client.post(format!("{BASE_URL}/entities")).header("Content-Type", content_type);
     if let Some(ctx) = link {
@@ -828,7 +828,7 @@ async fn create_entity_full(client: &Client, entity: &Value, content_type: &str,
     }
     let resp = req.json(entity).send().await.expect("create_entity_full request failed");
     let status = resp.status();
-    let location = resp.headers().get("Location").and_then(|v| v.to_str().ok()).map(|s| s.to_owned());
+    let location = resp.headers().get("Location").and_then(|v| v.to_str().ok()).map(std::borrow::ToOwned::to_owned);
     let body: Value = resp.json().await.unwrap_or_default();
     (status, location, body)
 }

@@ -57,6 +57,7 @@ struct JsonbPathExists;
 struct JsonbPathQueryFirst;
 
 /// JSONB: `col ? key` - tests if JSONB object contains key.
+#[must_use]
 pub fn jsonb_key_exists(col: SimpleExpr, key: SimpleExpr) -> SimpleExpr {
     col.jsonb_has_key(key)
 }
@@ -69,6 +70,7 @@ pub fn jsonb_key_exists(col: SimpleExpr, key: SimpleExpr) -> SimpleExpr {
 /// to an expression — inside a subquery whose result an `ARRAY(…)` collects into
 /// a Postgres array, which is how a JSONB array of strings becomes a `text[]`
 /// column. Its one output column is the text value.
+#[must_use]
 pub fn jsonb_array_elements_text(array: SimpleExpr) -> FunctionCall {
     Func::cust(JsonbArrayElementsText).args([array])
 }
@@ -78,6 +80,7 @@ pub fn jsonb_array_elements_text(array: SimpleExpr) -> FunctionCall {
 ///
 /// The function form composes where the `?` operator's precedence is awkward —
 /// as a negated conjunct `NOT jsonb_exists(...)` or beside a set-returning call.
+#[must_use]
 pub fn jsonb_exists(target: SimpleExpr, key: SimpleExpr) -> SimpleExpr {
     Func::cust(JsonbExists).args([target, key]).into()
 }
@@ -87,24 +90,28 @@ pub fn jsonb_exists(target: SimpleExpr, key: SimpleExpr) -> SimpleExpr {
 ///
 /// Returned as a [`FunctionCall`] so it stands in a `FROM`/`JOIN LATERAL`
 /// position where a set is expanded to rows, rather than in a projection.
+#[must_use]
 pub fn jsonb_array_elements(array: SimpleExpr) -> FunctionCall {
     Func::cust(JsonbArrayElements).args([array])
 }
 
 /// JSONB: `jsonb_each(object)` as a table source, whose output columns are `key`
 /// and `value`.
+#[must_use]
 pub fn jsonb_each(object: SimpleExpr) -> FunctionCall {
     Func::cust(JsonbEach).args([object])
 }
 
 /// JSONB: `jsonb_object_keys(object)` as a set-returning source, whose one
 /// output column is each top-level key name of `object`.
+#[must_use]
 pub fn jsonb_object_keys(object: SimpleExpr) -> FunctionCall {
     Func::cust(JsonbObjectKeys).args([object])
 }
 
 /// JSONB: `jsonb_typeof(value)` - the JSON type of `value` as text (`object`,
 /// `array`, `string`, `number`, `boolean`, `null`).
+#[must_use]
 pub fn jsonb_typeof(value: SimpleExpr) -> SimpleExpr {
     Func::cust(JsonbTypeof).args([value]).into()
 }
@@ -113,6 +120,7 @@ pub fn jsonb_typeof(value: SimpleExpr) -> SimpleExpr {
 ///
 /// Used by type-aware aggregation (clause 4.5.19.1), where an array-valued
 /// instance counts as its length so `avg`/`sum` mean something for it.
+#[must_use]
 pub fn jsonb_array_length(array: SimpleExpr) -> SimpleExpr {
     Func::cust(JsonbArrayLength).args([array]).into()
 }
@@ -124,6 +132,7 @@ pub fn jsonb_array_length(array: SimpleExpr) -> SimpleExpr {
 /// parameter is substituted, so it is inlined as a single-quoted literal — the
 /// key escaping the path itself needs is already applied by its builder, and
 /// [`text_literal`] adds the SQL escaping the surrounding literal needs.
+#[must_use]
 pub fn jsonb_path_exists(target: SimpleExpr, jsonpath: &str) -> SimpleExpr {
     Func::cust(JsonbPathExists).args([target, text_literal(jsonpath)]).into()
 }
@@ -132,11 +141,13 @@ pub fn jsonb_path_exists(target: SimpleExpr, jsonpath: &str) -> SimpleExpr {
 /// `target` the `jsonpath` matches, or JSON null when it matches nothing.
 ///
 /// The jsonpath is inlined for the same reason [`jsonb_path_exists`] inlines it.
+#[must_use]
 pub fn jsonb_path_query_first(target: SimpleExpr, jsonpath: &str) -> SimpleExpr {
     Func::cust(JsonbPathQueryFirst).args([target, text_literal(jsonpath)]).into()
 }
 
 /// Escape one jsonpath object key, which the path itself double-quotes.
+#[must_use]
 pub fn escape_jsonpath_key(key: &str) -> String {
     key.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -147,6 +158,7 @@ pub fn escape_jsonpath_key(key: &str) -> String {
 /// `'…'`. An attribute IRI containing an apostrophe would otherwise terminate
 /// the literal early; `geoproperty` and `orderBy` both carry request-supplied
 /// IRIs, and an absolute IRI passes JSON-LD expansion unchanged.
+#[must_use]
 pub fn escape_jsonpath(jsonpath: &str) -> String {
     escape_single_quoted(jsonpath)
 }

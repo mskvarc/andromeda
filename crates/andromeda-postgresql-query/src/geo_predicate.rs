@@ -5,14 +5,14 @@
 //! read from and what a row without one means; the relations themselves do not
 //! vary, and before this module they were written three times.
 //!
-//! Clause 4.10 lets `geoproperty` name any GeoProperty of the entity, defaulting
-//! to `location`. The default one has dedicated PostGIS columns on
-//! `entity_search` and is read directly. Every other GeoProperty — `observationSpace` and
+//! Clause 4.10 lets `geoproperty` name any `GeoProperty` of the entity, defaulting
+//! to `location`. The default one has dedicated `PostGIS` columns on
+//! `entity_search` and is read directly. Every other `GeoProperty` — `observationSpace` and
 //! `operationSpace` as much as a custom one — is read from the
 //! `current_attribute_values` projection, which holds one `value_geo` row per attribute
 //! instance keyed by the `attribute_names` dictionary. Reading the instance rows
 //! rather than a single column is also what gives clause 4.10 its multi-instance
-//! rule: where a GeoProperty has several `datasetId` instances, one of them
+//! rule: where a `GeoProperty` has several `datasetId` instances, one of them
 //! meeting the restriction is enough.
 
 use crate::{
@@ -42,7 +42,7 @@ use sea_query::{Alias, Cond, Condition, Expr as SeaExpr, ExprTrait, SelectStatem
 /// The two questions are one choice rather than two, because no caller mixes
 /// them: an entity query excludes a row that conveys no geometry (clause 4.10),
 /// while a registration discovery keeps one (clause 5.10.2). Carrying them
-/// separately made "an entity whose missing GeoProperty matches" expressible,
+/// separately made "an entity whose missing `GeoProperty` matches" expressible,
 /// and nothing could produce it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GeometrySource<'a> {
@@ -51,19 +51,19 @@ pub enum GeometrySource<'a> {
     ///
     /// The default `location` reads the `location` / `location_geo` columns of
     /// the search row and is additionally guarded against expiry through the
-    /// `location_expires_at` column beside them. Any other GeoProperty is
+    /// `location_expires_at` column beside them. Any other `GeoProperty` is
     /// reached through its `current_attribute_values` instance rows, correlated
     /// back to the identity row's surrogate key.
     ///
     /// Clause 4.10: an Entity that conveys no instance of the target
-    /// GeoProperty is non-matching.
+    /// `GeoProperty` is non-matching.
     Entity {
         /// The entity rows the predicate filters, and that any correlated
         /// instance subquery binds back to.
         rows: &'a EntityRowRefs,
     },
-    /// A plain PostGIS `geometry` column, as a Context Source Registration
-    /// carries. Registrations have no payload and no GeoProperty of their own,
+    /// A plain `PostGIS` `geometry` column, as a Context Source Registration
+    /// carries. Registrations have no payload and no `GeoProperty` of their own,
     /// so `geoproperty` does not apply.
     ///
     /// Clause 5.10.2: a registration that declares no location may still serve
@@ -160,7 +160,7 @@ enum Envelope {
 
 /// Work out the two operand expressions and the envelope for a source.
 ///
-/// `None` means the target GeoProperty is one no Entity can convey, because the
+/// `None` means the target `GeoProperty` is one no Entity can convey, because the
 /// broker has never recorded an attribute under that IRI.
 fn subject_geometry(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names: &ResolvedNames<AttributeName>) -> Option<SubjectGeometry> {
     match source {
@@ -298,7 +298,7 @@ mod tests {
         GeometrySource::Registration { column: "location" }
     }
 
-    /// A custom GeoProperty IRI and the dictionary key it is taken to resolve
+    /// A custom `GeoProperty` IRI and the dictionary key it is taken to resolve
     /// to, for the tests that render its instance subquery.
     const CUSTOM_GEOPROPERTY: &str = "https://example.com/customGeo";
     const CUSTOM_GEOPROPERTY_ID: i32 = 42;
@@ -400,7 +400,7 @@ mod tests {
         assert!(!sql.contains("payload"), "the guard no longer walks the payload: {sql}");
     }
 
-    /// Clause 4.10: `geoproperty` names any GeoProperty of the entity. Every
+    /// Clause 4.10: `geoproperty` names any `GeoProperty` of the entity. Every
     /// one other than the default is stored as a `current_attribute_values` row
     /// rather than a column of `entities`, so the relation is evaluated over
     /// those instance rows, correlated back to the entity being filtered.
@@ -427,7 +427,7 @@ mod tests {
         assert!(!sql.contains("expiresAt"), "the expiry guard is specific to the default location: {sql}");
     }
 
-    /// Clause 4.10: where a GeoProperty has several `datasetId` instances, one
+    /// Clause 4.10: where a `GeoProperty` has several `datasetId` instances, one
     /// of them meeting the restriction is enough. The predicate is therefore an
     /// existential over the instance rows, with no restriction on `dataset_id`
     /// that could pin it to the default instance — an instance that fails the
@@ -444,8 +444,8 @@ mod tests {
         assert!(!sql.contains("NOT EXISTS"), "a non-matching instance does not veto a matching one: {sql}");
     }
 
-    /// The two spec-defined GeoProperties of clause 4.7 are not special-cased:
-    /// they take the same instance-row route every other named GeoProperty does,
+    /// The two spec-defined `GeoProperties` of clause 4.7 are not special-cased:
+    /// they take the same instance-row route every other named `GeoProperty` does,
     /// so none of them can be the one that silently reads the wrong column.
     #[test]
     fn a_spec_defined_geoproperty_takes_the_same_route_as_a_custom_one() {
@@ -458,7 +458,7 @@ mod tests {
         }
     }
 
-    /// The default GeoProperty keeps its dedicated columns, so the common case
+    /// The default `GeoProperty` keeps its dedicated columns, so the common case
     /// still reads an indexed column rather than a correlated subquery.
     #[test]
     fn the_default_geoproperty_reads_its_dedicated_columns_without_a_subquery() {
@@ -471,7 +471,7 @@ mod tests {
         );
     }
 
-    /// Clause 4.10: an Entity that does not convey the target GeoProperty is
+    /// Clause 4.10: an Entity that does not convey the target `GeoProperty` is
     /// non-matching. An IRI the dictionary has never seen is conveyed by no
     /// Entity, so the filter is constant `FALSE` rather than an error.
     #[test]
@@ -483,7 +483,7 @@ mod tests {
     }
 
     /// `near` reaches the instance geometry as `geography`, exactly as it
-    /// reaches the default GeoProperty's dedicated geography column.
+    /// reaches the default `GeoProperty`'s dedicated geography column.
     #[test]
     fn a_near_relation_casts_the_instance_geometry_to_geography() {
         let geo = point_query(
@@ -531,7 +531,7 @@ mod tests {
     }
 
     /// A registration reaches a column that always exists, so it never renders
-    /// the constant-`FALSE` an unresolvable GeoProperty gives an entity query:
+    /// the constant-`FALSE` an unresolvable `GeoProperty` gives an entity query:
     /// the two null readings belong to the two sources and cannot be mixed.
     #[test]
     fn a_registration_never_renders_the_entity_exclusion() {
@@ -544,7 +544,7 @@ mod tests {
     // -- one reading of clause 4.10 ------------------------------------------
 
     /// Every relation renders through the same seven arms whatever the source,
-    /// so the PostGIS function each one picks cannot drift between callers.
+    /// so the `PostGIS` function each one picks cannot drift between callers.
     #[test]
     fn every_georel_renders_the_same_postgis_function_for_every_source() {
         let cases = [

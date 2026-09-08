@@ -19,6 +19,7 @@ pub fn member_is_null_sentinel(instance: &Value) -> bool {
 /// Returns `true` if the expanded attribute instance is a deletion sentinel
 /// (`urn:ngsi-ld:null` or its expanded IRI form in hasValue, hasObject, or
 /// hasLanguageMap).
+#[must_use]
 pub fn instance_is_null_sentinel(instance: &Value) -> bool {
     let Some(obj) = instance.as_object() else {
         return false;

@@ -8,6 +8,7 @@ use serde_json::Value;
 use std::{collections::HashSet, mem::replace, slice::from_ref};
 
 /// Merge local and forwarded temporal query entities by entity identifier.
+#[must_use]
 pub fn merge_temporal_query_results(local_entities: Vec<Value>, remote_results: Vec<ForwardedTemporalEntities>) -> Vec<Value> {
     if remote_results.is_empty() {
         return local_entities;
@@ -118,6 +119,7 @@ fn merge_temporal_instances(local: &mut Value, remote: &Value) {
 /// Merge remote temporal entity results for a single entity retrieval.
 ///
 /// Returns the merged temporal entity or None if no entity found from any source.
+#[must_use]
 pub fn merge_temporal_retrieve_results(local_entity: Option<Value>, remote_results: Vec<ForwardedTemporalEntities>) -> Option<Value> {
     let mut result = local_entity;
 

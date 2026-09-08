@@ -50,6 +50,7 @@ impl DeliveryErrorBound {
     }
 
     /// The bound as a whole number of characters.
+    #[must_use]
     pub const fn characters(self) -> u32 {
         self.0.get()
     }
@@ -58,7 +59,8 @@ impl DeliveryErrorBound {
     ///
     /// Truncation counts characters and cuts on a character boundary, so a
     /// multi-byte diagnostic is shortened rather than split into invalid UTF-8.
-    pub fn truncate<'detail>(self, detail: &'detail str) -> Cow<'detail, str> {
+    #[must_use]
+    pub fn truncate(self, detail: &str) -> Cow<'_, str> {
         let limit = match usize::try_from(self.characters()) {
             Ok(limit) => limit,
             Err(_) => return Cow::Borrowed(detail),

@@ -66,8 +66,7 @@ impl TemporalService {
         // entity with no attributes.
         if rendered.presence == HistoryPresence::Absent && !compiled.instances.attr_filter.is_empty() {
             return Err(TemporalError::not_found(format!(
-                "No temporal data found for the specified attributes on entity {}",
-                entity_id
+                "No temporal data found for the specified attributes on entity {entity_id}"
             )));
         }
 
@@ -168,7 +167,7 @@ impl TemporalService {
     }
 
     /// Build an aggregated temporal response in compacted form, bypassing JSON-LD compaction.
-    /// Aggregation keys (avg, min, etc.) aren't valid JSON-LD IRIs and would be dropped by compact().
+    /// Aggregation keys (avg, min, etc.) aren't valid JSON-LD IRIs and would be dropped by `compact()`.
     async fn build_aggregated_compacted(
         &self,
         entity_id: &Uri,
@@ -268,9 +267,9 @@ impl TemporalService {
 
     /// Execute stage 1 entity ID resolution without fetching temporal history.
     ///
-    /// Used to build EntityMaps that represent the full result set (spec 5.5.14).
+    /// Used to build `EntityMaps` that represent the full result set (spec 5.5.14).
     /// Runs only the lightweight stage 1 SQL (entity ID resolution) without fetching
-    /// temporal history, ensuring the EntityMap captures ALL matching IDs, not just the
+    /// temporal history, ensuring the `EntityMap` captures ALL matching IDs, not just the
     /// current page.
     pub async fn query_ids(&self, target: &ContextTarget, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<Vec<Uri>, TemporalError> {
         params.validate(true)?;
@@ -292,7 +291,7 @@ impl TemporalService {
 
 impl TemporalService {
     /// Clause 5.7.4.4: an aggregated representation over an attribute that is
-    /// not eligible for one of the requested methods is an InvalidRequest,
+    /// not eligible for one of the requested methods is an `InvalidRequest`,
     /// decided from the value shapes the attribute has been recorded with
     /// before any history is read. Only the attributes the request named can
     /// be checked ahead of the read; a request over every attribute is not.

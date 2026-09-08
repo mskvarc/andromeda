@@ -37,6 +37,7 @@ impl DeliveryAttemptCeiling {
     }
 
     /// The ceiling as a whole number of attempts.
+    #[must_use]
     pub const fn attempts(self) -> i32 {
         self.0.get()
     }
@@ -48,6 +49,7 @@ impl DeliveryAttemptCeiling {
     /// about to make attempt `attempts_before + 1`; when that number reaches
     /// the ceiling, a failure of this attempt exhausts the delivery instead of
     /// scheduling another retry.
+    #[must_use]
     pub const fn is_final_attempt(self, attempts_before: i32) -> bool {
         attempts_before.saturating_add(1) >= self.0.get()
     }

@@ -101,7 +101,7 @@ async fn temporal_attrs_modify_instance_preserves_an_exact_decimal() {
 
     let (status, bytes, _) = modify_temporal_attr_instance(&c, &id, "speed", &instance_id, &fragment).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    assert!(bytes.is_empty());
+    assert_eq!(bytes, [] as [u8; 0]);
     let (status, body) = get_temporal_entity(&c, &id, Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(serde_json::to_string(&body).expect("temporal entity JSON").contains("0.170000000000000005"));

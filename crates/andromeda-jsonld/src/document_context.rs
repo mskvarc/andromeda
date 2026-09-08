@@ -21,6 +21,7 @@ use std::collections::HashSet;
 ///
 /// Answers `None` when the combination is empty, which is the only case in
 /// which a document ends up with no `@context` at all.
+#[must_use]
 pub fn resolve_context_value(document_context: Option<&Value>, spec: &ContextSpec) -> Option<Value> {
     let mut combined = extract_context_items(document_context);
     if let Some(body_context) = spec.body_context() {

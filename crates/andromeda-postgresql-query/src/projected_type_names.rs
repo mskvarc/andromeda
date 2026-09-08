@@ -20,6 +20,7 @@ use andromeda_ngsi_ld_query::{
 /// clause 4.6.2 grammar an [`EntityTypeName`] validates, so a token that
 /// nevertheless fails to parse is left out and its predicate later compiles as
 /// an unresolved — and therefore unsatisfiable — type.
+#[must_use]
 pub fn projected_type_names(selection: &EntitySelection) -> Vec<EntityTypeName> {
     let mut names = Vec::new();
     for selector in &selection.selectors {
@@ -125,6 +126,6 @@ mod tests {
 
     #[test]
     fn a_selection_without_types_or_guards_resolves_nothing() {
-        assert!(projected_type_names(&selection_with(None, Some("\"https://example.com/speed\">1"))).is_empty());
+        assert_eq!(projected_type_names(&selection_with(None, Some("\"https://example.com/speed\">1"))), [] as [andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName; 0]);
     }
 }

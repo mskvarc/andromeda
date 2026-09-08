@@ -21,6 +21,7 @@ pub struct EntityTypeId(i32);
 
 impl EntityTypeId {
     /// The underlying `INTEGER` value, for SQL binding.
+    #[must_use]
     pub const fn get(self) -> i32 {
         self.0
     }

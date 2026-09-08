@@ -27,7 +27,7 @@ pub struct CommonHeadersOptions<'a> {
     pub context_location: ContextLocation,
 }
 
-/// Apply common NGSI-LD headers to a HeaderMap.
+/// Apply common NGSI-LD headers to a `HeaderMap`.
 ///
 /// `context_links` is what the rendering already resolved; it is advertised
 /// only when the rendering put the `@context` in the headers rather than in

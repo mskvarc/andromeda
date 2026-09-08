@@ -107,7 +107,7 @@ mod tests {
                 },
             ]
         );
-        assert!(compiled.omit.is_empty());
+        assert_eq!(compiled.omit, [] as [andromeda_ngsi_ld_query::projection::term::ProjectionTerm; 0]);
     }
 
     /// An `omit`-only request compiles to a projection whose `pick` is empty,
@@ -122,7 +122,7 @@ mod tests {
             .expect("compiles")
             .expect("a named omit compiles to a projection");
 
-        assert!(compiled.pick.is_empty());
+        assert_eq!(compiled.pick, [] as [andromeda_ngsi_ld_query::projection::term::ProjectionTerm; 0]);
         pretty_assertions::assert_eq!(
             compiled.omit,
             vec![ProjectionTerm::Attribute {

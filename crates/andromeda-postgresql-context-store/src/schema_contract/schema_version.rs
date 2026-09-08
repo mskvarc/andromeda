@@ -12,6 +12,7 @@ pub struct SchemaVersion(i32);
 
 impl SchemaVersion {
     /// The version as the `INTEGER` the column stores.
+    #[must_use]
     pub const fn get(self) -> i32 {
         self.0
     }

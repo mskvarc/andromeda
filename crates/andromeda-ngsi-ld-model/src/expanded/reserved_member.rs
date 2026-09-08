@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties;
 /// Covers the system metadata of [`is_system_attribute`], the two Entity
 /// members that are not attributes, and every family's value carrier in both
 /// its singular and its plural (Temporal API) spelling.
+#[must_use]
 pub fn is_reserved_member(name: &AttributeName) -> bool {
     is_system_attribute(name) || is_entity_member(name) || is_value_carrier(name)
 }

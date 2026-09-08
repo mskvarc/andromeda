@@ -1,4 +1,4 @@
-//! Creating an EntityMap from an entity query: input validation, term expansion,
+//! Creating an `EntityMap` from an entity query: input validation, term expansion,
 //! and the candidate-id shape of the result (clause 5.14.4). All `T-LOCAL`.
 
 use crate::{
@@ -91,7 +91,7 @@ async fn emq_invalid_id_q_geoq_csf_returns_400() {
 /// are present and indicate the use of Linked Entity retrieval, and the use of
 /// Linked Entity retrieval is not specified, or the projected attribute depth
 /// exceeds the Linked Entity retrieval depth, then an error of type
-/// BadRequestData shall be raised"). The projection uses the clause 4.21
+/// `BadRequestData` shall be raised"). The projection uses the clause 4.21
 /// `LinkedEntityTerm` form `linkedTo{speed}` and omits `join`, which clause
 /// 5.14.4.3 lists among the accepted Query Entities parameters. Confirms
 /// REQ-MAP-116.
@@ -107,7 +107,7 @@ async fn emq_projection_linked_entity_unspecified_or_deep_returns_400() {
 /// A `q` filter over linked-entity attributes without Linked Entity retrieval is
 /// rejected `400 BadRequestData` (clause 5.14.4.4: "If the filter conditions
 /// specified by the query includes Linked Entity attributes, and the use of
-/// Linked Entity retrieval is not specified ... an error of type BadRequestData
+/// Linked Entity retrieval is not specified ... an error of type `BadRequestData`
 /// shall be raised (too deep query)"). The hop uses the clause 4.9 brace form
 /// `linkedTo{speed>5}`; a dotted path would address a sub-attribute, not a
 /// linked entity. Confirms REQ-MAP-117.
@@ -120,7 +120,7 @@ async fn emq_query_linked_entity_attrs_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A geometry-property projection without a GeoJSON `Accept` is rejected
+/// A geometry-property projection without a `GeoJSON` `Accept` is rejected
 /// `400 BadRequestData` (clause 5.14.4). Confirms REQ-MAP-118.
 #[tokio::test]
 async fn emq_geometry_property_non_geojson_accept_returns_400() {

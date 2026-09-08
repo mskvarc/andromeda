@@ -298,7 +298,7 @@ async fn matching_sub_between_matches_on_overlap() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A geo-query notifies against a registration's `location` GeoProperty
+/// A geo-query notifies against a registration's `location` `GeoProperty`
 /// (clause 5.12). Confirms REQ-DISC-50, REQ-DISC-51.
 #[tokio::test]
 async fn matching_sub_geoq_matches_geoproperty_and_default_location() {
@@ -330,7 +330,7 @@ async fn matching_sub_geoq_matches_geoproperty_and_default_location() {
 /// satisfying the subscription's csf and scopeQ notifies (clause 5.12). The
 /// `csf` targets a Context Source Property of the registration (clause 4.9:
 /// "target is the name of a Context Source Property member of the
-/// CSourceRegistration"), so the fixture carries `tier` as a top-level member,
+/// `CSourceRegistration`"), so the fixture carries `tier` as a top-level member,
 /// not as a `contextSourceInfo` header pair. Confirms REQ-DISC-61, REQ-DISC-62.
 #[tokio::test]
 async fn matching_sub_csf_and_scope_gate_matching() {

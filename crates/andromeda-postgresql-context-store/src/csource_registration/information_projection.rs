@@ -224,6 +224,7 @@ pub enum RegistrationRouting<'info> {
 
 impl<'info> RegistrationRouting<'info> {
     /// The rows to store: the selective rows, or the one wildcard row.
+    #[must_use]
     pub fn into_rows(self) -> Vec<RegistrationInformationRow<'info>> {
         match self {
             RegistrationRouting::Unconstrained => vec![RegistrationInformationRow::wildcard()],
@@ -237,6 +238,7 @@ impl<'info> RegistrationRouting<'info> {
 /// These are the names the dictionary has to hold keys for before the
 /// projection can be written. They arrive already expanded to IRIs: JSON-LD
 /// expansion happens in the service layer, above the store.
+#[must_use]
 pub fn projected_attribute_names(information: &[RegistrationInfo]) -> Vec<AttributeName> {
     let mut names: Vec<AttributeName> = Vec::new();
     for entry in information {
@@ -257,6 +259,7 @@ pub fn projected_attribute_names(information: &[RegistrationInfo]) -> Vec<Attrib
 /// the property and the relationship axis -- rather than narrowing a row to the
 /// names that did resolve, which would drop a registration that genuinely serves
 /// the missing one.
+#[must_use]
 pub fn derive_routing<'info>(information: &'info [RegistrationInfo], ids: &HashMap<AttributeName, AttributeNameId>) -> RegistrationRouting<'info> {
     let mut rows = Vec::new();
     for entry in information {
@@ -277,32 +280,29 @@ fn entry_rows<'info>(entry: &'info RegistrationInfo, ids: &HashMap<AttributeName
     let attributes = entry_attributes(entry, ids);
     let selectors = entry.entities.as_deref().filter(|selectors| !selectors.is_empty());
 
-    match selectors {
-        Some(selectors) => {
-            let rows: Vec<RegistrationInformationRow<'info>> = selectors
-                .iter()
-                .map(|selector| selector_row(selector, attributes.clone())) // clone: each row owns its own copy of the entry-wide key set.
-                .collect();
-            // An `EntityInfo` always carries a `type` (Table 5.2.8-1), so a row
-            // built from one constrains at least the type axis; the guard is
-            // kept so a row that somehow constrains nothing still widens the
-            // whole registration rather than hiding behind selective siblings.
-            if rows.iter().any(|row| !row.is_selective()) { None } else { Some(rows) }
-        }
-        None => {
-            let row = RegistrationInformationRow {
-                types: TypeRouting::Any,
-                identifier: IdentifierRouting::Any,
-                identifier_pattern: None,
-                attributes,
-            };
-            if row.is_selective() { Some(vec![row]) } else { None }
-        }
+    if let Some(selectors) = selectors {
+        let rows: Vec<RegistrationInformationRow<'info>> = selectors
+            .iter()
+            .map(|selector| selector_row(selector, attributes.clone())) // clone: each row owns its own copy of the entry-wide key set.
+            .collect();
+        // An `EntityInfo` always carries a `type` (Table 5.2.8-1), so a row
+        // built from one constrains at least the type axis; the guard is
+        // kept so a row that somehow constrains nothing still widens the
+        // whole registration rather than hiding behind selective siblings.
+        if rows.iter().any(|row| !row.is_selective()) { None } else { Some(rows) }
+    } else {
+        let row = RegistrationInformationRow {
+            types: TypeRouting::Any,
+            identifier: IdentifierRouting::Any,
+            identifier_pattern: None,
+            attributes,
+        };
+        if row.is_selective() { Some(vec![row]) } else { None }
     }
 }
 
 /// One row for one `EntityInfo`, carrying its entry's attribute constraints.
-fn selector_row<'info>(selector: &'info EntityInfo, attributes: AttributeRouting) -> RegistrationInformationRow<'info> {
+fn selector_row(selector: &EntityInfo, attributes: AttributeRouting) -> RegistrationInformationRow<'_> {
     RegistrationInformationRow {
         types: TypeRouting::Named(selector.type_.names().iter().collect()),
         identifier: selector.id.as_ref().map_or(IdentifierRouting::Any, IdentifierRouting::Exact),
@@ -637,6 +637,6 @@ mod tests {
     #[test]
     fn a_registration_without_declared_names_interns_nothing() {
         let information = vec![entry(Some(vec![selector("Vehicle")]), None, None)];
-        assert!(projected_attribute_names(&information).is_empty());
+        assert_eq!(projected_attribute_names(&information), [] as [andromeda_ngsi_ld_lexicon::attribute_name::AttributeName; 0]);
     }
 }

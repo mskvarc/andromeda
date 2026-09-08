@@ -12,7 +12,7 @@
 //! the reserved members of that type are never mistaken for sub-attributes.
 //! Where clause 4.5 allows the type to be omitted, it is inferred rather than
 //! assumed: an `object` member makes a Relationship, `languageMap` a
-//! LanguageProperty, a bare GeoJSON geometry a GeoProperty, and so on — only a
+//! `LanguageProperty`, a bare `GeoJSON` geometry a `GeoProperty`, and so on — only a
 //! value with no such marker becomes an implicit Property.
 
 use crate::entity_members::ENTITY_MEMBERS;
@@ -135,13 +135,13 @@ fn attribute_type_of(instance: &Map<String, Value>) -> Option<AttributeType> {
 /// The attribute type a typeless concise instance's distinguishing member
 /// implies (ETSI GS CIM 009 v1.9.1 clauses 4.5.3.3, 4.5.18.3, 4.5.20.3,
 /// 4.5.21.3, 4.5.22.3, 4.5.24.3): `object` a Relationship, `languageMap` a
-/// LanguageProperty, `vocab` a VocabProperty, `valueList` a ListProperty,
-/// `objectList` a ListRelationship, `json` a JsonProperty.
+/// `LanguageProperty`, `vocab` a `VocabProperty`, `valueList` a `ListProperty`,
+/// `objectList` a `ListRelationship`, `json` a `JsonProperty`.
 ///
 /// The member table is [`AttributeType::compact_value_key`], the same one the
 /// rendering inverts, iterated so a ninth attribute type cannot be added to
 /// the lexicon and forgotten here. `value` is not a distinguishing member: a
-/// bare value is an implicit Property, and a GeoProperty is inferred from its
+/// bare value is an implicit Property, and a `GeoProperty` is inferred from its
 /// geometry shape. More than one distinguishing member is ambiguous, so no
 /// type is inferred and the object falls through to an implicit Property.
 fn distinguishing_member_type(instance: &Map<String, Value>) -> Option<AttributeType> {
@@ -161,15 +161,15 @@ fn distinguishing_member_type(instance: &Map<String, Value>) -> Option<Attribute
     inferred
 }
 
-/// The GeoJSON geometry type tokens, per RFC 7946 clause 1.4.
+/// The `GeoJSON` geometry type tokens, per RFC 7946 clause 1.4.
 ///
 /// Kept as a local token set rather than pulling in the geometry crate: this
 /// crate is a low-layer leaf, and inference needs only to recognise the shape,
 /// not decode it.
 ///
 /// `GeometryCollection` is listed even though ETSI GS CIM 009 v1.9.1 clause
-/// 4.7.1 excludes it from GeoProperty geometries. Recognising it is what routes
-/// a concise collection value to the GeoProperty write-side validator, which
+/// 4.7.1 excludes it from `GeoProperty` geometries. Recognising it is what routes
+/// a concise collection value to the `GeoProperty` write-side validator, which
 /// refuses it as `BadRequestData`; dropping it here would instead let a
 /// collection pass silently as an ordinary Property value.
 const GEOJSON_GEOMETRY_TYPES: &[&str] = &[
@@ -182,7 +182,7 @@ const GEOJSON_GEOMETRY_TYPES: &[&str] = &[
     "GeometryCollection",
 ];
 
-/// Whether an object is a GeoJSON geometry: a known geometry `type` alongside
+/// Whether an object is a `GeoJSON` geometry: a known geometry `type` alongside
 /// its coordinate member (`coordinates`, or `geometries` for a
 /// `GeometryCollection`).
 fn is_geojson_geometry(instance: &Map<String, Value>) -> bool {
@@ -212,7 +212,7 @@ fn normalize_instance(instance: &mut Map<String, Value>) {
 }
 
 /// Wrap a concise value as the `{type, value}` attribute clause 4.5.2.3 says it
-/// abbreviates: an implicit Property, or a GeoProperty for a bare geometry.
+/// abbreviates: an implicit Property, or a `GeoProperty` for a bare geometry.
 fn as_typed_value(attribute_type: AttributeType, value: Value) -> Value {
     let mut attribute = Map::with_capacity(2);
     attribute.insert("type".to_string(), Value::String(attribute_type.to_string()));

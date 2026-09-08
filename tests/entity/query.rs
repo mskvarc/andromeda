@@ -52,7 +52,7 @@ async fn entity_query_by_ids_returns_matching_entities() {
         assert_eq!(status, StatusCode::CREATED);
     }
 
-    let query = format!("id={},{}&type=Building", id1, id2);
+    let query = format!("id={id1},{id2}&type=Building");
     let (status, body, _) = query_entities(&client, &query, "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
@@ -516,7 +516,7 @@ async fn entity_query_key_values_returns_simplified() {
         assert_eq!(create_entity(&client, &building_simple_attributes(id)).await, StatusCode::CREATED);
     }
 
-    let query = format!("id={},{}&type=Building&options=keyValues", id1, id2);
+    let query = format!("id={id1},{id2}&type=Building&options=keyValues");
     let (status, body, _) = query_entities(&client, &query, "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
@@ -542,7 +542,7 @@ async fn entity_query_geojson_returns_feature_collection() {
     assert_eq!(create_entity(&client, &building_location(&id1)).await, StatusCode::CREATED);
     assert_eq!(create_entity(&client, &building_location(&id2)).await, StatusCode::CREATED);
 
-    let query = format!("id={},{}&type=Building", id1, id2);
+    let query = format!("id={id1},{id2}&type=Building");
     let (status, body, _) = query_entities(&client, &query, "application/geo+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["type"], "FeatureCollection");
@@ -566,7 +566,7 @@ async fn entity_query_with_limit_returns_limited_results() {
         assert_eq!(create_entity(&client, &building_minimal(id)).await, StatusCode::CREATED);
     }
 
-    let query = format!("id={},{},{}&type=Building&limit=2", id1, id2, id3);
+    let query = format!("id={id1},{id2},{id3}&type=Building&limit=2");
     let (status, body, _) = query_entities(&client, &query, "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 

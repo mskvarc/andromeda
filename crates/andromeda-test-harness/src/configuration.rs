@@ -50,7 +50,8 @@ impl DatabaseEndpoint {
         }
     }
 
-    /// Borrow the complete URL for SQLx without exposing it through diagnostics.
+    /// Borrow the complete URL for `SQLx` without exposing it through diagnostics.
+    #[must_use]
     pub const fn url(&self) -> &Url {
         &self.url
     }
@@ -78,6 +79,7 @@ impl CallbackEndpoint {
     }
 
     /// Borrow the validated host.
+    #[must_use]
     pub const fn host(&self) -> &Host<String> {
         &self.host
     }
@@ -105,21 +107,25 @@ impl TestRunConfiguration {
     }
 
     /// Borrow the broker endpoint.
+    #[must_use]
     pub const fn broker(&self) -> &BrokerEndpoint {
         &self.broker
     }
 
     /// Borrow the database endpoint.
+    #[must_use]
     pub const fn database(&self) -> &DatabaseEndpoint {
         &self.database
     }
 
     /// Borrow the callback endpoint.
+    #[must_use]
     pub const fn callback(&self) -> &CallbackEndpoint {
         &self.callback
     }
 
     /// Render a failure-oriented summary with database credentials redacted.
+    #[must_use]
     pub const fn diagnostic_summary(&self) -> ConfigurationSummary<'_> {
         ConfigurationSummary { configuration: self }
     }

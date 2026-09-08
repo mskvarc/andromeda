@@ -29,6 +29,7 @@ use sea_query::{Expr, SimpleExpr};
 /// statement being one of these, so the numbering stays contiguous. This exists
 /// only for the nullable-element array case the module documents; a value
 /// sea-query can carry is bound the ordinary way instead.
+#[must_use]
 pub fn external_placeholder(index: usize) -> SimpleExpr {
     Expr::cust(format!("${index}"))
 }

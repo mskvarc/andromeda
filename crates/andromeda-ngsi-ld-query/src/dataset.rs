@@ -16,9 +16,9 @@ pub const DEFAULT_INSTANCE_TOKEN: &str = "@none";
 /// One `datasetId`, naming either a specific dataset or the default instance.
 ///
 /// Used both as a filter entry on a temporal query and as a member of an
-/// EntityMap (clause 5.2.39), which records which instances of an entity a
+/// `EntityMap` (clause 5.2.39), which records which instances of an entity a
 /// distributed query resolved. Both are the same clause 4.5.5 value, and the
-/// EntityMap resource used to carry a second type spelling it differently.
+/// `EntityMap` resource used to carry a second type spelling it differently.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub enum DatasetSelector {
@@ -99,6 +99,7 @@ pub enum DatasetFilter {
 
 impl DatasetFilter {
     /// Reduce a selector list to the predicate shape it renders as.
+    #[must_use]
     pub fn from_selectors(selectors: &[DatasetSelector]) -> DatasetFilter {
         if selectors.is_empty() {
             return DatasetFilter::Unfiltered;

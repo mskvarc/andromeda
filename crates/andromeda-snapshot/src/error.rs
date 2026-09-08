@@ -70,6 +70,7 @@ impl SnapshotError {
     }
 
     /// Construct a missing snapshot failure from a validated identifier.
+    #[must_use]
     pub fn not_found(identifier: &Uri) -> SnapshotError {
         SnapshotError::NotFound {
             identifier: identifier.clone(), // clone: the error owns the borrowed snapshot identifier.
@@ -77,6 +78,7 @@ impl SnapshotError {
     }
 
     /// Construct an identifier conflict.
+    #[must_use]
     pub fn already_exists(identifier: &Uri) -> SnapshotError {
         SnapshotError::AlreadyExists {
             identifier: identifier.clone(), // clone: the error owns the borrowed snapshot identifier.
@@ -84,6 +86,7 @@ impl SnapshotError {
     }
 
     /// Construct a bounded preparation wait failure.
+    #[must_use]
     pub fn preparation_timeout(identifier: &Uri) -> SnapshotError {
         SnapshotError::PreparationTimeout {
             identifier: identifier.clone(), // clone: the error owns the borrowed snapshot identifier.

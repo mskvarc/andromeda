@@ -15,6 +15,7 @@ use chrono::{DateTime, Utc};
 /// Returns `None` when no time range is available (empty result set).
 /// The format is `date-time <start>-<end>/<size>` where size is `*` when the
 /// total is unknown.
+#[must_use]
 pub fn build_content_range(
     interval: &TimeInterval,
     time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,

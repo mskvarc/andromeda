@@ -95,7 +95,7 @@ pub(super) fn registration_count(total: i64) -> Result<u64, RegistrationError> {
 }
 
 /// Add the full registration row projection to `select`, decoding each stored
-/// geometry back to GeoJSON and each enum to text under the column name the
+/// geometry back to `GeoJSON` and each enum to text under the column name the
 /// mapper reads it by.
 
 #[async_trait]

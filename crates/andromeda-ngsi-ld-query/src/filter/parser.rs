@@ -225,12 +225,9 @@ impl<'a> Parser<'a> {
         self.advance();
         Self::check_depth(depth + 1)?;
         let guard = self.parse_hop_guard()?;
-        let inner = match guard.inner_leading {
-            Some(text) => self.parse_predicate_from(text, depth + 1)?,
-            None => {
-                let leading = self.parse_ident()?;
-                self.parse_predicate_from(leading, depth + 1)?
-            }
+        let inner = if let Some(text) = guard.inner_leading { self.parse_predicate_from(text, depth + 1)? } else {
+            let leading = self.parse_ident()?;
+            self.parse_predicate_from(leading, depth + 1)?
         };
         self.expect(&Token::RBrace)?;
         Ok(inner.nest_under_hop(relationship, guard.types))
@@ -269,16 +266,12 @@ impl<'a> Parser<'a> {
         let mut types = Vec::new();
         loop {
             let (name, quoting) = self.parse_guard_name()?;
-            match self.split_guard_terminator(name, quoting)? {
-                Some((last, inner_leading)) => {
-                    types.push(attribute_name(last)?);
-                    return Ok(HopGuard { types, inner_leading });
-                }
-                None => {
-                    types.push(attribute_name(name)?);
-                    self.expect(&Token::Comma)?;
-                }
+            if let Some((last, inner_leading)) = self.split_guard_terminator(name, quoting)? {
+                types.push(attribute_name(last)?);
+                return Ok(HopGuard { types, inner_leading });
             }
+            types.push(attribute_name(name)?);
+            self.expect(&Token::Comma)?;
         }
     }
 

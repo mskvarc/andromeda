@@ -21,19 +21,19 @@ use sqlx::{PgPool, Row};
 /// refuse servers the schema runs on correctly.
 pub const REQUIRED_POSTGRES_VERSION: PostgresVersion = PostgresVersion::new(150_000);
 
-/// The PostGIS version the tenant schema requires.
+/// The `PostGIS` version the tenant schema requires.
 ///
 /// The schema stores `geometry(PointZ, 4326)` and casts to `geography` for
 /// distance predicates, and the compiled `georel` predicates call
-/// `ST_MakeValid`; all of that is PostGIS 3.0 surface.
+/// `ST_MakeValid`; all of that is `PostGIS` 3.0 surface.
 pub const REQUIRED_POSTGIS_VERSION: ExtensionVersion = ExtensionVersion::new(3, 0);
 
-/// The TimescaleDB version the tenant schema requires.
+/// The `TimescaleDB` version the tenant schema requires.
 ///
 /// `attribute_history` and `scope_history` are hypertables created with
 /// `create_hypertable(..., by_range(...))` and aged out with the columnstore
 /// API — `enable_columnstore`, `add_columnstore_policy` — rather than the
-/// legacy compression calls those replaced. Both are TimescaleDB 2.18 surface,
+/// legacy compression calls those replaced. Both are `TimescaleDB` 2.18 surface,
 /// and neither has a fallback: a migration that reaches an older server has no
 /// second path to take.
 pub const REQUIRED_TIMESCALEDB_VERSION: ExtensionVersion = ExtensionVersion::new(2, 18);
@@ -45,6 +45,7 @@ pub struct PostgresVersion(i32);
 
 impl PostgresVersion {
     /// Wrap what `server_version_num` reports.
+    #[must_use]
     pub const fn new(server_version_num: i32) -> PostgresVersion {
         PostgresVersion(server_version_num)
     }
@@ -64,6 +65,7 @@ pub struct ExtensionVersion {
 
 impl ExtensionVersion {
     /// Name a `major.minor` version.
+    #[must_use]
     pub const fn new(major: u32, minor: u32) -> ExtensionVersion {
         ExtensionVersion { major, minor }
     }
@@ -156,7 +158,7 @@ pub async fn verify_server_requirements(pool: &PgPool) -> Result<(), SchemaContr
     )
 }
 
-/// Read the server's `server_version_num` and the PostGIS and TimescaleDB
+/// Read the server's `server_version_num` and the `PostGIS` and `TimescaleDB`
 /// extension versions.
 ///
 /// Every column is a system-function call or a `pg_extension` lookup, so the

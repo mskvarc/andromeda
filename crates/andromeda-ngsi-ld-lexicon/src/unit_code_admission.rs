@@ -13,12 +13,13 @@ pub enum UnitCodeAdmission {
 
 /// The `unitCode` admission of one attribute family.
 ///
-/// Clauses 4.5.3 (Relationship), 4.5.18 (LanguageProperty), 4.5.20
-/// (VocabProperty) and 4.5.24 (JsonProperty) each state that `unitCode` shall
-/// never be present, and a ListRelationship is a list of relationship targets
+/// Clauses 4.5.3 (Relationship), 4.5.18 (`LanguageProperty`), 4.5.20
+/// (`VocabProperty`) and 4.5.24 (`JsonProperty`) each state that `unitCode` shall
+/// never be present, and a `ListRelationship` is a list of relationship targets
 /// under the same rule. Their values are not quantities: a unit on them names
 /// nothing the broker could store or render back, so the write is refused
 /// rather than silently stripped.
+#[must_use]
 pub const fn unit_code_admission(attribute_type: AttributeType) -> UnitCodeAdmission {
     match attribute_type {
         AttributeType::Property | AttributeType::GeoProperty | AttributeType::ListProperty => UnitCodeAdmission::Admitted,

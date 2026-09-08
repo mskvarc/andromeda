@@ -28,6 +28,7 @@ pub struct EntitySpecification<'spec> {
 
 impl<'spec> EntitySpecification<'spec> {
     /// The specification a subscription's `EntitySelector` (clause 5.2.33) is.
+    #[must_use]
     pub const fn from_selector(selector: &'spec EntitySelector) -> EntitySpecification<'spec> {
         EntitySpecification {
             type_selector: Some(&selector.type_),
@@ -39,6 +40,7 @@ impl<'spec> EntitySpecification<'spec> {
     /// Whether this specification matches one `EntityInfo` (clause 5.12): the
     /// type selector matches the registered type(s), and one of the five
     /// identifier conditions holds.
+    #[must_use]
     pub fn matches_entity_info(&self, info: &EntityInfo) -> bool {
         let type_matches = self.type_selector.is_none_or(|selector| selector.matches(info.type_.names()));
         type_matches && self.identifier_axis_matches(info)
@@ -78,6 +80,7 @@ pub struct RegistrationMatchSpecification<'spec> {
 impl RegistrationMatchSpecification<'_> {
     /// Whether one `RegistrationInfo` matches (clause 5.12): the entity axis and
     /// the attribute axis both hold on the same element.
+    #[must_use]
     pub fn matches_information(&self, info: &RegistrationInfo) -> bool {
         self.entity_axis_matches(info) && self.attribute_axis_matches(info)
     }

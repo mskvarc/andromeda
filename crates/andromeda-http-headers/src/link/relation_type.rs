@@ -1,4 +1,4 @@
-//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-FileCopyrightText: 2014-2025 Sean `McArthur`
 //! SPDX-License-Identifier: MIT
 //!
 //! Link relation types (RFC 8288 section 2.1).
@@ -52,11 +52,13 @@ pub struct RelationTypeParseError;
 
 impl RelationType {
     /// The JSON-LD context relation type.
+    #[must_use]
     pub fn jsonld_context() -> RelationType {
         RelationType::ExtRelType(IriRefBuf::from(*JSONLD_CONTEXT_REL.as_iri_ref()))
     }
 
     /// Whether this is the JSON-LD context relation type.
+    #[must_use]
     pub fn is_jsonld_context(&self) -> bool {
         matches!(self, RelationType::ExtRelType(uri) if uri == JSONLD_CONTEXT_REL.as_str())
     }

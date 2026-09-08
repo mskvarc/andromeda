@@ -20,16 +20,19 @@ pub struct SideEffectJobId(Uuid);
 
 impl SideEffectJobId {
     /// Mint the identity of a job that is about to be enqueued.
+    #[must_use]
     pub fn mint() -> SideEffectJobId {
         SideEffectJobId(uuid_v7_clock::mint())
     }
 
     /// Reconstruct the identity of a job read back from the queue.
+    #[must_use]
     pub const fn from_uuid(value: Uuid) -> SideEffectJobId {
         SideEffectJobId(value)
     }
 
     /// Return the persistence representation.
+    #[must_use]
     pub const fn as_uuid(self) -> Uuid {
         self.0
     }

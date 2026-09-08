@@ -221,11 +221,13 @@ where
     }
 
     /// Compose an isolated identifier for any participating broker.
+    #[must_use]
     pub fn id(&self, local: &str) -> String {
         format!("{}:{local}", self.identifiers.prefix())
     }
 
     /// Borrow the prefix used by this topology's cleanup.
+    #[must_use]
     pub fn id_prefix(&self) -> &str {
         self.identifiers.prefix().as_str()
     }

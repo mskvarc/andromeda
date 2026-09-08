@@ -15,11 +15,13 @@ pub struct SnapshotRepository {
 
 impl SnapshotRepository {
     /// Create a new snapshot repository backed by the given connection pool.
+    #[must_use]
     pub fn new(pool: &PgPool) -> SnapshotRepository {
         SnapshotRepository { pool: pool.clone() } // clone: Arc ref-count bump
     }
 
     /// Borrow the pool for trait impls defined outside this crate.
+    #[must_use]
     pub const fn pool(&self) -> &PgPool {
         &self.pool
     }

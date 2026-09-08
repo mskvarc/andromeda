@@ -23,6 +23,7 @@ pub struct PayloadProfile(pub Option<SpecVersion>);
 
 impl PayloadProfile {
     /// The announced version, if any.
+    #[must_use]
     pub const fn version(self) -> Option<SpecVersion> {
         self.0
     }

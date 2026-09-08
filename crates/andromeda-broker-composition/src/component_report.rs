@@ -60,6 +60,6 @@ mod tests {
     #[test]
     fn andromeda_report_uses_build_constants() {
         assert!(matches!(andromeda_report(), ComponentReport::Andromeda { .. }));
-        assert!(!build::BUILD_TIME_3339.is_empty());
+        assert_ne!(build::BUILD_TIME_3339, "");
     }
 }

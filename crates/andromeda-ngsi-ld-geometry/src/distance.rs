@@ -16,11 +16,13 @@ const EARTH_RADIUS_M: f64 = 6_371_008.8;
 /// distance to anything from a geometry that is nowhere — this used to default
 /// to latitude 0, longitude 0, which put such a geometry in the Gulf of Guinea
 /// and let `near;maxDistance` match it.
+#[must_use]
 pub fn haversine_distance_m(a: &GeoGeometry<f64>, b: &GeoGeometry<f64>) -> Option<f64> {
     Some(haversine_point_distance_m(&a.centroid()?, &b.centroid()?))
 }
 
 /// Compute the great-circle distance in metres between two points.
+#[must_use]
 pub fn haversine_point_distance_m(a: &Point<f64>, b: &Point<f64>) -> f64 {
     let (lat1, lon1) = (a.y().to_radians(), a.x().to_radians());
     let (lat2, lon2) = (b.y().to_radians(), b.x().to_radians());
@@ -49,6 +51,7 @@ pub fn haversine_point_distance_m(a: &Point<f64>, b: &Point<f64>) -> f64 {
 /// clamped so the box only ever widens — an edge that would wrap (past a pole or
 /// the antimeridian) leaves that side unchanged, and the whole-partition rescue
 /// in the subscription index still catches anything such a wrap would miss.
+#[must_use]
 pub fn grow_lonlat_bounds_metres(min: [f64; 2], max: [f64; 2], metres: f64) -> ([f64; 2], [f64; 2]) {
     // A degree of longitude is shortest — so the grow in degrees is widest — at
     // the latitude furthest from the equator; use it for both east and west.
@@ -68,7 +71,7 @@ mod tests {
     fn haversine_zero_for_identical_points() {
         let p = GeoGeometry::Point(Point::new(2.3522, 48.8566));
         let d = haversine_distance_m(&p, &p).expect("a point is its own centroid");
-        assert!(d.abs() < 1e-6, "expected ~0, got {}", d);
+        assert!(d.abs() < 1e-6, "expected ~0, got {d}");
     }
 
     #[test]
@@ -77,7 +80,7 @@ mod tests {
         let london = GeoGeometry::Point(Point::new(-0.1276, 51.5074));
         let d = haversine_distance_m(&paris, &london).expect("both points have centroids");
         // Known distance ~344 km; allow 1% tolerance.
-        assert!((d - 344_000.0).abs() < 3_500.0, "expected ~344km, got {} m", d);
+        assert!((d - 344_000.0).abs() < 3_500.0, "expected ~344km, got {d} m");
     }
 
     #[test]

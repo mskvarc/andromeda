@@ -1,4 +1,4 @@
-//! Content negotiation on the EntityMap resource (NGSI-LD 6.3.5).
+//! Content negotiation on the `EntityMap` resource (NGSI-LD 6.3.5).
 
 use crate::{clean_database, cleanup_entity_map, client, create_entity_map_from_get, delete_entity, get_entity_map, setup_single_vehicle, unique_id};
 use reqwest::StatusCode;

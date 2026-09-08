@@ -229,7 +229,7 @@ mod tests {
             pagination: PaginationOutcome::Deferred,
         };
         let finished = finish_page(outcome, page(20, 10, CountPolicy::Emit)).expect("coherent outcome");
-        assert!(finished.rows.is_empty());
+        assert_eq!(finished.rows, [] as [serde_json::Value; 0]);
         pretty_assertions::assert_eq!(finished.total_count, Some(3));
     }
 

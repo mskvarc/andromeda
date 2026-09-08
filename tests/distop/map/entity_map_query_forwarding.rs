@@ -199,7 +199,7 @@ async fn emq_split_forward_strips_filters() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The forwarded query returns an EntityMap that the front broker folds in
+/// The forwarded query returns an `EntityMap` that the front broker folds in
 /// (clause 5.14.4). Confirms REQ-MAP-127.
 #[tokio::test]
 async fn emq_forwarded_query_returns_entity_map() {

@@ -160,7 +160,7 @@ fn id_node(id: Iri<&str>) -> Value {
     Value::Object(node)
 }
 
-/// Expand a GeoJSON geometry into the core context's expanded form.
+/// Expand a `GeoJSON` geometry into the core context's expanded form.
 fn expand_geometry(geometry: &Map<String, Value>) -> Option<Value> {
     let type_iri = compact_to_expanded(geometry.get("type")?.as_str()?)?;
 
@@ -182,7 +182,7 @@ fn expand_geometry(geometry: &Map<String, Value>) -> Option<Value> {
     Some(Value::Object(expanded))
 }
 
-/// Expand a GeoJSON coordinate structure into nested `@list` wrappers.
+/// Expand a `GeoJSON` coordinate structure into nested `@list` wrappers.
 fn expand_coordinates(value: &Value) -> Option<Value> {
     match value {
         Value::Array(items) => {
@@ -265,13 +265,10 @@ fn expand_metadata(key: &str, value: &Value, term_map: &BatchTermMap) -> Option<
         Value::String(text) => Some((iri, coerced_scalar(text, coercion, term_map)?)),
         // A coerced non-string has no expansion this walker can state, since
         // the coercion says how to read a lexical form.
-        Value::Number(_) | Value::Bool(_) => match coercion {
-            Some(_declared) => None,
-            None => {
-                let mut node = Map::with_capacity(1);
-                node.insert("@value".to_owned(), value.clone()); // clone: the source document is borrowed and stays valid
-                Some((iri, Value::Array(vec![Value::Object(node)])))
-            }
+        Value::Number(_) | Value::Bool(_) => if let Some(_declared) = coercion { None } else {
+            let mut node = Map::with_capacity(1);
+            node.insert("@value".to_owned(), value.clone()); // clone: the source document is borrowed and stays valid
+            Some((iri, Value::Array(vec![Value::Object(node)])))
         },
         // A nested sub-attribute is an attribute; the same walker applies.
         Value::Object(sub) => Some((iri, Value::Array(vec![expand_sub_attribute(sub, term_map)?]))),

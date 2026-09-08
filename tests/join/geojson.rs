@@ -8,7 +8,7 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
-/// A Building with two GeoProperties, so `geometryProperty` has a choice to
+/// A Building with two `GeoProperties`, so `geometryProperty` has a choice to
 /// make (clause 6.3.8).
 fn located_building(id: &str, longitude: f64) -> Value {
     json!({
@@ -20,7 +20,7 @@ fn located_building(id: &str, longitude: f64) -> Value {
     })
 }
 
-/// A Building with two GeoProperties and a Relationship to `target`.
+/// A Building with two `GeoProperties` and a Relationship to `target`.
 fn located_linked_building(id: &str, longitude: f64, target: &str) -> Value {
     json!({
         "id": id,
@@ -66,8 +66,8 @@ fn feature_for<'a>(body: &'a Value, id: &str) -> &'a Value {
     feature.expect("the feature was just asserted to be present")
 }
 
-/// Clause 6.4.3.2: a `join=flat` response is a collection, so its GeoJSON
-/// rendering is a FeatureCollection — on the query binding and on the
+/// Clause 6.4.3.2: a `join=flat` response is a collection, so its `GeoJSON`
+/// rendering is a `FeatureCollection` — on the query binding and on the
 /// single-entity retrieval alike, which the flat join also turns into a
 /// collection. Clause 6.3.8 `geometryProperty` selects the geometry on both.
 #[tokio::test]

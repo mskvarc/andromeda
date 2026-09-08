@@ -34,16 +34,19 @@ impl SchemaContract {
     /// they must, since one table cannot record two migrations under one
     /// version — so this floor is what tells a row of this set apart from a row
     /// of another one when the applied history is read back.
+    #[must_use]
     pub const fn first_version(&self) -> SchemaVersion {
         self.first_version
     }
 
     /// The stamped schema version.
+    #[must_use]
     pub const fn version(&self) -> SchemaVersion {
         self.version
     }
 
     /// The stamped migration-set digest.
+    #[must_use]
     pub const fn digest(&self) -> MigrationsDigest {
         self.digest
     }

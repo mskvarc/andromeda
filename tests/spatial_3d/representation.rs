@@ -1,7 +1,7 @@
 //! Altitude across the alternative representations (NGSI-LD 4.5.16, 6.3.15,
 //! 4.5.4, 4.5.19).
 //!
-//! GeoJSON, keyValues and concise representations all reshape an entity, and
+//! `GeoJSON`, keyValues and concise representations all reshape an entity, and
 //! none of them may drop an ordinate while doing so.
 
 use crate::fixtures::{assert_coordinates_eq, building_point_2d, building_point_3d, create, id_filter, location_coordinates};
@@ -12,7 +12,7 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
-/// Retrieves an entity as a GeoJSON Feature.
+/// Retrieves an entity as a `GeoJSON` Feature.
 async fn get_geojson(client: &TestClient, id: &str, query: &str) -> Value {
     let response = client
         .get_entity(id, query, "application/geo+json", Some(TEST_SUITE_CONTEXT))

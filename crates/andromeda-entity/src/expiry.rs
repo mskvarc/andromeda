@@ -74,6 +74,7 @@ pub struct EntityExpiryBatchSize(NonZeroU32);
 
 impl EntityExpiryBatchSize {
     /// Return the validated candidate limit.
+    #[must_use]
     pub const fn get(self) -> u32 {
         self.0.get()
     }
@@ -279,7 +280,7 @@ mod tests {
     #[test]
     fn vanished_and_superseded_entities_are_not_reported() -> Result<(), UriParseError> {
         let outcomes = vec![WriteOutcome::NotFound, WriteOutcome::Superseded];
-        assert!(landed_ids(identifiers(&["urn:ngsi-ld:A", "urn:ngsi-ld:B"])?, &outcomes).is_empty());
+        assert_eq!(landed_ids(identifiers(&["urn:ngsi-ld:A", "urn:ngsi-ld:B"])?, &outcomes), [] as [andromeda_ngsi_ld_lexicon::uri::Uri; 0]);
         Ok(())
     }
 

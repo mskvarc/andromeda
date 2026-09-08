@@ -21,11 +21,13 @@ impl SnapshotTarget {
     }
 
     /// Return the Snapshot-owned context space.
+    #[must_use]
     pub const fn space(&self) -> ContextSpace {
         self.space
     }
 
     /// Return the exact validated Snapshot URI.
+    #[must_use]
     pub const fn snapshot_id(&self) -> &Uri {
         &self.snapshot_id
     }

@@ -1,4 +1,4 @@
-//! The ListProperty attribute family (ETSI GS CIM 009 clause 5.2.36).
+//! The `ListProperty` attribute family (ETSI GS CIM 009 clause 5.2.36).
 
 use crate::attribute::{common_fields::CommonAttributeFields, value::NgsiLdValue};
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
@@ -6,7 +6,7 @@ use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
-/// NGSI-LD ListProperty representation (ETSI GS CIM 009 clause 5.2.36).
+/// NGSI-LD `ListProperty` representation (ETSI GS CIM 009 clause 5.2.36).
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]

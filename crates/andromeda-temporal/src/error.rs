@@ -111,6 +111,7 @@ impl TemporalError {
     }
 
     /// Whether this failure deliberately reports a missing temporal resource.
+    #[must_use]
     pub const fn is_not_found(&self) -> bool {
         matches!(self, TemporalError::NotFound { .. })
     }

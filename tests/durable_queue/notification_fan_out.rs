@@ -164,7 +164,7 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
             .event
             .changed_attributes
             .iter()
-            .map(|attribute| attribute.as_str())
+            .map(andromeda_ngsi_ld_lexicon::attribute_name::AttributeName::as_str)
             .collect::<Vec<&str>>(),
         vec![
             "https://uri.etsi.org/ngsi-ld/default-context/temperature",

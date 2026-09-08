@@ -94,6 +94,7 @@ pub const FORBIDDEN_PRODUCTION_DEPENDENCIES: &[&str] = &[
 ///
 /// Panics when `permitted` names a crate the production denylist does not
 /// contain: allowing a crate that was never forbidden is a silent no-op.
+#[must_use]
 pub fn forbidden_production_dependencies_except(permitted: &[&str]) -> Vec<&'static str> {
     for allowed in permitted {
         assert!(

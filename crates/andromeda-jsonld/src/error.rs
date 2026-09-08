@@ -139,6 +139,7 @@ impl JsonLdError {
     /// These variants carry the URL, status and reason a clause 5.5.2
     /// `LdContextNotAvailable` Problem Detail needs, so a caller can surface
     /// them directly instead of reporting an internal error.
+    #[must_use]
     pub const fn is_context_not_available(&self) -> bool {
         matches!(
             self,
@@ -151,6 +152,7 @@ impl JsonLdError {
     /// Decides whether falling back to core-only compaction is appropriate:
     /// a user context that redefines a protected core term is the one failure
     /// a retry without that context can fix.
+    #[must_use]
     pub const fn is_protected_term_error(error: &CompactError<LoaderError>) -> bool {
         match error {
             CompactError::ContextProcessing(processing) | CompactError::Expand(ExpandError::ContextProcessing(processing)) => {
@@ -170,10 +172,8 @@ impl JsonLdError {
                     false
                 }
             }
-            CompactError::Loading(_)
-            | CompactError::ContextLoading(_)
-            | CompactError::Expand(ExpandError::Loading(_))
-            | CompactError::Expand(ExpandError::ContextLoading(_)) => false,
+            CompactError::Loading(_) | CompactError::ContextLoading(_) |
+CompactError::Expand(ExpandError::Loading(_) | ExpandError::ContextLoading(_)) => false,
         }
     }
 }

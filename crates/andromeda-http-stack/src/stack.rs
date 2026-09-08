@@ -39,6 +39,7 @@ pub struct HttpStack {
 
 impl HttpStack {
     /// Construct an HTTP stack from its owner-defined configuration.
+    #[must_use]
     pub const fn new(config: HttpStackConfig) -> HttpStack {
         let request_body_limit = RequestBodyLimit::new(config.max_request_body_bytes);
         HttpStack { config, request_body_limit }

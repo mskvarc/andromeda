@@ -33,6 +33,7 @@ const UNLEASED: &str = "'-infinity'::timestamptz";
 /// and `lease_until` the column holding the current lease's expiry, null when
 /// no lease is held. Both are passed as expressions so a statement can name its
 /// own table alias.
+#[must_use]
 pub fn claimable_at(due: SimpleExpr, lease_until: SimpleExpr) -> SimpleExpr {
     Func::greatest([due, Func::coalesce([lease_until, Expr::cust(UNLEASED)]).into()]).into()
 }

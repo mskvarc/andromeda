@@ -1,16 +1,16 @@
-//! PostGIS EWKB, the binary form geometries take on the way in and out of the
+//! `PostGIS` EWKB, the binary form geometries take on the way in and out of the
 //! database.
 //!
 //! NGSI-LD says nothing about EWKB: ETSI GS CIM 009 v1.9.1 specifies
-//! GeoProperty values as GeoJSON per RFC 7946, and that is what
-//! [`Geometry`] models. EWKB is what PostGIS accepts natively
+//! `GeoProperty` values as `GeoJSON` per RFC 7946, and that is what
+//! [`Geometry`] models. EWKB is what `PostGIS` accepts natively
 //! on its binary protocol, so the encode and decode happen here and the store
 //! binds the buffer as `bytea`.
 //!
 //! The dialect is narrow and enforced: little-endian, XY or XYZ, never M, SRID
 //! 4326. Z is carried because RFC 7946 section 3.1.1 makes altitude an optional
-//! third ordinate of every position and PostGIS stores it natively; M has no
-//! meaning in GeoJSON at all, so a buffer carrying one is refused rather than
+//! third ordinate of every position and `PostGIS` stores it natively; M has no
+//! meaning in `GeoJSON` at all, so a buffer carrying one is refused rather than
 //! silently flattened. Which of XY and XYZ a geometry encodes as is decided by
 //! [`GeometryWalk`], per geometry rather than per position, because a WKB type
 //! word describes the whole geometry.
@@ -63,7 +63,7 @@ pub enum EwkbError {
         /// Length of the rejected buffer.
         length: usize,
     },
-    /// The buffer is big-endian. PostGIS emits little-endian and the canonical
+    /// The buffer is big-endian. `PostGIS` emits little-endian and the canonical
     /// dialect here is little-endian only.
     #[error("EWKB buffer is not little-endian (byte order marker {marker:#04x})")]
     NotLittleEndian {
@@ -99,7 +99,7 @@ pub fn encode(geometry: &Geometry) -> Result<Ewkb, EwkbError> {
     Ewkb::try_from(geometry)
 }
 
-/// A geometry in PostGIS EWKB: little-endian, XY or XYZ, never M, SRID 4326.
+/// A geometry in `PostGIS` EWKB: little-endian, XY or XYZ, never M, SRID 4326.
 ///
 /// Constructed only by encoding a [`Geometry`] or by validating bytes that came
 /// back from a `geometry` column, so the dialect is an enforced invariant
@@ -110,7 +110,7 @@ pub struct Ewkb(Bytes);
 impl Ewkb {
     /// Borrow the raw EWKB buffer.
     ///
-    /// This is what the store binds: PostgreSQL `bytea`, projected to PostGIS
+    /// This is what the store binds: PostgreSQL `bytea`, projected to `PostGIS`
     /// `geometry` by `ST_GeomFromEWKB($n)`. The SRID is already embedded, so no
     /// `ST_SetSRID` wrap is needed, and binding as `bytea` avoids a runtime
     /// `pg_type` OID lookup.
@@ -152,7 +152,7 @@ impl TryFrom<&[u8]> for Ewkb {
 
     /// Validate that `bytes` really are canonical-dialect EWKB.
     ///
-    /// PostGIS returns `geometry` columns in this exact form, but a `bytea`
+    /// `PostGIS` returns `geometry` columns in this exact form, but a `bytea`
     /// column can hold anything, so the dialect is checked rather than assumed.
     fn try_from(bytes: &[u8]) -> Result<Ewkb, EwkbError> {
         let Some(header) = bytes.get(..MIN_EWKB_LEN) else {

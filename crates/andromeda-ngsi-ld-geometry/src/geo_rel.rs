@@ -21,7 +21,7 @@ pub enum GeoRelParseError {
     },
     /// A `maxDistance` / `minDistance` modifier parsed to a non-finite number
     /// (`NaN` or an infinity). Clause 4.10 gives these no meaning, and left
-    /// unchecked they reach PostGIS as bare identifiers rather than a distance,
+    /// unchecked they reach `PostGIS` as bare identifiers rather than a distance,
     /// turning a malformed request into a statement that errors at execution.
     #[error("non-finite georel distance: {value}")]
     NonFiniteDistance {

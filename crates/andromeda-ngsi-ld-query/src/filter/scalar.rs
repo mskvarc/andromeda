@@ -126,6 +126,7 @@ impl Scalar {
     /// binding, so a filter that round-trips through the query string and a
     /// filter that reaches a store carry the same literal by construction.
     /// Temporal operands render in RFC 3339 UTC form.
+    #[must_use]
     pub fn literal_text(&self) -> String {
         match self {
             Scalar::Number(number) => number.to_string(),

@@ -51,6 +51,7 @@ pub struct EntityRenderer<'a> {
 
 impl<'a> EntityRenderer<'a> {
     /// Create a new renderer for the given entity in [`ResponseFormat::Normalized`] mode.
+    #[must_use]
     pub const fn new(entity: &'a Entity) -> EntityRenderer<'a> {
         EntityRenderer {
             entity,
@@ -66,18 +67,21 @@ impl<'a> EntityRenderer<'a> {
     ///
     /// Takes an `Option` so a caller that may or may not have negotiated a
     /// language has one spelling to reach for; `None` leaves the filter unset.
+    #[must_use]
     pub const fn with_optional_language_filter(mut self, filter: Option<&'a LanguageFilter>) -> Self {
         self.language_filter = filter;
         self
     }
 
     /// Set linked entities for `join=inline` expansion (NGSI-LD clause 4.5.23).
+    #[must_use]
     pub const fn with_inline_linked_entities(mut self, linked: &'a IndexMap<Uri, Entity>) -> Self {
         self.inline_linked_entities = Some(linked);
         self
     }
 
     /// Set the output representation mode.
+    #[must_use]
     pub const fn with_mode(mut self, mode: ResponseFormat) -> Self {
         self.mode = mode;
         self
@@ -88,6 +92,7 @@ impl<'a> EntityRenderer<'a> {
     ///
     /// Takes an `Option` so a caller that may or may not have compiled a
     /// projection has one spelling to reach for; `None` prunes nothing.
+    #[must_use]
     pub const fn with_optional_structural_projection(mut self, projection: Option<&'a Projection>) -> Self {
         self.structural_projection = projection;
         self
@@ -98,6 +103,7 @@ impl<'a> EntityRenderer<'a> {
     ///
     /// Takes an `Option` so a caller that may or may not have a projection has
     /// one spelling to reach for; `None` narrows nothing.
+    #[must_use]
     pub const fn with_optional_linked_projection(mut self, projection: Option<LinkedProjection<'a>>) -> Self {
         self.linked_projection = projection;
         self
@@ -146,7 +152,7 @@ pub fn render_flat_join<'a>(
     rendered_roots.chain(rendered_linked).collect()
 }
 
-impl<'a> EntityRenderer<'a> {
+impl EntityRenderer<'_> {
     /// Execute the full rendering pipeline and return the JSON value.
     ///
     /// Pipeline order:

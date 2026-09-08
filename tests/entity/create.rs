@@ -1,13 +1,13 @@
 //! Entity creation tests.
 //!
 //! Tests entity creation operations covering:
-//! - Valid entity creation (minimal, with properties, relationships, GeoProperty)
+//! - Valid entity creation (minimal, with properties, relationships, `GeoProperty`)
 //! - Invalid payloads (malformed JSON, empty, missing context)
 //! - Duplicate entity ID handling
 //! - Content-Type and Link header combinations
-//! - LanguageProperty, JsonProperty, VocabProperty
+//! - `LanguageProperty`, `JsonProperty`, `VocabProperty`
 //! - Scope property
-//! - observationSpace/operationSpace GeoProperty
+//! - observationSpace/operationSpace `GeoProperty`
 
 use crate::{
     TEST_SUITE_CONTEXT,

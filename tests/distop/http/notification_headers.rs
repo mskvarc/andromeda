@@ -1,5 +1,5 @@
-//! CSourceNotification dispatch binding (clause 6.3.9): a matching Context Source
-//! Registration triggers a `ContextSourceNotification` POSTed to the csource
+//! `CSourceNotification` dispatch binding (clause 6.3.9): a matching Context Source
+//! Registration triggers a `ContextSourceNotification` `POSTed` to the csource
 //! subscription's `endpoint.uri`, with the MIME type driven by `endpoint.accept`
 //! (`application/json` default, `application/ld+json` opt-in), a JSON-LD `Link`
 //! header on the JSON target, and one custom header per `receiverInfo` entry.
@@ -42,7 +42,7 @@ fn csource_subscription(id: &str, notification_endpoint: Value) -> Value {
     })
 }
 
-/// A CSourceNotification is POSTed to the subscription's `endpoint.uri`
+/// A `CSourceNotification` is `POSTed` to the subscription's `endpoint.uri`
 /// (clause 6.3.9). Confirms REQ-HTTP-4.
 #[tokio::test]
 async fn dist_http_csource_notification_posted_to_endpoint_uri() {

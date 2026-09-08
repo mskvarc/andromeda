@@ -15,6 +15,7 @@ use chrono::{DateTime, Duration, Utc};
 /// Fractional-second throttling values are converted into nanoseconds before
 /// building the [`Duration`], so sub-second throttling (e.g. `0.5`) stays
 /// precise.
+#[must_use]
 pub fn ceiling_for_throttle(now: DateTime<Utc>, throttling_secs: Option<f64>) -> Option<DateTime<Utc>> {
     let secs = throttling_secs?;
     if !secs.is_finite() || secs <= 0.0 {

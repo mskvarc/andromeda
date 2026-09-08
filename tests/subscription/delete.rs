@@ -65,7 +65,7 @@ async fn subscription_delete_existing_id_returns_no_content_and_removes_subscrip
     let (status, body_bytes) = delete_subscription(&http_client, &subscription_id).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
-    assert!(body_bytes.is_empty());
+    assert_eq!(body_bytes, [] as [u8; 0]);
 
     let (status, _) = retrieve_subscription(&http_client, &subscription_id, false).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);

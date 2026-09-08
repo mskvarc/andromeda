@@ -130,6 +130,7 @@ pub async fn delete_csource_subscription(client: &Client, subscription_id: &str)
     (status, body)
 }
 
+#[must_use]
 pub fn csource_subscription_payload(id: &str) -> Value {
     json!({
         "id": id,
@@ -150,18 +151,21 @@ pub fn csource_subscription_payload(id: &str) -> Value {
     })
 }
 
+#[must_use]
 pub fn inactive_csource_subscription_payload(id: &str) -> Value {
     let mut payload = csource_subscription_payload(id);
     payload["isActive"] = Value::Bool(false);
     payload
 }
 
+#[must_use]
 pub fn expires_at_csource_subscription_payload(id: &str, expires_at: &str) -> Value {
     let mut payload = csource_subscription_payload(id);
     payload["expiresAt"] = Value::String(expires_at.to_owned());
     payload
 }
 
+#[must_use]
 pub fn csource_subscription_without_notification_payload(id: &str) -> Value {
     json!({
         "id": id,
@@ -175,24 +179,28 @@ pub fn csource_subscription_without_notification_payload(id: &str) -> Value {
     })
 }
 
+#[must_use]
 pub fn invalid_type_csource_subscription_payload(id: &str) -> Value {
     let mut payload = csource_subscription_payload(id);
     payload["type"] = Value::String("RandomType".to_owned());
     payload
 }
 
+#[must_use]
 pub fn invalid_query_csource_subscription_payload(id: &str) -> Value {
     let mut payload = csource_subscription_payload(id);
     payload["q"] = Value::String("invalidQuery".to_owned());
     payload
 }
 
+#[must_use]
 pub fn empty_watched_attributes_csource_subscription_payload(id: &str) -> Value {
     let mut payload = csource_subscription_payload(id);
     payload["watchedAttributes"] = Value::Array(Vec::new());
     payload
 }
 
+#[must_use]
 pub fn update_notification_fragment() -> Value {
     json!({
         "notification": {
@@ -205,6 +213,7 @@ pub fn update_notification_fragment() -> Value {
     })
 }
 
+#[must_use]
 pub fn update_invalid_type_fragment() -> Value {
     json!({
         "type": Value::Null,
@@ -218,6 +227,7 @@ pub fn update_invalid_type_fragment() -> Value {
     })
 }
 
+#[must_use]
 pub fn update_invalid_notification_fragment() -> Value {
     json!({
         "notification": {
@@ -226,6 +236,7 @@ pub fn update_invalid_notification_fragment() -> Value {
     })
 }
 
+#[must_use]
 pub fn update_entities_vehicle_fragment() -> Value {
     json!({
         "entities": [

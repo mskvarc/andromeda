@@ -20,6 +20,7 @@ use serde_json::Value;
 
 /// Whether a change to `registration` notifies `sub`: the subscription is
 /// active, unexpired and change-driven, and the registration matches it.
+#[must_use]
 pub fn matches_csource_subscription(sub: &CompiledCsrSubscription, registration: &ContextSourceRegistration) -> bool {
     if sub.status != SubscriptionStatus::Active {
         return false;
@@ -93,7 +94,7 @@ fn geo_query_admits(geo_q: Option<&GeoQuery>, registration: &ContextSourceRegist
 
 /// The registration geometry a `geoQ` names (Table 5.2.9-1): `observationSpace`
 /// or `operationSpace` when the geoproperty is one of them, `location` for
-/// every other GeoProperty including the clause 5.11.2.4 default.
+/// every other `GeoProperty` including the clause 5.11.2.4 default.
 fn registration_geometry<'registration>(geo_q: &GeoQuery, registration: &'registration ContextSourceRegistration) -> Option<&'registration Value> {
     let geoproperty = geo_q.geoproperty.as_str();
     if geoproperty == OBSERVATION_SPACE.as_str() {

@@ -35,6 +35,7 @@ impl IcuCollation {
     }
 
     /// The collation identifier (a BCP47 language tag).
+    #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }

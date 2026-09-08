@@ -7,6 +7,7 @@ use sea_query::SimpleExpr;
 ///
 /// The pattern is cast to `lquery` so the `~` operator resolves to the `ltree`
 /// match rather than to POSIX regex, which shares the same token.
+#[must_use]
 pub fn ltree_matches(col: SimpleExpr, lquery: SimpleExpr) -> SimpleExpr {
     col.posix_matches(cast(lquery, PostgresType::Lquery))
 }

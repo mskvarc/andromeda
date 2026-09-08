@@ -18,6 +18,7 @@ pub enum EntityMutation {
 
 impl EntityMutation {
     /// Return the entity state written by an insert or update.
+    #[must_use]
     pub const fn record(&self) -> Option<&EntityRecord> {
         match self {
             EntityMutation::Insert(record) | EntityMutation::Update(record) => Some(record),

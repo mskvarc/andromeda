@@ -16,6 +16,7 @@ struct Now;
 ///
 /// Every row a set-write touches reads the same value, since it is fixed for the
 /// transaction rather than re-evaluated per row.
+#[must_use]
 pub fn now() -> SimpleExpr {
     Func::cust(Now).into()
 }

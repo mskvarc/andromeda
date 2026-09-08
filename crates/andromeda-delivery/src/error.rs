@@ -96,6 +96,7 @@ impl TransportError {
     /// same way on every attempt, so retrying only wastes the budget. A client
     /// that could not be built is a startup misconfiguration, not a per-delivery
     /// condition, so it is likewise not retryable.
+    #[must_use]
     pub const fn is_retryable(&self) -> bool {
         match self {
             TransportError::ConnectionFailed { .. }

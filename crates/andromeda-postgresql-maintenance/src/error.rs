@@ -30,7 +30,7 @@ pub enum MaintenanceError {
         /// Unsigned value returned by PostgreSQL.
         value: u64,
     },
-    /// SeaQuery rejected an internally assembled statement.
+    /// `SeaQuery` rejected an internally assembled statement.
     #[error("PostgreSQL maintenance statement assembly failed: {0}")]
     Statement(#[from] SeaQueryError),
     /// The platform registry contains an invalid tenant name.

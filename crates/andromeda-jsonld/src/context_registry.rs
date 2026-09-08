@@ -19,6 +19,7 @@ pub struct ContextRegistry {
 
 impl ContextRegistry {
     /// An empty registry.
+    #[must_use]
     pub fn new() -> ContextRegistry {
         ContextRegistry::default()
     }
@@ -36,6 +37,7 @@ impl ContextRegistry {
     }
 
     /// The document registered for a URL, if there is one.
+    #[must_use]
     pub fn get(&self, url: &IriBuf) -> Option<Arc<jsonld_syntax::Value>> {
         self.contexts.get(url).map(|entry| Arc::clone(entry.value()))
     }

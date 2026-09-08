@@ -145,7 +145,7 @@ struct ScopeHistoryBinds<'a> {
 }
 
 /// Spread one scope-history batch into its column-major binds.
-fn scope_history_binds<'a>(entries: &'a [ScopeHistoryEntry]) -> Result<ScopeHistoryBinds<'a>, TemporalStoreError> {
+fn scope_history_binds(entries: &[ScopeHistoryEntry]) -> Result<ScopeHistoryBinds<'_>, TemporalStoreError> {
     let mut binds = ScopeHistoryBinds {
         recorded_ats: Vec::with_capacity(entries.len()),
         entity_ids: Vec::with_capacity(entries.len()),

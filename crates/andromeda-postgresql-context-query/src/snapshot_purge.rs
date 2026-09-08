@@ -11,6 +11,7 @@ use sea_query::{BinOper, Condition, Expr as SeaExpr, ExprTrait, Query, SelectSta
 /// resource, and turning those members into columns is a property of this
 /// schema rather than of the resource — which is where the mapping used to
 /// live, on the resource's own enum in the specification model crate.
+#[must_use]
 pub fn build_match_query(filter: &SnapshotPurgeFilter) -> SelectStatement {
     let mut condition = match filter.conjunction {
         Conjunction::And => Condition::all(),

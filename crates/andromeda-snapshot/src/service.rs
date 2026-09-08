@@ -352,7 +352,7 @@ impl SnapshotService {
 /// Outcome of [`SnapshotService::purge_by_query`] (ETSI GS CIM 009 clause 6.36.3.2).
 #[derive(Debug)]
 pub enum PurgeOutcome {
-    /// No snapshots matched the filter (maps to 404 ResourceNotFound).
+    /// No snapshots matched the filter (maps to 404 `ResourceNotFound`).
     NoMatch,
     /// Every matched snapshot was deleted (maps to 204 No Content).
     FullSuccess,

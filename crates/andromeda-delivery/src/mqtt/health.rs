@@ -56,6 +56,7 @@ pub struct HealthCell(AtomicU8);
 
 impl HealthCell {
     /// A cell holding the given health.
+    #[must_use]
     pub const fn new(health: ConnectionHealth) -> HealthCell {
         HealthCell(AtomicU8::new(health.as_bits()))
     }

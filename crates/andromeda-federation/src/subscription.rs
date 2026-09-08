@@ -101,6 +101,7 @@ impl ForwardedSubscription {
     }
 
     /// Whether the source completed the operation.
+    #[must_use]
     pub const fn succeeded(&self) -> bool {
         matches!(self.outcome, Some(ForwardedWriteOutcome::Completed { .. }))
     }

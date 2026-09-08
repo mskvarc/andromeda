@@ -8,6 +8,7 @@ pub struct ContextSpaceKey(i64);
 
 impl ContextSpaceKey {
     /// Return the database representation.
+    #[must_use]
     pub const fn as_i64(self) -> i64 {
         self.0
     }

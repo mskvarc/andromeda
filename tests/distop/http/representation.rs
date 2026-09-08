@@ -1,6 +1,6 @@
 //! Representation and format negotiation (clause 6.3.7, 6.3.8, 4.5.16): the
 //! simplified `keyValues` form, the normalized default forwarded to sources, the
-//! GeoJSON `Feature`/`FeatureCollection` forms, the `501` on an unsupported
+//! `GeoJSON` `Feature`/`FeatureCollection` forms, the `501` on an unsupported
 //! forwarded representation, the `203 Preference-Applied` version-amendment
 //! responses driven by a `Prefer: ngsi-ld=<version>` request header, and the
 //! profile `Link` version hint of clause 6.3.21.
@@ -24,7 +24,7 @@ const PREFER_PREVIOUS_VERSION: &str = "ngsi-ld=1.8";
 /// `<https://uri.etsi.org/ngsi-ld/profile/version>` form of clause 6.3.21.
 const PROFILE_LINK_PREVIOUS_VERSION: &str = "<https://uri.etsi.org/ngsi-ld/profile/1.8>; rel=\"profile\"";
 
-/// A location GeoProperty node for a `Vehicle`, so GeoJSON rendering has a
+/// A location `GeoProperty` node for a `Vehicle`, so `GeoJSON` rendering has a
 /// geometry to project.
 fn located_vehicle(id: &str) -> serde_json::Value {
     entity(
@@ -150,7 +150,7 @@ async fn dist_http_forwarded_query_unsupported_representation_returns_501() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A GeoJSON `Accept` on a query returns a `FeatureCollection` (clause 6.3.7).
+/// A `GeoJSON` `Accept` on a query returns a `FeatureCollection` (clause 6.3.7).
 /// Confirms REQ-HTTP-56.
 #[tokio::test]
 async fn dist_http_query_geojson_accept_returns_feature_collection() {
@@ -184,7 +184,7 @@ async fn dist_http_query_geojson_accept_returns_feature_collection() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A GeoJSON `Accept` on a retrieve returns a `Feature` (clause 6.3.7).
+/// A `GeoJSON` `Accept` on a retrieve returns a `Feature` (clause 6.3.7).
 /// Confirms REQ-HTTP-67.
 #[tokio::test]
 async fn dist_http_retrieve_geojson_accept_returns_feature() {
@@ -261,7 +261,7 @@ async fn dist_http_query_version_amended_returns_203_preference_applied() {
 
 /// A retrieve carrying `Prefer: ngsi-ld=1.8` is amended to that version and
 /// answers `203` with `Preference-Applied` (clause 5.7.1.4: "If the Prefer
-/// Header [26] is set to "ngsi-ld=<version>" then the ContextBroker shall
+/// Header [26] is set to "ngsi-ld=<version>" then the `ContextBroker` shall
 /// endeavour to amend the JSON-LD object to conform to the specified version of
 /// the NGSI-LD specification as mandated in clause 4.3.6.8, and return a
 /// Preference-Applied Header set to "ngsi-ld=<conformant-version>" in the

@@ -17,7 +17,7 @@ pub struct MergeOptions<'a> {
     /// may not change any of them.
     pub representation: MergeRepresentation,
     /// The `languageMap` key a string merged into a pre-existing
-    /// LanguageProperty updates.
+    /// `LanguageProperty` updates.
     pub lang: Option<&'a LangTagBuf>,
     /// The `observedAt` a merged instance takes when the fragment names none
     /// and the instance it merges into previously carried one.

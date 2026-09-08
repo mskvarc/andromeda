@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_vocabulary::compact::properties;
 /// All three of `georel`, `geometry`, `coordinates` must be present together or
 /// all absent (clause 4.10). `geoproperty` defaults to `location`.
 ///
-/// `geometry` and `coordinates` are the two halves of one GeoJSON geometry
+/// `geometry` and `coordinates` are the two halves of one `GeoJSON` geometry
 /// object (clause 4.10, IETF RFC 7946), so they are rejoined and parsed here.
 pub async fn compile_geo_query(input: Option<&GeoQueryInput>, expander: &impl TermExpander) -> Result<Option<GeoQuery>, QueryError> {
     let Some(input) = input else {

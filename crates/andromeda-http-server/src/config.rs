@@ -43,6 +43,7 @@ impl ServerConfig {
     }
 
     /// Return the configured graceful-drain deadline.
+    #[must_use]
     pub const fn graceful_drain_deadline(&self) -> Duration {
         Duration::from_secs(self.graceful_drain_secs)
     }

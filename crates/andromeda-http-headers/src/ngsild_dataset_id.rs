@@ -17,6 +17,7 @@ pub struct NgsiLdDatasetId(Vec<DatasetSelector>);
 
 impl NgsiLdDatasetId {
     /// Return dataset identifiers as parsed URI/default selectors.
+    #[must_use]
     pub fn as_slice(&self) -> &[DatasetSelector] {
         &self.0
     }

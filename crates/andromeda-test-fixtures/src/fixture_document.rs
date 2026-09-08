@@ -23,6 +23,7 @@ impl JsonPointer {
     }
 
     /// Borrow the encoded pointer.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.value
     }
@@ -66,6 +67,7 @@ impl FixtureDocument {
     }
 
     /// Consume the document and return its JSON value.
+    #[must_use]
     pub fn into_value(self) -> Value {
         self.value
     }

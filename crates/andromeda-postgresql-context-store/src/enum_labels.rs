@@ -166,6 +166,6 @@ mod tests {
         // reader would otherwise be untested until one does.
         let migration = "ALTER TYPE csr_status ADD VALUE IF NOT EXISTS 'degraded';\nALTER TYPE csr_status ADD VALUE 'unknown';\n";
         assert_eq!(added_labels(migration, "csr_status"), vec!["degraded".to_string(), "unknown".to_string()]);
-        assert!(added_labels(migration, "snapshot_status").is_empty());
+        assert_eq!(added_labels(migration, "snapshot_status"), [] as [std::string::String; 0]);
     }
 }

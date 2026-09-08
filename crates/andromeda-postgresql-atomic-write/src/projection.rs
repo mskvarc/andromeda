@@ -197,7 +197,7 @@ mod tests {
         let intent = intent(vec![observation(TemporalValue::Number(JsonNumber::from(42)))]);
         collect(&mut work, &intent, entity_key(), &dictionary()).expect("a projectable observation");
         pretty_assertions::assert_eq!(work.upserts.len(), 1);
-        assert!(work.removals.is_empty());
+        assert_eq!(work.removals, [] as [andromeda_postgresql_context_store::current_attribute_values::row::ProjectedAttributeKey; 0]);
         pretty_assertions::assert_eq!(work.upserts[0].value.kind(), ValueKind::Number);
         pretty_assertions::assert_eq!(work.upserts[0].key.attribute_name_id, AttributeNameId::from(7));
     }
@@ -243,7 +243,7 @@ mod tests {
         ];
         collect(&mut work, &intent(entries), entity_key(), &dictionary()).expect("a scope entry");
         assert!(work.upserts.is_empty());
-        assert!(work.removals.is_empty());
+        assert_eq!(work.removals, [] as [andromeda_postgresql_context_store::current_attribute_values::row::ProjectedAttributeKey; 0]);
     }
 
     #[test]

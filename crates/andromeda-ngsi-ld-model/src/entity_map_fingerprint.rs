@@ -1,7 +1,7 @@
-//! The broker-internal record of the request that created an EntityMap.
+//! The broker-internal record of the request that created an `EntityMap`.
 //!
-//! Clause 5.5.14: "Subsequent requests referencing an EntityMap shall use the
-//! same parameters as in the original request that created the EntityMap,
+//! Clause 5.5.14: "Subsequent requests referencing an `EntityMap` shall use the
+//! same parameters as in the original request that created the `EntityMap`,
 //! except for the specification of Entity identifiers or parameters related
 //! to pagination, or, in the case of temporal requests, the temporal query."
 //! Enforcing that needs the creating request remembered beside the map, as
@@ -12,11 +12,11 @@ use std::str::FromStr;
 use strum::{Display, EnumString};
 use thiserror::Error;
 
-/// The operation that created an EntityMap (clause 5.5.14 lists the four).
+/// The operation that created an `EntityMap` (clause 5.5.14 lists the four).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString)]
 #[strum(serialize_all = "kebab-case")]
 pub enum MapRequestKind {
-    /// Query Entities (clause 5.7.2) or Create EntityMap for Query Entities (clause 5.14.4).
+    /// Query Entities (clause 5.7.2) or Create `EntityMap` for Query Entities (clause 5.14.4).
     QueryEntities,
     /// Retrieve Entity (clause 5.7.1).
     RetrieveEntity,
@@ -52,16 +52,19 @@ pub struct RequestFingerprint {
 
 impl RequestFingerprint {
     /// A fingerprint of `kind` over an already computed digest.
+    #[must_use]
     pub const fn new(kind: MapRequestKind, digest: [u8; 32]) -> RequestFingerprint {
         RequestFingerprint { kind, digest }
     }
 
     /// The operation that created the map.
+    #[must_use]
     pub const fn kind(&self) -> MapRequestKind {
         self.kind
     }
 
     /// Compare a follow-up request's fingerprint with the creating one.
+    #[must_use]
     pub fn compare(&self, follow_up: &RequestFingerprint) -> RequestComparison {
         if self.kind != follow_up.kind {
             RequestComparison::DifferentOperation

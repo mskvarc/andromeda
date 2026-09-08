@@ -1,14 +1,14 @@
-//! The relations an EntityMap occupies (clauses 5.2.39 and 5.5.14).
+//! The relations an `EntityMap` occupies (clauses 5.2.39 and 5.5.14).
 //!
 //! An `entity_maps` row is the map's control record; `entity_map_entries` holds
-//! one row per (entity, source) and `entity_map_links` the EntityMap each
+//! one row per (entity, source) and `entity_map_links` the `EntityMap` each
 //! contributing context source created. The surrogate `map_key` is never
 //! rendered: every statement that starts from the map's URI resolves it with a
 //! scalar subquery on the unique `id`.
 
 use sea_query::Iden;
 
-/// The `entity_maps` table - one control record per EntityMap.
+/// The `entity_maps` table - one control record per `EntityMap`.
 #[derive(Iden, Clone, Copy)]
 pub enum EntityMaps {
     /// Table name: `entity_maps`
@@ -51,7 +51,7 @@ pub enum EntityMapLinks {
     MapKey,
     /// The contributing registration's URI identifier.
     RegistrationId,
-    /// The EntityMap the context source created for the same query.
+    /// The `EntityMap` the context source created for the same query.
     LinkedMapId,
 }
 

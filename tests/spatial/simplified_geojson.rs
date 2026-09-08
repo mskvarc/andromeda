@@ -1,7 +1,7 @@
 //! Simplified-GeoJSON rendering tests (NGSI-LD 4.5.17).
 //!
 //! `options=keyValues` combined with `Accept: application/geo+json` must
-//! produce a FeatureCollection whose `properties` are flattened
+//! produce a `FeatureCollection` whose `properties` are flattened
 //! key-value pairs, not the normalized Property objects.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]

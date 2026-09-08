@@ -47,13 +47,10 @@ pub fn merge_entity(entity: &mut Value, patch: &Value, default_observed_at: Opti
             continue;
         }
 
-        let patch_instances = match value.as_array() {
-            Some(arr) => arr,
-            None => {
-                // clone: both the key and the value are borrowed from the patch and stored owned.
-                entity_obj.insert(key.clone(), value.clone());
-                continue;
-            }
+        let patch_instances = if let Some(arr) = value.as_array() { arr } else {
+            // clone: both the key and the value are borrowed from the patch and stored owned.
+            entity_obj.insert(key.clone(), value.clone());
+            continue;
         };
 
         if patch_instances.len() == 1 && member_is_null_sentinel(&patch_instances[0]) {
@@ -180,17 +177,14 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: Overwri
         }
 
         // Attribute already exists -- merge by datasetId
-        let patch_instances = match value.as_array() {
-            Some(arr) => arr,
-            None => {
-                if no_overwrite {
-                    not_appended.push(key.parse::<AttributeName>().map_err(|_| ExpandedEntityError::InvalidAttributeName)?);
-                } else {
-                    // clone: both the key and the value are borrowed from the fragment and stored owned.
-                    entity_obj.insert(key.clone(), value.clone());
-                }
-                continue;
+        let patch_instances = if let Some(arr) = value.as_array() { arr } else {
+            if no_overwrite {
+                not_appended.push(key.parse::<AttributeName>().map_err(|_| ExpandedEntityError::InvalidAttributeName)?);
+            } else {
+                // clone: both the key and the value are borrowed from the fragment and stored owned.
+                entity_obj.insert(key.clone(), value.clone());
             }
+            continue;
         };
 
         if no_overwrite {
@@ -278,13 +272,10 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Attr
             continue;
         }
 
-        let patch_instances = match value.as_array() {
-            Some(arr) => arr,
-            None => {
-                // clone: both the key and the value are borrowed from the fragment and stored owned.
-                entity_obj.insert(key.clone(), value.clone());
-                continue;
-            }
+        let patch_instances = if let Some(arr) = value.as_array() { arr } else {
+            // clone: both the key and the value are borrowed from the fragment and stored owned.
+            entity_obj.insert(key.clone(), value.clone());
+            continue;
         };
 
         apply_instance_patch(entity_obj, key, patch_instances, InstancePatchDepth::ReplaceInstance);

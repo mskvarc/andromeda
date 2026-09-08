@@ -1,4 +1,4 @@
-//! ListProperty and ListRelationship integration tests (NGSI-LD 5.2.36, 5.2.37).
+//! `ListProperty` and `ListRelationship` integration tests (NGSI-LD 5.2.36, 5.2.37).
 //!
 //! Naming convention: `list_<type>_<scenario>_<expected_outcome>`.
 

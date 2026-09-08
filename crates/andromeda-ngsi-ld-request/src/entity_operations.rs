@@ -52,7 +52,7 @@ pub struct PostQueryParams {
     /// How many links deep the traversal goes (`joinLevel`).
     #[serde(rename = "joinLevel")]
     pub join_level: Option<NonZeroU32>,
-    /// The GeoProperty a GeoJSON response uses as its geometry (clause 6.3.15 `geometryProperty`).
+    /// The `GeoProperty` a `GeoJSON` response uses as its geometry (clause 6.3.15 `geometryProperty`).
     #[serde(rename = "geometryProperty")]
     pub geometry_property: Option<AttributeName>,
     /// Dataset instances to select, comma-separated (`datasetId`).

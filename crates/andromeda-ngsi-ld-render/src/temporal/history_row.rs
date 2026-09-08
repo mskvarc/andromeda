@@ -18,6 +18,7 @@ pub type TimeRange = (DateTime<Utc>, DateTime<Utc>);
 /// [`TemporalHistoryRow`].
 ///
 /// The row already carries decoded, strongly typed values. The only work left is the JSON-LD structural expansion that the specification prescribes.
+#[must_use]
 pub fn neutral_row_to_expanded_instance(row: &TemporalHistoryRow, sys_attrs: SysAttrsInclusion) -> Value {
     let mut instance = serde_json::Map::new();
     let family = InstanceFamily::of_attribute_name(&row.attribute_name);

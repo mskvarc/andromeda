@@ -36,6 +36,7 @@ const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 /// `synchronous_commit_setting` is the PostgreSQL setting value (e.g.
 /// `"on"`, `"off"`, `"local"`). The binary maps its config enum via
 /// `SynchronousCommit::as_postgres_setting()` before calling.
+#[must_use]
 pub fn configure_pool_options(max_connections: u32, synchronous_commit_setting: &'static str) -> PgPoolOptions {
     PgPoolOptions::new()
         .min_connections(0)
@@ -56,6 +57,7 @@ pub struct DatabaseUrl(Url);
 
 impl DatabaseUrl {
     /// Wrap a validated database URL.
+    #[must_use]
     pub const fn new(url: Url) -> DatabaseUrl {
         DatabaseUrl(url)
     }
@@ -70,6 +72,7 @@ impl DatabaseUrl {
     }
 
     /// Build a full URL with a replaced database name.
+    #[must_use]
     pub fn with_db_name(&self, db_name: &TenantDatabaseName) -> Url {
         // clone: `Url::set_path` mutates, and the base URL is reused per tenant
         let mut url = self.0.clone();
@@ -80,6 +83,7 @@ impl DatabaseUrl {
 
 /// Replace non-alphanumeric characters with underscores, lowercase, and
 /// collapse consecutive underscores.
+#[must_use]
 pub fn sanitize_identifier(input: &str) -> String {
     let replaced: String = input
         .chars()
@@ -96,6 +100,7 @@ const POSTGRES_IDENT_MAX: usize = 63;
 /// `{prefix}_{sanitized}_{hash}` while ensuring the result fits within
 /// Postgres's identifier length limit. Uniqueness is preserved by the
 /// fixed-length hash suffix even when the sanitized label is truncated.
+#[must_use]
 pub fn generate_db_name(prefix: &DbNamePrefix, tenant_name: &TenantName) -> TenantDatabaseName {
     let prefix = prefix.as_str();
     let sanitized = sanitize_identifier(tenant_name.as_str());

@@ -20,6 +20,7 @@ pub struct StreamKey(i64);
 
 impl StreamKey {
     /// Return the stored representation.
+    #[must_use]
     pub const fn get(self) -> i64 {
         self.0
     }

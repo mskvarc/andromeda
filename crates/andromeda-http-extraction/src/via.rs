@@ -17,6 +17,7 @@ pub struct IncomingVia(pub Option<Via>);
 
 impl IncomingVia {
     /// Consume the extractor and return the optional Via chain.
+    #[must_use]
     pub fn into_inner(self) -> Option<Via> {
         self.0
     }

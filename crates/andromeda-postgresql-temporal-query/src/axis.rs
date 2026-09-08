@@ -11,6 +11,7 @@ use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 
 /// The `attribute_history` column that holds `timeproperty`.
+#[must_use]
 pub const fn axis_column(timeproperty: TimeProp) -> AttributeHistory {
     match timeproperty {
         TimeProp::Observed => AttributeHistory::ObservedAt,

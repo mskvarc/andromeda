@@ -24,7 +24,7 @@ use strum::IntoEnumIterator;
 /// Seconds in one day, the unit both policy values are configured in.
 const SECONDS_PER_DAY: i64 = 86_400;
 
-/// Days TimescaleDB counts one interval month as when it stores a policy.
+/// Days `TimescaleDB` counts one interval month as when it stores a policy.
 const DAYS_PER_MONTH: i64 = 30;
 
 /// Whether one stored policy value was already what the configuration names.
@@ -56,6 +56,7 @@ pub struct TemporalStoragePolicyOutcome {
 
 impl TemporalStoragePolicyOutcome {
     /// Whether nothing was written: every stored value already matched.
+    #[must_use]
     pub fn is_unchanged(&self) -> bool {
         self.hypertables.iter().all(|reconciliation| {
             reconciliation.chunk_interval == PolicyReconciliation::Unchanged && reconciliation.columnstore_after == PolicyReconciliation::Unchanged
@@ -127,7 +128,7 @@ async fn reconcile_columnstore_lag(pool: &PgPool, hypertable: HypertableName, da
 }
 
 /// The whole seconds an interval spans, counting a month as thirty days as
-/// TimescaleDB does when it stores a day-denominated policy.
+/// `TimescaleDB` does when it stores a day-denominated policy.
 const fn interval_seconds(interval: &PgInterval) -> i64 {
     (interval.months as i64 * DAYS_PER_MONTH + interval.days as i64) * SECONDS_PER_DAY + interval.microseconds / 1_000_000
 }

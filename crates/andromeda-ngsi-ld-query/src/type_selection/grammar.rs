@@ -55,6 +55,7 @@ impl TypeExprRaw {
     ///
     /// A caller that indexes subscriptions by type can only do so for a leaf;
     /// a boolean expression has no single key to file it under.
+    #[must_use]
     pub const fn as_single_type(&self) -> Option<&EntityTypeName> {
         match self {
             TypeExprRaw::Wildcard => None,
@@ -275,7 +276,7 @@ mod tests {
     #[test]
     fn only_a_leaf_names_a_single_type() {
         assert_eq!(
-            "Building".parse::<TypeExprRaw>().expect("valid").as_single_type().map(|name| name.as_str()),
+            "Building".parse::<TypeExprRaw>().expect("valid").as_single_type().map(andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName::as_str),
             Some("Building")
         );
         assert_eq!("A,B".parse::<TypeExprRaw>().expect("valid").as_single_type(), None);

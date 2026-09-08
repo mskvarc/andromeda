@@ -56,6 +56,7 @@ pub struct Via(Vec<ViaEntry>);
 
 impl Via {
     /// Create a `Via` header with a single entry.
+    #[must_use]
     pub fn with_entry(protocol: ReceivedProtocol, pseudonym: ContextSourcePseudonym) -> Via {
         Via(vec![ViaEntry {
             protocol: Some(protocol),
@@ -65,6 +66,7 @@ impl Via {
     }
 
     /// Append an entry to the Via chain, returning the modified header.
+    #[must_use]
     pub fn append(mut self, protocol: ReceivedProtocol, pseudonym: ContextSourcePseudonym) -> Via {
         self.0.push(ViaEntry {
             protocol: Some(protocol),
@@ -78,6 +80,7 @@ impl Via {
     ///
     /// Used for loop detection per clause 6.3.18: compares against each
     /// discrete pseudonym, not substring match.
+    #[must_use]
     pub fn contains_pseudonym(&self, identity: &ContextSourcePseudonym) -> bool {
         self.0.iter().any(|entry| &entry.pseudonym == identity)
     }

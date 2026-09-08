@@ -27,6 +27,7 @@ pub struct ContextualExpander<'a> {
 
 impl<'a> ContextualExpander<'a> {
     /// Bind an engine to a context for one compilation.
+    #[must_use]
     pub const fn new(engine: &'a JsonLdEngine, context: &'a PreparedTermContext) -> ContextualExpander<'a> {
         ContextualExpander { engine, context }
     }

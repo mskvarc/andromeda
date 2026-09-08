@@ -1,6 +1,6 @@
-//! Verification-matrix row "Arbitrary GeoProperty".
+//! Verification-matrix row "Arbitrary `GeoProperty`".
 //!
-//! A geo-query names the GeoProperty it applies to (clause 4.10). Only that
+//! A geo-query names the `GeoProperty` it applies to (clause 4.10). Only that
 //! attribute may participate, any of its dataset instances matching is enough,
 //! an Entity without it never matches, and the topological plan must reach the
 //! composite geometry index on the projection.
@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 /// the default instance.
 const REMOTE_DATASET: &str = "urn:ngsi-ld:Dataset:remote";
 
-/// Entity carrying two named GeoProperties, one of them with two instances.
+/// Entity carrying two named `GeoProperties`, one of them with two instances.
 fn two_geoproperty_building(id: &str) -> Value {
     json!({
         "id": id,
@@ -31,7 +31,7 @@ fn two_geoproperty_building(id: &str) -> Value {
     })
 }
 
-/// Entity carrying only the second GeoProperty.
+/// Entity carrying only the second `GeoProperty`.
 fn dock_only_building(id: &str) -> Value {
     json!({
         "id": id,

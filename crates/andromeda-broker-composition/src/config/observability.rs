@@ -24,6 +24,7 @@ pub enum LogLevel {
 
 impl LogLevel {
     /// Convert into tracing's filter level.
+    #[must_use]
     pub const fn as_tracing_level(self) -> tracing::Level {
         match self {
             LogLevel::Error => tracing::Level::ERROR,

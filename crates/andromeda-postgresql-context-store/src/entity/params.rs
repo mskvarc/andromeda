@@ -48,6 +48,7 @@ pub struct PreparedEntityColumns {
 
 impl PreparedEntityColumns {
     /// Create an empty set of parallel SQL bind vectors sized for `len` rows.
+    #[must_use]
     pub fn with_capacity(len: usize) -> PreparedEntityColumns {
         PreparedEntityColumns {
             ids: Vec::with_capacity(len),

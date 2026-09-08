@@ -191,7 +191,7 @@ async fn query_fully_qualified_type_without_context_returns_200() {
 // 5.10.2 -- Query matching EntityInfo of RegistrationInfo
 // ---------------------------------------------------------------------------
 
-/// Query with type+idPattern matching EntityInfo -- 200 (5.10.2).
+/// Query with type+idPattern matching `EntityInfo` -- 200 (5.10.2).
 #[tokio::test]
 #[serial]
 async fn query_entity_info_with_type_and_id_pattern_returns_matching() {
@@ -214,7 +214,7 @@ async fn query_entity_info_with_type_and_id_pattern_returns_matching() {
     pretty_assertions::assert_eq!(expected, actual);
 }
 
-/// Registration without EntityInfo matched by type+idPattern -- 200 (5.10.2).
+/// Registration without `EntityInfo` matched by type+idPattern -- 200 (5.10.2).
 #[tokio::test]
 #[serial]
 async fn query_registration_without_entity_info_returns_matching() {

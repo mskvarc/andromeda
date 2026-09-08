@@ -29,6 +29,7 @@ pub struct SubscriptionKey(i64);
 
 impl SubscriptionKey {
     /// Return the stored representation.
+    #[must_use]
     pub const fn get(self) -> i64 {
         self.0
     }

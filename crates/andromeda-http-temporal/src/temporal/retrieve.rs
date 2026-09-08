@@ -199,29 +199,26 @@ pub async fn get(
     // else about the response — status, `Content-Range`, `NGSILD-EntityMap`,
     // warnings — is identical either way, which is why only the payload is
     // decided here and the response is assembled once below.
-    let (payload, warnings) = match RetrievingJoin::from_mode(params.join) {
-        Some(join) => {
-            let mut roots = vec![entity_value];
-            let warnings = apply_temporal_join(service, &target, join, &mut roots, &linked_candidates, &params, &context, warnings)
-                .await
+    let (payload, warnings) = if let Some(join) = RetrievingJoin::from_mode(params.join) {
+        let mut roots = vec![entity_value];
+        let warnings = apply_temporal_join(service, &target, join, &mut roots, &linked_candidates, &params, &context, warnings)
+            .await
+            .with_instance(&uri)?
+            .warnings;
+        let payload = single_retrieval_payload(join, roots)
+            .ok_or_else(|| temporal_problem(&TemporalError::internal("the join left the retrieval without its root"), &uri))?;
+        (payload, warnings)
+    } else {
+        let data: Value = if params.is_simplified() {
+            TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Single(entity_value))
+                .render()
                 .with_instance(&uri)?
-                .warnings;
-            let payload = single_retrieval_payload(join, roots)
-                .ok_or_else(|| temporal_problem(&TemporalError::internal("the join left the retrieval without its root"), &uri))?;
-            (payload, warnings)
-        }
-        None => {
-            let data: Value = if params.is_simplified() {
-                TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Single(entity_value))
-                    .render()
-                    .with_instance(&uri)?
-                    .into_single()
-                    .with_instance(&uri)?
-            } else {
-                entity_value
-            };
-            (ResponsePayload::Single(data), warnings)
-        }
+                .into_single()
+                .with_instance(&uri)?
+        } else {
+            entity_value
+        };
+        (ResponsePayload::Single(data), warnings)
     };
 
     // Table 6.19.3.1-1: 201 when an EntityMap has been (re)created, 206 when

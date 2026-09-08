@@ -1,4 +1,4 @@
-//! EntityMap resource lifecycle: retrieve, partial update, and delete, with the
+//! `EntityMap` resource lifecycle: retrieve, partial update, and delete, with the
 //! output-only members ignored on input (clauses 5.14.1-5.14.3, 5.2.39). Local
 //! rows are `T-LOCAL`; durability is proven on the broker-a replica pair and
 //! isolation on a peer with its own store (test plan §6.3).
@@ -13,7 +13,7 @@ use andromeda_test_fixtures::problem_detail::{BAD_REQUEST_DATA, RESOURCE_NOT_FOU
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use serde_json::json;
 
-/// Create a `Vehicle` and an EntityMap over it, returning the map id.
+/// Create a `Vehicle` and an `EntityMap` over it, returning the map id.
 async fn create_map(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -> String {
     let entity_id = topology.id(local);
     assert_status(
@@ -35,7 +35,7 @@ async fn create_map(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -> 
         .to_owned()
 }
 
-/// Retrieving an invalid EntityMap id is rejected `400 BadRequestData`
+/// Retrieving an invalid `EntityMap` id is rejected `400 BadRequestData`
 /// (clause 5.14.1). Confirms REQ-MAP-100.
 #[tokio::test]
 async fn entity_map_retrieve_missing_or_invalid_id_returns_400() {
@@ -51,7 +51,7 @@ async fn entity_map_retrieve_missing_or_invalid_id_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Retrieving an unknown EntityMap is rejected `404 ResourceNotFound`
+/// Retrieving an unknown `EntityMap` is rejected `404 ResourceNotFound`
 /// (clause 5.14.1). Confirms REQ-MAP-101.
 #[tokio::test]
 async fn entity_map_retrieve_unknown_id_returns_404() {
@@ -67,7 +67,7 @@ async fn entity_map_retrieve_unknown_id_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Retrieving a valid EntityMap returns `200` with an `EntityMap` body
+/// Retrieving a valid `EntityMap` returns `200` with an `EntityMap` body
 /// (clause 5.14.1). Confirms REQ-MAP-102.
 #[tokio::test]
 async fn entity_map_retrieve_valid_returns_200_entity_map() {
@@ -122,7 +122,7 @@ async fn entity_map_update_partial_changes_only_provided() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Updating an invalid EntityMap id is rejected `400 BadRequestData`
+/// Updating an invalid `EntityMap` id is rejected `400 BadRequestData`
 /// (clause 5.14.2). Confirms REQ-MAP-104.
 #[tokio::test]
 async fn entity_map_update_missing_or_invalid_id_returns_400() {
@@ -138,7 +138,7 @@ async fn entity_map_update_missing_or_invalid_id_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Updating an unknown EntityMap is rejected `404 ResourceNotFound`
+/// Updating an unknown `EntityMap` is rejected `404 ResourceNotFound`
 /// (clause 5.14.2). Confirms REQ-MAP-105.
 #[tokio::test]
 async fn entity_map_update_unknown_id_returns_404() {
@@ -203,7 +203,7 @@ async fn entity_map_update_success_returns_204() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Deleting an invalid EntityMap id is rejected `400 BadRequestData`
+/// Deleting an invalid `EntityMap` id is rejected `400 BadRequestData`
 /// (clause 5.14.3). Confirms REQ-MAP-108.
 #[tokio::test]
 async fn entity_map_delete_missing_or_invalid_id_returns_400() {
@@ -219,7 +219,7 @@ async fn entity_map_delete_missing_or_invalid_id_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Deleting an unknown EntityMap is rejected `404 ResourceNotFound`
+/// Deleting an unknown `EntityMap` is rejected `404 ResourceNotFound`
 /// (clause 5.14.3). Confirms REQ-MAP-109.
 #[tokio::test]
 async fn entity_map_delete_unknown_id_returns_404() {
@@ -235,7 +235,7 @@ async fn entity_map_delete_unknown_id_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Deleting an EntityMap removes it and returns `204` (clause 5.14.3).
+/// Deleting an `EntityMap` removes it and returns `204` (clause 5.14.3).
 /// Confirms REQ-MAP-110.
 #[tokio::test]
 async fn entity_map_delete_removes_and_returns_204() {
@@ -260,7 +260,7 @@ async fn entity_map_delete_removes_and_returns_204() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An EntityMap is durably stored: it is retrievable after creation through
+/// An `EntityMap` is durably stored: it is retrievable after creation through
 /// the persisted row, not a process-local cache (test plan §6.3).
 
 #[tokio::test]
@@ -277,7 +277,7 @@ async fn entity_map_durability_survives_restart() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An EntityMap minted on broker-a is visible on broker-a2, the second
+/// An `EntityMap` minted on broker-a is visible on broker-a2, the second
 /// instance of the same broker identity sharing its store (clause 5.14.1:
 /// the map is a resource of the broker, not of the process that minted it).
 #[tokio::test]
@@ -302,7 +302,7 @@ async fn entity_map_visible_on_replica_of_same_broker() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An EntityMap created on one broker is not visible on a peer broker with
+/// An `EntityMap` created on one broker is not visible on a peer broker with
 /// its own store (clause 5.14.1: entity maps are per-broker resources).
 #[tokio::test]
 async fn entity_map_cross_instance_not_visible_on_peer() {

@@ -4,7 +4,7 @@ use std::{fs, path::Path};
 
 /// Fragments that only ever appear in a rendering, never in a grammar.
 ///
-/// The casts and the PostGIS and JSONB function prefixes are the shape a value
+/// The casts and the `PostGIS` and JSONB function prefixes are the shape a value
 /// takes in one store; `SELECT`, `= ANY(`, `IS NULL`, `AND` and `OR` are
 /// statement composition; `<>` is a second spelling of an operator clause 4.9
 /// writes `!=`, which is what one resource's enum returned while every other
@@ -65,7 +65,7 @@ pub fn assert_no_sql(crate_root: &str) {
 /// Whether `code` contains `fragment` other than as the tail of a longer word.
 ///
 /// A fragment that starts with an identifier character names something a store
-/// spells, not a suffix of a Rust name: `ST_` is the PostGIS function prefix,
+/// spells, not a suffix of a Rust name: `ST_` is the `PostGIS` function prefix,
 /// and matching it anywhere would also match the end of `CARGO_MANIFEST_DIR`.
 /// Fragments that open with punctuation — a cast, an operator, a separator —
 /// carry their own boundary and are matched as written.
@@ -83,7 +83,7 @@ pub(crate) fn contains_fragment(code: &str, fragment: &str) -> bool {
 /// Whether a string value reads as SQL rather than as ordinary text.
 ///
 /// The same fragment list the specification-crate guard uses: a value that
-/// carries a cast, a PostGIS or JSONB token, a set operator or a statement
+/// carries a cast, a `PostGIS` or JSONB token, a set operator or a statement
 /// composer is a rendering, not a description. Reused by the workspace-wide
 /// raw-SQL gate to classify constant bodies and macro literals.
 pub(crate) fn looks_like_sql(value: &str) -> bool {

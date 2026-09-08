@@ -17,6 +17,7 @@ impl XRequestId {
         (!value.is_empty() && value.bytes().all(|b| b > 0x20 && b != 0x7f && b < 0x80)).then_some(Self(value))
     }
     /// Return the identifier text.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }

@@ -24,6 +24,7 @@ pub struct WakeHandle {
 
 impl WakeHandle {
     /// Request one prompt bounded drain pass.
+    #[must_use]
     pub fn wake(&self) -> WakeRequest {
         match self.sender.try_send(()) {
             Ok(()) => WakeRequest::Scheduled,
@@ -48,6 +49,7 @@ impl DrainFallbackCadence {
     }
 
     /// Return the configured cadence.
+    #[must_use]
     pub const fn get(self) -> Duration {
         self.0
     }

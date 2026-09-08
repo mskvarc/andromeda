@@ -18,7 +18,7 @@ use std::{collections::HashMap, sync::Arc};
 /// the entity in scope, by consulting the cache's spatial index.
 ///
 /// Subscriptions without a `compiled_geo_q` are kept verbatim. The entity is
-/// probed with every instance of the target GeoProperty rather than with its
+/// probed with every instance of the target `GeoProperty` rather than with its
 /// default one: clause 4.10 counts one instance meeting the restriction as
 /// enough, so a subscription reached only by a `datasetId`-tagged instance
 /// must survive the narrowing.

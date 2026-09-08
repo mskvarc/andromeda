@@ -45,6 +45,7 @@ pub struct NgsiLdResponse {
 
 impl NgsiLdResponse {
     /// Create a response with a specific status code.
+    #[must_use]
     pub const fn new(status: StatusCode, rendered: RenderedOutput) -> NgsiLdResponse {
         NgsiLdResponse {
             status,
@@ -58,35 +59,41 @@ impl NgsiLdResponse {
     }
 
     /// Create a 200 OK response.
+    #[must_use]
     pub const fn ok(rendered: RenderedOutput) -> NgsiLdResponse {
         NgsiLdResponse::new(StatusCode::OK, rendered)
     }
 
     /// Set the Location header.
+    #[must_use]
     pub fn with_location(mut self, location: String) -> Self {
         self.location = Some(location);
         self
     }
 
     /// Set the NGSILD-EntityMap header URI.
+    #[must_use]
     pub fn with_entity_map_uri(mut self, uri: Uri) -> Self {
         self.entity_map_uri = Some(uri);
         self
     }
 
     /// Set NGSILD-Warning headers from distributed forwarding (clause 6.3.17).
+    #[must_use]
     pub fn with_warnings(mut self, warnings: Vec<NgsiLdWarning>) -> Self {
         self.warnings = warnings;
         self
     }
 
     /// Set the NGSILD-Snapshot header for snapshot-scoped responses (clause 6.3.22).
+    #[must_use]
     pub fn with_snapshot_uri(mut self, uri: Uri) -> Self {
         self.snapshot_uri = Some(uri);
         self
     }
 
     /// Set the Content-Range header value for temporal pagination.
+    #[must_use]
     pub const fn with_content_range(mut self, content_range: NgsiLdContentRange) -> Self {
         self.content_range = Some(content_range);
         self

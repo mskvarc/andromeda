@@ -23,13 +23,13 @@ impl ContextHitStore for JsonLdContextRepository {
                 })
                 .collect::<Result<Vec<i64>, ContextRegistryError>>()?;
             sqlx::query(
-                r#"
+                r"
                 UPDATE jsonld_contexts
                 SET number_of_hits = jsonld_contexts.number_of_hits + delta.count,
                     last_usage = NOW()
                 FROM UNNEST($1::text[], $2::bigint[]) AS delta(url, count)
                 WHERE jsonld_contexts.url = delta.url
-                "#,
+                ",
             )
             .bind(&urls)
             .bind(&counts)

@@ -1,4 +1,4 @@
-//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-FileCopyrightText: 2014-2025 Sean `McArthur`
 //! SPDX-License-Identifier: MIT
 //!
 //! The `Link` header itself: a list of link-values, and how it is spelled.
@@ -28,11 +28,13 @@ pub struct Link {
 
 impl Link {
     /// A `Link` header over the given link-values.
+    #[must_use]
     pub const fn new(link_values: Vec<LinkValue>) -> Link {
         Link { values: link_values }
     }
 
     /// The link-values this header carries.
+    #[must_use]
     pub fn values(&self) -> &[LinkValue] {
         &self.values
     }
@@ -41,11 +43,13 @@ impl Link {
     ///
     /// A `Link` header with no link-value is not a valid header, so the empty
     /// case is answered with "send nothing" rather than with an empty header.
+    #[must_use]
     pub fn from_values(values: Vec<LinkValue>) -> Option<Link> {
         if values.is_empty() { None } else { Some(Link::new(values)) }
     }
 
     /// A single-value JSON-LD context `Link` header.
+    #[must_use]
     pub fn jsonld_context(context_url: IriRefBuf) -> Link {
         Link::new(vec![LinkValue::jsonld_context(context_url)])
     }
@@ -58,11 +62,13 @@ impl Link {
     }
 
     /// Encode this header into a raw [`HeaderValue`], if it encodes at all.
+    #[must_use]
     pub fn to_header_value(&self) -> Option<HeaderValue> {
         HeaderValue::from_str(&self.to_string()).ok()
     }
 
     /// Encode this header into a string, if it encodes at all.
+    #[must_use]
     pub fn to_header_string(&self) -> Option<String> {
         self.to_header_value().and_then(|value| value.to_str().ok().map(ToOwned::to_owned))
     }
@@ -143,10 +149,7 @@ impl headers::Header for Link {
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        match self.to_header_value() {
-            Some(value) => values.extend(iter::once(value)),
-            None => tracing::warn!(link = %self, "failed to encode Link header"),
-        }
+        if let Some(value) = self.to_header_value() { values.extend(iter::once(value)) } else { tracing::warn!(link = %self, "failed to encode Link header") }
     }
 }
 
@@ -232,8 +235,8 @@ mod tests {
     #[test]
     fn a_malformed_parameter_is_rejected() {
         assert!(r#"<http://example.com/>; ="next""#.parse::<Link>().is_err());
-        assert!(r#"<http://example.com/>; rel="#.parse::<Link>().is_err());
-        assert!(r#"<http://example.com/>; profile="#.parse::<Link>().is_err());
+        assert!(r"<http://example.com/>; rel=".parse::<Link>().is_err());
+        assert!(r"<http://example.com/>; profile=".parse::<Link>().is_err());
     }
 
     #[test]

@@ -27,6 +27,7 @@ pub struct SpatialSubscriptionIndex {
 
 impl SpatialSubscriptionIndex {
     /// An empty index.
+    #[must_use]
     pub fn new() -> SpatialSubscriptionIndex {
         SpatialSubscriptionIndex::default()
     }
@@ -84,7 +85,7 @@ fn candidates_in(tree: &RTree<SubEntry>, entity_geometry: &Geometry, envelope: &
     // partition, mirroring the entity index's `candidates_for`. The scan
     // only touches entries the envelope pass missed, so no entry is
     // considered twice.
-    for entry in tree.iter() {
+    for entry in tree {
         if matches!(entry.georel, GeoRel::Disjoint | GeoRel::Near { .. })
             && !entry.envelope.intersects(envelope)
             && matches(&entry.georel, entity_geometry, &entry.ref_geometry)
@@ -171,7 +172,7 @@ mod tests {
                 },
             ),
         );
-        assert!(index.candidates(&key(), &point(10.0, 10.0)).is_empty());
+        assert_eq!(index.candidates(&key(), &point(10.0, 10.0)), [] as [andromeda_ngsi_ld_lexicon::uri::Uri; 0]);
     }
 
     #[test]
@@ -191,7 +192,7 @@ mod tests {
 
         // ~4 km east is 0.036 degrees at the equator; ~6 km east is 0.054.
         pretty_assertions::assert_eq!(index.candidates(&key(), &point(0.036, 0.0)), vec![uri("sub-5km")]);
-        assert!(index.candidates(&key(), &point(0.054, 0.0)).is_empty());
+        assert_eq!(index.candidates(&key(), &point(0.054, 0.0)), [] as [andromeda_ngsi_ld_lexicon::uri::Uri; 0]);
     }
 
     #[test]
@@ -199,14 +200,14 @@ mod tests {
         let index = SpatialSubscriptionIndex::new();
         index.insert(key(), entry("sub-1", square(0.0, 0.0, 1.0), GeoRel::Within));
         index.remove(&uri("sub-1"));
-        assert!(index.candidates(&key(), &point(0.0, 0.0)).is_empty());
+        assert_eq!(index.candidates(&key(), &point(0.0, 0.0)), [] as [andromeda_ngsi_ld_lexicon::uri::Uri; 0]);
     }
 
     #[test]
     fn a_subscription_on_one_geoproperty_is_not_a_candidate_for_another() {
         let index = SpatialSubscriptionIndex::new();
         index.insert(observation_space_key(), entry("sub-obs", square(0.0, 0.0, 1.0), GeoRel::Within));
-        assert!(index.candidates(&key(), &point(0.0, 0.0)).is_empty());
+        assert_eq!(index.candidates(&key(), &point(0.0, 0.0)), [] as [andromeda_ngsi_ld_lexicon::uri::Uri; 0]);
     }
 
     #[test]

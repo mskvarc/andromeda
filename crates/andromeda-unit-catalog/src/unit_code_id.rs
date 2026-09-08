@@ -20,11 +20,13 @@ pub struct UnitCodeId(i16);
 
 impl UnitCodeId {
     /// Return the in-memory representation.
+    #[must_use]
     pub const fn get(self) -> i16 {
         self.0
     }
 
     /// Return the identity following this one, when one is representable.
+    #[must_use]
     pub const fn next(self) -> Option<UnitCodeId> {
         match self.0.checked_add(1) {
             Some(successor) => Some(UnitCodeId(successor)),
@@ -33,6 +35,7 @@ impl UnitCodeId {
     }
 
     /// Return the first identity the registry assigns.
+    #[must_use]
     pub const fn first() -> UnitCodeId {
         UnitCodeId(1)
     }

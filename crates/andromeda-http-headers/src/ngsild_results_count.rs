@@ -17,11 +17,13 @@ pub struct NgsiLdResultsCount(pub(crate) usize);
 
 impl NgsiLdResultsCount {
     /// Create a new `NGSILD-Results-Count` header with the given count.
+    #[must_use]
     pub const fn new(count: usize) -> NgsiLdResultsCount {
         NgsiLdResultsCount(count)
     }
 
     /// The total number of matching entities this header reports (clause 6.3.13).
+    #[must_use]
     pub const fn count(&self) -> usize {
         self.0
     }

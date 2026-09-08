@@ -66,6 +66,7 @@ impl SnapshotPriority {
     pub const DEFAULT: SnapshotPriority = SnapshotPriority(5);
 
     /// Returns the integer representation.
+    #[must_use]
     pub const fn as_u8(self) -> u8 {
         self.0
     }
@@ -209,19 +210,20 @@ impl SnapshotStatus {
     ///
     /// Only `Preparing` can transition to a terminal state. Terminal states
     /// (`Success`, `Partial`, `Empty`, `Failure`) cannot transition further.
+    #[must_use]
     pub const fn can_transition_to(self, target: SnapshotStatus) -> bool {
         matches!(
             (self, target),
-            (SnapshotStatus::Preparing, SnapshotStatus::Success)
-                | (SnapshotStatus::Preparing, SnapshotStatus::Partial)
-                | (SnapshotStatus::Preparing, SnapshotStatus::Empty)
-                | (SnapshotStatus::Preparing, SnapshotStatus::Failure)
+            (SnapshotStatus::Preparing,
+SnapshotStatus::Success | SnapshotStatus::Partial | SnapshotStatus::Empty |
+SnapshotStatus::Failure)
         )
     }
 }
 
 impl Snapshot {
     /// Build a [`SnapshotNotification`] from the snapshot state.
+    #[must_use]
     pub fn build_notification(&self) -> SnapshotNotification {
         let id = SnapshotNotificationId::from_uuid(Uuid::new_v4());
         // clone: the notification owns its copy of the snapshot's id and

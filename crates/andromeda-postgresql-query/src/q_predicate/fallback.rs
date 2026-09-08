@@ -44,6 +44,7 @@ fn whole_text(jsonb: SimpleExpr) -> SimpleExpr {
 /// A sub-path existence check asks whether a nested element is present, which
 /// only the payload can answer. An earlier compiler silently dropped the
 /// sub-path here and tested the top-level attribute instead.
+#[must_use]
 pub fn fallback_exists(path: &AttrPath, rows: &EntityRowRefs) -> Condition {
     let jsonpath = value_extraction_jsonpath(path, VALUE.as_str());
     Condition::all().add(jsonb_path_exists(rows.payload_column(), &jsonpath))
@@ -68,7 +69,7 @@ fn scalar_predicate(stored_text: SimpleExpr, scalar: &Scalar, op: CmpOp) -> Simp
     compare(lifted.stored, op, lifted.operand)
 }
 
-/// Build a single-scalar equality comparison (`==`/`!=`), COALESCing a
+/// Build a single-scalar equality comparison (`==`/`!=`), `COALESCing` a
 /// Property's value with a Relationship's object so either matches.
 ///
 /// Clause 4.9 admits a Relationship's object as a comparison target for the
@@ -81,6 +82,7 @@ fn equality_scalar_comparison(extract_value: SimpleExpr, extract_object: SimpleE
 }
 
 /// Compile an equality predicate (`==`/`!=`) against the payload.
+#[must_use]
 pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &CompareValue, rows: &EntityRowRefs) -> Condition {
     let extract_value = payload_extraction(path, VALUE.as_str(), rows);
 
@@ -132,10 +134,11 @@ pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &Compa
 /// Compile an ordering predicate (`>`/`>=`/`<`/`<=`) against the payload.
 ///
 /// A Relationship's object is not extracted at all. Clause 4.9 requires a
-/// Relationship (and a ListRelationship) operand to non-match every operator
+/// Relationship (and a `ListRelationship`) operand to non-match every operator
 /// other than equality and inequality: a URI names a resource and carries no
-/// order a `<` or `>` could mean. COALESCing `hasObject` in here made
+/// order a `<` or `>` could mean. `COALESCing` `hasObject` in here made
 /// `owner>"a"` select entities the standard requires it to reject.
+#[must_use]
 pub fn fallback_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, rows: &EntityRowRefs) -> Condition {
     let extract_value = payload_extraction(path, VALUE.as_str(), rows);
     Condition::all().add(scalar_predicate(whole_text(extract_value), rhs, op.as_cmp_op()))
@@ -151,6 +154,7 @@ pub fn fallback_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, rows: &E
 /// non-match every operator other than equality and inequality, so a
 /// Relationship's object URI is not matched against a pattern however
 /// string-shaped it is.
+#[must_use]
 pub fn fallback_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, rows: &EntityRowRefs) -> Condition {
     let payload = rows.payload_column();
     let jsonpath = value_extraction_jsonpath(path, VALUE.as_str());

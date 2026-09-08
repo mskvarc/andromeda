@@ -93,6 +93,7 @@ impl<P: StreamPayload> Default for ConnectionRegistry<P> {
 
 impl<P: StreamPayload> ConnectionRegistry<P> {
     /// Create an empty connection registry.
+    #[must_use]
     pub fn new() -> ConnectionRegistry<P> {
         ConnectionRegistry { connections: DashMap::new() }
     }
@@ -102,6 +103,7 @@ impl<P: StreamPayload> ConnectionRegistry<P> {
     /// Returns the connection identifier, the receiving end of the payload
     /// channel, and a cancellation token that fires when the subscription is
     /// deleted.
+    #[must_use]
     pub fn register(&self, subscription_id: &Uri, buffer_size: usize) -> (ConnectionId, mpsc::Receiver<P>, CancellationToken) {
         let connection_id = ConnectionId::next();
         let (tx, rx) = mpsc::channel(buffer_size);

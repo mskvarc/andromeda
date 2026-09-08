@@ -267,7 +267,7 @@ async fn georel_near_ignores_altitude() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// NGSI-LD 4.10 lets `geoproperty` select which GeoProperty a georel evaluates
+/// NGSI-LD 4.10 lets `geoproperty` select which `GeoProperty` a georel evaluates
 /// against, and the selected one is matched on its 2D footprint like any other,
 /// so a stored Z ordinate does not affect the outcome.
 #[tokio::test]
@@ -302,7 +302,7 @@ async fn georel_near_3d_custom_geoproperty() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// NGSI-LD 4.10 names `observationSpace` among the GeoProperties a geo-query may
+/// NGSI-LD 4.10 names `observationSpace` among the `GeoProperties` a geo-query may
 /// target (clause 4.7.1), and its example 1 targets exactly that one. It has a
 /// dedicated storage column, so it is the case most likely to be routed to the
 /// wrong place.
@@ -338,8 +338,8 @@ async fn georel_near_observation_space_matches() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// A custom GeoProperty carrying a plain 2D geometry matches on the same terms:
-/// clause 4.10 draws no distinction between the GeoProperties it defines and
+/// A custom `GeoProperty` carrying a plain 2D geometry matches on the same terms:
+/// clause 4.10 draws no distinction between the `GeoProperties` it defines and
 /// ones a Context defines.
 #[tokio::test]
 async fn georel_near_2d_custom_geoproperty_matches() {
@@ -371,10 +371,10 @@ async fn georel_near_2d_custom_geoproperty_matches() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// NGSI-LD 4.10: "Entities which do not convey the target GeoProperty of the
+/// NGSI-LD 4.10: "Entities which do not convey the target `GeoProperty` of the
 /// query shall be considered as non-matching." That is an empty result set and
 /// not an error, whether the named attribute is absent from the entity or
-/// present but not a GeoProperty.
+/// present but not a `GeoProperty`.
 #[tokio::test]
 async fn georel_near_geoproperty_the_entity_does_not_convey_matches_nothing() {
     let scope = TestEnvironment::from_suite("spatial_3d").await.expect("isolated test environment");
@@ -412,7 +412,7 @@ async fn georel_near_geoproperty_the_entity_does_not_convey_matches_nothing() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// NGSI-LD 4.10: where a GeoProperty has several `datasetId` instances, it is
+/// NGSI-LD 4.10: where a `GeoProperty` has several `datasetId` instances, it is
 /// enough that one of them meets the restriction.
 ///
 /// The default instance is placed far from the reference and only a tagged one

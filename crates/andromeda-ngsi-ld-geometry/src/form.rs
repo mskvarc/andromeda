@@ -1,4 +1,4 @@
-//! The shape of a geometry: its GeoJSON type together with its positions.
+//! The shape of a geometry: its `GeoJSON` type together with its positions.
 //!
 //! This is the wire form held verbatim. IETF RFC 7946 section 3.1.6 requires
 //! the first and last position of a linear ring to be identical, but a ring
@@ -8,7 +8,7 @@
 
 use crate::{dimension::GeometryDimension, position::Position};
 
-/// The rings of a GeoJSON Polygon: an exterior ring followed by zero or more
+/// The rings of a `GeoJSON` Polygon: an exterior ring followed by zero or more
 /// interior rings (IETF RFC 7946 section 3.1.6).
 ///
 /// A Polygon with no rings at all is representable, because RFC 7946 permits
@@ -17,22 +17,24 @@ use crate::{dimension::GeometryDimension, position::Position};
 pub struct PolygonRings(Vec<Vec<Position>>);
 
 impl PolygonRings {
-    /// Build from the ring list of a GeoJSON Polygon, exterior ring first.
+    /// Build from the ring list of a `GeoJSON` Polygon, exterior ring first.
+    #[must_use]
     pub const fn new(rings: Vec<Vec<Position>>) -> PolygonRings {
         PolygonRings(rings)
     }
 
     /// The rings, exterior ring first.
+    #[must_use]
     pub fn rings(&self) -> &[Vec<Position>] {
         &self.0
     }
 }
 
-/// A GeoJSON geometry object's type and coordinates (IETF RFC 7946 section 3.1),
-/// which ETSI GS CIM 009 v1.9.1 clause 4.7 makes the value of a GeoProperty.
+/// A `GeoJSON` geometry object's type and coordinates (IETF RFC 7946 section 3.1),
+/// which ETSI GS CIM 009 v1.9.1 clause 4.7 makes the value of a `GeoProperty`.
 ///
 /// There is deliberately no `GeometryCollection` variant. Clause 4.7.1 allows a
-/// GeoProperty value every geometry RFC 7946 defines *except* GeometryCollection,
+/// `GeoProperty` value every geometry RFC 7946 defines *except* `GeometryCollection`,
 /// and clause 4.6.3 excludes it from reference geometries as well, so a
 /// collection is not a state this type is allowed to reach.
 ///
@@ -46,7 +48,7 @@ pub enum GeometryForm {
     MultiPoint(Vec<Position>),
     /// An array of two or more positions.
     LineString(Vec<Position>),
-    /// An array of LineString coordinate arrays.
+    /// An array of `LineString` coordinate arrays.
     MultiLineString(Vec<Vec<Position>>),
     /// An array of linear ring coordinate arrays.
     Polygon(PolygonRings),
@@ -61,6 +63,7 @@ impl GeometryForm {
     /// position and all of them carry a third ordinate. A geometry with no
     /// positions has no altitudes to speak of, and one whose positions disagree
     /// is only partly elevated; both are [`GeometryDimension::TwoD`].
+    #[must_use]
     pub fn dimension(&self) -> GeometryDimension {
         let mut census = PositionCensus::default();
         self.take_census(&mut census);

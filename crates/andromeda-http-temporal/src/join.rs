@@ -30,7 +30,7 @@ pub(crate) struct AppliedTemporalJoin {
     /// 6.3.17 leaves unresolved.
     pub(crate) warnings: Vec<NgsiLdWarning>,
     /// The identifiers of the Linked Entities the traversal resolved, in
-    /// traversal order. Spec 5.5.14 asks an EntityMap created alongside a
+    /// traversal order. Spec 5.5.14 asks an `EntityMap` created alongside a
     /// joined query to include them.
     pub(crate) linked_ids: Vec<Uri>,
 }
@@ -208,7 +208,7 @@ mod tests {
 
         let warnings = fold_resolution(RetrievingJoin::Flat, &mut entities, resolution(&["urn:ngsi-ld:T:B"]), Vec::new());
 
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, [] as [andromeda_http_headers::ngsild_warning::NgsiLdWarning; 0]);
     }
 
     /// Clause 4.5.23: a flat join turns a single-entity retrieval into a
@@ -223,7 +223,7 @@ mod tests {
             ResponsePayload::Collection(entities) => {
                 pretty_assertions::assert_eq!(identifiers(&entities), vec!["urn:ngsi-ld:T:A", "urn:ngsi-ld:T:B"]);
             }
-            single @ ResponsePayload::Single(_) | single @ ResponsePayload::Batch(_) => {
+            single @ (ResponsePayload::Single(_) | ResponsePayload::Batch(_)) => {
                 panic!("a flat join answers with a collection, not {single:?}")
             }
         }
@@ -236,7 +236,7 @@ mod tests {
 
         match payload {
             ResponsePayload::Single(single) => pretty_assertions::assert_eq!(single["id"], "urn:ngsi-ld:T:A"),
-            many @ ResponsePayload::Collection(_) | many @ ResponsePayload::Batch(_) => {
+            many @ (ResponsePayload::Collection(_) | ResponsePayload::Batch(_)) => {
                 panic!("an inline join answers with one entity, not {many:?}")
             }
         }

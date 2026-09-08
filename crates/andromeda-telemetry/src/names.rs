@@ -1,6 +1,6 @@
 //! The metric and label names the broker emits.
 //!
-//! Names follow the Prometheus conventions: snake_case, an `andromeda_` prefix,
+//! Names follow the Prometheus conventions: `snake_case`, an `andromeda_` prefix,
 //! base units in the name (`_seconds`, `_total`). Label values are kebab-case
 //! and come from the enums in the sibling modules, so no free-form string
 //! ever becomes a series dimension.

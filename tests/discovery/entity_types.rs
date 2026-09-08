@@ -29,7 +29,7 @@ fn sorted_strings(val: &Value) -> Vec<String> {
 // 5.5.9 -- Empty database
 // ---------------------------------------------------------------------------
 
-/// List entity types on empty database -- returns EntityTypeList with empty typeList (5.5.9).
+/// List entity types on empty database -- returns `EntityTypeList` with empty typeList (5.5.9).
 #[tokio::test]
 #[serial]
 async fn list_entity_types_empty_database_returns_empty_list() {

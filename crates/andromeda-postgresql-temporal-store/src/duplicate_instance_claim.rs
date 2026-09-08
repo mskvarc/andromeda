@@ -33,6 +33,7 @@ pub struct DuplicateInstanceClaimError;
 
 /// Lift a statement failure into the typed invariant when the instance-claim
 /// primary key is what refused the write.
+#[must_use]
 pub fn claim_write_failure(error: sqlx::Error) -> TemporalStoreError {
     if let sqlx::Error::Database(database) = &error
         && database.constraint() == Some(PK_ATTRIBUTE_HISTORY_INSTANCE_CLAIMS)

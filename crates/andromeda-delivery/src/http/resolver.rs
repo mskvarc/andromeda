@@ -28,6 +28,7 @@ pub struct PrivateIpResolver {
 
 impl PrivateIpResolver {
     /// A resolver enforcing the given policy.
+    #[must_use]
     pub const fn new(blocking: PrivateIpBlocking) -> PrivateIpResolver {
         PrivateIpResolver { blocking }
     }

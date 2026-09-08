@@ -1,8 +1,8 @@
 //! Whether an expanded attribute instance's declared family admits the `unitCode` member it carries.
 //!
-//! Clauses 4.5.18 (LanguageProperty), 4.5.20 (VocabProperty) and 4.5.24
-//! (JsonProperty) each state that `unitCode` shall
-//! never be present, and a ListRelationship is a list of relationship targets
+//! Clauses 4.5.18 (`LanguageProperty`), 4.5.20 (`VocabProperty`) and 4.5.24
+//! (`JsonProperty`) each state that `unitCode` shall
+//! never be present, and a `ListRelationship` is a list of relationship targets
 //! under the same rule. Every write path that constructs a durable
 //! consequence from expanded JSON-LD — the Core Entity envelope, the Temporal
 //! API create and append paths, and the temporal instance PATCH path — must
@@ -22,6 +22,7 @@ use serde_json::Value;
 /// `None` means the instance is well formed with respect to `unitCode`
 /// admission — either it carries no `unitCode` member at all, or its declared
 /// family is one clause 4.5.2 defines a `unitCode` member for.
+#[must_use]
 pub fn forbidden_unit_code_family(instance: &Value) -> Option<AttributeType> {
     let carries_unit_code = instance.as_object().is_some_and(|object| object.contains_key(properties::UNIT_CODE.as_str()));
     if !carries_unit_code {

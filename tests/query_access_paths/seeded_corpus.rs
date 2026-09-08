@@ -21,7 +21,7 @@ pub const COMMON_TYPE: &str = "https://example.test/query-access-paths/Building"
 /// Expanded IRI of the seeded numeric attribute.
 pub const READING_ATTRIBUTE: &str = "https://example.test/query-access-paths/reading";
 
-/// Expanded IRI of the seeded GeoProperty attribute.
+/// Expanded IRI of the seeded `GeoProperty` attribute.
 pub const ENTRANCE_ATTRIBUTE: &str = "https://example.test/query-access-paths/entrance";
 
 /// Expanded IRI of the attribute every seeded Entity carries, so an `attrs`
@@ -62,7 +62,7 @@ impl SeededCorpus {
         self.reading
     }
 
-    /// Dictionary identifier of the seeded GeoProperty attribute.
+    /// Dictionary identifier of the seeded `GeoProperty` attribute.
     pub const fn entrance(&self) -> i32 {
         self.entrance
     }
@@ -121,7 +121,7 @@ async fn type_dictionary_id(pool: &PgPool, name: &str) -> i32 {
 /// a document row carrying a payload with the city attribute (and, on every
 /// 1000th Entity, the alarm attribute), and a search row carrying the type,
 /// the attribute keys, the location and the scope. The projection receives a
-/// numeric reading, a GeoProperty entrance and the city string per Entity.
+/// numeric reading, a `GeoProperty` entrance and the city string per Entity.
 pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
     let reading = dictionary_id(pool, READING_ATTRIBUTE).await;
     let entrance = dictionary_id(pool, ENTRANCE_ATTRIBUTE).await;

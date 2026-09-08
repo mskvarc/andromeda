@@ -5,7 +5,7 @@
 //! 4.5.1 (the normalized rendering), 4.5.4 (`keyValues` and simplified), the
 //! per-type `.3` subclauses (concise), 4.15 (language negotiation), 4.8 (whether
 //! the system-generated attributes appear), 4.5.23 (`join=inline`), 4.3.6.8
-//! (version conformance) and 4.5.16 (the GeoJSON envelope). This crate is the second
+//! (version conformance) and 4.5.16 (the `GeoJSON` envelope). This crate is the second
 //! half, and only the second half: nothing here decides *what* to answer, only
 //! how the answer is spelled.
 //!

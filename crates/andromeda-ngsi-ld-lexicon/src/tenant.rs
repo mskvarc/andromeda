@@ -46,6 +46,7 @@ pub struct TenantName(TenantLabelBuf);
 
 impl TenantName {
     /// Return the tenant name as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }

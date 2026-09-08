@@ -1,4 +1,4 @@
-//! The GeoProperty attribute family (ETSI GS CIM 009 clause 5.2.7).
+//! The `GeoProperty` attribute family (ETSI GS CIM 009 clause 5.2.7).
 
 use crate::attribute::common_fields::CommonAttributeFields;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
@@ -7,7 +7,7 @@ use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
-/// NGSI-LD GeoProperty representation (ETSI GS CIM 009 clause 5.2.7).
+/// NGSI-LD `GeoProperty` representation (ETSI GS CIM 009 clause 5.2.7).
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
@@ -16,7 +16,7 @@ use serde_with::skip_serializing_none;
     prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
 )]
 pub struct GeoProperty {
-    /// Geometry value, held and serialised as GeoJSON per RFC 7946.
+    /// Geometry value, held and serialised as `GeoJSON` per RFC 7946.
     #[jsonld(property = "ngsi:hasValue", coerce = "@json")]
     pub value: Geometry,
     /// Optional JSON-LD datatype for `value`.

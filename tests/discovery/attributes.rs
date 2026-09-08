@@ -28,7 +28,7 @@ fn sorted_strings(val: &Value) -> Vec<String> {
 // 5.5.11 -- Empty database
 // ---------------------------------------------------------------------------
 
-/// List attributes on empty database -- returns AttributeList with empty attributeList (5.5.11).
+/// List attributes on empty database -- returns `AttributeList` with empty attributeList (5.5.11).
 #[tokio::test]
 #[serial]
 async fn list_attributes_empty_database_returns_empty_list() {

@@ -23,6 +23,7 @@ pub enum EntityTypeSelection {
 
 impl EntityTypeSelection {
     /// Every type name the selection carries.
+    #[must_use]
     pub fn names(&self) -> &[EntityTypeName] {
         match self {
             EntityTypeSelection::Single(name) => slice::from_ref(name),
@@ -31,6 +32,7 @@ impl EntityTypeSelection {
     }
 
     /// Whether `name` is one of the selected types.
+    #[must_use]
     pub fn admits(&self, name: &str) -> bool {
         self.names().iter().any(|selected| selected.as_str() == name)
     }
@@ -102,6 +104,7 @@ impl EntityInfo {
     ///
     /// Clause 5.2.8: an `id` is decisive when present; otherwise an `idPattern`
     /// decides; an entry constraining neither covers every identifier.
+    #[must_use]
     pub fn covers_id(&self, entity_id: &Uri) -> bool {
         match (&self.id, &self.id_pattern) {
             (Some(id), _) => id == entity_id,

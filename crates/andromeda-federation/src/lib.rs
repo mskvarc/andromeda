@@ -108,7 +108,7 @@ pub(crate) struct SentResponse {
     /// The specification version the source says its payload conforms to
     /// (clause 4.3.6.8 `Preference-Applied`), when it said.
     pub(crate) returned_version: Option<SpecVersion>,
-    /// The EntityMap the source used (clause 5.5.14 `NGSILD-EntityMap`), when
+    /// The `EntityMap` the source used (clause 5.5.14 `NGSILD-EntityMap`), when
     /// it returned one.
     pub(crate) entity_map: Option<Uri>,
     /// The raw body.
@@ -152,7 +152,7 @@ impl FederationService {
             .no_zstd()
             .connect_timeout(config.connect_timeout())
             .build()
-            .map_err(|e| FederationError::internal(format!("Failed to create HTTP client for context source forwarding: {}", e)))?;
+            .map_err(|e| FederationError::internal(format!("Failed to create HTTP client for context source forwarding: {e}")))?;
         let received_protocol =
             ReceivedProtocol::try_from("1.1").map_err(|error| FederationError::internal(format!("invalid forwarding protocol: {error}")))?;
         Ok(FederationService {
@@ -171,21 +171,25 @@ impl FederationService {
 
     /// Resolve a request's or subscription's `splitEntities` against the
     /// deployment default (clauses 4.3.6.7 and 5.2.12).
+    #[must_use]
     pub const fn split_entities(&self, explicit: Option<bool>) -> SplitEntities {
         self.split_entities_default.resolve(explicit)
     }
 
     /// The JSON-LD engine forwarding expands and compacts with.
+    #[must_use]
     pub const fn engine(&self) -> &JsonLdEngine {
         &self.engine
     }
 
     /// The registration store forwarding selects context sources from.
+    #[must_use]
     pub fn registration_store(&self) -> &dyn RegistrationStore {
         self.csr_repo.as_ref()
     }
 
     /// Check whether forwarding would create a Via loop.
+    #[must_use]
     pub fn is_loop_detected(&self, incoming_via: Option<&Via>) -> bool {
         loop_detected(incoming_via, &self.source_alias)
     }
@@ -204,7 +208,7 @@ impl FederationService {
             .management
             .as_ref()
             .and_then(|management| management.timeout)
-            .map_or(self.default_timeout, |timeout| timeout.as_duration())
+            .map_or(self.default_timeout, andromeda_ngsi_ld_lexicon::positive_milliseconds::PositiveMilliseconds::as_duration)
     }
 
     /// Send a request to `registration` and return its status, `Warning` and raw body.

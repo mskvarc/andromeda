@@ -1,16 +1,16 @@
 //! Geometry extraction for registration creation and updates.
 //!
 //! The repository is forbidden from inspecting `Value`; the service layer
-//! decodes inbound GeoProperty wrappers into a [`Geometry`] before any CSR
+//! decodes inbound `GeoProperty` wrappers into a [`Geometry`] before any CSR
 //! insert or update.
 
 use crate::error::RegistrationError;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use serde_json::Value;
 
-/// If `v` is a GeoProperty wrapper `{"type":"GeoProperty","value":{...}}`,
-/// decode the inner GeoJSON geometry. Otherwise treat `v` itself as a raw
-/// GeoJSON geometry.
+/// If `v` is a `GeoProperty` wrapper `{"type":"GeoProperty","value":{...}}`,
+/// decode the inner `GeoJSON` geometry. Otherwise treat `v` itself as a raw
+/// `GeoJSON` geometry.
 pub fn unwrap_geo_property_to_geometry(v: &Value) -> Result<Geometry, RegistrationError> {
     let geometry = if v.get("type").and_then(|t| t.as_str()) == Some("GeoProperty")
         && let Some(inner) = v.get("value")

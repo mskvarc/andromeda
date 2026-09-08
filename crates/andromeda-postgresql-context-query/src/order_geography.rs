@@ -21,10 +21,10 @@ use sea_query::{Expr as SeaExpr, Func, Keyword, QueryStatementBuilder, SimpleExp
 /// distance ordering sorts by (clause 4.23), with the reference geometry bound
 /// as EWKB.
 ///
-/// The default GeoProperty has a dedicated geography column; every other one is
+/// The default `GeoProperty` has a dedicated geography column; every other one is
 /// read from its `current_attribute_values` instance rows, the same projection
 /// the geo filter itself reads, so an ordering and a filter can never disagree
-/// about where a GeoProperty's geometry lives. Where a GeoProperty has several
+/// about where a `GeoProperty`'s geometry lives. Where a `GeoProperty` has several
 /// `datasetId` instances the ordering takes the smallest of their distances,
 /// which is the reading that agrees with clause 4.10 counting an entity as
 /// matching when any one instance does.
@@ -34,9 +34,10 @@ use sea_query::{Expr as SeaExpr, Func, Keyword, QueryStatementBuilder, SimpleExp
 /// the instance subquery correlates back to the identity row's surrogate key.
 ///
 /// Clause 4.23's `id` and `type` keywords carry no geometry at all, and neither
-/// does a GeoProperty the broker has never recorded, so a distance ordering on
+/// does a `GeoProperty` the broker has never recorded, so a distance ordering on
 /// either measures from nothing and yields NULL, which sorts every row equally
 /// and leaves the `id` tiebreaker to decide.
+#[must_use]
 pub fn geo_order_distance(target: &OrderTarget, attribute_names: &ResolvedNames<AttributeName>, outer: &EntityRowRefs, reference: &[u8]) -> SimpleExpr {
     // Built fresh per branch so the EWKB it binds is not shared as an owned value.
     let reference_geography = || cast(validated_geom_from_ewkb(SeaExpr::val(reference.to_vec())), PostgresType::Geography);
@@ -58,14 +59,14 @@ pub fn geo_order_distance(target: &OrderTarget, attribute_names: &ResolvedNames<
 /// under.
 ///
 /// Deliberately not the alias the geo predicate uses: a query that both filters
-/// and orders on GeoProperties nests the two subqueries in one statement.
+/// and orders on `GeoProperties` nests the two subqueries in one statement.
 const ORDER_ALIAS: &str = "geo_order";
 
 /// Where a distance ordering reads the entity's geometry from.
 enum OrderSubject {
     /// The ordering term names nothing that carries a geometry.
     None,
-    /// The default GeoProperty's dedicated geography column.
+    /// The default `GeoProperty`'s dedicated geography column.
     LocationColumn,
     /// The instance rows of one attribute, by dictionary key.
     Instances(AttributeNameId),
@@ -153,7 +154,7 @@ mod tests {
     }
 
     /// Clause 4.23 read together with clause 4.10: an ordering reads the same
-    /// projection the filter does, so a named GeoProperty measures from its
+    /// projection the filter does, so a named `GeoProperty` measures from its
     /// instance rows and takes the smallest distance among them.
     #[test]
     fn a_custom_geoproperty_measures_from_its_nearest_attribute_instance() {
@@ -222,7 +223,7 @@ mod tests {
     }
 
     /// Clause 4.23 admits `id`, `type` and `scope` as ordering terms; none names
-    /// a GeoProperty, so a distance ordering on one measures from nothing.
+    /// a `GeoProperty`, so a distance ordering on one measures from nothing.
     #[test]
     fn a_keyword_order_target_carries_no_geometry() {
         for target in [OrderTarget::Id, OrderTarget::Type, OrderTarget::Scope] {

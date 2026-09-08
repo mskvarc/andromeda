@@ -6,6 +6,7 @@ use andromeda_http_response::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 
 /// Classify one entity-policy failure for both single and batch HTTP reporting.
+#[must_use]
 pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
     match error {
         EntityError::Validation { detail } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail),

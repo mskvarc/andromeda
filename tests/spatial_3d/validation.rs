@@ -3,7 +3,7 @@
 //!
 //! RFC 7946 3.1.1 permits exactly two or three ordinates per position. Anything
 //! else — four ordinates, a lone ordinate, a non-numeric ordinate — is invalid
-//! GeoJSON and the broker answers 400 `BadRequestData` on every surface that
+//! `GeoJSON` and the broker answers 400 `BadRequestData` on every surface that
 //! accepts a geometry: entity bodies, query parameters, POST query bodies,
 //! subscriptions, temporal queries, ordering references and registrations.
 
@@ -15,7 +15,7 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
-/// Asserts a body is an NGSI-LD `BadRequestData` ProblemDetails document.
+/// Asserts a body is an NGSI-LD `BadRequestData` `ProblemDetails` document.
 fn assert_bad_request_data(body: &Value) {
     assert_eq!(
         body["type"].as_str().expect("ProblemDetails must carry a type"),
@@ -25,7 +25,7 @@ fn assert_bad_request_data(body: &Value) {
     assert!(body.get("title").and_then(Value::as_str).is_some(), "ProblemDetails must carry a title");
 }
 
-/// Posts an entity expected to be rejected and returns the ProblemDetails body.
+/// Posts an entity expected to be rejected and returns the `ProblemDetails` body.
 async fn create_expecting_bad_request(client: &TestClient, entity: &Value) -> Value {
     let response = client.post_entity(entity).send().await.expect("create request failed");
     assert_eq!(response.status, StatusCode::BAD_REQUEST, "entity create must be rejected");

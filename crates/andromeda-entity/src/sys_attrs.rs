@@ -20,6 +20,7 @@ use serde_json::{Map, Value};
 /// store the way a non-deletion notification does, so they are captured into the
 /// snapshot at delete time. `deletedAt` is not embedded here — the delivery path
 /// derives it from the event instant.
+#[must_use]
 pub fn snapshot_with_sys_attrs(entity: &Value, sys_attrs: &SysAttrsSnapshot) -> Value {
     let mut enriched = entity.clone(); // clone: the durable match owns a sys-attr-enriched copy of the pre-deletion payload
     inject_sys_attrs(&mut enriched, sys_attrs.created_at, sys_attrs.modified_at, sys_attrs.expires_at);

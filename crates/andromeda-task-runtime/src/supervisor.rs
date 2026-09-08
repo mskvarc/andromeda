@@ -84,12 +84,14 @@ struct ManagedTask {
 
 impl TaskSupervisor {
     /// Construct a process supervisor on the supplied primary Tokio runtime.
+    #[must_use]
     pub fn process(host: Handle) -> TaskSupervisor {
         let process_cancellation = CancellationToken::new();
         TaskSupervisor::with_tokens(host, process_cancellation.clone(), process_cancellation)
     }
 
     /// Construct an isolated tenant supervisor whose cancellation is a child of this process scope.
+    #[must_use]
     pub fn tenant(&self) -> TaskSupervisor {
         TaskSupervisor::with_tokens(
             self.inner.host.clone(), // clone: process and tenant supervisors spawn on the same runtime handle.
@@ -116,11 +118,13 @@ impl TaskSupervisor {
     }
 
     /// Subscribe to lifecycle transitions in the order they are observed.
+    #[must_use]
     pub fn subscribe(&self) -> broadcast::Receiver<TaskLifecycleEvent> {
         self.inner.lifecycle.subscribe()
     }
 
     /// Return the cancellation token for the supervisor scope.
+    #[must_use]
     pub fn cancellation_token(&self) -> CancellationToken {
         self.inner.cancellation.clone() // clone: callers receive another handle to the same hierarchical cancellation state.
     }
@@ -278,7 +282,7 @@ impl TaskSupervisor {
                     task.forced.store(true, Ordering::Release);
                     task.abort.abort();
                 } else {
-                    let remaining = task.grace_period - elapsed;
+                    let remaining = task.grace_period.checked_sub(elapsed).unwrap();
                     nearest_deadline = Some(nearest_deadline.map_or(remaining, |nearest| nearest.min(remaining)));
                 }
             }

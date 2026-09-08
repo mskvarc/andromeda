@@ -10,6 +10,7 @@ pub struct WorkerInstanceId(String);
 
 impl WorkerInstanceId {
     /// Create the identifier used by a notification delivery worker.
+    #[must_use]
     pub fn delivery(nonce: Uuid) -> WorkerInstanceId {
         WorkerInstanceId(format!("notification-delivery-worker-{nonce}"))
     }

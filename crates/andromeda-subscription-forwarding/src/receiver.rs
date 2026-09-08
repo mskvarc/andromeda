@@ -14,6 +14,7 @@ pub struct ReceiverEndpoint(Url);
 
 impl ReceiverEndpoint {
     /// The receiver below the advertised origin.
+    #[must_use]
     pub fn from_advertised(advertised: &Url) -> Option<ReceiverEndpoint> {
         let mut url = advertised.clone(); // clone: the endpoint owns a URL distinct from the configured origin
         {
@@ -34,6 +35,7 @@ impl ReceiverEndpoint {
     }
 
     /// The endpoint URL.
+    #[must_use]
     pub const fn url(&self) -> &Url {
         &self.0
     }

@@ -28,6 +28,7 @@ pub struct UnitCodeToken(&'static str);
 
 impl UnitCodeToken {
     /// Return the token as written on the wire.
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         self.0
     }

@@ -96,7 +96,7 @@ fn accumulate_document(document: &str, table: &mut SemanticsTable) {
 ///
 /// The core context spells the four JSON-LD coercions the fastpath models:
 /// `@id`, `@vocab`, `@json` and the `DateTime` alias (which the context maps to
-/// the NGSI-LD DateTime datatype). Any other datatype is left unmodelled here —
+/// the NGSI-LD `DateTime` datatype). Any other datatype is left unmodelled here —
 /// a request context that names an arbitrary datatype keeps it as a
 /// [`TermCoercion::TypeIri`] through the caller, not this function.
 pub(crate) fn coercion_of(declared_type: Option<&str>) -> Option<TermCoercion> {

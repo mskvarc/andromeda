@@ -1,12 +1,12 @@
 //! Correlating a subquery to one entity's geometry-valued attribute instances.
 //!
-//! Clause 4.10 lets a geo-query name any GeoProperty of an entity, and clause
-//! 4.23 lets a distance ordering measure to one. Every GeoProperty other than
+//! Clause 4.10 lets a geo-query name any `GeoProperty` of an entity, and clause
+//! 4.23 lets a distance ordering measure to one. Every `GeoProperty` other than
 //! the default `location` is stored as `current_attribute_values` rows — one per
 //! `datasetId` instance — rather than as a column of `entity_search`, so both the
 //! filter and the ordering reach it through the same correlated subquery. That
 //! fragment is written once here: a predicate and an ordering that disagreed
-//! about which rows a GeoProperty lives in would silently order by a geometry
+//! about which rows a `GeoProperty` lives in would silently order by a geometry
 //! they did not filter on.
 
 use crate::{attribute_name_id::AttributeNameId, entity_row_refs::EntityRowRefs};
@@ -30,6 +30,7 @@ use sea_query::{Alias, Expr as SeaExpr, ExprTrait, Query, SelectStatement, Simpl
 /// The correlation reads the outer row's `entity_key`: the projection is owned
 /// by the `entities` row through the surrogate key, and the entity URI it used
 /// to carry is not a column of this relation at all.
+#[must_use]
 pub fn geometry_instances_of(outer: &EntityRowRefs, subquery_alias: &str, attribute_id: AttributeNameId) -> SelectStatement {
     let alias = Alias::new(subquery_alias);
     let mut scan = Query::select();
@@ -42,6 +43,7 @@ pub fn geometry_instances_of(outer: &EntityRowRefs, subquery_alias: &str, attrib
 
 /// The subquery's geometry column: the `value_geo` of the instance rows
 /// [`geometry_instances_of`] selects.
+#[must_use]
 pub fn instance_geometry_column(subquery_alias: &str) -> SimpleExpr {
     SeaExpr::col((Alias::new(subquery_alias), CurrentAttributeValues::ValueGeo))
 }
@@ -49,6 +51,7 @@ pub fn instance_geometry_column(subquery_alias: &str) -> SimpleExpr {
 /// A `SELECT 1` marker for a correlated `EXISTS` built over
 /// [`geometry_instances_of`], kept beside the scan so both crates that wrap the
 /// scan in an existential spell the marker the same way.
+#[must_use]
 pub fn existence_marker() -> SimpleExpr {
     int_literal(1)
 }
@@ -115,7 +118,7 @@ mod tests {
         assert!(!sql.contains("attribute_current"), "{sql}");
     }
 
-    /// Clause 4.10 reads the instances of one named GeoProperty, so the scan
+    /// Clause 4.10 reads the instances of one named `GeoProperty`, so the scan
     /// restricts on the dictionary key and on the geometry column being
     /// populated — the two halves the supporting partial index is built on.
     #[test]

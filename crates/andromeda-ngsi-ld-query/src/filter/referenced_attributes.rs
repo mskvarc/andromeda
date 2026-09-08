@@ -17,6 +17,7 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 /// Relationship it descends through: that is the member of the entity under
 /// evaluation the predicate reads, and the attribute a context source would
 /// have to hold for the hop to begin.
+#[must_use]
 pub fn referenced_attributes(expr: &Expr) -> Vec<&AttributeName> {
     let mut names = Vec::new();
     collect(expr, &mut names);

@@ -10,6 +10,7 @@ pub struct TaskName(CompactString);
 
 impl TaskName {
     /// Borrow the validated task name.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }

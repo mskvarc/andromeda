@@ -149,7 +149,7 @@ pub(crate) enum SingleWrite {
     Merge,
 }
 
-/// What a batch upsert does after a source reports AlreadyExists on the
+/// What a batch upsert does after a source reports `AlreadyExists` on the
 /// per-entity create (clause 5.6.8.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UpsertFollowUp {
@@ -157,7 +157,7 @@ pub(crate) enum UpsertFollowUp {
     Replace,
     /// Update Attributes, the mode being update and the operation advertised.
     UpdateAttributes,
-    /// Nothing the mode calls for is advertised: OperationNotSupported.
+    /// Nothing the mode calls for is advertised: `OperationNotSupported`.
     NotAdvertised,
 }
 
@@ -345,7 +345,7 @@ fn without_identifier(body: &Value) -> Value {
     }
 }
 
-/// The clause 5.6.8.4 follow-up of a per-entity create answered AlreadyExists.
+/// The clause 5.6.8.4 follow-up of a per-entity create answered `AlreadyExists`.
 const fn follow_up_write(follow_up: UpsertFollowUp) -> Option<SingleWrite> {
     match follow_up {
         UpsertFollowUp::Replace => Some(SingleWrite::Replace),
@@ -464,7 +464,7 @@ impl FederationService {
     }
 
     /// Send one single-entity fallback write, with the clause 5.6.8.4
-    /// follow-up when a create is answered AlreadyExists.
+    /// follow-up when a create is answered `AlreadyExists`.
     async fn single_write(
         &self,
         write: SingleWrite,

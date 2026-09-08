@@ -70,6 +70,7 @@ impl JsonLdEngine {
     }
 
     /// Start configuring an engine.
+    #[must_use]
     pub fn builder() -> JsonLdEngineBuilder {
         JsonLdEngineBuilder::new()
     }
@@ -79,6 +80,7 @@ impl JsonLdEngine {
     /// The version this deployment pinned (clause 4.4); the fastpath term
     /// table is built from it. Defaults to the versionless core context when no
     /// pin was configured.
+    #[must_use]
     pub const fn default_core_url(&self) -> &IriBuf {
         &self.default_core_url
     }
@@ -93,6 +95,7 @@ impl JsonLdEngine {
     /// The broker's startup path takes this so a periodic task can fold the
     /// accumulated deltas into the durable cache. Absent when no durable
     /// cache was attached, because there would be nothing to fold them into.
+    #[must_use]
     pub fn hit_counter(&self) -> Option<Arc<HitCounter>> {
         self.hit_counter.clone() // clone: Arc ref-count bump
     }

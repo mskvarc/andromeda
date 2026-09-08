@@ -29,6 +29,7 @@ pub struct HitCounter {
 
 impl HitCounter {
     /// An empty counter.
+    #[must_use]
     pub fn new() -> HitCounter {
         HitCounter::default()
     }
@@ -50,6 +51,7 @@ impl HitCounter {
     }
 
     /// Remove every pending count and answer with the drained deltas.
+    #[must_use]
     pub fn drain(&self) -> Vec<HitDelta> {
         let keys: Vec<_> = self.pending.iter().map(|entry| entry.key().clone()).collect();
         let mut drained = Vec::with_capacity(keys.len());

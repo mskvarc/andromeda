@@ -74,7 +74,7 @@ async fn ordering_dist_2d_orderfrom_with_3d_entities() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// NGSI-LD 4.23 read with 4.10: `orderBy` may name any GeoProperty, not only
+/// NGSI-LD 4.23 read with 4.10: `orderBy` may name any `GeoProperty`, not only
 /// the default `location`. A named one is measured from its
 /// `current_attribute_values`
 /// instance rows, so the ordering has to reach the same geometry the filter
@@ -82,7 +82,7 @@ async fn ordering_dist_2d_orderfrom_with_3d_entities() {
 ///
 /// Every entity's `location` is deliberately placed in the opposite order to
 /// its `observationPoint`, so an ordering that silently fell back to the
-/// default GeoProperty would produce exactly the reverse result.
+/// default `GeoProperty` would produce exactly the reverse result.
 #[tokio::test]
 async fn ordering_dist_asc_on_a_custom_geoproperty_sorts_by_that_geoproperty() {
     let scope = TestEnvironment::from_suite("spatial_3d").await.expect("isolated test environment");
@@ -125,7 +125,7 @@ async fn ordering_dist_asc_on_a_custom_geoproperty_sorts_by_that_geoproperty() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// NGSI-LD 4.23 read with 4.10: an entity whose named GeoProperty has several
+/// NGSI-LD 4.23 read with 4.10: an entity whose named `GeoProperty` has several
 /// `datasetId` instances is ordered by its nearest instance, which is the
 /// reading that agrees with the filter counting an entity as matching when any
 /// one instance does.

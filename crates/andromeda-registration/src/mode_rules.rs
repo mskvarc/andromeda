@@ -399,6 +399,6 @@ mod tests {
                 .is_ok()
         );
         assert!(check_conflicts(&store, &probe, ForwardingMode::Auxiliary, &[entry], None).await.is_ok());
-        assert!(probe.asked().is_empty());
+        assert_eq!(probe.asked(), [] as [std::string::String; 0]);
     }
 }

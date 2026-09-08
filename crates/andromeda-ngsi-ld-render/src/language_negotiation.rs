@@ -19,12 +19,11 @@ use indexmap::IndexMap;
 use langtag::LangTagBuf;
 use serde::Serialize;
 use serde_json::Value;
-use std::ops::Deref;
 
 /// Render one attribute value, negotiating any language map inside it.
 pub(crate) fn render_attribute_value(attr: &AttributeValue, language_filter: Option<&LanguageFilter>) -> Result<Value, RenderError> {
     match attr {
-        AttributeValue::Single(attribute) => render_attribute(attribute.deref(), language_filter),
+        AttributeValue::Single(attribute) => render_attribute(attribute, language_filter),
         AttributeValue::Multiple(attributes) => attributes
             .iter()
             .map(|attribute| render_attribute(attribute, language_filter))

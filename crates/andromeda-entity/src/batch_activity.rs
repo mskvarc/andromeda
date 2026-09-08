@@ -31,6 +31,7 @@ pub struct BatchActivityTracker {
 
 impl BatchActivityTracker {
     /// Creates a new tracker with the default 10-second cooldown.
+    #[must_use]
     pub fn new() -> BatchActivityTracker {
         BatchActivityTracker {
             last_activity_epoch: Arc::new(AtomicI64::new(0)),
@@ -50,6 +51,7 @@ impl BatchActivityTracker {
     /// than [`cooldown`](Self::new) seconds ago.
     ///
     /// Background workers should skip their work when this returns `true`.
+    #[must_use]
     pub fn is_within_cooldown(&self) -> bool {
         let last = self.last_activity_epoch.load(Ordering::Acquire);
         if last == 0 {

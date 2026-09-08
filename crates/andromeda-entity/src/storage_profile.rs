@@ -56,11 +56,11 @@ pub struct StorageProfile {
 }
 
 impl StorageProfile {
-    /// A PostgreSQL store with PostGIS geometry columns, `jsonb` payloads and
+    /// A PostgreSQL store with `PostGIS` geometry columns, `jsonb` payloads and
     /// `ltree` scope paths.
     ///
     /// Constant rather than probed, which is the difference between these axes
-    /// and the TimescaleDB edition. `migrations/tenant/` creates the PostGIS
+    /// and the `TimescaleDB` edition. `migrations/tenant/` creates the `PostGIS`
     /// and `ltree` columns, so a pool that migrated has them and one that could
     /// not migrate never becomes a store. There is no runtime state to detect
     /// and no per-tenant divergence to carry.
@@ -77,6 +77,7 @@ impl StorageProfile {
     /// still hands it back: the rows it returns are a superset, and returning a
     /// superset without saying so is the failure this whole mechanism exists to
     /// prevent.
+    #[must_use]
     pub fn unapplied(&self, selection: &EntitySelection) -> ResidualFilter {
         let mut residual = EntitySelection::default();
         if selection.geo.is_some() && self.geo_predicates != GeoPredicatePushdown::Full {
@@ -99,6 +100,7 @@ impl StorageProfile {
     /// holds. Clause 5.5.2 provides `OperationNotSupported` for exactly this,
     /// and answering slowly and silently is the alternative it exists to
     /// replace.
+    #[must_use]
     pub fn unnarrowable(&self, selection: &EntitySelection) -> Vec<ResidualPredicate> {
         let mut refused = Vec::new();
         if selection.q_expr.is_some() && self.value_filter == ValueFilterPushdown::None {

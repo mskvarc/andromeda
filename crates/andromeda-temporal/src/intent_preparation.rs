@@ -371,7 +371,7 @@ fn relationship_value(instance: &Value) -> Result<TemporalValue, TemporalError> 
         .map_err(|error| TemporalError::validation(format!("Relationship object is not a valid URI: {error}")))
 }
 
-/// Decode an expanded or encoded GeoProperty value.
+/// Decode an expanded or encoded `GeoProperty` value.
 fn geometry_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
     let node = first_member(instance, expanded_properties::VALUE.as_str()).ok_or_else(|| TemporalError::validation("GeoProperty missing value"))?;
     let geometry = if let Some(value) = node.get("@value") {
@@ -386,7 +386,7 @@ fn geometry_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
     Ok(TemporalValue::Geometry(geometry))
 }
 
-/// Decode one or many VocabProperty identifiers.
+/// Decode one or many `VocabProperty` identifiers.
 fn vocab_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
     let values = instance
         .get(expanded_properties::VOCAB.as_str())
@@ -436,7 +436,7 @@ fn list_value(instance: &Value, key: &str, error: &'static str) -> Result<Tempor
         .ok_or_else(|| TemporalError::validation(error))
 }
 
-/// Decode a ListRelationship object list.
+/// Decode a `ListRelationship` object list.
 ///
 /// Each member names a target Entity URI (clause 4.5.22), but which JSON-LD
 /// keyword carries it depends on the context the client wrote the Entity under.

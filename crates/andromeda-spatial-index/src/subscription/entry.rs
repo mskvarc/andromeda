@@ -36,6 +36,7 @@ impl SubEntry {
     /// Takes the geometry and the relation rather than a compiled subscription:
     /// this crate indexes geo filters, and knowing what else a subscription
     /// carries would make an R-tree a subscription cache.
+    #[must_use]
     pub fn new(subscription_id: Uri, ref_geometry: Geometry, georel: GeoRel) -> Option<SubEntry> {
         let rect = ref_geometry.bounding_rect()?;
         let mut min = [rect.min().x, rect.min().y];

@@ -3,7 +3,7 @@
 //!
 //! The cases are grouped by the shape of the response they assert on: the
 //! flat collection, the inline nesting, the `pick`/`omit` narrowing, and the
-//! GeoJSON rendering. A fifth group covers the clause 4.9 `q` traversal axis,
+//! `GeoJSON` rendering. A fifth group covers the clause 4.9 `q` traversal axis,
 //! which reaches the same linked entities to *select* roots rather than to
 //! render them. This module owns only the helpers those groups share.
 //!

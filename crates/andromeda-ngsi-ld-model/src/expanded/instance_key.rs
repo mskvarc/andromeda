@@ -11,6 +11,7 @@ use std::collections::HashMap;
 /// System attributes are broker-managed metadata (`createdAt`, `observedAt`,
 /// …) rather than user attributes, so they never take part in the temporal
 /// catalogue or in attribute-level diffing.
+#[must_use]
 pub fn is_system_attribute(attr_name: &AttributeName) -> bool {
     attr_name.as_str() == properties::CREATED_AT.as_str()
         || attr_name.as_str() == properties::DATASET_ID.as_str()
@@ -44,7 +45,7 @@ pub struct AttributeInstanceKey {
 /// The family is carried beside the identity because a deletion has to record
 /// it: clauses 4.5.7 and 4.5.8 render an instance that has ended with the
 /// `urn:ngsi-ld:null` member its family prescribes — `object` for a
-/// Relationship, a `languageMap` entry for a LanguageProperty, and so on — and
+/// Relationship, a `languageMap` entry for a `LanguageProperty`, and so on — and
 /// once the instance is gone from current state there is nowhere else left to
 /// read it from. An instance that declares no family is a Property (clause
 /// 4.5.2).
@@ -53,6 +54,7 @@ pub struct AttributeInstanceKey {
 /// an attribute — clause 4.5.4). Attribute names that are not valid IRIs are
 /// skipped too: they cannot correspond to a temporal catalogue row, whose
 /// `attribute_name` is IRI-validated on read.
+#[must_use]
 pub fn attribute_instance_families(expanded: &Value) -> HashMap<AttributeInstanceKey, AttributeType> {
     let mut instances_by_key = HashMap::new();
     let Some(obj) = expanded_object_ref(expanded) else {

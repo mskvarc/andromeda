@@ -1,8 +1,8 @@
 //! PostgreSQL's own wire formats, for the values Andromeda binds and reads back.
 //!
 //! Everything here is a property of the backend rather than of NGSI-LD. EWKB is
-//! PostGIS's extended well-known binary; ETSI GS CIM 009 v1.9.1 never mentions
-//! it, and says only that a GeoProperty value is GeoJSON per RFC 7946. Encoding
+//! `PostGIS`'s extended well-known binary; ETSI GS CIM 009 v1.9.1 never mentions
+//! it, and says only that a `GeoProperty` value is `GeoJSON` per RFC 7946. Encoding
 //! therefore belongs on this side of the boundary and not in
 //! `andromeda-ngsi-ld-geometry`, which models the specification's geometry and
 //! nothing else.

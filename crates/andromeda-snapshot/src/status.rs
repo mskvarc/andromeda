@@ -18,6 +18,7 @@ pub enum ScopingEligibility {
 }
 
 /// Decide whether a snapshot in `status` can scope a request.
+#[must_use]
 pub const fn scoping_eligibility(status: SnapshotStatus) -> ScopingEligibility {
     match status {
         SnapshotStatus::Success | SnapshotStatus::Partial | SnapshotStatus::Empty | SnapshotStatus::Failure => ScopingEligibility::Usable,

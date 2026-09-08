@@ -17,6 +17,7 @@ use andromeda_ngsi_ld_render::{context::ResponseContext, response::ResponseRende
 /// Returns the renderer before its payload; the caller attaches that with
 /// [`ResponseRenderer::with_payload`], which is the only route to a runnable
 /// response, so a handler cannot render a body without one.
+#[must_use]
 pub fn start_rendering<'a>(media_type: ResponseMediaType, context: &ContextSpec, preferences: RenderingPreferences) -> ResponseRenderer<'a> {
     ResponseRenderer::new(media_type, response_context(context))
         .with_geo_json_body(preferences.geo_json_body)
@@ -26,7 +27,7 @@ pub fn start_rendering<'a>(media_type: ResponseMediaType, context: &ContextSpec,
 /// Rendering-related values resolved from the request's typed `Prefer` header.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RenderingPreferences {
-    /// Whether a GeoJSON response carries JSON-LD context in the body or a `Link` header.
+    /// Whether a `GeoJSON` response carries JSON-LD context in the body or a `Link` header.
     pub geo_json_body: GeoJsonBodyPreference,
     /// Requested earlier NGSI-LD representation version, when present.
     pub requested_version: Option<SpecVersion>,
@@ -37,6 +38,7 @@ pub struct RenderingPreferences {
 /// Both come from a single [`ContextSpec::for_presentation`] reading, so a
 /// response cannot advertise one set of contexts in its `Link` header and embed
 /// a different set in its body.
+#[must_use]
 pub fn response_context(context: &ContextSpec) -> ResponseContext {
     let presentation = context.for_presentation();
     ResponseContext::new(presentation.to_context_value(), presentation.to_link_headers())

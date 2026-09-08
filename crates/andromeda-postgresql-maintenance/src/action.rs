@@ -147,7 +147,7 @@ enum StatementOutcome {
     Failed(sqlx::Error),
 }
 
-/// Execute a statement built by the PostgreSQL SeaQuery dialect extension.
+/// Execute a statement built by the PostgreSQL `SeaQuery` dialect extension.
 async fn execute_statement(connection: &mut PgConnection, statement: &MaintenanceStatement, cancellation: &CancellationToken) -> StatementOutcome {
     tokio::select! {
         () = cancellation.cancelled() => StatementOutcome::Cancelled,

@@ -1,6 +1,6 @@
 //! Altitude through the temporal API (NGSI-LD 4.5.7, 5.6.11, 5.7.3, 5.7.4).
 //!
-//! Temporal instances store the GeoJSON value verbatim just as the current
+//! Temporal instances store the `GeoJSON` value verbatim just as the current
 //! representation does, and a temporal geo-query filters on the same 2D
 //! footprint as the non-temporal one.
 
@@ -171,7 +171,7 @@ async fn temporal_query_georel_2d_reference_matches_3d_history() {
 }
 
 /// NGSI-LD 4.10 applies to a temporal query exactly as it does to a
-/// current-state one: `geoproperty` may name any GeoProperty, and one that is
+/// current-state one: `geoproperty` may name any `GeoProperty`, and one that is
 /// not the default is read from its `current_attribute_values` instance rows,
 /// correlated through the alias stage 1 joins `entities` under.
 #[tokio::test]

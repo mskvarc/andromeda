@@ -6,7 +6,7 @@ use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 
-/// Retrieve source identity — returns 200 with ContextSourceIdentity body (5.8.1).
+/// Retrieve source identity — returns 200 with `ContextSourceIdentity` body (5.8.1).
 #[tokio::test]
 async fn info_source_identity_default_returns_200() {
     let scope = TestEnvironment::from_suite("info").await.expect("isolated test environment");

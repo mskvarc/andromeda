@@ -33,6 +33,7 @@ pub struct TemporalValuesRenderer {
 
 impl TemporalValuesRenderer {
     /// Create a renderer for the given compacted payload.
+    #[must_use]
     pub const fn new(payload: Value) -> TemporalValuesRenderer {
         TemporalValuesRenderer { payload }
     }

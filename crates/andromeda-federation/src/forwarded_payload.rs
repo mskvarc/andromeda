@@ -277,7 +277,7 @@ mod tests {
             .await
             .expect("payload builds");
         pretty_assertions::assert_eq!(payload.media_type, ResponseMediaType::JsonLd);
-        assert!(payload.link_contexts.is_empty());
+        assert_eq!(payload.link_contexts, [] as [iri_rs::IriRef<std::string::String>; 0]);
         pretty_assertions::assert_eq!(body_context(payload.body.as_deref().expect("body")), Some(json!(USER_CONTEXT)));
     }
 
@@ -308,7 +308,7 @@ mod tests {
             .await
             .expect("payload builds");
         pretty_assertions::assert_eq!(as_ld.media_type, ResponseMediaType::JsonLd);
-        assert!(as_ld.link_contexts.is_empty());
+        assert_eq!(as_ld.link_contexts, [] as [iri_rs::IriRef<std::string::String>; 0]);
         pretty_assertions::assert_eq!(body_context(as_ld.body.as_deref().expect("body")), Some(inline));
 
         let json_pairs = pairs(&[]);
@@ -363,7 +363,7 @@ mod tests {
         let none = build_forwarded_payload(&engine(), &ContextSpec::none(), None, &info, None)
             .await
             .expect("payload builds");
-        assert!(none.link_contexts.is_empty());
+        assert_eq!(none.link_contexts, [] as [iri_rs::IriRef<std::string::String>; 0]);
     }
 
     #[tokio::test]

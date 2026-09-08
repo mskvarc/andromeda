@@ -59,6 +59,7 @@ pub enum ProjectedAttributeValue {
 
 impl ProjectedAttributeValue {
     /// The code the row records for this value's shape.
+    #[must_use]
     pub const fn kind(&self) -> ValueKind {
         match self {
             ProjectedAttributeValue::Number(_) => ValueKind::Number,

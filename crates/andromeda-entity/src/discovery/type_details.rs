@@ -14,7 +14,6 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::options::CompactOptions};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::entity_type_list::{EntityType, EntityTypeType};
-use jsonld::Expandable;
 use serde_json::Value;
 
 impl EntityDiscoveryService {
@@ -55,7 +54,7 @@ impl EntityDiscoveryService {
             .collect::<Result<_, EntityError>>()?;
 
         // Expand and compact
-        let expanded = serde_json::json!(entity_types.iter().map(|et| et.expand::<serde_json::Value>()).collect::<Vec<_>>());
+        let expanded = serde_json::json!(entity_types.iter().map(jsonld::Expandable::expand::<serde_json::Value>).collect::<Vec<_>>());
         let mut compacted = self.engine.compact(expanded, context, CompactOptions::default()).await?;
 
         // Extract the @graph array (compaction wraps multiple items in @graph)

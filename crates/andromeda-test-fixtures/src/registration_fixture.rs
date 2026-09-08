@@ -20,6 +20,7 @@ pub struct RegistrationFixture {
 
 impl RegistrationFixture {
     /// Render the fixture as an NGSI-LD JSON object.
+    #[must_use]
     pub fn into_value(self) -> Value {
         json!({
             "id": self.id,

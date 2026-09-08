@@ -22,7 +22,7 @@ pub enum TemporalValue {
     String(String),
     /// A boolean attribute value.
     Boolean(bool),
-    /// A GeoJSON geometry in canonical JSON form.
+    /// A `GeoJSON` geometry in canonical JSON form.
     Geometry(Value),
     /// A JSON object attribute value.
     Object(Value),
@@ -73,6 +73,7 @@ mod tests {
 
 impl TemporalValue {
     /// The deletion instant this observation carries, which only a tombstone has.
+    #[must_use]
     pub const fn deleted_at(&self) -> Option<DateTime<Utc>> {
         match self {
             TemporalValue::Tombstone { deleted_at } => Some(*deleted_at),
@@ -129,6 +130,7 @@ impl TemporalHistoryRow {
     /// [`recorded_at`](TemporalHistoryRow::recorded_at) never fills a missing
     /// axis in — doing so would invent a match on a Temporal Property the
     /// observation does not have.
+    #[must_use]
     pub const fn time_axis(&self, timeproperty: TimeProp) -> Option<DateTime<Utc>> {
         match timeproperty {
             TimeProp::Observed => self.observed_at,

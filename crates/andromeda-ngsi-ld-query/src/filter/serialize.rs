@@ -12,6 +12,7 @@ use std::fmt::Write;
 ///
 /// The result parses back to an equal expression; identifiers that would
 /// confuse the tokeniser are re-quoted.
+#[must_use]
 pub fn serialize(expr: &Expr) -> String {
     let mut buf = String::new();
     write_expr(&mut buf, expr);

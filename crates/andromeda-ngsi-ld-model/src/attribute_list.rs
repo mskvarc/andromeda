@@ -15,7 +15,7 @@ use typed_builder::TypedBuilder;
 constant_string!(AttributeListType, "AttributeList");
 constant_string!(AttributeResourceType, "Attribute");
 
-/// NGSI-LD AttributeList representation (ETSI GS CIM 009 clause 5.2.27).
+/// NGSI-LD `AttributeList` representation (ETSI GS CIM 009 clause 5.2.27).
 ///
 /// Lists all attributes known to the broker.
 #[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
@@ -74,7 +74,7 @@ pub struct AttributeInfo {
     pub type_names: Option<Vec<EntityTypeName>>,
 }
 
-/// Detail record for a single attribute within an EntityTypeInfo (ETSI GS CIM 009 clause 5.2.26).
+/// Detail record for a single attribute within an `EntityTypeInfo` (ETSI GS CIM 009 clause 5.2.26).
 #[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
 #[jsonld(

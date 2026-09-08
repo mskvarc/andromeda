@@ -26,7 +26,7 @@ pub enum IndexTarget {
     IdxCavAttrDatetime,
     /// URI predicate index.
     IdxCavAttrUri,
-    /// Attribute-aware geometry GiST.
+    /// Attribute-aware geometry `GiST`.
     IdxCavAttrGeo,
     /// Entity/attribute geometry correlation index.
     IdxCavAttrEntityGeo,
@@ -59,6 +59,7 @@ impl IndexTarget {
     ];
 
     /// The exact database identifier created by tenant migrations.
+    #[must_use]
     pub const fn relation_name(self) -> &'static str {
         match self {
             IndexTarget::UqCurrentAttributeValuesGrain => "uq_current_attribute_values_grain",
@@ -74,11 +75,13 @@ impl IndexTarget {
     }
 
     /// A fixed concurrent rebuild statement; no external identifier enters SQL.
+    #[must_use]
     pub fn reindex_statement(self) -> MaintenanceStatement {
         reindex_index_concurrently(&MaintenanceSchema::Public, &self)
     }
 
     /// Whether qualification also queues the unsupported trigram probe target.
+    #[must_use]
     pub const fn queues_trigram_pair(self) -> bool {
         matches!(self, IndexTarget::IdxCavAttrString)
     }
@@ -105,6 +108,7 @@ impl HeapTarget {
     ];
 
     /// The exact database identifier created by tenant migrations.
+    #[must_use]
     pub const fn relation_name(self) -> &'static str {
         match self {
             HeapTarget::CurrentAttributeValues => "current_attribute_values",
@@ -114,6 +118,7 @@ impl HeapTarget {
     }
 
     /// A fixed non-truncating, non-parallel ordinary vacuum statement.
+    #[must_use]
     pub fn vacuum_statement(self) -> MaintenanceStatement {
         match self {
             HeapTarget::CurrentAttributeValues => vacuum_non_truncating(&MaintenanceSchema::Public, &CurrentAttributeValues::Table),
@@ -134,6 +139,7 @@ pub enum MaintenanceTarget {
 
 impl MaintenanceTarget {
     /// Recover a target from its exact durable-state key.
+    #[must_use]
     pub fn from_state_key(key: &str) -> Option<MaintenanceTarget> {
         match key {
             "uq_current_attribute_values_grain" => Some(MaintenanceTarget::Index(IndexTarget::UqCurrentAttributeValuesGrain)),
@@ -153,6 +159,7 @@ impl MaintenanceTarget {
     }
 
     /// Stable bounded-cardinality label used in durable state and logs.
+    #[must_use]
     pub const fn state_key(self) -> &'static str {
         match self {
             MaintenanceTarget::Index(target) => target.relation_name(),
@@ -161,6 +168,7 @@ impl MaintenanceTarget {
     }
 
     /// Parent heap whose load and lock gates apply to the target.
+    #[must_use]
     pub const fn heap_name(self) -> &'static str {
         match self {
             MaintenanceTarget::Index(

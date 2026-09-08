@@ -159,7 +159,7 @@ async fn reg_entityinfo_id_and_idpattern_prefers_id() {
     assert_status(&by_other, 200);
     let by_other = json_body(&by_other);
     assert!(
-        by_other.as_array().is_none_or(|registrations| registrations.is_empty()),
+        by_other.as_array().is_none_or(std::vec::Vec::is_empty),
         "the ignored idPattern must not match, so a pattern-covered id finds nothing"
     );
 

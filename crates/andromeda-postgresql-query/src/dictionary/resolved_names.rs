@@ -44,6 +44,7 @@ impl<N: InternedName> ResolvedNames<N> {
     /// selection holds an `IriBuf`, a linked-entity guard holds attribute-name
     /// typed tokens — and their text is the dictionary's own key form, so it
     /// is looked up without re-validating it into `N`.
+    #[must_use]
     pub fn get_str(&self, name: &str) -> Option<N::Key> {
         self.keys.get::<str>(name).copied()
     }
@@ -51,6 +52,7 @@ impl<N: InternedName> ResolvedNames<N> {
     /// Whether no name resolved to a dictionary key, in which case every
     /// dictionary-keyed probe the query would compile is already known to be
     /// unsatisfiable.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.keys.is_empty()
     }

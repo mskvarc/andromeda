@@ -17,13 +17,14 @@ pub struct SpatialKey {
     pub tenant: TenantRef,
     /// Expanded entity type IRI.
     pub type_iri: IriBuf,
-    /// The GeoProperty the partition indexes, named by its expanded IRI — for
+    /// The `GeoProperty` the partition indexes, named by its expanded IRI — for
     /// instance `https://uri.etsi.org/ngsi-ld/location`.
     pub geoproperty: AttributeName,
 }
 
 impl SpatialKey {
     /// The partition an entity of this type, in this tenant, is indexed under.
+    #[must_use]
     pub const fn new(tenant: TenantRef, type_iri: IriBuf, geoproperty: AttributeName) -> SpatialKey {
         SpatialKey { tenant, type_iri, geoproperty }
     }
@@ -37,6 +38,7 @@ impl SpatialKey {
     /// boolean-typed geo subscription is still reached for any entity change;
     /// the residual filter then re-checks the real selector. Both sides mint the
     /// key through this one constructor so the synthetic type IRI cannot drift.
+    #[must_use]
     pub fn any_type(tenant: TenantRef, geoproperty: AttributeName) -> SpatialKey {
         SpatialKey::new(tenant, IriBuf::from(iri!("urn:andromeda:spatial:any-type")), geoproperty)
     }
@@ -48,6 +50,7 @@ impl SpatialKey {
 /// multi-typed entities is not what the partitioning models, and answering
 /// from the tree anyway would silently narrow the result. The caller falls
 /// back to the store in that case.
+#[must_use]
 pub fn flatten_or_type_iris(expr: &TypeExpr) -> Option<Vec<IriBuf>> {
     match expr {
         TypeExpr::Wildcard => None,

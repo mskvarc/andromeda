@@ -175,6 +175,7 @@ fn bucket_subquery(axis: AttributeHistory, width: SimpleExpr, origin: SimpleExpr
 }
 
 /// Build the aggregation query with `time_bucket` windows.
+#[must_use]
 pub fn build_aggregation_query(compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
     // Clause 4.5.19: an absent period aggregates the whole range into one
     // bucket rather than bucketing at all. A zero period is absent by

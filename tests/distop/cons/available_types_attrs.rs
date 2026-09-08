@@ -114,7 +114,7 @@ async fn distop_entity_type_details_system_wide_attribute_details_may_be_empty()
     let body = json_body(&response);
     assert!(body.get("typeName").is_some(), "type details are returned system-wide: {body}");
     assert!(
-        body.get("attributeDetails").is_none_or(|details| details.is_array()),
+        body.get("attributeDetails").is_none_or(serde_json::Value::is_array),
         "attributeDetails may be present and empty: {body}"
     );
 
@@ -232,7 +232,7 @@ async fn distop_attribute_details_system_wide_may_be_empty() {
     let body = json_body(&response);
     assert!(body.get("attributeName").is_some(), "attribute details are returned system-wide: {body}");
     assert!(
-        body.get("typeNames").is_none_or(|names| names.is_array()),
+        body.get("typeNames").is_none_or(serde_json::Value::is_array),
         "typeNames may be present and empty: {body}"
     );
 
@@ -390,7 +390,7 @@ async fn distop_available_types_empty_arrays_permitted_when_registration_lacks_d
     assert_status(&response, 200);
     let body = json_body(&response);
     assert!(
-        body.get("attributeDetails").is_none_or(|details| details.is_array()),
+        body.get("attributeDetails").is_none_or(serde_json::Value::is_array),
         "empty attributeDetails is permitted, not an error: {body}"
     );
 

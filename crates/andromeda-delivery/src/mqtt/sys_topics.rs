@@ -26,6 +26,7 @@ pub enum SysTopic {
 impl SysTopic {
     /// The `$SYS` topic string this metric is published on, for the subscribe
     /// call that takes one.
+    #[must_use]
     pub const fn topic(self) -> &'static str {
         match self {
             SysTopic::BrokerUptime => "$SYS/broker/uptime",
@@ -36,6 +37,7 @@ impl SysTopic {
 
     /// The metric a published `$SYS` topic names, or `None` for a topic this
     /// broker does not read.
+    #[must_use]
     pub fn from_topic(topic: &str) -> Option<SysTopic> {
         match topic {
             "$SYS/broker/uptime" => Some(SysTopic::BrokerUptime),

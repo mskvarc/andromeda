@@ -14,6 +14,7 @@ pub struct CsourceSubscriptionCache {
 
 impl CsourceSubscriptionCache {
     /// Construct an empty context-source-subscription cache.
+    #[must_use]
     pub fn new() -> CsourceSubscriptionCache {
         CsourceSubscriptionCache { inner: DashMap::new() }
     }
@@ -34,16 +35,19 @@ impl CsourceSubscriptionCache {
     }
 
     /// Return the number of compiled subscriptions.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.inner.len()
     }
 
     /// Whether the cache contains no compiled subscriptions.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
 
     /// Find compiled subscriptions matching one context-source registration.
+    #[must_use]
     pub fn find_matching(&self, registration: &ContextSourceRegistration) -> Vec<Arc<CompiledCsrSubscription>> {
         self.inner
             .iter()

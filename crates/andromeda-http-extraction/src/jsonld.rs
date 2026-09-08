@@ -197,12 +197,9 @@ where
             .map(|value| value.to_string())
             .unwrap_or_default();
 
-        let content_kind = match classify_content_type(&content_type_raw) {
-            Some(kind) => kind,
-            None => {
-                tracing::warn!("JsonLd extraction failed: unsupported media type '{}'", content_type_raw);
-                return Err(ExtractorRejection::Empty(StatusCode::UNSUPPORTED_MEDIA_TYPE));
-            }
+        let content_kind = if let Some(kind) = classify_content_type(&content_type_raw) { kind } else {
+            tracing::warn!("JsonLd extraction failed: unsupported media type '{}'", content_type_raw);
+            return Err(ExtractorRejection::Empty(StatusCode::UNSUPPORTED_MEDIA_TYPE));
         };
 
         let is_ld_json = matches!(content_kind, ContentKind::LdJson);
@@ -230,7 +227,7 @@ where
 
         let bytes = Bytes::from_request(req, state)
             .await
-            .map_err(|e| ExtractorRejection::invalid_request(format!("Invalid request body: {}", e), uri.clone()))?;
+            .map_err(|e| ExtractorRejection::invalid_request(format!("Invalid request body: {e}"), uri.clone()))?;
 
         if bytes.is_empty() {
             return Err(ExtractorRejection::invalid_request("Request body shall not be empty", uri.clone()));
@@ -241,7 +238,7 @@ where
         canonicalize_numbers(&mut value).map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri.clone()))?;
 
         // Reject empty arrays — not a valid NGSI-LD entity or batch payload
-        if value.as_array().is_some_and(|a| a.is_empty()) {
+        if value.as_array().is_some_and(std::vec::Vec::is_empty) {
             return Err(ExtractorRejection::bad_request_data(
                 "Invalid JSON: expected object, got empty array",
                 uri.clone(),

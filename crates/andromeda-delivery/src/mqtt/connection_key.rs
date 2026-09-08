@@ -31,6 +31,7 @@ pub struct MqttConnectionKey {
 
 impl MqttConnectionKey {
     /// The key an endpoint's connection is pooled under.
+    #[must_use]
     pub fn from_config(config: &MqttEndpointConfig) -> MqttConnectionKey {
         let password_hash = config.password.as_ref().map(|password| {
             let mut hasher = DefaultHasher::new();

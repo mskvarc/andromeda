@@ -16,6 +16,7 @@ pub struct Rec20Revision(i16);
 
 impl Rec20Revision {
     /// Return the revision number.
+    #[must_use]
     pub const fn get(self) -> i16 {
         self.0
     }

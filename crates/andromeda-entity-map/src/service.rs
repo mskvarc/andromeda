@@ -127,8 +127,8 @@ impl EntityMapService {
     }
 
     /// Record on a live map the maps its sources answered a follow-up with
-    /// (clause 5.5.14: "the EntityMap's linked maps are updated to hold the
-    /// location of every EntityMap used by the Context Source
+    /// (clause 5.5.14: "the `EntityMap`'s linked maps are updated to hold the
+    /// location of every `EntityMap` used by the Context Source
     /// Registrations"). A map that expired meanwhile is left alone.
     pub async fn record_linked_maps<'a>(&self, identifier: &Uri, links: impl IntoIterator<Item = (&'a Uri, &'a Uri)>) -> Result<(), EntityMapError> {
         for (registration, linked_map) in links {
@@ -138,6 +138,7 @@ impl EntityMapService {
     }
 
     /// Intersect query identifiers with a live map while preserving query order.
+    #[must_use]
     pub fn scope_query_ids(map: &EntityMap, existing_ids: Option<&[Uri]>) -> Vec<Uri> {
         match existing_ids {
             Some(existing) => existing
@@ -252,7 +253,7 @@ mod tests {
             })
         }
 
-        fn delete_expired<'a>(&'a self, cutoff: DateTime<Utc>) -> EntityMapStoreFuture<'a, u64> {
+        fn delete_expired(&self, cutoff: DateTime<Utc>) -> EntityMapStoreFuture<'_, u64> {
             Box::pin(async move {
                 let mut maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
                 let before = maps.len();

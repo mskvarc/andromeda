@@ -226,7 +226,7 @@ fn compile_ordering_on_projection(id: AttributeNameId, op: OrderingOp, rhs: &Sca
 /// * booleans in `value_bool`,
 /// * date-times in `value_datetime`,
 /// * strings in `value_string` for Properties and single-valued
-///   VocabProperties, and — under the equality operators only — in `value_uri`
+///   `VocabProperties`, and — under the equality operators only — in `value_uri`
 ///   for Relationship objects, which is what [`relationship_object_is_comparable`]
 ///   decides,
 /// * plain dates and times in `value_string`, because only full
@@ -282,7 +282,7 @@ enum RelationshipObjects {
     NonMatching,
 }
 
-/// Clause 4.9: a Relationship (and a ListRelationship) operand shall non-match
+/// Clause 4.9: a Relationship (and a `ListRelationship`) operand shall non-match
 /// every operator other than equality and inequality.
 ///
 /// A URI names a resource; it carries no order a `<` or `>` could mean, and the
@@ -290,7 +290,7 @@ enum RelationshipObjects {
 /// an ordering operator therefore made `owner>"a"` select entities the standard
 /// requires it to reject.
 ///
-/// Known gap, left deliberately: a ListRelationship's objects are projected into
+/// Known gap, left deliberately: a `ListRelationship`'s objects are projected into
 /// `value_object` as a JSON array, not into `value_uri`, so equality against one
 /// of its members is not answered by this probe at all. Clause 4.9 admits it, and
 /// closing it needs a containment predicate over `value_object` that the

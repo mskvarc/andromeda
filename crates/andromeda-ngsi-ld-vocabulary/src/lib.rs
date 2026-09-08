@@ -4,7 +4,7 @@
 //! parses the embedded NGSI-LD v1.9 core context JSON and emits typed
 //! `pub const iri_rs::Iri<&'static str>` constants for every resolved term,
 //! partitioned into `classes` and `properties` submodules by JSON-LD casing
-//! convention (TitleCase classes, lowerCase properties). A handful of IRIs the
+//! convention (`TitleCase` classes, lowerCase properties). A handful of IRIs the
 //! core context does not declare as terms — because they appear as data
 //! values or a bare datatype rather than as `@context` term names — are
 //! hand-written constants alongside it.

@@ -1,9 +1,9 @@
-//! GeoJSON Feature and FeatureCollection mapping for NGSI-LD entities.
+//! `GeoJSON` Feature and `FeatureCollection` mapping for NGSI-LD entities.
 //!
-//! Handles the conversion of NGSI-LD entity JSON objects into GeoJSON Features
-//! and FeatureCollections per NGSI-LD spec clause 4.5.16.  Uses the `geojson`
+//! Handles the conversion of NGSI-LD entity JSON objects into `GeoJSON` Features
+//! and `FeatureCollections` per NGSI-LD spec clause 4.5.16.  Uses the `geojson`
 //! crate for type-safe construction; `@context` is injected post-serialization
-//! because it is an NGSI-LD extension absent from the GeoJSON spec.
+//! because it is an NGSI-LD extension absent from the `GeoJSON` spec.
 
 use crate::error::{RenderError, RenderedShape};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -14,14 +14,14 @@ use serde_json::{Map, Value};
 /// Output shape selector for [`GeoJsonRenderer`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum GeoJsonShape {
-    /// Render a single entity as a GeoJSON Feature.
+    /// Render a single entity as a `GeoJSON` Feature.
     #[default]
     Feature,
-    /// Render an array of entities as a GeoJSON FeatureCollection.
+    /// Render an array of entities as a `GeoJSON` `FeatureCollection`.
     FeatureCollection,
 }
 
-/// Renders NGSI-LD JSON objects into GeoJSON Features or FeatureCollections.
+/// Renders NGSI-LD JSON objects into `GeoJSON` Features or `FeatureCollections`.
 #[derive(Debug)]
 pub(crate) struct GeoJsonRenderer<'a> {
     /// The entity or entity array to wrap.
@@ -57,20 +57,20 @@ impl<'a> GeoJsonRenderer<'a> {
         self
     }
 
-    /// Set the output shape (Feature for single entity, FeatureCollection for an array).
+    /// Set the output shape (Feature for single entity, `FeatureCollection` for an array).
     pub const fn with_shape(mut self, shape: GeoJsonShape) -> Self {
         self.shape = shape;
         self
     }
 }
 
-impl<'a> GeoJsonRenderer<'a> {
-    /// Wrap the payload in the clause 4.5.16 GeoJSON envelope.
+impl GeoJsonRenderer<'_> {
+    /// Wrap the payload in the clause 4.5.16 `GeoJSON` envelope.
     ///
     /// # Errors
     ///
     /// Returns [`RenderError::Serialization`] when the assembled Feature or
-    /// FeatureCollection cannot be turned into a JSON value.
+    /// `FeatureCollection` cannot be turned into a JSON value.
     pub fn render(self) -> Result<Value, RenderError> {
         let mut value = match self.shape {
             GeoJsonShape::Feature => {
@@ -99,7 +99,7 @@ impl<'a> GeoJsonRenderer<'a> {
     }
 }
 
-/// Convert a single NGSI-LD entity JSON object into a GeoJSON [`Feature`].
+/// Convert a single NGSI-LD entity JSON object into a `GeoJSON` [`Feature`].
 fn entity_to_feature(entity: &Value, geometry_property: Option<&AttributeName>) -> Feature {
     let Some(obj) = entity.as_object() else {
         return Feature {
@@ -129,7 +129,7 @@ fn entity_to_feature(entity: &Value, geometry_property: Option<&AttributeName>) 
     }
 }
 
-/// Extract a GeoJSON [`geojson::Geometry`] from an entity object using the
+/// Extract a `GeoJSON` [`geojson::Geometry`] from an entity object using the
 /// configured geometry property name.
 fn extract_geometry(obj: &Map<String, Value>, geometry_property: Option<&AttributeName>) -> Option<geojson::Geometry> {
     let geom_key = geometry_property.map_or(compact_properties::LOCATION, AttributeName::as_str);
@@ -146,9 +146,9 @@ fn extract_geometry(obj: &Map<String, Value>, geometry_property: Option<&Attribu
     serde_json::from_value(geojson_value).ok()
 }
 
-/// Select the instance a GeoJSON geometry is taken from.
+/// Select the instance a `GeoJSON` geometry is taken from.
 ///
-/// A GeoProperty may carry several datasetId-separated instances as a JSON
+/// A `GeoProperty` may carry several datasetId-separated instances as a JSON
 /// array; clause 4.5.16 takes the geometry from the default instance (the one
 /// with no `datasetId`), falling back to the first when every instance is
 /// dataset-scoped. A single-object value is itself the instance.
@@ -163,7 +163,7 @@ fn default_geo_instance(located: &Value) -> &Value {
     }
 }
 
-/// Read the GeoJSON geometry value out of one GeoProperty instance.
+/// Read the `GeoJSON` geometry value out of one `GeoProperty` instance.
 fn geojson_from_instance(instance: &Value) -> Option<Value> {
     // Normalized: {"type": "GeoProperty", "value": {<geojson>}}
     if let Some(value) = instance.get("value") {

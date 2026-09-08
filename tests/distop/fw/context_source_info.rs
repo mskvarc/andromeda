@@ -281,7 +281,7 @@ async fn distop_entity_csi_accept_plain_json_sets_forwarded_accept() {
 }
 
 /// A `contextSourceInfo` `accept` of `text/plain` is rejected at registration
-/// with 400 BadRequestData (clause 4.3.6.6, 5.2.9). Confirms REQ-FW-37.
+/// with 400 `BadRequestData` (clause 4.3.6.6, 5.2.9). Confirms REQ-FW-37.
 #[tokio::test]
 async fn distop_entity_csi_accept_invalid_rejected_at_registration() {
     let topology = topology::single().await.expect("single-broker topology");

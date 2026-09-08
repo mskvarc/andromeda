@@ -1,4 +1,4 @@
-//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-FileCopyrightText: 2014-2025 Sean `McArthur`
 //! SPDX-License-Identifier: MIT
 //!
 //! Typed `Preference-Applied` response header for NGSI-LD (RFC 7240, clause 6.3.6).
@@ -40,18 +40,21 @@ impl PreferenceApplied {
     /// response payload conforms to (clauses 4.3.6.8 and 6.3.6): the version
     /// the payload was amended down to, or the version the server itself
     /// conforms to when no amendment was needed.
+    #[must_use]
     pub fn version(version: SpecVersion) -> PreferenceApplied {
         PreferenceApplied(vec![Preference::Version(version)])
     }
 
     /// Create a `Preference-Applied: respond-async` header, signalling the
     /// server accepted the client's async processing hint for this request.
+    #[must_use]
     pub fn respond_async() -> PreferenceApplied {
         PreferenceApplied(vec![Preference::Respond(RespondMode::Async)])
     }
 
     /// The NGSI-LD version the server says its payload conforms to (clause
     /// 4.3.6.8), when the header names one.
+    #[must_use]
     pub fn applied_version(&self) -> Option<SpecVersion> {
         self.0.iter().find_map(|preference| match preference {
             Preference::Version(version) => Some(*version),
@@ -81,7 +84,7 @@ impl headers::Header for PreferenceApplied {
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        let s: String = self.0.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ");
+        let s: String = self.0.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(", ");
         match HeaderValue::from_str(&s) {
             Ok(val) => values.extend(iter::once(val)),
             Err(err) => tracing::warn!(error = %err, "failed to encode Preference-Applied header"),

@@ -1,4 +1,4 @@
-//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-FileCopyrightText: 2014-2025 Sean `McArthur`
 //! SPDX-License-Identifier: MIT
 //!
 //! The two operations RFC 8288's quoting rules force on a parser.
@@ -25,6 +25,7 @@ pub struct SplitAsciiUnquoted<'a> {
 
 impl<'a> SplitAsciiUnquoted<'a> {
     /// Split `source` on any character of `delimiters` that is not quoted.
+    #[must_use]
     pub const fn new(source: &'a str, delimiters: &'a str) -> SplitAsciiUnquoted<'a> {
         SplitAsciiUnquoted {
             source,
@@ -46,7 +47,7 @@ impl<'a> Iterator for SplitAsciiUnquoted<'a> {
         let mut in_quotes = false;
         let mut escaped = false;
 
-        for byte in self.source.as_bytes()[start..].iter() {
+        for byte in &self.source.as_bytes()[start..] {
             if escaped {
                 // The target of an RFC 8288 quoted-pair (`\`-escaped): data,
                 // never a quote toggle or a delimiter.

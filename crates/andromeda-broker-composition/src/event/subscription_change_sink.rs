@@ -25,7 +25,7 @@ impl<C> SubscriptionChangeSink<C> for BroadcastSubscriptionChangeSink<C>
 where
     C: Clone + Send + 'static,
 {
-    fn publish<'a>(&'a self, change: C) -> BoxFuture<'a, ()> {
+    fn publish(&self, change: C) -> BoxFuture<'_, ()> {
         Box::pin(async move {
             let _receivers = self.sender.send(change);
         })
@@ -51,7 +51,7 @@ impl CoherentSubscriptionChangeSink {
 }
 
 impl SubscriptionChangeSink<SubscriptionChange> for CoherentSubscriptionChangeSink {
-    fn publish<'a>(&'a self, change: SubscriptionChange) -> BoxFuture<'a, ()> {
+    fn publish(&self, change: SubscriptionChange) -> BoxFuture<'_, ()> {
         Box::pin(async move {
             self.cache.handle_change(&change, self.repository.as_ref()).await;
             let _receivers = self.sender.send(change);

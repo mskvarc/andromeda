@@ -12,7 +12,7 @@ use std::str::FromStr;
 /// NGSI-LD value family from clause 4.6.3.
 ///
 /// The `Json` variant preserves plain JSON-native values. Typed string forms
-/// such as URI, DateTime, Date, and Time can be represented explicitly when
+/// such as URI, `DateTime`, Date, and Time can be represented explicitly when
 /// they are known semantically, for example after inspecting `valueType`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NgsiLdValue {
@@ -20,13 +20,13 @@ pub enum NgsiLdValue {
     Json(Value),
     /// A URI value.
     Uri(Uri),
-    /// A DateTime value.
+    /// A `DateTime` value.
     DateTime(DateTime<Utc>),
     /// A Date value.
     Date(NgsiLdDate),
     /// A Time value.
     Time(NgsiLdTime),
-    /// A GeoJSON geometry value (clause 4.7).
+    /// A `GeoJSON` geometry value (clause 4.7).
     Geometry(Geometry),
 }
 
@@ -106,14 +106,14 @@ impl<V: JsonValue> ToJsonValue<V> for NgsiLdValue {
 /// GeoJSON-shaped and still fails to decode is an error rather than a
 /// fall-through: silently demoting, say, a Point whose position carries four
 /// ordinates to an ordinary Property would store an unusable geometry under a
-/// GeoProperty and hide a clause 5.5.4 `BadRequestData` from the client.
+/// `GeoProperty` and hide a clause 5.5.4 `BadRequestData` from the client.
 ///
 /// # Errors
 ///
 /// Returns [`GeometryError::Position`] when a position carries an ordinate
 /// count IETF RFC 7946 section 3.1.1 gives no meaning to, and
 /// [`GeometryError::GeojsonValue`] when the `type`/`coordinates` pair is not a
-/// GeoJSON geometry object.
+/// `GeoJSON` geometry object.
 fn try_geometry(value: &Value) -> Result<Option<Geometry>, GeometryError> {
     let Some(object) = value.as_object() else {
         return Ok(None);

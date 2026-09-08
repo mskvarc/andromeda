@@ -135,7 +135,7 @@ pub struct EntityQueryParameters {
     /// Whether attributes split across Context Sources are merged after forwarding (`splitEntities`).
     #[serde(rename = "splitEntities")]
     pub split_entities: Option<bool>,
-    /// The GeoProperty a GeoJSON response uses as its geometry (clause 6.3.15 `geometryProperty`).
+    /// The `GeoProperty` a `GeoJSON` response uses as its geometry (clause 6.3.15 `geometryProperty`).
     #[serde(rename = "geometryProperty")]
     pub geometry_property: Option<AttributeName>,
     /// Context Source Filter expression (S6.4.3.2) for filtering which CSRs

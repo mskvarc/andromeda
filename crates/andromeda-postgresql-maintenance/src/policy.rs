@@ -29,6 +29,7 @@ pub struct PolicyProfile {
 
 impl PolicyProfile {
     /// Expand one named profile into its fixed values.
+    #[must_use]
     pub const fn from_profile(profile: MaintenanceProfile) -> PolicyProfile {
         const MIB: u64 = 1_048_576;
         match profile {
@@ -165,6 +166,7 @@ pub(crate) const fn safety_deferral(profile: PolicyProfile, gates: SafetyGates) 
 }
 
 /// Apply fixed thresholds, consecutive evidence, cooldown and load gates.
+#[must_use]
 pub fn decide(
     mode: MaintenanceMode,
     profile: PolicyProfile,

@@ -245,6 +245,7 @@ impl FederationService {
 /// advertise the operation (clauses 5.6.1.4 and following). `None` when the
 /// operation was spread over several sources or partly handled locally, which
 /// the caller reports as a 207 instead, and when the single source succeeded.
+#[must_use]
 pub fn single_source_failure(results: &[ForwardedWriteResult]) -> Option<FederationError> {
     let [single] = results else {
         return None;
@@ -315,9 +316,7 @@ fn remote_detail(status: u16, body: Option<&Value>) -> String {
 fn parse_timeout_detail(detail: &str) -> Duration {
     detail
         .split(|character: char| !character.is_ascii_digit())
-        .filter(|token| !token.is_empty())
-        .filter_map(|token| token.parse::<u64>().ok())
-        .next()
+        .filter(|token| !token.is_empty()).find_map(|token| token.parse::<u64>().ok())
         .map_or(Duration::ZERO, Duration::from_millis)
 }
 

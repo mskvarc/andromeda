@@ -1,6 +1,6 @@
-//! EntityMap creation, update, and query-with-map requests expressed against the
+//! `EntityMap` creation, update, and query-with-map requests expressed against the
 //! broker origin, since the test client exposes only retrieve/delete for
-//! EntityMaps. Creation is the `GET`/`POST` `/entityMaps` binding (clause
+//! `EntityMaps`. Creation is the `GET`/`POST` `/entityMaps` binding (clause
 //! 5.14.4), the temporal variant is `/temporal/entityMaps` (clause 5.14.5), and
 //! updates use `PATCH /entityMaps/{id}` (clause 5.14.2).
 
@@ -18,7 +18,7 @@ pub fn jsonld_link() -> String {
     )
 }
 
-/// Create an EntityMap from a `GET /entityMaps` query string (no leading `?`).
+/// Create an `EntityMap` from a `GET /entityMaps` query string (no leading `?`).
 pub async fn create_entity_map(client: &TestClient, query: &str) -> TestResponse {
     let link = jsonld_link();
     client
@@ -29,7 +29,7 @@ pub async fn create_entity_map(client: &TestClient, query: &str) -> TestResponse
         .expect("entity map creation request")
 }
 
-/// Create a temporal EntityMap from a `GET /temporal/entityMaps` query string.
+/// Create a temporal `EntityMap` from a `GET /temporal/entityMaps` query string.
 pub async fn create_temporal_entity_map(client: &TestClient, query: &str) -> TestResponse {
     let link = jsonld_link();
     client
@@ -40,7 +40,7 @@ pub async fn create_temporal_entity_map(client: &TestClient, query: &str) -> Tes
         .expect("temporal entity map creation request")
 }
 
-/// Partially update an EntityMap through `PATCH /entityMaps/{id}`.
+/// Partially update an `EntityMap` through `PATCH /entityMaps/{id}`.
 pub async fn update_entity_map(client: &TestClient, id: &str, patch: &Value) -> TestResponse {
     let encoded = urlencoding::encode(id);
     client

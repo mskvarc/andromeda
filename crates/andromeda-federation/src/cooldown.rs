@@ -30,7 +30,7 @@ impl CooldownRegistry {
         let cooldown = registration.access.management.as_ref()?.cooldown?.as_duration();
         let last_failure = *self.last_failure.get(&registration.id)?;
         let elapsed = last_failure.elapsed();
-        (elapsed < cooldown).then(|| cooldown - elapsed)
+        (elapsed < cooldown).then(|| cooldown.checked_sub(elapsed).unwrap())
     }
 }
 

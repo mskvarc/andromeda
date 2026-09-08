@@ -62,6 +62,7 @@ impl TemporalIntentRetryPolicy {
 
     /// Whether an intent that has now failed `attempts` completed attempts is
     /// to be reported as stuck.
+    #[must_use]
     pub const fn is_stuck(&self, attempts: u32) -> bool {
         attempts >= self.stuck_after.get()
     }

@@ -1,4 +1,4 @@
-//! The JsonProperty attribute family (ETSI GS CIM 009 clause 5.2.38).
+//! The `JsonProperty` attribute family (ETSI GS CIM 009 clause 5.2.38).
 
 use crate::attribute::common_fields::CommonAttributeFields;
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
 
-/// NGSI-LD JsonProperty representation (ETSI GS CIM 009 clause 5.2.38).
+/// NGSI-LD `JsonProperty` representation (ETSI GS CIM 009 clause 5.2.38).
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]

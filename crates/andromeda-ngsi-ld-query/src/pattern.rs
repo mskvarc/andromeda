@@ -60,11 +60,13 @@ impl Pattern {
     ///
     /// This is what binds into SQL, where PostgreSQL compiles it again under
     /// POSIX rules.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
 
     /// Whether the pattern matches anywhere in `haystack`.
+    #[must_use]
     pub fn is_match(&self, haystack: &str) -> bool {
         self.0.is_match(haystack)
     }

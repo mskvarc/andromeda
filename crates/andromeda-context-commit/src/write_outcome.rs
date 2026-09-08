@@ -31,7 +31,7 @@ pub fn single(outcomes: Vec<WriteOutcome>) -> Result<WriteOutcome, CommitError> 
     let mut outcomes = outcomes.into_iter();
     match (outcomes.next(), outcomes.next()) {
         (Some(outcome), None) => Ok(outcome),
-        (None, None) | (Some(_), Some(_)) | (None, Some(_)) => Err(CommitError::UnexpectedOutcomeCount { expected: 1, actual }),
+        (None, None | Some(_)) | (Some(_), Some(_)) => Err(CommitError::UnexpectedOutcomeCount { expected: 1, actual }),
     }
 }
 

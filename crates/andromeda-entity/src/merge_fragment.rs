@@ -28,7 +28,7 @@ use thiserror::Error;
 pub enum MergeFragmentError {
     /// A simplified fragment declared a type other than the target's
     /// (Table 6.5.3.4-1: "any attempt to modify the type of an Attribute shall
-    /// result in a BadRequest error").
+    /// result in a `BadRequest` error").
     #[error("attribute {attribute} is a {existing} on the target entity; a simplified merge cannot change it to a {declared}")]
     TypeChange {
         /// The fragment member.
@@ -38,7 +38,7 @@ pub enum MergeFragmentError {
         /// The type the fragment declared.
         declared: AttributeType,
     },
-    /// A string was merged into a LanguageProperty without the `lang` that
+    /// A string was merged into a `LanguageProperty` without the `lang` that
     /// names its `languageMap` key.
     #[error("attribute {attribute} is a LanguageProperty; merging a string into it requires the lang parameter")]
     LanguageKeyRequired {
@@ -50,6 +50,7 @@ pub enum MergeFragmentError {
 /// The attribute family each top-level member of an expanded entity holds,
 /// keyed by expanded attribute IRI. An instance declaring no recognised
 /// `@type` is a Property (clause 4.5.2).
+#[must_use]
 pub fn existing_attribute_types(expanded_entity: &Map<String, Value>) -> HashMap<String, AttributeType> {
     expanded_entity
         .iter()
@@ -76,7 +77,7 @@ pub fn existing_attribute_types(expanded_entity: &Map<String, Value>) -> HashMap
 ///
 /// [`MergeFragmentError::TypeChange`] when a simplified fragment declares a
 /// different type; [`MergeFragmentError::LanguageKeyRequired`] when a string
-/// meets a LanguageProperty with no `lang`.
+/// meets a `LanguageProperty` with no `lang`.
 pub fn adapt_member(
     attribute: &str,
     member: &mut Value,
@@ -96,7 +97,7 @@ pub fn adapt_member(
     }
 }
 
-/// A normalized LanguageProperty node whose `languageMap` is a bare string or
+/// A normalized `LanguageProperty` node whose `languageMap` is a bare string or
 /// string array takes `lang` as that string's key.
 fn adapt_language_member(attribute: &str, member: &mut Value, existing: AttributeType, lang: Option<&LangTagBuf>) -> Result<(), MergeFragmentError> {
     if existing != AttributeType::LanguageProperty {

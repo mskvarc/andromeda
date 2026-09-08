@@ -54,6 +54,7 @@ pub struct EntityRowRefs {
 impl EntityRowRefs {
     /// The three relations used unaliased, under their own table names, with
     /// `entity_documents` joined.
+    #[must_use]
     pub fn unaliased() -> EntityRowRefs {
         EntityRowRefs::unaliased_with(DocumentsRef::Joined(EntityDocuments::Table.into_iden()))
     }
@@ -65,6 +66,7 @@ impl EntityRowRefs {
     /// it reads it [`DocumentsRef::ByKeyLookup`]: the planner then defers the
     /// lookup past the sort and the limit, so a page of a hundred entities
     /// fetches a hundred documents instead of joining every candidate's.
+    #[must_use]
     pub fn unaliased_with(documents: DocumentsRef) -> EntityRowRefs {
         EntityRowRefs {
             identity: Entities::Table.into_iden(),
@@ -91,27 +93,32 @@ impl EntityRowRefs {
     /// one, so `"cav"."entity_key" = "entity_key"` is not a reference to the
     /// outer row at all — it compares the subquery's column with itself and
     /// silently admits every instance in the tenant.
+    #[must_use]
     pub fn identity_column(&self, column: Entities) -> SimpleExpr {
         Expr::col((self.identity.clone(), column.into_iden()))
     }
 
     /// The row's `entity_key`, the surrogate a correlated subquery binds against.
+    #[must_use]
     pub fn entity_key_column(&self) -> SimpleExpr {
         self.identity_column(Entities::EntityKey)
     }
 
     /// A column of the `entity_search` row, qualified.
+    #[must_use]
     pub fn search_column(&self, column: EntitySearch) -> SimpleExpr {
         Expr::col((self.search.clone(), column.into_iden()))
     }
 
     /// The `entity_search` relation's name, for a statement that joins it.
+    #[must_use]
     pub fn search_relation(&self) -> DynIden {
         self.search.clone()
     }
 
     /// The payload, as a column of the joined `entity_documents` row or as a
     /// scalar subquery keyed on the identity row.
+    #[must_use]
     pub fn payload_column(&self) -> SimpleExpr {
         match &self.documents {
             DocumentsRef::Joined(documents) => Expr::col((documents.clone(), EntityDocuments::Payload.into_iden())),

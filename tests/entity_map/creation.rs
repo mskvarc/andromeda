@@ -1,4 +1,4 @@
-//! Creating an EntityMap from a query, over both bindings of
+//! Creating an `EntityMap` from a query, over both bindings of
 //! `/entityMaps` (NGSI-LD 5.2.32, 6.3.19).
 
 use crate::{

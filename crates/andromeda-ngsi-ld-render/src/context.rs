@@ -3,7 +3,7 @@
 //! Clause 6.3.6 gives the JSON-LD `@context` of a response two carriers: an
 //! `application/ld+json` body holds it as a member, and an `application/json`
 //! body cannot, so it is advertised through `Link` headers instead (clause
-//! 6.3.6). Which carrier applies is decided by the media type and, for GeoJSON,
+//! 6.3.6). Which carrier applies is decided by the media type and, for `GeoJSON`,
 //! by the `Prefer: body=` token — so the renderer decides it, and both
 //! spellings have to be ready before it does.
 //!
@@ -40,11 +40,13 @@ pub struct ResponseContext {
 
 impl ResponseContext {
     /// Build a response context from its two resolved spellings.
+    #[must_use]
     pub const fn new(body_value: Option<Value>, link_urls: Vec<IriRefBuf>) -> ResponseContext {
         ResponseContext { body_value, link_urls }
     }
 
     /// The context URLs a `Link` header should advertise.
+    #[must_use]
     pub fn link_urls(&self) -> &[IriRefBuf] {
         &self.link_urls
     }

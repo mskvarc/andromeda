@@ -48,6 +48,7 @@ pub enum DiscoveryScope {
 impl DiscoveryScope {
     /// The scope a request's `local` parameter asks for (clause 5.5.13): only
     /// an explicit `local=true` confines the discovery to this broker.
+    #[must_use]
     pub const fn for_local_request(local: Option<bool>) -> DiscoveryScope {
         match local {
             Some(true) => DiscoveryScope::Local,

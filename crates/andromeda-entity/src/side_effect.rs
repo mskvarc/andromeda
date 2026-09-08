@@ -38,7 +38,8 @@ pub(crate) const fn resolve_side_effect_mode(async_threshold: Option<usize>, pre
     match (preference, async_threshold) {
         (AsyncPreference::Requested, None) => BatchSideEffectMode::Enqueue,
         (AsyncPreference::Requested, Some(threshold)) if batch_size >= threshold => BatchSideEffectMode::Enqueue,
-        (AsyncPreference::Requested, Some(_)) | (AsyncPreference::NotRequested, None) | (AsyncPreference::NotRequested, Some(_)) => BatchSideEffectMode::Inline,
+        (AsyncPreference::Requested | AsyncPreference::NotRequested, Some(_)) |
+(AsyncPreference::NotRequested, None) => BatchSideEffectMode::Inline,
     }
 }
 

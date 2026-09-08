@@ -124,7 +124,7 @@ fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
     headers
         .get_all("NGSILD-Warning")
         .iter()
-        .filter_map(|v| v.to_str().ok().map(|s| s.to_string()))
+        .filter_map(|v| v.to_str().ok().map(std::string::ToString::to_string))
         .collect()
 }
 

@@ -11,6 +11,7 @@ pub enum ComponentReportError {
 }
 
 /// Classify every component-report failure without exposing internal details.
+#[must_use]
 pub fn classify(error: &ComponentReportError) -> ClassifiedReport {
     match error {
         ComponentReportError::Identifier(_) => ClassifiedReport::internal(error),

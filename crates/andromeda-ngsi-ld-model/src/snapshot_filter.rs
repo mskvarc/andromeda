@@ -185,7 +185,7 @@ fn split_top_level(input: &str) -> Result<(Vec<&str>, Conjunction), SnapshotQPar
     let conjunction = match (has_semi, has_pipe) {
         (true, true) => return Err(SnapshotQParseError::MixedConjunctions),
         (false, true) => Conjunction::Or,
-        (true, false) | (false, false) => Conjunction::And,
+        (true | false, false) => Conjunction::And,
     };
     let sep = match conjunction {
         Conjunction::And => ';',

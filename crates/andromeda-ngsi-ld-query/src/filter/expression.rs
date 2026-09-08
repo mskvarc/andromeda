@@ -15,7 +15,7 @@ use std::{fmt, str::FromStr};
 ///
 /// The wire form is the clause 4.9 expression itself, in both directions: a
 /// resource that carries a filter — a Subscription (clause 5.2.12), a
-/// ContextSourceRegistration (5.2.9), a Snapshot query (5.2.23) — stores the
+/// `ContextSourceRegistration` (5.2.9), a Snapshot query (5.2.23) — stores the
 /// text a client wrote and must give back an equivalent one. Parsing at
 /// deserialization is what makes a malformed filter a rejected request instead
 /// of a filter that silently matches nothing at first use.

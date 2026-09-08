@@ -99,6 +99,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     ///
     /// A single-tenant broker holds exactly one runtime that is never evicted,
     /// so the sweep would have nothing to do.
+    #[must_use]
     pub fn spawn_janitor(self: &Arc<TenantRuntimeManager<D, F>>) -> Option<JoinHandle<()>> {
         if !self.config.enabled {
             return None;

@@ -1,6 +1,6 @@
 //! `application/geo+json` Accept negotiation (NGSI-LD 6.3.4, 5.7.1, 5.7.2).
 //!
-//! GeoJSON responses are valid only for Retrieve Entity and Query Entities. Any
+//! `GeoJSON` responses are valid only for Retrieve Entity and Query Entities. Any
 //! other resource must answer `application/geo+json` with 406 Not Acceptable.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]

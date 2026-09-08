@@ -47,6 +47,7 @@ pub struct PostgresTemporalHistorySink {
 
 impl PostgresTemporalHistorySink {
     /// Construct one PostgreSQL-backed idempotent history sink.
+    #[must_use]
     pub const fn new(repository: Arc<TemporalRepository>) -> PostgresTemporalHistorySink {
         PostgresTemporalHistorySink { repository }
     }

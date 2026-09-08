@@ -4,7 +4,7 @@
 //! 6.8.3.2-1 that shape the representation rather than narrow the query:
 //! `sysAttrs`, the clause 4.21 `pick`/`omit` member projection, and the
 //! clause 4.15 `lang` language negotiation. The clause 4.5.16 `geometryProperty`
-//! selection is not applied here: it belongs to the GeoJSON envelope the
+//! selection is not applied here: it belongs to the `GeoJSON` envelope the
 //! response pipeline builds, and is threaded to that pipeline instead.
 
 use crate::language_negotiation::render_attribute_value;
@@ -54,6 +54,7 @@ pub struct RegistrationRenderer<'a> {
 
 impl<'a> RegistrationRenderer<'a> {
     /// Create a renderer for the given payload.
+    #[must_use]
     pub const fn new(payload: Value) -> RegistrationRenderer<'a> {
         RegistrationRenderer {
             payload,
@@ -65,24 +66,28 @@ impl<'a> RegistrationRenderer<'a> {
     }
 
     /// Set whether system attributes are included in the response.
+    #[must_use]
     pub const fn with_sys_attrs(mut self, sys_attrs: SysAttrsInclusion) -> Self {
         self.sys_attrs = sys_attrs;
         self
     }
 
     /// Set the clause 4.21 `pick` terms the response is narrowed to.
+    #[must_use]
     pub const fn with_pick(mut self, pick: Option<&'a [RawProjectionTerm]>) -> Self {
         self.pick = pick;
         self
     }
 
     /// Set the clause 4.21 `omit` terms the response drops.
+    #[must_use]
     pub const fn with_omit(mut self, omit: Option<&'a [RawProjectionTerm]>) -> Self {
         self.omit = omit;
         self
     }
 
     /// Set the clause 4.15 `lang` preferences applied to language maps.
+    #[must_use]
     pub const fn with_language_filter(mut self, language_filter: Option<&'a LanguageFilter>) -> Self {
         self.language_filter = language_filter;
         self
@@ -129,6 +134,7 @@ impl<'a> RegistrationRenderer<'a> {
     ///
     /// Removing members and negotiating language cannot fail in a way a caller
     /// could act on, so this answers with the value rather than a `Result`.
+    #[must_use]
     pub fn render(self) -> Value {
         let RegistrationRenderer {
             mut payload,

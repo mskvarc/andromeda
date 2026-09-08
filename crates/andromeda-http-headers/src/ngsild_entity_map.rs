@@ -19,21 +19,25 @@ pub struct NgsiLdEntityMap(Uri);
 
 impl NgsiLdEntityMap {
     /// Create a new `NGSILD-EntityMap` header from a validated identifier.
+    #[must_use]
     pub const fn new(value: Uri) -> NgsiLdEntityMap {
         NgsiLdEntityMap(value)
     }
 
     /// Return the entity map URI as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
 
     /// Borrow the validated entity-map identifier.
+    #[must_use]
     pub const fn as_inner(&self) -> &Uri {
         &self.0
     }
 
     /// Consume the header and return the inner identifier.
+    #[must_use]
     pub fn into_inner(self) -> Uri {
         self.0
     }

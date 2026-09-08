@@ -71,7 +71,7 @@ impl EntityService {
     pub async fn create(&self, target: &ContextTarget, entity: &Entity, context: &ContextSpec) -> Result<Uri, EntityError> {
         let id = &entity.id;
 
-        let mut entity_json = serde_json::to_value(entity).map_err(|err| EntityError::validation(format!("Invalid entity payload: {}", err)))?;
+        let mut entity_json = serde_json::to_value(entity).map_err(|err| EntityError::validation(format!("Invalid entity payload: {err}")))?;
         normalize_entity_attributes(&mut entity_json);
         let expanded = self.engine.expand(entity_json, context).await?;
         validate_attribute_envelopes(&expanded)?;
@@ -121,7 +121,7 @@ impl EntityService {
     ) -> Result<(), EntityError> {
         let entity_uri = id.clone(); // clone: mutation events and computed-write closures own the identifier
 
-        let mut patch_json = serde_json::to_value(patch).map_err(|err| EntityError::validation(format!("Invalid patch payload: {}", err)))?;
+        let mut patch_json = serde_json::to_value(patch).map_err(|err| EntityError::validation(format!("Invalid patch payload: {err}")))?;
         let prepared_context = self.engine.prepare_term_context(context);
         let type_selector = match options.type_selector {
             Some(raw) => Some(expand_type_expression(raw, &ContextualExpander::new(&self.engine, &prepared_context)).await?),
@@ -216,7 +216,7 @@ impl EntityService {
             return Err(EntityError::not_found(&entity_uri));
         }
 
-        let mut patch_json = serde_json::to_value(patch).map_err(|err| EntityError::validation(format!("Invalid patch payload: {}", err)))?;
+        let mut patch_json = serde_json::to_value(patch).map_err(|err| EntityError::validation(format!("Invalid patch payload: {err}")))?;
         normalize_entity_attributes(&mut patch_json);
         let expanded = self.engine.expand(patch_json, context).await?;
         validate_attribute_envelopes(&expanded)?;

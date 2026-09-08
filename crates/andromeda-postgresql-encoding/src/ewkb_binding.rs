@@ -4,7 +4,7 @@
 //! [`Ewkb`](crate::ewkb::Ewkb) implements none of sqlx's traits.
 //! Every geometry bind goes through this module instead, which hands sqlx the
 //! raw buffer as `bytea`; the statement's `ST_GeomFromEWKB($n)` projects it to
-//! PostGIS `geometry` on the server. The SRID is already embedded, so no
+//! `PostGIS` `geometry` on the server. The SRID is already embedded, so no
 //! `ST_SetSRID` wrap is needed, and binding as `bytea` avoids a runtime
 //! `pg_type` OID lookup.
 

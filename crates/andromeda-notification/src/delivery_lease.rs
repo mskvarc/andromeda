@@ -56,11 +56,13 @@ impl LeaseTerm {
     }
 
     /// The term as a whole number of seconds.
+    #[must_use]
     pub const fn seconds(self) -> u32 {
         self.0.get()
     }
 
     /// The term as a signed duration.
+    #[must_use]
     pub fn as_duration(self) -> Duration {
         Duration::seconds(i64::from(self.seconds()))
     }
@@ -71,6 +73,7 @@ impl LeaseTerm {
     /// clock; this projection exists so a worker can report the deadline it
     /// expects. `None` means the addition would leave the representable
     /// timestamp range, which no reachable claim clock produces.
+    #[must_use]
     pub fn expires_at(self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
         now.checked_add_signed(self.as_duration())
     }
@@ -99,6 +102,7 @@ pub enum DeliveryLeaseError {
 
 impl DeliveryLeaseError {
     /// Construct the lost-lease failure for one delivery and worker.
+    #[must_use]
     pub fn lease_lost(delivery: DeliveryId, worker: &WorkerInstanceId) -> DeliveryLeaseError {
         // clone: the failure outlives the borrow of the worker identity it names.
         DeliveryLeaseError::LeaseLost {

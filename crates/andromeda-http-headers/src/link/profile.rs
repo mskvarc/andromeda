@@ -34,6 +34,7 @@ impl LinkValue {
     ///
     /// A profile IRI outside the NGSI-LD version namespace, or one whose
     /// remainder is not a `major.minor` version, announces nothing.
+    #[must_use]
     pub fn ngsi_ld_profile_version(&self) -> Option<SpecVersion> {
         let attribute = self.profile().and_then(|profile| profile_version(profile.as_str()));
         attribute.or_else(|| self.has_rel(&RelationType::Profile).then(|| profile_version(self.link().as_str())).flatten())

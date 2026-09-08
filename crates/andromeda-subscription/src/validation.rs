@@ -96,20 +96,20 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
         return Err(SubscriptionError::validation("timeInterval and throttling are mutually exclusive"));
     }
 
-    if let Some(throttling) = payload.get("throttling").and_then(|v| v.as_f64())
+    if let Some(throttling) = payload.get("throttling").and_then(serde_json::Value::as_f64)
         && throttling < 0.0
     {
         return Err(SubscriptionError::validation("throttling must be greater than or equal to 0"));
     }
 
-    if let Some(time_interval) = payload.get("timeInterval").and_then(|v| v.as_f64())
+    if let Some(time_interval) = payload.get("timeInterval").and_then(serde_json::Value::as_f64)
         && time_interval <= 0.0
     {
         return Err(SubscriptionError::validation("timeInterval must be greater than 0"));
     }
 
     if let Some(q_str) = payload.get("q").and_then(|v| v.as_str()) {
-        let expr = parser::parse(q_str).map_err(|e| SubscriptionError::validation(format!("Invalid q expression: {}", e)))?;
+        let expr = parser::parse(q_str).map_err(|e| SubscriptionError::validation(format!("Invalid q expression: {e}")))?;
         if !q_has_comparison(&expr) {
             return Err(SubscriptionError::validation(
                 "Invalid q expression: must contain at least one comparison operator",
@@ -275,7 +275,7 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
         for entity_sel in arr.iter_mut() {
             if let Some(type_val) = entity_sel.get("type").and_then(|v| v.as_str()) {
                 let raw = type_val.parse::<TypeExprRaw>()?;
-                match expand_type_expression(&raw, &expander).await.and_then(|expanded| expanded.into_raw()) {
+                match expand_type_expression(&raw, &expander).await.and_then(andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr::into_raw) {
                     Ok(expanded) => {
                         if let Some(obj) = entity_sel.as_object_mut() {
                             obj.insert("type".to_string(), Value::String(expanded.to_string()));

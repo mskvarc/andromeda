@@ -94,7 +94,7 @@ impl EntityQueryService {
     /// attached a nested projection to it, so it renders in full. `Some`
     /// carries the union of every nested `pick`/`omit` sub-projection
     /// (clause 4.21 `{...}`) attached to that id by any Relationship or
-    /// ListRelationship, at any traversal level, that named it with a nested
+    /// `ListRelationship`, at any traversal level, that named it with a nested
     /// projection.
     ///
     /// Attribute keys are matched through the request's `@context`, the same
@@ -272,7 +272,7 @@ fn term_for_attribute<'p>(key: &str, expanded: &IriBuf, terms: &'p [ProjectionTe
     terms.iter().find(|term| term.matches_attribute(key, expanded))
 }
 
-/// The identifiers a Relationship or ListRelationship instance points at, or
+/// The identifiers a Relationship or `ListRelationship` instance points at, or
 /// `None` for every other attribute family.
 fn relationship_targets(attr: &Attribute) -> Option<Vec<Uri>> {
     match attr {
@@ -359,7 +359,7 @@ mod tests {
             .as_ref()
             .expect("nested projection");
         assert_eq!(nested.pick, vec![leaf("temperature")]);
-        assert!(nested.omit.is_empty());
+        assert_eq!(nested.omit, [] as [andromeda_ngsi_ld_query::projection::term::ProjectionTerm; 0]);
     }
 
     /// The same relationship, keyed by its already-expanded IRI, matches
@@ -427,7 +427,7 @@ mod tests {
     }
 
     /// Clause 4.21 applies the same nested projection to every member of a
-    /// ListRelationship's `hasObjectList`.
+    /// `ListRelationship`'s `hasObjectList`.
     #[tokio::test]
     async fn a_list_relationship_attaches_its_nested_pick_to_every_target() {
         let root = entity(json!({
@@ -481,7 +481,7 @@ mod tests {
             .expect("target has an entry")
             .as_ref()
             .expect("nested projection");
-        assert!(nested.pick.is_empty());
+        assert_eq!(nested.pick, [] as [andromeda_ngsi_ld_query::projection::term::ProjectionTerm; 0]);
         assert_eq!(nested.omit, vec![leaf("temperature")]);
     }
 

@@ -22,9 +22,9 @@ use thiserror::Error;
 pub struct GeoQueryInput {
     /// Spatial relationship to evaluate.
     pub georel: GeoRel,
-    /// Validated GeoJSON reference geometry.
+    /// Validated `GeoJSON` reference geometry.
     pub geometry: Geometry,
-    /// Compact GeoProperty identifier, or `location` when absent.
+    /// Compact `GeoProperty` identifier, or `location` when absent.
     pub geoproperty: Option<NgsiLdReference>,
 }
 
@@ -34,16 +34,17 @@ pub struct GeoQueryInput {
 struct GeoQueryInputWire {
     /// Spatial relationship.
     georel: GeoRel,
-    /// GeoJSON geometry type.
+    /// `GeoJSON` geometry type.
     geometry: String,
-    /// GeoJSON coordinates.
+    /// `GeoJSON` coordinates.
     coordinates: serde_json::Value,
-    /// Optional GeoProperty reference.
+    /// Optional `GeoProperty` reference.
     geoproperty: Option<NgsiLdReference>,
 }
 
 impl GeoQueryInput {
     /// Construct a complete decoded geo-query.
+    #[must_use]
     pub const fn new(georel: GeoRel, geometry: Geometry, geoproperty: Option<NgsiLdReference>) -> GeoQueryInput {
         GeoQueryInput { georel, geometry, geoproperty }
     }
@@ -119,7 +120,7 @@ pub enum GeoQueryInputError {
     /// The URL coordinate member was not JSON.
     #[error("invalid geo-query coordinates: {0}")]
     Coordinates(serde_json::Error),
-    /// The geometry name is not one of the GeoJSON types supported by NGSI-LD.
+    /// The geometry name is not one of the `GeoJSON` types supported by NGSI-LD.
     #[error("invalid geo-query geometry type: {0}")]
     GeometryType(strum::ParseError),
     /// The reference geometry is invalid.

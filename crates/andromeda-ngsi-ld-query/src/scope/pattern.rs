@@ -39,6 +39,7 @@ impl ScopeLabel {
     }
 
     /// The label as written.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
@@ -84,6 +85,7 @@ impl ScopePattern {
     /// Every segment is validated, which is what lets a backend translate the
     /// pattern without re-checking it: an unvalidated label reaching PostgreSQL
     /// as an `lquery` cast fails there, which is a 500 for a malformed request.
+    #[must_use]
     pub fn segments(&self) -> &[ScopeSegment] {
         &self.0
     }
@@ -98,6 +100,7 @@ impl ScopePattern {
     /// Subscription matching used to carry its own reading in which `#`
     /// consumed exactly one further level, so `/A/#` matched `/A/B` and not
     /// `/A/B/C` while the same subscription's stored query matched both.
+    #[must_use]
     pub fn matches(&self, scope_path: &str) -> bool {
         let trimmed = scope_path.trim();
         let trimmed = trimmed.strip_prefix('/').unwrap_or(trimmed);

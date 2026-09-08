@@ -28,6 +28,7 @@ pub struct RemovedAttributeInstance {
 /// Identity is the attribute name and `datasetId` pair alone (clause 5.2.5), so
 /// an instance whose family changed is an update rather than a removal; the
 /// family reported here is the one the removed instance held.
+#[must_use]
 pub fn removed_attribute_instances(previous: &Value, replacement: &Value) -> Vec<RemovedAttributeInstance> {
     let retained = attribute_instance_families(replacement);
     attribute_instance_families(previous)

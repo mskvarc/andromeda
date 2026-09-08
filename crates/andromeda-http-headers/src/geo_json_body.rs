@@ -1,8 +1,8 @@
-//! Where the `@context` goes in a GeoJSON response (clause 6.3.6).
+//! Where the `@context` goes in a `GeoJSON` response (clause 6.3.6).
 
 use strum::{Display, EnumString};
 
-/// Whether the `@context` appears in a GeoJSON body or in a `Link` header.
+/// Whether the `@context` appears in a `GeoJSON` body or in a `Link` header.
 ///
 /// The rendering is the token as it appears after `body=` in a `Prefer` header;
 /// RFC 7240 makes preference tokens case-insensitive, which `FromStr` honours.

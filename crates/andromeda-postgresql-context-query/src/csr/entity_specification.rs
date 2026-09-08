@@ -33,6 +33,7 @@ pub struct EntitySpecification<'query> {
 
 impl EntitySpecification<'_> {
     /// Whether the specification constrains the entity axis at all.
+    #[must_use]
     pub const fn constrains(&self) -> bool {
         self.entity_type.is_some() || !self.ids.is_empty() || self.id_pattern.is_some()
     }
@@ -40,6 +41,7 @@ impl EntitySpecification<'_> {
     /// The `entities` scan admitting the entries this specification matches,
     /// for the caller to wrap in the clause 5.10.2 "no entities covers all"
     /// disjunction.
+    #[must_use]
     pub fn matching_entities(&self) -> SelectStatement {
         let mut scan = entities_of_item();
         if let Some(entity_type) = self.entity_type {

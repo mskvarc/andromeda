@@ -90,6 +90,7 @@ pub fn provision_response(
 ///
 /// Clause 6.3.6: the body is always `application/json`, whatever the
 /// negotiated `Accept`, so it carries no JSON-LD context.
+#[must_use]
 pub fn multi_status(body: BatchOperationResult) -> Response {
     (StatusCode::MULTI_STATUS, Json(body)).into_response()
 }
@@ -97,6 +98,7 @@ pub fn multi_status(body: BatchOperationResult) -> Response {
 /// The clause 5.2.16 body of a single-entity write that partly failed: the
 /// entity in `success` when any part of it landed, and one clause 5.2.17
 /// error per failed part, each forwarded failure naming its `registrationId`.
+#[must_use]
 pub fn multi_status_result(entity_id: &Uri, local: &LocalOutcome, forwarded: &[ForwardedWriteResult]) -> BatchOperationResult {
     let mut errors = Vec::new();
     let local_ok = match local {
@@ -129,6 +131,7 @@ pub fn multi_status_result(entity_id: &Uri, local: &LocalOutcome, forwarded: &[F
 /// 502) and a conflict its clause 5.5.2 category. The remaining variants
 /// describe a failure inside this broker rather than at a context source, and
 /// are sanitized as internal.
+#[must_use]
 pub fn classify_forwarding_error(error: &FederationError) -> ClassifiedReport {
     match error {
         FederationError::Conflict { detail } => ClassifiedReport::public(NgsiLdErrorType::Conflict, detail),

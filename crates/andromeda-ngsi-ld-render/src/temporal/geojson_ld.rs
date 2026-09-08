@@ -1,17 +1,18 @@
-//! Expanding a GeoJSON geometry into its JSON-LD form.
+//! Expanding a `GeoJSON` geometry into its JSON-LD form.
 //!
-//! A geometry read back out of the store is plain GeoJSON, and the temporal
+//! A geometry read back out of the store is plain `GeoJSON`, and the temporal
 //! API answers in expanded JSON-LD, where a coordinate array is an `@list` of
-//! `@value` nodes and the geometry type is a `@type` under the GeoJSON
+//! `@value` nodes and the geometry type is a `@type` under the `GeoJSON`
 //! vocabulary. This is that expansion, and it knows nothing about rows: it is
 //! separated from the row decoding because the two change for different
-//! reasons -- one when RFC 7946 or the GeoJSON context changes, the other when
+//! reasons -- one when RFC 7946 or the `GeoJSON` context changes, the other when
 //! the history table does.
 
 use andromeda_ngsi_ld_vocabulary::prefix;
 use serde_json::{Value, json};
 
-/// Expand one canonical GeoJSON geometry into its JSON-LD vocabulary form.
+/// Expand one canonical `GeoJSON` geometry into its JSON-LD vocabulary form.
+#[must_use]
 pub fn expand_geojson(geojson: &Value) -> Value {
     let Some(obj) = geojson.as_object() else {
         return geojson.clone();
@@ -31,7 +32,7 @@ pub fn expand_geojson(geojson: &Value) -> Value {
 fn expand_coordinates(value: &Value) -> Value {
     match value {
         Value::Array(arr) => {
-            if arr.first().is_some_and(|v| v.is_number()) {
+            if arr.first().is_some_and(serde_json::Value::is_number) {
                 Value::Array(arr.iter().map(|v| json!({"@value": v})).collect())
             } else {
                 Value::Array(arr.iter().map(|v| json!({"@list": expand_coordinates(v)})).collect())

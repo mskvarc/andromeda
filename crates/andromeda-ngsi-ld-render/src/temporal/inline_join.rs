@@ -192,7 +192,7 @@ mod tests {
         pretty_assertions::assert_eq!(entity["parkedAt"]["entity"]["id"], "urn:ngsi-ld:T:B");
     }
 
-    /// A ListRelationship nests one entry per identifier that resolved, in list
+    /// A `ListRelationship` nests one entry per identifier that resolved, in list
     /// order, and the ones that did not resolve simply have no entry.
     #[test]
     fn an_object_list_nests_the_entities_that_resolved_in_list_order() {

@@ -48,7 +48,7 @@ const fn header_is_temporal_format(format: NgsiLdResponseFormat) -> bool {
     matches!(format, NgsiLdResponseFormat::TemporalValues | NgsiLdResponseFormat::AggregatedValues)
 }
 
-impl<'a> ProtocolExtensions<'a> {
+impl ProtocolExtensions<'_> {
     /// Fill in a single-entity GET from the headers it arrived with.
     ///
     /// # Errors

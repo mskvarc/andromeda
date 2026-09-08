@@ -51,6 +51,7 @@ pub struct TemporalEntityRenderer<'a> {
 
 impl<'a> TemporalEntityRenderer<'a> {
     /// Create a renderer for the given entity and row set.
+    #[must_use]
     pub const fn new(
         entity_id: &'a Uri,
         entity_types: &'a [EntityTypeName],
@@ -66,8 +67,9 @@ impl<'a> TemporalEntityRenderer<'a> {
     }
 }
 
-impl<'a> TemporalEntityRenderer<'a> {
+impl TemporalEntityRenderer<'_> {
     /// Assemble the temporal entity and the pagination metadata around it.
+    #[must_use]
     pub fn render(self) -> TemporalEntityBuildResult {
         let TemporalEntityRenderer {
             entity_id,
@@ -90,7 +92,7 @@ impl<'a> TemporalEntityRenderer<'a> {
                 && let Some(total) = row.partition_total
             {
                 max_partition_total = Some(max_partition_total.map_or(total, |m: i64| m.max(total)));
-                if total > last_n as i64 {
+                if total > i64::from(last_n) {
                     truncated = true;
                 }
             }
@@ -133,7 +135,7 @@ impl<'a> TemporalEntityRenderer<'a> {
 
                         if let Some((_, keep_min, keep_max)) = keep_range {
                             let (keep_min, keep_max) = (*keep_min, *keep_max);
-                            for (_name, instances) in attrs.iter_mut() {
+                            for (_name, instances) in &mut attrs {
                                 instances.retain(|(t, _)| t.is_some_and(|t| t >= keep_min && t <= keep_max));
                             }
                             min_time = Some(keep_min);

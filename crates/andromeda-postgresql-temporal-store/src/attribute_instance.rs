@@ -13,6 +13,7 @@ use serde_json::{Map, Value};
 /// The instance's NGSI-LD attribute type, defaulting to `Property`.
 ///
 /// Clause 4.5.2 makes `Property` the type of an attribute that declares none.
+#[must_use]
 pub fn detect_attribute_type(instance: &Value) -> AttributeType {
     let empty: Vec<Value> = vec![];
     let types = instance.get("@type").and_then(|v| v.as_array()).unwrap_or(&empty);
@@ -59,6 +60,7 @@ fn is_metadata_skip_key(key: &str) -> bool {
 }
 
 /// Everything on the instance that has no dedicated column, kept verbatim.
+#[must_use]
 pub fn collect_metadata(instance: &Value) -> Option<Value> {
     let obj = instance.as_object()?;
 

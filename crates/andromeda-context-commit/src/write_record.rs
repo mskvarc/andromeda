@@ -22,6 +22,7 @@ pub struct WriteRecord {
 
 impl WriteRecord {
     /// Open the record of a write being attempted for the first time.
+    #[must_use]
     pub fn mint(recorded_at: DateTime<Utc>) -> WriteRecord {
         WriteRecord {
             write_id: WriteId::mint(),
@@ -30,16 +31,19 @@ impl WriteRecord {
     }
 
     /// Reconstruct the record of a write read back from durable storage.
+    #[must_use]
     pub const fn restored(write_id: WriteId, recorded_at: DateTime<Utc>) -> WriteRecord {
         WriteRecord { write_id, recorded_at }
     }
 
     /// Return the identity every consequence of this write carries.
+    #[must_use]
     pub const fn write_id(&self) -> WriteId {
         self.write_id
     }
 
     /// Return the ingestion instant every consequence of this write shares.
+    #[must_use]
     pub const fn recorded_at(&self) -> DateTime<Utc> {
         self.recorded_at
     }

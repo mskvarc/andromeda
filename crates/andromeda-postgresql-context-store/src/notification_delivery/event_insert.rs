@@ -162,7 +162,7 @@ fn insert_events_statement(
             .to_owned(),
         )
         .returning(Query::returning().columns([NotificationEvents::Id, NotificationEvents::EventOrdinal]));
-    Ok(statement.to_owned())
+    Ok(statement.clone())
 }
 
 /// Bind one optional entity snapshot as a JSONB value or SQL `NULL`.
@@ -231,7 +231,7 @@ fn insert_deliveries_statement(
         ])
         .select_from(source)
         .map_err(|error| ContextStoreError::Internal(format!("notification delivery insert: {error}")))?;
-    Ok(statement.to_owned())
+    Ok(statement.clone())
 }
 
 #[cfg(test)]
@@ -330,7 +330,7 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#"FROM UNNEST(ARRAY [42,42,43]::bigint[], ARRAY [1,2,1]::bigint[]) AS p(event_id, subscription_key)"#),
+            sql.contains(r"FROM UNNEST(ARRAY [42,42,43]::bigint[], ARRAY [1,2,1]::bigint[]) AS p(event_id, subscription_key)"),
             "{sql}"
         );
         assert!(

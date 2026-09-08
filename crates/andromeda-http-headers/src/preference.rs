@@ -32,7 +32,7 @@ pub enum RespondMode {
 /// One NGSI-LD preference token (clause 6.3.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Preference {
-    /// `body=json` or `body=ld+json` -- GeoJSON `@context` placement.
+    /// `body=json` or `body=ld+json` -- `GeoJSON` `@context` placement.
     Body(GeoJsonBodyPreference),
     /// `ngsi-ld=<version>` -- request version conformance (clause 4.3.6.8).
     Version(SpecVersion),

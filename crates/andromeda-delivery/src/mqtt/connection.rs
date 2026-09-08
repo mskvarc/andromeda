@@ -66,7 +66,7 @@ pub struct ConnectionState {
     pub last_healthy: RwLock<Instant>,
     /// Broker metadata collected from `$SYS`.
     pub sys_data: RwLock<SysTopicData>,
-    /// Correlates each outgoing QoS 1/2 publish with its broker acknowledgement.
+    /// Correlates each outgoing `QoS` 1/2 publish with its broker acknowledgement.
     ///
     /// Written by the delivery path (register) and the event loop (assign,
     /// resolve, fail). A synchronous lock because every critical section is a
@@ -80,6 +80,7 @@ pub struct ConnectionState {
 
 impl ConnectionState {
     /// A state for a connection that has just come up.
+    #[must_use]
     pub fn connected() -> ConnectionState {
         ConnectionState {
             health: HealthCell::new(ConnectionHealth::Healthy),

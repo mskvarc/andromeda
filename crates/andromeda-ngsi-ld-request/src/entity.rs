@@ -67,7 +67,7 @@ pub struct MergeParams {
     #[serde(default, deserialize_with = "deserialize_option_response_format")]
     pub format: Option<ResponseFormat>,
     /// The natural language of string values merged into a pre-existing
-    /// LanguageProperty: the `languageMap` key they update.
+    /// `LanguageProperty`: the `languageMap` key they update.
     #[serde(default, deserialize_with = "deserialize_optional_language_tag")]
     pub lang: Option<LangTagBuf>,
     /// The `observedAt` a merged attribute that previously carried one takes
@@ -134,7 +134,7 @@ pub struct GetEntityParams {
     #[serde(rename = "datasetId")]
     #[serde(default, deserialize_with = "deserialize_optional_dataset_selectors")]
     pub dataset_id: Option<Vec<DatasetSelector>>,
-    /// The GeoProperty a GeoJSON response uses as its geometry (clause 6.3.15 `geometryProperty`).
+    /// The `GeoProperty` a `GeoJSON` response uses as its geometry (clause 6.3.15 `geometryProperty`).
     #[serde(rename = "geometryProperty")]
     pub geometry_property: Option<AttributeName>,
     /// Whether the operation is confined to this broker (clause 5.10 `local`).
@@ -149,7 +149,7 @@ pub struct GetEntityParams {
     #[serde(rename = "containedBy")]
     #[serde(default, deserialize_with = "deserialize_optional_uri_csv")]
     pub contained_by: Option<Vec<Uri>>,
-    /// Whether the retrieval returns the location of the EntityMap it used,
+    /// Whether the retrieval returns the location of the `EntityMap` it used,
     /// creating one when none is in use (Table 6.5.3.1-1 `entityMap`).
     #[serde(rename = "entityMap")]
     #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
@@ -167,6 +167,7 @@ impl GetEntityParams {
     /// `format` takes precedence over the legacy `options` (clause 4.5.1). The
     /// resolution is shared with the GET-query parameter set so the two paths
     /// cannot disagree; see [`resolve_response_format`].
+    #[must_use]
     pub fn resolve_render_mode(&self) -> ResponseFormat {
         self.format.or_else(|| self.options.and_then(|options| options.format)).unwrap_or_default()
     }
@@ -303,7 +304,7 @@ mod tests {
         pretty_assertions::assert_eq!(terms[0].name.as_str(), "linkedTo");
         pretty_assertions::assert_eq!(terms[0].linked.iter().map(|term| term.name.as_str()).collect::<Vec<_>>(), vec!["category"]);
         pretty_assertions::assert_eq!(terms[1].name.as_str(), "id");
-        assert!(terms[1].linked.is_empty());
+        assert_eq!(terms[1].linked, [] as [andromeda_ngsi_ld_query::projection::grammar::RawProjectionTerm; 0]);
     }
 
     /// Clause 4.21 declares `pick` and `omit` mutually exclusive on every

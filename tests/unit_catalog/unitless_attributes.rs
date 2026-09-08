@@ -1,7 +1,7 @@
 //! Verification matrix row "Unitless attributes".
 //!
-//! Clauses 4.5.3 (Relationship), 4.5.18 (LanguageProperty), 4.5.20
-//! (VocabProperty) and 4.5.24 (JsonProperty) define those attribute families
+//! Clauses 4.5.3 (Relationship), 4.5.18 (`LanguageProperty`), 4.5.20
+//! (`VocabProperty`) and 4.5.24 (`JsonProperty`) define those attribute families
 //! without a `unitCode` member: a relationship target and a language map are
 //! not quantities, so a unit on them means nothing the broker could store or
 //! render back. Every such body is refused, and nothing about the refused write

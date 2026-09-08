@@ -19,6 +19,7 @@ use crate::projection::{attribute_iri_index::AttributeIriIndex, term::Projection
 /// A key the index does not cover can still be matched when the term's own IRI
 /// is spelled exactly as the key -- an entity whose attributes are keyed by
 /// expanded IRI needs no expansion to be matched.
+#[must_use]
 pub fn matching_term<'t>(key: &str, terms: &'t [ProjectionTerm], index: &AttributeIriIndex) -> Option<&'t ProjectionTerm> {
     terms.iter().find(|term| match index.expanded(key) {
         Some(expanded) => term.matches_attribute(key, expanded),

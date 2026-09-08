@@ -11,6 +11,7 @@ pub enum HealthHttpError {
 }
 
 /// Classify every health-binding failure without exposing internal details.
+#[must_use]
 pub fn classify(error: &HealthHttpError) -> ClassifiedReport {
     match error {
         HealthHttpError::Identifier(_) => ClassifiedReport::internal(error),

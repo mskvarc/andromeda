@@ -64,12 +64,12 @@ where
     }
 }
 
-/// Read one optional GeoJSON geometry member, unwrapping a GeoProperty carrier.
+/// Read one optional `GeoJSON` geometry member, unwrapping a `GeoProperty` carrier.
 fn deserialize_geometry(payload: &Value, key: &str) -> Result<Option<Geometry>, RegistrationError> {
     payload.get(key).map(unwrap_geo_property_to_geometry).transpose()
 }
 
-/// Read one nullable GeoJSON geometry member for an update.
+/// Read one nullable `GeoJSON` geometry member for an update.
 fn deserialize_nullable_geometry(payload: &Value, key: &str) -> Result<Option<Option<Geometry>>, RegistrationError> {
     match payload.get(key) {
         None => Ok(None),
@@ -78,7 +78,7 @@ fn deserialize_nullable_geometry(payload: &Value, key: &str) -> Result<Option<Op
     }
 }
 
-/// Parse a clause 4.6.3 DateTime member, naming the member in the error.
+/// Parse a clause 4.6.3 `DateTime` member, naming the member in the error.
 fn parse_datetime(value: &Value, key: &str) -> Result<DateTime<Utc>, RegistrationError> {
     let raw = value
         .as_str()

@@ -82,8 +82,7 @@ async fn regression_r2_113_context_link_with_an_escaped_quote_still_resolves_the
     // at the escaped quote would split on the inner `;` and expose a spurious
     // `rel`, hiding the genuine context link.
     let link = format!(
-        "<{context}>; title=\"a\\\"b; rel=nonsense\"; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"",
-        context = TEST_SUITE_CONTEXT
+        "<{TEST_SUITE_CONTEXT}>; title=\"a\\\"b; rel=nonsense\"; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\""
     );
 
     // Body carries no `@context`, so the type can only compact if the Link

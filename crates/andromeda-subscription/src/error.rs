@@ -59,6 +59,7 @@ impl SubscriptionError {
     }
 
     /// Construct a missing-subscription error.
+    #[must_use]
     pub fn not_found(identifier: &Uri) -> SubscriptionError {
         SubscriptionError::NotFound {
             identifier: identifier.clone(), // clone: the error owns the borrowed request identifier.
@@ -66,6 +67,7 @@ impl SubscriptionError {
     }
 
     /// Construct an identifier-conflict error.
+    #[must_use]
     pub fn already_exists(identifier: &Uri) -> SubscriptionError {
         SubscriptionError::AlreadyExists {
             identifier: identifier.clone(), // clone: the error owns the borrowed request identifier.

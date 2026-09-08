@@ -1,9 +1,9 @@
 //! Geometry in the NGSI-LD data model.
 //!
 //! NGSI-LD (ETSI GS CIM 009 v1.9.1, clause 4.7 and Table 5.2.7-1) defines
-//! GeoProperty values as GeoJSON geometries per IETF RFC 7946, in WGS84 /
+//! `GeoProperty` values as `GeoJSON` geometries per IETF RFC 7946, in WGS84 /
 //! CRS84. That is the representation this type serialises to and from. The
-//! PostGIS binary encoding is not a specification artefact and lives outside
+//! `PostGIS` binary encoding is not a specification artefact and lives outside
 //! this crate, in `andromeda-postgresql-encoding`, reached only by the store
 //! and by the statement renderers that bind a reference geometry.
 //!
@@ -20,9 +20,9 @@ use jsonld_expandable_core::{JsonValue, ToJsonValue};
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value};
 
-/// A geometry attached to an NGSI-LD GeoProperty (clause 5.2.7).
+/// A geometry attached to an NGSI-LD `GeoProperty` (clause 5.2.7).
 ///
-/// In WGS84 / CRS84, as RFC 7946 mandates for GeoJSON without an explicit CRS
+/// In WGS84 / CRS84, as RFC 7946 mandates for `GeoJSON` without an explicit CRS
 /// member, and up to three-dimensional: the optional third ordinate of RFC 7946
 /// section 3.1.1 is carried through unchanged. Equality is structural over the
 /// form, altitude included, so a change to a height alone is a change to the
@@ -42,33 +42,34 @@ impl Geometry {
     ///
     /// Infallible: every form has a projection, including the degenerate ones
     /// RFC 7946 permits.
+    #[must_use]
     pub fn new(form: GeometryForm) -> Geometry {
         let planar = project(&form);
         Geometry { form, planar }
     }
 
-    /// Build from a parsed GeoJSON geometry.
+    /// Build from a parsed `GeoJSON` geometry.
     ///
     /// # Errors
     ///
     /// Returns [`GeometryError::Position`] if any position of the geometry
     /// carries fewer than two or more than three ordinates, and
-    /// [`GeometryError::GeometryCollectionUnsupported`] for a GeometryCollection,
+    /// [`GeometryError::GeometryCollectionUnsupported`] for a `GeometryCollection`,
     /// which ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes.
     pub fn from_geojson(geometry: &GeoJsonGeometry) -> Result<Geometry, GeometryError> {
         Ok(Geometry::new(GeometryForm::from_geojson(&geometry.value)?))
     }
 
-    /// Build from an arbitrary JSON value that is expected to encode a GeoJSON
+    /// Build from an arbitrary JSON value that is expected to encode a `GeoJSON`
     /// geometry object.
     ///
     /// # Errors
     ///
-    /// Returns [`GeometryError::GeojsonValue`] if `value` is not a GeoJSON
+    /// Returns [`GeometryError::GeojsonValue`] if `value` is not a `GeoJSON`
     /// geometry object, [`GeometryError::Position`] if one of its positions has
     /// an ordinate count RFC 7946 gives no meaning to, or
     /// [`GeometryError::GeometryCollectionUnsupported`] if it is a
-    /// GeometryCollection.
+    /// `GeometryCollection`.
     pub fn from_geojson_value(value: &Value) -> Result<Geometry, GeometryError> {
         // clone: `serde_json::from_value` consumes the value it decodes
         let geometry: GeoJsonGeometry = serde_json::from_value(value.clone())?;
@@ -100,38 +101,43 @@ impl Geometry {
 
     /// The geometry as received: every position with the altitude and the
     /// ordinate count it arrived with, every polygon ring exactly as written.
+    #[must_use]
     pub const fn form(&self) -> &GeometryForm {
         &self.form
     }
 
     /// The horizontal projection the clause 4.10 predicates are evaluated over.
+    #[must_use]
     pub const fn planar(&self) -> &geo::Geometry<f64> {
         &self.planar
     }
 
     /// Whether every position of this geometry carries an altitude.
+    #[must_use]
     pub fn dimension(&self) -> GeometryDimension {
         self.form.dimension()
     }
 
-    /// Render as a GeoJSON geometry for the wire.
+    /// Render as a `GeoJSON` geometry for the wire.
     ///
     /// Infallible, and byte-faithful to what was received: a position that
     /// arrived with two ordinates renders with two, one that arrived with three
     /// renders with three, and an open polygon ring stays open.
+    #[must_use]
     pub fn to_geojson(&self) -> GeoJsonGeometry {
         GeoJsonGeometry::new(self.form.to_geojson())
     }
 
     /// Axis-aligned bounding rectangle of the horizontal projection, or `None`
     /// for a geometry with no coordinates, such as a Polygon with no rings.
+    #[must_use]
     pub fn bounding_rect(&self) -> Option<geo::Rect<f64>> {
         self.planar.bounding_rect()
     }
 }
 
 /// Narrow arbitrary-precision JSON coordinate numbers to the finite binary64
-/// domain used by `geo`, `geojson` and PostGIS geometry operations.
+/// domain used by `geo`, `geojson` and `PostGIS` geometry operations.
 fn coordinates_as_f64(value: Value) -> Result<Value, GeometryError> {
     match value {
         Value::Number(number) => {

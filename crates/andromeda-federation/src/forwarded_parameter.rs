@@ -27,7 +27,7 @@ pub enum ForwardedParameter {
     Geometry,
     /// The geo-query coordinates.
     Coordinates,
-    /// The GeoProperty the geo-query evaluates.
+    /// The `GeoProperty` the geo-query evaluates.
     Geoproperty,
     /// The clause 4.19 scope query.
     ScopeQ,

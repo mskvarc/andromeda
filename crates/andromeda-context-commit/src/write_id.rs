@@ -18,6 +18,7 @@ pub struct WriteId(Uuid);
 
 impl WriteId {
     /// Mint the identity of a write that is about to be attempted.
+    #[must_use]
     pub fn mint() -> WriteId {
         WriteId(uuid_v7_clock::mint())
     }
@@ -26,11 +27,13 @@ impl WriteId {
     ///
     /// A replay must reuse the stored identity rather than mint a new one, or
     /// it writes rows that collide with nothing and duplicate history.
+    #[must_use]
     pub const fn from_uuid(value: Uuid) -> WriteId {
         WriteId(value)
     }
 
     /// Return the persistence representation.
+    #[must_use]
     pub const fn as_uuid(self) -> Uuid {
         self.0
     }

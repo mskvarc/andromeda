@@ -29,6 +29,7 @@ pub struct ContextualCompactor<'a> {
 
 impl<'a> ContextualCompactor<'a> {
     /// Bind an engine to a context for one rendering.
+    #[must_use]
     pub const fn new(engine: &'a JsonLdEngine, context: &'a ContextSpec) -> ContextualCompactor<'a> {
         ContextualCompactor { engine, context }
     }

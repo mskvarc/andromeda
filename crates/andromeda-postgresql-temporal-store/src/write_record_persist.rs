@@ -50,7 +50,7 @@ fn persist_write_record_statement(write_id: Uuid, recorded_at: DateTime<Utc>, ac
         .columns([WriteRecords::WriteId, WriteRecords::RecordedAt, WriteRecords::AcceptedAt])
         .values([Expr::val(write_id), recorded_at.into(), accepted_at.into()])?
         .on_conflict(OnConflict::new().do_nothing().to_owned());
-    Ok(statement.to_owned())
+    Ok(statement.clone())
 }
 
 #[cfg(test)]

@@ -126,6 +126,7 @@ fn any_row(dimension: SimpleExpr) -> SimpleExpr {
 /// One overlap against the requested type IRI and the wildcard sentinel, which
 /// is what `idx_registration_information_entity_types` serves. The two values
 /// cross the bind boundary as one `text[]`.
+#[must_use]
 pub fn entity_type_candidate(entity_type: &IriBuf) -> SimpleExpr {
     any_row(ri_col(RegistrationInformation::EntityTypes).array_overlaps(text_array(&[entity_type.as_str(), ANY_TYPE])))
 }
@@ -161,11 +162,12 @@ pub fn entity_id_candidate(entity_ids: &[Uri]) -> SimpleExpr {
 /// requested names twice. That is the price of two indexable operands and it is
 /// small: the resolution is an index lookup per name against a dictionary the
 /// planner treats as a constant array for the overlap.
+#[must_use]
 pub fn attribute_name_candidate(attribute_names: &[IriBuf]) -> SimpleExpr {
     // Each overlap resolves the dictionary independently, so the keys
     // subquery is rebuilt — and its names rebound — per operand.
     let requested_keys = || {
-        let names: Vec<&str> = attribute_names.iter().map(|name| name.as_str()).collect();
+        let names: Vec<&str> = attribute_names.iter().map(iri_rs::Iri::as_str).collect();
         let mut dictionary = Query::select();
         dictionary
             .expr(SeaExpr::col((Alias::new("an"), AttributeNames::Id)))

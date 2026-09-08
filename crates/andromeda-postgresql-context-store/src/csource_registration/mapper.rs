@@ -132,7 +132,7 @@ pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStore
             .map(ContextSourcePseudonym::try_from)
             .transpose()
             .map_err(|error| ContextStoreError::Internal(format!("Invalid CSR contextSourceAlias: {error}")))?,
-        Err(sqlx::Error::ColumnNotFound(_)) | Err(sqlx::Error::ColumnDecode { .. }) => None,
+        Err(sqlx::Error::ColumnNotFound(_) | sqlx::Error::ColumnDecode { .. }) => None,
         Err(e) => return Err(ContextStoreError::Internal(format!("Failed to read context_source_alias column: {e}"))),
     };
     let status_label: String = row.get("status");

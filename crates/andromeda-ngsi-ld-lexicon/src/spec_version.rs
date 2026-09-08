@@ -47,16 +47,19 @@ impl SpecVersion {
     pub const SUPPORTED: [SpecVersion; 5] = [SpecVersion::V1_0, SpecVersion::V1_3, SpecVersion::V1_4, SpecVersion::V1_8, SpecVersion::V1_9];
 
     /// A version from its two components.
+    #[must_use]
     pub const fn new(major: u16, minor: u16) -> SpecVersion {
         SpecVersion { major, minor }
     }
 
     /// The major version component.
+    #[must_use]
     pub const fn major(self) -> u16 {
         self.major
     }
 
     /// The minor version component.
+    #[must_use]
     pub const fn minor(self) -> u16 {
         self.minor
     }
@@ -70,6 +73,7 @@ impl SpecVersion {
     /// older. Anything newer than [`SpecVersion::CONFORMANT`] snaps to it, and
     /// anything older than [`SpecVersion::V1_0`] snaps up to `1.0`, the oldest
     /// version the tables describe.
+    #[must_use]
     pub fn nearest_supported(self) -> SpecVersion {
         SpecVersion::SUPPORTED
             .iter()

@@ -15,6 +15,7 @@ pub struct TenantDatabaseName(String);
 
 impl TenantDatabaseName {
     /// The name as a string slice, for a store that has to spell it.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }

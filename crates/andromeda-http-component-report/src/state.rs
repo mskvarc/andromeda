@@ -12,11 +12,13 @@ pub struct ComponentReportState {
 
 impl ComponentReportState {
     /// Construct focused state from the active component inventory.
+    #[must_use]
     pub fn new(components: Vec<ComponentReport>) -> ComponentReportState {
         ComponentReportState { components: components.into() }
     }
 
     /// Borrow every active component in composition order.
+    #[must_use]
     pub fn components(&self) -> &[ComponentReport] {
         &self.components
     }

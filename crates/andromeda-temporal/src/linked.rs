@@ -316,18 +316,15 @@ fn merge_candidates(first: &[TemporalLinkedCandidate], second: Vec<TemporalLinke
         if visited.contains(&candidate.id) {
             continue;
         }
-        match seen.get_index_of(&candidate.id) {
-            Some(index) => {
-                if candidate.eligibility == RemoteEligibility::Eligible
-                    && let Some(existing) = merged.get_mut(index)
-                {
-                    existing.eligibility = RemoteEligibility::Eligible;
-                }
+        if let Some(index) = seen.get_index_of(&candidate.id) {
+            if candidate.eligibility == RemoteEligibility::Eligible
+                && let Some(existing) = merged.get_mut(index)
+            {
+                existing.eligibility = RemoteEligibility::Eligible;
             }
-            None => {
-                seen.insert(candidate.id.clone()); // clone: the duplicate guard owns the ids it records
-                merged.push(candidate);
-            }
+        } else {
+            seen.insert(candidate.id.clone()); // clone: the duplicate guard owns the ids it records
+            merged.push(candidate);
         }
     }
     merged

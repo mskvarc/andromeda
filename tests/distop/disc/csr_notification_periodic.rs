@@ -1,6 +1,6 @@
 //! Periodic and change-driven Context Source Notification delivery and matching
 //! filters (clause 5.11.7): time-interval versus change-driven behaviour,
-//! empty-attribute match-all, watched-attribute filtering, and RegistrationInfo
+//! empty-attribute match-all, watched-attribute filtering, and `RegistrationInfo`
 //! trimming in the notification data. `T-LOCAL` plus the notification adapter.
 
 use crate::{
@@ -190,7 +190,7 @@ async fn csr_notification_watched_attributes_filter_matches_registration() {
 }
 
 /// The notification data trims each registration to only its matching
-/// RegistrationInfo (clause 5.11.7, SHOULD). Confirms REQ-DISC-85, REQ-DISC-84.
+/// `RegistrationInfo` (clause 5.11.7, SHOULD). Confirms REQ-DISC-85, REQ-DISC-84.
 #[tokio::test]
 async fn csr_notification_returns_only_matching_registration_info() {
     let topology = topology::single().await.expect("single-broker topology");

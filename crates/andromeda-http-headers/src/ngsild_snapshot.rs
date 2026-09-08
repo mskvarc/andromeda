@@ -19,16 +19,19 @@ pub struct NgsiLdSnapshot(Uri);
 
 impl NgsiLdSnapshot {
     /// Create a new `NGSILD-Snapshot` header from a validated URI.
+    #[must_use]
     pub const fn new(value: Uri) -> NgsiLdSnapshot {
         NgsiLdSnapshot(value)
     }
 
     /// Consume the header and return the inner URI.
+    #[must_use]
     pub fn into_inner(self) -> Uri {
         self.0
     }
 
     /// Return the Snapshot identifier as its wire representation.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }

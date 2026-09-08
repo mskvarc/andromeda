@@ -1,4 +1,4 @@
-//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-FileCopyrightText: 2014-2025 Sean `McArthur`
 //! SPDX-License-Identifier: MIT
 //!
 //! A single `link-value` within a `Link` header (RFC 8288 section 3).
@@ -40,6 +40,7 @@ pub struct LinkValue {
 
 impl LinkValue {
     /// A link-value naming `link`, with no parameters.
+    #[must_use]
     pub const fn new(link: IriRefBuf) -> LinkValue {
         LinkValue {
             link,
@@ -50,16 +51,19 @@ impl LinkValue {
     }
 
     /// The target IRI reference.
+    #[must_use]
     pub const fn link(&self) -> &IriRefBuf {
         &self.link
     }
 
     /// The `rel` parameter, if present.
+    #[must_use]
     pub fn rel(&self) -> Option<&[RelationType]> {
         self.rel.as_deref()
     }
 
     /// The `profile` parameter, if present.
+    #[must_use]
     pub const fn profile(&self) -> Option<&IriBuf> {
         self.profile.as_ref()
     }
@@ -71,18 +75,21 @@ impl LinkValue {
     }
 
     /// Set the `type` parameter.
+    #[must_use]
     pub fn set_media_type(mut self, media_type: MediaTypeBuf) -> LinkValue {
         self.media_type = Some(media_type);
         self
     }
 
     /// Set the `profile` parameter (RFC 8288 section 3.4, clause 6.3.21).
+    #[must_use]
     pub fn set_profile(mut self, profile: IriBuf) -> LinkValue {
         self.profile = Some(profile);
         self
     }
 
     /// Build a link-value with optional `rel` and `type` parameters.
+    #[must_use]
     pub fn with_params(target: IriRefBuf, rel: Option<RelationType>, media_type: Option<MediaTypeBuf>) -> LinkValue {
         let mut value = LinkValue::new(target);
         if let Some(rel) = rel {
@@ -95,6 +102,7 @@ impl LinkValue {
     }
 
     /// A JSON-LD context link-value with the standard relation and media type.
+    #[must_use]
     pub fn jsonld_context(context_url: IriRefBuf) -> LinkValue {
         LinkValue::new(context_url)
             .push_rel(RelationType::jsonld_context())
@@ -102,11 +110,13 @@ impl LinkValue {
     }
 
     /// Whether this link-value carries the given relation type.
+    #[must_use]
     pub fn has_rel(&self, rel: &RelationType) -> bool {
         self.rel().is_some_and(|rels| rels.contains(rel))
     }
 
     /// Whether this link-value is a JSON-LD context link.
+    #[must_use]
     pub fn is_context_link(&self) -> bool {
         self.rel().is_some_and(|rels| rels.iter().any(RelationType::is_jsonld_context))
     }

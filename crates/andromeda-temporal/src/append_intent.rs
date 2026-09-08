@@ -25,6 +25,7 @@ impl TemporalIntentSequence {
     }
 
     /// Return the persistence representation.
+    #[must_use]
     pub const fn get(self) -> i64 {
         self.0
     }

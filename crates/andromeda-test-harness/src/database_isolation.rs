@@ -117,7 +117,7 @@ pub async fn connect_pool(endpoint: &DatabaseEndpoint) -> Result<PgPool, Databas
 /// Database connection or advisory-lock failure.
 #[derive(Debug, Error)]
 pub enum DatabaseIsolationError {
-    /// SQLx could not connect or execute the lock operation.
+    /// `SQLx` could not connect or execute the lock operation.
     #[error("test database isolation failed: {0}")]
     Sqlx(#[source] sqlx::Error),
     /// The capability attempted to release or use a lock it no longer held.

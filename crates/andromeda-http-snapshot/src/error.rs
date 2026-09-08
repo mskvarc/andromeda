@@ -11,6 +11,7 @@ use axum::http::Uri;
 use std::{fmt::Display, time::Duration};
 
 /// Exhaustively classify one snapshot policy failure.
+#[must_use]
 pub fn classify_snapshot_error(error: &SnapshotError) -> ClassifiedReport {
     match error {
         SnapshotError::Validation { detail } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail),

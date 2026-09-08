@@ -73,7 +73,7 @@ fn vehicle_temporal_representation(id: &str) -> Value {
     })
 }
 
-/// Fragment to add a new attribute (added_attribute) with temporal values.
+/// Fragment to add a new attribute (`added_attribute`) with temporal values.
 fn add_attribute_fragment() -> Value {
     json!({
         "added_attribute": [

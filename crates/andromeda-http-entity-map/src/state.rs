@@ -33,6 +33,7 @@ pub struct EntityMapRouteServices {
 
 impl EntityMapRouteServices {
     /// Construct focused Entity Map route capabilities.
+    #[must_use]
     pub const fn new(
         entity_maps: Arc<EntityMapService>,
         entity_query: Arc<EntityQueryService>,

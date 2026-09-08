@@ -85,7 +85,7 @@ pub struct CsrQueryParameters {
     /// Clause-4.15 natural-language selection preferences (`lang`).
     #[serde(default, deserialize_with = "deserialize_optional_language_filter")]
     pub lang: Option<LanguageFilter>,
-    /// The GeoProperty a GeoJSON response uses as its geometry (`geometryProperty`).
+    /// The `GeoProperty` a `GeoJSON` response uses as its geometry (`geometryProperty`).
     #[serde(rename = "geometryProperty")]
     pub geometry_property: Option<AttributeName>,
     /// How the window relates to the given instants (clause 4.11 `timerel`).
@@ -121,6 +121,7 @@ impl_shared_query_params!(CsrQueryParameters {
 
 impl CsrQueryParameters {
     /// Parses the `options` parameter into structured flags.
+    #[must_use]
     pub fn parse_options(&self) -> SysAttrsOptions {
         self.options.unwrap_or_default()
     }
@@ -131,6 +132,7 @@ impl CsrQueryParameters {
     /// the attribute list, the `q` query and the geoquery. Entity identifiers
     /// and an `idPattern` on their own are too wide (clause 5.10.2.3), and so
     /// are `csf`, `scopeQ` and the temporal window.
+    #[must_use]
     pub const fn has_filter(&self) -> bool {
         self.entity_type.is_some() || self.attrs.is_some() || self.q.is_some() || self.geo.0.is_some()
     }

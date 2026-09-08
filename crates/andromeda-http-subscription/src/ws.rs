@@ -127,7 +127,7 @@ async fn handle_ws(
                 }
             }
             // Cancellation: subscription deleted or transport changed.
-            _ = cancellation_token.cancelled() => {
+            () = cancellation_token.cancelled() => {
                 let _ = sender.send(Message::Close(None)).await;
                 break;
             }

@@ -50,6 +50,7 @@ pub enum ClientQuery<'a> {
 
 impl ClientQuery<'_> {
     /// The clause 4.17 type selector the client wrote, if the operation has one.
+    #[must_use]
     pub const fn entity_type(&self) -> Option<&TypeExprRaw> {
         match self {
             ClientQuery::EntityQuery(params) => params.entity_type.as_ref(),
@@ -59,6 +60,7 @@ impl ClientQuery<'_> {
     }
 
     /// The entity identifiers the client selected, if the operation has any.
+    #[must_use]
     pub fn entity_ids(&self) -> Option<&[Uri]> {
         match self {
             ClientQuery::EntityQuery(params) => params.id.as_deref(),
@@ -69,6 +71,7 @@ impl ClientQuery<'_> {
 
     /// The scope query used to preselect registrations by their declared
     /// coverage footprint.
+    #[must_use]
     pub const fn scope_q(&self) -> Option<&ScopeQuery> {
         match self {
             ClientQuery::EntityQuery(params) => params.scope_q.as_ref(),
@@ -91,6 +94,7 @@ impl ForwardedQuery {
     /// Narrow `client` to `registration`, or `None` when the registration
     /// covers none of the types, identifiers or attributes the client asked
     /// for, in which case it has nothing to answer and is not contacted.
+    #[must_use]
     pub fn for_registration(client: ClientQuery<'_>, registration: &ContextSourceRegistration, split: SplitEntities) -> Option<ForwardedQuery> {
         Self::for_registration_on_page(client, registration, split, None)
     }
@@ -197,11 +201,13 @@ impl ForwardedQuery {
     }
 
     /// The value of one parameter, when it is written.
+    #[must_use]
     pub fn value_of(&self, parameter: ForwardedParameter) -> Option<&str> {
         self.pairs.iter().find(|(name, _)| *name == parameter).map(|(_, value)| value.as_str())
     }
 
     /// The `application/x-www-form-urlencoded` rendering the forwarded URL carries.
+    #[must_use]
     pub fn to_query_string(&self) -> String {
         let mut serializer = form_urlencoded::Serializer::new(String::new());
         for (parameter, value) in &self.pairs {
@@ -421,7 +427,7 @@ fn covered_attrs(attrs: &[AttributeName], registration: &ContextSourceRegistrati
         .coverage
         .information
         .iter()
-        .flat_map(|information| information.attribute_names())
+        .flat_map(andromeda_ngsi_ld_model::registration::RegistrationInfo::attribute_names)
         .collect::<Vec<_>>();
     if declared.is_empty() {
         return Some(attrs.to_vec()); // clone: the forwarded query owns the names it writes

@@ -7,6 +7,7 @@ use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::http::Uri;
 
 /// Classify one Context Registry policy failure for its HTTP surface.
+#[must_use]
 pub fn classify_context_registry_error(error: &ContextRegistryError) -> ClassifiedReport {
     match error {
         ContextRegistryError::MissingTopLevelContext => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),

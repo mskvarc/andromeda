@@ -23,6 +23,7 @@ const SNAPSHOT_KEY: &str = "NGSILD-Snapshot";
 /// member for it, so each spells that one in its own idiom. Everything here has
 /// no protocol slot at all — the clause 5.5.7 `@context` link, the
 /// subscription's `receiverInfo`, and the tenant.
+#[must_use]
 pub fn transported_headers(request: &DeliveryRequest) -> Vec<(String, String)> {
     let mut headers = Vec::with_capacity(request.receiver_info.len() + 2);
 

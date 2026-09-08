@@ -72,6 +72,7 @@ pub struct TemporalSimplifyRenderer {
 
 impl TemporalSimplifyRenderer {
     /// Create a renderer for the given payload.
+    #[must_use]
     pub const fn new(payload: TemporalSimplifyPayload) -> TemporalSimplifyRenderer {
         TemporalSimplifyRenderer { payload }
     }
@@ -162,7 +163,7 @@ mod tests {
     #[test]
     fn simplify_temporal_values_empty_vec() {
         let result = render_collection(Vec::new());
-        assert!(result.is_empty());
+        assert_eq!(result, [] as [serde_json::Value; 0]);
     }
 
     #[test]

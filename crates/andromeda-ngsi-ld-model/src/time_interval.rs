@@ -1,4 +1,4 @@
-//! The TimeInterval member (ETSI GS CIM 009 clause 5.2.11).
+//! The `TimeInterval` member (ETSI GS CIM 009 clause 5.2.11).
 
 use andromeda_ngsi_ld_lexicon::rfc3339;
 use andromeda_ngsi_ld_query::temporal::window::TimeInterval as QueryWindow;
@@ -31,6 +31,7 @@ impl TimeInterval {
     /// interval or on one of its endpoints; for `between` the window and the
     /// interval must overlap. An open-ended interval extends forever, and an
     /// unbounded window narrows nothing.
+    #[must_use]
     pub fn meets(&self, window: &QueryWindow) -> bool {
         match window {
             QueryWindow::Unbounded => true,

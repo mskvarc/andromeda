@@ -11,6 +11,7 @@ pub struct JsonLdContextRepository {
 
 impl JsonLdContextRepository {
     /// Create a Context repository backed by the given tenant connection pool.
+    #[must_use]
     pub fn new(pool: &PgPool) -> JsonLdContextRepository {
         JsonLdContextRepository { pool: pool.clone() } // clone: SQLx pools are shared handles and the caller retains its composition-root handle.
     }

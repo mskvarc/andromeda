@@ -95,6 +95,7 @@ impl UnitCodeRegistry {
     }
 
     /// Return every registration in the order the snapshot lists them.
+    #[must_use]
     pub fn entries(&self) -> &[UnitCodeEntry] {
         &self.entries
     }
@@ -257,7 +258,7 @@ mod tests {
         let decoded = UnitCodeRegistry::parse(SAMPLE)
             .ok()
             .and_then(|catalog| UnitCodeId::try_from(2_i16).ok().and_then(|id| catalog.unit_code_of(id).ok()));
-        assert_eq!(decoded.map(|code| code.as_str()), Some("MTR"));
+        assert_eq!(decoded.map(cefact_units::UnitCode::as_str), Some("MTR"));
     }
 
     #[test]

@@ -18,6 +18,7 @@ pub struct ReadinessPolicy {
 
 impl ReadinessPolicy {
     /// Construct a readiness policy with an overall timeout and retry interval.
+    #[must_use]
     pub const fn new(timeout: Duration, interval: Duration, request_timeout: Duration) -> ReadinessPolicy {
         ReadinessPolicy {
             timeout,
@@ -38,7 +39,7 @@ pub async fn wait_until_ready_once(client: &TestClient, policy: ReadinessPolicy)
     PROCESS_READINESS
         .get_or_try_init(|| async { wait_until_ready(client, policy).await })
         .await
-        .map(|_| ())
+        .map(|()| ())
 }
 
 /// Poll the broker health endpoint according to an explicit timing policy.

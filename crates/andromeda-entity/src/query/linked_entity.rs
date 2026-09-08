@@ -286,7 +286,7 @@ async fn fetch_remote_candidate(
 }
 
 /// Collect, in first-encounter order, every not-yet-visited identifier the
-/// given entities' Relationships and ListRelationships name.
+/// given entities' Relationships and `ListRelationships` name.
 ///
 /// `objectList` order is preserved, and an id named by several Relationships
 /// appears once, carrying the union of their `objectType` annotations.
@@ -339,23 +339,20 @@ fn collect_from_attribute(attr: &Attribute, visited: &IndexSet<Uri>, seen: &mut 
         if visited.contains(object) {
             continue;
         }
-        match seen.get_index_of(object) {
-            Some(index) => {
-                if let Some(candidate) = candidates.get_mut(index) {
-                    for object_type in &object_types {
-                        if !candidate.object_types.contains(object_type) {
-                            candidate.object_types.push(object_type.clone()); // clone: the candidate owns the annotations it records
-                        }
+        if let Some(index) = seen.get_index_of(object) {
+            if let Some(candidate) = candidates.get_mut(index) {
+                for object_type in &object_types {
+                    if !candidate.object_types.contains(object_type) {
+                        candidate.object_types.push(object_type.clone()); // clone: the candidate owns the annotations it records
                     }
                 }
             }
-            None => {
-                seen.insert(object.clone()); // clone: the duplicate guard owns the ids it records
-                candidates.push(LinkedCandidate {
-                    id: object.clone(),                 // clone: the candidate owns its identifier
-                    object_types: object_types.clone(), // clone: each candidate owns its own annotation list
-                });
-            }
+        } else {
+            seen.insert(object.clone()); // clone: the duplicate guard owns the ids it records
+            candidates.push(LinkedCandidate {
+                id: object.clone(),                 // clone: the candidate owns its identifier
+                object_types: object_types.clone(), // clone: each candidate owns its own annotation list
+            });
         }
     }
 }
@@ -773,7 +770,7 @@ mod tests {
             .expect("resolves");
 
         assert!(resolved.entities.is_empty());
-        assert!(resolved.failures.is_empty());
+        assert_eq!(resolved.failures, [] as [andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure; 0]);
         assert!(source.calls().is_empty());
     }
 

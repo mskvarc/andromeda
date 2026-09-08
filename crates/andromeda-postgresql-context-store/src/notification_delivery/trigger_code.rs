@@ -12,6 +12,7 @@ use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use andromeda_postgresql_codes::notification_trigger::NotificationTriggerCode;
 
 /// The registry member the schema persists for a trigger condition.
+#[must_use]
 pub const fn stored_trigger(trigger: NotificationTrigger) -> NotificationTriggerCode {
     match trigger {
         NotificationTrigger::EntityCreated => NotificationTriggerCode::EntityCreated,
@@ -24,6 +25,7 @@ pub const fn stored_trigger(trigger: NotificationTrigger) -> NotificationTrigger
 }
 
 /// The trigger condition a stored registry member names.
+#[must_use]
 pub const fn trigger_of(code: NotificationTriggerCode) -> NotificationTrigger {
     match code {
         NotificationTriggerCode::EntityCreated => NotificationTrigger::EntityCreated,

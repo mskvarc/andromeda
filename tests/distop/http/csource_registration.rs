@@ -73,7 +73,7 @@ async fn dist_http_create_csource_registration_duplicate_returns_409() {
 }
 
 /// An auxiliary registration declaring write operations violates clause
-/// 5.9.2.4, which names the error type BadRequestData, so the HTTP binding
+/// 5.9.2.4, which names the error type `BadRequestData`, so the HTTP binding
 /// answers `400` (clause 6.8.3.1). Confirms REQ-HTTP-80.
 #[tokio::test]
 async fn dist_http_create_csource_registration_auxiliary_write_operations_returns_400() {

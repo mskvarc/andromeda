@@ -44,6 +44,7 @@ impl ProjectionTerm {
     /// Both forms are tested because an entity's attribute map may be keyed by
     /// a compact term or by an IRI, depending on which side of expansion the
     /// representation sits on. A keyword term never names an attribute.
+    #[must_use]
     pub fn matches_attribute(&self, key: &str, expanded: &IriBuf) -> bool {
         match self {
             ProjectionTerm::Attribute { iri, .. } => iri == expanded || iri.as_str() == key,
@@ -55,6 +56,7 @@ impl ProjectionTerm {
     ///
     /// Empty for the clause 4.21 keywords and for an attribute term that
     /// selects no linked entity.
+    #[must_use]
     pub fn linked_terms(&self) -> &[ProjectionTerm] {
         match self {
             ProjectionTerm::Attribute { linked, .. } => linked,
@@ -104,7 +106,7 @@ mod tests {
             iri: iri("https://example.com/speed"),
             linked: Vec::new(),
         };
-        assert!(term.linked_terms().is_empty());
+        assert_eq!(term.linked_terms(), []);
     }
 
     #[test]

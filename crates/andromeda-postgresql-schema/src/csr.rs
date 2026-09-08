@@ -33,11 +33,11 @@ pub enum Csr {
     ObservationInterval,
     /// The `managementInterval` temporal bounds.
     ManagementInterval,
-    /// PostGIS geometry of the registration `location`.
+    /// `PostGIS` geometry of the registration `location`.
     Location,
-    /// PostGIS geometry of the `observationSpace`.
+    /// `PostGIS` geometry of the `observationSpace`.
     ObservationSpace,
-    /// PostGIS geometry of the `operationSpace`.
+    /// `PostGIS` geometry of the `operationSpace`.
     OperationSpace,
     /// Expiry instant, after which the registration is gone.
     ExpiresAt,

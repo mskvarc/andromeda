@@ -193,7 +193,7 @@ pub enum QueryError {
     /// The `coordinates` parameter was not valid JSON.
     #[error("geo: coordinates is not valid JSON")]
     GeoCoordinatesInvalid(#[source] serde_json::Error),
-    /// The `geometry`/`coordinates` pair did not form a GeoJSON geometry.
+    /// The `geometry`/`coordinates` pair did not form a `GeoJSON` geometry.
     #[error("geo-query reference geometry: {0}")]
     ReferenceGeometry(#[from] GeometryError),
     /// `georel=near` carried neither `maxDistance` nor `minDistance`.

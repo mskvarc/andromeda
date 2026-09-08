@@ -45,6 +45,7 @@ pub struct NgsiLdCollectionResponse {
 
 impl NgsiLdCollectionResponse {
     /// Create a 200 OK response for a collection.
+    #[must_use]
     pub const fn ok(rendered: RenderedOutput) -> NgsiLdCollectionResponse {
         NgsiLdCollectionResponse {
             status: StatusCode::OK,
@@ -58,36 +59,42 @@ impl NgsiLdCollectionResponse {
     }
 
     /// Override the HTTP status code.
+    #[must_use]
     pub const fn with_status(mut self, status: StatusCode) -> Self {
         self.status = status;
         self
     }
 
     /// Set the total count for pagination (NGSILD-Results-Count header).
+    #[must_use]
     pub const fn with_total_count(mut self, count: usize) -> Self {
         self.total_count = Some(count);
         self
     }
 
     /// Set the Content-Range header value for temporal pagination.
+    #[must_use]
     pub const fn with_content_range(mut self, content_range: NgsiLdContentRange) -> Self {
         self.content_range = Some(content_range);
         self
     }
 
     /// Set the NGSILD-EntityMap header URI.
+    #[must_use]
     pub fn with_entity_map_uri(mut self, uri: Uri) -> Self {
         self.entity_map_uri = Some(uri);
         self
     }
 
     /// Set NGSILD-Warning headers from distributed forwarding (clause 6.3.17).
+    #[must_use]
     pub fn with_warnings(mut self, warnings: Vec<NgsiLdWarning>) -> Self {
         self.warnings = warnings;
         self
     }
 
     /// Set the NGSILD-Snapshot header for snapshot-scoped responses (clause 6.3.22).
+    #[must_use]
     pub fn with_snapshot_uri(mut self, uri: Uri) -> Self {
         self.snapshot_uri = Some(uri);
         self

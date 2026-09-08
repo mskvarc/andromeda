@@ -60,7 +60,7 @@ fn enqueue_statement(
                 .do_nothing()
                 .to_owned(),
         );
-    Ok(statement.to_owned())
+    Ok(statement.clone())
 }
 
 /// Postgres-backed queue for deferred batch side-effects.
@@ -72,11 +72,13 @@ pub struct PendingSideEffectsRepository {
 
 impl PendingSideEffectsRepository {
     /// Create a new repository backed by the given connection pool.
+    #[must_use]
     pub fn new(pool: &PgPool) -> PendingSideEffectsRepository {
         PendingSideEffectsRepository { pool: pool.clone() } // clone: Arc ref-count bump (PgPool is Arc-based)
     }
 
     /// Borrow the pool for focused port implementations in this crate.
+    #[must_use]
     pub const fn pool(&self) -> &PgPool {
         &self.pool
     }

@@ -26,7 +26,7 @@ use chrono::Utc;
 use futures::{StreamExt, stream};
 use tracing::warn;
 
-/// Which EntityMap creation resource a forwarded request targets.
+/// Which `EntityMap` creation resource a forwarded request targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntityMapQueryKind {
     /// `GET /entityMaps` over current entities (clause 5.14.4).
@@ -53,7 +53,7 @@ impl EntityMapQueryKind {
     }
 }
 
-/// Parameters for forwarding an EntityMap creation.
+/// Parameters for forwarding an `EntityMap` creation.
 pub struct ForwardEntityMapRequest<'a> {
     /// Which creation resource is targeted.
     pub kind: EntityMapQueryKind,
@@ -71,7 +71,7 @@ pub struct ForwardEntityMapRequest<'a> {
     pub triggering: TriggeringRequest<'a>,
 }
 
-/// The EntityMap one registration's context source created for the query.
+/// The `EntityMap` one registration's context source created for the query.
 pub struct ForwardedEntityMap {
     /// The contributing registration.
     pub registration_id: Uri,
@@ -82,7 +82,7 @@ pub struct ForwardedEntityMap {
 }
 
 impl FederationService {
-    /// Ask every matching context source that advertises EntityMap creation
+    /// Ask every matching context source that advertises `EntityMap` creation
     /// for its map of the same query.
     pub async fn forward_entity_map_query(&self, request: ForwardEntityMapRequest<'_>) -> Result<Vec<ForwardedEntityMap>, FederationError> {
         let ForwardEntityMapRequest {
@@ -153,7 +153,7 @@ impl FederationService {
         Ok(results)
     }
 
-    /// The registrations a request that references a live EntityMap contacts:
+    /// The registrations a request that references a live `EntityMap` contacts:
     /// the map's sources, looked up by identifier, in place of clause 5.12
     /// matching (clause 5.5.14, clause 5.12 last paragraph).
     pub(crate) async fn registrations_of_map(&self, map: &EntityMap) -> Result<Vec<ContextSourceRegistration>, FederationError> {

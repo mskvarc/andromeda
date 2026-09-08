@@ -84,7 +84,7 @@ async fn temporal_semantics_write_idempotency_replays_collide_instead_of_duplica
         .await;
     let violation = replayed.expect_err("a replayed consequence must not be stored twice");
     assert_eq!(
-        violation.as_database_error().and_then(|error| error.code()).as_deref(),
+        violation.as_database_error().and_then(sqlx::error::DatabaseError::code).as_deref(),
         Some("23505"),
         "the collision is a uniqueness violation on (recorded_at, write_id, write_ordinal)"
     );
@@ -168,17 +168,17 @@ async fn temporal_semantics_write_idempotency_records_release_only_with_their_ow
     );
 }
 
-const REPLAY_HISTORY_ROW_SQL: &str = r#"
+const REPLAY_HISTORY_ROW_SQL: &str = r"
 INSERT INTO attribute_history
     (recorded_at, context_space_key, write_id, stream_key, write_ordinal, attribute_kind, value_kind,
      generated_instance_uuid, value_number)
 SELECT $1, context_space_key, $2, stream_key, $4, $5, $6, $7, 55
 FROM temporal_attribute_streams WHERE stream_key = $3
-"#;
+";
 
-const CLAIM_WRITE_RECORD_SQL: &str = r#"
+const CLAIM_WRITE_RECORD_SQL: &str = r"
 INSERT INTO write_records (write_id, recorded_at, accepted_at)
 VALUES ($1, $2, $3)
 ON CONFLICT DO NOTHING
 RETURNING write_id
-"#;
+";

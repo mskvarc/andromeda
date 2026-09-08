@@ -38,11 +38,13 @@ impl ContextSourceServer {
     }
 
     /// Return the number of requests captured for one exact method and path.
+    #[must_use]
     pub fn request_count(&self, method: Method, path: CallbackPath) -> usize {
         self.server.request_count(&RequestMatcher::new(method, path))
     }
 
     /// Return the total number of requests captured by this server.
+    #[must_use]
     pub fn total_request_count(&self) -> usize {
         self.server.total_request_count()
     }

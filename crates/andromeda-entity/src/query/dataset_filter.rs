@@ -11,7 +11,7 @@ use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 /// filtered out is not part of the answer.
 pub(super) fn filter_entity_by_dataset_id(entity: &mut Entity, dataset_ids: &[DatasetSelector]) {
     let mut keys_to_remove = Vec::new();
-    for (key, attr_val) in entity.attrs.iter_mut() {
+    for (key, attr_val) in &mut entity.attrs {
         match attr_val {
             AttributeValue::Single(attr) => {
                 if !selected(attr.as_ref().dataset_id(), dataset_ids) {

@@ -235,18 +235,15 @@ impl EntityService {
         let mut miss_pending: Vec<(usize, Uri, Value)> = Vec::new();
         for ClassifiedEntry { idx, id, mut value } in slow {
             normalize_entity_attributes(&mut value);
-            match self.engine.entity_context_matches_handle(&value, handle) {
-                true => {
-                    if let Some(obj) = value.as_object_mut()
-                        && !obj.contains_key("@context")
-                        && let Some(resolved) = handle.spec().to_context_value()
-                    {
-                        obj.insert("@context".to_string(), resolved);
-                    }
-                    hit_pending.push((idx, id, value));
+            if self.engine.entity_context_matches_handle(&value, handle) {
+                if let Some(obj) = value.as_object_mut()
+                    && !obj.contains_key("@context")
+                    && let Some(resolved) = handle.spec().to_context_value()
+                {
+                    obj.insert("@context".to_string(), resolved);
                 }
-                false => miss_pending.push((idx, id, value)),
-            }
+                hit_pending.push((idx, id, value));
+            } else { miss_pending.push((idx, id, value)) }
         }
 
         let mut results: Vec<IndexedPrepared> = Vec::new();

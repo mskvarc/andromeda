@@ -50,7 +50,7 @@ pub fn merge_entity_attributes(local: &mut Entity, remote: Entity, policy: Merge
     };
 }
 
-/// Fold one of the entity's named GeoProperty members.
+/// Fold one of the entity's named `GeoProperty` members.
 fn merge_optional_attribute(local: &mut Option<AttributeValue>, remote: Option<AttributeValue>, policy: MergePolicy) {
     match (local.as_mut(), remote) {
         (Some(existing), Some(received)) => merge_attribute_value(existing, received, policy),
@@ -107,11 +107,11 @@ fn merge_instances(mut held: Vec<Attribute>, received: Vec<Attribute>) -> Vec<At
 fn most_recent(held: &Attribute, candidate: &Attribute) -> Ordering {
     match (held.common().observed_at, candidate.common().observed_at) {
         (Some(held_at), Some(candidate_at)) if held_at != candidate_at => return held_at.cmp(&candidate_at),
-        (Some(_), Some(_)) | (None, Some(_)) | (Some(_), None) | (None, None) => {}
+        (Some(_) | None, Some(_) | None) => {}
     }
     match (held.common().modified_at, candidate.common().modified_at) {
         (Some(held_at), Some(candidate_at)) => held_at.cmp(&candidate_at),
-        (None, Some(_)) | (Some(_), None) | (None, None) => Ordering::Equal,
+        (None, Some(_) | None) | (Some(_), None) => Ordering::Equal,
     }
 }
 
@@ -149,7 +149,7 @@ mod tests {
             .map(AttributeValue::instances)
             .into_iter()
             .flatten()
-            .map(|instance| instance.value())
+            .map(andromeda_ngsi_ld_model::attribute::instance::Attribute::value)
             .collect()
     }
 
@@ -218,7 +218,7 @@ mod tests {
 
     /// Clause 4.5.5.3: the entity-level `expiresAt` survives only when every
     /// version carries one, as the furthest in the future; the named
-    /// GeoProperties merge like any other attribute.
+    /// `GeoProperties` merge like any other attribute.
     #[test]
     fn entity_expires_at_and_location_follow_the_conflict_rules() {
         let mut local = entity(json!({"expiresAt": "2030-01-01T00:00:00Z"}));

@@ -20,6 +20,7 @@ pub enum Precondition {
 
 impl Precondition {
     /// Return the compare-and-set timestamp, when this is a version condition.
+    #[must_use]
     pub const fn expected_modified_at(self) -> Option<DateTime<Utc>> {
         match self {
             Precondition::UnchangedSince(modified_at) => Some(modified_at),
@@ -40,6 +41,7 @@ pub enum AfterAttempt {
 }
 
 /// Classify a write outcome for the read-modify-write retry loop.
+#[must_use]
 pub const fn after_attempt(outcome: &WriteOutcome) -> AfterAttempt {
     match outcome {
         WriteOutcome::Created | WriteOutcome::Updated | WriteOutcome::Deleted(_) | WriteOutcome::NoEntityChange | WriteOutcome::Skipped => {

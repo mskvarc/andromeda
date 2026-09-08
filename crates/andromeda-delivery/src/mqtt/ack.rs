@@ -5,7 +5,7 @@
 //! identifier, so a caller cannot key on the packet id to await its
 //! acknowledgement. The event loop is the only place that sees both the
 //! `Outgoing::Publish(pkid)` when a publish reaches the wire and the `PubAck`
-//! (QoS 1) or `PubComp` (QoS 2) that later completes it. Publishes are
+//! (`QoS` 1) or `PubComp` (`QoS` 2) that later completes it. Publishes are
 //! registered here in send order — the delivery path holds a lock across
 //! register-and-publish, so the registration order matches the wire order —
 //! assigned their id when the event loop reports the outgoing packet, and
@@ -14,12 +14,12 @@
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::oneshot;
 
-/// The acknowledgement packet that completes a publish at its QoS.
+/// The acknowledgement packet that completes a publish at its `QoS`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AckKind {
-    /// QoS 1 completes on `PUBACK`.
+    /// `QoS` 1 completes on `PUBACK`.
     PubAck,
-    /// QoS 2 completes on `PUBCOMP`, after the `PUBREC`/`PUBREL` handshake.
+    /// `QoS` 2 completes on `PUBCOMP`, after the `PUBREC`/`PUBREL` handshake.
     PubComp,
 }
 
@@ -68,18 +68,18 @@ impl AckTracker {
         }
     }
 
-    /// Complete the publish a `PUBACK` acknowledges (QoS 1).
+    /// Complete the publish a `PUBACK` acknowledges (`QoS` 1).
     pub fn on_puback(&mut self, pkid: u16) {
         self.complete(pkid, AckKind::PubAck);
     }
 
-    /// Complete the publish a `PUBCOMP` acknowledges (QoS 2).
+    /// Complete the publish a `PUBCOMP` acknowledges (`QoS` 2).
     pub fn on_pubcomp(&mut self, pkid: u16) {
         self.complete(pkid, AckKind::PubComp);
     }
 
     /// Resolve the in-flight publish for `pkid`, but only when `kind` is the
-    /// acknowledgement it waits on — a `PUBACK` for a QoS 2 publish still
+    /// acknowledgement it waits on — a `PUBACK` for a `QoS` 2 publish still
     /// mid-handshake leaves it in flight for its real `PUBCOMP`.
     fn complete(&mut self, pkid: u16, kind: AckKind) {
         let awaits_this = self.in_flight.get(&pkid).is_some_and(|pending| pending.completes_on == kind);

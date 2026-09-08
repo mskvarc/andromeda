@@ -46,7 +46,7 @@ use sqlx::{Executor, Postgres, Transaction};
 /// Number of columns written per staged history tuple.
 const STAGE_ATTRIBUTE_HISTORY_FIELD_COUNT: i16 = 21;
 
-const CREATE_STAGE_ATTRIBUTE_HISTORY_SQL: &str = r#"
+const CREATE_STAGE_ATTRIBUTE_HISTORY_SQL: &str = r"
 CREATE TEMP TABLE stage_attribute_history (
     recorded_at             timestamptz NOT NULL,
     write_id                uuid NOT NULL,
@@ -70,14 +70,14 @@ CREATE TEMP TABLE stage_attribute_history (
     value_uri               text,
     metadata                jsonb
 ) ON COMMIT DROP
-"#;
+";
 
 const COPY_INTO_STAGE_SQL: &str = "COPY stage_attribute_history (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, \
      value_kind, observed_at, created_at, modified_at, deleted_at, value_datetime, generated_instance_uuid, unit_code_id, \
      value_bool, verbatim_instance_id, value_number, value_string, value_geo, value_object, value_uri, metadata) \
      FROM STDIN WITH (FORMAT binary)";
 
-const INSERT_FROM_STAGE_SQL: &str = r#"
+const INSERT_FROM_STAGE_SQL: &str = r"
 INSERT INTO attribute_history (
     recorded_at, context_space_key, write_id, stream_key, write_ordinal, attribute_kind, value_kind,
     observed_at, created_at, modified_at, deleted_at, value_datetime,
@@ -95,7 +95,7 @@ SELECT
     s.value_object, s.value_uri, s.metadata
 FROM stage_attribute_history s
 ON CONFLICT ON CONSTRAINT uq_attribute_history_write DO NOTHING
-"#;
+";
 
 /// Bulk-insert via binary COPY into a per-transaction staging table, then
 /// materialise into `attribute_history`.

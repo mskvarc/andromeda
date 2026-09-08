@@ -145,7 +145,7 @@ const PROJECTION_COLUMNS: [CurrentAttributeValues; 14] = [
 /// at all. Both the direct update and concurrent-insert fallback compare every
 /// non-grain column with `ROW(stored) IS DISTINCT FROM ROW(proposed)`, so a
 /// restated reading leaves no new heap or value-index tuple. The equality is
-/// each column type's own -- PostGIS geometry `=` is exact geometry equality,
+/// each column type's own -- `PostGIS` geometry `=` is exact geometry equality,
 /// jsonb `=` is structural, and `NUMERIC` `=` ignores scale (`1.0 = 1.00`),
 /// which is acceptable because no reader renders a projected number, only
 /// compares it.
@@ -507,7 +507,7 @@ mod tests {
     #[test]
     fn a_number_reaches_the_arbitrary_precision_column_rather_than_a_double() {
         let sql = rendered();
-        assert!(sql.contains(r#"$9::numeric[]"#), "{sql}");
+        assert!(sql.contains(r"$9::numeric[]"), "{sql}");
         assert!(!sql.contains(r#""d"."value_number"::numeric"#), "{sql}");
         assert!(!sql.contains("double precision"), "{sql}");
         assert!(!sql.contains("float8"), "{sql}");

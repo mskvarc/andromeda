@@ -17,6 +17,7 @@ pub struct SnapshotFixture {
 
 impl SnapshotFixture {
     /// Render the snapshot request as JSON.
+    #[must_use]
     pub fn into_value(self) -> Value {
         json!({"id": self.id, "entities": self.entities, "priority": self.priority})
     }

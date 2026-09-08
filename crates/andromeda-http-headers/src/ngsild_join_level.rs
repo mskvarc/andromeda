@@ -14,6 +14,7 @@ pub struct NgsiLdJoinLevel(NonZeroU32);
 
 impl NgsiLdJoinLevel {
     /// Return the parsed join level.
+    #[must_use]
     pub const fn into_inner(self) -> NonZeroU32 {
         self.0
     }

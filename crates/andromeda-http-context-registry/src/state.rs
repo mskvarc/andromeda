@@ -19,6 +19,7 @@ pub struct ContextRegistryRouteServices {
 
 impl ContextRegistryRouteServices {
     /// Construct the focused capability set.
+    #[must_use]
     pub const fn new(contexts: Arc<ContextRegistryService>) -> ContextRegistryRouteServices {
         ContextRegistryRouteServices { contexts }
     }

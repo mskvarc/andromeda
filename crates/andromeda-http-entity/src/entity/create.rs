@@ -50,7 +50,7 @@ pub(crate) async fn create(
 
     if is_local {
         let id = service.create(&target, &entity, &context).await.with_entity_instance(&uri)?;
-        return Ok(with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{}", id)));
+        return Ok(with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{id}")));
     }
 
     // Check for matching CSRs for distributed forwarding
@@ -87,7 +87,7 @@ pub(crate) async fn create(
 
     if forwarded.is_empty() {
         let id = service.create(&target, &entity, &context).await.with_entity_instance(&uri)?;
-        return Ok(with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{}", id)));
+        return Ok(with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{id}")));
     }
 
     // Clause 5.6.1.4: the attributes proxied registrations cover leave the

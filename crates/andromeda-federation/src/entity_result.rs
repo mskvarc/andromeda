@@ -48,8 +48,7 @@ pub(crate) fn parse_forwarded_entities(csr_id: &Uri, values: Vec<Value>, now: Da
             Err(err) => {
                 warn!("Context source {} returned entity that failed to parse: {}", csr_id, err);
                 warnings.push(NgsiLdWarning::RevalidationFailed(format!(
-                    "Context source {} returned entity that failed to parse: {}",
-                    csr_id, err
+                    "Context source {csr_id} returned entity that failed to parse: {err}"
                 )));
             }
         }
@@ -76,6 +75,7 @@ const fn policy_of(mode: ForwardingMode) -> MergePolicy {
 /// has its attributes merged per clause 4.5.5; one only a source returned is
 /// added, except from an auxiliary source, which only supplements entities
 /// present already (clause 4.3.6.2).
+#[must_use]
 pub fn merge_query_results(local_entities: Vec<Entity>, remote_results: Vec<ForwardedEntities>) -> Vec<Entity> {
     if remote_results.is_empty() {
         return local_entities;
@@ -108,6 +108,7 @@ pub fn merge_query_results(local_entities: Vec<Entity>, remote_results: Vec<Forw
 /// Merge remote entity results for a single entity retrieval (clause 5.7.1.4).
 ///
 /// Returns the merged entity, or `None` when no source held it.
+#[must_use]
 pub fn merge_retrieve_results(local_entity: Option<Entity>, remote_results: Vec<ForwardedEntities>) -> Option<Entity> {
     let mut result = local_entity;
 
@@ -128,22 +129,24 @@ pub fn merge_retrieve_results(local_entity: Option<Entity>, remote_results: Vec<
 }
 
 /// Collect all warnings from forwarded entity results.
+#[must_use]
 pub fn collect_warnings(results: &[ForwardedEntities]) -> Vec<NgsiLdWarning> {
     results.iter().flat_map(|r| r.warnings.iter().cloned()).collect()
 }
 
 /// Collect all warnings from forwarded temporal-entity results.
+#[must_use]
 pub fn collect_temporal_warnings(results: &[ForwardedTemporalEntities]) -> Vec<NgsiLdWarning> {
     results.iter().flat_map(|r| r.warnings.iter().cloned()).collect()
 }
 
-/// What each contacted source contributed to the EntityMap of a
+/// What each contacted source contributed to the `EntityMap` of a
 /// current-entity read (clause 5.2.39), in result order.
 pub fn contributions_of(results: &[ForwardedEntities]) -> impl Iterator<Item = SourceContribution> + '_ {
     results.iter().filter_map(ForwardedEntities::contribution)
 }
 
-/// What each contacted source contributed to the EntityMap of a temporal
+/// What each contacted source contributed to the `EntityMap` of a temporal
 /// read (clause 5.2.39), in result order.
 pub fn temporal_contributions_of(results: &[ForwardedTemporalEntities]) -> impl Iterator<Item = SourceContribution> + '_ {
     results.iter().filter_map(ForwardedTemporalEntities::contribution)
@@ -151,6 +154,7 @@ pub fn temporal_contributions_of(results: &[ForwardedTemporalEntities]) -> impl 
 
 /// The attributes every proxied registration in `results` takes out of local
 /// processing, in result order.
+#[must_use]
 pub fn collect_proxied_attrs(results: &[ForwardedWriteResult]) -> Vec<AttributeName> {
     // A proxied registration owns its attributes whether or not the forward
     // succeeded (clause 4.3.6.3), so a failed or refused forward still keeps
@@ -191,7 +195,7 @@ mod tests {
 
         let (entities, warnings) = parse_forwarded_entities(&registration_id(), vec![value], Utc::now());
         pretty_assertions::assert_eq!(entities.len(), 1);
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, [] as [andromeda_http_headers::ngsild_warning::NgsiLdWarning; 0]);
     }
 
     #[test]
@@ -199,7 +203,7 @@ mod tests {
         let value = serde_json::from_str(r#"{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":0.100000000000000005}}"#)
             .expect("exact remote JSON");
         let (entities, warnings) = parse_forwarded_entities(&registration_id(), vec![value], Utc::now());
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, [] as [andromeda_http_headers::ngsild_warning::NgsiLdWarning; 0]);
         let encoded = serde_json::to_string(&entities).expect("forwarded response JSON");
         assert!(encoded.contains("0.100000000000000005"), "{encoded}");
     }
@@ -212,7 +216,7 @@ mod tests {
         let expired = json!({"id": "urn:ngsi-ld:Vehicle:old", "type": "Vehicle", "expiresAt": "2000-01-01T00:00:00Z"});
         let valid = json!({"id": "urn:ngsi-ld:Vehicle:new", "type": "Vehicle", "expiresAt": "2999-01-01T00:00:00Z"});
         let (entities, warnings) = parse_forwarded_entities(&registration_id(), vec![expired, valid], now);
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, [] as [andromeda_http_headers::ngsild_warning::NgsiLdWarning; 0]);
         pretty_assertions::assert_eq!(
             entities.iter().map(|entity| entity.id.as_str()).collect::<Vec<_>>(),
             vec!["urn:ngsi-ld:Vehicle:new"]

@@ -262,7 +262,7 @@ mod tests {
         Ok(())
     }
 
-    /// Resolves every term to the NGSI-LD `location` GeoProperty, which is what
+    /// Resolves every term to the NGSI-LD `location` `GeoProperty`, which is what
     /// the core context does for the default `geoproperty`.
     struct LocationExpander;
 

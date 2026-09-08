@@ -300,7 +300,7 @@ async fn dist_http_post_entity_maps_query_body_returns_201_and_map_header() {
 /// The temporal `entityMaps` collection GET creates a map and returns its id in
 /// the header (clause 6.34). The request carries a temporal query because
 /// clause 5.14.5.4 opens with "If a temporal query is not provided then an error
-/// of type BadRequestData shall be raised". Confirms REQ-HTTP-102.
+/// of type `BadRequestData` shall be raised". Confirms REQ-HTTP-102.
 #[tokio::test]
 async fn dist_http_get_temporal_entity_maps_create_returns_201_and_map_header() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -344,7 +344,7 @@ async fn dist_http_get_temporal_entity_maps_create_returns_201_and_map_header() 
 /// The temporal `entityMaps` collection POST with a Query body creates a map and
 /// returns its id in the header (clause 6.34). The Query carries a `temporalQ`
 /// because clause 5.14.5.4 opens with "If a temporal query is not provided then
-/// an error of type BadRequestData shall be raised". Confirms REQ-HTTP-103.
+/// an error of type `BadRequestData` shall be raised". Confirms REQ-HTTP-103.
 #[tokio::test]
 async fn dist_http_post_temporal_entity_maps_query_body_returns_201_and_map_header() {
     let topology = topology::single().await.expect("single-broker topology");

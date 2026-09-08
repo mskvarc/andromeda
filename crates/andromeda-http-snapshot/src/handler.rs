@@ -94,9 +94,9 @@ pub async fn delete(
 ///
 /// Implements ETSI GS CIM 009 v1.9.1 clauses 5.16.7 and 6.36.3.2:
 ///
-/// - Missing or malformed `q` -> 400 BadRequestData (handled by the
+/// - Missing or malformed `q` -> 400 `BadRequestData` (handled by the
 ///   [`SnapshotPurgeQ`] extractor).
-/// - No matches -> 404 ResourceNotFound.
+/// - No matches -> 404 `ResourceNotFound`.
 /// - All matches deleted -> 204 No Content.
 /// - At least one deletion failed -> 207 Multi-Status with a
 ///   [`BatchOperationResult`] body.

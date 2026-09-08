@@ -48,6 +48,7 @@ impl ColumnReference {
     }
 
     /// Render the reference as the quoted SQL text a custom fragment interpolates.
+    #[must_use]
     pub fn render(&self) -> String {
         match self {
             ColumnReference::Bare(column) => format!("\"{column}\""),
@@ -58,6 +59,7 @@ impl ColumnReference {
     /// The reference as a sea-query column expression, so a predicate that used
     /// to interpolate [`render`](Self::render) into a fragment can name the
     /// column through the builder instead.
+    #[must_use]
     pub fn column_expr(&self) -> SimpleExpr {
         match self {
             ColumnReference::Bare(column) => Expr::col(column.clone()),

@@ -336,7 +336,7 @@ async fn list_entity_types(client: &Client, query: &str, link_ctx: Option<&str>)
     (status, body)
 }
 
-/// GET /types/{type_name} with optional Link context. Returns (status, body).
+/// GET /`types/{type_name`} with optional Link context. Returns (status, body).
 async fn retrieve_entity_type(client: &Client, type_name: &str, link_ctx: Option<&str>) -> (StatusCode, Value) {
     let mut req = client.get(format!("{BASE_URL}/types/{type_name}"));
     if let Some(ctx_url) = link_ctx {
@@ -361,7 +361,7 @@ async fn list_attributes(client: &Client, query: &str, link_ctx: Option<&str>) -
     (status, body)
 }
 
-/// GET /attributes/{attr_name} with optional Link context. Returns (status, body).
+/// GET /`attributes/{attr_name`} with optional Link context. Returns (status, body).
 async fn retrieve_attribute(client: &Client, attr_name: &str, link_ctx: Option<&str>) -> (StatusCode, Value) {
     let mut req = client.get(format!("{BASE_URL}/attributes/{attr_name}"));
     if let Some(ctx_url) = link_ctx {

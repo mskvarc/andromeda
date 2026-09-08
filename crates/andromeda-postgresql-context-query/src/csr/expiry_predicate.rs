@@ -12,6 +12,7 @@ use sea_query::{Condition, Expr as SeaExpr, ExprTrait};
 
 /// `expires_at IS NULL OR expires_at > NOW()`: the registrations that have not
 /// expired, those with no expiry or one still in the future.
+#[must_use]
 pub fn not_expired() -> Condition {
     Condition::any()
         .add(SeaExpr::col(Csr::ExpiresAt).is_null())

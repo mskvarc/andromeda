@@ -24,7 +24,7 @@ fn near_query(entity_type: &str, coordinates: [f64; 2], distance: u32, geoproper
 }
 
 /// A geo-query with no `geoproperty` defaults to matching against the
-/// registration's `location` GeoProperty (clause 5.12). Confirms REQ-DISC-28.
+/// registration's `location` `GeoProperty` (clause 5.12). Confirms REQ-DISC-28.
 #[tokio::test]
 async fn query_csr_geoquery_defaults_to_location_geoproperty() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -60,7 +60,7 @@ async fn query_csr_geoquery_matches_direct_and_possible_containment() {
 
 /// A Context Source Filter matches registrations by their own Context Source
 /// Properties (clause 4.9: the filter's "target is the name of a Context Source
-/// Property member of the CSourceRegistration, see Table 5.2.9-1"), so the
+/// Property member of the `CSourceRegistration`, see Table 5.2.9-1"), so the
 /// fixture carries `tier` as a top-level registration member rather than a
 /// `contextSourceInfo` header pair: the registration whose `tier` satisfies the
 /// filter matches and the other is excluded (clause 5.10.2.4). Confirms

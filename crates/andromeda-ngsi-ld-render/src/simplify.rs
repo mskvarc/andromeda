@@ -19,7 +19,7 @@ use std::str::FromStr;
 /// Whether clause 4.5.4 keeps an attribute family's value member in the
 /// simplified form rather than collapsing to a bare value.
 ///
-/// A LanguageProperty, JsonProperty and VocabProperty each keep their single
+/// A `LanguageProperty`, `JsonProperty` and `VocabProperty` each keep their single
 /// distinguishing member (`{"languageMap": …}`, `{"json": …}`, `{"vocab": …}`),
 /// so the simplified value reads back as the same family rather than as a
 /// Property whose value happens to be a map, document or string.
@@ -57,6 +57,7 @@ fn simplify_instance(attr: &Attribute) -> Value {
 /// skip a full serialise round-trip. It lived on `Entity` itself until this
 /// module existed: a resource is what the specification defines, and how it is
 /// rendered is a decision above it.
+#[must_use]
 pub fn simplify_entity(entity: &Entity) -> Value {
     let mut map = Map::new();
     map.insert("id".to_string(), serde_json::json!(entity.id));
@@ -122,7 +123,7 @@ fn simplify_attribute_value(attr: &AttributeValue) -> Value {
 /// path — a language-negotiated value, or a member the broker carries through.
 ///
 /// The value member is read through [`AttributeType::compact_value_key`] rather
-/// than a hand-written key list, so a VocabProperty reads its `vocab` member
+/// than a hand-written key list, so a `VocabProperty` reads its `vocab` member
 /// rather than a `value` it never carries, and the three [`keeps_value_wrapper`]
 /// families keep their clause 4.5.4 member.
 fn simplify_raw_envelope(envelope: &Value) -> Value {
@@ -152,6 +153,7 @@ fn simplify_raw_envelope(envelope: &Value) -> Value {
 /// paths carry, and what a payload that reached the broker as JSON-LD and was
 /// never an [`Entity`] carries. The two must agree, which is why they are one
 /// module and one test.
+#[must_use]
 pub fn simplify_value(val: Value) -> Value {
     let Value::Object(obj) = val else { return val };
 

@@ -50,6 +50,7 @@ pub enum DeliveryResult {
 
 impl DeliveryResult {
     /// Whether the endpoint accepted the notification.
+    #[must_use]
     pub const fn is_delivered(&self) -> bool {
         matches!(self, DeliveryResult::Delivered)
     }
@@ -57,6 +58,7 @@ impl DeliveryResult {
     /// Whether a failed delivery should be retried. A terminal failure must not
     /// be, or the delivery queue burns its whole attempt budget on a delivery that can
     /// never succeed.
+    #[must_use]
     pub const fn should_retry(&self) -> bool {
         matches!(self, DeliveryResult::RetryableFailure)
     }
@@ -161,16 +163,19 @@ impl TransportDispatcher {
     }
 
     /// The MQTT pool, for the health indicator and the probe task.
+    #[must_use]
     pub const fn mqtt_pool(&self) -> &Arc<MqttTransportPool> {
         &self.mqtt_pool
     }
 
     /// The Server-Sent Events connection registry.
+    #[must_use]
     pub const fn sse_registry(&self) -> &Arc<ConnectionRegistry<SseNotificationEvent>> {
         &self.sse_registry
     }
 
     /// The WebSocket connection registry.
+    #[must_use]
     pub const fn ws_registry(&self) -> &Arc<ConnectionRegistry<WsNotificationMessage>> {
         &self.ws_registry
     }

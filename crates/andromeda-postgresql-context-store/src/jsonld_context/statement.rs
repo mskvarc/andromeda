@@ -33,6 +33,7 @@ fn identity_matches(identifier: &str) -> Condition {
 }
 
 /// The `@context` payload of the Context identified by `identifier`.
+#[must_use]
 pub fn payload_by_identifier_query(identifier: &str) -> SelectStatement {
     Query::select()
         .column(JsonldContexts::Payload)
@@ -79,30 +80,34 @@ fn paged_where(statement: &mut SelectStatement, kind: Option<&str>, after: Optio
 }
 
 /// The full-metadata page of stored Contexts.
+#[must_use]
 pub fn metadata_page_query(kind: Option<&str>, after: Option<&str>, limit: i64) -> SelectStatement {
     let mut statement = Query::select();
     metadata_columns(&mut statement);
     paged_where(&mut statement, kind, after, limit);
-    statement.to_owned()
+    statement.clone()
 }
 
 /// The summary (id and url) page of stored Contexts.
+#[must_use]
 pub fn summary_page_query(kind: Option<&str>, after: Option<&str>, limit: i64) -> SelectStatement {
     let mut statement = Query::select();
     statement.column(JsonldContexts::Id).column(JsonldContexts::Url).from(JsonldContexts::Table);
     paged_where(&mut statement, kind, after, limit);
-    statement.to_owned()
+    statement.clone()
 }
 
 /// The full metadata of the Context identified by `identifier`.
+#[must_use]
 pub fn metadata_by_identifier_query(identifier: &str) -> SelectStatement {
     let mut statement = Query::select();
     metadata_columns(&mut statement);
     statement.cond_where(identity_matches(identifier));
-    statement.to_owned()
+    statement.clone()
 }
 
 /// The id, kind and url of the Context identified by `identifier`.
+#[must_use]
 pub fn stored_context_query(identifier: &str) -> SelectStatement {
     Query::select()
         .column(JsonldContexts::Id)
@@ -115,6 +120,7 @@ pub fn stored_context_query(identifier: &str) -> SelectStatement {
 
 /// Record one access: refresh the last-usage instant and increment the hit
 /// count of the Context identified by `identifier`.
+#[must_use]
 pub fn record_access_update(identifier: &str) -> UpdateStatement {
     Query::update()
         .table(JsonldContexts::Table)
@@ -125,6 +131,7 @@ pub fn record_access_update(identifier: &str) -> UpdateStatement {
 }
 
 /// Delete the Context identified by `identifier`.
+#[must_use]
 pub fn delete_by_identifier(identifier: &str) -> DeleteStatement {
     Query::delete()
         .from_table(JsonldContexts::Table)
@@ -136,6 +143,7 @@ pub fn delete_by_identifier(identifier: &str) -> DeleteStatement {
 ///
 /// Matched by local id alone: a replacement addresses the Context this broker
 /// hosts, not one it merely cached under a source URL.
+#[must_use]
 pub fn replace_payload_update(local_id: &str, payload: Value) -> UpdateStatement {
     Query::update()
         .table(JsonldContexts::Table)
@@ -168,7 +176,7 @@ pub fn hosted_insert(local_id: &str, serving_url: Option<&str>, kind_label: &str
             Expr::current_timestamp(),
             0_i64.into(),
         ])?;
-    Ok(statement.to_owned())
+    Ok(statement.clone())
 }
 
 #[cfg(test)]

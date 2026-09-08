@@ -19,16 +19,19 @@ pub struct NgsiLdTenant(TenantName);
 
 impl NgsiLdTenant {
     /// Create a new `NGSILD-Tenant` header from a validated [`TenantName`].
+    #[must_use]
     pub const fn new(value: TenantName) -> NgsiLdTenant {
         NgsiLdTenant(value)
     }
 
     /// Return the tenant identifier as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
 
     /// Consume the header and return the inner [`TenantName`].
+    #[must_use]
     pub fn into_inner(self) -> TenantName {
         self.0
     }

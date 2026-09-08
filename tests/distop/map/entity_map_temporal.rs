@@ -1,4 +1,4 @@
-//! Creating a temporal EntityMap from a temporal query: the mandatory temporal
+//! Creating a temporal `EntityMap` from a temporal query: the mandatory temporal
 //! query, entity-filter validation, term expansion, `lastN` selection, and
 //! interval filtering (clause 5.14.5). All `T-LOCAL`.
 

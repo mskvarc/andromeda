@@ -16,7 +16,7 @@ use std::convert::Infallible;
 /// handler acts on, already resolved, so no handler decodes the header itself.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PreferHeader {
-    /// GeoJSON body preference: whether @context goes in body or Link header.
+    /// `GeoJSON` body preference: whether @context goes in body or Link header.
     pub geo_json_body: GeoJsonBodyPreference,
     /// Requested NGSI-LD version for backwards-compatible payload adaptation.
     pub requested_version: Option<SpecVersion>,
@@ -44,6 +44,7 @@ where
 
 impl PreferHeader {
     /// The subset of preferences consumed by shared response rendering.
+    #[must_use]
     pub const fn rendering_preferences(self) -> RenderingPreferences {
         RenderingPreferences {
             geo_json_body: self.geo_json_body,

@@ -160,6 +160,7 @@ struct TermCacheKey {
 
 impl JsonLdEngine {
     /// Resolve a context once before expanding all terms for one operation.
+    #[must_use]
     pub fn prepare_term_context(&self, context: &ContextSpec) -> PreparedTermContext {
         PreparedTermContext::from_spec(context)
     }

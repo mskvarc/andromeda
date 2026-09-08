@@ -11,11 +11,13 @@ pub struct HealthRouteState {
 
 impl HealthRouteState {
     /// Construct focused health-route state.
+    #[must_use]
     pub const fn new(health: Health) -> HealthRouteState {
         HealthRouteState { health }
     }
 
     /// Borrow the health aggregation capability.
+    #[must_use]
     pub const fn health(&self) -> &Health {
         &self.health
     }

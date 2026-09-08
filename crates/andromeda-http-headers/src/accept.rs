@@ -1,4 +1,4 @@
-//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-FileCopyrightText: 2014-2025 Sean `McArthur`
 //! SPDX-License-Identifier: MIT
 //!
 //! Typed `Accept` request header for NGSI-LD content negotiation.
@@ -45,15 +45,17 @@ pub struct Accept(Vec<QualityValue<ResponseMediaType>>);
 
 impl Accept {
     /// Construct an `Accept` header requesting one response format.
+    #[must_use]
     pub fn single(format: ResponseMediaType) -> Accept {
         Accept(vec![QualityValue::new(format, Quality::default())])
     }
     /// Return the highest-quality supported format.
     ///
-    /// Filters out GeoJSON when `geo_json` is [`GeoJsonSupport::Disallowed`].
+    /// Filters out `GeoJSON` when `geo_json` is [`GeoJsonSupport::Disallowed`].
     /// Returns `None` when no supported format is found (caller maps this to 406),
     /// which includes the case where every supported format was offered at
     /// `q=0`.
+    #[must_use]
     pub fn best_format(&self, geo_json: GeoJsonSupport) -> Option<ResponseMediaType> {
         let mut best: Option<&QualityValue<ResponseMediaType>> = None;
         for qv in &self.0 {
@@ -106,7 +108,7 @@ impl headers::Header for Accept {
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        let s: String = self.0.iter().map(|qv| qv.to_string()).collect::<Vec<_>>().join(", ");
+        let s: String = self.0.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(", ");
         match HeaderValue::from_str(&s) {
             Ok(val) => values.extend(iter::once(val)),
             Err(err) => tracing::warn!(error = %err, "failed to encode Accept header"),

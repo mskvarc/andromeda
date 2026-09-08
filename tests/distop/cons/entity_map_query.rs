@@ -33,7 +33,7 @@ async fn query_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, query: &s
 /// a source registered after minting is consulted only after recreation
 /// (clause 5.5.14). Reusing the live map answers `200`; the bogus-map leg mints
 /// a replacement and answers `201` (Table 6.4.3.2-3: "201 Created (in case an
-/// EntityMap has been (re)created)"). Confirms REQ-CONS-23.
+/// `EntityMap` has been (re)created)"). Confirms REQ-CONS-23.
 #[tokio::test]
 async fn distop_query_entities_map_location_reused_or_recreated() {
     let topology = topology::single().await.expect("single-broker topology");

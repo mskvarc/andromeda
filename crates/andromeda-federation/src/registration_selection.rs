@@ -187,7 +187,7 @@ pub(crate) fn registration_scope_admits(registration: &ContextSourceRegistration
         .coverage
         .scope
         .as_ref()
-        .is_none_or(|scopes| scope_q.matches(&scopes.iter().map(|scope| scope.as_str()).collect::<Vec<_>>()))
+        .is_none_or(|scopes| scope_q.matches(&scopes.iter().map(andromeda_ngsi_ld_lexicon::scope::grammar::ScopeBuf::as_str).collect::<Vec<_>>()))
 }
 
 /// Whether the entity selector axis of one information entry matches.
@@ -308,7 +308,7 @@ mod tests {
         let mut kept = object.keys().cloned().collect::<Vec<_>>();
         kept.sort();
         pretty_assertions::assert_eq!(kept, vec!["id", "type"]);
-        assert!(covered_attribute_members(&vehicle(), &csr, Some(&vehicle_type()), Some(&vehicle_id())).is_empty());
+        assert_eq!(covered_attribute_members(&vehicle(), &csr, Some(&vehicle_type()), Some(&vehicle_id())), [] as [std::string::String; 0]);
     }
 
     #[test]

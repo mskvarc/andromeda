@@ -5,7 +5,7 @@
 //! - Delete attribute with specific datasetId
 //! - Delete all attribute instances (deleteAll=true)
 //! - Error cases (invalid ID, non-existent entity/attribute)
-//! - Special attributes (scope, observationSpace, operationSpace, VocabProperty)
+//! - Special attributes (scope, observationSpace, operationSpace, `VocabProperty`)
 
 use crate::{
     COMPOUND_CONTEXT,

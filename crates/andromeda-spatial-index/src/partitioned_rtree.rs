@@ -115,6 +115,7 @@ where
     E: RTreeObject + Clone + PartialEq + Indexed,
 {
     /// An empty tree.
+    #[must_use]
     pub fn new() -> PartitionedRTree<E> {
         PartitionedRTree::default()
     }
@@ -134,7 +135,7 @@ where
     /// Replace one object's entries under one partition.
     ///
     /// An object may occupy a partition several times — ETSI GS CIM 009 v1.9.1
-    /// clause 4.5.16.1 lets a GeoProperty carry one instance per `datasetId`,
+    /// clause 4.5.16.1 lets a `GeoProperty` carry one instance per `datasetId`,
     /// and clause 4.10 counts an entity as matching when any one of them meets
     /// the restriction, so every instance has to be reachable. Passing all of
     /// them at once is what makes the replacement atomic with respect to the
@@ -205,7 +206,7 @@ where
         // clone: the ownership records outlive the entry list, which the tree consumes
         let incoming: HashSet<<E as Indexed>::Id> = entries.iter().map(|entry| entry.id().clone()).collect();
         // clone: the tree owns its copy; `entries` is kept to refresh the placements
-        let tree = RTree::bulk_load(entries.to_vec());
+        let tree = RTree::bulk_load(entries.clone());
 
         let departed: Vec<<E as Indexed>::Id> = {
             let bucket = self.buckets.entry(key.clone()).or_default();
@@ -312,7 +313,7 @@ mod tests {
     }
 
     fn count(index: &PartitionedRTree<SpatialEntry>, key: &SpatialKey) -> usize {
-        index.read_partition(key, |tree| tree.size()).unwrap_or(0)
+        index.read_partition(key, rstar::RTree::size).unwrap_or(0)
     }
 
     #[test]

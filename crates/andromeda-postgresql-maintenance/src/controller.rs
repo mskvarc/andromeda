@@ -68,6 +68,7 @@ pub struct MaintenanceController {
 
 impl MaintenanceController {
     /// Construct a controller over the shared platform registry.
+    #[must_use]
     pub const fn new(
         platform_pool: PgPool,
         database_url: DatabaseUrl,
@@ -111,7 +112,7 @@ impl MaintenanceController {
         match (result, release) {
             (Ok(outcome), Ok(())) => Ok(outcome),
             (Err(error), Ok(())) => Err(error),
-            (Ok(_), Err(error)) | (Err(_), Err(error)) => Err(error),
+            (Ok(_) | Err(_), Err(error)) => Err(error),
         }
     }
 
@@ -171,7 +172,7 @@ impl MaintenanceController {
                 warn!(tenant = tenant.log_name(), database = %tenant.database, target = index.name(), decision = "invalid-index-reported", "Invalid non-maintenance index requires operator investigation");
             }
         }
-        if let Some((artifact, kind)) = invalid.iter().find_map(|index| index.recovery_artifact()) {
+        if let Some((artifact, kind)) = invalid.iter().find_map(super::inspection::InvalidIndex::recovery_artifact) {
             return action::recover_artifact(self.config.mode, platform, &mut connection, &tenant, artifact, kind, profile, cancellation).await;
         }
         if let Some(target) = pending_before_sampling {

@@ -1,4 +1,4 @@
-//! Staged construction of a temporal EntityMap (clause 5.14.5): the candidate
+//! Staged construction of a temporal `EntityMap` (clause 5.14.5): the candidate
 //! set S1, the value-filter result S2, the geo-filter result S3, the
 //! scope-filter result S4, and the map built from S4. Each row observes the
 //! stage boundary through map membership. All `T-LOCAL`.

@@ -127,7 +127,7 @@ pub async fn orphaned_temporal_rows(pool: &PgPool) -> (i64, i64, i64) {
     )
 }
 
-const STORED_HISTORY_SQL: &str = r#"
+const STORED_HISTORY_SQL: &str = r"
 SELECT an.name AS attribute_name,
        s.stream_key AS stream_key,
        s.dataset_id,
@@ -154,23 +154,23 @@ JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key
 JOIN attribute_names an ON an.id = s.attribute_name_id
 WHERE te.id = $1
 ORDER BY ah.recorded_at, ah.write_id, ah.write_ordinal
-"#;
+";
 
-const CURRENT_PROJECTION_ROWS_SQL: &str = r#"
+const CURRENT_PROJECTION_ROWS_SQL: &str = r"
 SELECT count(*)::bigint AS rows
 FROM current_attribute_values c
 JOIN entities e ON e.entity_key = c.entity_key
 WHERE e.id = $1
-"#;
+";
 
-const TEMPORAL_CATALOG_ROWS_SQL: &str = r#"
+const TEMPORAL_CATALOG_ROWS_SQL: &str = r"
 SELECT (SELECT count(*)::bigint FROM temporal_entities WHERE id = $1) AS entities,
        (SELECT count(*)::bigint FROM temporal_attribute_streams s
         JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key
         WHERE te.id = $1) AS streams
-"#;
+";
 
-const ORPHANED_TEMPORAL_ROWS_SQL: &str = r#"
+const ORPHANED_TEMPORAL_ROWS_SQL: &str = r"
 SELECT
     (SELECT count(*)::bigint FROM attribute_history ah
         LEFT JOIN temporal_attribute_streams s ON s.stream_key = ah.stream_key
@@ -181,4 +181,4 @@ SELECT
     (SELECT count(*)::bigint FROM temporal_attribute_streams s
         LEFT JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key
         WHERE te.entity_key IS NULL) AS orphaned_streams
-"#;
+";

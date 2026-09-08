@@ -48,6 +48,7 @@ pub fn types_present(columns: &PreparedEntityColumns) -> Result<(), EntityTypesM
 
 /// Lift a statement failure into the typed invariant when the entity types
 /// check constraint is what refused the write.
+#[must_use]
 pub fn entity_write_failure(error: sqlx::Error) -> ContextStoreError {
     if let sqlx::Error::Database(database) = &error
         && database.constraint() == Some(ENTITY_TYPES_PRESENT_CONSTRAINT)

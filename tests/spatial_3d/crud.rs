@@ -1,4 +1,4 @@
-//! Round-tripping of three-dimensional GeoJSON geometries through entity
+//! Round-tripping of three-dimensional `GeoJSON` geometries through entity
 //! create, retrieve, batch create and attribute patch (NGSI-LD 4.7.1,
 //! RFC 7946 3.1.1).
 //!

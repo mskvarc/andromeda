@@ -131,7 +131,7 @@ fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
     headers
         .get_all("NGSILD-Warning")
         .iter()
-        .filter_map(|v| v.to_str().ok().map(|s| s.to_string()))
+        .filter_map(|v| v.to_str().ok().map(std::string::ToString::to_string))
         .collect()
 }
 
@@ -139,7 +139,7 @@ fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
 // Tests
 // ---------------------------------------------------------------------------
 
-/// list_attributes with local=true does not forward to CSR endpoints.
+/// `list_attributes` with local=true does not forward to CSR endpoints.
 #[tokio::test]
 #[serial]
 async fn distop_attributes_local_skips_forwarding() {
@@ -172,7 +172,7 @@ async fn distop_attributes_local_skips_forwarding() {
     mock.shutdown().await;
 }
 
-/// list_attributes without local=true forwards to CSR and merges remote attributes.
+/// `list_attributes` without local=true forwards to CSR and merges remote attributes.
 #[tokio::test]
 #[serial]
 async fn distop_attributes_merges_remote_attributes() {
@@ -214,7 +214,7 @@ async fn distop_attributes_merges_remote_attributes() {
     mock.shutdown().await;
 }
 
-/// list_attributes deduplicates attributes that appear in both local and remote results.
+/// `list_attributes` deduplicates attributes that appear in both local and remote results.
 #[tokio::test]
 #[serial]
 async fn distop_attributes_deduplicates_attribute_list() {
@@ -255,7 +255,7 @@ async fn distop_attributes_deduplicates_attribute_list() {
     mock.shutdown().await;
 }
 
-/// list_attributes with details=true merges detailed attribute objects from local and remote.
+/// `list_attributes` with details=true merges detailed attribute objects from local and remote.
 #[tokio::test]
 #[serial]
 async fn distop_attributes_details_merges_remote_attribute_objects() {
@@ -295,7 +295,7 @@ async fn distop_attributes_details_merges_remote_attribute_objects() {
     mock.shutdown().await;
 }
 
-/// list_attributes emits NGSILD-Warning 299 header when a CSR returns an error response.
+/// `list_attributes` emits NGSILD-Warning 299 header when a CSR returns an error response.
 #[tokio::test]
 #[serial]
 async fn distop_attributes_warning_on_csr_error_response() {
@@ -324,7 +324,7 @@ async fn distop_attributes_warning_on_csr_error_response() {
     mock.shutdown().await;
 }
 
-/// get_attribute forwards to CSR and merges type name information from remote.
+/// `get_attribute` forwards to CSR and merges type name information from remote.
 #[tokio::test]
 #[serial]
 async fn distop_attributes_attribute_info_merges_remote_type_names() {
@@ -363,7 +363,7 @@ async fn distop_attributes_attribute_info_merges_remote_type_names() {
     mock.shutdown().await;
 }
 
-/// list_attributes emits NGSILD-Warning 199 header when a CSR is unreachable.
+/// `list_attributes` emits NGSILD-Warning 199 header when a CSR is unreachable.
 #[tokio::test]
 #[serial]
 async fn distop_attributes_warning_on_csr_unreachable() {

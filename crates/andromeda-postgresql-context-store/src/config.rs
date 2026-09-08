@@ -38,6 +38,7 @@ pub enum SynchronousCommit {
 
 impl SynchronousCommit {
     /// Render the literal accepted by PostgreSQL's `SET` statement.
+    #[must_use]
     pub const fn as_postgres_setting(self) -> &'static str {
         match self {
             SynchronousCommit::On => "on",

@@ -1,4 +1,4 @@
-//! Temporal query extractor for the EntityMap creation resource (clause 6.35.3.1).
+//! Temporal query extractor for the `EntityMap` creation resource (clause 6.35.3.1).
 //!
 //! `GET /temporal/entityMaps` takes the parameters of a temporal query
 //! (Table 6.18.3.2-1): the temporal window is mandatory and at least one entity

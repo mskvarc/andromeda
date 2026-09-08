@@ -199,6 +199,7 @@ impl TemporalConfig {
     ///
     /// Only meaningful on a validated configuration: a zero override is
     /// refused by [`TemporalConfig::validate`] and treated as absent here.
+    #[must_use]
     pub const fn storage_policy(&self) -> TemporalStoragePolicy {
         TemporalStoragePolicy {
             chunk_interval_days: match self.chunk_interval_days {

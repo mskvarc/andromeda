@@ -1,7 +1,7 @@
 //! Verification suite for the query access paths of the redesigned schema.
 //!
 //! Covers the database-schema-redesign verification-matrix rows "Typed q
-//! predicates", "Arbitrary GeoProperty", "Entity access-path plans",
+//! predicates", "Arbitrary `GeoProperty`", "Entity access-path plans",
 //! "Identifier collation", "Object GIN operator class", "Extended statistics",
 //! "Physical column layout", "Semantic-time plans", and "Registration routing
 //! plans".

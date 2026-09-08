@@ -16,7 +16,7 @@ use andromeda_registration::{error::RegistrationError, store::ForwardingOutcome}
 use sea_query::{CaseStatement, Expr as SeaExpr, ExprTrait, Keyword, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 
 /// Add the full registration row projection to `select`, decoding each stored
-/// geometry back to GeoJSON and each enum to text under the column name the
+/// geometry back to `GeoJSON` and each enum to text under the column name the
 /// mapper reads it by.
 pub(super) fn apply_csr_projection(select: &mut SelectStatement) {
     select

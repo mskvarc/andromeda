@@ -119,7 +119,7 @@ pub fn parse_batch_entities(
         let has_context_link = headers
             .get_all("Link")
             .iter()
-            .any(|v| v.to_str().ok().is_some_and(|s| s.contains("http://www.w3.org/ns/json-ld#context")));
+            .any(|v| v.to_str().is_ok_and(|s| s.contains("http://www.w3.org/ns/json-ld#context")));
         if has_context_link {
             return Err(public_error(
                 NgsiLdErrorType::InvalidRequest,
@@ -247,7 +247,7 @@ pub fn parse_batch_entities(
                 parse_errors.push(BatchEntityError::new(
                     entity_id,
                     NgsiLdErrorType::BadRequestData,
-                    &format!("Invalid entity: {}", e),
+                    &format!("Invalid entity: {e}"),
                 ));
             }
         }

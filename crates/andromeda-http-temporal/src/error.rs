@@ -25,6 +25,7 @@ impl TemporalHttpClassify for TemporalError {
 }
 
 /// Exhaustively classify one temporal-policy failure.
+#[must_use]
 pub fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
     match error {
         TemporalError::Validation { detail } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail),
@@ -199,7 +200,7 @@ mod tests {
     }
 
     /// Table 6.4.3.2-3: the 501 of the one registered source holding the data
-    /// is answered as a 501 carrying the OperationNotSupported category.
+    /// is answered as a 501 carrying the `OperationNotSupported` category.
     #[test]
     fn a_lone_source_declining_the_representation_is_a_501() {
         let response = single_source_declined(501, &"/ngsi-ld/v1/temporal/entities".parse().expect("valid URI"));

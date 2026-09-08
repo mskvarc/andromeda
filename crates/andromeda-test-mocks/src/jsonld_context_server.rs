@@ -50,6 +50,7 @@ impl JsonLdContextServer {
     }
 
     /// Return the number of context fetches captured for one path.
+    #[must_use]
     pub fn request_count(&self, path: &CallbackPath) -> usize {
         self.server.request_count(&RequestMatcher::new(Method::GET, path.clone())) // clone: the temporary matcher owns its path key.
     }

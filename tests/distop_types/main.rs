@@ -135,7 +135,7 @@ fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
     headers
         .get_all("NGSILD-Warning")
         .iter()
-        .filter_map(|v| v.to_str().ok().map(|s| s.to_string()))
+        .filter_map(|v| v.to_str().ok().map(std::string::ToString::to_string))
         .collect()
 }
 
@@ -143,7 +143,7 @@ fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
 // Tests
 // ---------------------------------------------------------------------------
 
-/// list_types with local=true does not forward to CSR endpoints.
+/// `list_types` with local=true does not forward to CSR endpoints.
 #[tokio::test]
 #[serial]
 async fn distop_types_local_skips_forwarding() {
@@ -176,7 +176,7 @@ async fn distop_types_local_skips_forwarding() {
     mock.shutdown().await;
 }
 
-/// list_types without local=true forwards to CSR and merges remote types into the result.
+/// `list_types` without local=true forwards to CSR and merges remote types into the result.
 #[tokio::test]
 #[serial]
 async fn distop_types_merges_remote_types() {
@@ -219,7 +219,7 @@ async fn distop_types_merges_remote_types() {
     mock.shutdown().await;
 }
 
-/// list_types deduplicates types that appear in both local and remote results.
+/// `list_types` deduplicates types that appear in both local and remote results.
 #[tokio::test]
 #[serial]
 async fn distop_types_deduplicates_type_list() {
@@ -256,7 +256,7 @@ async fn distop_types_deduplicates_type_list() {
     mock.shutdown().await;
 }
 
-/// list_types with details=true merges detailed type objects from local and remote.
+/// `list_types` with details=true merges detailed type objects from local and remote.
 #[tokio::test]
 #[serial]
 async fn distop_types_details_merges_remote_type_objects() {
@@ -296,7 +296,7 @@ async fn distop_types_details_merges_remote_type_objects() {
     mock.shutdown().await;
 }
 
-/// list_types emits NGSILD-Warning 299 header when a CSR returns an error response.
+/// `list_types` emits NGSILD-Warning 299 header when a CSR returns an error response.
 #[tokio::test]
 #[serial]
 async fn distop_types_warning_on_csr_error_response() {
@@ -325,7 +325,7 @@ async fn distop_types_warning_on_csr_error_response() {
     mock.shutdown().await;
 }
 
-/// list_types emits NGSILD-Warning 199 header when a CSR is unreachable.
+/// `list_types` emits NGSILD-Warning 199 header when a CSR is unreachable.
 #[tokio::test]
 #[serial]
 async fn distop_types_warning_on_csr_unreachable() {
@@ -355,7 +355,7 @@ async fn distop_types_warning_on_csr_unreachable() {
     delete_registration(&c, &reg_id).await;
 }
 
-/// get_type forwards to CSR and returns merged type information including remote attributes.
+/// `get_type` forwards to CSR and returns merged type information including remote attributes.
 #[tokio::test]
 #[serial]
 async fn distop_types_type_info_merges_remote_attributes() {

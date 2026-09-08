@@ -1,9 +1,9 @@
-//! MAP area — EntityMap, subscription-to-CSR-subscription forwarding,
-//! notification re-assembly, Context Source Identity, and the EntityMap /
-//! ContextSourceIdentity data-shape constraints (ETSI GS CIM 009 v1.9.1,
+//! MAP area — `EntityMap`, subscription-to-CSR-subscription forwarding,
+//! notification re-assembly, Context Source Identity, and the `EntityMap` /
+//! `ContextSourceIdentity` data-shape constraints (ETSI GS CIM 009 v1.9.1,
 //! clauses 5.8.1/5.8.2/5.8.5/5.8.6, 5.14.1-5.14.5, 5.15.1, 5.2.39, 5.2.40).
 //!
-//! Registry-API-local subscription and EntityMap validation runs on `T-LOCAL`
+//! Registry-API-local subscription and `EntityMap` validation runs on `T-LOCAL`
 //! (broker A alone). Reduced-copy subscription forwarding and forwarded
 //! EntityMap-query building run on `T-MOCK` against an in-process Context Source
 //! that captures the exact forwarded request. Inbound notification re-assembly

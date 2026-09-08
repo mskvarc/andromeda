@@ -54,6 +54,7 @@ pub fn validate_submission(writes: &[AtomicWrite]) -> Result<(), CommitError> {
 /// `Skipped` is intentionally landed: an unconditional insert that found an
 /// existing placeholder leaves current state untouched, while independently
 /// submitted temporal observations still belong to that entity.
+#[must_use]
 pub const fn consequences_land(outcome: &WriteOutcome) -> bool {
     match outcome {
         WriteOutcome::Created | WriteOutcome::Updated | WriteOutcome::Deleted(_) | WriteOutcome::NoEntityChange | WriteOutcome::Skipped => true,

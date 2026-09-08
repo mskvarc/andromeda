@@ -14,16 +14,19 @@ pub struct TemporalResidual(EntitySelection);
 
 impl TemporalResidual {
     /// Construct a residual from the exact compiled selection vocabulary.
+    #[must_use]
     pub const fn over(selection: EntitySelection) -> TemporalResidual {
         TemporalResidual(selection)
     }
 
     /// Borrow the unapplied entity selection.
+    #[must_use]
     pub const fn selection(&self) -> &EntitySelection {
         &self.0
     }
 
     /// Whether every selection predicate was applied by the reader.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         let selection = &self.0;
         !selection.selectors_constrain() && selection.attrs.is_empty() && selection.q_expr.is_none() && selection.geo.is_none() && selection.scope_q.is_none()
@@ -107,6 +110,7 @@ pub enum InvalidTemporalOutcome {
 }
 
 /// Apply a deferred page after policy finishes residual evaluation.
+#[must_use]
 pub fn apply_deferred_page<T>(rows: Vec<T>, pagination: Pagination) -> (Vec<T>, Option<i64>) {
     let total = (pagination.count == CountPolicy::Emit).then_some(rows.len() as i64);
     let offset = usize::try_from(pagination.offset).unwrap_or(usize::MAX);

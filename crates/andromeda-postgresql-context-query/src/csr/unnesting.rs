@@ -48,8 +48,8 @@ pub(crate) fn entities_of_item() -> SelectStatement {
 /// The first two disjuncts are the "constrains everything" escape hatch clause
 /// 5.10.2 requires: an item with no `entities`, or an empty one, covers every
 /// entity, so a caller only reaches its own entry-level predicate for items that
-/// do constrain (clause 5.12: "If there is no EntityInfo specified in the
-/// RegistrationInfo, the entity specification is considered matching").
+/// do constrain (clause 5.12: "If there is no `EntityInfo` specified in the
+/// `RegistrationInfo`, the entity specification is considered matching").
 pub(crate) fn entity_axis_covers(entities_match: SelectStatement) -> Condition {
     Condition::any()
         .add(lacks_key(info(), "entities"))

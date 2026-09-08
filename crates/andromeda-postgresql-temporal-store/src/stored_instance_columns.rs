@@ -11,6 +11,7 @@ use andromeda_ngsi_ld_lexicon::instance_identity::InstanceIdentity;
 use uuid::Uuid;
 
 /// The broker-minted identifier column's content, when the row uses it.
+#[must_use]
 pub const fn generated_instance_uuid(instance: &InstanceIdentity) -> Option<Uuid> {
     match instance {
         InstanceIdentity::Generated(uuid) => Some(*uuid),
@@ -22,6 +23,7 @@ pub const fn generated_instance_uuid(instance: &InstanceIdentity) -> Option<Uuid
 ///
 /// A populated verbatim column is also what marks the instance as one the
 /// broker did not mint and must hand back unchanged (clause 4.5.7).
+#[must_use]
 pub fn verbatim_instance_id(instance: &InstanceIdentity) -> Option<&str> {
     match instance {
         InstanceIdentity::Generated(_) => None,

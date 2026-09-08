@@ -49,6 +49,7 @@ pub struct AttributeHistoryRow {
 
 impl AttributeHistoryRow {
     /// The UUID of the atomic write that produced this row.
+    #[must_use]
     pub const fn write_id(&self) -> Uuid {
         self.identity.write_id.as_uuid()
     }

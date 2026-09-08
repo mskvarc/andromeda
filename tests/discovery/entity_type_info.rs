@@ -51,7 +51,7 @@ async fn retrieve_entity_type_info_unknown_type_returns_404() {
 // 5.5.10, 6.3.5 -- Compacted type name
 // ---------------------------------------------------------------------------
 
-/// Retrieve entity type info by compacted name with context Link header -- returns EntityTypeInfo (5.5.10, 6.3.5).
+/// Retrieve entity type info by compacted name with context Link header -- returns `EntityTypeInfo` (5.5.10, 6.3.5).
 #[tokio::test]
 #[serial]
 async fn retrieve_entity_type_info_with_compacted_name_returns_type_info() {
@@ -90,7 +90,7 @@ async fn retrieve_entity_type_info_with_compacted_name_returns_type_info() {
 // 5.5.10, 6.3.5 -- Expanded (URL-encoded) type name
 // ---------------------------------------------------------------------------
 
-/// Retrieve entity type info by URL-encoded expanded IRI -- returns same EntityTypeInfo as compacted (5.5.10, 6.3.5).
+/// Retrieve entity type info by URL-encoded expanded IRI -- returns same `EntityTypeInfo` as compacted (5.5.10, 6.3.5).
 #[tokio::test]
 #[serial]
 async fn retrieve_entity_type_info_with_expanded_name_returns_type_info() {

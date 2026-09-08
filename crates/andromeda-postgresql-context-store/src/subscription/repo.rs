@@ -26,6 +26,7 @@ impl SubscriptionRepository {
     }
 
     /// Creates a new repository backed by the given connection pool.
+    #[must_use]
     pub fn new(pool: &PgPool) -> SubscriptionRepository {
         SubscriptionRepository { pool: pool.clone() } // clone: Arc ref-count bump
     }

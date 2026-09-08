@@ -43,6 +43,7 @@ pub struct SubscriptionCache {
 
 impl SubscriptionCache {
     /// Create an empty subscription cache scoped to the given tenant.
+    #[must_use]
     pub fn new(tenant: TenantRef) -> SubscriptionCache {
         SubscriptionCache::with_spatial(tenant, Arc::new(SpatialSubscriptionIndex::new()))
     }
@@ -183,18 +184,15 @@ impl SubscriptionCache {
                 needs_wildcard = true;
                 continue;
             };
-            match IriBuf::new(type_name.as_str().to_owned()) {
-                Ok(type_iri) => {
-                    let key = SpatialKey::new(self.tenant.clone(), type_iri, geoproperty.clone());
-                    self.spatial.insert(key, entry.clone());
-                }
-                Err(_) => {
-                    debug!(
-                        "Subscription {} spatial index selector type '{}' is not a valid IRI; indexing under the wildcard partition",
-                        compiled.id, type_name
-                    );
-                    needs_wildcard = true;
-                }
+            if let Ok(type_iri) = IriBuf::new(type_name.as_str().to_owned()) {
+                let key = SpatialKey::new(self.tenant.clone(), type_iri, geoproperty.clone());
+                self.spatial.insert(key, entry.clone());
+            } else {
+                debug!(
+                    "Subscription {} spatial index selector type '{}' is not a valid IRI; indexing under the wildcard partition",
+                    compiled.id, type_name
+                );
+                needs_wildcard = true;
             }
         }
         if needs_wildcard {

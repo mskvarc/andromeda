@@ -1,4 +1,4 @@
-//! Decoding and encoding a [`GeometryForm`] as GeoJSON.
+//! Decoding and encoding a [`GeometryForm`] as `GeoJSON`.
 //!
 //! The conversion goes straight between [`GeometryForm`] and
 //! `geojson::GeometryValue`, never through `geo_types`. The `geojson` crate's
@@ -13,14 +13,14 @@ use crate::{
 use geojson::{GeometryValue, Position as GeoJsonPosition};
 use thiserror::Error;
 
-/// Failures decoding a GeoJSON geometry into the domain model.
+/// Failures decoding a `GeoJSON` geometry into the domain model.
 #[derive(Debug, Error)]
 pub enum GeometryError {
     /// A position of the geometry had an ordinate count that carries no meaning
     /// under IETF RFC 7946 section 3.1.1.
     #[error(transparent)]
     Position(#[from] PositionError),
-    /// The raw JSON value was not a GeoJSON geometry object at all: an unknown
+    /// The raw JSON value was not a `GeoJSON` geometry object at all: an unknown
     /// `type`, a missing or misshapen `coordinates` member, or an ordinate that
     /// is not a number.
     #[error("invalid GeoJSON geometry value: {0}")]
@@ -29,8 +29,8 @@ pub enum GeometryError {
     /// spatial operations.
     #[error("GeoJSON coordinate cannot be represented as a finite 64-bit float")]
     CoordinateOutOfRange,
-    /// The value is a GeoJSON GeometryCollection. ETSI GS CIM 009 v1.9.1 clause
-    /// 4.7.1 allows a GeoProperty value every geometry RFC 7946 defines except
+    /// The value is a `GeoJSON` `GeometryCollection`. ETSI GS CIM 009 v1.9.1 clause
+    /// 4.7.1 allows a `GeoProperty` value every geometry RFC 7946 defines except
     /// this one, and clause 4.6.3 excludes it from reference geometries too.
     #[error(
         "GeometryCollection is not an allowed GeoProperty geometry: ETSI GS CIM 009 v1.9.1 clause 4.7.1 allows every RFC 7946 geometry except GeometryCollection"
@@ -39,7 +39,7 @@ pub enum GeometryError {
 }
 
 impl GeometryForm {
-    /// Decode from a parsed GeoJSON geometry value.
+    /// Decode from a parsed `GeoJSON` geometry value.
     ///
     /// A `bbox` or foreign member is not part of the geometry RFC 7946 section
     /// 3.1 defines and is not carried.
@@ -48,7 +48,7 @@ impl GeometryForm {
     ///
     /// Returns [`GeometryError::Position`] if any position of the geometry
     /// carries fewer than two or more than three ordinates, and
-    /// [`GeometryError::GeometryCollectionUnsupported`] for a GeometryCollection,
+    /// [`GeometryError::GeometryCollectionUnsupported`] for a `GeometryCollection`,
     /// which ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes.
     pub fn from_geojson(value: &GeometryValue) -> Result<GeometryForm, GeometryError> {
         match value {
@@ -74,7 +74,7 @@ impl GeometryForm {
         }
     }
 
-    /// Encode as a GeoJSON geometry value.
+    /// Encode as a `GeoJSON` geometry value.
     ///
     /// Infallible, and faithful to what was decoded: each position renders with
     /// the ordinate count it arrived with, and rings are not closed on the way
@@ -103,12 +103,12 @@ impl GeometryForm {
     }
 }
 
-/// Decode a flat list of GeoJSON positions.
+/// Decode a flat list of `GeoJSON` positions.
 fn decode_positions(positions: &[GeoJsonPosition]) -> Result<Vec<Position>, PositionError> {
     positions.iter().map(Position::try_from).collect()
 }
 
-/// Decode the ring list of a GeoJSON Polygon.
+/// Decode the ring list of a `GeoJSON` Polygon.
 fn decode_rings(rings: &[Vec<GeoJsonPosition>]) -> Result<PolygonRings, PositionError> {
     let rings = rings
         .iter()
@@ -117,12 +117,12 @@ fn decode_rings(rings: &[Vec<GeoJsonPosition>]) -> Result<PolygonRings, Position
     Ok(PolygonRings::new(rings))
 }
 
-/// Encode a flat list of positions as GeoJSON.
+/// Encode a flat list of positions as `GeoJSON`.
 fn encode_positions(positions: &[Position]) -> Vec<GeoJsonPosition> {
     positions.iter().map(Position::to_geojson).collect()
 }
 
-/// Encode the rings of a Polygon as GeoJSON.
+/// Encode the rings of a Polygon as `GeoJSON`.
 fn encode_rings(rings: &PolygonRings) -> Vec<Vec<GeoJsonPosition>> {
     rings.rings().iter().map(|ring| encode_positions(ring)).collect()
 }

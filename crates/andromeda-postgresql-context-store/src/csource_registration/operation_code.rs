@@ -17,6 +17,7 @@ use andromeda_ngsi_ld_model::registration::CsrOperation;
 use andromeda_postgresql_codes::csr_operation::CsrOperationCode;
 
 /// The registry member the projection persists for an operation.
+#[must_use]
 pub const fn stored_operation(operation: CsrOperation) -> CsrOperationCode {
     match operation {
         CsrOperation::CreateEntity => CsrOperationCode::CreateEntity,
@@ -71,6 +72,7 @@ pub const fn stored_operation(operation: CsrOperation) -> CsrOperationCode {
 }
 
 /// The operation a stored registry member names.
+#[must_use]
 pub const fn operation_of(code: CsrOperationCode) -> CsrOperation {
     match code {
         CsrOperationCode::CreateEntity => CsrOperation::CreateEntity,

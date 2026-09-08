@@ -116,6 +116,7 @@ impl RuntimeConfig {
     }
 
     /// Describe layered configuration precedence for operator reporting.
+    #[must_use]
     pub const fn precedence_summary() -> &'static str {
         "CLI host/port > environment > config file > defaults"
     }
@@ -155,6 +156,7 @@ pub enum ConfigurationLoadOutcome {
 }
 
 /// Load configuration for broker execution and report a typed failure at this boundary.
+#[must_use]
 pub fn load_reported(config_file: &Path, overrides: BrokerRunOverrides) -> ConfigurationLoadOutcome {
     match RuntimeConfig::load(
         config_file,
@@ -172,6 +174,7 @@ pub fn load_reported(config_file: &Path, overrides: BrokerRunOverrides) -> Confi
 }
 
 /// Validate configuration and report the result at the configuration boundary.
+#[must_use]
 pub fn validate_reported(config_file: &Path) -> ProcessExitOutcome {
     match RuntimeConfig::load(config_file, ServerOverrides::default()) {
         Ok(_) => {
@@ -186,6 +189,7 @@ pub fn validate_reported(config_file: &Path) -> ProcessExitOutcome {
 }
 
 /// Print the effective redacted configuration and report rendering failures at their owner.
+#[must_use]
 pub fn print_effective_reported(config_file: &Path, format: ConfigurationOutputFormat) -> ProcessExitOutcome {
     let config = match RuntimeConfig::load(config_file, ServerOverrides::default()) {
         Ok(config) => config,
@@ -471,7 +475,7 @@ mod tests {
             env::set_var(
                 "ANDROMEDA_JSONLD_PRELOAD_CONTEXTS",
                 "{\"https://example.com/context.jsonld\":\"contexts/test.jsonld\"}",
-            )
+            );
         };
         let config = RuntimeConfig::builder().env().load().expect("config should load");
         unsafe { env::remove_var("ANDROMEDA_JSONLD_PRELOAD_CONTEXTS") };
@@ -488,13 +492,13 @@ mod tests {
     #[serial]
     fn file_overrides_defaults() {
         let path = write_temp_config(
-            r#"
+            r"
 [server]
 port = 1600
 
 [notifications.ws]
 ping_interval_secs = 45
-"#,
+",
         );
 
         let config = RuntimeConfig::load(&path, ServerOverrides::default()).expect("config should load");
@@ -541,10 +545,10 @@ ping_interval_secs = 45
     #[serial]
     fn env_overrides_file() {
         let path = write_temp_config(
-            r#"
+            r"
 [server]
 port = 1600
-"#,
+",
         );
 
         unsafe { env::set_var("ANDROMEDA_SERVER_PORT", "1700") };

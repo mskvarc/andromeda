@@ -41,7 +41,7 @@ const STAGE_ENTITIES_FIELD_COUNT: i16 = 11;
 /// DDL for the per-transaction staging table. Dropped automatically on
 /// transaction commit, so concurrent chunk writes on separate pool
 /// connections each get their own fresh table.
-const CREATE_STAGE_ENTITIES_SQL: &str = r#"
+const CREATE_STAGE_ENTITIES_SQL: &str = r"
 CREATE TEMP TABLE stage_entities (
     id text,
     type_ids_json jsonb,
@@ -55,7 +55,7 @@ CREATE TEMP TABLE stage_entities (
     expires_at timestamptz,
     min_attribute_expires_at timestamptz
 ) ON COMMIT DROP
-"#;
+";
 
 /// Binary COPY statement targeting the staging table.
 const COPY_INTO_STAGE_SQL: &str = "COPY stage_entities (id, type_ids_json, attribute_name_ids_json, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at) FROM STDIN WITH (FORMAT binary)";
@@ -63,7 +63,7 @@ const COPY_INTO_STAGE_SQL: &str = "COPY stage_entities (id, type_ids_json, attri
 /// Materialise staged rows into the three entity relations: the same
 /// projection and the same three inserts the `UNNEST` path performs, read from
 /// the staging table instead of parallel arrays.
-const INSERT_FROM_STAGE_CREATE_SQL: &str = r#"
+const INSERT_FROM_STAGE_CREATE_SQL: &str = r"
 WITH proj AS (
     SELECT
         s.id,
@@ -95,7 +95,7 @@ srch AS (
     FROM ins JOIN proj ON proj.id = ins.id
 )
 SELECT entity_key, id FROM ins
-"#;
+";
 
 /// Bulk-insert via binary COPY into a staging table, then materialise into
 /// the entity relations inside the provided transaction. Returns the rows

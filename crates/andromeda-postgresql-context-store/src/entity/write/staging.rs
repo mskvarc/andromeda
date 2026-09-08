@@ -80,7 +80,7 @@ pub(super) enum StagedColumn {
     ScopePathsJson,
     /// Payload as JSON text, cast to `jsonb` in the projection.
     Payload,
-    /// Default GeoProperty geometry as EWKB.
+    /// Default `GeoProperty` geometry as EWKB.
     Loc,
     /// `observationSpace` geometry as EWKB.
     Obs,

@@ -8,6 +8,7 @@ use url::Url;
 pub const BROKER_ENDPOINT_ENV: &str = "ANDROMEDA_TEST_BROKER_URL";
 
 /// Return the default endpoint used when [`BROKER_ENDPOINT_ENV`] is absent.
+#[must_use]
 pub const fn default_broker_endpoint() -> &'static str {
     "http://127.0.0.1:1056/ngsi-ld/v1/"
 }
@@ -36,11 +37,13 @@ impl BrokerDnsOverride {
     }
 
     /// Borrow the hostname passed to reqwest's resolver override.
+    #[must_use]
     pub fn hostname(&self) -> &str {
         &self.hostname
     }
 
     /// Return the address used for the override.
+    #[must_use]
     pub const fn address(&self) -> SocketAddr {
         self.address
     }
@@ -65,6 +68,7 @@ impl BrokerEndpoint {
     }
 
     /// Borrow the normalized endpoint URL.
+    #[must_use]
     pub const fn url(&self) -> &Url {
         &self.url
     }

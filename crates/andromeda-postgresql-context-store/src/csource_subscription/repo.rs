@@ -14,6 +14,7 @@ pub struct CsourceSubscriptionRepository {
 
 impl CsourceSubscriptionRepository {
     /// Create a new context source subscription repository backed by the given connection pool.
+    #[must_use]
     pub fn new(pool: &PgPool) -> CsourceSubscriptionRepository {
         CsourceSubscriptionRepository { pool: pool.clone() } // clone: Arc ref-count bump
     }

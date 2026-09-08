@@ -29,11 +29,13 @@ pub enum PositiveMillisecondsError {
 
 impl PositiveMilliseconds {
     /// The number of milliseconds.
+    #[must_use]
     pub const fn get(self) -> u32 {
         self.0.get()
     }
 
     /// The value as a standard-library duration.
+    #[must_use]
     pub const fn as_duration(self) -> Duration {
         Duration::from_millis(self.0.get() as u64)
     }

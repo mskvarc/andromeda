@@ -40,7 +40,7 @@ use syn::{
 ///
 /// The sea-query extension and the iden catalogue are the backend itself; the
 /// COPY modules speak the binary wire protocol sea-query has no form for; a
-/// `schema_ddl` module holds the `CREATE`/TimescaleDB DDL SeaQuery cannot
+/// `schema_ddl` module holds the `CREATE`/`TimescaleDB` DDL `SeaQuery` cannot
 /// express. Everything else builds statements through sea-query.
 const SANCTIONED_PREFIXES: &[&str] = &[
     "crates/andromeda-postgresql-seaquery/",
@@ -78,6 +78,7 @@ pub struct RawSqlSite {
 }
 
 /// Every raw-SQL site in the workspace, sanctioned paths included, sorted.
+#[must_use]
 pub fn raw_sql_sites(workspace_root: &str) -> Vec<RawSqlSite> {
     let mut sites = Vec::new();
     for source in workspace_sources(Path::new(workspace_root)) {

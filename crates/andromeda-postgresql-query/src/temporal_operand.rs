@@ -84,6 +84,7 @@ fn shape_guarded(regex_operand: SimpleExpr, shape: &str, cast_source: SimpleExpr
 ///
 /// PostgreSQL resolves the offset itself, so two spellings of one instant compare
 /// equal without the statement having to normalise either.
+#[must_use]
 pub fn stored_date_time(stored: SimpleExpr) -> SimpleExpr {
     // The one stored expression is read three times — by the shape check, by
     // `pg_input_is_valid`, and by the cast — so each reader takes its own copy.
@@ -109,6 +110,7 @@ pub fn stored_date_time(stored: SimpleExpr) -> SimpleExpr {
 /// stored expression — an out-of-range hour or minute (`25:00:00Z`, `12:60:00Z`)
 /// has the `TIME_SHAPE` regex's shape but is not a real time of day, and only
 /// validating the text that is actually cast catches that.
+#[must_use]
 pub fn stored_time(stored: SimpleExpr) -> SimpleExpr {
     // The shape check reads the bare stored text; the offset resolution reads it
     // anchored to a date.

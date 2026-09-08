@@ -15,6 +15,7 @@ pub struct NgsiLdJoin(JoinMode);
 
 impl NgsiLdJoin {
     /// Return the parsed join mode.
+    #[must_use]
     pub const fn into_inner(self) -> JoinMode {
         self.0
     }

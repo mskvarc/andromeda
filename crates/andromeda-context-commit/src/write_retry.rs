@@ -36,6 +36,7 @@ const MAX_BACKOFF_MICROS: u64 = 50_000;
 ///
 /// Doubles from [`FIRST_BACKOFF_MICROS`] and saturates at
 /// [`MAX_BACKOFF_MICROS`]; `0` lost attempts yields no wait at all.
+#[must_use]
 pub const fn backoff_ceiling(lost_attempts: u32) -> Duration {
     Duration::from_micros(backoff_ceiling_micros(lost_attempts))
 }
@@ -45,6 +46,7 @@ pub const fn backoff_ceiling(lost_attempts: u32) -> Duration {
 /// The wait is drawn uniformly from the whole interval up to
 /// [`backoff_ceiling`] — full jitter rather than a fixed delay, because a fixed
 /// delay moves colliding writers together instead of separating them.
+#[must_use]
 pub fn backoff_after_lost_attempts(lost_attempts: u32) -> Duration {
     Duration::from_micros(fastrand::u64(0..=backoff_ceiling_micros(lost_attempts)))
 }

@@ -26,6 +26,7 @@ pub enum AttributeChangeKind {
 
 impl AttributeChangeKind {
     /// Clause-5.2.12 notification trigger corresponding to this transition.
+    #[must_use]
     pub const fn notification_trigger(self) -> NotificationTrigger {
         match self {
             AttributeChangeKind::Created => NotificationTrigger::AttributeCreated,

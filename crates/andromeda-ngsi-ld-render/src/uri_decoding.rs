@@ -1,27 +1,27 @@
-//! Percent-decoding of the URIs a Relationship (and ListRelationship) points at.
+//! Percent-decoding of the URIs a Relationship (and `ListRelationship`) points at.
 //!
 //! An entity identifier is a URI, and a client is free to percent-encode
 //! characters in one when it writes a Relationship. The store keeps what it was
 //! given, so the decoding happens at the presentation boundary. It runs before
-//! any GeoJSON wrapping, over the plain entity, so the policy does not depend on
-//! the negotiated media type — a GeoJSON Feature carries the same decoded URIs
+//! any `GeoJSON` wrapping, over the plain entity, so the policy does not depend on
+//! the negotiated media type — a `GeoJSON` Feature carries the same decoded URIs
 //! its JSON counterpart does.
 
 use andromeda_ngsi_ld_vocabulary::compact::{classes as compact_classes, properties as compact_properties};
 use serde_json::Value;
 use std::borrow::Cow;
 
-/// Decode percent-encoded URIs in Relationship `object` and ListRelationship
+/// Decode percent-encoded URIs in Relationship `object` and `ListRelationship`
 /// `objectList` fields.
 ///
 /// Postgres stores URIs as-is, but some clients percent-encode characters in
 /// entity IDs (e.g. colons). This function decodes them for human-readable
-/// output, walking a Relationship's single `object` and a ListRelationship's
+/// output, walking a Relationship's single `object` and a `ListRelationship`'s
 /// ordered `objectList` — and only those, so a Property value that happens to
 /// contain a `%` (e.g. `"50%"`) is left untouched.
 ///
 /// A pipeline stage of [`crate::response::ResponseRenderer`], run over the plain
-/// entity before any GeoJSON envelope is built. It is `pub` because the
+/// entity before any `GeoJSON` envelope is built. It is `pub` because the
 /// notification worker composes its payloads outside this crate and must decode
 /// by exactly this rule, so a query response and a notification of the same
 /// entity carry the same URIs rather than two drifting readings of them.
@@ -73,6 +73,7 @@ fn decode_uri_in_place(uri: &mut String) {
 /// Relationship target for typed history storage. This keeps current-entity
 /// storage unchanged while preventing its durable temporal consequence from
 /// assigning different semantics to the same target.
+#[must_use]
 pub fn decode_percent_encoded_uri(uri: &str) -> Cow<'_, str> {
     if uri.contains('%')
         && let Ok(decoded) = percent_encoding::percent_decode_str(uri).decode_utf8()

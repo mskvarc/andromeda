@@ -7,7 +7,7 @@
 //! fragments `andromeda-postgresql-query` renders.
 //!
 //! Keeping it apart from the context statements is what makes a temporal
-//! backend that is not PostgreSQL a wiring choice: a ClickHouse profile
+//! backend that is not PostgreSQL a wiring choice: a `ClickHouse` profile
 //! replaces this crate and reuses the context statements unchanged.
 
 #![deny(missing_docs)]

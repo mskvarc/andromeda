@@ -43,6 +43,7 @@ pub struct SnapshotRenderer<'a> {
 
 impl<'a> SnapshotRenderer<'a> {
     /// Create a renderer for the given compacted payload.
+    #[must_use]
     pub const fn new(payload: Value) -> SnapshotRenderer<'a> {
         SnapshotRenderer {
             payload,
@@ -54,18 +55,21 @@ impl<'a> SnapshotRenderer<'a> {
     }
 
     /// Restrict the output to the given attribute keys (plus `id`, `type`, `@context`).
+    #[must_use]
     pub const fn with_attrs_filter(mut self, attrs: Option<&'a [AttributeName]>) -> Self {
         self.attrs_filter = attrs;
         self
     }
 
     /// Set the output representation mode.
+    #[must_use]
     pub const fn with_mode(mut self, mode: ResponseFormat) -> Self {
         self.mode = mode;
         self
     }
 
     /// Provide linked entities for `join=inline` expansion.
+    #[must_use]
     pub const fn with_inline_linked_entities(mut self, linked: &'a IndexMap<Uri, Entity>) -> Self {
         self.inline_linked_entities = Some(linked);
         self
@@ -73,6 +77,7 @@ impl<'a> SnapshotRenderer<'a> {
 
     /// Apply the clause 4.21 structural-member rule to the payload's `id`,
     /// `type` and `scope` keys.
+    #[must_use]
     pub const fn with_structural_projection(mut self, projection: &'a Projection) -> Self {
         self.structural_projection = Some(projection);
         self

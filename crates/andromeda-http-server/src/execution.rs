@@ -103,7 +103,7 @@ mod tests {
         ));
         let response = reqwest::get(format!("http://{address}/test")).await?;
         pretty_assertions::assert_eq!(response.text().await?, "served");
-        shutdown_sender.send(()).map_err(|_| TestError::Shutdown)?;
+        shutdown_sender.send(()).map_err(|()| TestError::Shutdown)?;
         server.await??;
         Ok(())
     }
@@ -140,7 +140,7 @@ mod tests {
         ));
         let request = tokio::spawn(reqwest::get(format!("http://{address}/slow")));
         started.notified().await;
-        shutdown_sender.send(()).map_err(|_| TestError::Shutdown)?;
+        shutdown_sender.send(()).map_err(|()| TestError::Shutdown)?;
         release.notify_one();
         let response = request.await??;
         pretty_assertions::assert_eq!(response.text().await?, "complete");

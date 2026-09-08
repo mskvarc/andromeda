@@ -69,6 +69,7 @@ impl ContextSourceAdapter {
         self.server.next_request(timeout).await.expect("Context Source captured a forwarded request")
     }
 
+    #[must_use]
     pub fn url(&self, path: &str) -> String {
         let path = if path.is_empty() { "/" } else { path };
         let path = CallbackPath::parse(path).expect("Context Source endpoint path is absolute");

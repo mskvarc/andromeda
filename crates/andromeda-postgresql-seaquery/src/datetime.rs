@@ -24,6 +24,7 @@ struct PgInputIsValid;
 ///
 /// The template is a fixed statement-level constant, not caller-supplied data, so
 /// it is inlined as a literal rather than bound.
+#[must_use]
 pub fn to_char(value: SimpleExpr, format: &str) -> SimpleExpr {
     Func::cust(ToChar).args([value, text_literal(format)]).into()
 }
@@ -33,6 +34,7 @@ pub fn to_char(value: SimpleExpr, format: &str) -> SimpleExpr {
 ///
 /// The type name is a statement-level constant naming the type token, so it is
 /// inlined as a literal exactly as a [`crate::cast`] names its target type.
+#[must_use]
 pub fn pg_input_is_valid(value: SimpleExpr, ty: PostgresType) -> SimpleExpr {
     let type_name = Iden::to_string(&ty);
     Func::cust(PgInputIsValid).args([value, text_literal(&type_name)]).into()

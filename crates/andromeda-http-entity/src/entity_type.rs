@@ -160,7 +160,7 @@ pub async fn get(
         (local_result, Vec::new())
     } else {
         let query_string = uri.query().unwrap_or("");
-        let path = format!("/types/{}", type_);
+        let path = format!("/types/{type_}");
         let forwarded = state
             .forwarding
             .forward_discovery_query(

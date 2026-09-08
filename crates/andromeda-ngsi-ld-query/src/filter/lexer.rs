@@ -68,6 +68,7 @@ impl Token {
     /// `BadRequestData` detail a client receives names the character the grammar
     /// expected. The three token kinds that carry text describe their kind
     /// instead, because their spelling is whatever the client wrote.
+    #[must_use]
     pub const fn spelling(&self) -> &'static str {
         match self {
             Token::Ident(_) => "identifier",

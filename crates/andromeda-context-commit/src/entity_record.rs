@@ -41,6 +41,7 @@ pub struct SearchProjection {
 
 impl SearchProjection {
     /// Extract the projection of an expanded entity payload.
+    #[must_use]
     pub fn from_expanded(payload: &Value) -> SearchProjection {
         SearchProjection {
             types: extract_types(payload),
@@ -72,6 +73,7 @@ pub struct EntityRecord {
 impl EntityRecord {
     /// Extract the backend-neutral state required to persist an expanded
     /// entity payload.
+    #[must_use]
     pub fn from_expanded(payload: Arc<Value>) -> EntityRecord {
         EntityRecord {
             projection: SearchProjection::from_expanded(&payload),
@@ -83,6 +85,7 @@ impl EntityRecord {
 
     /// Assemble a record from members a preparation pass already extracted,
     /// so a batch that validated the payload does not extract them twice.
+    #[must_use]
     pub const fn from_parts(
         payload: Arc<Value>,
         projection: SearchProjection,
@@ -133,6 +136,6 @@ mod tests {
         let payload = Arc::new(json!([{"@id": "urn:ngsi-ld:A"}]));
         let record = EntityRecord::from_parts(Arc::clone(&payload), SearchProjection::default(), None, None);
         assert!(Arc::ptr_eq(&payload, &record.payload));
-        assert!(record.projection.types.is_empty());
+        assert_eq!(record.projection.types, [] as [andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName; 0]);
     }
 }

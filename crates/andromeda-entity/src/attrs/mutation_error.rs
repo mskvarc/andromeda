@@ -10,7 +10,7 @@ use crate::error::EntityError;
 use andromeda_ngsi_ld_model::expanded::mutation::error::ExpandedEntityError;
 
 impl From<ExpandedEntityError> for EntityError {
-    /// Map each mutation failure onto the NGSI-LD ProblemDetails type clause
+    /// Map each mutation failure onto the NGSI-LD `ProblemDetails` type clause
     /// 5.5.2 requires: a malformed request body is `BadRequestData` (400),
     /// while a well-formed request naming an attribute, dataset or instance
     /// the entity does not have is `ResourceNotFound` (404).

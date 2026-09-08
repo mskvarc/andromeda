@@ -1,4 +1,4 @@
-//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-FileCopyrightText: 2014-2025 Sean `McArthur`
 //! SPDX-License-Identifier: MIT
 //!
 //! Typed NGSI-LD temporal `Content-Range` response header (ETSI GS CIM 009,
@@ -33,19 +33,23 @@ impl NgsiLdContentRange {
     /// A backwards `lastN` page legitimately has a range start later than its
     /// range end (ETSI GS CIM 009 clause 6.3.10), so chronological ordering is
     /// not a validity condition for this header.
+    #[must_use]
     pub const fn new(start: DateTime<Utc>, end: DateTime<Utc>, total: Option<u64>) -> Self {
         Self { start, end, total }
     }
 
     /// Start of the temporal range.
+    #[must_use]
     pub const fn start(&self) -> DateTime<Utc> {
         self.start
     }
     /// End of the temporal range.
+    #[must_use]
     pub const fn end(&self) -> DateTime<Utc> {
         self.end
     }
     /// Total result count, when known.
+    #[must_use]
     pub const fn total(&self) -> Option<u64> {
         self.total
     }
@@ -91,7 +95,7 @@ impl headers::Header for NgsiLdContentRange {
             .to_str()
             .map_err(|_| headers::Error::invalid())?
             .parse()
-            .map_err(|_| headers::Error::invalid())
+            .map_err(|()| headers::Error::invalid())
     }
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         if let Ok(value) = HeaderValue::from_str(&self.to_string()) {

@@ -21,6 +21,7 @@ pub struct SubscriptionFixture {
 
 impl SubscriptionFixture {
     /// Render the fixture as an NGSI-LD JSON object.
+    #[must_use]
     pub fn into_value(self) -> Value {
         let mut value = json!({
             "type": "Subscription",

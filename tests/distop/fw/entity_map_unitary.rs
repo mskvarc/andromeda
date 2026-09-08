@@ -1,4 +1,4 @@
-//! Linked EntityMap creation, reuse, pinning, and lifecycle for a single broker
+//! Linked `EntityMap` creation, reuse, pinning, and lifecycle for a single broker
 //! instance (ETSI GS CIM 009 v1.9.1, clauses 5.5.9.3, 5.7.2, 5.14). Multi-source
 //! fan-out on `T-MOCK-N`; map mechanics on `T-MOCK`; cross-instance reuse is a
 //! tracked gap.
@@ -297,8 +297,8 @@ async fn distop_entity_map_retrieve_records_holding_sources_single_instance() {
 
 /// A map minted on broker A is unknown to peer B, which therefore (re)creates
 /// one and answers `201` with a fresh map id (Table 6.4.3.2-3: "201 Created (in
-/// case an EntityMap has been (re)created)"; clause 5.7.2.4: "If the resource
-/// cannot be found, or the data has expired, a new EntityMap shall be created").
+/// case an `EntityMap` has been (re)created)"; clause 5.7.2.4: "If the resource
+/// cannot be found, or the data has expired, a new `EntityMap` shall be created").
 /// Confirms REQ-FW-49, REQ-FW-51.
 #[tokio::test]
 async fn distop_entity_map_retrieve_cross_instance_reuse() {
@@ -344,9 +344,9 @@ async fn distop_entity_map_retrieve_cross_instance_reuse() {
 /// (`200`, same id) and the mapped source is still consulted under the map, the
 /// forwarded request carrying the linked map id (clause 4.3.6.7: "Only the
 /// Entities whose identifiers are contained in the Entity map are considered
-/// when rendering the result pages"; clause 5.7.2.4: "If an EntityMap is in use
-/// for this operation, and an EntityMap entry linked to a Context Source
-/// Registration is found, the location of the linked EntityMap shall be passed
+/// when rendering the result pages"; clause 5.7.2.4: "If an `EntityMap` is in use
+/// for this operation, and an `EntityMap` entry linked to a Context Source
+/// Registration is found, the location of the linked `EntityMap` shall be passed
 /// as part of any forwarded request"). Confirms REQ-FW-51, REQ-FW-75.
 #[tokio::test]
 async fn distop_entity_map_reused_when_field_passed_back() {
@@ -459,7 +459,7 @@ async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
 }
 
 /// A subsequent request that changes a non-id, non-pagination filter parameter
-/// is rejected with 400 InvalidRequest (clause 5.5.9.3). Confirms REQ-FW-76.
+/// is rejected with 400 `InvalidRequest` (clause 5.5.9.3). Confirms REQ-FW-76.
 #[tokio::test]
 async fn distop_entity_map_subsequent_request_rejects_changed_filter_params() {
     let topology = topology::single().await.expect("single-broker topology");

@@ -19,10 +19,10 @@ pub struct OrderingGeometry {
 /// The two wire members that jointly describe an ordering geometry.
 #[derive(Deserialize)]
 struct OrderingGeometryWire {
-    /// GeoJSON coordinates.
+    /// `GeoJSON` coordinates.
     #[serde(alias = "orderFrom", deserialize_with = "deserialize_coordinates")]
     coordinates: Value,
-    /// GeoJSON geometry type; clause 5.2.43 defaults it to `Point`.
+    /// `GeoJSON` geometry type; clause 5.2.43 defaults it to `Point`.
     #[serde(alias = "orderGeometry", default = "default_geometry_type")]
     geometry: GeometryType,
 }
@@ -58,6 +58,7 @@ pub enum OrderingGeometryError {
 
 impl OrderingGeometry {
     /// Wrap a geometry into an ordering reference.
+    #[must_use]
     pub const fn new(geometry: Geometry) -> OrderingGeometry {
         OrderingGeometry { geometry }
     }

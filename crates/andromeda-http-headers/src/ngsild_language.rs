@@ -1,4 +1,4 @@
-//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-FileCopyrightText: 2014-2025 Sean `McArthur`
 //! SPDX-License-Identifier: MIT
 //!
 //! Typed `NGSILD-Language` request header for language negotiation.
@@ -34,6 +34,7 @@ pub struct NgsiLdLanguage(LanguageFilter);
 
 impl NgsiLdLanguage {
     /// The negotiated language preferences this header carries.
+    #[must_use]
     pub fn into_filter(self) -> LanguageFilter {
         self.0
     }

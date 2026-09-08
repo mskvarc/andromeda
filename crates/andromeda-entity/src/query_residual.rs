@@ -22,16 +22,19 @@ pub struct ResidualFilter(EntitySelection);
 
 impl ResidualFilter {
     /// A residual over the predicates in `selection`.
+    #[must_use]
     pub const fn over(selection: EntitySelection) -> ResidualFilter {
         ResidualFilter(selection)
     }
 
     /// Borrow the underlying selection for field-level access.
+    #[must_use]
     pub const fn selection(&self) -> &EntitySelection {
         &self.0
     }
 
     /// Whether the store applied every predicate, leaving nothing to finish.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.kinds().is_empty()
     }
@@ -78,6 +81,7 @@ impl ResidualFilter {
 
     /// Which kinds of predicate are outstanding, in the order they are
     /// evaluated.
+    #[must_use]
     pub fn kinds(&self) -> Vec<ResidualPredicate> {
         let EntitySelection {
             selectors,

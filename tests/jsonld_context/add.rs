@@ -22,7 +22,7 @@ use crate::{
 };
 use serde_json::json;
 
-/// 050_01_01: Add valid hosted @context from key-value dictionary -> 201.
+/// `050_01_01`: Add valid hosted @context from key-value dictionary -> 201.
 #[tokio::test]
 #[serial]
 async fn add_valid_context_dictionary_returns_201() {
@@ -49,7 +49,7 @@ async fn add_valid_context_dictionary_returns_201() {
     let _ = resp_body;
 }
 
-/// 050_01_02: Add valid hosted @context from URI list -> 201.
+/// `050_01_02`: Add valid hosted @context from URI list -> 201.
 #[tokio::test]
 #[serial]
 async fn add_valid_context_uri_list_returns_201() {
@@ -67,7 +67,7 @@ async fn add_valid_context_uri_list_returns_201() {
     assert!(location.is_some(), "should have Location header");
 }
 
-/// 050_02_01: Add @context with incorrect payload (missing @context key) -> 400.
+/// `050_02_01`: Add @context with incorrect payload (missing @context key) -> 400.
 #[tokio::test]
 async fn add_invalid_context_missing_key_returns_400() {
     let c = client();
@@ -83,7 +83,7 @@ async fn add_invalid_context_missing_key_returns_400() {
     pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
 }
 
-/// 050_02_02: Add @context with malformed JSON (empty object) -> 400.
+/// `050_02_02`: Add @context with malformed JSON (empty object) -> 400.
 #[tokio::test]
 async fn add_invalid_context_empty_object_returns_400() {
     let c = client();
@@ -93,7 +93,7 @@ async fn add_invalid_context_empty_object_returns_400() {
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-/// 050_03_01: ImplicitlyCreated @context via subscription creation.
+/// `050_03_01`: `ImplicitlyCreated` @context via subscription creation.
 #[tokio::test]
 #[serial]
 async fn add_implicitly_created_context_via_subscription() {
@@ -124,7 +124,7 @@ async fn add_implicitly_created_context_via_subscription() {
     delete_subscription(&c, &sub_id).await;
 }
 
-/// 050_04_01: Add hosted @context with URI references, verify URIs become cached.
+/// `050_04_01`: Add hosted @context with URI references, verify URIs become cached.
 #[tokio::test]
 #[serial]
 async fn add_hosted_context_with_cached_uri_refs() {

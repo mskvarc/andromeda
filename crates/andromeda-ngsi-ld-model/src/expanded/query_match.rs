@@ -7,16 +7,18 @@ use serde_json::Value;
 
 /// Whether an expanded entity satisfies a compiled geo-query from clause 4.10.
 ///
-/// Where the target GeoProperty has several `datasetId` instances, one of them
+/// Where the target `GeoProperty` has several `datasetId` instances, one of them
 /// meeting the restriction is enough, and an entity conveying no instance of it
 /// matches nothing. This is the same reading the SQL rendering gives the clause
 /// with its correlated `EXISTS`, so a query and the equivalent subscription
-/// cannot disagree about a multi-instance GeoProperty.
+/// cannot disagree about a multi-instance `GeoProperty`.
+#[must_use]
 pub fn matches_geo_query(geo_query: &GeoQuery, expanded: &Value) -> bool {
     geo_property_instance_geometries(expanded, geo_query.geoproperty.as_str()).any(|subject| matches(&geo_query.georel, &subject, &geo_query.geometry))
 }
 
 /// Whether an expanded entity's scopes satisfy a parsed `scopeQ` from clause 4.18.
+#[must_use]
 pub fn matches_scope_query(query: &ScopeQuery, expanded: &Value) -> bool {
     query.matches(&extract_scopes(expanded))
 }

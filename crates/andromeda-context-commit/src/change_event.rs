@@ -45,6 +45,7 @@ pub struct ChangeEvent {
 
 impl ChangeEvent {
     /// Build a local event whose optional payload fields are absent.
+    #[must_use]
     pub fn new(entity_id: Uri, entity_types: Vec<EntityTypeName>, trigger_reason: NotificationTrigger) -> ChangeEvent {
         ChangeEvent::builder()
             .entity_id(entity_id)

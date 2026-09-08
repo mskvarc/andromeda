@@ -16,6 +16,7 @@ use crate::pg_type::PostgresType;
 use sea_query::{Expr, SimpleExpr};
 
 /// Cast an atomic expression to `ty`, rendered `expr::ty`.
+#[must_use]
 pub fn cast(expr: SimpleExpr, ty: PostgresType) -> SimpleExpr {
     // The crate is the sanctioned home for a hand-spelled fragment; the type
     // token still comes from the iden so the cast and the column that carries
@@ -30,6 +31,7 @@ pub fn cast(expr: SimpleExpr, ty: PostgresType) -> SimpleExpr {
 /// `#>>` extraction — must be parenthesised or the cast would bind to only its
 /// right-hand side. [`cast`] leaves that to the caller; this applies the
 /// parentheses for operands that carry an operator.
+#[must_use]
 pub fn cast_compound(expr: SimpleExpr, ty: PostgresType) -> SimpleExpr {
     Expr::cust_with_exprs(format!("($1)::{ty}", ty = type_token(ty)), [expr])
 }
@@ -40,6 +42,7 @@ pub fn cast_compound(expr: SimpleExpr, ty: PostgresType) -> SimpleExpr {
 /// row - the aggregation `bucket_start`/`bucket_end` over a whole-range group -
 /// is a typed null so the result column keeps its declared type rather than
 /// arriving as an untyped `NULL` the driver cannot decode.
+#[must_use]
 pub fn typed_null(ty: PostgresType) -> SimpleExpr {
     Expr::cust(format!("NULL::{ty}", ty = type_token(ty)))
 }

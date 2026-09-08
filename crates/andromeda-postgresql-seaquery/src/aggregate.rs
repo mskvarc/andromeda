@@ -26,6 +26,7 @@ struct BoolOr;
 struct RowNumber;
 
 /// `STDDEV(value)` - the sample standard deviation of a group's values.
+#[must_use]
 pub fn stddev(value: SimpleExpr) -> SimpleExpr {
     Func::cust(StdDev).args([value]).into()
 }
@@ -35,6 +36,7 @@ pub fn stddev(value: SimpleExpr) -> SimpleExpr {
 ///
 /// `MIN`/`MAX` skip nulls, so a group spanning both annotated and unannotated
 /// rows needs this to report that some row carried no value at all.
+#[must_use]
 pub fn bool_or(predicate: SimpleExpr) -> SimpleExpr {
     Func::cust(BoolOr).args([predicate]).into()
 }
@@ -42,6 +44,7 @@ pub fn bool_or(predicate: SimpleExpr) -> SimpleExpr {
 /// `ROW_NUMBER()` - the position of a row within its window frame, for the
 /// `lastN` ranking whose `OVER (…)` frame the caller supplies through
 /// [`sea_query::SelectStatement::expr_window_as`].
+#[must_use]
 pub fn row_number() -> SimpleExpr {
     Func::cust(RowNumber).args::<[SimpleExpr; 0]>([]).into()
 }
@@ -52,6 +55,7 @@ pub fn row_number() -> SimpleExpr {
 /// The ordering is part of the aggregate, not of the enclosing query, so a
 /// caller that needs the array to preserve a per-row position folds that
 /// position in here rather than ordering the surrounding statement.
+#[must_use]
 pub fn array_agg_ordered(value: SimpleExpr, order_by: SimpleExpr) -> SimpleExpr {
     Expr::cust_with_exprs("array_agg($1 ORDER BY $2)", [value, order_by])
 }
@@ -60,6 +64,7 @@ pub fn array_agg_ordered(value: SimpleExpr, order_by: SimpleExpr) -> SimpleExpr 
 ///
 /// `DISTINCT` is part of the aggregate, which sea-query's bare argument list
 /// cannot carry, so the call is spelled here.
+#[must_use]
 pub fn array_agg_distinct(value: SimpleExpr) -> SimpleExpr {
     Expr::cust_with_exprs("array_agg(DISTINCT $1)", [value])
 }
@@ -70,16 +75,19 @@ pub fn array_agg_distinct(value: SimpleExpr) -> SimpleExpr {
 /// The `FILTER` restricts which rows feed the aggregate, which is how an absent
 /// value stays out of the array rather than entering it as a NULL. Both the
 /// value and the predicate are bound expressions.
+#[must_use]
 pub fn array_agg_distinct_filter(value: SimpleExpr, predicate: SimpleExpr) -> SimpleExpr {
     Expr::cust_with_exprs("array_agg(DISTINCT $1) FILTER (WHERE $2)", [value, predicate])
 }
 
 /// `COUNT(DISTINCT value)` - the number of distinct non-NULL values.
+#[must_use]
 pub fn count_distinct(value: SimpleExpr) -> SimpleExpr {
     Expr::cust_with_exprs("COUNT(DISTINCT $1)", [value])
 }
 
 /// `COUNT(*)` - the number of rows in the group, NULLs included.
+#[must_use]
 pub fn count_all() -> SimpleExpr {
     Expr::cust("COUNT(*)")
 }
@@ -91,6 +99,7 @@ pub fn count_all() -> SimpleExpr {
 /// and the page come back in one round-trip. sea-query models a window frame as
 /// a `WindowStatement`, but the empty `OVER ()` an unbounded count needs carries
 /// no partition or ordering, so it is spelled here.
+#[must_use]
 pub fn count_over_all() -> SimpleExpr {
     Expr::cust("COUNT(*) OVER ()")
 }

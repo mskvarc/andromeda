@@ -26,7 +26,7 @@ use crate::{
 };
 use serde_json::json;
 
-/// 053_01_01: Serve @context without details parameter -> returns @context body.
+/// `053_01_01`: Serve @context without details parameter -> returns @context body.
 #[tokio::test]
 #[serial]
 async fn serve_context_no_details_returns_context_body() {
@@ -43,7 +43,7 @@ async fn serve_context_no_details_returns_context_body() {
     pretty_assertions::assert_eq!(ctx["A3"], "urn:ngsi-ld:attributes:A3");
 }
 
-/// 053_01_02: Serve @context with details=false -> returns @context body.
+/// `053_01_02`: Serve @context with details=false -> returns @context body.
 #[tokio::test]
 #[serial]
 async fn serve_context_details_false_returns_context_body() {
@@ -58,7 +58,7 @@ async fn serve_context_details_false_returns_context_body() {
     pretty_assertions::assert_eq!(ctx["A1"], "urn:ngsi-ld:attributes:A1");
 }
 
-/// 053_02_01: Serve @context with details=true -> returns metadata.
+/// `053_02_01`: Serve @context with details=true -> returns metadata.
 #[tokio::test]
 #[serial]
 async fn serve_context_details_true_returns_metadata() {
@@ -73,7 +73,7 @@ async fn serve_context_details_true_returns_metadata() {
     assert!(body.get("createdAt").is_some(), "detailed response should have createdAt");
 }
 
-/// 053_03_01: Serve @context with unknown ID -> 404.
+/// `053_03_01`: Serve @context with unknown ID -> 404.
 #[tokio::test]
 async fn serve_unknown_context_returns_404() {
     let c = client();
@@ -82,7 +82,7 @@ async fn serve_unknown_context_returns_404() {
     pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
 }
 
-/// 053_04_01: numberOfHits increases after using hosted context.
+/// `053_04_01`: numberOfHits increases after using hosted context.
 #[tokio::test]
 #[serial]
 async fn serve_hosted_number_of_hits_increases() {
@@ -115,7 +115,7 @@ async fn serve_hosted_number_of_hits_increases() {
     delete_entity(&c, &entity_id).await;
 }
 
-/// 053_07_01: Serve ImplicitlyCreated @context with details=true.
+/// `053_07_01`: Serve `ImplicitlyCreated` @context with details=true.
 #[tokio::test]
 #[serial]
 async fn serve_implicitly_created_details_true() {
@@ -150,7 +150,7 @@ async fn serve_implicitly_created_details_true() {
     delete_subscription(&c, &sub_id).await;
 }
 
-/// 053_08_01: numberOfHits increases after using ImplicitlyCreated context.
+/// `053_08_01`: numberOfHits increases after using `ImplicitlyCreated` context.
 #[tokio::test]
 #[serial]
 async fn serve_implicitly_created_number_of_hits_increases() {
@@ -199,7 +199,7 @@ async fn serve_implicitly_created_number_of_hits_increases() {
     delete_subscription(&c, &sub_id).await;
 }
 
-/// 053_05_01: Cached context still available after context server goes down.
+/// `053_05_01`: Cached context still available after context server goes down.
 #[tokio::test]
 #[serial]
 async fn serve_cached_context_after_server_down() {
@@ -225,7 +225,7 @@ async fn serve_cached_context_after_server_down() {
     assert!(body.get("createdAt").is_some());
 }
 
-/// 053_06_01: numberOfHits increases for cached context.
+/// `053_06_01`: numberOfHits increases for cached context.
 #[tokio::test]
 #[serial]
 async fn serve_cached_number_of_hits_increases() {

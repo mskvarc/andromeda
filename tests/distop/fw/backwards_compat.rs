@@ -128,7 +128,7 @@ async fn distop_entity_bc_version_values_are_major_minor() {
 
     let forwarded = mock.next_request(CAPTURE_TIMEOUT).await;
     let prefer = forwarded_header(&forwarded, "prefer").unwrap_or_default();
-    let version = prefer.split("ngsi-ld=").nth(1).map(|rest| rest.trim()).unwrap_or_default();
+    let version = prefer.split("ngsi-ld=").nth(1).map(str::trim).unwrap_or_default();
     let segments = version.split('.').count();
     assert_eq!(segments, 2, "the requested version is major.minor: {prefer:?}");
 

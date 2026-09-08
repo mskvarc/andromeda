@@ -18,6 +18,7 @@ pub struct TaskRegistration {
 
 impl TaskRegistration {
     /// Construct complete task metadata.
+    #[must_use]
     pub const fn new(name: TaskName, criticality: TaskCriticality, restart_policy: RestartPolicy, shutdown_policy: ShutdownPolicy) -> TaskRegistration {
         TaskRegistration {
             name,
@@ -28,21 +29,25 @@ impl TaskRegistration {
     }
 
     /// Return the task name.
+    #[must_use]
     pub const fn name(&self) -> &TaskName {
         &self.name
     }
 
     /// Return the task criticality.
+    #[must_use]
     pub const fn criticality(&self) -> TaskCriticality {
         self.criticality
     }
 
     /// Return the restart policy.
+    #[must_use]
     pub const fn restart_policy(&self) -> RestartPolicy {
         self.restart_policy
     }
 
     /// Return the shutdown policy.
+    #[must_use]
     pub const fn shutdown_policy(&self) -> ShutdownPolicy {
         self.shutdown_policy
     }

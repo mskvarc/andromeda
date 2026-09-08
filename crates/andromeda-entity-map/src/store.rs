@@ -43,7 +43,7 @@ pub trait EntityMapStore: Send + Sync + 'static {
     fn delete<'a>(&'a self, identifier: &'a Uri) -> EntityMapStoreFuture<'a, EntityMapMutation>;
 
     /// Remove every Entity Map whose expiry is at or before `cutoff`, returning how many.
-    fn delete_expired<'a>(&'a self, cutoff: DateTime<Utc>) -> EntityMapStoreFuture<'a, u64>;
+    fn delete_expired(&self, cutoff: DateTime<Utc>) -> EntityMapStoreFuture<'_, u64>;
 }
 
 #[cfg(test)]

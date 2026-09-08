@@ -19,6 +19,7 @@ pub struct TenantHeader(pub Option<TenantName>);
 
 impl TenantHeader {
     /// Consume the extractor and return the optional tenant name.
+    #[must_use]
     pub fn into_inner(self) -> Option<TenantName> {
         self.0
     }

@@ -223,6 +223,7 @@ impl TemporalQueryParameters {
     ///
     /// Per NGSI-LD Table 6.18.3.2-1, `type=*` implies `local=true` since wildcard
     /// type queries are undefined across federated sources.
+    #[must_use]
     pub fn is_local(&self) -> bool {
         if self.local == Some(true) {
             return true;
@@ -234,6 +235,7 @@ impl TemporalQueryParameters {
     /// The temporal property the window applies to, defaulting to `observedAt`
     /// (clause 4.8) when the request named none. The value was validated as a
     /// [`TimeProp`] at the query boundary.
+    #[must_use]
     pub fn timeproperty_or_default(&self) -> TimeProp {
         self.timeproperty.unwrap_or_default()
     }
@@ -243,11 +245,13 @@ impl TemporalQueryParameters {
     /// The `format` parameter takes precedence over `options`. Recognized values
     /// are `"temporalValues"` and `"aggregatedValues"`. Defaults to
     /// `TemporalFormat::Normalized`.
+    #[must_use]
     pub fn parse_format(&self) -> TemporalFormat {
         self.format.or_else(|| self.options.and_then(|options| options.format)).unwrap_or_default()
     }
 
     /// Returns whether the `sysAttrs` option is present in the `options` parameter.
+    #[must_use]
     pub fn has_sys_attrs(&self) -> bool {
         self.options.is_some_and(|options| options.sys_attrs == SysAttrsInclusion::Include)
     }
@@ -256,13 +260,14 @@ impl TemporalQueryParameters {
     ///
     /// Checks both `keyValues` and `simplified` option values, which are
     /// equivalent per NGSI-LD spec.
+    #[must_use]
     pub const fn is_simplified(&self) -> bool {
         false
     }
 
     /// Validate parameters.
-    /// - For query endpoint (require_temporal=true): timerel and timeAt are REQUIRED.
-    /// - For single-entity GET (require_temporal=false): timerel and timeAt are optional (both or neither).
+    /// - For query endpoint (`require_temporal=true)`: timerel and timeAt are REQUIRED.
+    /// - For single-entity GET (`require_temporal=false)`: timerel and timeAt are optional (both or neither).
     pub fn validate(&self, require_temporal: bool) -> Result<(), ParameterError> {
         validate_attrs(self.attrs.as_deref())?;
         // Clause 4.21: pick and omit select opposite ends of the same

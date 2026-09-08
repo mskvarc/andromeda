@@ -22,6 +22,7 @@ impl MqttHost {
     }
 
     /// Borrow the host name.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -38,6 +39,7 @@ impl MqttTopic {
     }
 
     /// Borrow the topic name.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -86,6 +88,7 @@ pub struct MqttReceiver {
 
 impl MqttReceiver {
     /// Connect to an MQTT broker and begin capturing publications.
+    #[must_use]
     pub fn connect(host: MqttHost, port: u16, credentials: Option<MqttCredentials>) -> MqttReceiver {
         let client_id = format!("andromeda-test-{}", Uuid::new_v4());
         let mut options = MqttOptions::new(client_id, host.as_str(), port);
@@ -108,7 +111,7 @@ impl MqttReceiver {
                         });
                         signal.notify_waiters();
                     }
-                    Ok(Event::Incoming(_)) | Ok(Event::Outgoing(_)) => {}
+                    Ok(Event::Incoming(_) | Event::Outgoing(_)) => {}
                     Err(_error) => break,
                 }
             }

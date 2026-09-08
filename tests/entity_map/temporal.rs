@@ -1,4 +1,4 @@
-//! EntityMaps created from a temporal query (NGSI-LD 5.2.32, 6.3.19).
+//! `EntityMaps` created from a temporal query (NGSI-LD 5.2.32, 6.3.19).
 
 use crate::{
     clean_database,

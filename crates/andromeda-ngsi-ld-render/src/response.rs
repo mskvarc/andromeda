@@ -8,7 +8,7 @@
 //! 2. version adaptation for a client that asked for an older spec version
 //!    (`Prefer: ngsi-ld=<version>`, clause 4.3.6.8),
 //! 3. `@context` injection for a body that carries it (clause 6.3.6), and
-//! 4. the GeoJSON Feature or FeatureCollection envelope (clause 4.5.16).
+//! 4. the `GeoJSON` Feature or `FeatureCollection` envelope (clause 4.5.16).
 //!
 //! Which of them run is a function of the media type and the payload shape,
 //! and of nothing else — which is why there is one pipeline here rather than
@@ -31,7 +31,7 @@ use std::sync::Arc;
 /// Payload fed to [`ResponseRenderer`]: the three NGSI-LD response shapes.
 ///
 /// The three variants are *not* interchangeable: batch results skip
-/// percent-encoded URI decoding and never participate in GeoJSON wrapping,
+/// percent-encoded URI decoding and never participate in `GeoJSON` wrapping,
 /// while collections unwrap into JSON arrays with per-item `@context`
 /// injection in `ld+json`.
 #[derive(Debug)]
@@ -53,7 +53,7 @@ impl ResponsePayload {
         matches!(self, ResponsePayload::Single(_) | ResponsePayload::Collection(_))
     }
 
-    /// The GeoJSON envelope this shape takes, if it takes one.
+    /// The `GeoJSON` envelope this shape takes, if it takes one.
     ///
     /// Clause 4.5.16 wraps entities. A batch result is not an entity and is
     /// answered as `application/json` whatever the request asked for, which is
@@ -78,7 +78,7 @@ impl ResponsePayload {
 /// Configuration for the response rendering pipeline, before the payload.
 ///
 /// Configured by whoever answered the request, from the negotiated media type,
-/// the resolved `@context`, the client's `Prefer` tokens and — for GeoJSON —
+/// the resolved `@context`, the client's `Prefer` tokens and — for `GeoJSON` —
 /// the attribute the geometry is taken from. It cannot be rendered on its own:
 /// only [`ResponseRenderer::with_payload`] produces a [`ReadyResponse`], and
 /// only that carries [`ReadyResponse::render`]. A caller therefore cannot forget
@@ -90,11 +90,11 @@ pub struct ResponseRenderer<'a> {
     media_type: ResponseMediaType,
     /// The resolved `@context`, in both the spellings the carriers need.
     context: ResponseContext,
-    /// The `Prefer: body=` token, which moves a GeoJSON `@context` to the headers.
+    /// The `Prefer: body=` token, which moves a `GeoJSON` `@context` to the headers.
     geo_json_body: GeoJsonBodyPreference,
     /// The `Prefer: ngsi-ld=` version to adapt the payload to, if any.
     requested_version: Option<SpecVersion>,
-    /// The attribute a GeoJSON geometry is taken from.
+    /// The attribute a `GeoJSON` geometry is taken from.
     geometry_property: Option<&'a AttributeName>,
 }
 
@@ -128,6 +128,7 @@ pub struct RenderedOutput {
 
 impl<'a> ResponseRenderer<'a> {
     /// Create a renderer for the given media type and resolved `@context`.
+    #[must_use]
     pub const fn new(media_type: ResponseMediaType, context: ResponseContext) -> ResponseRenderer<'a> {
         ResponseRenderer {
             media_type,
@@ -138,20 +139,23 @@ impl<'a> ResponseRenderer<'a> {
         }
     }
 
-    /// Set the `Prefer: body=` token, which decides where a GeoJSON response
+    /// Set the `Prefer: body=` token, which decides where a `GeoJSON` response
     /// carries its `@context` (clause 4.5.16).
+    #[must_use]
     pub const fn with_geo_json_body(mut self, geo_json_body: GeoJsonBodyPreference) -> Self {
         self.geo_json_body = geo_json_body;
         self
     }
 
     /// Set the `Prefer: ngsi-ld=` version the payload is adapted to, if any.
+    #[must_use]
     pub const fn with_requested_version(mut self, requested_version: Option<SpecVersion>) -> Self {
         self.requested_version = requested_version;
         self
     }
 
-    /// Set the attribute a GeoJSON geometry is taken from (clause 4.5.16).
+    /// Set the attribute a `GeoJSON` geometry is taken from (clause 4.5.16).
+    #[must_use]
     pub const fn with_geometry_property(mut self, geometry_property: Option<&'a AttributeName>) -> Self {
         self.geometry_property = geometry_property;
         self
@@ -161,6 +165,7 @@ impl<'a> ResponseRenderer<'a> {
     ///
     /// The only way to reach [`ReadyResponse::render`], so a response body
     /// cannot be produced without a payload.
+    #[must_use]
     pub const fn with_payload(self, payload: ResponsePayload) -> ReadyResponse<'a> {
         ReadyResponse { renderer: self, payload }
     }
@@ -168,7 +173,7 @@ impl<'a> ResponseRenderer<'a> {
     /// Where this response carries its `@context`.
     ///
     /// `application/ld+json` carries it in the body and `application/json`
-    /// cannot, so it goes in the `Link` header. GeoJSON is the exception: the
+    /// cannot, so it goes in the `Link` header. `GeoJSON` is the exception: the
     /// envelope can hold an `@context` member, and clause 4.5.16 lets the client
     /// ask for it not to with `Prefer: body=json`.
     const fn context_location(&self, geo_json_shape: Option<GeoJsonShape>) -> ContextLocation {
@@ -193,7 +198,7 @@ impl ReadyResponse<'_> {
     ///
     /// # Errors
     ///
-    /// Returns [`RenderError::Serialization`] when the GeoJSON envelope cannot
+    /// Returns [`RenderError::Serialization`] when the `GeoJSON` envelope cannot
     /// be turned into a JSON value.
     pub fn render(self) -> Result<RenderedOutput, RenderError> {
         let ReadyResponse { mut renderer, payload } = self;
@@ -231,16 +236,13 @@ impl ReadyResponse<'_> {
             ContextLocation::LinkHeader => None,
         };
 
-        value = match geo_json_shape {
-            Some(shape) => GeoJsonRenderer::new(value)
-                .with_context(context_value)
-                .with_geometry_property(renderer.geometry_property)
-                .with_shape(shape)
-                .render()?,
-            None => {
-                inject_context(&mut value, context_value);
-                value
-            }
+        value = if let Some(shape) = geo_json_shape { GeoJsonRenderer::new(value)
+        .with_context(context_value)
+        .with_geometry_property(renderer.geometry_property)
+        .with_shape(shape)
+        .render()? } else {
+            inject_context(&mut value, context_value);
+            value
         };
 
         Ok(RenderedOutput {

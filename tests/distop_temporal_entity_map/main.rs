@@ -157,7 +157,7 @@ async fn get_entity_map(client: &Client, id: &str, link: &str) -> (StatusCode, V
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Temporal EntityMap includes both local and forwarded entity IDs.
+/// Temporal `EntityMap` includes both local and forwarded entity IDs.
 #[tokio::test]
 #[serial]
 async fn distop_temporal_entity_map_includes_forwarded_ids() {
@@ -220,7 +220,7 @@ async fn distop_temporal_entity_map_includes_forwarded_ids() {
     mock.shutdown().await;
 }
 
-/// Temporal EntityMap with local=true only contains local IDs.
+/// Temporal `EntityMap` with local=true only contains local IDs.
 #[tokio::test]
 #[serial]
 async fn distop_temporal_entity_map_local_only_when_local_true() {
@@ -273,7 +273,7 @@ async fn distop_temporal_entity_map_local_only_when_local_true() {
     mock.shutdown().await;
 }
 
-/// Temporal EntityMap scopes subsequent query to map members.
+/// Temporal `EntityMap` scopes subsequent query to map members.
 #[tokio::test]
 #[serial]
 async fn distop_temporal_entity_map_scopes_subsequent_query() {
@@ -342,8 +342,8 @@ async fn distop_temporal_entity_map_scopes_subsequent_query() {
     mock.shutdown().await;
 }
 
-/// Temporal query with entityMap=true creates EntityMap and returns 201.
-/// Spec ref: 5.7.4.4 - entityMap=true creates new EntityMap, returns 201 Created.
+/// Temporal query with entityMap=true creates `EntityMap` and returns 201.
+/// Spec ref: 5.7.4.4 - entityMap=true creates new `EntityMap`, returns 201 Created.
 #[tokio::test]
 #[serial]
 async fn distop_temporal_entity_map_creates_map_returns_201() {
@@ -373,7 +373,7 @@ async fn distop_temporal_entity_map_creates_map_returns_201() {
 }
 
 /// NGSILD-EntityMap header is echoed in query response when using entity map.
-/// Spec ref: 5.7.4 - the EntityMap used in operation shall be returned in response header.
+/// Spec ref: 5.7.4 - the `EntityMap` used in operation shall be returned in response header.
 #[tokio::test]
 #[serial]
 async fn distop_temporal_entity_map_echoed_in_response() {
@@ -418,7 +418,7 @@ async fn distop_temporal_entity_map_echoed_in_response() {
     delete_entity_map(&c, &map_id).await;
 }
 
-/// Retrieve returns 404 when entity not in EntityMap.
+/// Retrieve returns 404 when entity not in `EntityMap`.
 /// Spec ref: 5.7.3.4 - entity not in map returns 404.
 #[tokio::test]
 #[serial]
@@ -456,7 +456,7 @@ async fn distop_temporal_entity_map_retrieve_not_in_map_returns_404() {
     delete_entity_map(&c, &map_id).await;
 }
 
-/// Retrieve succeeds and echoes EntityMap header when entity is in map.
+/// Retrieve succeeds and echoes `EntityMap` header when entity is in map.
 /// Spec ref: 5.7.3.4 - entity in map returns 200 with NGSILD-EntityMap echoed.
 #[tokio::test]
 #[serial]
@@ -496,7 +496,7 @@ async fn distop_temporal_entity_map_retrieve_in_map_succeeds() {
     delete_entity_map(&c, &map_id).await;
 }
 
-/// entityMapLifetime parameter sets EntityMap expiry.
+/// entityMapLifetime parameter sets `EntityMap` expiry.
 /// Spec ref: 5.5.14 - entityMapLifetime suggests an expiry duration.
 #[tokio::test]
 #[serial]
@@ -537,7 +537,7 @@ async fn distop_temporal_entity_map_with_lifetime_sets_expiry() {
     delete_entity_map(&c, &map_id).await;
 }
 
-/// Query scoped by EntityMap only returns entities in the map.
+/// Query scoped by `EntityMap` only returns entities in the map.
 /// Spec ref: 5.5.14 - requests with NGSILD-EntityMap header filtered to map members.
 #[tokio::test]
 #[serial]

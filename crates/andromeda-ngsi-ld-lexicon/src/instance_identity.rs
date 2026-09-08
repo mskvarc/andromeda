@@ -36,6 +36,7 @@ impl InstanceIdentity {
     ///
     /// The UUID is version 7, so minted identifiers sort by the instant they
     /// were minted and cluster in the index that carries them.
+    #[must_use]
     pub fn generate() -> InstanceIdentity {
         InstanceIdentity::Generated(Uuid::now_v7())
     }
@@ -49,6 +50,7 @@ impl InstanceIdentity {
     /// non-canonical UUID spelling, a URN carrying a resolution component, a
     /// trailing segment such as the write ordinal earlier releases appended —
     /// is kept verbatim instead of being silently rewritten.
+    #[must_use]
     pub fn from_uri(identifier: Uri, family: InstanceFamily) -> InstanceIdentity {
         match generated_uuid_of(&identifier, family) {
             Some(uuid) => InstanceIdentity::Generated(uuid),
@@ -61,6 +63,7 @@ impl InstanceIdentity {
     /// Rendering is total: a generated identifier is spelled out from its UUID
     /// rather than reparsed, so no stored value can make an instance
     /// unrenderable.
+    #[must_use]
     pub const fn rendered(&self, family: InstanceFamily) -> RenderedInstanceId<'_> {
         match self {
             InstanceIdentity::Generated(uuid) => RenderedInstanceId::Generated(family, *uuid),

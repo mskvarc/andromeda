@@ -50,12 +50,13 @@ pub struct MqttTransportHandle {
 
 impl MqttTransportHandle {
     /// Bind a handle to one endpoint on a pool.
+    #[must_use]
     pub const fn new(pool: Arc<MqttTransportPool>, config: MqttEndpointConfig) -> MqttTransportHandle {
         MqttTransportHandle { pool, config }
     }
 
-    /// The acknowledgement a publish at this endpoint's QoS is completed by, or
-    /// `None` for QoS 0, which is fire-and-forget and never acknowledged.
+    /// The acknowledgement a publish at this endpoint's `QoS` is completed by, or
+    /// `None` for `QoS` 0, which is fire-and-forget and never acknowledged.
     const fn completing_ack(&self) -> Option<AckKind> {
         match self.config.qos {
             MqttQoS::AtMost => None,

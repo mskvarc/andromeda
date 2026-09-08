@@ -12,6 +12,7 @@ use sea_query::{BinOper, Expr, ExprTrait, SimpleExpr};
 /// from the clause 4.9 spelling only at `==`, which SQL writes `=`, and `!=`,
 /// which is kept over the equivalent `<>` so a converted statement reads exactly
 /// as it did before.
+#[must_use]
 pub fn compare(lhs: SimpleExpr, op: CmpOp, rhs: SimpleExpr) -> SimpleExpr {
     let lhs = Expr::expr(lhs);
     match op {
@@ -25,6 +26,7 @@ pub fn compare(lhs: SimpleExpr, op: CmpOp, rhs: SimpleExpr) -> SimpleExpr {
 }
 
 /// Build a clause 4.9 pattern predicate between a target and a POSIX regex.
+#[must_use]
 pub fn pattern(lhs: SimpleExpr, polarity: PatternPolarity, rhs: SimpleExpr) -> SimpleExpr {
     match polarity {
         PatternPolarity::Match => lhs.posix_matches(rhs),

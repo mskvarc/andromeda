@@ -73,6 +73,7 @@ pub struct NgsiLdTime(NaiveTime);
 
 impl NgsiLdTime {
     /// The normalised time of day, in UTC.
+    #[must_use]
     pub const fn get(self) -> NaiveTime {
         self.0
     }

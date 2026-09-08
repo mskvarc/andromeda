@@ -20,6 +20,7 @@ impl CallbackPath {
     }
 
     /// Borrow the encoded path.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.value
     }

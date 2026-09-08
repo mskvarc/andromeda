@@ -53,6 +53,7 @@ impl UnnestColumn {
 /// form a type or scope discovery expands one column with, returned as a
 /// [`FunctionCall`] so it stands either in a `FROM` position (`unnest(types) AS
 /// t`) or, converted to an expression, in a projection (`unnest(types)`).
+#[must_use]
 pub fn unnest_of(array: SimpleExpr) -> FunctionCall {
     Func::cust(UnnestFunction).args([array])
 }

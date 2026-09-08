@@ -48,6 +48,7 @@ pub struct SnapshotStatusOutbox {
 
 impl SnapshotStatusOutbox {
     /// Construct an outbox over one tenant database.
+    #[must_use]
     pub fn new(pool: &PgPool) -> SnapshotStatusOutbox {
         SnapshotStatusOutbox { pool: pool.clone() }
     }

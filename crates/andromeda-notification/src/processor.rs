@@ -95,6 +95,7 @@ pub struct NotificationEvaluationOutcome {
 
 impl NotificationProcessor {
     /// Construct event evaluation from its focused capabilities.
+    #[must_use]
     pub fn new(deps: NotificationProcessorDeps) -> NotificationProcessor {
         NotificationProcessor {
             live_target: deps.live_target,
@@ -280,12 +281,9 @@ impl NotificationProcessor {
                         return Some(DeliveryResult::TerminalFailure);
                     }
 
-                    let notification_id = match format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() {
-                        Ok(u) => u,
-                        Err(_) => {
-                            error!("Failed to construct notification URN for {}", sub_id);
-                            return Some(DeliveryResult::TerminalFailure);
-                        }
+                    let notification_id = if let Ok(u) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() { u } else {
+                        error!("Failed to construct notification URN for {}", sub_id);
+                        return Some(DeliveryResult::TerminalFailure);
                     };
                     // clone: the builder takes the id by value and `sub_id` is still needed for delivery
                     let sub_uri = sub_id.clone();
@@ -315,7 +313,7 @@ impl NotificationProcessor {
                         receiver_info: compiled_sub.endpoint_receiver_info.as_deref(),
                         jsonld_context: compiled_sub.jsonld_context.as_ref(),
                         tenant: self.tenant.tenant_name(),
-                        snapshot: target.snapshot().map(|snapshot| snapshot.snapshot_id()),
+                        snapshot: target.snapshot().map(andromeda_context_space::snapshot_target::SnapshotTarget::snapshot_id),
                         subscription_id: &sub_id,
                     })
                     .assemble();

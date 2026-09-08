@@ -533,7 +533,7 @@ async fn spatial_georel_count_header_is_populated() {
     let mut ids = Vec::new();
     for i in 0..3 {
         let id = scope.id(&format!("Building:count_{i}"));
-        create(client, &building_point(&id, 13.388930 + (i as f64) * 0.001, 52.534473)).await;
+        create(client, &building_point(&id, 13.388930 + f64::from(i) * 0.001, 52.534473)).await;
         ids.push(id);
     }
 
@@ -560,7 +560,7 @@ async fn spatial_georel_limit_caps_result_set() {
     let mut ids = Vec::new();
     for i in 0..5 {
         let id = scope.id(&format!("Building:lim_{i}"));
-        create(client, &building_point(&id, 13.388930 + (i as f64) * 0.001, 52.534473)).await;
+        create(client, &building_point(&id, 13.388930 + f64::from(i) * 0.001, 52.534473)).await;
         ids.push(id);
     }
 
@@ -611,7 +611,7 @@ async fn spatial_georel_rapid_updates_are_reflected() {
     create(client, &building_point(&id, 0.5, 0.5)).await;
 
     for i in 0..5 {
-        let lon = 10.0 + (i as f64) * 0.1;
+        let lon = 10.0 + f64::from(i) * 0.1;
         patch_location_point(client, &id, lon, 10.0).await;
     }
 

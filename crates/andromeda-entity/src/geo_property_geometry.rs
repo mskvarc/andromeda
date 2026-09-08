@@ -1,7 +1,7 @@
-//! Checking that every GeoProperty a write carries is a geometry the broker can
+//! Checking that every `GeoProperty` a write carries is a geometry the broker can
 //! read back (ETSI GS CIM 009 v1.9.1 clause 5.5.4).
 //!
-//! Clause 4.7 makes a GeoProperty value a GeoJSON geometry per IETF RFC 7946,
+//! Clause 4.7 makes a `GeoProperty` value a `GeoJSON` geometry per IETF RFC 7946,
 //! and section 3.1.1 of that RFC gives a position exactly two ordinates
 //! (longitude, latitude) or three (longitude, latitude, altitude). It permits
 //! further elements but assigns them no meaning, and NGSI-LD assigns them none
@@ -10,18 +10,18 @@
 //! the boundary rather than to discover in the store — or, worse, to accept and
 //! then silently skip on every subsequent read.
 //!
-//! Every GeoProperty is checked, not only `location`, `observationSpace` and
-//! `operationSpace`: clause 4.7.1 lets any attribute be a GeoProperty, and one
+//! Every `GeoProperty` is checked, not only `location`, `observationSpace` and
+//! `operationSpace`: clause 4.7.1 lets any attribute be a `GeoProperty`, and one
 //! the broker cannot read is no more usable for being user-defined.
 //!
-//! A GeometryCollection is refused for a second, independent reason: clause
-//! 4.7.1 allows a GeoProperty value every geometry RFC 7946 defines *except*
-//! GeometryCollection, and clause 4.6.3 excludes it from reference geometries
+//! A `GeometryCollection` is refused for a second, independent reason: clause
+//! 4.7.1 allows a `GeoProperty` value every geometry RFC 7946 defines *except*
+//! `GeometryCollection`, and clause 4.6.3 excludes it from reference geometries
 //! too, so one is `BadRequestData` however well-formed it is.
 //!
 //! Mixed arity *within* one geometry is accepted and preserved verbatim. RFC
-//! 7946 nowhere requires a uniform arity, and a LineString whose first position
-//! is flat and whose second is elevated is a legal GeoJSON document.
+//! 7946 nowhere requires a uniform arity, and a `LineString` whose first position
+//! is flat and whose second is elevated is a legal `GeoJSON` document.
 
 use crate::error::EntityError;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
@@ -31,19 +31,19 @@ use andromeda_ngsi_ld_vocabulary::{expanded::properties as expanded_properties, 
 use serde_json::Value;
 use std::{fmt::Display, slice::from_ref};
 
-/// Reject an expanded write payload carrying a GeoProperty whose geometry has an
-/// unusable position, or whose geometry is a GeometryCollection.
+/// Reject an expanded write payload carrying a `GeoProperty` whose geometry has an
+/// unusable position, or whose geometry is a `GeometryCollection`.
 ///
 /// Accepts the shapes the rest of the write path passes around: one expanded
 /// entity object, or the array JSON-LD expansion produces. The payload may be a
-/// whole entity or a patch fragment — a GeoProperty is validated wherever it
+/// whole entity or a patch fragment — a `GeoProperty` is validated wherever it
 /// appears, so create, replace, update, partial-update, merge and every batch
 /// form are covered by the one reading.
 ///
 /// # Errors
 ///
 /// Returns [`EntityError::Validation`], which the HTTP layer renders as a 400
-/// `BadRequestData`, naming the GeoProperty and what makes its geometry
+/// `BadRequestData`, naming the `GeoProperty` and what makes its geometry
 /// unusable.
 pub(crate) fn validate_geo_property_geometries(expanded: &Value) -> Result<(), EntityError> {
     let entities = match expanded {
@@ -65,7 +65,7 @@ pub(crate) fn validate_geo_property_geometries(expanded: &Value) -> Result<(), E
     Ok(())
 }
 
-/// Validate every GeoProperty instance of one attribute.
+/// Validate every `GeoProperty` instance of one attribute.
 ///
 /// Clause 4.5.5 lets an attribute carry several instances, each keyed by
 /// `datasetId`; every one of them is a geometry a later read has to cope with,
@@ -90,7 +90,7 @@ fn validate_attribute(attribute_iri: &str, value: &Value) -> Result<(), EntityEr
     Ok(())
 }
 
-/// Whether an expanded attribute instance's `@type` names GeoProperty.
+/// Whether an expanded attribute instance's `@type` names `GeoProperty`.
 fn is_geo_property(types: Option<&Value>) -> bool {
     types
         .and_then(Value::as_array)
@@ -101,10 +101,10 @@ fn is_geo_property(types: Option<&Value>) -> bool {
         .any(|attribute_type| attribute_type == AttributeType::GeoProperty)
 }
 
-/// Validate one `hasValue` node of a GeoProperty, in either of the two forms
+/// Validate one `hasValue` node of a `GeoProperty`, in either of the two forms
 /// clause 4.7 permits it to arrive in.
 ///
-/// A literal `@value` is a whole GeoJSON document and is decoded outright, so
+/// A literal `@value` is a whole `GeoJSON` document and is decoded outright, so
 /// its geometry type and coordinates are checked against each other as well as
 /// its arities. The fully expanded node form has no such decoder, and its
 /// positions are checked in place.
@@ -123,10 +123,10 @@ fn validate_geo_node(attribute_iri: &str, node: &Value) -> Result<(), EntityErro
     }
 }
 
-/// Decode a literal GeoJSON document, reporting what makes it unusable.
+/// Decode a literal `GeoJSON` document, reporting what makes it unusable.
 ///
 /// Only documents shaped as a geometry object are decoded. Anything else is
-/// left alone: refusing a GeoProperty for not being GeoJSON is a separate
+/// left alone: refusing a `GeoProperty` for not being `GeoJSON` is a separate
 /// reading of clause 5.5.4 from refusing it for an ordinate count, and widening
 /// this one to cover it would change what unrelated payloads are answered.
 fn validate_geojson_document(attribute_iri: &str, document: &Value) -> Result<(), EntityError> {
@@ -141,9 +141,9 @@ fn validate_geojson_document(attribute_iri: &str, document: &Value) -> Result<()
         .map_err(|error| geo_property_error(attribute_iri, &error))
 }
 
-/// The clause 5.5.4 `BadRequestData` detail for one unusable GeoProperty.
+/// The clause 5.5.4 `BadRequestData` detail for one unusable `GeoProperty`.
 ///
-/// The GeoProperty is named by its compact term where the core context defines
+/// The `GeoProperty` is named by its compact term where the core context defines
 /// one, and by its expanded IRI otherwise: a user-defined term's compaction
 /// depends on the request's own `@context`, which validation does not hold, and
 /// an IRI the client can look up beats a guess it cannot.
@@ -163,7 +163,7 @@ mod tests {
     const GEO_PROPERTY: &str = "https://uri.etsi.org/ngsi-ld/GeoProperty";
     const HAS_VALUE: &str = "https://uri.etsi.org/ngsi-ld/hasValue";
 
-    /// One expanded entity carrying `iri` as a GeoProperty whose literal
+    /// One expanded entity carrying `iri` as a `GeoProperty` whose literal
     /// `@value` is `geojson`.
     fn entity_with_literal(iri: &str, geojson: Value) -> Value {
         json!([{
@@ -172,7 +172,7 @@ mod tests {
         }])
     }
 
-    /// One expanded entity carrying `location` as a GeoProperty in the fully
+    /// One expanded entity carrying `location` as a `GeoProperty` in the fully
     /// expanded node form, with the given coordinate member.
     fn entity_with_expanded_node(coordinates: Value) -> Value {
         json!([{

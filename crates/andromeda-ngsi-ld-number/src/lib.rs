@@ -75,22 +75,26 @@ impl JsonNumber {
     }
 
     /// Borrows the exact decimal for database bindings and arithmetic.
+    #[must_use]
     pub const fn decimal(&self) -> &BigDecimal {
         &self.0
     }
 
     /// Consumes this number and returns its exact decimal representation.
+    #[must_use]
     pub fn into_decimal(self) -> BigDecimal {
         self.0
     }
 
     /// Constructs the native `serde_json` number value used by exact JSON-LD
     /// expansion and response rendering.
+    #[must_use]
     pub fn to_json_value(&self) -> Value {
         Value::Number(self.to_serde_number())
     }
 
     /// Constructs the native `serde_json` number token for this exact value.
+    #[must_use]
     pub fn to_serde_number(&self) -> Number {
         Number::from_string_unchecked(self.to_string())
     }

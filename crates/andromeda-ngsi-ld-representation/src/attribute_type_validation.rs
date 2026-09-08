@@ -80,9 +80,9 @@ fn validate_instance(attribute: &str, instance: &Map<String, Value>) -> Result<(
     })
 }
 
-/// The RFC 7946 geometry tokens a bare GeoJSON geometry value declares as its
+/// The RFC 7946 geometry tokens a bare `GeoJSON` geometry value declares as its
 /// `type` (clause 4.5.2.3 geospatial exception): such an object is the value
-/// of a GeoProperty, not an attribute node, and is not a declaration to check.
+/// of a `GeoProperty`, not an attribute node, and is not a declaration to check.
 fn is_geojson_geometry_type(token: &str) -> bool {
     matches!(
         token,

@@ -53,6 +53,7 @@ pub enum NgsiLdErrorType {
 
 impl NgsiLdErrorType {
     /// The canonical ETSI type IRI for this category.
+    #[must_use]
     pub const fn type_iri(self) -> Iri<&'static str> {
         match self {
             NgsiLdErrorType::InvalidRequest => iri!("https://uri.etsi.org/ngsi-ld/errors/InvalidRequest"),
@@ -72,6 +73,7 @@ impl NgsiLdErrorType {
 
     /// The short title of this category, as the `title` member of a problem
     /// detail carries it.
+    #[must_use]
     pub fn title(self) -> &'static str {
         self.into()
     }
@@ -82,6 +84,7 @@ impl NgsiLdErrorType {
     /// hand-written inverse can drift from [`type_iri`](Self::type_iri), and a
     /// twelve-element scan costs nothing on a path that runs once per
     /// deserialised batch error.
+    #[must_use]
     pub fn from_type_iri(iri: &IriRefBuf) -> Option<NgsiLdErrorType> {
         NgsiLdErrorType::iter().find(|category| category.type_iri().as_str() == iri.as_str())
     }
@@ -93,6 +96,7 @@ impl NgsiLdErrorType {
     /// here — notably `LdContextNotAvailable`, which it assigns 504 rather than
     /// 503 because the broker is a gateway that failed to dereference an
     /// upstream `@context`, not a service that is itself unavailable.
+    #[must_use]
     pub const fn status_code(self) -> StatusCode {
         match self {
             NgsiLdErrorType::InvalidRequest | NgsiLdErrorType::BadRequestData => StatusCode::BAD_REQUEST,
@@ -129,7 +133,7 @@ mod tests {
     #[test]
     fn every_category_has_a_non_empty_title_that_is_its_rendering() {
         for category in NgsiLdErrorType::iter() {
-            assert!(!category.title().is_empty());
+            assert_ne!(category.title(), "");
             pretty_assertions::assert_eq!(category.to_string(), category.title());
         }
     }

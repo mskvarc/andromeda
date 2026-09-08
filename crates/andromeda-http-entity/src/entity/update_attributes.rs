@@ -95,7 +95,7 @@ pub(crate) async fn update_attrs(
     let proxied = collect_proxied_attrs(&forwarded);
     let mut local_fragment = fragment;
     strip_attributes_from_value(&mut local_fragment, &proxied);
-    let local = if local_fragment.as_object().is_some_and(|object| object.is_empty()) {
+    let local = if local_fragment.as_object().is_some_and(serde_json::Map::is_empty) {
         LocalOutcome::NothingRemained
     } else {
         LocalOutcome::processed(service.update_attrs(&target, &id, local_fragment, &context).await, classify_entity_error)

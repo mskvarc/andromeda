@@ -20,6 +20,7 @@ pub struct TemporalHistoryOutcome {
 
 impl TemporalHistoryOutcome {
     /// Consume the outcome and discard adapter provenance after overlay deduplication.
+    #[must_use]
     pub fn into_rows(self) -> Vec<TemporalHistoryRow> {
         self.observations.into_iter().map(|observation| observation.row).collect()
     }
@@ -48,7 +49,7 @@ pub enum RecordedValueKind {
     String,
     /// A JSON boolean.
     Boolean,
-    /// A GeoJSON geometry.
+    /// A `GeoJSON` geometry.
     Geometry,
     /// A JSON object or array.
     Object,

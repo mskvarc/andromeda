@@ -11,11 +11,13 @@ pub struct ShutdownPolicy {
 
 impl ShutdownPolicy {
     /// Construct a shutdown policy with the supplied grace period.
+    #[must_use]
     pub const fn new(grace_period: Duration) -> ShutdownPolicy {
         ShutdownPolicy { grace_period }
     }
 
     /// Return the cooperative grace period.
+    #[must_use]
     pub const fn grace_period(self) -> Duration {
         self.grace_period
     }

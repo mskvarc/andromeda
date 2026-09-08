@@ -79,7 +79,7 @@ pub(crate) async fn enforce_snapshot_quotas(pool: &PgPool, count_quota: Option<u
     Ok(evicted)
 }
 
-/// Execute one SeaQuery statement inside the quota transaction.
+/// Execute one `SeaQuery` statement inside the quota transaction.
 async fn execute(transaction: &mut Transaction<'_, Postgres>, statement: impl SqlxBinder) -> Result<u64, SnapshotError> {
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)

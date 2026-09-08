@@ -33,7 +33,7 @@ pub enum ResponseMediaType {
     Json,
     /// `application/ld+json` -- `@context` included in the body as a URL reference.
     JsonLd,
-    /// `application/geo+json` -- GeoJSON `FeatureCollection` format (clause 6.3.15).
+    /// `application/geo+json` -- `GeoJSON` `FeatureCollection` format (clause 6.3.15).
     GeoJson,
 }
 
@@ -50,6 +50,7 @@ impl ResponseMediaType {
     /// `application/json` is matched with no suffix on purpose:
     /// `application/merge-patch+json` and `application/json-patch+json` are
     /// request body types, not response types, and must not negotiate as JSON.
+    #[must_use]
     pub fn from_media_type(media_type: &MediaType<'_>) -> Option<ResponseMediaType> {
         if media_type.ty == names::_STAR && media_type.subty == names::_STAR {
             // A client that will take anything gets the clause 6.3.4 default.
@@ -73,6 +74,7 @@ impl ResponseMediaType {
     }
 
     /// The structured [`MediaType`] this response carries.
+    #[must_use]
     pub const fn media_type(&self) -> MediaType<'static> {
         match self {
             ResponseMediaType::Json => APPLICATION_JSON,
@@ -85,6 +87,7 @@ impl ResponseMediaType {
     ///
     /// Rendering [`media_type`](Self::media_type) would produce the same text at
     /// the cost of an allocation on every response.
+    #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
             ResponseMediaType::Json => "application/json",
@@ -94,6 +97,7 @@ impl ResponseMediaType {
     }
 
     /// Whether the `@context` belongs in the response body.
+    #[must_use]
     pub const fn include_context_in_body(&self) -> bool {
         matches!(self, ResponseMediaType::JsonLd)
     }
@@ -127,16 +131,16 @@ impl headers::Header for ResponseMediaType {
     }
 }
 
-/// Whether an endpoint may answer with GeoJSON.
+/// Whether an endpoint may answer with `GeoJSON`.
 ///
-/// Clause 6.3.15 defines the GeoJSON representation for entity resources only;
-/// the temporal, subscription and registration resources have no GeoJSON form,
+/// Clause 6.3.15 defines the `GeoJSON` representation for entity resources only;
+/// the temporal, subscription and registration resources have no `GeoJSON` form,
 /// so their endpoints answer `406` rather than negotiating one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeoJsonSupport {
     /// The endpoint supports `application/geo+json` responses.
     Allowed,
-    /// The endpoint does not support GeoJSON responses.
+    /// The endpoint does not support `GeoJSON` responses.
     Disallowed,
 }
 

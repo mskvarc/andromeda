@@ -17,11 +17,13 @@ pub struct TemporalIntentLeaseOwner(Uuid);
 
 impl TemporalIntentLeaseOwner {
     /// Mint one owner identifier for a constructed tenant drain.
+    #[must_use]
     pub fn mint() -> TemporalIntentLeaseOwner {
         TemporalIntentLeaseOwner(Uuid::new_v4())
     }
 
     /// Return the UUID persistence representation.
+    #[must_use]
     pub const fn as_uuid(self) -> Uuid {
         self.0
     }
@@ -33,11 +35,13 @@ pub struct TemporalIntentBatchSize(NonZeroU32);
 
 impl TemporalIntentBatchSize {
     /// Construct a non-zero bounded claim size.
+    #[must_use]
     pub const fn new(value: NonZeroU32) -> TemporalIntentBatchSize {
         TemporalIntentBatchSize(value)
     }
 
     /// Return the SQL-compatible claim limit.
+    #[must_use]
     pub const fn get(self) -> u32 {
         self.0.get()
     }

@@ -51,7 +51,7 @@ const EXACT_MICROSECOND: &str = "2026-03-04T05:06:07.123456Z";
 /// below Julian day zero, and above chrono's year ceiling of 262142.
 const OUT_OF_RANGE: &[&str] = &["-4714-01-01T00:00:00Z", "300000-01-01T00:00:00Z"];
 
-/// One entity whose Property declares `observedAt` and carries a DateTime value.
+/// One entity whose Property declares `observedAt` and carries a `DateTime` value.
 fn entity_with_instants(entity_id: &str, observed_at: &str, value: &str) -> Value {
     json!({
         "id": entity_id,
@@ -71,7 +71,7 @@ fn stored_instant(instant: Option<DateTime<Utc>>) -> String {
         .to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
 }
 
-/// Clause 4.6.3 caps an NGSI-LD DateTime at six fractional-second digits. A
+/// Clause 4.6.3 caps an NGSI-LD `DateTime` at six fractional-second digits. A
 /// finer value is refused rather than truncated: discarding digits the client
 /// wrote is a policy of the broker's own invention, and the clause's explicit
 /// ceiling exists precisely to remove that ambiguity. Nothing about the refused

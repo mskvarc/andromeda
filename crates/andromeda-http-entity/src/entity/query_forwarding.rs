@@ -70,7 +70,7 @@ pub(crate) struct QueryForwarding<'a> {
     pub(crate) context: &'a ContextSpec,
     /// The triggering request's `Via` chain and headers.
     pub(crate) triggering: TriggeringRequest<'a>,
-    /// The EntityMap the query runs under.
+    /// The `EntityMap` the query runs under.
     pub(crate) entity_map: EntityMapInUse<'a>,
 }
 

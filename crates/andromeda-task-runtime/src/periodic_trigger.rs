@@ -68,21 +68,25 @@ impl PeriodicSchedule {
     }
 
     /// Return the configured cadence.
+    #[must_use]
     pub const fn cadence(self) -> Duration {
         self.cadence
     }
 
     /// Return the first-execution policy.
+    #[must_use]
     pub const fn initial_execution(self) -> InitialExecution {
         self.initial_execution
     }
 
     /// Return the missed-tick policy.
+    #[must_use]
     pub const fn missed_tick_policy(self) -> MissedTickPolicy {
         self.missed_tick_policy
     }
 
     /// Return the optional maximum jitter.
+    #[must_use]
     pub const fn maximum_jitter(self) -> Option<Duration> {
         self.maximum_jitter
     }

@@ -11,6 +11,7 @@ use sea_query::{Expr, SimpleExpr};
 ///
 /// `collation` must be a validated collation identifier; it is written into the
 /// quoted identifier directly, never bound.
+#[must_use]
 pub fn collate(expr: SimpleExpr, collation: &str) -> SimpleExpr {
     Expr::cust_with_exprs(format!("$1 COLLATE \"{collation}\""), [expr])
 }

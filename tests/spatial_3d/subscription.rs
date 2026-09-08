@@ -172,7 +172,7 @@ async fn subscription_notification_keyvalues_format_keeps_altitude() {
 }
 
 /// NGSI-LD 4.10 read with 5.8.6: a subscription `geoQ` is evaluated with the
-/// same multi-instance rule a query is, so a GeoProperty whose only matching
+/// same multi-instance rule a query is, so a `GeoProperty` whose only matching
 /// geometry sits on a `datasetId`-tagged instance still notifies.
 ///
 /// The default instance is placed far from the reference, so a matcher reading

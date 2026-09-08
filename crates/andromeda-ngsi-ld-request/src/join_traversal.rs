@@ -28,6 +28,7 @@ pub enum RetrievingJoin {
 impl RetrievingJoin {
     /// The retrieving join the request asked for, or `None` when it asked for
     /// no join at all.
+    #[must_use]
     pub const fn from_mode(mode: Option<JoinMode>) -> Option<RetrievingJoin> {
         match mode {
             Some(JoinMode::Flat) => Some(RetrievingJoin::Flat),
@@ -37,6 +38,7 @@ impl RetrievingJoin {
     }
 
     /// The spec-level mode this join is.
+    #[must_use]
     pub const fn mode(self) -> JoinMode {
         match self {
             RetrievingJoin::Flat => JoinMode::Flat,
@@ -50,6 +52,7 @@ impl RetrievingJoin {
 /// Clause 4.5.23: `joinLevel` defaults to one hop when `join` is present
 /// without it, and `containedBy` names the entities the client already holds,
 /// which the traversal must not retrieve again.
+#[must_use]
 pub fn traversal_bounds(join_level: Option<NonZeroU32>, contained_by: Option<&[Uri]>) -> (NonZeroU32, HashSet<Uri>) {
     let held = contained_by.map(|ids| ids.iter().cloned().collect()).unwrap_or_default(); // clone: the guard owns the ids it excludes
     (traversal_depth(join_level), held)
@@ -62,6 +65,7 @@ pub fn traversal_bounds(join_level: Option<NonZeroU32>, contained_by: Option<&[U
 /// before any traversal exists, and must not pay for the `containedBy` set to
 /// get it -- nor restate the default and risk validating against a different
 /// depth than the traversal runs at.
+#[must_use]
 pub const fn traversal_depth(join_level: Option<NonZeroU32>) -> NonZeroU32 {
     match join_level {
         Some(level) => level,

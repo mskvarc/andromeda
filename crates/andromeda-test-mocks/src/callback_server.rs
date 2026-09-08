@@ -42,6 +42,7 @@ pub struct RequestMatcher {
 
 impl RequestMatcher {
     /// Match one HTTP method and absolute path.
+    #[must_use]
     pub const fn new(method: Method, path: CallbackPath) -> RequestMatcher {
         RequestMatcher { method, path }
     }
@@ -107,6 +108,7 @@ struct ResponseGateState {
 
 impl ResponseGate {
     /// Construct a closed response gate.
+    #[must_use]
     pub fn closed() -> ResponseGate {
         ResponseGate::default()
     }
@@ -223,11 +225,13 @@ impl CallbackServer {
     }
 
     /// Return the number of requests captured for an exact matcher.
+    #[must_use]
     pub fn request_count(&self, matcher: &RequestMatcher) -> usize {
         self.state.counts.get(matcher).map_or(0, |count| count.load(Ordering::Acquire))
     }
 
     /// Return the total number of requests captured by this server.
+    #[must_use]
     pub fn total_request_count(&self) -> usize {
         self.state.total_count.load(Ordering::Acquire)
     }
@@ -235,7 +239,7 @@ impl CallbackServer {
     /// Shut down the listener and report both signaling and server-task failures.
     pub async fn shutdown(mut self) -> Result<(), CallbackServerError> {
         if let Some(shutdown) = self.shutdown.take() {
-            shutdown.send(()).map_err(|_| CallbackServerError::ShutdownSignal)?;
+            shutdown.send(()).map_err(|()| CallbackServerError::ShutdownSignal)?;
         }
         if let Some(task) = self.task.take() {
             task.await.map_err(CallbackServerError::Join)?.map_err(CallbackServerError::Serve)?;

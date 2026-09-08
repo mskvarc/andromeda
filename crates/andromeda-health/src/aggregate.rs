@@ -15,6 +15,7 @@ pub struct Health {
 
 impl Health {
     /// Create a new [`HealthBuilder`] for registering indicators.
+    #[must_use]
     pub const fn builder() -> HealthBuilder {
         HealthBuilder { indicators: Vec::new() }
     }
@@ -60,6 +61,7 @@ impl HealthBuilder {
     }
 
     /// Build the [`Health`] instance.
+    #[must_use]
     pub fn build(self) -> Health {
         Health {
             indicators: Arc::new(self.indicators),

@@ -51,7 +51,7 @@ impl EntityMapStore for EntityMapRepository {
         Box::pin(async move { delete_live(self.pool(), identifier).await })
     }
 
-    fn delete_expired<'a>(&'a self, cutoff: DateTime<Utc>) -> EntityMapStoreFuture<'a, u64> {
+    fn delete_expired(&self, cutoff: DateTime<Utc>) -> EntityMapStoreFuture<'_, u64> {
         Box::pin(async move { delete_expired(self.pool(), cutoff).await })
     }
 }

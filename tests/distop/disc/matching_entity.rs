@@ -43,7 +43,7 @@ async fn matching_query_relevant_spec_uses_type_ids_idpattern_attrs() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A query spec matches a registration if any of its RegistrationInfo entries
+/// A query spec matches a registration if any of its `RegistrationInfo` entries
 /// matches (clause 5.12). Confirms REQ-DISC-99.
 #[tokio::test]
 async fn matching_spec_matches_csr_if_any_registrationinfo_matches() {
@@ -66,7 +66,7 @@ async fn matching_spec_matches_csr_if_any_registrationinfo_matches() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A RegistrationInfo matches only when both its entity part and its attribute
+/// A `RegistrationInfo` matches only when both its entity part and its attribute
 /// part match (clause 5.12). Confirms REQ-DISC-100.
 #[tokio::test]
 async fn matching_registrationinfo_requires_both_entity_and_attribute_parts() {
@@ -114,7 +114,7 @@ async fn matching_entity_requires_type_selector_and_id_condition() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Id sub-case: EntityInfo with neither id nor idPattern matches any queried id
+/// Id sub-case: `EntityInfo` with neither id nor idPattern matches any queried id
 /// (clause 5.12). Confirms REQ-DISC-102.
 #[tokio::test]
 async fn matching_id_subcase_entityinfo_without_id_or_idpattern_matches() {

@@ -84,7 +84,7 @@ pub(super) async fn inject_previous_values(
                 .ok()
                 .and_then(|iri| iri.as_str().parse::<AttributeName>().ok())
                 .is_some_and(|name| changed_attributes.contains(&name));
-            let compact_matches = key.parse::<AttributeName>().ok().is_some_and(|name| changed_attributes.contains(&name));
+            let compact_matches = key.parse::<AttributeName>().is_ok_and(|name| changed_attributes.contains(&name));
             if !expanded_matches && !compact_matches {
                 continue;
             }

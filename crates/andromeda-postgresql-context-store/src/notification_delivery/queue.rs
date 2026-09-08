@@ -30,6 +30,7 @@ pub struct NotificationDeliveryQueue {
 
 impl NotificationDeliveryQueue {
     /// Open the delivery queue held in the given tenant's database.
+    #[must_use]
     pub fn new(pool: &PgPool) -> NotificationDeliveryQueue {
         NotificationDeliveryQueue { pool: pool.clone() } // clone: Arc ref-count bump (PgPool is Arc-based)
     }

@@ -50,16 +50,19 @@ impl TaskFailure {
     }
 
     /// Return the runtime failure class.
+    #[must_use]
     pub const fn class(&self) -> FailureClass {
         self.class
     }
 
     /// Return the human-readable summary.
+    #[must_use]
     pub fn summary(&self) -> &str {
         &self.summary
     }
 
     /// Share the failure summary with lifecycle and health observers.
+    #[must_use]
     pub fn shared_summary(&self) -> Arc<str> {
         Arc::clone(&self.summary) // clone: health and lifecycle events retain the same immutable summary.
     }

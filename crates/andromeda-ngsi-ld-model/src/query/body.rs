@@ -82,10 +82,10 @@ pub struct Query {
         serialize_with = "attribute_name_csv::serialize"
     )]
     pub expand_values: Option<Vec<AttributeName>>,
-    /// Whether an EntityMap location is returned.
+    /// Whether an `EntityMap` location is returned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity_map: Option<bool>,
-    /// Requested lifetime of a generated EntityMap.
+    /// Requested lifetime of a generated `EntityMap`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity_map_lifetime: Option<Iso8601Duration>,
     /// Attribute names whose nested values are treated as uninterpreted JSON.

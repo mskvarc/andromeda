@@ -85,7 +85,7 @@ fn payload_entity_type(payload: &Value) -> Option<EntityTypeName> {
 }
 
 /// The local outcome of a temporal write on an entity registrations also
-/// hold: clauses 5.6.12.4 to 5.6.16.4 raise ResourceNotFound only when the
+/// hold: clauses 5.6.12.4 to 5.6.16.4 raise `ResourceNotFound` only when the
 /// entity is held neither locally nor by a matching registration, so a local
 /// not-found beside a matching registration is nothing left to do here.
 fn local_temporal_outcome<T>(result: Result<T, TemporalError>, forwarded: &[ForwardedWriteResult]) -> LocalOutcome {

@@ -86,7 +86,7 @@ async fn fed_batch_provision_routes_entities_to_three_domains() {
     let domains = [(FedRole::Madrid, "MAD"), (FedRole::Berlin, "BER"), (FedRole::Nordic, "NOR")];
     for (role, prefix) in domains {
         let domain = broker(&topology, role);
-        let pattern = format!(".*:{}-.*", prefix);
+        let pattern = format!(".*:{prefix}-.*");
         let csr = json!({"id": topology.id(&format!("registration:batch:{prefix}")), "type": "ContextSourceRegistration", "endpoint": domain.peer_url(), "information": [{"entities": [{"type": "Building", "idPattern": pattern}]}], "mode": "redirect", "operations": ["redirectionOps", "createBatch", "updateBatch", "deleteBatch"], "@context": COMPOUND_CONTEXT.as_str()});
         assert_status(&hub.client().create_registration(&csr).await.expect("batch registration"), 201);
     }
@@ -98,7 +98,7 @@ async fn fed_batch_provision_routes_entities_to_three_domains() {
     assert!(created.status.as_u16() < 500, "batch create must not be a server failure: {}", created.status);
     for (role, prefix) in domains {
         let domain = broker(&topology, role);
-        let query = format!("type=Building&idPattern=.*%3A{}-.*", prefix);
+        let query = format!("type=Building&idPattern=.*%3A{prefix}-.*");
         let response = domain
             .client()
             .query_entities(&query, "application/ld+json", None)

@@ -14,6 +14,7 @@ pub enum ProvisionResource {
 
 impl ProvisionResource {
     /// The path segments of the resource below the API base.
+    #[must_use]
     pub const fn segments(self) -> &'static [&'static str] {
         match self {
             ProvisionResource::Entities => &["entities"],

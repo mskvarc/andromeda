@@ -117,7 +117,7 @@ async fn fed_temporal_fragments_merge_and_apply_last_n() {
     assert_status(&response, 200);
     let response_body = body(&response);
     let entity = response_body.as_array().and_then(|items| items.first()).expect("merged temporal entity");
-    assert_eq!(entity["speed"].as_array().map(Vec::len), Some(1), "merged temporal response: {}", response_body);
+    assert_eq!(entity["speed"].as_array().map(Vec::len), Some(1), "merged temporal response: {response_body}");
     topology.finish().await.expect("topology cleanup");
 }
 

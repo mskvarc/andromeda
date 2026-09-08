@@ -14,7 +14,7 @@ pub enum LastNOrigin {
     /// reduced it. Triggers truncation detection (206 Partial Content) but uses
     /// user-specified direction for Content-Range.
     UserSpecifiedCapped,
-    /// No user `lastN` was specified; the system applied DEFAULT_LAST_N as a cap.
+    /// No user `lastN` was specified; the system applied `DEFAULT_LAST_N` as a cap.
     /// Triggers truncation detection (206 Partial Content) with system direction
     /// for Content-Range.
     SystemCapped,
@@ -26,12 +26,14 @@ pub enum LastNOrigin {
 impl LastNOrigin {
     /// Returns true when the system cap is active and truncation may occur.
     /// This is the case for both `SystemCapped` and `UserSpecifiedCapped`.
+    #[must_use]
     pub const fn is_system_capped(self) -> bool {
         matches!(self, LastNOrigin::SystemCapped | LastNOrigin::UserSpecifiedCapped)
     }
 
     /// Returns true when the user explicitly provided a `lastN` parameter,
     /// regardless of whether it was further capped by the system.
+    #[must_use]
     pub const fn is_user_specified(self) -> bool {
         matches!(self, LastNOrigin::UserSpecified | LastNOrigin::UserSpecifiedCapped)
     }

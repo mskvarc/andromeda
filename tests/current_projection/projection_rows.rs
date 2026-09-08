@@ -19,7 +19,7 @@ pub struct ProjectionRow {
     pub attribute_name: String,
     /// `datasetId` of the instance, absent for the default instance.
     pub dataset_id: Option<String>,
-    /// Migration-owned attribute-kind code (1 Property … 8 ListRelationship).
+    /// Migration-owned attribute-kind code (1 Property … 8 `ListRelationship`).
     pub attribute_kind: i16,
     /// Migration-owned value-kind code (1 Number … 7 Uri).
     pub value_kind: i16,

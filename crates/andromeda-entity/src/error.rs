@@ -135,6 +135,7 @@ impl EntityError {
     }
 
     /// Construct a missing-entity failure.
+    #[must_use]
     pub fn not_found(identifier: &Uri) -> EntityError {
         EntityError::NotFound {
             identifier: identifier.clone(), // clone: the error owns the borrowed request identifier.
@@ -142,6 +143,7 @@ impl EntityError {
     }
 
     /// Construct a missing-entity-type failure.
+    #[must_use]
     pub fn type_not_found(name: &EntityTypeName) -> EntityError {
         EntityError::TypeNotFound {
             name: name.clone(), // clone: the error owns the borrowed request type.
@@ -149,6 +151,7 @@ impl EntityError {
     }
 
     /// Construct a missing-attribute failure.
+    #[must_use]
     pub fn attribute_not_found(name: &AttributeName) -> EntityError {
         EntityError::AttributeNotFound {
             name: name.clone(), // clone: the error owns the borrowed request attribute.
@@ -161,6 +164,7 @@ impl EntityError {
     }
 
     /// Construct an identifier-conflict failure.
+    #[must_use]
     pub fn already_exists(identifier: &Uri) -> EntityError {
         EntityError::AlreadyExists {
             identifier: identifier.clone(), // clone: the error owns the borrowed request identifier.
@@ -168,6 +172,7 @@ impl EntityError {
     }
 
     /// Construct a write-contention failure over the attempts it consumed.
+    #[must_use]
     pub fn contention(identifier: &Uri, attempts: u32) -> EntityError {
         EntityError::Contention {
             identifier: identifier.clone(), // clone: the error owns the borrowed request identifier.

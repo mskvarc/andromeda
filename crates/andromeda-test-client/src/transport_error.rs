@@ -36,6 +36,7 @@ pub struct TransportError {
 
 impl TransportError {
     /// Attach method and URL context to a reqwest failure.
+    #[must_use]
     pub const fn new(method: Method, url: Url, source: reqwest::Error) -> TransportError {
         TransportError { method, url, source }
     }

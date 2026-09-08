@@ -54,6 +54,7 @@ pub struct LiftedComparison {
 ///
 /// Numbers bind directly as `NUMERIC`; booleans and `DateTime` values bind as
 /// text and are cast in the statement.
+#[must_use]
 pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr) -> LiftedComparison {
     match scalar {
         Scalar::Number(number) => LiftedComparison {
@@ -105,6 +106,7 @@ pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr) -> LiftedCompar
 /// — rather than one `@value` holding a raw JSON object. Selecting `@value`
 /// first and then indexing into it addressed a member of a node that does not
 /// exist, so every compound-value predicate resolved nothing.
+#[must_use]
 pub fn attribute_value_jsonpath(attr_iri: &str, sub_attrs: &[&str], value_path: &[&str], terminal_iri: &str) -> String {
     let mut jsonpath = format!("$[0].\"{}\"", escape_jsonpath_key(attr_iri));
     for sub in sub_attrs {

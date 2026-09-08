@@ -9,6 +9,7 @@ use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_tenancy::error::TenancyError;
 
 /// Classify tenant resolution independently of any policy route binding.
+#[must_use]
 pub fn classify_tenancy_error(error: &TenancyError) -> ClassifiedReport {
     match error {
         TenancyError::MultiTenancyDisabled => ClassifiedReport::public(NgsiLdErrorType::NoMultiTenantSupport, error.to_string()),
@@ -20,6 +21,7 @@ pub fn classify_tenancy_error(error: &TenancyError) -> ClassifiedReport {
 }
 
 /// Classify malformed request-origin headers at the shared extraction boundary.
+#[must_use]
 pub fn classify_request_origin_error(error: &RequestOriginError) -> ClassifiedReport {
     match error {
         RequestOriginError::InvalidText { .. } | RequestOriginError::InvalidOrigin { .. } => {
@@ -29,6 +31,7 @@ pub fn classify_request_origin_error(error: &RequestOriginError) -> ClassifiedRe
 }
 
 /// Classify a parameter-model failure using its typed syntax-versus-value distinction.
+#[must_use]
 pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
     match error {
         ParameterError::Query(source) => classify_query_error(source),
@@ -71,6 +74,7 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
 }
 
 /// Classify a typed NGSI-LD query-language failure.
+#[must_use]
 pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
     match error {
         QueryError::QEmpty
@@ -113,6 +117,7 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
 }
 
 /// Classify JSON-LD context availability separately from malformed input.
+#[must_use]
 pub fn classify_jsonld_error(error: &JsonLdError) -> ClassifiedReport {
     match error {
         JsonLdError::ContextFetchDisabled { .. } | JsonLdError::ContextLoad { .. } | JsonLdError::ContextHttp { .. } | JsonLdError::ContextTooLarge { .. } => {

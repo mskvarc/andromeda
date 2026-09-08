@@ -86,7 +86,7 @@ pub fn build_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &
         select.expr_as(count_over_all(), Alias::new(TOTAL_COUNT_COLUMN));
     }
 
-    select.limit(query.pagination.limit as u64).offset(query.pagination.offset as u64);
+    select.limit(u64::from(query.pagination.limit)).offset(u64::from(query.pagination.offset));
 
     add_order_clause(
         &mut select,
@@ -143,7 +143,7 @@ pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, name
         &names.attributes,
     )?;
 
-    select.limit(query.pagination.limit as u64).offset(query.pagination.offset as u64);
+    select.limit(u64::from(query.pagination.limit)).offset(u64::from(query.pagination.offset));
 
     Ok(select.take())
 }
@@ -199,7 +199,7 @@ fn build_entity_conditions(target: &ContextTarget, query: &CompiledEntityQuery, 
     Ok(condition)
 }
 
-/// Render one selector's identifier, pattern and type predicates, ANDed.
+/// Render one selector's identifier, pattern and type predicates, `ANDed`.
 ///
 /// The three axes of a single [`EntitySelector`] hold together (clause 5.2.33):
 /// `{id:A,type:T}` selects entity `A` *and only if* it is a `T`. A selector
@@ -372,7 +372,7 @@ mod tests {
         }
     }
 
-    /// A GeoJSON point reference geometry, for tests that vary the relation
+    /// A `GeoJSON` point reference geometry, for tests that vary the relation
     /// rather than the geometry.
     fn point(coordinates: serde_json::Value) -> Geometry {
         Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": coordinates })).expect("point parses")
@@ -869,7 +869,7 @@ mod tests {
                 .bind_values
                 .iter()
                 .filter_map(|value| match value {
-                    Value::Bytes(Some(bytes)) => Some(bytes.to_vec()), // the assertion outlives the borrow of the built query
+                    Value::Bytes(Some(bytes)) => Some(bytes.clone()), // the assertion outlives the borrow of the built query
                     _non_geometry @ (Value::Bool(_)
                     | Value::TinyInt(_)
                     | Value::SmallInt(_)
@@ -963,7 +963,7 @@ mod tests {
         }
     }
 
-    /// Clause 4.10: `geoproperty` selects any GeoProperty of the entity. A
+    /// Clause 4.10: `geoproperty` selects any `GeoProperty` of the entity. A
     /// named one is held in `current_attribute_values`, so the whole statement —
     /// not just the fragment — has to reach it there.
     #[test]
@@ -989,8 +989,8 @@ mod tests {
         assert!(built.sql.contains("ST_GeomFromEWKB"), "reference side must still bind EWKB");
     }
 
-    /// Clause 4.10: an Entity that does not convey the target GeoProperty is
-    /// non-matching, so an unrecorded GeoProperty yields an empty result rather
+    /// Clause 4.10: an Entity that does not convey the target `GeoProperty` is
+    /// non-matching, so an unrecorded `GeoProperty` yields an empty result rather
     /// than an error.
     #[test]
     fn an_unrecorded_geoproperty_filters_everything_out_without_failing() {
@@ -1024,7 +1024,7 @@ mod tests {
         sql.matches('\'').count()
     }
 
-    /// A geo-query names its target GeoProperty by IRI, but the statement
+    /// A geo-query names its target `GeoProperty` by IRI, but the statement
     /// reaches it by dictionary key, so no part of the IRI is interpolated and
     /// an apostrophe in one cannot terminate a literal.
     #[test]
@@ -1066,7 +1066,7 @@ mod tests {
         assert_eq!(apostrophe_count(&built.sql) % 2, 0, "unbalanced SQL literal: {}", built.sql);
     }
 
-    /// A distance ordering reaches its GeoProperty by dictionary key too, so
+    /// A distance ordering reaches its `GeoProperty` by dictionary key too, so
     /// the same IRI that is interpolated into a value ordering's jsonpath is
     /// absent from a distance ordering's statement text.
     #[test]

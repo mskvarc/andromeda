@@ -1,4 +1,4 @@
-//! A single GeoJSON position.
+//! A single `GeoJSON` position.
 //!
 //! IETF RFC 7946 section 3.1.1 defines a position as an array of numbers whose
 //! first two elements are longitude and latitude, with an optional third
@@ -12,7 +12,7 @@ use crate::dimension::GeometryDimension;
 use geojson::Position as GeoJsonPosition;
 use thiserror::Error;
 
-/// Failures decoding a GeoJSON position array.
+/// Failures decoding a `GeoJSON` position array.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum PositionError {
     /// Fewer than the two ordinates RFC 7946 section 3.1.1 requires
@@ -50,9 +50,9 @@ pub enum PositionError {
 /// meaningful.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Position {
-    /// Easting in decimal degrees, the first ordinate of the GeoJSON array.
+    /// Easting in decimal degrees, the first ordinate of the `GeoJSON` array.
     longitude: f64,
-    /// Northing in decimal degrees, the second ordinate of the GeoJSON array.
+    /// Northing in decimal degrees, the second ordinate of the `GeoJSON` array.
     latitude: f64,
     /// Height in metres above the WGS84 ellipsoid, the optional third ordinate.
     altitude: Option<f64>,
@@ -60,27 +60,32 @@ pub struct Position {
 
 impl Position {
     /// Build a position from its ordinates.
+    #[must_use]
     pub const fn new(longitude: f64, latitude: f64, altitude: Option<f64>) -> Position {
         Position { longitude, latitude, altitude }
     }
 
     /// Easting in decimal degrees.
+    #[must_use]
     pub const fn longitude(&self) -> f64 {
         self.longitude
     }
 
     /// Northing in decimal degrees.
+    #[must_use]
     pub const fn latitude(&self) -> f64 {
         self.latitude
     }
 
     /// Height in metres above the WGS84 ellipsoid, or `None` for a position
     /// that was received without a third ordinate.
+    #[must_use]
     pub const fn altitude(&self) -> Option<f64> {
         self.altitude
     }
 
     /// Whether this position carries an altitude.
+    #[must_use]
     pub const fn dimension(&self) -> GeometryDimension {
         match self.altitude {
             Some(_) => GeometryDimension::ThreeD,
@@ -88,11 +93,12 @@ impl Position {
         }
     }
 
-    /// Render as a GeoJSON position array.
+    /// Render as a `GeoJSON` position array.
     ///
     /// The arity received is the arity produced: a position decoded from two
     /// ordinates renders back to two, one decoded from three renders back to
     /// three.
+    #[must_use]
     pub fn to_geojson(&self) -> GeoJsonPosition {
         match self.altitude {
             Some(altitude) => GeoJsonPosition::from([self.longitude, self.latitude, altitude]),

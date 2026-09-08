@@ -172,6 +172,7 @@ impl EntityService {
     }
 
     /// Select inline or durable queued side effects for one batch.
+    #[must_use]
     pub const fn effective_side_effect_mode(&self, preference: AsyncPreference, batch_size: usize) -> BatchSideEffectMode {
         resolve_side_effect_mode(self.batch_execution.async_side_effect_threshold, preference, batch_size)
     }

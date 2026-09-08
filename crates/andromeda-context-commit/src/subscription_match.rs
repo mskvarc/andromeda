@@ -48,6 +48,6 @@ mod tests {
             .build();
         assert!(entry.entity_snapshot.is_none());
         assert!(entry.previous_snapshot.is_none());
-        assert!(entry.changed_attrs.is_empty());
+        assert_eq!(entry.changed_attrs, [] as [andromeda_ngsi_ld_lexicon::attribute_name::AttributeName; 0]);
     }
 }

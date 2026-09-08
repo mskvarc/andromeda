@@ -20,6 +20,7 @@ pub struct EntityFixture {
 
 impl EntityFixture {
     /// Render the fixture as an NGSI-LD JSON object.
+    #[must_use]
     pub fn into_value(self) -> Value {
         let mut object = self.attributes;
         object.insert("id".to_owned(), Value::String(self.id.to_string()));

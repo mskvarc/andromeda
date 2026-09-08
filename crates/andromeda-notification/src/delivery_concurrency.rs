@@ -56,6 +56,7 @@ impl DeliveryConcurrency {
     }
 
     /// The bound as the number of deliveries kept in flight.
+    #[must_use]
     pub const fn get(self) -> usize {
         self.0.get()
     }

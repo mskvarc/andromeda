@@ -28,16 +28,19 @@ impl MockServerConfig {
     }
 
     /// Construct callback server addressing from validated values.
+    #[must_use]
     pub const fn new(bind_address: SocketAddr, visible_host: Host<String>) -> MockServerConfig {
         MockServerConfig { bind_address, visible_host }
     }
 
     /// Socket address on which the test process listens.
+    #[must_use]
     pub const fn bind_address(&self) -> SocketAddr {
         self.bind_address
     }
 
     /// Host the broker uses to reach the test process.
+    #[must_use]
     pub const fn visible_host(&self) -> &Host<String> {
         &self.visible_host
     }

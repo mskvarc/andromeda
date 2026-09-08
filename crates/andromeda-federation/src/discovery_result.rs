@@ -8,6 +8,7 @@ use serde_json::Value;
 use std::collections::HashSet;
 
 /// Collect protocol warnings from all forwarded discovery outcomes in encounter order.
+#[must_use]
 pub fn collect_discovery_warnings(results: &[ForwardedDiscoveryResult]) -> Vec<NgsiLdWarning> {
     results.iter().flat_map(|r| r.warnings.iter().cloned()).collect()
 }
@@ -17,6 +18,7 @@ pub fn collect_discovery_warnings(results: &[ForwardedDiscoveryResult]) -> Vec<N
 /// For simple types list (`typeList`): union of type IRIs, deduplicated.
 /// For detailed types (`details=true`): merge by type name, union attribute names per type.
 /// For type info (single type): merge attribute details from all sources.
+#[must_use]
 pub fn merge_types_results(local: Value, remote: Vec<ForwardedDiscoveryResult>, details: bool) -> Value {
     let bodies: Vec<&Value> = remote.iter().filter_map(|r| r.body.as_ref()).collect();
     if bodies.is_empty() {
@@ -118,6 +120,7 @@ fn merge_type_attribute_names(local: &mut Value, remote: &Value) {
 /// Merge type info result (single type) with forwarded discovery results.
 ///
 /// Merges attribute details from all sources, unioning attribute names.
+#[must_use]
 pub fn merge_type_info_results(local: Value, remote: Vec<ForwardedDiscoveryResult>) -> Value {
     let bodies: Vec<&Value> = remote.iter().filter_map(|r| r.body.as_ref()).collect();
     if bodies.is_empty() {
@@ -135,6 +138,7 @@ pub fn merge_type_info_results(local: Value, remote: Vec<ForwardedDiscoveryResul
 ///
 /// For simple attribute list (`attributeList`): union of attribute IRIs, deduplicated.
 /// For detailed attributes (`details=true`): merge by attribute name, union type names per attribute.
+#[must_use]
 pub fn merge_attributes_results(local: Value, remote: Vec<ForwardedDiscoveryResult>, details: bool) -> Value {
     let bodies: Vec<&Value> = remote.iter().filter_map(|r| r.body.as_ref()).collect();
     if bodies.is_empty() {
@@ -233,6 +237,7 @@ fn merge_attribute_type_names(local: &mut Value, remote: &Value) {
 /// Merge attribute info result (single attribute) with forwarded discovery results.
 ///
 /// Merges type name lists from all sources.
+#[must_use]
 pub fn merge_attribute_info_results(local: Value, remote: Vec<ForwardedDiscoveryResult>) -> Value {
     let bodies: Vec<&Value> = remote.iter().filter_map(|r| r.body.as_ref()).collect();
     if bodies.is_empty() {

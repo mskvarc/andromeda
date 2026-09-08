@@ -181,18 +181,15 @@ fn push_dataset_list(buffer: &mut String, value: Option<&[DatasetSelector]>) {
 
 /// Append a parsed geo-query without retaining URL component strings.
 fn push_geo_query(buffer: &mut String, value: Option<&GeoQueryInput>) {
-    match value {
-        Some(value) => {
-            push_field(buffer, Some(&value.georel.to_string()));
-            let geometry = value.geometry.to_geojson().to_string();
-            push_field(buffer, Some(&geometry));
-            push_field(buffer, value.geoproperty.as_ref().map(AsRef::<str>::as_ref));
-        }
-        None => {
-            push_field(buffer, None);
-            push_field(buffer, None);
-            push_field(buffer, None);
-        }
+    if let Some(value) = value {
+        push_field(buffer, Some(&value.georel.to_string()));
+        let geometry = value.geometry.to_geojson().to_string();
+        push_field(buffer, Some(&geometry));
+        push_field(buffer, value.geoproperty.as_ref().map(AsRef::<str>::as_ref));
+    } else {
+        push_field(buffer, None);
+        push_field(buffer, None);
+        push_field(buffer, None);
     }
 }
 
@@ -256,11 +253,13 @@ pub struct CompiledQueryCache {
 
 impl CompiledQueryCache {
     /// Create a cache with the default capacity and TTL.
+    #[must_use]
     pub fn new() -> CompiledQueryCache {
         CompiledQueryCache::with_capacity_and_ttl(DEFAULT_CAPACITY, DEFAULT_TTL)
     }
 
     /// Create a cache with explicit capacity and idle time-to-live.
+    #[must_use]
     pub fn with_capacity_and_ttl(capacity: u64, ttl: Duration) -> CompiledQueryCache {
         let inner = Cache::builder().max_capacity(capacity).time_to_idle(ttl).build();
         CompiledQueryCache { inner }

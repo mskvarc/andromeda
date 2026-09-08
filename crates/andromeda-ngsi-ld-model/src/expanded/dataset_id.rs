@@ -5,6 +5,7 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde_json::Value;
 
 /// Extract the `datasetId` (`@id` value) from an expanded attribute instance.
+#[must_use]
 pub fn get_instance_dataset_id(instance: &Value) -> Option<Uri> {
     instance
         .get(properties::DATASET_ID.as_str())
@@ -20,6 +21,7 @@ pub fn get_instance_dataset_id(instance: &Value) -> Option<Uri> {
 ///
 /// Presence-only sibling of [`get_instance_dataset_id`]: default-instance selection (clause 4.5.16.1) only needs to know
 /// which instance lacks a `datasetId`, not what the others' identifiers are.
+#[must_use]
 pub fn instance_has_dataset_id(instance: &Value) -> bool {
     instance
         .get(properties::DATASET_ID.as_str())

@@ -35,6 +35,7 @@ use sea_query::{Alias, Asterisk, Condition, Expr, ExprTrait, JoinType, Order, Qu
 /// The entity id is bound here rather than by the caller, so the statement owns
 /// its whole placeholder sequence and no two functions have to agree on where
 /// it starts.
+#[must_use]
 pub fn build_temporal_history_query(context_space_key: ContextSpaceKey, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> SelectStatement {
     let condition = stage2_conditions(context_space_key, entity_id, compiled);
     match compiled.representation.format {
@@ -72,7 +73,7 @@ fn stage2_conditions(context_space_key: ContextSpaceKey, entity_id: &Uri, compil
     }
 
     if !compiled.instances.attr_filter.is_empty() {
-        let names = compiled.instances.attr_filter.iter().map(|iri| iri.as_str());
+        let names = compiled.instances.attr_filter.iter().map(iri_rs::Iri::as_str);
         condition = condition.add(Expr::col((An, AttributeNames::Name)).is_in(names));
     }
 
@@ -190,7 +191,7 @@ fn build_history_query(compiled: &CompiledTemporalQuery, condition: Condition) -
         outer
             .expr(Expr::col((ranked_alias.clone(), Asterisk)))
             .from_subquery(ranked.take(), ranked_alias.clone())
-            .and_where(Expr::col((ranked_alias.clone(), Alias::new("rn"))).lte(last_n as i64))
+            .and_where(Expr::col((ranked_alias.clone(), Alias::new("rn"))).lte(i64::from(last_n)))
             .order_by((ranked_alias.clone(), Alias::new("attribute_name")), Order::Asc)
             .order_by((ranked_alias.clone(), axis), Order::Asc)
             .order_by((ranked_alias.clone(), AttributeHistory::RecordedAt), Order::Asc)
@@ -365,7 +366,7 @@ mod tests {
         };
         let sql = sql_of(&compiled);
         assert!(sql.contains(">="), "{sql}");
-        assert!(sql.contains("<"), "{sql}");
+        assert!(sql.contains('<'), "{sql}");
     }
 
     /// Clause 4.11 defaults the selector to `observedAt`; each axis is filtered

@@ -1,4 +1,4 @@
-//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-FileCopyrightText: 2014-2025 Sean `McArthur`
 //! SPDX-License-Identifier: MIT
 //!
 //! Typed `Prefer` request header for NGSI-LD (RFC 7240, clause 6.3.6).
@@ -8,7 +8,7 @@
 //! This file, including local modifications, is distributed under the MIT License.
 //!
 //! Parses the `Prefer` request header to extract NGSI-LD-specific preferences:
-//! - `body=json` / `body=ld+json` for GeoJSON @context placement
+//! - `body=json` / `body=ld+json` for `GeoJSON` @context placement
 //! - `ngsi-ld=<version>` for version conformance negotiation (clause 4.3.6.8)
 //! - `respond-async` / `respond-sync` for asynchronous vs synchronous processing
 //!
@@ -25,8 +25,8 @@
 //! ```
 //!
 //! # NGSI-LD preference tokens
-//! * `body=json` -- @context in Link header, omitted from GeoJSON body
-//! * `body=ld+json` -- @context included in GeoJSON response body
+//! * `body=json` -- @context in Link header, omitted from `GeoJSON` body
+//! * `body=ld+json` -- @context included in `GeoJSON` response body
 //! * `ngsi-ld=1.9` -- request version conformance (clause 4.3.6.8)
 //! * `respond-async` / `respond-sync` -- asynchronous vs synchronous processing
 
@@ -49,11 +49,13 @@ impl Prefer {
     /// A `Prefer: ngsi-ld=<version>` asking the receiver for a payload that
     /// conforms to `version` (clause 4.3.6.8), which is what a broker sends on
     /// every forwarded context consumption request.
+    #[must_use]
     pub fn version(version: SpecVersion) -> Prefer {
         Prefer(vec![Preference::Version(version)])
     }
 
-    /// Return the GeoJSON body preference, defaulting to `LdJson` if absent.
+    /// Return the `GeoJSON` body preference, defaulting to `LdJson` if absent.
+    #[must_use]
     pub fn geo_json_body(&self) -> GeoJsonBodyPreference {
         self.0
             .iter()
@@ -65,6 +67,7 @@ impl Prefer {
     }
 
     /// Return the requested NGSI-LD version, if present.
+    #[must_use]
     pub fn requested_version(&self) -> Option<SpecVersion> {
         self.0.iter().find_map(|p| match p {
             Preference::Version(v) => Some(*v),
@@ -74,6 +77,7 @@ impl Prefer {
 
     /// Return the requested response mode (`respond-async` / `respond-sync`),
     /// if the client included one.
+    #[must_use]
     pub fn respond_mode(&self) -> Option<RespondMode> {
         self.0.iter().find_map(|p| match p {
             Preference::Respond(mode) => Some(*mode),
@@ -103,7 +107,7 @@ impl headers::Header for Prefer {
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        let s: String = self.0.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ");
+        let s: String = self.0.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(", ");
         match HeaderValue::from_str(&s) {
             Ok(val) => values.extend(iter::once(val)),
             Err(err) => tracing::warn!(error = %err, "failed to encode Prefer header"),

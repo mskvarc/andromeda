@@ -63,6 +63,7 @@ impl Predicate {
     /// Every variant carries one, so a consumer that only has to walk the axis —
     /// a SQL compiler descending the linked-entity hops, for instance — reads it
     /// here rather than re-matching all five variants.
+    #[must_use]
     pub const fn path(&self) -> &QueryPath {
         match self {
             Predicate::Exists(path)
@@ -81,6 +82,7 @@ impl Predicate {
     /// sides of the operator in the query text — `rel{attr=="x"}` states the
     /// relationship before the inner predicate and closes after its operand — so
     /// the inner predicate is complete before the hop that wraps it is known.
+    #[must_use]
     pub fn nest_under_hop(self, relationship: AttributeName, guard_types: Vec<AttributeName>) -> Predicate {
         let hop = |inner: QueryPath| QueryPath::Linked {
             relationship,
@@ -142,6 +144,7 @@ impl OrderingOp {
     ///
     /// The inverse of what the parser consumes, used to serialise a filter back
     /// into query-string form.
+    #[must_use]
     pub const fn ngsi_token(self) -> &'static str {
         match self {
             OrderingOp::Greater => token::GREATER,
@@ -152,6 +155,7 @@ impl OrderingOp {
     }
 
     /// The comparison primitive this ordering operator renders as.
+    #[must_use]
     pub const fn as_cmp_op(self) -> CmpOp {
         match self {
             OrderingOp::Greater => CmpOp::Greater,
@@ -173,6 +177,7 @@ pub enum SetMembership {
 
 impl SetMembership {
     /// Clause 4.9 token this equality comparison was written as.
+    #[must_use]
     pub const fn ngsi_token(self) -> &'static str {
         match self {
             SetMembership::Within => token::EQUAL,
@@ -183,6 +188,7 @@ impl SetMembership {
     /// The comparison primitive a single scalar operand renders as under this
     /// membership: `==` for [`SetMembership::Within`], `!=` for
     /// [`SetMembership::Outside`].
+    #[must_use]
     pub const fn as_cmp_op(self) -> CmpOp {
         match self {
             SetMembership::Within => CmpOp::Equal,

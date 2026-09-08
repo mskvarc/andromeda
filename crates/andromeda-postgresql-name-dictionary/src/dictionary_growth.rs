@@ -49,11 +49,13 @@ impl DictionaryNameLimit {
     });
 
     /// Build a bound from a non-zero count.
+    #[must_use]
     pub const fn new(names: NonZeroU32) -> DictionaryNameLimit {
         DictionaryNameLimit(names)
     }
 
     /// The bound as a count.
+    #[must_use]
     pub const fn get(self) -> u32 {
         self.0.get()
     }

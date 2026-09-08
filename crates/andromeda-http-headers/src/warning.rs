@@ -1,4 +1,4 @@
-//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-FileCopyrightText: 2014-2025 Sean `McArthur`
 //! SPDX-License-Identifier: MIT
 //!
 //! Strict `Warning` response header (RFC 9110, section 5.5).
@@ -35,7 +35,7 @@ impl fmt::Display for Warning {
         }
         write!(f, "{:03} {} \"{}\"", self.code, self.agent, self.text)?;
         if let Some(date) = self.date {
-            write!(f, " \"{}\"", date)?;
+            write!(f, " \"{date}\"")?;
         }
         Ok(())
     }
@@ -82,7 +82,7 @@ impl headers::Header for Warning {
             .to_str()
             .map_err(|_| headers::Error::invalid())?
             .parse()
-            .map_err(|_| headers::Error::invalid())
+            .map_err(|()| headers::Error::invalid())
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {

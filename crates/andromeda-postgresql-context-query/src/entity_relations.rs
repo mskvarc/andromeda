@@ -64,6 +64,7 @@ impl EntityRelations {
 
     /// The relations the fallback count of a paginated query needs: the same
     /// filters, no projection and no ordering.
+    #[must_use]
     pub fn for_count(query: &CompiledEntityQuery) -> EntityRelations {
         let selection = &query.selection;
         let search = selection.selectors.iter().any(|selector| selector.type_expr.is_some())
@@ -79,6 +80,7 @@ impl EntityRelations {
     /// How the statement's fragments reach the three rows: the joined
     /// `entity_documents` column when the document row is joined, a scalar
     /// lookup by `entity_key` when it is not.
+    #[must_use]
     pub fn rows(&self) -> EntityRowRefs {
         match self.documents {
             Demand::Joined => EntityRowRefs::unaliased(),

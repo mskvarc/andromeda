@@ -66,6 +66,7 @@ impl RegistrationError {
     }
 
     /// Construct a missing-registration error.
+    #[must_use]
     pub fn not_found(identifier: &Uri) -> RegistrationError {
         RegistrationError::NotFound {
             identifier: identifier.clone(), // clone: the error must own the borrowed request identifier.
@@ -73,6 +74,7 @@ impl RegistrationError {
     }
 
     /// Construct an identifier-conflict error.
+    #[must_use]
     pub fn already_exists(identifier: &Uri) -> RegistrationError {
         RegistrationError::AlreadyExists {
             identifier: identifier.clone(), // clone: the error must outlive the borrowed request identifier.

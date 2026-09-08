@@ -61,6 +61,7 @@ pub async fn resolve_private_ip_outcome(authority: &HostPort) -> PrivateIpCheck 
 ///   would reach `127.0.0.1`; the whole prefix is refused.
 /// - Multicast is not a unicast endpoint and `is_global` does not exclude IPv4
 ///   multicast, so it is refused explicitly.
+#[must_use]
 pub fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_blocked_v4(*v4),
@@ -97,7 +98,7 @@ mod tests {
     #[test]
     fn every_ipv4_range_an_ssrf_would_aim_at_is_blocked() {
         for address in [
-            Ipv4Addr::new(127, 0, 0, 1),    // loopback 127.0.0.0/8
+            Ipv4Addr::LOCALHOST,    // loopback 127.0.0.0/8
             Ipv4Addr::new(10, 0, 0, 1),     // private 10/8
             Ipv4Addr::new(172, 16, 0, 1),   // private 172.16/12
             Ipv4Addr::new(192, 168, 1, 1),  // private 192.168/16
@@ -133,7 +134,7 @@ mod tests {
     fn an_ipv4_mapped_ipv6_address_is_classified_as_the_ipv4_it_embeds() {
         // The pre-fix IPv6 arm tested only IPv6 ranges, so ::ffff:127.0.0.1 and
         // ::ffff:10.0.0.1 passed the guard and reached the loopback / RFC 1918.
-        assert!(is_private_ip(&IpAddr::V6(Ipv4Addr::new(127, 0, 0, 1).to_ipv6_mapped())));
+        assert!(is_private_ip(&IpAddr::V6(Ipv4Addr::LOCALHOST.to_ipv6_mapped())));
         assert!(is_private_ip(&IpAddr::V6(Ipv4Addr::new(10, 0, 0, 1).to_ipv6_mapped())));
         // A mapped public address is still allowed.
         assert!(!is_private_ip(&IpAddr::V6(Ipv4Addr::new(8, 8, 8, 8).to_ipv6_mapped())));

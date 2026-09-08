@@ -45,6 +45,7 @@ pub struct NgsiLdDate(NaiveDate);
 
 impl NgsiLdDate {
     /// The calendar date this value names.
+    #[must_use]
     pub const fn get(self) -> NaiveDate {
         self.0
     }

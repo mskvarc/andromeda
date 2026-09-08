@@ -30,6 +30,7 @@ pub enum ProblemClassification {
 
 impl ProblemClassification {
     /// The clause 5.5.2 payload category represented by this classification.
+    #[must_use]
     pub const fn error_type(self) -> NgsiLdErrorType {
         match self {
             ProblemClassification::Category(error_type) => error_type,
@@ -43,6 +44,7 @@ impl ProblemClassification {
     }
 
     /// The HTTP status selected by the category or the more specific clause 6.3.17 binding.
+    #[must_use]
     pub const fn status_code(self) -> StatusCode {
         match self {
             ProblemClassification::Category(error_type) => error_type.status_code(),
@@ -62,6 +64,7 @@ impl ProblemClassification {
     /// rather than collapsing all three onto `InternalError`, which would leave
     /// the `type` disagreeing with the status. The remaining classifications
     /// carry their clause 5.5.2 category's canonical IRI.
+    #[must_use]
     pub const fn type_iri(self) -> Iri<&'static str> {
         match self {
             ProblemClassification::LoopDetected => iri!("https://uri.etsi.org/ngsi-ld/errors/LoopDetected"),
@@ -76,6 +79,7 @@ impl ProblemClassification {
 
     /// The problem `title` this classification serialises with, paired with
     /// [`type_iri`](Self::type_iri).
+    #[must_use]
     pub fn title(self) -> &'static str {
         match self {
             ProblemClassification::LoopDetected => "Loop detected",
@@ -93,6 +97,7 @@ impl ProblemClassification {
     /// Recognises the three IRIs [`type_iri`](Self::type_iri) publishes for the
     /// clause 6.3.17 gateway failures, so a peer broker's document round-trips
     /// back into its classification.
+    #[must_use]
     pub fn from_distributed_type_iri(iri: &IriRefBuf) -> Option<ProblemClassification> {
         [
             ProblemClassification::LoopDetected,

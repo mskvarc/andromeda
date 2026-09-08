@@ -27,6 +27,7 @@ pub enum TaskHealthState {
 
 impl TaskHealthState {
     /// Whether no further execution is active for this registration.
+    #[must_use]
     pub const fn is_terminal(self) -> bool {
         matches!(
             self,

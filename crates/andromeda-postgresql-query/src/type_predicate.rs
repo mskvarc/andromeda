@@ -15,6 +15,7 @@ use andromeda_postgresql_seaquery::{literal::false_literal, operator::array_cont
 use sea_query::{Condition, SimpleExpr};
 
 /// Render a type expression against the given `type_ids` column.
+#[must_use]
 pub fn condition(expr: &TypeExpr, type_ids: &SimpleExpr, types: &ResolvedNames<EntityTypeName>) -> Condition {
     match expr {
         TypeExpr::Wildcard => Condition::all(),

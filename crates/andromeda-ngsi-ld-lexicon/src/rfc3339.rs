@@ -15,6 +15,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 /// The single reading of the format every NGSI-LD timestamp Andromeda
 /// generates is written in: `2024-06-15T12:30:00Z`, never a sub-second
 /// fraction and never a numeric offset.
+#[must_use]
 pub fn whole_seconds(dt: DateTime<Utc>) -> String {
     dt.to_rfc3339_opts(SecondsFormat::Secs, true)
 }

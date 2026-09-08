@@ -45,6 +45,7 @@ pub struct BatchEntityError {
 
 impl BatchEntityError {
     /// Report `error_type` against `entity_id`, with a human-readable detail.
+    #[must_use]
     pub fn new(entity_id: Uri, error_type: NgsiLdErrorType, detail: &str) -> BatchEntityError {
         BatchEntityError::from_classification(entity_id, ProblemClassification::Category(error_type), detail)
     }
@@ -52,6 +53,7 @@ impl BatchEntityError {
     /// Report a binding-specific classification against `entity_id`: the
     /// clause 6.3.17 statuses a forwarded part of a distributed operation can
     /// fail with (502, 504, 508) beside the ordinary clause 5.5.2 categories.
+    #[must_use]
     pub fn from_classification(entity_id: Uri, classification: ProblemClassification, detail: &str) -> BatchEntityError {
         BatchEntityError {
             entity_id,
@@ -64,6 +66,7 @@ impl BatchEntityError {
     }
 
     /// Attach the registration responsible for a failed distributed operation.
+    #[must_use]
     pub fn with_registration_id(mut self, registration_id: Uri) -> BatchEntityError {
         self.registration_id = Some(registration_id);
         self

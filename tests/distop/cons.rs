@@ -14,10 +14,10 @@
 //! and shared across instances, so the cross-instance linked-map rows
 //! (`REQ-CONS-8/13/26/45/48/61`) run like any other row.
 //!
-//! [`single`]: crate::topology::{self, BrokerRole}::single
-//! [`pair`]: crate::topology::{self, BrokerRole}::pair
-//! [`chain`]: crate::topology::{self, BrokerRole}::chain
-//! [`ContextSourceAdapter`]: crate::context_source_adapter::ContextSourceAdapter
+//! [`single`]: `crate::topology::{self`, `BrokerRole}::single`
+//! [`pair`]: `crate::topology::{self`, `BrokerRole}::pair`
+//! [`chain`]: `crate::topology::{self`, `BrokerRole}::chain`
+//! [`ContextSourceAdapter`]: `crate::context_source_adapter::ContextSourceAdapter`
 
 mod available_types_attrs;
 mod entity_map_query;

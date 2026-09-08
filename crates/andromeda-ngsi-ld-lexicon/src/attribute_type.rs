@@ -15,17 +15,17 @@ pub enum AttributeType {
     Property,
     /// A Relationship (clause 5.2.6).
     Relationship,
-    /// A GeoProperty (clause 5.2.7).
+    /// A `GeoProperty` (clause 5.2.7).
     GeoProperty,
-    /// A VocabProperty (clause 5.2.35).
+    /// A `VocabProperty` (clause 5.2.35).
     VocabProperty,
-    /// A LanguageProperty (clause 5.2.32).
+    /// A `LanguageProperty` (clause 5.2.32).
     LanguageProperty,
-    /// A JsonProperty (clause 5.2.38).
+    /// A `JsonProperty` (clause 5.2.38).
     JsonProperty,
-    /// A ListProperty (clause 5.2.36).
+    /// A `ListProperty` (clause 5.2.36).
     ListProperty,
-    /// A ListRelationship (clause 5.2.37).
+    /// A `ListRelationship` (clause 5.2.37).
     ListRelationship,
 }
 
@@ -40,6 +40,7 @@ impl AsRef<str> for AttributeType {
 
 impl AttributeType {
     /// Returns the expanded IRI for this attribute type as an [`Iri`].
+    #[must_use]
     pub const fn iri(self) -> Iri<&'static str> {
         match self {
             Self::Property => expanded_classes::PROPERTY,
@@ -54,12 +55,14 @@ impl AttributeType {
     }
 
     /// Returns the expanded IRI for this attribute type as a static string slice.
+    #[must_use]
     pub fn iri_str(self) -> &'static str {
         self.iri().into_inner()
     }
 
     /// Returns the expanded IRI of the value container for this attribute type
     /// as an [`Iri`].
+    #[must_use]
     pub const fn value_key(self) -> Iri<&'static str> {
         match self {
             Self::Property | Self::GeoProperty => expanded_properties::VALUE,
@@ -73,6 +76,7 @@ impl AttributeType {
     }
 
     /// Returns the expanded IRI of the value container as a static string slice.
+    #[must_use]
     pub fn value_key_str(self) -> &'static str {
         self.value_key().into_inner()
     }
@@ -82,6 +86,7 @@ impl AttributeType {
     /// The same eight-way table as [`AttributeType::value_key`], spelled in the
     /// compacted terms clause 4.5.1 uses. A rendering works on compacted JSON
     /// and needs this one; an expansion or a store predicate needs the IRI.
+    #[must_use]
     pub const fn compact_value_key(self) -> &'static str {
         match self {
             Self::Property | Self::GeoProperty => compact_properties::VALUE,
@@ -95,6 +100,7 @@ impl AttributeType {
     }
 
     /// Returns the compacted previous-value key for showChanges support.
+    #[must_use]
     pub const fn previous_key(self) -> &'static str {
         match self {
             Self::Relationship => compact_properties::PREVIOUS_OBJECT,
@@ -107,7 +113,8 @@ impl AttributeType {
         }
     }
 
-    /// Returns (plural_key, singular_key) for temporal values format.
+    /// Returns (`plural_key`, `singular_key`) for temporal values format.
+    #[must_use]
     pub const fn temporal_values_keys(self) -> (&'static str, &'static str) {
         match self {
             Self::Relationship | Self::ListRelationship => (compact_properties::OBJECTS, compact_properties::OBJECT),
@@ -119,6 +126,7 @@ impl AttributeType {
     }
 
     /// Parse strings ending with "/Property", "/Relationship", etc. (for discovery).
+    #[must_use]
     pub fn from_iri_suffix(s: &str) -> Option<AttributeType> {
         for variant in Self::ALL {
             let name = variant.to_string();
@@ -130,6 +138,7 @@ impl AttributeType {
     }
 
     /// Returns the reserved compacted field names for this attribute type.
+    #[must_use]
     pub const fn reserved_fields(self) -> &'static [&'static str] {
         match self {
             Self::Property => &[
@@ -253,11 +262,13 @@ impl AttributeType {
     /// Returns the short (compacted) name for this attribute type as a static string.
     ///
     /// Equivalent to `Display` / `IntoStaticStr` output (e.g. `"Property"`).
+    #[must_use]
     pub fn short_name(self) -> &'static str {
         self.into()
     }
 
     /// Try to parse an expanded IRI string into an `AttributeType`.
+    #[must_use]
     pub fn from_expanded_iri(iri: &str) -> Option<AttributeType> {
         Self::ALL.iter().find(|v| v.iri().as_str() == iri).copied()
     }

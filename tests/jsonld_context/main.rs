@@ -260,7 +260,7 @@ async fn create_hosted_context(client: &Client) -> String {
     extract_id(location.as_ref().expect("should have Location"))
 }
 
-/// Create a subscription that generates an ImplicitlyCreated context. Returns (sub_id, ctx_id).
+/// Create a subscription that generates an `ImplicitlyCreated` context. Returns (`sub_id`, `ctx_id`).
 async fn create_implicit_context(client: &Client) -> (String, String) {
     let sub = json!({
         "type": "Subscription",
@@ -291,7 +291,7 @@ async fn create_implicit_context(client: &Client) -> (String, String) {
 }
 
 /// Start a local context server, create an entity that references it (causing caching),
-/// then return (server, cached_context_url).
+/// then return (server, `cached_context_url`).
 async fn setup_cached_context(client: &Client) -> (ContextServer, String) {
     let ctx_content = r#"{"@context":{"X1":"urn:ngsi-ld:attributes:X1"}}"#;
     let server = ContextServer::start(HashMap::from([("/context.jsonld".to_string(), ctx_content.to_string())])).await;

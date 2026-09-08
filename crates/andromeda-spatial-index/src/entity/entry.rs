@@ -28,6 +28,7 @@ impl SpatialEntry {
     /// An empty collection has no rectangle and therefore no way to be
     /// prefiltered; refusing to index it is what keeps the tree's answer and
     /// the exact predicate's answer the same.
+    #[must_use]
     pub fn new(entity_id: Urn, geometry: Geometry) -> Option<SpatialEntry> {
         let rect = geometry.bounding_rect()?;
         let envelope = AABB::from_corners([rect.min().x, rect.min().y], [rect.max().x, rect.max().y]);

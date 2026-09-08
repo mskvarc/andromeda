@@ -26,6 +26,7 @@ pub struct DatabaseHealthIndicator {
 
 impl DatabaseHealthIndicator {
     /// Report on the given pool.
+    #[must_use]
     pub const fn new(pool: PgPool) -> DatabaseHealthIndicator {
         DatabaseHealthIndicator { pool }
     }

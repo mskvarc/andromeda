@@ -29,6 +29,7 @@ pub enum FilterCarriage {
 
 impl FilterCarriage {
     /// The carriage clause 5.8.1.4 prescribes for a resolved `splitEntities`.
+    #[must_use]
     pub const fn for_split(split_entities: SplitEntities) -> FilterCarriage {
         match split_entities {
             SplitEntities::Split => FilterCarriage::Strip,
@@ -92,6 +93,7 @@ pub struct ReducedSubscription {
 impl ReducedSubscription {
     /// Reduce `subscription` to what `registration` matches, notifying
     /// `receiver`, under the identifier `minted`.
+    #[must_use]
     pub fn reduce(
         subscription: &Subscription,
         registration: &ContextSourceRegistration,
@@ -171,6 +173,7 @@ impl ReducedSubscription {
 
     /// The same document as an update fragment: everything but the identifier
     /// and type (clause 5.8.2.4).
+    #[must_use]
     pub fn as_fragment(&self) -> Value {
         let mut fragment = self.document.clone(); // clone: the fragment is a second document
         if let Some(object) = fragment.as_object_mut() {

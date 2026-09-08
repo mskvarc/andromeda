@@ -19,6 +19,7 @@ pub struct RegistrationRouteServices {
 
 impl RegistrationRouteServices {
     /// Construct the focused capability set.
+    #[must_use]
     pub const fn new(registrations: Arc<RegistrationService>) -> RegistrationRouteServices {
         RegistrationRouteServices { registrations }
     }

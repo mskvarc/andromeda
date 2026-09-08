@@ -79,7 +79,7 @@ mod tests {
             || selection.selectors.iter().any(|selector| {
                 let type_ok = selector.type_expr.as_ref().is_none_or(|type_expr| {
                     let types = extract_types(entity);
-                    type_expr.matches(&types.iter().map(|name| name.as_str()).collect::<Vec<&str>>())
+                    type_expr.matches(&types.iter().map(andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName::as_str).collect::<Vec<&str>>())
                 });
                 let id_ok = selector.ids.is_empty() || extract_id(entity).is_some_and(|id| selector.ids.contains(&id));
                 type_ok && id_ok

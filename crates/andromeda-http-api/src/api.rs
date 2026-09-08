@@ -16,6 +16,7 @@ pub struct HttpApi {
 
 impl HttpApi {
     /// Merge every required route family under `/ngsi-ld/v1` and apply the configured stack.
+    #[must_use]
     pub fn assemble(routes: ApiRoutes, stack: &HttpStack) -> HttpApi {
         let v1 = Router::new()
             .merge(routes.entity.into_router())
@@ -41,6 +42,7 @@ impl HttpApi {
     }
 
     /// Consume the API and return the generic state-complete HTTP service.
+    #[must_use]
     pub fn into_service(self) -> NormalizePath<Router> {
         self.service
     }

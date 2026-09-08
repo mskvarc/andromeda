@@ -249,7 +249,7 @@ fn stamp_statement(version: i32, digest: String) -> Result<InsertStatement, SeaQ
         ])
         .values([Expr::current_timestamp(), version.into(), true.into(), digest.into()])?
         .on_conflict(OnConflict::column(SchemaMetadata::Singleton).do_nothing().to_owned());
-    Ok(statement.to_owned())
+    Ok(statement.clone())
 }
 
 /// Advance the existing singleton stamp to the contract just migrated to.

@@ -7,7 +7,7 @@ use strum::{Display, EnumIter, IntoStaticStr};
 /// reconciles.
 ///
 /// The name renders as the catalogue relation name, which is what every
-/// TimescaleDB procedure and information view takes.
+/// `TimescaleDB` procedure and information view takes.
 #[derive(Clone, Copy, Debug, Display, EnumIter, Eq, Hash, IntoStaticStr, PartialEq)]
 #[strum(serialize_all = "snake_case")]
 pub enum HypertableName {
@@ -22,11 +22,13 @@ pub enum HypertableName {
 /// The lag is rendered as an interval literal: it is a validated positive day
 /// count from configuration, not caller data, and a procedure argument cannot
 /// be a bound parameter of a `CALL` executed through this driver.
+#[must_use]
 pub fn add_columnstore_policy(hypertable: HypertableName, after_days: NonZeroU32) -> String {
     format!("CALL add_columnstore_policy('{hypertable}', after => INTERVAL '{after_days} days', if_not_exists => true)")
 }
 
 /// `CALL remove_columnstore_policy(hypertable, if_exists => true)`.
+#[must_use]
 pub fn remove_columnstore_policy(hypertable: HypertableName) -> String {
     format!("CALL remove_columnstore_policy('{hypertable}', if_exists => true)")
 }

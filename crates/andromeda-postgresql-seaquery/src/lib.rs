@@ -1,6 +1,6 @@
-//! The generic PostgreSQL spelling of a SeaQuery statement.
+//! The generic PostgreSQL spelling of a `SeaQuery` statement.
 //!
-//! Everything here is dialect vocabulary with no NGSI-LD in it: the PostGIS,
+//! Everything here is dialect vocabulary with no NGSI-LD in it: the `PostGIS`,
 //! `ltree`, `jsonb` and array operators sea-query has no native constructor for,
 //! the casts and quoting a hand-written fragment needs, the typed bind values a
 //! store binds, and the render-output struct a rendered statement leaves as.

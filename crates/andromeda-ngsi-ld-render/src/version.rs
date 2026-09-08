@@ -36,6 +36,7 @@ impl VersionAdaptation {
     /// The version to echo in `Preference-Applied` (clause 6.3.6), when a
     /// preference was expressed at all: the amended version, or the version
     /// this broker conforms to when the payload needed no amendment.
+    #[must_use]
     pub const fn applied_version(self) -> Option<SpecVersion> {
         match self {
             VersionAdaptation::Applied { version } => Some(version),
@@ -45,6 +46,7 @@ impl VersionAdaptation {
     }
 
     /// Whether the payload was amended, which is what turns a 200 into a 203.
+    #[must_use]
     pub const fn is_amended(self) -> bool {
         matches!(self, VersionAdaptation::Applied { .. })
     }
@@ -68,11 +70,13 @@ pub struct VersionRenderer {
 
 impl VersionRenderer {
     /// Create a renderer targeting the given NGSI-LD version with an empty payload.
+    #[must_use]
     pub const fn new(target: SpecVersion) -> VersionRenderer {
         VersionRenderer { target, payload: Value::Null }
     }
 
     /// Set the payload value to adapt.
+    #[must_use]
     pub fn with_payload(mut self, payload: Value) -> VersionRenderer {
         self.payload = payload;
         self
@@ -89,6 +93,7 @@ impl VersionRenderer {
     /// makes the representation non-authoritative (203). Removing members
     /// cannot fail, so this answers with a value rather than a `Result` no
     /// caller could act on.
+    #[must_use]
     pub fn render(self) -> (Value, VersionAdaptation) {
         let VersionRenderer { target, mut payload } = self;
         if target >= SpecVersion::CONFORMANT {
@@ -492,7 +497,7 @@ mod tests {
         let adapted = adapt(SpecVersion::V1_0, value);
         let temp = adapted.get("temperature").unwrap();
         assert!(temp.is_object(), "a 1.0 attribute is a bare instance object, not an array: {temp}");
-        pretty_assertions::assert_eq!(temp.get("value").and_then(|v| v.as_f64()), Some(30.0));
+        pretty_assertions::assert_eq!(temp.get("value").and_then(serde_json::Value::as_f64), Some(30.0));
         assert!(temp.get("datasetId").is_none());
     }
 

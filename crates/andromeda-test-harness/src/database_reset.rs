@@ -122,7 +122,7 @@ pub enum DatabaseResetError {
     /// The serialized-state capability was unavailable.
     #[error(transparent)]
     Isolation(#[from] DatabaseIsolationError),
-    /// SQLx could not execute the reset or cleanup transaction.
+    /// `SQLx` could not execute the reset or cleanup transaction.
     #[error("test database reset failed: {0}")]
     Sqlx(#[source] sqlx::Error),
 }

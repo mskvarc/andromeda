@@ -1,7 +1,7 @@
 //! Altitude on context source registrations (NGSI-LD 5.9.2, 5.10.2).
 //!
-//! A registration's `location` is a plain GeoJSON geometry rather than a
-//! GeoProperty, and it obeys the same rules: three ordinates round-trip
+//! A registration's `location` is a plain `GeoJSON` geometry rather than a
+//! `GeoProperty`, and it obeys the same rules: three ordinates round-trip
 //! verbatim, and registration discovery filters on the 2D footprint.
 
 use crate::fixtures::{assert_coordinates_eq, encode_json, pillar_ring_3d};

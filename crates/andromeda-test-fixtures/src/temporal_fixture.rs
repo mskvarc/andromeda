@@ -18,6 +18,7 @@ pub struct TemporalPropertyFixture {
 
 impl TemporalPropertyFixture {
     /// Render the attribute member and its temporal instance.
+    #[must_use]
     pub fn into_member(self) -> (String, Value) {
         (
             self.attribute.to_string(),

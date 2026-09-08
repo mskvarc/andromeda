@@ -18,13 +18,13 @@ pub enum MqttVersion {
 /// MQTT quality-of-service level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
 pub enum MqttQoS {
-    /// At most once (QoS 0).
+    /// At most once (`QoS` 0).
     #[strum(to_string = "QoS 0")]
     AtMost,
-    /// At least once (QoS 1).
+    /// At least once (`QoS` 1).
     #[strum(to_string = "QoS 1")]
     AtLeast,
-    /// Exactly once (QoS 2).
+    /// Exactly once (`QoS` 2).
     #[strum(to_string = "QoS 2")]
     Exactly,
 }
@@ -51,7 +51,7 @@ pub struct MqttEndpointConfig {
     pub use_tls: bool,
     /// The protocol version, from `notifierInfo` or defaulted to MQTT 5.
     pub version: MqttVersion,
-    /// The quality of service, from `notifierInfo` or defaulted to QoS 0.
+    /// The quality of service, from `notifierInfo` or defaulted to `QoS` 0.
     pub qos: MqttQoS,
     /// The username from the URI's userinfo, if any.
     ///

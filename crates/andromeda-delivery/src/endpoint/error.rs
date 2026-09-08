@@ -29,7 +29,7 @@ pub enum EndpointParseError {
         /// The value that was given.
         value: String,
     },
-    /// `notifierInfo` asked for a QoS level MQTT does not define.
+    /// `notifierInfo` asked for a `QoS` level MQTT does not define.
     #[error("unsupported MQTT-QoS: {value}")]
     UnsupportedMqttQos {
         /// The value that was given.

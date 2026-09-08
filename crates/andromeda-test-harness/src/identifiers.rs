@@ -25,6 +25,7 @@ impl TestSuiteName {
     }
 
     /// Borrow the validated suite token.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -98,6 +99,7 @@ impl TestIdentifiers {
     }
 
     /// Borrow the non-empty cleanup prefix shared by every allocated resource.
+    #[must_use]
     pub const fn prefix(&self) -> &IriBuf {
         &self.prefix
     }

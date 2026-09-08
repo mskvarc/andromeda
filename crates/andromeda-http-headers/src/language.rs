@@ -83,6 +83,7 @@ impl LanguageRange {
     ///
     /// A wildcard matches any tag; a tag range matches only an equal tag,
     /// case-insensitively per BCP 47.
+    #[must_use]
     pub fn exact_matches(&self, available: &LangTag) -> bool {
         match self {
             LanguageRange::Wildcard => true,
@@ -98,6 +99,7 @@ impl LanguageRange {
     /// True when this range is a case-insensitive prefix of `available`
     /// followed by a `-` subtag separator. Exact matches are excluded -- use
     /// [`exact_matches`](Self::exact_matches) for those.
+    #[must_use]
     pub fn prefix_matches(&self, available: &LangTag) -> bool {
         match self {
             LanguageRange::Wildcard => false,
@@ -114,6 +116,7 @@ impl LanguageRange {
     ///
     /// Guards prefix matching: RFC 4647 basic filtering has `fr` prefix-match
     /// `fr-CA`, but not `fr-CA` prefix-match `fr-CA-variant`.
+    #[must_use]
     pub fn is_basic_range(&self) -> bool {
         match self {
             LanguageRange::Wildcard => true,
@@ -144,6 +147,7 @@ pub struct LanguageFilter {
 
 impl LanguageFilter {
     /// Build a single-preference filter from an already validated BCP 47 tag.
+    #[must_use]
     pub fn from_tag(tag: LangTagBuf) -> LanguageFilter {
         LanguageFilter {
             preferences: vec![QualityValue::new(LanguageRange::Tag(tag), Quality::default())],
@@ -173,6 +177,7 @@ impl LanguageFilter {
     }
 
     /// The preferences as written, in wire order.
+    #[must_use]
     pub fn preferences(&self) -> &[QualityValue<LanguageRange>] {
         &self.preferences
     }
@@ -181,6 +186,7 @@ impl LanguageFilter {
     ///
     /// Zero-quality preferences are excluded: RFC 9110 gives `q=0` the meaning
     /// "not acceptable", so a language named that way must not be selected.
+    #[must_use]
     pub fn ordered(&self) -> Vec<&QualityValue<LanguageRange>> {
         let mut preferences = self
             .preferences

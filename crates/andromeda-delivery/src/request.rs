@@ -137,6 +137,7 @@ impl NotificationDelivery<'_> {
 /// earlier — whether to leave the `@context` in the document it is compacting —
 /// and that has to be the same answer this gives, not a second string
 /// comparison against `application/ld+json`.
+#[must_use]
 pub fn notification_media_type(accept: Option<&MediaTypeBuf>) -> ResponseMediaType {
     accept
         .and_then(|media_type| ResponseMediaType::from_media_type(&media_type.to_ref()))
@@ -325,6 +326,6 @@ mod tests {
             subscription_id: &subscription,
         }
         .assemble();
-        pretty_assertions::assert_eq!(request.snapshot.as_ref().map(|header| header.as_str()), Some(snapshot.as_str()));
+        pretty_assertions::assert_eq!(request.snapshot.as_ref().map(andromeda_http_headers::ngsild_snapshot::NgsiLdSnapshot::as_str), Some(snapshot.as_str()));
     }
 }

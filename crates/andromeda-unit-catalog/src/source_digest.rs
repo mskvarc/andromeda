@@ -19,11 +19,13 @@ pub struct SourceDigest([u8; DIGEST_LENGTH]);
 
 impl SourceDigest {
     /// Return the digest bytes.
+    #[must_use]
     pub const fn get(self) -> [u8; DIGEST_LENGTH] {
         self.0
     }
 
     /// Return the lower-case hexadecimal rendering of the digest.
+    #[must_use]
     pub fn to_hex(self) -> String {
         hex::encode(self.0)
     }

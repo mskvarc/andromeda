@@ -41,6 +41,7 @@ pub struct SubscriptionRenderer {
 
 impl SubscriptionRenderer {
     /// Create a renderer for the given payload and flavor.
+    #[must_use]
     pub const fn new(payload: Value, flavor: SubscriptionFlavor) -> SubscriptionRenderer {
         SubscriptionRenderer {
             payload,
@@ -50,6 +51,7 @@ impl SubscriptionRenderer {
     }
 
     /// Set whether system attributes are included in the response.
+    #[must_use]
     pub const fn with_sys_attrs(mut self, sys_attrs: SysAttrsInclusion) -> Self {
         self.sys_attrs = sys_attrs;
         self
@@ -59,6 +61,7 @@ impl SubscriptionRenderer {
     ///
     /// Removing members cannot fail, so this answers with the value rather
     /// than a `Result` no caller could act on.
+    #[must_use]
     pub fn render(self) -> Value {
         let SubscriptionRenderer {
             mut payload,
@@ -77,13 +80,13 @@ impl SubscriptionRenderer {
             obj.remove("modifiedAt");
         }
         // isActive is only shown when explicitly false (paused); true is the default
-        if obj.get("isActive").and_then(|v| v.as_bool()) == Some(true) {
+        if obj.get("isActive").and_then(serde_json::Value::as_bool) == Some(true) {
             obj.remove("isActive");
         }
         match flavor {
             SubscriptionFlavor::Local => {
                 // localOnly is only shown when true; false is the default
-                if obj.get("localOnly").and_then(|v| v.as_bool()) != Some(true) {
+                if obj.get("localOnly").and_then(serde_json::Value::as_bool) != Some(true) {
                     obj.remove("localOnly");
                 }
             }
@@ -157,7 +160,7 @@ mod tests {
             "isActive": false
         });
         let rendered = render_local(value, SysAttrsInclusion::Strip);
-        pretty_assertions::assert_eq!(rendered.get("isActive").and_then(|v| v.as_bool()), Some(false));
+        pretty_assertions::assert_eq!(rendered.get("isActive").and_then(serde_json::Value::as_bool), Some(false));
     }
 
     #[test]
@@ -168,7 +171,7 @@ mod tests {
             "localOnly": true
         });
         let rendered = render_local(value, SysAttrsInclusion::Strip);
-        pretty_assertions::assert_eq!(rendered.get("localOnly").and_then(|v| v.as_bool()), Some(true));
+        pretty_assertions::assert_eq!(rendered.get("localOnly").and_then(serde_json::Value::as_bool), Some(true));
     }
 
     #[test]

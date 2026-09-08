@@ -13,6 +13,7 @@ impl EntityQueryService {
     /// were already parsed to [`Entity`] at the registration boundary, so no
     /// `Value` round trip occurs. Clause 5.7.2 applies `attrs` after the merge,
     /// because a context source returns every attribute it holds.
+    #[must_use]
     pub fn merge_with_forwarded(local_entities: Vec<Entity>, forwarded: Vec<ForwardedEntities>, attrs_filter: Option<&[AttributeName]>) -> Vec<Entity> {
         let mut result = merge_query_results(local_entities, forwarded);
         if let Some(attrs) = attrs_filter {

@@ -19,11 +19,13 @@ pub struct WriteOrdinal(u32);
 
 impl WriteOrdinal {
     /// Return the ordinal of a consequence at `position` in its write's list.
+    #[must_use]
     pub const fn at(position: u32) -> WriteOrdinal {
         WriteOrdinal(position)
     }
 
     /// Return the in-memory representation.
+    #[must_use]
     pub const fn get(self) -> u32 {
         self.0
     }

@@ -27,6 +27,7 @@ pub struct AttributeIriIndex {
 
 impl AttributeIriIndex {
     /// Create an empty index.
+    #[must_use]
     pub fn new() -> AttributeIriIndex {
         AttributeIriIndex { expansions: HashMap::new() }
     }
@@ -38,6 +39,7 @@ impl AttributeIriIndex {
     }
 
     /// The IRI `key` expands to, or `None` when the index does not cover it.
+    #[must_use]
     pub fn expanded(&self, key: &str) -> Option<&IriBuf> {
         self.expansions.get(key)
     }

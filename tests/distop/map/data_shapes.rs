@@ -1,4 +1,4 @@
-//! EntityMap and ContextSourceIdentity field-shape constraints (clauses 5.2.39,
+//! `EntityMap` and `ContextSourceIdentity` field-shape constraints (clauses 5.2.39,
 //! 5.2.40): the URI and enum-typed members, the datetime members, the
 //! entity-to-holder-list element shape, the `@none` local marker, and the
 //! per-broker alias. Local rows are `T-LOCAL`; the alias row spans three brokers
@@ -18,7 +18,7 @@ use chrono::DateTime;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
-/// Create a `Vehicle` and an EntityMap over it, returning the entity id and the
+/// Create a `Vehicle` and an `EntityMap` over it, returning the entity id and the
 /// created map body.
 async fn map_over_vehicle(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -> (String, Value) {
     let entity_id = topology.id(local);
@@ -50,7 +50,7 @@ async fn identity(topology: &MultiBrokerTopology<BrokerRole>) -> Value {
     json_body(&response)
 }
 
-/// An EntityMap `id` is a valid URI (clause 5.2.39). Confirms REQ-MAP-163.
+/// An `EntityMap` `id` is a valid URI (clause 5.2.39). Confirms REQ-MAP-163.
 #[tokio::test]
 async fn entity_map_id_is_valid_uri() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -60,7 +60,7 @@ async fn entity_map_id_is_valid_uri() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An EntityMap `type` is `EntityMap` (clause 5.2.39). Confirms REQ-MAP-164.
+/// An `EntityMap` `type` is `EntityMap` (clause 5.2.39). Confirms REQ-MAP-164.
 #[tokio::test]
 async fn entity_map_type_is_entity_map() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -69,7 +69,7 @@ async fn entity_map_type_is_entity_map() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An EntityMap `expiresAt` is a DateTime (clause 5.2.39). Confirms REQ-MAP-165.
+/// An `EntityMap` `expiresAt` is a `DateTime` (clause 5.2.39). Confirms REQ-MAP-165.
 #[tokio::test]
 async fn entity_map_expires_at_is_datetime() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -128,7 +128,7 @@ async fn entity_map_none_key_marks_locally_held() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `linkedMaps` maps a CSR id to a remote EntityMap id (clause 5.2.39).
+/// `linkedMaps` maps a CSR id to a remote `EntityMap` id (clause 5.2.39).
 /// Confirms REQ-MAP-169.
 #[tokio::test]
 async fn entity_map_linked_maps_shape_csr_to_map_id() {
@@ -170,7 +170,7 @@ async fn entity_map_linked_maps_shape_csr_to_map_id() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A ContextSourceIdentity `id` is a valid URI (clause 5.2.40). Confirms REQ-MAP-170.
+/// A `ContextSourceIdentity` `id` is a valid URI (clause 5.2.40). Confirms REQ-MAP-170.
 #[tokio::test]
 async fn identity_id_is_valid_uri() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -180,7 +180,7 @@ async fn identity_id_is_valid_uri() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A ContextSourceIdentity `type` is `ContextSourceIdentity` (clause 5.2.40).
+/// A `ContextSourceIdentity` `type` is `ContextSourceIdentity` (clause 5.2.40).
 /// Confirms REQ-MAP-171.
 #[tokio::test]
 async fn identity_type_is_context_source_identity() {
@@ -214,7 +214,7 @@ async fn identity_context_source_alias_non_empty() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A ContextSourceIdentity `contextSourceUptime` is an ISO 8601 duration
+/// A `ContextSourceIdentity` `contextSourceUptime` is an ISO 8601 duration
 /// (clause 5.2.40). Confirms REQ-MAP-173.
 #[tokio::test]
 async fn identity_context_source_uptime_iso8601() {
@@ -224,7 +224,7 @@ async fn identity_context_source_uptime_iso8601() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A ContextSourceIdentity `contextSourceTimeAt` is a DateTime (clause 5.2.40).
+/// A `ContextSourceIdentity` `contextSourceTimeAt` is a `DateTime` (clause 5.2.40).
 /// Confirms REQ-MAP-174.
 #[tokio::test]
 async fn identity_context_source_time_at_datetime() {
@@ -237,7 +237,7 @@ async fn identity_context_source_time_at_datetime() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A ContextSourceIdentity `contextSourceExtras` is preserved verbatim when
+/// A `ContextSourceIdentity` `contextSourceExtras` is preserved verbatim when
 /// configured (clause 5.2.40). Confirms REQ-MAP-175.
 #[tokio::test]
 async fn identity_context_source_extras_preserved_verbatim() {

@@ -65,7 +65,7 @@ pub enum SchemaContractError {
         /// What the server reports.
         found: PostgresVersion,
     },
-    /// PostGIS is absent or below the version the schema depends on.
+    /// `PostGIS` is absent or below the version the schema depends on.
     #[error("tenant schema contract: PostGIS {found} is below the required minimum {required}")]
     PostGisBelowMinimum {
         /// The minimum the schema depends on.
@@ -73,7 +73,7 @@ pub enum SchemaContractError {
         /// What the extension catalogue reports.
         found: ExtensionPresence,
     },
-    /// TimescaleDB is absent or below the version the schema depends on.
+    /// `TimescaleDB` is absent or below the version the schema depends on.
     #[error("tenant schema contract: TimescaleDB {found} is below the required minimum {required}")]
     TimescaleDbBelowMinimum {
         /// The minimum the schema depends on.

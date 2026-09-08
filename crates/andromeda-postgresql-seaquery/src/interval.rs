@@ -13,6 +13,7 @@ use sea_query::{Expr, SimpleExpr};
 /// Used to move an instant by a runtime-computed duration, as in
 /// `NOW() + make_interval(secs => $1)`, without spelling the duration into the
 /// SQL or binding a pre-built `interval` string.
+#[must_use]
 pub fn make_interval_secs(seconds: SimpleExpr) -> SimpleExpr {
     Expr::cust_with_exprs("make_interval(secs => $1)", [seconds])
 }

@@ -16,6 +16,7 @@ pub struct TemporalRecorder {
 
 impl TemporalRecorder {
     /// Create a temporal recorder backed by the given repository.
+    #[must_use]
     pub const fn new(repo: Arc<TemporalRepository>) -> TemporalRecorder {
         TemporalRecorder { repo }
     }

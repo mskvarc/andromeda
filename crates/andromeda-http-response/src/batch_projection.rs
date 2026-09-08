@@ -35,6 +35,7 @@ pub fn batch_operation_result<E>(success: Vec<Uri>, errors: Vec<(Uri, E)>, class
 /// happened, with the clause 6.3.17 statuses for the ones that produced no
 /// response. Every error names the registration it came from (Table
 /// 5.2.17-1 `registrationId`).
+#[must_use]
 pub fn forwarded_write_error(entity_id: Uri, registration_id: &Uri, outcome: &ForwardedWriteOutcome) -> Option<BatchEntityError> {
     let error = match outcome {
         ForwardedWriteOutcome::Completed { .. } => return None,

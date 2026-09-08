@@ -9,6 +9,7 @@ use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use chrono::Utc;
 
 /// Derive the new subscription status based on the current status and the update fields provided.
+#[must_use]
 pub fn compute_updated_status(current_status: SubscriptionStatus, fields: &StatusUpdateFields) -> SubscriptionStatus {
     let now = Utc::now();
 
@@ -24,8 +25,8 @@ pub fn compute_updated_status(current_status: SubscriptionStatus, fields: &Statu
         (Some(true), true) => SubscriptionStatus::Active,
         (Some(false), true) => SubscriptionStatus::Paused,
         (None, true) if current_status == SubscriptionStatus::Expired => SubscriptionStatus::Active,
-        (Some(true), false) | (Some(false), false) => current_status,
-        (None, true) | (None, false) => current_status,
+        (Some(true | false), false) => current_status,
+        (None, true | false) => current_status,
     }
 }
 

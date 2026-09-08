@@ -16,6 +16,7 @@ pub enum SourceIdentityError {
 }
 
 /// Classify every source-identity failure without exposing internal details.
+#[must_use]
 pub fn classify(error: &SourceIdentityError) -> ClassifiedReport {
     match error {
         SourceIdentityError::Serialization(_) | SourceIdentityError::Rendering(_) => {

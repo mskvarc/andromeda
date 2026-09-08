@@ -32,6 +32,7 @@ struct ConfiguredIdentity {
 impl SourceIdentityState {
     /// Construct the context source identity exposed by the broker, available
     /// since `started_at`.
+    #[must_use]
     pub fn new(id: Uri, alias: ContextSourcePseudonym, started_at: DateTime<Utc>, extras: Option<Value>) -> SourceIdentityState {
         SourceIdentityState {
             configured: Arc::new(ConfiguredIdentity { id, alias, started_at, extras }),
@@ -39,6 +40,7 @@ impl SourceIdentityState {
     }
 
     /// The identity document as observed at `now`.
+    #[must_use]
     pub fn identity_at(&self, now: DateTime<Utc>) -> ContextSourceIdentity {
         let elapsed = (now - self.configured.started_at).to_std().unwrap_or(Duration::ZERO);
         ContextSourceIdentity {

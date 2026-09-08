@@ -40,7 +40,7 @@ pub struct TriggeringRequest<'a> {
     pub headers: Option<&'a HeaderMap>,
 }
 
-/// The EntityMap a read runs under (clause 5.5.14).
+/// The `EntityMap` a read runs under (clause 5.5.14).
 #[derive(Debug, Clone, Copy)]
 pub enum EntityMapInUse<'a> {
     /// No map: the registrations are matched by clause 5.12 and no location
@@ -67,6 +67,7 @@ impl<'a> From<&'a EntityMapUse> for EntityMapInUse<'a> {
 
 impl EntityMapInUse<'_> {
     /// The live map that fixes the registrations, if one is referenced.
+    #[must_use]
     pub const fn referenced(&self) -> Option<&EntityMap> {
         match self {
             EntityMapInUse::Referenced(map) => Some(map),
@@ -75,6 +76,7 @@ impl EntityMapInUse<'_> {
     }
 
     /// The `NGSILD-EntityMap` a forwarded request to `registration` carries.
+    #[must_use]
     pub fn location_for(&self, registration: &Uri) -> Option<&Uri> {
         match self {
             EntityMapInUse::Referenced(map) => Some(map.linked_map_for(registration).unwrap_or(&map.id)),
@@ -130,7 +132,7 @@ pub struct ForwardTemporalQueryRequest<'a> {
     pub csf_expr: Option<&'a Expr>,
     /// Registration modes included in this forwarding phase.
     pub mode_filter: CsrModeFilter,
-    /// The EntityMap the request runs under (clause 5.5.14).
+    /// The `EntityMap` the request runs under (clause 5.5.14).
     pub entity_map: EntityMapInUse<'a>,
     /// Explicit per-source range, or `None` for the ordinary post-merge page policy.
     pub source_page: Option<SourcePage>,
@@ -155,7 +157,7 @@ pub struct ForwardQueryRequest<'a> {
     pub csf_expr: Option<&'a Expr>,
     /// Registration modes included in this forwarding phase.
     pub mode_filter: CsrModeFilter,
-    /// The EntityMap the request runs under (clause 5.5.14).
+    /// The `EntityMap` the request runs under (clause 5.5.14).
     pub entity_map: EntityMapInUse<'a>,
     /// Explicit per-source range, or `None` for the ordinary post-merge page policy.
     pub source_page: Option<SourcePage>,
@@ -180,7 +182,7 @@ pub struct ForwardRetrieveRequest<'a> {
     pub triggering: TriggeringRequest<'a>,
     /// Registration modes included in this forwarding phase.
     pub mode_filter: CsrModeFilter,
-    /// The EntityMap the request runs under (clause 5.5.14).
+    /// The `EntityMap` the request runs under (clause 5.5.14).
     pub entity_map: EntityMapInUse<'a>,
 }
 

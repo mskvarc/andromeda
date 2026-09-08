@@ -17,6 +17,7 @@ pub struct NgsiLdScope(ScopeQuery);
 
 impl NgsiLdScope {
     /// The parsed scope query carried by this header.
+    #[must_use]
     pub const fn query(&self) -> &ScopeQuery {
         &self.0
     }

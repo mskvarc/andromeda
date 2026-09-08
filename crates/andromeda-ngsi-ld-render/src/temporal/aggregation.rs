@@ -30,6 +30,7 @@ pub struct TemporalAggregationRenderer<'a> {
 
 impl<'a> TemporalAggregationRenderer<'a> {
     /// Create a renderer for the given row set.
+    #[must_use]
     pub const fn new(rows: &'a [TemporalAggregationRow], compiled: &'a CompiledTemporalQuery) -> TemporalAggregationRenderer<'a> {
         TemporalAggregationRenderer { rows, compiled }
     }
@@ -50,8 +51,9 @@ fn aggregation_min_max_to_json(value: Option<&AggregationMinMax>) -> Value {
     }
 }
 
-impl<'a> TemporalAggregationRenderer<'a> {
+impl TemporalAggregationRenderer<'_> {
     /// Group the rows and extract each requested aggregation method.
+    #[must_use]
     pub fn render(self) -> IndexMap<AttributeName, Value> {
         let TemporalAggregationRenderer { rows, compiled } = self;
 

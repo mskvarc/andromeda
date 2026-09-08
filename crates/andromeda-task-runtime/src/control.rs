@@ -35,11 +35,13 @@ impl DrainExecution {
     }
 
     /// Return the cancellation token for cooperative active shutdown.
+    #[must_use]
     pub const fn cancellation(&self) -> &CancellationToken {
         &self.cancellation
     }
 
     /// Return the wall-clock cutoff fixed for this bounded pass.
+    #[must_use]
     pub const fn cutoff(&self) -> SystemTime {
         self.cutoff
     }
@@ -52,11 +54,13 @@ impl ScheduledExecution {
     }
 
     /// Return the cancellation token for cooperative active shutdown.
+    #[must_use]
     pub const fn cancellation(&self) -> &CancellationToken {
         &self.cancellation
     }
 
     /// Return the wall-clock cutoff fixed for this execution.
+    #[must_use]
     pub const fn cutoff(&self) -> SystemTime {
         self.cutoff
     }
@@ -78,6 +82,7 @@ impl ResidentExecution {
     }
 
     /// Return the cancellation token for cooperative shutdown.
+    #[must_use]
     pub const fn cancellation(&self) -> &CancellationToken {
         &self.cancellation
     }
@@ -136,6 +141,7 @@ pub struct RunNowHandle {
 
 impl RunNowHandle {
     /// Request one prompt execution, coalescing with an existing request.
+    #[must_use]
     pub fn request(&self) -> RunNowRequest {
         match self.sender.try_send(()) {
             Ok(()) => RunNowRequest::Scheduled,

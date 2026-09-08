@@ -52,6 +52,7 @@ pub const DEFAULT_NOTIFICATION_TRIGGERS: [NotificationTrigger; 2] = [Notificatio
 /// `attributeCreated`, `attributeUpdated`, and `attributeDeleted`. This helper
 /// performs that expansion on the Subscription side; mutation producers remain
 /// responsible for classifying the precise attribute change that occurred.
+#[must_use]
 pub fn effective_notification_triggers(requested: Option<&[NotificationTrigger]>) -> Vec<NotificationTrigger> {
     let requested = requested.unwrap_or(&DEFAULT_NOTIFICATION_TRIGGERS);
     let mut effective = Vec::with_capacity(requested.len().saturating_add(2));
@@ -137,7 +138,7 @@ pub struct CsrChangeEvent {
     pub csr_snapshot: Option<Value>,
 }
 
-/// NGSI-LD CsourceNotification payload (ETSI GS CIM 009 clause 5.3.2).
+/// NGSI-LD `CsourceNotification` payload (ETSI GS CIM 009 clause 5.3.2).
 ///
 /// Represents a notification sent to a subscriber when context source
 /// registration changes occur. Contains the subscription reference,

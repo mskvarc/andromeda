@@ -5,9 +5,9 @@
 //! - Append attribute with different datasetId
 //! - Append with noOverwrite option
 //! - Error cases (invalid ID, non-existent entity)
-//! - Special attribute types (LanguageProperty, JsonProperty, VocabProperty)
+//! - Special attribute types (`LanguageProperty`, `JsonProperty`, `VocabProperty`)
 //! - Scope handling
-//! - observationSpace/operationSpace GeoProperty
+//! - observationSpace/operationSpace `GeoProperty`
 
 use crate::{
     TEST_SUITE_CONTEXT,

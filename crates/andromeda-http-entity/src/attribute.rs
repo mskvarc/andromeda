@@ -51,10 +51,7 @@ pub async fn query(
         DiscoveryScope::Local
     };
 
-    let representation = match params.details {
-        true => AttributeCollectionRepresentation::Detailed,
-        false => AttributeCollectionRepresentation::List,
-    };
+    let representation = if params.details { AttributeCollectionRepresentation::Detailed } else { AttributeCollectionRepresentation::List };
     let local_result = service.attributes(&target, representation, scope, &context).await.with_entity_instance(&uri)?;
 
     let (result, warnings) = if is_local {
@@ -128,7 +125,7 @@ pub async fn get(
         (local_result, Vec::new())
     } else {
         let query_string = uri.query().unwrap_or("");
-        let path = format!("/attributes/{}", attr_id);
+        let path = format!("/attributes/{attr_id}");
         let forwarded = state
             .forwarding
             .forward_discovery_query(

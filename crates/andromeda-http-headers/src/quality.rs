@@ -1,4 +1,4 @@
-//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-FileCopyrightText: 2014-2025 Sean `McArthur`
 //! SPDX-License-Identifier: MIT
 //!
 //! Quality factors for HTTP content negotiation.
@@ -28,11 +28,13 @@ impl Quality {
     /// Create a new quality value.
     ///
     /// Returns `None` if `value` exceeds 1000.
+    #[must_use]
     pub const fn new(value: u16) -> Option<Quality> {
         if value > 1000 { None } else { Some(Quality(value)) }
     }
 
     /// The raw integer value (0..=1000).
+    #[must_use]
     pub const fn value(&self) -> u16 {
         self.0
     }

@@ -63,6 +63,7 @@ pub struct JsonLdEngineBuilder {
 
 impl JsonLdEngineBuilder {
     /// A builder carrying the defaults.
+    #[must_use]
     pub fn new() -> JsonLdEngineBuilder {
         JsonLdEngineBuilder {
             registry: Arc::new(ContextRegistry::new()),

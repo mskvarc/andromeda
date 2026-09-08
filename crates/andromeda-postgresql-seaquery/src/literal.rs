@@ -12,6 +12,7 @@ use sea_query::{Expr, SimpleExpr};
 ///
 /// Doubling `'` is the whole of it: PostgreSQL's standard-conforming string
 /// literals recognise no backslash escapes, so no other character is special.
+#[must_use]
 pub fn escape_single_quoted(value: &str) -> String {
     value.replace('\'', "''")
 }
@@ -23,6 +24,7 @@ pub fn escape_single_quoted(value: &str) -> String {
 /// shift the numbering of the values a caller does bind. The value is escaped,
 /// so an apostrophe cannot terminate the literal early; it is never a channel
 /// for caller-supplied data, which always binds.
+#[must_use]
 pub fn text_literal(value: &str) -> SimpleExpr {
     Expr::cust(format!("'{}'", escape_single_quoted(value)))
 }
@@ -32,6 +34,7 @@ pub fn text_literal(value: &str) -> SimpleExpr {
 /// A predicate that no row can satisfy — an attribute IRI no Entity has ever
 /// written, a temporal value with no canonical form — renders as this rather
 /// than as a bound `false`, so it needs no placeholder and shifts no numbering.
+#[must_use]
 pub fn false_literal() -> SimpleExpr {
     Expr::cust("FALSE")
 }
@@ -42,6 +45,7 @@ pub fn false_literal() -> SimpleExpr {
 /// canonical example — where binding it would only add a placeholder to every
 /// probe and shift the numbering of the values that carry meaning. The value is
 /// a broker-minted integer, never caller-supplied data.
+#[must_use]
 pub fn int_literal(value: i64) -> SimpleExpr {
     Expr::cust(value.to_string())
 }

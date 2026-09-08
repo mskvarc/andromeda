@@ -43,6 +43,7 @@ pub struct UnknownCompactCode {
 
 impl UnknownCompactCode {
     /// Report that `registry` has no member numbered `code`.
+    #[must_use]
     pub const fn new(registry: &'static str, code: i16) -> UnknownCompactCode {
         UnknownCompactCode { registry, code }
     }
@@ -60,6 +61,7 @@ impl UnknownCompactCode {
 /// A `prefix` beyond the registry's length digests the whole registry; the
 /// generated stability test rejects that case separately, so this function
 /// never has to fail.
+#[must_use]
 pub const fn frozen_prefix_digest(registrations: &[(i16, &str)], prefix: usize) -> u64 {
     let limit = if prefix < registrations.len() { prefix } else { registrations.len() };
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;

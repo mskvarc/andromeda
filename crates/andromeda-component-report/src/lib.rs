@@ -90,13 +90,13 @@ pub enum ComponentReport {
         /// Server version.
         version: ComponentVersion,
     },
-    /// Active PostGIS extension.
+    /// Active `PostGIS` extension.
     #[serde(rename = "postgis")]
     PostGis {
         /// Extension version.
         version: ComponentVersion,
     },
-    /// Active TimescaleDB extension.
+    /// Active `TimescaleDB` extension.
     #[serde(rename = "timescaledb")]
     TimescaleDb {
         /// Extension version.

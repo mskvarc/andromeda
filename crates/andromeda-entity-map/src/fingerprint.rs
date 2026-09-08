@@ -35,7 +35,7 @@ const RECORD_SEPARATOR: u8 = 0x1e;
 /// The request a map is created for, by the operation it is.
 #[derive(Debug, Clone, Copy)]
 pub enum FingerprintedRequest<'a> {
-    /// Query Entities, through either binding, or Create EntityMap for Query Entities.
+    /// Query Entities, through either binding, or Create `EntityMap` for Query Entities.
     QueryEntities(&'a EntityQueryParameters),
     /// Retrieve Entity.
     RetrieveEntity(&'a GetEntityParams),

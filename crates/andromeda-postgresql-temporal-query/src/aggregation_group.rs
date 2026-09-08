@@ -84,6 +84,7 @@ pub enum MixingSensitivity {
 }
 
 /// Classify an aggregation method of clause 4.5.19 by what its result depends on.
+#[must_use]
 pub const fn mixing_sensitivity(method: AggrMethod) -> MixingSensitivity {
     match method {
         AggrMethod::Avg | AggrMethod::Min | AggrMethod::Max | AggrMethod::Sum | AggrMethod::SumSq | AggrMethod::StdDev => MixingSensitivity::Sensitive,

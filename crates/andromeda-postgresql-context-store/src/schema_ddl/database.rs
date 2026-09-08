@@ -1,7 +1,7 @@
 //! `CREATE DATABASE` DDL.
 //!
 //! `CREATE DATABASE` cannot run inside a transaction and takes no bound
-//! parameters, so it is neither a SeaQuery statement nor executed through
+//! parameters, so it is neither a `SeaQuery` statement nor executed through
 //! `query_with`; the database name is a quoted identifier, not a value.
 
 /// The `CREATE DATABASE "name"` statement for `name`.
@@ -10,6 +10,7 @@
 /// removed, because an identifier cannot be a bound parameter. Callers pass a
 /// name already constrained to the sanitised, length-bounded form
 /// [`crate::tenant_database::generate_db_name`] produces.
+#[must_use]
 pub fn create_database(name: &str) -> String {
     format!("CREATE DATABASE \"{}\"", name.replace('"', ""))
 }

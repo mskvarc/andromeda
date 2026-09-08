@@ -16,6 +16,7 @@ pub enum TenancyHttpError {
 }
 
 /// Classify every tenancy-binding failure exhaustively.
+#[must_use]
 pub fn classify(error: &TenancyHttpError) -> ClassifiedReport {
     match error {
         TenancyHttpError::Tenancy(source) => classify_tenancy_error(source),

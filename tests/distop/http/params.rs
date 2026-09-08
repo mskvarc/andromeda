@@ -474,7 +474,7 @@ async fn dist_http_query_contained_by_param_honoured() {
 /// `entityMap=true` returns an `NGSILD-EntityMap` header whose lifetime is set by
 /// `entityMapLifetime` (clause 6.3.15). With no map referenced in the request a
 /// new map is minted, so the query answers `201` (Table 6.4.3.2-3: "201 Created"
-/// when an EntityMap is "(re)created"). Confirms REQ-HTTP-51 (entityMap).
+/// when an `EntityMap` is "(re)created"). Confirms REQ-HTTP-51 (entityMap).
 #[tokio::test]
 async fn dist_http_query_entity_map_lifetime_param_sets_expiry() {
     let topology = topology::single().await.expect("single-broker topology");

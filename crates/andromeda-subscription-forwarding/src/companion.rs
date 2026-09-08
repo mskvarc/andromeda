@@ -227,25 +227,22 @@ impl SubscriptionForwardingService {
         if is_local_only(subscription) {
             return self.tear_down(&subscription.id).await;
         }
-        let companion = match self.mappings.companion_of(&subscription.id).await? {
-            Some(companion) => {
-                let mut fragment = companion_document(subscription, &companion, self.receiver.url());
-                if let Some(object) = fragment.as_object_mut() {
-                    object.remove("id");
-                    object.remove("type");
-                }
-                self.csource_subscriptions
-                    .update(&self.live_target, &companion, fragment, &ContextSpec::core_only(), None)
-                    .await?;
-                companion
+        let companion = if let Some(companion) = self.mappings.companion_of(&subscription.id).await? {
+            let mut fragment = companion_document(subscription, &companion, self.receiver.url());
+            if let Some(object) = fragment.as_object_mut() {
+                object.remove("id");
+                object.remove("type");
             }
-            None => {
-                // An update that first provisions the companion carries no
-                // creation-time `Via` chain here; the update path forwards to
-                // every selected source as before.
-                self.create_companion(subscription, context, &[]).await?;
-                return Ok(());
-            }
+            self.csource_subscriptions
+                .update(&self.live_target, &companion, fragment, &ContextSpec::core_only(), None)
+                .await?;
+            companion
+        } else {
+            // An update that first provisions the companion carries no
+            // creation-time `Via` chain here; the update path forwards to
+            // every selected source as before.
+            self.create_companion(subscription, context, &[]).await?;
+            return Ok(());
         };
         let compiled = self.compiled_companion(&companion).await?;
         for copy in self.mappings.forwarded_of(&subscription.id).await? {

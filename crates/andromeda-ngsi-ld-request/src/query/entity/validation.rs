@@ -10,6 +10,7 @@ use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 
 impl EntityQueryParameters {
     /// Parses the `options` and `format` parameters into structured flags.
+    #[must_use]
     pub fn parse_options(&self) -> EntityQueryParametersOptions {
         let options = self.options.unwrap_or_default();
         EntityQueryParametersOptions {
@@ -21,6 +22,7 @@ impl EntityQueryParameters {
 
     /// Whether the query is confined to this broker: `local=true`, or a
     /// `type=*` selector, which Table 5.2.33-1 defines as implying local scope.
+    #[must_use]
     pub const fn is_local(&self) -> bool {
         self.local_flag_set() || self.selects_every_type()
     }
@@ -36,6 +38,7 @@ impl EntityQueryParameters {
     }
 
     /// Whether any entity filter parameter is present.
+    #[must_use]
     pub const fn has_any_filter(&self) -> bool {
         self.entity_type.is_some()
             || self.id.is_some()

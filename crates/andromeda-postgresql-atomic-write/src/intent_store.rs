@@ -120,7 +120,7 @@ fn enqueue_statement(
             .do_nothing()
             .to_owned(),
         );
-    Ok(statement.to_owned())
+    Ok(statement.clone())
 }
 
 /// PostgreSQL-backed pending temporal intent queue for one tenant.
@@ -132,6 +132,7 @@ pub struct PostgresTemporalIntentStore {
 
 impl PostgresTemporalIntentStore {
     /// Construct a pending-intent store over the tenant anchor pool.
+    #[must_use]
     pub fn new(pool: &PgPool) -> PostgresTemporalIntentStore {
         PostgresTemporalIntentStore {
             pool: pool.clone(), // clone: SQLx pools are shared reference-counted handles.
@@ -346,7 +347,7 @@ fn claim_statement(context_space_key: ContextSpaceKey, owner: Uuid, entity_id: O
         .value(TemporalAppendIntents::LeaseOwner, owner)
         .value(TemporalAppendIntents::LeaseUntil, lease_until)
         .value(TemporalAppendIntents::Attempts, Expr::col(TemporalAppendIntents::Attempts).add(1))
-        .and_where(Expr::col(TemporalAppendIntents::Sequence).in_subquery(eligible.to_owned()))
+        .and_where(Expr::col(TemporalAppendIntents::Sequence).in_subquery(eligible.clone()))
         .returning(Query::returning().columns([TemporalAppendIntents::Sequence, TemporalAppendIntents::Intent, TemporalAppendIntents::Attempts]))
         .to_owned()
 }

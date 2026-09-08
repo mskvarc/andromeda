@@ -68,6 +68,7 @@ impl PostgresTenantRegistry {
     }
 
     /// The platform pool, for the health indicator and the version service.
+    #[must_use]
     pub const fn main_pool(&self) -> &PgPool {
         &self.main_pool
     }
@@ -205,7 +206,7 @@ fn named_tenant_database_query(name: &str, scope: NamedTenantScope) -> SelectSta
         }
         NamedTenantScope::AnyRow => {}
     }
-    query.to_owned()
+    query.clone()
 }
 
 /// Take the transaction advisory lock keyed on `name`.
@@ -242,7 +243,7 @@ fn default_tenant_upsert(db_name: &str, status: &str) -> Result<InsertStatement,
                 .values([(Tenants::ModifiedAt, Expr::current_timestamp())])
                 .to_owned(),
         );
-    Ok(statement.to_owned())
+    Ok(statement.clone())
 }
 
 /// Insert a named tenant.
@@ -266,7 +267,7 @@ fn tenant_insert(name: &str, db_name: &str, status: &str) -> Result<InsertStatem
             Expr::current_timestamp(),
             Expr::current_timestamp(),
         ])?;
-    Ok(statement.to_owned())
+    Ok(statement.clone())
 }
 
 #[cfg(test)]

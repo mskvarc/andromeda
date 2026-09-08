@@ -4,7 +4,7 @@
 //! - Partial update attribute value
 //! - Partial update with datasetId
 //! - Error cases (invalid ID, non-existent entity, mismatched type)
-//! - LanguageProperty, JsonProperty, VocabProperty
+//! - `LanguageProperty`, `JsonProperty`, `VocabProperty`
 //! - Deletion via NGSI-LD null sentinel
 
 use crate::{

@@ -20,6 +20,7 @@ pub fn assert_no_raw_iri_or_media_constants(workspace_root: &str) {
 }
 
 /// Return exact declarations that encode an IRI or media type as `&str`.
+#[must_use]
 pub fn raw_iri_or_media_constants(workspace_root: &str) -> Vec<String> {
     let mut violations = Vec::new();
     for source in workspace_sources(Path::new(workspace_root)) {

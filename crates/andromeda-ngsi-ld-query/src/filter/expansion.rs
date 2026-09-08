@@ -289,7 +289,8 @@ mod tests {
 
     fn path_of(expr: &Expr) -> &AttrPath {
         match expr {
-            Expr::Pred(Predicate::Equality { path, .. }) | Expr::Pred(Predicate::Ordering { path, .. }) => path.terminal(),
+            Expr::Pred(Predicate::Equality { path, .. } | Predicate::Ordering { path, ..
+}) => path.terminal(),
             other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected a comparison, got {other:?}"),
         }
     }

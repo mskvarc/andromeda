@@ -1,4 +1,4 @@
-//! The KeyValuePair member (ETSI GS CIM 009 clause 5.2.22).
+//! The `KeyValuePair` member (ETSI GS CIM 009 clause 5.2.22).
 //!
 //! Two resources carry a list of these and mean the same thing by it: a
 //! subscription's `receiverInfo` and `notifierInfo` (clause 5.2.15), and a

@@ -88,6 +88,7 @@ impl ScopeTarget {
 /// one-alternative, one-requirement query renders as a single predicate:
 /// sea-query's `Condition::any` of one term adds no nesting of its own, which
 /// is why the hand-written special case both renderers used to carry is gone.
+#[must_use]
 pub fn condition(scope_q: &ScopeQuery, target: &ScopeTarget) -> Condition {
     let mut disjunction = Condition::any();
     for alternative in scope_q.alternatives() {

@@ -74,11 +74,13 @@ pub const NGSI_LD_CORE_CONTEXT_MAP: [(Iri<&'static str>, &str); 8] = [
 ];
 
 /// Returns `true` if `url` matches any known NGSI-LD core context version.
+#[must_use]
 pub fn is_ngsi_ld_core_context_url(url: Iri<&str>) -> bool {
     NGSI_LD_CORE_CONTEXT_URL_LIST.iter().any(|candidate| candidate == &url)
 }
 
 /// The embedded core-context document associated with a known URL.
+#[must_use]
 pub fn embedded_core_context(url: Iri<&str>) -> Option<&'static str> {
     NGSI_LD_CORE_CONTEXT_MAP
         .iter()
@@ -94,6 +96,7 @@ pub fn embedded_core_context(url: Iri<&str>) -> Option<&'static str> {
 /// only when it does may the fastpath's version-specific term table speak for
 /// it. Payloads are compared by pointer, as each URL maps to one interned
 /// `&'static str`.
+#[must_use]
 pub fn same_core_context_document(a: Iri<&str>, b: Iri<&str>) -> bool {
     match (embedded_core_context(a), embedded_core_context(b)) {
         (Some(payload_a), Some(payload_b)) => ptr::eq(payload_a, payload_b),

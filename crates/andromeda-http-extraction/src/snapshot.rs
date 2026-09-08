@@ -18,6 +18,7 @@ pub struct SnapshotHeader(pub Option<Uri>);
 
 impl SnapshotHeader {
     /// Consume the extractor and return the optional snapshot URN.
+    #[must_use]
     pub fn into_inner(self) -> Option<Uri> {
         self.0
     }

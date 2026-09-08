@@ -83,8 +83,8 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<CsrQuery, RenderError
         // across executions (clause 5.5.9 requires a stable order).
         .order_by(Csr::CreatedAt, Order::Asc)
         .order_by(Csr::Id, Order::Asc)
-        .limit(query.pagination.limit as u64)
-        .offset(query.pagination.offset as u64);
+        .limit(u64::from(query.pagination.limit))
+        .offset(u64::from(query.pagination.offset));
 
     // Count query always generated for CSR
     let mut count = Query::select();
@@ -169,7 +169,7 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
 ///
 /// A registration carries three geometries (Table 5.2.9-1). The query's
 /// `geoproperty` selects `observationSpace` or `operationSpace` when it names
-/// one of them; every other GeoProperty, including the clause 5.10.2.4 default
+/// one of them; every other `GeoProperty`, including the clause 5.10.2.4 default
 /// `location`, is matched against `location`.
 fn registration_geometry_column(geo: &GeoQuery) -> &'static str {
     let geoproperty = geo.geoproperty.as_str();
@@ -227,7 +227,7 @@ mod tests {
         DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
     }
 
-    /// A GeoJSON point reference geometry, for tests that vary the relation
+    /// A `GeoJSON` point reference geometry, for tests that vary the relation
     /// rather than the geometry.
     fn point(coordinates: serde_json::Value) -> Geometry {
         Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": coordinates })).expect("point parses")
@@ -439,7 +439,7 @@ mod tests {
     }
 
     /// Table 5.2.9-1: `observationSpace` and `operationSpace` are geometries of
-    /// their own, reached when the geoquery names them; any other GeoProperty,
+    /// their own, reached when the geoquery names them; any other `GeoProperty`,
     /// including the clause 5.10.2.4 default, reads `location`.
     #[test]
     fn the_geoproperty_selects_the_registration_geometry() {

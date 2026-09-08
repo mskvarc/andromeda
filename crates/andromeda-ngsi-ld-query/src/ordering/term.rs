@@ -63,6 +63,7 @@ impl<'a> RawOrderTarget<'a> {
     pub const SCOPE_KEYWORD: &'static str = "scope";
 
     /// Classify a raw `orderBy` name.
+    #[must_use]
     pub fn classify(raw: &'a NgsiLdReference) -> RawOrderTarget<'a> {
         match raw.as_str() {
             RawOrderTarget::ID_KEYWORD => RawOrderTarget::Id,
@@ -164,6 +165,7 @@ impl From<OrderTerm> for String {
 
 impl OrderDirection {
     /// Whether this is a distance-based ordering direction.
+    #[must_use]
     pub const fn is_distance(&self) -> bool {
         matches!(self, OrderDirection::DistAsc | OrderDirection::DistDesc)
     }

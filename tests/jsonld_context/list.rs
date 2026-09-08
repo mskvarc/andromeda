@@ -72,7 +72,7 @@ async fn create_three_contexts(c: &reqwest::Client) -> Vec<String> {
     uris
 }
 
-/// Create a subscription that generates an ImplicitlyCreated context.
+/// Create a subscription that generates an `ImplicitlyCreated` context.
 async fn create_implicit_context_for_list(c: &reqwest::Client) -> String {
     let sub = json!({
         "type": "Subscription",

@@ -20,6 +20,7 @@ pub struct SpatialEntityIndex {
 
 impl SpatialEntityIndex {
     /// An empty index.
+    #[must_use]
     pub fn new() -> SpatialEntityIndex {
         SpatialEntityIndex::default()
     }
@@ -43,7 +44,7 @@ impl SpatialEntityIndex {
     /// Replace one entity's geometries under one partition.
     ///
     /// ETSI GS CIM 009 v1.9.1 clause 4.10 counts an entity as matching when any
-    /// one instance of the target GeoProperty meets the restriction, so every
+    /// one instance of the target `GeoProperty` meets the restriction, so every
     /// `datasetId` instance is indexed and the partition may hold the entity
     /// several times. [`SpatialEntityIndex::query`] answers with a set, so an
     /// entity two of whose instances match is still reported once.
@@ -369,7 +370,7 @@ mod tests {
     }
 
     /// Clause 4.10: an entity matches when any instance of the target
-    /// GeoProperty meets the restriction, so a partition holds one entry per
+    /// `GeoProperty` meets the restriction, so a partition holds one entry per
     /// `datasetId` instance and reports the entity once however many match.
     #[test]
     fn every_instance_of_a_multi_dataset_geoproperty_is_indexed_and_reported_once() {

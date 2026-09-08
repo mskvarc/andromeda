@@ -47,7 +47,7 @@ pub fn building_polygon_3d(id: &str, coordinates: Value) -> Value {
     building_with_location(id, json!({"type": "Polygon", "coordinates": coordinates}))
 }
 
-/// A `Building` carrying an arbitrary GeoJSON geometry as its `location`.
+/// A `Building` carrying an arbitrary `GeoJSON` geometry as its `location`.
 pub fn building_with_location(id: &str, geometry: Value) -> Value {
     json!({
         "id": id,
@@ -104,14 +104,14 @@ pub async fn get_entity(client: &TestClient, id: &str) -> (StatusCode, Value) {
     (response.status, body)
 }
 
-/// Extracts the `location` GeoProperty coordinates from a normalised entity.
+/// Extracts the `location` `GeoProperty` coordinates from a normalised entity.
 pub fn location_coordinates(entity: &Value) -> &Value {
     entity
         .pointer("/location/value/coordinates")
         .expect("entity must carry location.value.coordinates")
 }
 
-/// Extracts the coordinates of an arbitrary GeoProperty from a normalised entity.
+/// Extracts the coordinates of an arbitrary `GeoProperty` from a normalised entity.
 pub fn geoproperty_coordinates<'a>(entity: &'a Value, attribute: &str) -> &'a Value {
     entity
         .pointer(&format!("/{attribute}/value/coordinates"))
@@ -138,7 +138,7 @@ pub fn encode_json(value: &Value) -> String {
     urlencoding::encode(&value.to_string()).into_owned()
 }
 
-/// Compares two GeoJSON coordinate trees by numeric value.
+/// Compares two `GeoJSON` coordinate trees by numeric value.
 ///
 /// A JSON round-trip may render `13.0` as `13`, which `serde_json` treats as a
 /// different `Number` even though RFC 7946 gives the two identical meaning.

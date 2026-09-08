@@ -19,10 +19,10 @@ pub enum RenderedShape {
     /// A clause 4.5.1 entity rendering.
     #[strum(serialize = "entity")]
     Entity,
-    /// A clause 4.5.16 GeoJSON Feature.
+    /// A clause 4.5.16 `GeoJSON` Feature.
     #[strum(serialize = "GeoJSON Feature")]
     GeoJsonFeature,
-    /// A clause 4.5.16 GeoJSON FeatureCollection.
+    /// A clause 4.5.16 `GeoJSON` `FeatureCollection`.
     #[strum(serialize = "GeoJSON FeatureCollection")]
     GeoJsonFeatureCollection,
 }
@@ -42,6 +42,7 @@ pub enum RenderError {
 
 impl RenderError {
     /// A serialisation failure under the given rendering.
+    #[must_use]
     pub const fn serialization(shape: RenderedShape, source: serde_json::Error) -> RenderError {
         RenderError::Serialization { shape, source }
     }

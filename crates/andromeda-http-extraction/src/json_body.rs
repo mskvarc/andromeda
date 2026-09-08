@@ -22,6 +22,7 @@ impl JsonBodyFailure {
 }
 
 /// Classify an Axum JSON rejection according to NGSI-LD clause 5.5.2.
+#[must_use]
 pub fn classify_json_body(rejection: JsonRejection) -> JsonBodyFailure {
     let detail = rejection.body_text();
     if let JsonRejection::JsonDataError(_) = rejection {

@@ -36,7 +36,7 @@ impl TemporalService {
             let entity_id = entity_id
                 .parse::<Uri>()
                 .map_err(|error| TemporalError::validation(format!("Invalid entity id: {error}")))?;
-            if entity_obj.get("@type").and_then(|v| v.as_array()).is_none_or(|types| types.is_empty()) {
+            if entity_obj.get("@type").and_then(|v| v.as_array()).is_none_or(std::vec::Vec::is_empty) {
                 return Err(TemporalError::validation("Entity missing @type"));
             }
             entity_id
@@ -174,7 +174,7 @@ impl TemporalService {
         }
 
         if !self.mutator.attribute_exists(target, entity_id, &attr_iri).await? {
-            return Err(TemporalError::not_found(format!("Attribute {} not found on entity {}", attr_iri, entity_id)));
+            return Err(TemporalError::not_found(format!("Attribute {attr_iri} not found on entity {entity_id}")));
         }
 
         let dataset_uri = match dataset_id {
@@ -184,8 +184,8 @@ impl TemporalService {
         let deleted = self.mutator.delete_attribute(target, entity_id, &attr_iri, dataset_uri, scope).await?;
         if deleted == 0 {
             let missing_detail = match dataset_id {
-                Some(ds_id) => format!("Attribute {} with datasetId {} not found on entity {}", attr_iri, ds_id, entity_id),
-                None => format!("Attribute {} default instance not found on entity {}", attr_iri, entity_id),
+                Some(ds_id) => format!("Attribute {attr_iri} with datasetId {ds_id} not found on entity {entity_id}"),
+                None => format!("Attribute {attr_iri} default instance not found on entity {entity_id}"),
             };
             return Err(TemporalError::not_found(missing_detail));
         }
@@ -206,11 +206,11 @@ impl TemporalService {
         let attr_iri = self.resolve_attr_iri_for_entity(target, entity_id, attr_id, context).await?;
 
         if !self.mutator.entity_exists(target, entity_id).await? {
-            return Err(TemporalError::not_found(format!("Entity {} not found", entity_id)));
+            return Err(TemporalError::not_found(format!("Entity {entity_id} not found")));
         }
 
         if !self.mutator.attribute_exists(target, entity_id, &attr_iri).await? {
-            return Err(TemporalError::not_found(format!("Attribute {} not found on entity {}", attr_iri, entity_id)));
+            return Err(TemporalError::not_found(format!("Attribute {attr_iri} not found on entity {entity_id}")));
         }
 
         if !self.mutator.instance_exists(target, instance, entity_id, &attr_iri).await? {
@@ -240,11 +240,11 @@ impl TemporalService {
         let attr_iri = self.resolve_attr_iri_for_entity(target, entity_id, attr_id, context).await?;
 
         if !self.mutator.entity_exists(target, entity_id).await? {
-            return Err(TemporalError::not_found(format!("Entity {} not found", entity_id)));
+            return Err(TemporalError::not_found(format!("Entity {entity_id} not found")));
         }
 
         if !self.mutator.attribute_exists(target, entity_id, &attr_iri).await? {
-            return Err(TemporalError::not_found(format!("Attribute {} not found on entity {}", attr_iri, entity_id)));
+            return Err(TemporalError::not_found(format!("Attribute {attr_iri} not found on entity {entity_id}")));
         }
 
         if !self.mutator.instance_exists(target, instance, entity_id, &attr_iri).await? {

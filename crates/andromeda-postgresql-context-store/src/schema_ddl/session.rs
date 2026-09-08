@@ -1,7 +1,7 @@
 //! Session-level `SET` statements.
 //!
 //! `SET` alters a connection's own configuration for the rest of its life and
-//! takes no bound parameters, so it is not a SeaQuery statement; the setting
+//! takes no bound parameters, so it is not a `SeaQuery` statement; the setting
 //! value is a configuration literal chosen from a fixed vocabulary, not
 //! caller-supplied data.
 
@@ -11,6 +11,7 @@
 /// (`SynchronousCommit::as_postgres_setting`), one of a fixed set of PostgreSQL
 /// tokens (`on`, `off`, `local`, `remote_write`, `remote_apply`), so it is a
 /// configuration literal rather than external input.
+#[must_use]
 pub fn set_synchronous_commit(setting: &str) -> String {
     format!("SET synchronous_commit = '{setting}'")
 }

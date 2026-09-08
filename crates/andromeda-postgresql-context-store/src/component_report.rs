@@ -32,8 +32,8 @@ pub async fn discover(pool: &PgPool) -> Result<Vec<ComponentReport>, sqlx::Error
     Ok(reports)
 }
 
-/// The introspection query reading the server version, the PostGIS and
-/// TimescaleDB extension versions, and the TimescaleDB license marker.
+/// The introspection query reading the server version, the `PostGIS` and
+/// `TimescaleDB` extension versions, and the `TimescaleDB` license marker.
 ///
 /// Each column is a system-function call or a `pg_extension` lookup, so the
 /// statement names no application relation; the extension and setting names it
@@ -47,7 +47,7 @@ fn discover_statement() -> sea_query::SelectStatement {
         .to_owned()
 }
 
-/// Normalize TimescaleDB's setting values into stable report values.
+/// Normalize `TimescaleDB`'s setting values into stable report values.
 fn normalize_timescale_license(license: Option<&str>) -> String {
     match license {
         Some("timescale") => "TSL".to_owned(),

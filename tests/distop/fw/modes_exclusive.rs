@@ -240,7 +240,7 @@ async fn distop_entity_exclusive_then_redirect_same_id_attrs_rejected() {
 }
 
 /// An exclusive registration expressed by `idPattern` rather than an exact id is
-/// rejected with 400 BadRequestData (clause 5.2.9). Confirms REQ-FW-23.
+/// rejected with 400 `BadRequestData` (clause 5.2.9). Confirms REQ-FW-23.
 #[tokio::test]
 async fn distop_entity_exclusive_registration_with_id_pattern_rejected() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -261,7 +261,7 @@ async fn distop_entity_exclusive_registration_with_id_pattern_rejected() {
 }
 
 /// An exclusive registration by type only, without an exact id, is rejected with
-/// 400 BadRequestData (clause 5.2.9). Confirms REQ-FW-23.
+/// 400 `BadRequestData` (clause 5.2.9). Confirms REQ-FW-23.
 #[tokio::test]
 async fn distop_entity_exclusive_registration_type_only_rejected() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -282,7 +282,7 @@ async fn distop_entity_exclusive_registration_type_only_rejected() {
 }
 
 /// An exclusive registration with an exact id but no property or relationship
-/// names is rejected with 400 BadRequestData (clause 5.2.9). Confirms REQ-FW-24.
+/// names is rejected with 400 `BadRequestData` (clause 5.2.9). Confirms REQ-FW-24.
 #[tokio::test]
 async fn distop_entity_exclusive_registration_without_attributes_rejected() {
     let topology = topology::single().await.expect("single-broker topology");

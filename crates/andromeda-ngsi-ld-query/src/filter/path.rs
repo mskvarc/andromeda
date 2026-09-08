@@ -42,7 +42,7 @@ pub struct AttrPath {
     /// A compound value reaches the evaluator in two genuinely different
     /// shapes (see `eval::resolve_compound_member`): a structured Property
     /// value, whose members JSON-LD expansion turns into IRI-keyed nodes, and
-    /// a JsonProperty's (or an opaque Property's) raw JSON object, whose keys
+    /// a `JsonProperty`'s (or an opaque Property's) raw JSON object, whose keys
     /// are never touched by expansion because they sit inside an opaque value,
     /// not the JSON-LD graph. Term-expanding `value_path` addresses the first
     /// shape; this field keeps what the client actually wrote so the second
@@ -50,7 +50,7 @@ pub struct AttrPath {
     /// `expand_attr_path` overwrites `value_path` alone.
     pub value_path_compact: Vec<AttributeName>,
     /// Whether the path carried the `[*]` language-suppression marker, which
-    /// matches a LanguageProperty against every language's value rather than
+    /// matches a `LanguageProperty` against every language's value rather than
     /// against the one the `lang` parameter would otherwise pick (clause 4.9).
     pub match_all_languages: bool,
 }
@@ -75,6 +75,7 @@ impl Eq for AttrPath {}
 impl AttrPath {
     /// Build a path addressing an attribute's own value, with no sub-attribute
     /// and no compound value navigation.
+    #[must_use]
     pub const fn simple(attr: AttributeName) -> AttrPath {
         AttrPath {
             attr,
@@ -124,6 +125,7 @@ impl QueryPath {
     /// value-level concern such as `expandValues` or `jsonKeys` (clause 6.4.3.2)
     /// names: those parameters describe the values being compared, and after a
     /// hop the compared values belong to the linked entity's attribute.
+    #[must_use]
     pub fn terminal(&self) -> &AttrPath {
         match self {
             QueryPath::Local(local) => local,
@@ -136,6 +138,7 @@ impl QueryPath {
     /// Testing the outermost segment is enough to answer that for the whole
     /// axis: a hop wraps everything after it, so a [`QueryPath::Local`] can
     /// never have one nested inside.
+    #[must_use]
     pub const fn is_linked(&self) -> bool {
         matches!(self, QueryPath::Linked { .. })
     }
@@ -147,6 +150,7 @@ impl QueryPath {
     /// `rel{rel2{attr}}`, and so on. Clause 5.7.2.4 measures a filter against
     /// `joinLevel` by exactly this count, so the number the traversal is bounded
     /// by and the number the rule checks are the same one.
+    #[must_use]
     pub fn linked_depth(&self) -> u32 {
         match self {
             QueryPath::Local(_) => 0,

@@ -26,6 +26,7 @@ impl ContextTarget {
     }
 
     /// Return the selected durable branch key.
+    #[must_use]
     pub const fn key(&self) -> ContextSpaceKey {
         match self {
             ContextTarget::Live(space) => space.key(),
@@ -34,6 +35,7 @@ impl ContextTarget {
     }
 
     /// Return the selected branch role.
+    #[must_use]
     pub const fn kind(&self) -> ContextSpaceKind {
         match self {
             ContextTarget::Live(space) => space.kind(),
@@ -42,6 +44,7 @@ impl ContextTarget {
     }
 
     /// Return whether distributed discovery and forwarding are allowed.
+    #[must_use]
     pub const fn permits_federation(&self) -> bool {
         match self {
             ContextTarget::Live(_) => true,
@@ -50,6 +53,7 @@ impl ContextTarget {
     }
 
     /// Return the Snapshot target when the selected branch is Snapshot-owned.
+    #[must_use]
     pub const fn snapshot(&self) -> Option<&SnapshotTarget> {
         match self {
             ContextTarget::Live(_) => None,

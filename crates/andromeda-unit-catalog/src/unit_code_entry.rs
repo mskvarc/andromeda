@@ -25,6 +25,7 @@ pub struct UnitCodeEntry {
 impl UnitCodeEntry {
     /// Register `token` under `id`, first seen in `first_revision` and
     /// withdrawn in `retired_revision`.
+    #[must_use]
     pub const fn new(id: UnitCodeId, token: UnitCodeToken, first_revision: Rec20Revision, retired_revision: Option<Rec20Revision>) -> UnitCodeEntry {
         UnitCodeEntry {
             id,
@@ -35,27 +36,32 @@ impl UnitCodeEntry {
     }
 
     /// Return the persisted identity.
+    #[must_use]
     pub const fn id(&self) -> UnitCodeId {
         self.id
     }
 
     /// Return the common code as written on the wire.
+    #[must_use]
     pub const fn token(&self) -> UnitCodeToken {
         self.token
     }
 
     /// Return the revision this code was first registered from.
+    #[must_use]
     pub const fn first_revision(&self) -> Rec20Revision {
         self.first_revision
     }
 
     /// Return the revision that withdrew this code, when one has.
+    #[must_use]
     pub const fn retired_revision(&self) -> Option<Rec20Revision> {
         self.retired_revision
     }
 
     /// Return the typed code, when the linked Recommendation 20 artifact still
     /// defines one for this token.
+    #[must_use]
     pub fn unit_code(&self) -> Option<UnitCode> {
         UnitCode::from_code(self.token.as_str())
     }
@@ -75,7 +81,7 @@ mod tests {
     #[test]
     fn a_current_registration_resolves_to_a_typed_code() {
         let resolved = kilogram().and_then(|entry| entry.unit_code());
-        assert_eq!(resolved.map(|code| code.as_str()), Some("KGM"));
+        assert_eq!(resolved.map(cefact_units::UnitCode::as_str), Some("KGM"));
     }
 
     #[test]

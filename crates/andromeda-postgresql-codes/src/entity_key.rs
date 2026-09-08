@@ -26,6 +26,7 @@ pub struct EntityKey(i64);
 
 impl EntityKey {
     /// Return the stored representation.
+    #[must_use]
     pub const fn get(self) -> i64 {
         self.0
     }

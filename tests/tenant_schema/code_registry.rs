@@ -130,7 +130,7 @@ async fn the_routing_projection_refuses_an_operation_number_no_release_assigned(
         .execute(scope.database_pool())
         .await;
     let violation = refused.expect_err("an unassigned operation number must be refused");
-    let code = violation.as_database_error().and_then(|error| error.code().map(|code| code.into_owned()));
+    let code = violation.as_database_error().and_then(|error| error.code().map(std::borrow::Cow::into_owned));
     assert_eq!(code.as_deref(), Some("23514"), "the refusal must be a check violation: {violation}");
 
     // The highest number the registry does assign is accepted, so the check

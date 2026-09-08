@@ -1,6 +1,6 @@
-//! TimescaleDB functions sea-query has no form for.
+//! `TimescaleDB` functions sea-query has no form for.
 //!
-//! TimescaleDB extends PostgreSQL with hypertable-management and time-bucketing
+//! `TimescaleDB` extends PostgreSQL with hypertable-management and time-bucketing
 //! functions that take keyword arguments (`older_than => …`) and stand in
 //! statement positions sea-query models no other way. They are spelled here, in
 //! the one crate sanctioned to write a dialect fragment, with every
@@ -19,7 +19,7 @@ use sea_query::{Expr, ExprTrait, Func, Iden, Query, SelectStatement, SimpleExpr}
 #[iden = "time_bucket"]
 struct TimeBucket;
 
-/// TimescaleDB: `time_bucket(width, ts, origin)` - the start of the fixed-width
+/// `TimescaleDB`: `time_bucket(width, ts, origin)` - the start of the fixed-width
 /// window `ts` falls in, aligned so one bucket boundary lands on `origin`.
 ///
 /// All three arguments are expressions: `width` is an `interval`, `ts` the time
@@ -27,16 +27,18 @@ struct TimeBucket;
 /// correlated per-entity earliest observation. None is interpolated - a
 /// caller-supplied period reaches `width` as a bound value already cast to
 /// `interval`.
+#[must_use]
 pub fn time_bucket(width: SimpleExpr, ts: SimpleExpr, origin: SimpleExpr) -> SimpleExpr {
     Func::cust(TimeBucket).args([width, ts, origin]).into()
 }
 
-/// TimescaleDB: `drop_chunks(hypertable, older_than => cutoff::timestamptz)` -
+/// `TimescaleDB`: `drop_chunks(hypertable, older_than => cutoff::timestamptz)` -
 /// drop every chunk of `hypertable` whose range ends before `cutoff`.
 ///
 /// A set-returning function naming each dropped chunk, so it stands in a
 /// projection whose row count is the number of chunks removed. The hypertable is
 /// a fixed catalog name rendered inline; the cutoff is a bound value.
+#[must_use]
 pub fn drop_chunks(hypertable: &str, cutoff: SimpleExpr) -> SimpleExpr {
     Expr::cust_with_exprs(
         "drop_chunks($1, older_than => $2)",
@@ -89,6 +91,7 @@ const COMPRESS_AFTER_KEY: &str = "compress_after";
 /// the time dimension every hypertable in this schema is partitioned by, and
 /// projects its `time_interval`. The hypertable name is a fixed catalogue name
 /// bound as a value.
+#[must_use]
 pub fn chunk_interval_statement(hypertable: &str) -> SelectStatement {
     Query::select()
         .column(Dimensions::TimeInterval)
@@ -103,6 +106,7 @@ pub fn chunk_interval_statement(hypertable: &str) -> SelectStatement {
 /// Reads `timescaledb_information.jobs` for the compression-policy job of the
 /// hypertable and projects `config ->> 'compress_after'` cast to `interval`;
 /// no row means no policy is installed.
+#[must_use]
 pub fn columnstore_policy_statement(hypertable: &str) -> SelectStatement {
     Query::select()
         .expr(cast_compound(
@@ -115,11 +119,12 @@ pub fn columnstore_policy_statement(hypertable: &str) -> SelectStatement {
         .to_owned()
 }
 
-/// TimescaleDB: `set_chunk_time_interval(hypertable, make_interval(days => n))`
+/// `TimescaleDB`: `set_chunk_time_interval(hypertable, make_interval(days => n))`
 /// - the interval every chunk created from now on spans.
 ///
 /// The hypertable is a fixed catalogue name rendered inline; the day count is a
 /// bound value turned into an `interval` server-side.
+#[must_use]
 pub fn set_chunk_time_interval(hypertable: &str, days: SimpleExpr) -> SimpleExpr {
     Expr::cust_with_exprs("set_chunk_time_interval($1, make_interval(days => $2))", [text_literal(hypertable), days])
 }

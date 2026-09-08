@@ -50,6 +50,7 @@ const SECONDS_PER_MINUTE: u64 = 60;
 /// Decomposed into days, hours, minutes and seconds so each component stays a
 /// small whole number; only the seconds carry a millisecond fraction, so the
 /// rendering is exact for any realistic uptime.
+#[must_use]
 pub fn uptime_duration(elapsed: Duration) -> Iso8601Duration {
     let whole_seconds = elapsed.as_secs();
     let days = whole_seconds / SECONDS_PER_DAY;

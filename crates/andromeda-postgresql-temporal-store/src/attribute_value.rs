@@ -50,7 +50,7 @@ pub enum AttributeValue {
     String(String),
     /// A JSON boolean.
     Boolean(bool),
-    /// A GeoProperty geometry.
+    /// A `GeoProperty` geometry.
     Geometry(Geometry),
     /// A structured value: object, array, language map, JSON literal or list.
     Object(Value),
@@ -66,6 +66,7 @@ impl AttributeValue {
     /// Infallible by construction: every value that can fail to reach a column
     /// has already been rejected by [`extract_attribute_value`], so no branch
     /// here can silently leave a column empty.
+    #[must_use]
     pub fn into_columns(self) -> HistoryValueColumns {
         let mut columns = HistoryValueColumns {
             value_number: None,
@@ -119,11 +120,11 @@ pub fn extract_attribute_value(instance: &Value, attribute_type: AttributeType) 
             let geometry = if let Some(val) = geo_node.get("@value") {
                 let geo_value: Value = match val.as_str() {
                     Some(s) => {
-                        serde_json::from_str(s).map_err(|error| TemporalStoreError::Validation(format!("Invalid GeoProperty GeoJSON string: {}", error)))?
+                        serde_json::from_str(s).map_err(|error| TemporalStoreError::Validation(format!("Invalid GeoProperty GeoJSON string: {error}")))?
                     }
                     None => val.clone(), // clone: need owned Value for from_geojson_value
                 };
-                Geometry::from_geojson_value(&geo_value).map_err(|error| TemporalStoreError::Validation(format!("Invalid GeoProperty geometry: {}", error)))?
+                Geometry::from_geojson_value(&geo_value).map_err(|error| TemporalStoreError::Validation(format!("Invalid GeoProperty geometry: {error}")))?
             } else {
                 expanded_geo_node_to_geometry(geo_node).ok_or_else(|| TemporalStoreError::Validation("Invalid expanded GeoProperty geometry".to_string()))?
             };

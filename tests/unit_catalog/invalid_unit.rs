@@ -109,7 +109,7 @@ async fn a_bypass_write_of_an_unregistered_unit_identity_is_refused_by_the_forei
     .await;
 
     let refusal = bypass.expect_err("the projection must refuse a unit identity the catalogue does not hold");
-    let code = refusal.as_database_error().and_then(|error| error.code().map(|code| code.into_owned()));
+    let code = refusal.as_database_error().and_then(|error| error.code().map(std::borrow::Cow::into_owned));
     assert_eq!(code.as_deref(), Some("23503"), "the refusal must be a foreign-key violation: {refusal}");
 
     scope.finish().await.expect("cleanup failed");

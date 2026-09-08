@@ -22,6 +22,7 @@ pub enum InstanceFamily {
 
 impl InstanceFamily {
     /// The namespace-specific prefix a generated identifier of this family carries.
+    #[must_use]
     pub const fn nss_prefix(self) -> &'static str {
         match self {
             InstanceFamily::Attribute => "attribute:instance:",
@@ -35,6 +36,7 @@ impl InstanceFamily {
     /// so scope history reaches rendering keyed by the scope IRI rather than
     /// through a carrier of its own; that IRI is what separates the two
     /// families once a row is decoded.
+    #[must_use]
     pub fn of_attribute_name(attribute_name: &AttributeName) -> InstanceFamily {
         if attribute_name.as_str() == expanded_properties::SCOPE.as_str() {
             InstanceFamily::Scope

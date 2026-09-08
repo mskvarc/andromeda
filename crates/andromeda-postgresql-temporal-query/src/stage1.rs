@@ -66,8 +66,8 @@ pub fn build_stage1_entity_ids(context_space_key: ContextSpaceKey, compiled: &Co
         .cond_where(entity_conditions.clone()) // clone: the count query applies the same entity predicate
         .cond_where(SeaExpr::exists(temporal_match_subquery(context_space_key, compiled)?))
         .order_by((E, TemporalEntities::Id), Order::Asc)
-        .limit(compiled.pagination.limit as u64)
-        .offset(compiled.pagination.offset as u64);
+        .limit(u64::from(compiled.pagination.limit))
+        .offset(u64::from(compiled.pagination.offset));
 
     let count = if compiled.pagination.count == CountPolicy::Emit {
         let mut count_select = SelectStatement::new();
@@ -149,7 +149,7 @@ fn build_entity_conditions_for_temporal(
 /// probe reads by key lookup rather than by joining `entity_documents`; a geo
 /// query (clause 4.10) reads the default `location` columns of the
 /// `entity_search` row - joined as `cs` only then - or the instance rows of a
-/// named GeoProperty. Both are statements about current state, so they are
+/// named `GeoProperty`. Both are statements about current state, so they are
 /// evaluated inside one probe correlated to the temporal entity's URI. `None`
 /// when the query carries neither filter, so an unfiltered temporal query never
 /// touches current state.
@@ -190,7 +190,7 @@ fn current_state_probe(
 }
 
 /// Render one selector's identifier, pattern and type predicates against the
-/// `e` alias stage 1 selects `temporal_entities` under, ANDed (clause 5.2.33).
+/// `e` alias stage 1 selects `temporal_entities` under, `ANDed` (clause 5.2.33).
 ///
 /// The entity path renders the same three axes against `entities`; the columns
 /// carry the same names on both relations, so the two cannot drift on what a
@@ -295,7 +295,7 @@ mod tests {
         }
     }
 
-    /// A GeoJSON point reference geometry, for tests that vary the relation
+    /// A `GeoJSON` point reference geometry, for tests that vary the relation
     /// rather than the geometry.
     fn point(coordinates: serde_json::Value) -> Geometry {
         Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": coordinates })).expect("point parses")
@@ -507,7 +507,7 @@ mod tests {
         };
         let (sql, _) = built(&compiled, &QueryNames::default());
         assert!(sql.contains(">="), "Between should bound the scope probe from below: {sql}");
-        assert!(sql.contains("<"), "Between should bound the scope probe from above: {sql}");
+        assert!(sql.contains('<'), "Between should bound the scope probe from above: {sql}");
     }
 
     #[test]
@@ -596,7 +596,7 @@ mod tests {
     }
 
     /// Clause 4.10 applies to a temporal query exactly as it does to a current-
-    /// state one: a named GeoProperty is read from its `current_attribute_values`
+    /// state one: a named `GeoProperty` is read from its `current_attribute_values`
     /// instance rows, correlated through the current-state probe.
     #[test]
     fn a_temporal_geo_query_on_a_named_geoproperty_reads_its_attribute_instance_rows() {

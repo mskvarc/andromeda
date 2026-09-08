@@ -63,6 +63,7 @@ impl TemporalLinkedWindow {
     /// Taken from the request rather than from the compiled query because a
     /// forwarded retrieval is spelled in the same vocabulary the client used:
     /// the remote broker compiles it itself, against its own context.
+    #[must_use]
     pub fn of_request(params: &TemporalQueryParameters) -> TemporalLinkedWindow {
         TemporalLinkedWindow {
             timerel: params.timerel,
@@ -82,6 +83,7 @@ impl TemporalLinkedWindow {
     /// and nothing else. Because every member the struct does not hold is left
     /// at its default, an `attrs` or `datasetId` that narrowed the roots cannot
     /// leak into the traversal and hide a linked entity's own attributes.
+    #[must_use]
     pub fn to_parameters(&self) -> TemporalQueryParameters {
         TemporalQueryParameters {
             timerel: self.timerel,

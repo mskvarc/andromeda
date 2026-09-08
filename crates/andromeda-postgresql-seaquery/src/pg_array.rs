@@ -9,6 +9,7 @@ use sea_query::{Expr, Func, Iden, PostgresQueryBuilder, QueryStatementBuilder, S
 /// than rendered to text, so any request value inside it — a name to resolve
 /// through a dictionary, a type to overlap — binds and numbers with the enclosing
 /// statement rather than being inlined.
+#[must_use]
 pub fn array_of_subquery(subquery: SelectStatement) -> SimpleExpr {
     Expr::cust_with_exprs("ARRAY($1)", [SimpleExpr::SubQuery(None, Box::new(subquery.into_sub_query_statement()))])
 }
@@ -30,6 +31,7 @@ struct ArrayPosition;
 /// order: a subquery over the dictionary is sorted by each key's position in
 /// the row's own array, so a rendered type list comes back in the order the
 /// entity declared it.
+#[must_use]
 pub fn array_position(array: SimpleExpr, element: SimpleExpr) -> SimpleExpr {
     Func::cust(ArrayPosition).args([array, element]).into()
 }
@@ -45,6 +47,7 @@ struct ArrayAppend;
 /// an overlap against `array_append(ARRAY(<resolved keys>), 0)` admits both the
 /// rows declaring one of the keys and the rows whose stored set is the
 /// wildcard `{0}`, in one operator a GIN index serves.
+#[must_use]
 pub fn array_append(array: SimpleExpr, element: SimpleExpr) -> SimpleExpr {
     Func::cust(ArrayAppend).args([array, element]).into()
 }
@@ -58,6 +61,7 @@ pub fn array_append(array: SimpleExpr, element: SimpleExpr) -> SimpleExpr {
 /// in it must be a column or function call — a value-free subquery, which is the
 /// case for `ARRAY(SELECT jsonb_array_elements_text(col))`: no request value
 /// crosses this boundary, only columns of the enclosing statement.
+#[must_use]
 pub fn array_subquery(subquery: SelectStatement) -> SimpleExpr {
     Expr::cust(format!("ARRAY({})", subquery.to_string(PostgresQueryBuilder)))
 }
@@ -67,6 +71,7 @@ pub fn array_subquery(subquery: SelectStatement) -> SimpleExpr {
 /// Membership is tested against one bound array rather than expanding to a
 /// placeholder per element, so a large batch cannot exhaust the wire protocol's
 /// parameter space. The array binds as a single value.
+#[must_use]
 pub fn any(array: SimpleExpr) -> SimpleExpr {
     Func::cust(AnyQuantifier).args([array]).into()
 }
@@ -75,6 +80,7 @@ pub fn any(array: SimpleExpr) -> SimpleExpr {
 ///
 /// The array value owns its elements, so each string is copied: a bound
 /// parameter cannot borrow from the caller's slice across the round trip.
+#[must_use]
 pub fn text_array(values: &[&str]) -> SimpleExpr {
     Expr::val(values.iter().map(|value| (*value).to_owned()).collect::<Vec<String>>())
 }

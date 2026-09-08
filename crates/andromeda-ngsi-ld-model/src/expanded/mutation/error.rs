@@ -8,7 +8,7 @@ use thiserror::Error;
 ///
 /// Every variant carries the offending attribute and dataset identifiers as
 /// separate fields rather than baked into a message, so the HTTP layer can map
-/// each one onto the ProblemDetails type NGSI-LD clause 5.5.2 requires instead
+/// each one onto the `ProblemDetails` type NGSI-LD clause 5.5.2 requires instead
 /// of reporting one undifferentiated failure.
 ///
 /// The attribute IRI is an [`IriBuf`] and the `datasetId` a [`Uri`], the domain

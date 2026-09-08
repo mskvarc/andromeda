@@ -1,4 +1,4 @@
-//! The ListRelationship attribute family (ETSI GS CIM 009 clause 5.2.37).
+//! The `ListRelationship` attribute family (ETSI GS CIM 009 clause 5.2.37).
 
 use crate::attribute::{common_fields::CommonAttributeFields, inline_entity::InlineEntity, object_list::RelationshipObjectList, one_or_many::OneOrMany};
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
@@ -6,7 +6,7 @@ use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
-/// NGSI-LD ListRelationship representation (ETSI GS CIM 009 clause 5.2.37).
+/// NGSI-LD `ListRelationship` representation (ETSI GS CIM 009 clause 5.2.37).
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]

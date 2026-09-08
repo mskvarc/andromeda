@@ -11,6 +11,7 @@ use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 /// default; a row that carries no value on the requested axis is therefore
 /// outside every bounded window on that axis, and the operational `recorded_at`
 /// never stands in for a missing one.
+#[must_use]
 pub const fn history_column(timeproperty: TimeProp) -> &'static str {
     match timeproperty {
         TimeProp::Observed => "\"ah\".\"observed_at\"",
@@ -22,6 +23,7 @@ pub const fn history_column(timeproperty: TimeProp) -> &'static str {
 
 /// Time column expression without a table prefix, for the outer query over a CTE
 /// that already projected the columns.
+#[must_use]
 pub const fn unprefixed_column(timeproperty: TimeProp) -> &'static str {
     match timeproperty {
         TimeProp::Observed => "\"observed_at\"",
@@ -36,6 +38,7 @@ pub const fn unprefixed_column(timeproperty: TimeProp) -> &'static str {
 /// Used where a correlated subquery reads the same axis under a second alias
 /// (e.g. `ah2`), so an aggregation bucket origin measures the same time
 /// property the outer query filters and buckets on.
+#[must_use]
 pub fn history_column_for_alias(timeproperty: TimeProp, alias: &str) -> String {
     let column = column_name(timeproperty);
     format!("\"{alias}\".\"{column}\"")
@@ -46,6 +49,7 @@ pub fn history_column_for_alias(timeproperty: TimeProp, alias: &str) -> String {
 /// Every relation that records the four semantic axes names them identically —
 /// `attribute_history` and `scope_history` alike — so a statement over either
 /// asks here for the column that answers the requested Temporal Property.
+#[must_use]
 pub const fn column_name(timeproperty: TimeProp) -> &'static str {
     match timeproperty {
         TimeProp::Observed => "observed_at",

@@ -87,7 +87,7 @@ pub enum AttributeHistory {
     ValueGeo,
     /// JSON object or array value, when `value_kind` selects it
     ValueObject,
-    /// DateTime value, when `value_kind` selects it
+    /// `DateTime` value, when `value_kind` selects it
     ValueDatetime,
     /// URI value, when `value_kind` selects it
     ValueUri,

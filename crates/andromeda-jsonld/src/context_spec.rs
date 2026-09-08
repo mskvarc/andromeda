@@ -40,6 +40,7 @@ pub struct ContextSpec {
 
 impl ContextSpec {
     /// A spec carrying nothing, with the core context appended.
+    #[must_use]
     pub const fn none() -> ContextSpec {
         ContextSpec {
             link_contexts: Vec::new(),
@@ -49,6 +50,7 @@ impl ContextSpec {
     }
 
     /// A spec that resolves to the core context alone.
+    #[must_use]
     pub const fn core_only() -> ContextSpec {
         ContextSpec {
             link_contexts: Vec::new(),
@@ -58,6 +60,7 @@ impl ContextSpec {
     }
 
     /// A spec built from the `Link` header context URLs of a request.
+    #[must_use]
     pub const fn from_links(links: Vec<IriRefBuf>) -> ContextSpec {
         ContextSpec {
             link_contexts: links,
@@ -73,6 +76,7 @@ impl ContextSpec {
     /// A [`Url`] is always a well-formed IRI reference, so the conversion
     /// cannot fail in practice; a URL the IRI parser nonetheless rejects
     /// falls back to the core context rather than to no context at all.
+    #[must_use]
     pub fn for_subscription_context(jsonld_context: Option<&Url>) -> ContextSpec {
         match jsonld_context.and_then(|url| IriRefBuf::new(url.as_str().to_owned()).ok()) {
             Some(iri) => ContextSpec::from_links(vec![iri]),
@@ -88,16 +92,19 @@ impl ContextSpec {
     }
 
     /// The body `@context`, if the request carried one.
+    #[must_use]
     pub const fn body_context(&self) -> Option<&Value> {
         self.body_context.as_ref()
     }
 
     /// Consume the spec and take its body `@context`.
+    #[must_use]
     pub fn into_body_context(self) -> Option<Value> {
         self.body_context
     }
 
     /// The `Link` header context URLs, in the order the request gave them.
+    #[must_use]
     pub fn link_contexts(&self) -> &[IriRefBuf] {
         &self.link_contexts
     }
@@ -110,6 +117,7 @@ impl ContextSpec {
     }
 
     /// The current core-context policy.
+    #[must_use]
     pub const fn core_policy(&self) -> CoreContextPolicy {
         self.core_policy
     }
@@ -122,6 +130,7 @@ impl ContextSpec {
     /// reference expands against is a separate, engine-internal decision (the
     /// fastpath term table, [`crate::engine::JsonLdEngine::default_core_url`]),
     /// and it is not leaked here.
+    #[must_use]
     pub const fn effective_core_url(&self) -> Iri<&'static str> {
         NGSI_LD_CORE_CONTEXT_URL
     }
@@ -131,6 +140,7 @@ impl ContextSpec {
     /// A response repeats the context the client supplied and names the core
     /// context only when the client named none, which is
     /// [`CoreContextPolicy::AppendIfNoExplicit`].
+    #[must_use]
     pub fn for_presentation(&self) -> ContextSpec {
         ContextSpec {
             link_contexts: self.link_contexts.clone(), // clone: the source spec is borrowed and stays valid
@@ -140,6 +150,7 @@ impl ContextSpec {
     }
 
     /// The `@context` value a response body carries for this spec.
+    #[must_use]
     pub fn to_context_value(&self) -> Option<Value> {
         resolve_context_value(None, self)
     }

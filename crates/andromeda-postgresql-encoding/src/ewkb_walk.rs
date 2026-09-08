@@ -8,7 +8,7 @@
 //!
 //! Dimensionality is a property of the whole geometry, not of a position: the
 //! walk announces XYZ only when every position carries an altitude, because a
-//! WKB buffer has one type word for the whole geometry and PostGIS would fill
+//! WKB buffer has one type word for the whole geometry and `PostGIS` would fill
 //! the gaps of a partly-elevated geometry with a fabricated zero.
 //!
 //! ## Polygon rings are closed on the way out
@@ -16,8 +16,8 @@
 //! RFC 7946 section 3.1.6 requires the first and last position of a linear ring
 //! to be identical, but [`GeometryForm`] keeps a ring exactly as the client sent
 //! it, open ring included, so that the client reads back what it wrote. That
-//! verbatim form is not what belongs in a PostGIS `geometry` column: an open
-//! ring is not a valid OGC Simple Features polygon, and PostGIS's WKB parser
+//! verbatim form is not what belongs in a `PostGIS` `geometry` column: an open
+//! ring is not a valid OGC Simple Features polygon, and `PostGIS`'s WKB parser
 //! does not enforce ring closure the way its WKT parser does, so an open ring is
 //! accepted and stored as an *invalid* polygon. Every spatial predicate then
 //! rests on whatever `ST_MakeValid` decides that shape should have been — a
@@ -26,7 +26,7 @@
 //! So the walk closes each ring as it emits it, by repeating the ring's own
 //! first position. That is the identity operation on an already-closed ring, it
 //! invents no geometry that the ring did not already describe, and it never
-//! touches the stored form: the GeoJSON the client reads back still has the ring
+//! touches the stored form: the `GeoJSON` the client reads back still has the ring
 //! it sent, open or closed.
 
 use andromeda_ngsi_ld_geometry::{

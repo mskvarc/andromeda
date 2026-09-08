@@ -114,10 +114,10 @@ impl TemporalService {
                 Option::None => LastNOrigin::SystemCapped,
             }
         };
-        let effective_last_n = if !is_aggregated {
-            Some(params.last_n.map_or(last_n_cap, |n| n.min(last_n_cap)))
-        } else {
+        let effective_last_n = if is_aggregated {
             params.last_n
+        } else {
+            Some(params.last_n.map_or(last_n_cap, |n| n.min(last_n_cap)))
         };
 
         Ok(CompiledTemporalQuery::builder()

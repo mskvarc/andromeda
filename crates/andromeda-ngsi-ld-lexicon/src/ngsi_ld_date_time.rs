@@ -87,6 +87,7 @@ pub struct NgsiLdDateTime(DateTime<Utc>);
 
 impl NgsiLdDateTime {
     /// The normalised instant.
+    #[must_use]
     pub const fn get(self) -> DateTime<Utc> {
         self.0
     }
@@ -202,11 +203,13 @@ fn storable_floor() -> Option<DateTime<Utc>> {
 }
 
 /// The calendar year of the storable floor, for callers reporting the accepted range.
+#[must_use]
 pub const fn earliest_storable_year() -> i32 {
     JULIAN_DAY_ZERO.0
 }
 
 /// The calendar year of the storable ceiling, which is `chrono`'s own year ceiling.
+#[must_use]
 pub fn latest_storable_year() -> i32 {
     DateTime::<Utc>::MAX_UTC.year()
 }

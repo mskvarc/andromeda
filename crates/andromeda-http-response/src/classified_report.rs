@@ -51,21 +51,25 @@ impl ClassifiedReport {
     }
 
     /// The typed classification selected by the route binding.
+    #[must_use]
     pub const fn classification(&self) -> ProblemClassification {
         self.classification
     }
 
     /// The clause 5.5.2 payload category.
+    #[must_use]
     pub const fn error_type(&self) -> NgsiLdErrorType {
         self.classification.error_type()
     }
 
     /// The client-safe human-readable detail.
+    #[must_use]
     pub fn detail(&self) -> &str {
         &self.detail
     }
 
     /// Attach a bounded retry delay to a recoverable response.
+    #[must_use]
     pub const fn with_retry_after(mut self, retry_after: Duration) -> ClassifiedReport {
         self.retry_after = Some(retry_after);
         self

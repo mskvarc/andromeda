@@ -54,26 +54,23 @@ impl SpatialSynchronizer {
     }
 
     async fn synchronize_entity(&self, target: &ContextTarget, urn: &Urn, event: &ChangeEvent) {
-        let payload = match &event.current_payload {
-            Some(payload) => Arc::clone(payload),
-            None => {
-                let identifier = Uri::from(urn.clone()); // clone: the fallback read owns a URI while the index retains the URN.
-                match self.reader.get(target, &identifier).await {
-                    Ok(Some(payload)) => Arc::new(payload),
-                    Ok(None) => {
-                        self.index.remove(urn);
-                        return;
-                    }
-                    Err(error) => {
-                        debug!(entity_id = %identifier, %error, "spatial synchronization fallback read failed");
-                        return;
-                    }
+        let payload = if let Some(payload) = &event.current_payload { Arc::clone(payload) } else {
+            let identifier = Uri::from(urn.clone()); // clone: the fallback read owns a URI while the index retains the URN.
+            match self.reader.get(target, &identifier).await {
+                Ok(Some(payload)) => Arc::new(payload),
+                Ok(None) => {
+                    self.index.remove(urn);
+                    return;
+                }
+                Err(error) => {
+                    debug!(entity_id = %identifier, %error, "spatial synchronization fallback read failed");
+                    return;
                 }
             }
         };
         self.index.remove(urn);
         // clone: the loop below hands each partition key its own copy
-        let mut candidates: Vec<AttributeName> = event.changed_attributes.to_vec();
+        let mut candidates: Vec<AttributeName> = event.changed_attributes.clone();
         match expanded_properties::LOCATION.as_str().parse::<AttributeName>() {
             Ok(location) if !candidates.contains(&location) => candidates.push(location),
             Ok(_already_present) => {}
@@ -95,7 +92,7 @@ impl SpatialSynchronizer {
                 self.index.insert_all(
                     SpatialKey::new(self.tenant.clone(), type_iri, geoproperty.clone()), // clone: each partition key independently owns its tenant and geoproperty.
                     urn.clone(),                                                         // clone: each type partition owns the entity identifier.
-                    geometries.to_vec(),                                                 // clone: each type partition owns its geometries.
+                    geometries.clone(),                                                 // clone: each type partition owns its geometries.
                 );
             }
         }

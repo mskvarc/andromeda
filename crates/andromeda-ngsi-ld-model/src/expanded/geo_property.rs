@@ -1,4 +1,4 @@
-//! Decoding GeoProperty values out of an expanded payload (ETSI GS CIM 009 clause 4.7).
+//! Decoding `GeoProperty` values out of an expanded payload (ETSI GS CIM 009 clause 4.7).
 
 use crate::expanded::{attribute_expiry::instance_expires_at, dataset_id::instance_has_dataset_id, node::expanded_object_ref};
 use andromeda_ngsi_ld_geometry::{
@@ -13,15 +13,16 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::str::FromStr;
 
-/// The GeoJSON `type` token of a GeometryCollection.
+/// The `GeoJSON` `type` token of a `GeometryCollection`.
 ///
 /// [`GeometryType`] deliberately does not name it, because ETSI GS CIM 009
-/// v1.9.1 clause 4.7.1 allows a GeoProperty every RFC 7946 geometry except this
+/// v1.9.1 clause 4.7.1 allows a `GeoProperty` every RFC 7946 geometry except this
 /// one. The token survives only so the write path can recognise a collection in
 /// order to refuse it.
 const GEOMETRY_COLLECTION_TOKEN: &str = "GeometryCollection";
 
-/// Extract the entity's `location` GeoProperty decoded into a [`Geometry`].
+/// Extract the entity's `location` `GeoProperty` decoded into a [`Geometry`].
+#[must_use]
 pub fn extract_location_geometry(expanded: &Value) -> Option<Geometry> {
     extract_geo_property_geometry(expanded, properties::LOCATION.as_str())
 }
@@ -29,7 +30,7 @@ pub fn extract_location_geometry(expanded: &Value) -> Option<Geometry> {
 /// The instant after which every `location` instance of the entity has
 /// expired, or `None` when at least one instance never expires (clause 4.22).
 ///
-/// A geo query against the default GeoProperty must not match an entity whose
+/// A geo query against the default `GeoProperty` must not match an entity whose
 /// every `location` instance is past its `expiresAt`, and it reads the answer
 /// from a stored column rather than the payload. The column carries the latest
 /// instance expiry, so "some instance still stands" is `column IS NULL OR
@@ -47,41 +48,44 @@ pub fn extract_location_expiry(expanded: &Value) -> Option<DateTime<Utc>> {
         })?
 }
 
-/// Extract the entity's `observationSpace` GeoProperty decoded into a [`Geometry`].
+/// Extract the entity's `observationSpace` `GeoProperty` decoded into a [`Geometry`].
+#[must_use]
 pub fn extract_observation_space_geometry(expanded: &Value) -> Option<Geometry> {
     extract_geo_property_geometry(expanded, properties::OBSERVATION_SPACE.as_str())
 }
 
-/// Extract the entity's `operationSpace` GeoProperty decoded into a [`Geometry`].
+/// Extract the entity's `operationSpace` `GeoProperty` decoded into a [`Geometry`].
+#[must_use]
 pub fn extract_operation_space_geometry(expanded: &Value) -> Option<Geometry> {
     extract_geo_property_geometry(expanded, properties::OPERATION_SPACE.as_str())
 }
 
-/// Decode the default instance of the GeoProperty named by `iri` into a
-/// [`Geometry`], accepting both the GeoJSON literal form and the fully expanded
+/// Decode the default instance of the `GeoProperty` named by `iri` into a
+/// [`Geometry`], accepting both the `GeoJSON` literal form and the fully expanded
 /// node form.
 ///
 /// One geometry per entity, chosen by [`default_instance`] rather than by array
 /// order. This is what the spatial index is built from: an R-tree partition
-/// holds one bounding rectangle per entity, so a multi-instance GeoProperty has
+/// holds one bounding rectangle per entity, so a multi-instance `GeoProperty` has
 /// to be reduced to a single geometry before it can be indexed, and clause
 /// 4.5.16.1's default instance is the only defensible choice of which.
 ///
 /// Matching is a different question and does not use this reader: clause 4.10
 /// counts an entity as matching when *any* instance meets the restriction, for
 /// which [`geo_property_instance_geometries`] yields all of them. The index
-/// therefore over- and under-approximates a multi-instance GeoProperty, and
+/// therefore over- and under-approximates a multi-instance `GeoProperty`, and
 /// every consumer of it re-checks the exact relation afterwards — the spatial
 /// prefilter falls back to the store, and the notification path re-evaluates
 /// through the residual filter.
+#[must_use]
 pub fn extract_geo_property_geometry(expanded: &Value, iri: &str) -> Option<Geometry> {
     let instances = geo_property_instances(expanded, iri)?;
     geometry_of_instance(default_instance(instances)?)
 }
 
-/// Decode every instance of the GeoProperty named by `iri`, in payload order.
+/// Decode every instance of the `GeoProperty` named by `iri`, in payload order.
 ///
-/// Clause 4.10: where a GeoProperty has several `datasetId` instances, one of
+/// Clause 4.10: where a `GeoProperty` has several `datasetId` instances, one of
 /// them meeting a geo restriction is enough, so a matcher reads all of them
 /// rather than the default one. Instances that carry no decodable geometry are
 /// skipped, exactly as the SQL rendering skips `current_attribute_values` rows whose
@@ -102,7 +106,7 @@ fn geo_property_instances<'a>(expanded: &'a Value, iri: &str) -> Option<&'a [Val
 ///
 /// Reads the "{@type, ...coordinates}" object that lives at
 /// `<instance>.hasValue[0]`, ignoring whether the value was inlined as a
-/// literal `@value` or expanded as a nested JSON-LD GeoJSON node.
+/// literal `@value` or expanded as a nested JSON-LD `GeoJSON` node.
 fn geometry_of_instance(instance: &Value) -> Option<Geometry> {
     let geo_node = instance
         .get(properties::VALUE.as_str())
@@ -138,7 +142,7 @@ fn literal_geojson_to_geometry(literal: &Value) -> Option<Geometry> {
     }
 }
 
-/// Walk an expanded JSON-LD GeoJSON node directly into a [`Geometry`].
+/// Walk an expanded JSON-LD `GeoJSON` node directly into a [`Geometry`].
 ///
 /// A single-pass walker that emits a [`GeometryForm`] directly: no intermediate
 /// `Value` cloning, no string serialisation, no second JSON parser pass. Each
@@ -151,10 +155,10 @@ pub fn expanded_geo_node_to_geometry(node: &Value) -> Option<Geometry> {
     walk_expanded_geo_node(node).map(Geometry::new)
 }
 
-/// Reads an expanded GeoJSON node, dispatching on its `@type` to the walker
+/// Reads an expanded `GeoJSON` node, dispatching on its `@type` to the walker
 /// for that geometry kind.
 ///
-/// A GeometryCollection yields `None`: clause 4.7.1 excludes it from GeoProperty
+/// A `GeometryCollection` yields `None`: clause 4.7.1 excludes it from `GeoProperty`
 /// geometries, so nothing the write path accepted can be one, and the lenient
 /// read simply has no geometry to offer for it.
 fn walk_expanded_geo_node(node: &Value) -> Option<GeometryForm> {
@@ -173,28 +177,28 @@ fn walk_expanded_geo_node(node: &Value) -> Option<GeometryForm> {
     }
 }
 
-/// Check that an expanded GeoJSON node is a geometry a GeoProperty may carry.
+/// Check that an expanded `GeoJSON` node is a geometry a `GeoProperty` may carry.
 ///
 /// The strict counterpart of [`expanded_geo_node_to_geometry`], for the write
 /// path: where the reader skips a geometry it cannot use, this reports why, so
 /// a caller can turn it into the `BadRequestData` ETSI GS CIM 009 v1.9.1 clause
-/// 5.5.4 requires instead of accepting a GeoProperty the broker will later
+/// 5.5.4 requires instead of accepting a `GeoProperty` the broker will later
 /// refuse to read back.
 ///
-/// Two things are checked. A node typed GeometryCollection is refused outright,
-/// because clause 4.7.1 allows a GeoProperty value every geometry IETF RFC 7946
+/// Two things are checked. A node typed `GeometryCollection` is refused outright,
+/// because clause 4.7.1 allows a `GeoProperty` value every geometry IETF RFC 7946
 /// defines except that one, and clause 4.6.3 excludes it from reference
 /// geometries as well. Otherwise the ordinate count of every position is
 /// checked, traversing nesting rather than geometry type: a position is the
 /// innermost list, whatever encloses it, so one walk covers Point through
-/// MultiPolygon. A node carrying no coordinates at all passes — deciding
+/// `MultiPolygon`. A node carrying no coordinates at all passes — deciding
 /// whether a value is a geometry in the first place is not this function's
 /// question.
 ///
 /// # Errors
 ///
 /// Returns [`GeometryError::GeometryCollectionUnsupported`] for a
-/// GeometryCollection, and [`GeometryError::Position`] for the first position
+/// `GeometryCollection`, and [`GeometryError::Position`] for the first position
 /// whose ordinate count RFC 7946 section 3.1.1 gives no meaning to, or whose
 /// members are not all numbers as that section requires.
 pub fn validate_expanded_geo_node(node: &Value) -> Result<(), GeometryError> {
@@ -212,7 +216,7 @@ pub fn validate_expanded_geo_node(node: &Value) -> Result<(), GeometryError> {
     }
 }
 
-/// Whether an expanded GeoJSON node's `@type` names a GeometryCollection.
+/// Whether an expanded `GeoJSON` node's `@type` names a `GeometryCollection`.
 fn is_geometry_collection_node(types: Option<&Value>) -> bool {
     types
         .and_then(Value::as_array)
@@ -289,7 +293,7 @@ fn walk_positions(node: &Value) -> Option<Vec<Position>> {
     list_items(node)?.iter().map(walk_position).collect()
 }
 
-/// Reads an expanded list of position lists, as a MultiLineString carries.
+/// Reads an expanded list of position lists, as a `MultiLineString` carries.
 fn walk_position_lists(node: &Value) -> Option<Vec<Vec<Position>>> {
     list_items(node)?.iter().map(walk_positions).collect()
 }
@@ -300,7 +304,7 @@ fn walk_rings(node: &Value) -> Option<PolygonRings> {
     walk_position_lists(node).map(PolygonRings::new)
 }
 
-/// Reads an expanded list of ring lists, as a MultiPolygon carries.
+/// Reads an expanded list of ring lists, as a `MultiPolygon` carries.
 fn walk_ring_lists(node: &Value) -> Option<Vec<PolygonRings>> {
     list_items(node)?.iter().map(walk_rings).collect()
 }

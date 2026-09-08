@@ -1,4 +1,4 @@
-//! HTTP request model for updating an EntityMap.
+//! HTTP request model for updating an `EntityMap`.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, de::IgnoredAny};

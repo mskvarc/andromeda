@@ -19,6 +19,7 @@ pub struct SnapshotRouteServices {
 
 impl SnapshotRouteServices {
     /// Construct focused snapshot capabilities.
+    #[must_use]
     pub const fn new(snapshots: Arc<SnapshotService>) -> SnapshotRouteServices {
         SnapshotRouteServices { snapshots }
     }

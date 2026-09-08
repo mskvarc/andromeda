@@ -21,6 +21,7 @@ pub enum RestartPolicy {
 
 impl RestartPolicy {
     /// Construct a transient-only restart policy.
+    #[must_use]
     pub const fn transient(max_restarts: u32, initial_backoff: Duration, maximum_backoff: Duration) -> RestartPolicy {
         RestartPolicy::Transient {
             max_restarts,

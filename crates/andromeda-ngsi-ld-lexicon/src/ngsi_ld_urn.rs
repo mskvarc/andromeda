@@ -148,11 +148,13 @@ pub struct SnapshotNotificationId(#[serde(serialize_with = "serialize_snapshot_n
 
 impl SnapshotNotificationId {
     /// Create an identifier from the UUID generated for a notification.
+    #[must_use]
     pub const fn from_uuid(uuid: Uuid) -> SnapshotNotificationId {
         SnapshotNotificationId(uuid)
     }
 
     /// Borrow the UUID that uniquely identifies this notification.
+    #[must_use]
     pub const fn as_uuid(&self) -> &Uuid {
         &self.0
     }

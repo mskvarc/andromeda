@@ -144,7 +144,7 @@ mod tests {
         pretty_assertions::assert_eq!(terms[0].name.as_str(), "observation");
         pretty_assertions::assert_eq!(terms[0].linked.iter().map(|term| term.name.as_str()).collect::<Vec<_>>(), vec!["temperature"]);
         pretty_assertions::assert_eq!(terms[1].name.as_str(), "name");
-        assert!(terms[1].linked.is_empty());
+        assert_eq!(terms[1].linked, [] as [andromeda_ngsi_ld_query::projection::grammar::RawProjectionTerm; 0]);
     }
 
     #[test]

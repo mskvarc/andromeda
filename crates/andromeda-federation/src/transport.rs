@@ -45,7 +45,7 @@ pub(crate) struct ForwardedRequest<'a> {
     pub(crate) registration: &'a ContextSourceRegistration,
     /// The request that triggered the forwarding.
     pub(crate) triggering: TriggeringRequest<'a>,
-    /// The EntityMap the registration's context source created for this
+    /// The `EntityMap` the registration's context source created for this
     /// query, sent back to it in `NGSILD-EntityMap` (clause 5.5.14).
     pub(crate) linked_map: Option<&'a Uri>,
 }
@@ -164,7 +164,7 @@ impl FederationService {
             }
             Err(e) => {
                 warn!("Failed to parse CS response as JSON: {}. Body: {}", e, &text[..text.len().min(200)]);
-                ForwardGetOutcome::InvalidPayload(format!("Failed to parse context source response as JSON: {}", e))
+                ForwardGetOutcome::InvalidPayload(format!("Failed to parse context source response as JSON: {e}"))
             }
         }
     }
@@ -234,7 +234,7 @@ impl FederationService {
             .tenant
             .clone() // clone: the header owns the tenant name
             .map(NgsiLdTenant::new)
-            .or_else(|| triggering.headers.and_then(|headers| headers.typed_get::<NgsiLdTenant>()));
+            .or_else(|| triggering.headers.and_then(headers::HeaderMapExt::typed_get::<NgsiLdTenant>));
         if let Some(tenant) = tenant {
             let mut request_headers = HeaderMap::new();
             request_headers.typed_insert(tenant);

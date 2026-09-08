@@ -129,7 +129,7 @@ impl EntityRepository {
     ///
     /// What is sent and what is handed back are decided by this store's
     /// [`StorageProfile`](andromeda_entity::storage_profile::StorageProfile).
-    /// With PostGIS and `ltree` every predicate is sent and nothing is handed
+    /// With `PostGIS` and `ltree` every predicate is sent and nothing is handed
     /// back, so the residual is always empty here -- but the decision is read
     /// off the profile rather than assumed, which is what a store without
     /// those extensions changes.
@@ -183,7 +183,7 @@ impl EntityRepository {
     /// each hop descends through is probed by dictionary key just as the
     /// terminal attribute is, and both come back from the same collection walk.
     /// A geo-query and a distance ordering each contribute their target
-    /// GeoProperty, which is read from the same projection (clauses 4.10 and
+    /// `GeoProperty`, which is read from the same projection (clauses 4.10 and
     /// 4.23). The type selection of every selector
     /// (clause 4.17) and the type guard of every traversal hop are tested
     /// against the interned `type_ids` column, so they resolve through the type

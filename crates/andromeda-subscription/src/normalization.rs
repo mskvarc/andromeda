@@ -14,7 +14,7 @@ use serde_json::Value;
 pub fn fixup_integer_fields(value: &mut Value) {
     if let Some(obj) = value.as_object_mut() {
         for key in &["timeInterval", "throttling"] {
-            if let Some(val) = obj.get(*key).and_then(|v| v.as_f64())
+            if let Some(val) = obj.get(*key).and_then(serde_json::Value::as_f64)
                 && val.fract() == 0.0
             {
                 obj.insert(key.to_string(), Value::Number(serde_json::Number::from(val as i64)));

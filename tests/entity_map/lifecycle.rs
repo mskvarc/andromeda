@@ -1,4 +1,4 @@
-//! Lifecycle of an EntityMap resource: retrieving, updating and deleting one
+//! Lifecycle of an `EntityMap` resource: retrieving, updating and deleting one
 //! that a query already created (NGSI-LD 5.2.32, 6.3.19).
 
 use crate::{

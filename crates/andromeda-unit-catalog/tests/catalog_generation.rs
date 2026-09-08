@@ -164,7 +164,7 @@ fn render_seed(entries: &[UnitCodeEntry]) -> String {
     }
 
     rendered.push_str("\nINSERT INTO unit_code_catalog_metadata (singleton, rec20_revision, source_sha256, generated_at) VALUES\n");
-    rendered.push_str(&format!("    (TRUE, {}, '{}', '{}');\n", REC20_REVISION, SOURCE_SHA256, GENERATED_AT));
+    rendered.push_str(&format!("    (TRUE, {REC20_REVISION}, '{SOURCE_SHA256}', '{GENERATED_AT}');\n"));
     rendered
 }
 
@@ -282,7 +282,7 @@ fn every_identity_decodes_back_to_the_code_it_was_assigned_for() -> Result<(), C
     for entry in catalog.entries() {
         let decoded = catalog.entry(entry.id()).map(UnitCodeEntry::token);
         assert_eq!(
-            decoded.map(|token| token.as_str()),
+            decoded.map(andromeda_unit_catalog::unit_code_token::UnitCodeToken::as_str),
             Ok(entry.token().as_str()),
             "identity {} does not decode back to its own code",
             entry.id()

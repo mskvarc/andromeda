@@ -114,7 +114,7 @@ pub fn deep_merge_attribute(entity_obj: &mut Map<String, Value>, key: &str, patc
 fn instance_type_changed(existing_inst: &Value, patch_inst: &Value) -> bool {
     match (existing_inst.get("@type"), patch_inst.get("@type")) {
         (Some(existing_type), Some(patch_type)) => existing_type != patch_type,
-        (Some(_), None) | (None, Some(_)) | (None, None) => false,
+        (Some(_) | None, None) | (None, Some(_)) => false,
     }
 }
 
@@ -171,7 +171,7 @@ fn merge_member(base: &mut Value, patch: &Value) {
             merge_node(&mut base_arr[0], &patch_arr[0]);
         }
         // clone: nothing to recurse into, so the patch member replaces the base.
-        (Some(_), Some(_)) | (Some(_), None) | (None, Some(_)) | (None, None) => *base = patch.clone(),
+        (Some(_) | None, Some(_)) | (Some(_) | None, None) => *base = patch.clone(),
     }
 }
 

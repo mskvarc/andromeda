@@ -40,12 +40,14 @@ enum EntityRepresentation<'a> {
 
 impl<'a> CreateEntity<'a> {
     /// Send `application/ld+json` with the context retained in the body.
+    #[must_use]
     pub const fn with_ld_json(mut self) -> CreateEntity<'a> {
         self.representation = EntityRepresentation::JsonLd;
         self
     }
 
     /// Send `application/json` with the supplied JSON-LD context Link header.
+    #[must_use]
     pub const fn with_json(mut self, context: &'a str) -> CreateEntity<'a> {
         self.representation = EntityRepresentation::Json { context };
         self
@@ -171,6 +173,7 @@ impl TestClient {
 }
 
 /// Decode `NGSILD-Results-Count` when it is present and numeric.
+#[must_use]
 pub fn results_count(headers: &http::HeaderMap) -> Option<usize> {
     headers
         .get("ngsild-results-count")

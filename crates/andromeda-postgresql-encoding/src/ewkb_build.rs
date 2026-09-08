@@ -11,7 +11,7 @@
 //! altitudes comes back without them, rather than with a column of fabricated
 //! zeroes.
 //!
-//! Geometry types PostGIS supports but GeoJSON has no counterpart for — the
+//! Geometry types `PostGIS` supports but `GeoJSON` has no counterpart for — the
 //! curves, the surfaces, the triangulated network — are refused rather than
 //! ignored. geozero's default callbacks accept them silently, which would turn
 //! a `CIRCULARSTRING` into a geometry that decodes to nothing at all.
@@ -31,7 +31,7 @@ use thiserror::Error;
 ///
 /// Every variant describes a callback stream that no well-formed EWKB buffer
 /// produces, so each one means the buffer was malformed or held a geometry
-/// outside the GeoJSON model.
+/// outside the `GeoJSON` model.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum GeometryBuildError {
     /// A coordinate arrived while no geometry that holds positions was open.
@@ -51,7 +51,7 @@ pub enum GeometryBuildError {
         geometry: &'static str,
     },
     /// A geometry finished inside another that cannot contain it, such as a
-    /// Polygon nested directly in a MultiPoint.
+    /// Polygon nested directly in a `MultiPoint`.
     #[error("a {geometry} ended inside a geometry that cannot contain one")]
     MisplacedGeometry {
         /// The geometry that finished in the wrong place.
@@ -64,15 +64,15 @@ pub enum GeometryBuildError {
     /// The callback stream ended without producing a geometry.
     #[error("the buffer encoded no geometry")]
     MissingGeometry,
-    /// The buffer holds a PostGIS geometry type that GeoJSON, and therefore
+    /// The buffer holds a `PostGIS` geometry type that `GeoJSON`, and therefore
     /// ETSI GS CIM 009 v1.9.1 clause 4.7, has no representation for.
     #[error("the buffer encodes a {geometry}, which GeoJSON has no geometry type for")]
     UnsupportedGeometryType {
-        /// The PostGIS geometry type that cannot be represented.
+        /// The `PostGIS` geometry type that cannot be represented.
         geometry: &'static str,
     },
-    /// The buffer holds a GeometryCollection. GeoJSON defines one, but ETSI GS
-    /// CIM 009 v1.9.1 clause 4.7.1 allows a GeoProperty every RFC 7946 geometry
+    /// The buffer holds a `GeometryCollection`. `GeoJSON` defines one, but ETSI GS
+    /// CIM 009 v1.9.1 clause 4.7.1 allows a `GeoProperty` every RFC 7946 geometry
     /// except that one, so no geometry the broker stores is a collection.
     #[error("the buffer encodes a GeometryCollection, which ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes from GeoProperty geometries")]
     GeometryCollectionUnsupported,
@@ -92,16 +92,16 @@ impl From<GeometryBuildError> for GeozeroError {
 enum PartialGeometry {
     /// A Point awaiting its single position.
     Point(Option<Position>),
-    /// A MultiPoint collecting its positions.
+    /// A `MultiPoint` collecting its positions.
     MultiPoint(Vec<Position>),
-    /// A LineString collecting its positions, whether standalone, a member of a
-    /// MultiLineString, or a polygon ring.
+    /// A `LineString` collecting its positions, whether standalone, a member of a
+    /// `MultiLineString`, or a polygon ring.
     LineString(Vec<Position>),
-    /// A MultiLineString collecting finished line strings.
+    /// A `MultiLineString` collecting finished line strings.
     MultiLineString(Vec<Vec<Position>>),
     /// A Polygon collecting finished rings, exterior ring first.
     Polygon(Vec<Vec<Position>>),
-    /// A MultiPolygon collecting finished polygons.
+    /// A `MultiPolygon` collecting finished polygons.
     MultiPolygon(Vec<PolygonRings>),
 }
 
@@ -119,6 +119,7 @@ pub struct GeometryBuilder {
 
 impl GeometryBuilder {
     /// An empty builder, ready to receive a reader's callbacks.
+    #[must_use]
     pub const fn new() -> GeometryBuilder {
         GeometryBuilder {
             stack: Vec::new(),
@@ -143,12 +144,9 @@ impl GeometryBuilder {
     /// Record a position into the geometry currently open.
     fn record(&mut self, position: Position) -> Result<(), GeometryBuildError> {
         match self.stack.last_mut() {
-            Some(PartialGeometry::Point(slot)) => match slot {
-                Some(_) => Err(GeometryBuildError::RepeatedPointCoordinate),
-                None => {
-                    *slot = Some(position);
-                    Ok(())
-                }
+            Some(PartialGeometry::Point(slot)) => if slot.is_some() { Err(GeometryBuildError::RepeatedPointCoordinate) } else {
+                *slot = Some(position);
+                Ok(())
             },
             Some(PartialGeometry::MultiPoint(positions) | PartialGeometry::LineString(positions)) => {
                 positions.push(position);
@@ -164,24 +162,21 @@ impl GeometryBuilder {
     /// one can stand.
     ///
     /// Nothing may enclose a finished geometry now that clause 4.7.1 rules out
-    /// the GeometryCollection: a ring inside a Polygon, a line inside a
-    /// MultiLineString and a polygon inside a MultiPolygon are all folded by
+    /// the `GeometryCollection`: a ring inside a Polygon, a line inside a
+    /// `MultiLineString` and a polygon inside a `MultiPolygon` are all folded by
     /// their own end callbacks, before they ever become a [`GeometryForm`].
     fn complete(&mut self, form: GeometryForm) -> Result<(), GeometryBuildError> {
         match self.stack.last() {
             Some(_enclosing) => Err(GeometryBuildError::MisplacedGeometry { geometry: form_name(&form) }),
-            None => match self.finished {
-                Some(_) => Err(GeometryBuildError::TrailingGeometry),
-                None => {
-                    self.finished = Some(form);
-                    Ok(())
-                }
+            None => if self.finished.is_some() { Err(GeometryBuildError::TrailingGeometry) } else {
+                self.finished = Some(form);
+                Ok(())
             },
         }
     }
 }
 
-/// The GeoJSON type name of a finished geometry, for diagnostics.
+/// The `GeoJSON` type name of a finished geometry, for diagnostics.
 const fn form_name(form: &GeometryForm) -> &'static str {
     match form {
         GeometryForm::Point(_) => "Point",
@@ -193,7 +188,7 @@ const fn form_name(form: &GeometryForm) -> &'static str {
     }
 }
 
-/// The GeoJSON type name of an unfinished geometry, for diagnostics.
+/// The `GeoJSON` type name of an unfinished geometry, for diagnostics.
 const fn partial_name(partial: &PartialGeometry) -> &'static str {
     match partial {
         PartialGeometry::Point(_) => "Point",
@@ -205,7 +200,7 @@ const fn partial_name(partial: &PartialGeometry) -> &'static str {
     }
 }
 
-/// The failure for a PostGIS geometry type GeoJSON cannot express.
+/// The failure for a `PostGIS` geometry type `GeoJSON` cannot express.
 fn unsupported(geometry: &'static str) -> GeozeroError {
     GeometryBuildError::UnsupportedGeometryType { geometry }.into()
 }
@@ -344,7 +339,7 @@ impl GeomProcessor for GeometryBuilder {
     }
 
     /// Refused rather than decoded: ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes
-    /// the GeometryCollection from GeoProperty geometries, so a buffer holding
+    /// the `GeometryCollection` from `GeoProperty` geometries, so a buffer holding
     /// one is a row no write of this broker can have produced, and decoding it
     /// into something else would hide that.
     fn geometrycollection_begin(&mut self, _size: usize, _idx: usize) -> GeozeroResult<()> {

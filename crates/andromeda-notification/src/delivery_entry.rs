@@ -20,6 +20,7 @@ pub struct DeliveryId(i64);
 
 impl DeliveryId {
     /// Returns the raw `i64` value.
+    #[must_use]
     pub const fn into_inner(self) -> i64 {
         self.0
     }

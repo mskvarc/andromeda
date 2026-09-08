@@ -10,6 +10,7 @@ use sea_query::{Expr, ExprTrait, Iden, SimpleExpr};
 /// hold for a row that lacks the value entirely. Every rendering that tests a
 /// value builds its predicate here, which is what stops one of them disjoining
 /// presence instead.
+#[must_use]
 pub fn present_and(presence: SimpleExpr, value: SimpleExpr) -> SimpleExpr {
     presence.and(value)
 }
@@ -31,6 +32,7 @@ pub fn present_and(presence: SimpleExpr, value: SimpleExpr) -> SimpleExpr {
 /// The element is cast to `element_type` so the single-element array has the
 /// column's element type whatever the bound value's inferred type is: an
 /// `integer[]` dictionary-key column and a `text[]` column are both served.
+#[must_use]
 pub fn array_contains(array_col: SimpleExpr, value: SimpleExpr, element_type: PostgresType) -> SimpleExpr {
     Expr::cust_with_exprs(format!("$1 @> ARRAY(SELECT $2::{})", Iden::to_string(&element_type)), [array_col, value])
 }
@@ -49,11 +51,13 @@ pub fn array_contains(array_col: SimpleExpr, value: SimpleExpr, element_type: Po
 /// `entity_type_names.id`) and never caller-supplied text, which is what makes
 /// inlining it safe; the element type of `ARRAY[<integer>]` is `integer[]`, the
 /// type of every dictionary-key column.
+#[must_use]
 pub fn array_contains_key(array_col: SimpleExpr, key: i32) -> SimpleExpr {
     array_col.array_contains(Expr::cust(format!("ARRAY[{key}]")))
 }
 
 /// Regex: `col ~ pattern` - tests if column matches POSIX regex.
+#[must_use]
 pub fn regex_match(col: SimpleExpr, pattern: SimpleExpr) -> SimpleExpr {
     col.posix_matches(pattern)
 }

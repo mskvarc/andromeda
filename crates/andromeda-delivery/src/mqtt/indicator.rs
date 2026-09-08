@@ -25,6 +25,7 @@ pub struct MqttHealthIndicator {
 
 impl MqttHealthIndicator {
     /// Report on the given pool.
+    #[must_use]
     pub const fn new(pool: Arc<MqttTransportPool>) -> MqttHealthIndicator {
         MqttHealthIndicator { pool }
     }

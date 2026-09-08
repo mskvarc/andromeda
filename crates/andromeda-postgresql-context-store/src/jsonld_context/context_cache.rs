@@ -66,7 +66,7 @@ fn cache_insert(local_id: &str, url: &str, payload: &Value) -> Result<InsertStat
             0_i64.into(),
         ])?
         .on_conflict(OnConflict::column(JsonldContexts::Url).do_nothing().to_owned());
-    Ok(statement.to_owned())
+    Ok(statement.clone())
 }
 
 /// Mint the local identifier used for a newly cached remote Context.

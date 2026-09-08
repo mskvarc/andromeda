@@ -1,4 +1,4 @@
-//! GeoProperty geometry rendering integration tests (NGSI-LD 6.3.3, 6.4.3.2).
+//! `GeoProperty` geometry rendering integration tests (NGSI-LD 6.3.3, 6.4.3.2).
 //!
 //! Naming convention: `geometry_<area>_<scenario>_<expected_outcome>`.
 

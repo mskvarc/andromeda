@@ -19,6 +19,7 @@ pub enum SplitEntitiesDefault {
 
 impl SplitEntitiesDefault {
     /// Resolve a request's explicit `splitEntities` against this default.
+    #[must_use]
     pub const fn resolve(self, explicit: Option<bool>) -> SplitEntities {
         match explicit {
             Some(true) => SplitEntities::Split,
@@ -50,6 +51,7 @@ pub enum SplitEntities {
 
 impl SplitEntities {
     /// Whether filters are deferred until after the aggregation.
+    #[must_use]
     pub const fn is_split(self) -> bool {
         matches!(self, SplitEntities::Split)
     }
@@ -108,11 +110,13 @@ impl FederationConfig {
     }
 
     /// The connection deadline.
+    #[must_use]
     pub const fn connect_timeout(&self) -> Duration {
         Duration::from_millis(self.connect_timeout_ms)
     }
 
     /// The default per-request deadline.
+    #[must_use]
     pub const fn request_timeout(&self) -> Duration {
         Duration::from_millis(self.request_timeout_ms)
     }

@@ -22,7 +22,7 @@ use crate::{
     setup_cached_context,
 };
 
-/// 051_01_01: Delete hosted @context without reload param -> 204.
+/// `051_01_01`: Delete hosted @context without reload param -> 204.
 #[tokio::test]
 #[serial]
 async fn delete_hosted_context_returns_204() {
@@ -35,7 +35,7 @@ async fn delete_hosted_context_returns_204() {
     assert!(bytes.is_empty(), "response body should be empty");
 }
 
-/// 051_02_01: Delete @context with unknown identifier -> 404.
+/// `051_02_01`: Delete @context with unknown identifier -> 404.
 #[tokio::test]
 async fn delete_unknown_context_returns_404() {
     let c = client();
@@ -44,7 +44,7 @@ async fn delete_unknown_context_returns_404() {
     pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
 }
 
-/// 051_04_01: Delete wrong ID + reload=true -> 400.
+/// `051_04_01`: Delete wrong ID + reload=true -> 400.
 #[tokio::test]
 async fn delete_unknown_with_reload_true_returns_400() {
     let c = client();
@@ -52,7 +52,7 @@ async fn delete_unknown_with_reload_true_returns_400() {
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-/// 051_04_02: Delete wrong ID + reload=false -> 404.
+/// `051_04_02`: Delete wrong ID + reload=false -> 404.
 #[tokio::test]
 async fn delete_unknown_with_reload_false_returns_404() {
     let c = client();
@@ -60,7 +60,7 @@ async fn delete_unknown_with_reload_false_returns_404() {
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-/// 051_04_03: Delete wrong ID + no reload -> 404.
+/// `051_04_03`: Delete wrong ID + no reload -> 404.
 #[tokio::test]
 async fn delete_unknown_no_reload_returns_404() {
     let c = client();
@@ -68,7 +68,7 @@ async fn delete_unknown_no_reload_returns_404() {
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-/// 051_04_04: Delete wrong ID + reload=xxx (invalid) -> 400.
+/// `051_04_04`: Delete wrong ID + reload=xxx (invalid) -> 400.
 #[tokio::test]
 async fn delete_unknown_with_reload_invalid_returns_400() {
     let c = client();
@@ -76,7 +76,7 @@ async fn delete_unknown_with_reload_invalid_returns_400() {
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-/// 051_04_05: Delete hosted + reload=true -> 400.
+/// `051_04_05`: Delete hosted + reload=true -> 400.
 #[tokio::test]
 #[serial]
 async fn delete_hosted_with_reload_true_returns_400() {
@@ -88,7 +88,7 @@ async fn delete_hosted_with_reload_true_returns_400() {
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-/// 051_06_01: Delete ImplicitlyCreated @context without reload -> 204.
+/// `051_06_01`: Delete `ImplicitlyCreated` @context without reload -> 204.
 #[tokio::test]
 #[serial]
 async fn delete_implicitly_created_context_returns_204() {
@@ -103,7 +103,7 @@ async fn delete_implicitly_created_context_returns_204() {
     let _ = bytes;
 }
 
-/// 051_07_01: Delete ImplicitlyCreated @context with reload=true -> 400.
+/// `051_07_01`: Delete `ImplicitlyCreated` @context with reload=true -> 400.
 #[tokio::test]
 #[serial]
 async fn delete_implicitly_created_with_reload_returns_400() {
@@ -117,7 +117,7 @@ async fn delete_implicitly_created_with_reload_returns_400() {
     crate::delete_subscription(&c, &sub_id).await;
 }
 
-/// 051_08_01: Delete core context without reload -> 400.
+/// `051_08_01`: Delete core context without reload -> 400.
 #[tokio::test]
 async fn delete_core_context_no_reload_returns_400() {
     let c = client();
@@ -126,7 +126,7 @@ async fn delete_core_context_no_reload_returns_400() {
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
-/// 051_08_02: Delete core context with reload=false -> 400.
+/// `051_08_02`: Delete core context with reload=false -> 400.
 #[tokio::test]
 async fn delete_core_context_reload_false_returns_400() {
     let c = client();
@@ -134,7 +134,7 @@ async fn delete_core_context_reload_false_returns_400() {
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-/// 051_09_01: Delete core context with reload=true -> 204, then verify re-downloaded.
+/// `051_09_01`: Delete core context with reload=true -> 204, then verify re-downloaded.
 #[tokio::test]
 async fn delete_and_reload_core_context_returns_204() {
     let c = client();
@@ -152,7 +152,7 @@ async fn delete_and_reload_core_context_returns_204() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 }
 
-/// 051_03_01: Delete cached @context without reload -> 204.
+/// `051_03_01`: Delete cached @context without reload -> 204.
 #[tokio::test]
 #[serial]
 async fn delete_cached_context_returns_204() {
@@ -164,10 +164,10 @@ async fn delete_cached_context_returns_204() {
 
     let (status, bytes) = delete_context_raw(&c, &cached_id, "").await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
-    assert!(bytes.is_empty());
+    assert_eq!(bytes, [] as [u8; 0]);
 }
 
-/// 051_05_01: Delete cached @context with reload=true when server is unavailable -> 504.
+/// `051_05_01`: Delete cached @context with reload=true when server is unavailable -> 504.
 #[tokio::test]
 #[serial]
 async fn delete_cached_reload_server_unavailable_returns_504() {

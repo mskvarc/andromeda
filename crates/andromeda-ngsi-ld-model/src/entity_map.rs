@@ -1,4 +1,4 @@
-//! The EntityMap resource that pins a distributed query's result set (ETSI GS CIM 009 clauses 4.5.25 and 5.2.39).
+//! The `EntityMap` resource that pins a distributed query's result set (ETSI GS CIM 009 clauses 4.5.25 and 5.2.39).
 
 use crate::entity_map_fingerprint::RequestFingerprint;
 use andromeda_ngsi_ld_lexicon::{constant_string, rfc3339, uri::Uri};
@@ -59,7 +59,7 @@ impl From<EntityMapSource> for String {
     }
 }
 
-/// NGSI-LD EntityMap representation (ETSI GS CIM 009 clause 5.2.39).
+/// NGSI-LD `EntityMap` representation (ETSI GS CIM 009 clause 5.2.39).
 ///
 /// `entityMap` and `linkedMaps` are output-only: a client that supplies them
 /// is ignored (Table 5.2.39-2), so deserialisation tolerates their absence and
@@ -82,7 +82,7 @@ pub struct EntityMap {
     #[serde(default)]
     #[builder(default = Default::default())]
     pub entity_map: IndexMap<Uri, Vec<EntityMapSource>>,
-    /// The EntityMap each contributing context source created for the same
+    /// The `EntityMap` each contributing context source created for the same
     /// query, keyed by the registration that named the source.
     #[serde(default)]
     #[builder(default = Default::default())]
@@ -108,6 +108,7 @@ impl EntityMap {
     }
 
     /// Whether `entity_id` is one of the map's entities.
+    #[must_use]
     pub fn contains(&self, entity_id: &Uri) -> bool {
         self.entity_map.contains_key(entity_id)
     }
@@ -132,7 +133,8 @@ impl EntityMap {
             })
     }
 
-    /// The EntityMap a registration's context source created for this query.
+    /// The `EntityMap` a registration's context source created for this query.
+    #[must_use]
     pub fn linked_map_for(&self, registration: &Uri) -> Option<&Uri> {
         self.linked_maps.get(registration)
     }
@@ -160,7 +162,7 @@ impl EntityMap {
         }
     }
 
-    /// Record the EntityMap a registration's context source used for this
+    /// Record the `EntityMap` a registration's context source used for this
     /// query (Table 5.2.39-2 `linkedMaps`), replacing an earlier link.
     pub fn link(&mut self, registration: Uri, linked_map: Uri) {
         self.linked_maps.insert(registration, linked_map);
@@ -176,7 +178,7 @@ impl EntityMap {
         }
     }
 
-    /// Fold in the EntityMap a registration's context source created for the
+    /// Fold in the `EntityMap` a registration's context source created for the
     /// same query (clause 5.14.4.4): its identifier joins `linkedMaps`, and every
     /// entity it lists is attributed to the registration.
     pub fn add_remote(&mut self, registration: &Uri, remote: &EntityMap) {
@@ -185,6 +187,7 @@ impl EntityMap {
     }
 
     /// Returns whether this map has already expired.
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         Utc::now() >= self.expires_at
     }

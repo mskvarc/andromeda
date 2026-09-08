@@ -40,6 +40,7 @@ use std::slice;
 ///
 /// The projection preselect narrows the candidates the unnesting has to read;
 /// the unnesting decides coverage.
+#[must_use]
 pub fn entity_type_coverage(entity_type: &IriBuf) -> SimpleExpr {
     let mut entities_match = entities_of_item();
     entities_match.and_where(entity_type_admits(entity_type));
@@ -59,6 +60,7 @@ pub fn entity_type_coverage(entity_type: &IriBuf) -> SimpleExpr {
 /// The projection preselect that runs first admits every pattern row without
 /// looking at the pattern, so the regular expression is evaluated exactly once,
 /// here, where the coverage decision is made.
+#[must_use]
 pub fn entity_id_coverage(entity_id: &Uri) -> SimpleExpr {
     let mut entities_match = entities_of_item();
     entities_match.cond_where(

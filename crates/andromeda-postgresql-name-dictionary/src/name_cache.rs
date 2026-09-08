@@ -154,6 +154,7 @@ async fn read_schema_epoch<'e, E: Executor<'e, Database = Postgres>>(executor: E
 impl<N: DictionaryRelation> NameCache<N> {
     /// Create a cache backed by the given tenant pool, bounded by
     /// [`DictionaryNameLimit::DEFAULT`].
+    #[must_use]
     pub fn new(pool: &PgPool) -> NameCache<N> {
         NameCache {
             pool: pool.clone(), // clone: Arc ref-count bump
@@ -504,9 +505,9 @@ fn name_insert_query<N: DictionaryRelation>(names: &[&str]) -> Result<InsertStat
     insert
         .into_table(N::table())
         .columns([N::name_column()])
-        .select_from(source.to_owned())?
+        .select_from(source.clone())?
         .on_conflict(OnConflict::column(N::name_column()).do_nothing().to_owned());
-    Ok(insert.to_owned())
+    Ok(insert.clone())
 }
 
 #[cfg(test)]

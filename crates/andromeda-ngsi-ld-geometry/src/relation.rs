@@ -16,7 +16,7 @@
 //! enters a verdict, however many ordinates the geometries carry.
 //!
 //! The SQL renderings are a separate reading of the same clause, because
-//! PostGIS evaluates the predicates rather than this crate. The pairs they
+//! `PostGIS` evaluates the predicates rather than this crate. The pairs they
 //! render to are named in the doc comments below so the two stay comparable.
 
 use crate::{distance::haversine_distance_m, geo_rel::GeoRel, geometry::Geometry};
@@ -27,6 +27,7 @@ use geo::algorithm::{Contains, Intersects};
 /// `subject` is the geometry read off the entity or registration; `reference`
 /// is the one the query supplied. The asymmetry matters: `within` asks whether
 /// the subject is inside the reference, `contains` the opposite.
+#[must_use]
 pub fn matches(georel: &GeoRel, subject: &Geometry, reference: &Geometry) -> bool {
     matches_planar(georel, subject.planar(), reference.planar())
 }
@@ -157,7 +158,7 @@ mod tests {
 
     /// The conformance table over every clause 4.10 relation. The fixtures are
     /// the ones the three deleted copies each tested separately.
-    fn conformance_table<'a>(fixtures: &'a Fixtures) -> Vec<Case<'a>> {
+    fn conformance_table(fixtures: &Fixtures) -> Vec<Case<'_>> {
         vec![
             Case {
                 description: "a point inside the reference area is within it",

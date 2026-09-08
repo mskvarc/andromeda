@@ -1,4 +1,4 @@
-//! Temporal EntityMap forwarding to supporting temporal Context Sources (clause
+//! Temporal `EntityMap` forwarding to supporting temporal Context Sources (clause
 //! 5.14.5): the forwarded createEntityMapQueryTemporal, filter stripping, and
 //! the remote map folded into `linkedMaps` and the `entityMap` element, plus the
 //! local success result. The source advertises `createEntityMapQueryTemporal`
@@ -126,7 +126,7 @@ async fn emt_split_forward_strips_filters() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The forwarded temporal query returns an EntityMap folded into the result
+/// The forwarded temporal query returns an `EntityMap` folded into the result
 /// (clause 5.14.5). Confirms REQ-MAP-152.
 #[tokio::test]
 async fn emt_forwarded_query_returns_entity_map() {

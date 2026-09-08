@@ -1,5 +1,5 @@
 //! Readers for the entity-level members of an expanded payload: `@id`,
-//! `@type`, `scope`, `expiresAt` and the names of the attributes it carries. A named GeoProperty's geometry is read by
+//! `@type`, `scope`, `expiresAt` and the names of the attributes it carries. A named `GeoProperty`'s geometry is read by
 //! [`crate::expanded::geo_property::extract_geo_property_geometry`], the single
 //! reader shared by the write/index and read/match paths.
 
@@ -21,6 +21,7 @@ pub fn extract_id(expanded: &Value) -> Option<Uri> {
 ///
 /// Entries that are not strings, or that do not satisfy the NGSI-LD name
 /// grammar, are skipped: a payload member that cannot name a type is not one.
+#[must_use]
 pub fn extract_types(expanded: &Value) -> Vec<EntityTypeName> {
     expanded_object_ref(expanded)
         .and_then(|obj| obj.get("@type"))
@@ -37,6 +38,7 @@ pub fn extract_types(expanded: &Value) -> Vec<EntityTypeName> {
 /// matches an `attrs` term when its payload carries a member of that name,
 /// which is what the write path records against each entity so the term is
 /// answered by index. A key that cannot name an attribute is skipped.
+#[must_use]
 pub fn extract_attribute_names(expanded: &Value) -> Vec<AttributeName> {
     expanded_object_ref(expanded)
         .map(|obj| obj.keys().filter(|key| !key.starts_with('@')).filter_map(|key| key.parse().ok()).collect())
@@ -44,6 +46,7 @@ pub fn extract_attribute_names(expanded: &Value) -> Vec<AttributeName> {
 }
 
 /// Extract scope strings from an expanded entity payload.
+#[must_use]
 pub fn extract_scopes(expanded: &Value) -> Vec<ScopeBuf> {
     let Some(obj) = expanded_object_ref(expanded) else {
         return Vec::new();
@@ -65,6 +68,7 @@ pub fn extract_scopes(expanded: &Value) -> Vec<ScopeBuf> {
 
 /// Extract the `expiresAt` value from an expanded JSON-LD entity payload
 /// (ETSI GS CIM 009 clause 4.22).
+#[must_use]
 pub fn extract_expires_at(expanded: &Value) -> Option<DateTime<Utc>> {
     let obj = expanded_object_ref(expanded)?;
     let dt_str = obj

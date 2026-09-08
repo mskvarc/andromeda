@@ -97,7 +97,7 @@ fn pattern_target(target: &ResolvedTarget) -> Option<&str> {
 /// denotes a Relationship object.
 ///
 /// Covers all eight attribute families of clause 5.2.4, not only Property and
-/// Relationship, so a `q` over a LanguageProperty, VocabProperty, JsonProperty
+/// Relationship, so a `q` over a `LanguageProperty`, `VocabProperty`, `JsonProperty`
 /// or a list attribute resolves rather than silently missing.
 fn value_members() -> [(&'static str, &'static str, bool); 7] {
     [
@@ -204,11 +204,11 @@ fn resolve_values(obj: &Map<String, Value>, path: &AttrPath) -> Vec<ResolvedTarg
 }
 
 /// Resolve the `[*]` language-suppression form: every language's value of a
-/// LanguageProperty instance (clause 4.9), so a predicate holds when it holds
+/// `LanguageProperty` instance (clause 4.9), so a predicate holds when it holds
 /// for any language rather than only the one negotiation would select.
 ///
 /// Falls back to the ordinary single-value resolution when the instance is not
-/// a LanguageProperty, so `attr[*]` on another family still addresses its value.
+/// a `LanguageProperty`, so `attr[*]` on another family still addresses its value.
 fn resolve_all_languages(instance: &Value, path: &AttrPath) -> Vec<ResolvedTarget> {
     let mut current = instance;
     for sub in &path.sub_attrs {
@@ -261,7 +261,7 @@ fn resolve_instance_value(instance: &Value, path: &AttrPath) -> Option<ResolvedT
 ///   notification payload and a stored entity carry, and the one an earlier
 ///   evaluator missed entirely: it read the terminal `@value` first and then
 ///   indexed into it, which for this shape resolves nothing.
-/// * A JsonProperty's value, and a Property value that survived expansion as an
+/// * A `JsonProperty`'s value, and a Property value that survived expansion as an
 ///   opaque JSON object, sit *under* a single `@value` as raw JSON, where `city`
 ///   is an ordinary object key. The NGSI-LD data model puts no constraint on
 ///   those keys, so they are read verbatim.
@@ -271,7 +271,7 @@ fn resolve_instance_value(instance: &Value, path: &AttrPath) -> Option<ResolvedT
 /// and a raw JSON object cannot carry a member whose key is the expanded IRI
 /// without the client having written that IRI. The raw-JSON fallback then
 /// retries with the pre-expansion spelling (`path.value_path_compact`),
-/// because a JsonProperty's value — and a Property value that survived
+/// because a `JsonProperty`'s value — and a Property value that survived
 /// expansion as an opaque object — is never touched by JSON-LD expansion: its
 /// keys are exactly what the client wrote, not what the request `@context`
 /// expands them to.
@@ -792,7 +792,7 @@ mod tests {
         }
     }
 
-    /// A JsonProperty, whose value is raw JSON that JSON-LD expansion never
+    /// A `JsonProperty`, whose value is raw JSON that JSON-LD expansion never
     /// touches: `hasJSON`'s `@value` holds the object exactly as the client
     /// wrote it, keys included.
     fn entity_with_json_property() -> Value {
@@ -808,7 +808,7 @@ mod tests {
     }
 
     /// The defect a term-expanded `value_path` reintroduced: `resolve_member_hops`
-    /// cannot walk into a JsonProperty's raw `@value` object (it carries no
+    /// cannot walk into a `JsonProperty`'s raw `@value` object (it carries no
     /// IRI-keyed member nodes to hop through), so a compound `q` over one has to
     /// fall back to the raw-JSON walk — and that walk has to use the key the
     /// client wrote, not the IRI the path was expanded to. `eval_compound_value_path`

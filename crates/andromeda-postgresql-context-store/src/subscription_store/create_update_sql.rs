@@ -53,7 +53,7 @@ pub fn bind_entity_create<'q>(
         .bind(
             fields
                 .watched_attributes
-                .map(|names| names.iter().map(|name| name.as_str()).collect::<Vec<_>>()),
+                .map(|names| names.iter().map(andromeda_ngsi_ld_lexicon::attribute_name::AttributeName::as_str).collect::<Vec<_>>()),
         )
         .bind(stored_triggers(fields))
         .bind(fields.time_interval)
@@ -90,7 +90,7 @@ pub fn bind_entity_update<'q>(
         .bind(
             fields
                 .watched_attributes
-                .map(|names| names.iter().map(|name| name.as_str()).collect::<Vec<_>>()),
+                .map(|names| names.iter().map(andromeda_ngsi_ld_lexicon::attribute_name::AttributeName::as_str).collect::<Vec<_>>()),
         )
         .bind(stored_triggers(fields))
         .bind(fields.time_interval)
@@ -126,7 +126,7 @@ pub fn bind_csource_create<'q>(
         .bind(
             fields
                 .watched_attributes
-                .map(|names| names.iter().map(|name| name.as_str()).collect::<Vec<_>>()),
+                .map(|names| names.iter().map(andromeda_ngsi_ld_lexicon::attribute_name::AttributeName::as_str).collect::<Vec<_>>()),
         )
         .bind(stored_triggers(fields))
         .bind(fields.time_interval)
@@ -160,7 +160,7 @@ pub fn bind_csource_update<'q>(
         .bind(
             fields
                 .watched_attributes
-                .map(|names| names.iter().map(|name| name.as_str()).collect::<Vec<_>>()),
+                .map(|names| names.iter().map(andromeda_ngsi_ld_lexicon::attribute_name::AttributeName::as_str).collect::<Vec<_>>()),
         )
         .bind(stored_triggers(fields))
         .bind(fields.time_interval)

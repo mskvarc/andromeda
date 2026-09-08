@@ -74,6 +74,7 @@ impl TelemetryRecorder {
     }
 
     /// Render every recorded series in the Prometheus text exposition format.
+    #[must_use]
     pub fn render(&self) -> String {
         self.handle.render()
     }

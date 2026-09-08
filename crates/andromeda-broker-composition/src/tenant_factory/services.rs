@@ -258,26 +258,23 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
     // Clauses 5.8.1.4 and 5.8.6 need a notification endpoint peers can reach;
     // without an advertised origin the distributed side of subscriptions stays
     // off, and the broker says so once per tenant.
-    let subscription_forwarding = match info_config.advertised_url.as_ref().and_then(ReceiverEndpoint::from_advertised) {
-        Some(receiver) => Some(Arc::new(
-            SubscriptionForwardingService::builder()
-                .live_target(live_target.clone()) // clone: forwarding is defined only over the tenant's live branch.
-                .receiver(receiver)
-                .tenant(tenant.clone()) // clone: the forwarding service owns its tenant
-                .subscriptions(Arc::clone(&subscription_store))
-                .csource_subscriptions(Arc::clone(&csr_subscriptions))
-                .mappings(Arc::new(SubscriptionForwardingRepository::new(pool)) as Arc<dyn SubscriptionForwardingStore>)
-                .router(Arc::clone(subscription_router))
-                .federation(Arc::clone(&forwarding))
-                .entity_query(Arc::clone(&entity_query))
-                .transport(Arc::clone(&transports.dispatcher))
-                .engine(engine.clone())
-                .build(),
-        )),
-        None => {
-            tracing::info!(tenant = ?tenant, "subscription forwarding disabled: ANDROMEDA_INFO_ADVERTISED_URL is not set");
-            None
-        }
+    let subscription_forwarding = if let Some(receiver) = info_config.advertised_url.as_ref().and_then(ReceiverEndpoint::from_advertised) { Some(Arc::new(
+        SubscriptionForwardingService::builder()
+            .live_target(live_target.clone()) // clone: forwarding is defined only over the tenant's live branch.
+            .receiver(receiver)
+            .tenant(tenant.clone()) // clone: the forwarding service owns its tenant
+            .subscriptions(Arc::clone(&subscription_store))
+            .csource_subscriptions(Arc::clone(&csr_subscriptions))
+            .mappings(Arc::new(SubscriptionForwardingRepository::new(pool)) as Arc<dyn SubscriptionForwardingStore>)
+            .router(Arc::clone(subscription_router))
+            .federation(Arc::clone(&forwarding))
+            .entity_query(Arc::clone(&entity_query))
+            .transport(Arc::clone(&transports.dispatcher))
+            .engine(engine.clone())
+            .build(),
+    )) } else {
+        tracing::info!(tenant = ?tenant, "subscription forwarding disabled: ANDROMEDA_INFO_ADVERTISED_URL is not set");
+        None
     };
     let mut subscriptions = SubscriptionService::new(
         Arc::clone(&subscription_store),

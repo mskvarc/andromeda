@@ -32,7 +32,7 @@ pub enum TemporalStoreError {
     /// An extracted attribute value was invalid.
     #[error("temporal store validation: {0}")]
     Validation(String),
-    /// A DateTime attribute value could not be accepted at microsecond resolution.
+    /// A `DateTime` attribute value could not be accepted at microsecond resolution.
     #[error("temporal store timestamp precision: {0}")]
     TimestampPrecision(#[from] NgsiLdDateTimeError),
     /// The instance's `unitCode` member could not be moved to or from its column.

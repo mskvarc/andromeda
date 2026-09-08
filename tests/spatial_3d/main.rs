@@ -1,4 +1,4 @@
-//! Three-dimensional GeoJSON coordinate integration tests (NGSI-LD 4.7.1, RFC 7946 3.1.1).
+//! Three-dimensional `GeoJSON` coordinate integration tests (NGSI-LD 4.7.1, RFC 7946 3.1.1).
 //!
 //! RFC 7946 3.1.1 allows a position to carry exactly two ordinates (longitude,
 //! latitude) or three (longitude, latitude, altitude). Andromeda stores and

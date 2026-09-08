@@ -116,7 +116,7 @@ pub(crate) async fn mark_inspected(connection: &mut PgConnection, tenant: &Regis
     if result != "started" {
         statement.value(PostgresqlMaintenanceTenants::ConsecutiveFailures, 0);
     }
-    execute_update(connection, statement.to_owned()).await
+    execute_update(connection, statement.clone()).await
 }
 
 /// Record that reaching one tenant database failed without starving later tenants.
@@ -289,7 +289,7 @@ pub(crate) async fn record_decision(
             | DeferralReason::WaitingRelationLock,
         ) => {}
     }
-    execute_update(connection, statement.to_owned()).await?;
+    execute_update(connection, statement.clone()).await?;
     if decision == PolicyDecision::Queued && matches!(target, MaintenanceTarget::Index(IndexTarget::IdxCavAttrString)) {
         let trigram = MaintenanceTarget::Index(IndexTarget::IdxCavAttrStringTrgm);
         ensure_target_state(connection, tenant, trigram).await?;
@@ -393,7 +393,7 @@ fn tenant_state_insert(tenant: TenantId) -> Result<InsertStatement, SeaQueryErro
         .columns([PostgresqlMaintenanceTenants::TenantId])
         .values([tenant.0.into()])?
         .on_conflict(OnConflict::column(PostgresqlMaintenanceTenants::TenantId).do_nothing().to_owned());
-    Ok(statement.to_owned())
+    Ok(statement.clone())
 }
 
 /// Build the idempotent target-state insert.
@@ -408,7 +408,7 @@ fn target_state_insert(tenant: TenantId, target: MaintenanceTarget) -> Result<In
                 .do_nothing()
                 .to_owned(),
         );
-    Ok(statement.to_owned())
+    Ok(statement.clone())
 }
 
 /// Execute one SeaQuery-built update.

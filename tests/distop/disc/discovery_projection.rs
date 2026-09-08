@@ -90,9 +90,9 @@ async fn query_csr_lang_reduces_languagemap() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `geometryProperty` selects the named GeoProperty as the GeoJSON geometry of
+/// `geometryProperty` selects the named `GeoProperty` as the `GeoJSON` geometry of
 /// the returned registration Feature (clause 4.5.16). Confirms REQ-DISC
-/// GeoJSON geometry selection.
+/// `GeoJSON` geometry selection.
 #[tokio::test]
 async fn query_csr_geometry_property_selects_geometry() {
     let topology = topology::single().await.expect("single-broker topology");

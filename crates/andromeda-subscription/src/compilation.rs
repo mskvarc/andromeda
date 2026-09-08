@@ -32,7 +32,7 @@ pub fn compile_subscription(stored: &StoredSubscription) -> CompiledSubscription
     let sub = &stored.subscription;
     let selectors: Vec<EntitySelector> = sub.selection.entities.clone().unwrap_or_default();
     let triggers = effective_notification_triggers(sub.selection.notification_trigger.as_deref());
-    let watched_attrs = sub.selection.watched_attributes.as_ref().cloned().map(HashSet::from_iter);
+    let watched_attrs = sub.selection.watched_attributes.clone().map(HashSet::from_iter);
     CompiledSubscription {
         id: sub.id.clone(), // clone: compiled state outlives the persisted value.
         key: stored.key,
@@ -74,6 +74,7 @@ pub fn compile_subscription(stored: &StoredSubscription) -> CompiledSubscription
 
 /// Compile a context-source subscription for in-memory registration matching
 /// (clauses 5.11.2.4 and 5.12).
+#[must_use]
 pub fn compile_csource_subscription(sub: &Subscription) -> CompiledCsrSubscription {
     let selectors: Vec<EntitySelector> = sub.selection.entities.clone().unwrap_or_default();
     CompiledCsrSubscription {
@@ -212,6 +213,7 @@ pub fn compile_geo_q(geo_q: &serde_json::Value, sub_id: &str) -> Option<GeoQuery
 /// the resource was written (clause 5.5.7), except the three clause 4.21
 /// keywords, which name structural members of the representation rather than
 /// attributes and are kept as written.
+#[must_use]
 pub fn notification_projection(notification: &NotificationParams, sub_id: &str) -> Projection {
     Projection::builder()
         .pick(projection_terms(notification.pick.as_deref().unwrap_or_default(), sub_id))
@@ -318,7 +320,7 @@ mod tests {
         pretty_assertions::assert_eq!(csource_matching_attributes(Some(&watched), None), names(&["speed"]));
         pretty_assertions::assert_eq!(csource_matching_attributes(None, Some(&notified)), names(&["brandName", "speed"]));
         pretty_assertions::assert_eq!(csource_matching_attributes(Some(&watched), Some(&[])), names(&["speed"]));
-        assert!(csource_matching_attributes(None, None).is_empty());
+        assert_eq!(csource_matching_attributes(None, None), [] as [andromeda_ngsi_ld_lexicon::attribute_name::AttributeName; 0]);
     }
 
     #[test]

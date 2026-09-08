@@ -27,6 +27,7 @@ const ATTRIBUTE_METADATA: &[&str] = &["observedAt", "datasetId", "unitCode", "cr
 ///
 /// Consumes `val` to avoid deep-cloning the entity tree; pass `value.clone()`
 /// at the call site if the caller still needs the original.
+#[must_use]
 pub fn concise_value(val: Value) -> Value {
     let Value::Object(obj) = val else { return val };
 
@@ -60,11 +61,11 @@ fn concise_attr_value(value: Value) -> Value {
 
 /// Concise a single attribute instance object.
 ///
-/// Only a Property or GeoProperty collapses to its bare value: clause 4.5.2.3
+/// Only a Property or `GeoProperty` collapses to its bare value: clause 4.5.2.3
 /// licenses the bare form for those two, so `{"type": "Property", "value": 25}`
 /// becomes `25`. Every other family keeps its mandatory distinguishing member
 /// (clause 4.5.3.3 and the five list/language/vocab/json clauses): the `type`
-/// is dropped but a Relationship stays `{"object": …}`, a LanguageProperty
+/// is dropped but a Relationship stays `{"object": …}`, a `LanguageProperty`
 /// `{"languageMap": …}`, and so on — collapsing them to a bare value would read
 /// back as a different attribute type. An instance carrying sub-attributes or
 /// metadata always keeps its object shape, whatever its family.

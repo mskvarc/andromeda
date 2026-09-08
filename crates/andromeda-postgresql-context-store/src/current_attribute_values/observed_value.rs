@@ -23,7 +23,7 @@ pub enum ProjectedValueUnrepresentable {
     /// a tombstone for a value.
     #[error("a deletion is not a projected value; the instance's row is removed instead")]
     Deletion,
-    /// The observation carried a geometry that is not valid GeoJSON.
+    /// The observation carried a geometry that is not valid `GeoJSON`.
     #[error(transparent)]
     Geometry(#[from] GeometryError),
 }

@@ -32,17 +32,17 @@ pub enum Attribute {
     Property(Property),
     /// A Relationship instance (clause 5.2.6).
     Relationship(Relationship),
-    /// A VocabProperty instance (clause 5.2.35).
+    /// A `VocabProperty` instance (clause 5.2.35).
     VocabProperty(VocabProperty),
-    /// A GeoProperty instance (clause 5.2.7).
+    /// A `GeoProperty` instance (clause 5.2.7).
     GeoProperty(GeoProperty),
-    /// A LanguageProperty instance (clause 5.2.32).
+    /// A `LanguageProperty` instance (clause 5.2.32).
     LanguageProperty(LanguageProperty),
-    /// A JsonProperty instance (clause 5.2.38).
+    /// A `JsonProperty` instance (clause 5.2.38).
     JsonProperty(JsonProperty),
-    /// A ListProperty instance (clause 5.2.36).
+    /// A `ListProperty` instance (clause 5.2.36).
     ListProperty(ListProperty),
-    /// A ListRelationship instance (clause 5.2.37).
+    /// A `ListRelationship` instance (clause 5.2.37).
     ListRelationship(ListRelationship),
 }
 
@@ -52,6 +52,7 @@ impl Attribute {
     /// Each family names its payload differently (`value`, `object`, `vocab`,
     /// …); this collapses them to the single JSON value a caller that does not
     /// care about the family needs.
+    #[must_use]
     pub fn value(&self) -> Value {
         match self {
             Attribute::Property(p) => serde_json::to_value(&p.value).unwrap_or_default(),
@@ -73,6 +74,7 @@ impl Attribute {
     /// The discriminant of the enum, exposed so a renderer can decide the shape
     /// a family takes (for example whether clause 4.5.4 keeps its value member)
     /// without re-parsing a `type` string.
+    #[must_use]
     pub const fn attribute_type(&self) -> AttributeType {
         match self {
             Attribute::Property(_) => AttributeType::Property,
@@ -91,6 +93,7 @@ impl Attribute {
     /// Every family struct embeds the same [`CommonAttributeFields`], so an
     /// accessor for a shared member reaches it through this one match rather
     /// than re-matching all eight families itself.
+    #[must_use]
     pub const fn common(&self) -> &CommonAttributeFields {
         match self {
             Attribute::Property(p) => &p.common,
@@ -105,11 +108,13 @@ impl Attribute {
     }
 
     /// Returns the `expiresAt` value of the underlying attribute instance, if set.
+    #[must_use]
     pub const fn expires_at(&self) -> Option<DateTime<Utc>> {
         self.common().expires_at
     }
 
     /// Borrows the instance's `datasetId`, if set.
+    #[must_use]
     pub const fn dataset_id(&self) -> Option<&Uri> {
         self.common().dataset_id.as_ref()
     }

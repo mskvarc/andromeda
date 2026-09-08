@@ -54,6 +54,7 @@ impl SelectorRouting {
     /// the matcher applies the pattern afterwards. A selector with a boolean
     /// type expression and an exact id is placed by id alone, since the id is
     /// the more selective half and the matcher re-checks the type.
+    #[must_use]
     pub fn of(compiled: &CompiledSubscription) -> SelectorRouting {
         let mut routing = SelectorRouting::default();
         if compiled.selectors.is_empty() {

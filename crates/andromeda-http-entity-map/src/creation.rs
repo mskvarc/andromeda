@@ -1,4 +1,4 @@
-//! Composing, storing and rendering a created EntityMap (clauses 5.14.4.4
+//! Composing, storing and rendering a created `EntityMap` (clauses 5.14.4.4
 //! and 5.14.5.4, Tables 6.34.3.1-1 and 6.35.3.1-1), whichever binding the
 //! request came through.
 

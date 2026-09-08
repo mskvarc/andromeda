@@ -82,7 +82,7 @@ mod tests {
             vec![("urn:ngsi-ld:csr:b".to_string(), "urn:ngsi-ld:EntityMap:b".to_string())],
         )
         .expect("maps");
-        let ids: Vec<&str> = map.entity_ids().map(|id| id.as_str()).collect();
+        let ids: Vec<&str> = map.entity_ids().map(andromeda_ngsi_ld_lexicon::uri::Uri::as_str).collect();
         pretty_assertions::assert_eq!(ids, vec!["urn:ngsi-ld:Vehicle:2", "urn:ngsi-ld:Vehicle:1"]);
         pretty_assertions::assert_eq!(
             map.entity_map.get(&"urn:ngsi-ld:Vehicle:2".parse::<Uri>().expect("valid URI")),

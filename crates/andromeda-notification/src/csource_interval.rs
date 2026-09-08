@@ -84,12 +84,9 @@ impl CsourceIntervalNotificationOperation {
                 continue;
             }
 
-            let notification_id = match format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() {
-                Ok(u) => u,
-                Err(_) => {
-                    error!("Failed to construct notification URN for {}", sub.id);
-                    continue;
-                }
+            let notification_id = if let Ok(u) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() { u } else {
+                error!("Failed to construct notification URN for {}", sub.id);
+                continue;
             };
             // clone: the notification owns its subscription id and the
             // subscription is still needed below
@@ -136,10 +133,8 @@ impl CsourceIntervalNotificationOperation {
                 if let Err(e) = self.sub_repo.mark_success(&self.target, &sub.id).await {
                     debug!("Failed to mark success for {}: {}", sub.id, e);
                 }
-            } else {
-                if let Err(e) = self.sub_repo.mark_failure(&self.target, &sub.id).await {
-                    debug!("Failed to mark failure for {}: {}", sub.id, e);
-                }
+            } else if let Err(e) = self.sub_repo.mark_failure(&self.target, &sub.id).await {
+                debug!("Failed to mark failure for {}: {}", sub.id, e);
             }
         }
         Ok(due_count)

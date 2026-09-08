@@ -1,4 +1,4 @@
-//! The LanguageProperty attribute family and its language map (ETSI GS CIM 009 clause 5.2.32).
+//! The `LanguageProperty` attribute family and its language map (ETSI GS CIM 009 clause 5.2.32).
 
 use crate::attribute::common_fields::CommonAttributeFields;
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
@@ -95,7 +95,7 @@ impl ExpandableLanguageMap for LanguageMap {
     }
 }
 
-/// NGSI-LD LanguageProperty representation (ETSI GS CIM 009 clause 5.2.32).
+/// NGSI-LD `LanguageProperty` representation (ETSI GS CIM 009 clause 5.2.32).
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]

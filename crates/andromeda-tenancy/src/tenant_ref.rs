@@ -19,6 +19,7 @@ pub enum TenantRef {
 
 impl TenantRef {
     /// The tenant an optional header value addresses.
+    #[must_use]
     pub fn from_header(header: Option<TenantName>) -> TenantRef {
         match header {
             Some(value) => TenantRef::Named(value),
@@ -27,6 +28,7 @@ impl TenantRef {
     }
 
     /// The tenant name, or `None` for the unnamed default.
+    #[must_use]
     pub const fn tenant_name(&self) -> Option<&TenantName> {
         match self {
             TenantRef::UnnamedDefault => None,
@@ -35,6 +37,7 @@ impl TenantRef {
     }
 
     /// Whether this is the unnamed default tenant.
+    #[must_use]
     pub const fn is_unnamed_default(&self) -> bool {
         matches!(self, TenantRef::UnnamedDefault)
     }

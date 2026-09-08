@@ -22,6 +22,7 @@ pub enum EntityMapFlag {
 
 impl EntityMapFlag {
     /// Read the optional boolean request parameter.
+    #[must_use]
     pub const fn from_parameter(value: Option<bool>) -> EntityMapFlag {
         match value {
             Some(true) => EntityMapFlag::Requested,
@@ -63,11 +64,13 @@ impl EntityMapUse {
     }
 
     /// Whether the read ends by creating a map.
+    #[must_use]
     pub const fn mints(&self) -> bool {
         matches!(self, EntityMapUse::Mint(_))
     }
 
     /// The live map the read runs under, if it reuses one.
+    #[must_use]
     pub fn reused(&self) -> Option<&EntityMap> {
         match self {
             EntityMapUse::Reuse(map) => Some(map),
@@ -76,6 +79,7 @@ impl EntityMapUse {
     }
 
     /// The map the read is minting, if it mints one.
+    #[must_use]
     pub fn minting(&self) -> Option<&EntityMap> {
         match self {
             EntityMapUse::Mint(map) => Some(map),

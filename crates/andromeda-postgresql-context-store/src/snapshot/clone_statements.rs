@@ -1,4 +1,4 @@
-//! SeaQuery statements that copy the branch-owned current and temporal relations.
+//! `SeaQuery` statements that copy the branch-owned current and temporal relations.
 
 use crate::snapshot::persistence_error;
 use andromeda_postgresql_schema::{
@@ -104,7 +104,7 @@ fn entities(source_key: i64, target_key: i64) -> Result<InsertStatement, Snapsho
         ])
         .select_from(select)
         .map_err(persistence_error)?;
-    Ok(insert.to_owned())
+    Ok(insert.clone())
 }
 
 /// Copy Entity documents while remapping their generated entity keys.
@@ -143,7 +143,7 @@ fn entity_documents(source_key: i64, target_key: i64) -> Result<InsertStatement,
         ])
         .select_from(select)
         .map_err(persistence_error)?;
-    Ok(insert.to_owned())
+    Ok(insert.clone())
 }
 
 /// Copy Entity search projections while remapping their generated entity keys.
@@ -195,7 +195,7 @@ fn entity_search(source_key: i64, target_key: i64) -> Result<InsertStatement, Sn
         ])
         .select_from(select)
         .map_err(persistence_error)?;
-    Ok(insert.to_owned())
+    Ok(insert.clone())
 }
 
 /// Copy typed current values while remapping their generated entity keys.
@@ -257,7 +257,7 @@ fn current_attribute_values(source_key: i64, target_key: i64) -> Result<InsertSt
         ])
         .select_from(select)
         .map_err(persistence_error)?;
-    Ok(insert.to_owned())
+    Ok(insert.clone())
 }
 
 /// Copy temporal Entity catalogue rows into the target branch.
@@ -285,7 +285,7 @@ fn temporal_entities(source_key: i64, target_key: i64) -> Result<InsertStatement
         ])
         .select_from(select)
         .map_err(persistence_error)?;
-    Ok(insert.to_owned())
+    Ok(insert.clone())
 }
 
 /// Copy temporal streams while remapping their generated temporal-entity keys.
@@ -327,7 +327,7 @@ fn temporal_attribute_streams(source_key: i64, target_key: i64) -> Result<Insert
         ])
         .select_from(select)
         .map_err(persistence_error)?;
-    Ok(insert.to_owned())
+    Ok(insert.clone())
 }
 
 /// Copy attribute history while remapping generated stream keys.
@@ -429,7 +429,7 @@ fn attribute_history(source_key: i64, target_key: i64) -> Result<InsertStatement
         ])
         .select_from(select)
         .map_err(persistence_error)?;
-    Ok(insert.to_owned())
+    Ok(insert.clone())
 }
 
 /// Copy scope history while remapping generated temporal-entity keys.
@@ -489,7 +489,7 @@ fn scope_history(source_key: i64, target_key: i64) -> Result<InsertStatement, Sn
         ])
         .select_from(select)
         .map_err(persistence_error)?;
-    Ok(insert.to_owned())
+    Ok(insert.clone())
 }
 
 /// Copy verbatim-instance uniqueness claims into the target branch.
@@ -531,5 +531,5 @@ fn attribute_history_instance_claims(source_key: i64, target_key: i64) -> Result
         ])
         .select_from(select)
         .map_err(persistence_error)?;
-    Ok(insert.to_owned())
+    Ok(insert.clone())
 }

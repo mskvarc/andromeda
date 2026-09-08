@@ -59,11 +59,13 @@ impl MqttTransportPool {
     }
 
     /// A transport handle bound to one MQTT endpoint.
+    #[must_use]
     pub fn transport_for(self: &Arc<MqttTransportPool>, config: &MqttEndpointConfig) -> MqttTransportHandle {
         MqttTransportHandle::new(Arc::clone(self), config.clone()) // clone: the handle outlives the subscription it was read from
     }
 
-    /// How long a QoS 1/2 publish waits for its broker acknowledgement.
+    /// How long a `QoS` 1/2 publish waits for its broker acknowledgement.
+    #[must_use]
     pub const fn publish_ack_timeout(&self) -> Duration {
         self.config.publish_ack_timeout
     }
@@ -74,6 +76,7 @@ impl MqttTransportPool {
     /// This is not a probe in the sense of sending anything: MQTT's own
     /// keep-alive already does that, and a broker that has stopped answering it
     /// will stop producing packets. What this notices is the absence.
+    #[must_use]
     pub fn spawn_health_probe(self: &Arc<MqttTransportPool>, mut shutdown_rx: watch::Receiver<bool>) -> JoinHandle<()> {
         let pool = Arc::clone(self);
         let interval = pool.config.health_probe_interval;
@@ -253,6 +256,7 @@ impl MqttTransportPool {
 
     /// Whether every pooled connection is answering, which an empty pool
     /// vacuously is.
+    #[must_use]
     pub fn all_healthy(&self) -> bool {
         self.connections.iter().all(|entry| entry.value().state.is_healthy())
     }

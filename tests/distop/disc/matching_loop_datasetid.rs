@@ -1,6 +1,6 @@
-//! Matching algorithm: datasetId intersection, loop prevention, and EntityMap
+//! Matching algorithm: datasetId intersection, loop prevention, and `EntityMap`
 //! preference (clause 5.12). The datasetId rows run on `T-LOCAL`; the loop and
-//! EntityMap rows require the distributed forwarding path and are tracked gaps.
+//! `EntityMap` rows require the distributed forwarding path and are tracked gaps.
 
 use crate::{
     disc::{
@@ -85,8 +85,8 @@ async fn matching_loop_prevention_excludes_csr_with_alias_in_encountered_listing
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A valid EntityMap passed into a request is preferred over re-running the
-/// matching algorithm (clause 5.12, 6.3.15). Cross-instance/durable EntityMap
+/// A valid `EntityMap` passed into a request is preferred over re-running the
+/// matching algorithm (clause 5.12, 6.3.15). Cross-instance/durable `EntityMap`
 /// sharing is not implemented. Confirms REQ-DISC-113.
 #[tokio::test]
 async fn matching_valid_entitymap_preferred_over_rematching() {

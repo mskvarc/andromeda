@@ -11,7 +11,7 @@ constant_string!(EntityTypeListType, "EntityTypeList");
 constant_string!(EntityTypeType, "EntityType");
 constant_string!(EntityTypeInfoType, "EntityTypeInfo");
 
-/// NGSI-LD EntityTypeList representation (ETSI GS CIM 009 clause 5.2.24).
+/// NGSI-LD `EntityTypeList` representation (ETSI GS CIM 009 clause 5.2.24).
 ///
 /// Lists all entity types known to the broker.
 #[derive(Debug, Clone, Serialize, Deserialize, Expandable)]

@@ -20,16 +20,19 @@ pub struct ContextSpace {
 
 impl ContextSpace {
     /// Construct a context-space record returned by persistence.
+    #[must_use]
     pub const fn new(key: ContextSpaceKey, kind: ContextSpaceKind) -> ContextSpace {
         ContextSpace { key, kind }
     }
 
     /// Return the durable branch identity.
+    #[must_use]
     pub const fn key(self) -> ContextSpaceKey {
         self.key
     }
 
     /// Return the branch role.
+    #[must_use]
     pub const fn kind(self) -> ContextSpaceKind {
         self.kind
     }

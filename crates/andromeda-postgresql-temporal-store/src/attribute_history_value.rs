@@ -45,6 +45,7 @@ pub enum AttributeHistoryValue {
 
 impl AttributeHistoryValue {
     /// The code the row records for this value's shape.
+    #[must_use]
     pub const fn kind(&self) -> ValueKind {
         match self {
             AttributeHistoryValue::Tombstone { .. } => ValueKind::Tombstone,
@@ -59,6 +60,7 @@ impl AttributeHistoryValue {
     }
 
     /// The instant this row records a deletion at, when it records one.
+    #[must_use]
     pub const fn deleted_at(&self) -> Option<DateTime<Utc>> {
         match self {
             AttributeHistoryValue::Tombstone { deleted_at } => Some(*deleted_at),
@@ -80,6 +82,7 @@ impl AttributeHistoryValue {
     /// being refused or rounded at the boundary. Every [`JsonNumber`] renders a
     /// finite literal without an exponent, which is exactly what `NUMERIC`
     /// parses.
+    #[must_use]
     pub fn numeric_literal(&self) -> Option<String> {
         match self {
             AttributeHistoryValue::Number(number) => Some(number.to_string()),
@@ -93,7 +96,8 @@ impl AttributeHistoryValue {
         }
     }
 
-    /// Borrows the exact numeric value for an ordinary SQLx `NUMERIC` bind.
+    /// Borrows the exact numeric value for an ordinary `SQLx` `NUMERIC` bind.
+    #[must_use]
     pub const fn number(&self) -> Option<&BigDecimal> {
         match self {
             AttributeHistoryValue::Number(number) => Some(number.decimal()),
@@ -108,6 +112,7 @@ impl AttributeHistoryValue {
     }
 
     /// The string column's content, when this row populates it.
+    #[must_use]
     pub fn string(&self) -> Option<&str> {
         match self {
             AttributeHistoryValue::String(text) => Some(text),
@@ -122,6 +127,7 @@ impl AttributeHistoryValue {
     }
 
     /// The boolean column's content, when this row populates it.
+    #[must_use]
     pub const fn boolean(&self) -> Option<bool> {
         match self {
             AttributeHistoryValue::Boolean(flag) => Some(*flag),
@@ -136,6 +142,7 @@ impl AttributeHistoryValue {
     }
 
     /// The geometry column's content, when this row populates it.
+    #[must_use]
     pub const fn geometry(&self) -> Option<&Geometry> {
         match self {
             AttributeHistoryValue::Geometry(geometry) => Some(geometry),
@@ -150,6 +157,7 @@ impl AttributeHistoryValue {
     }
 
     /// The structured column's content, when this row populates it.
+    #[must_use]
     pub const fn object(&self) -> Option<&Value> {
         match self {
             AttributeHistoryValue::Object(object) => Some(object),
@@ -164,6 +172,7 @@ impl AttributeHistoryValue {
     }
 
     /// The timestamp column's content, when this row populates it.
+    #[must_use]
     pub const fn date_time(&self) -> Option<DateTime<Utc>> {
         match self {
             AttributeHistoryValue::DateTime(instant) => Some(*instant),
@@ -178,6 +187,7 @@ impl AttributeHistoryValue {
     }
 
     /// The URI column's content, when this row populates it.
+    #[must_use]
     pub const fn uri(&self) -> Option<&Uri> {
         match self {
             AttributeHistoryValue::Uri(uri) => Some(uri),

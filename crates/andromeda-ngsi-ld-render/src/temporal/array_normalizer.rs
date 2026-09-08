@@ -19,6 +19,7 @@ pub struct TemporalArrayNormalizer {
 
 impl TemporalArrayNormalizer {
     /// Create a normalizer for the given compacted payload.
+    #[must_use]
     pub const fn new(payload: Value) -> TemporalArrayNormalizer {
         TemporalArrayNormalizer { payload }
     }
@@ -27,6 +28,7 @@ impl TemporalArrayNormalizer {
     ///
     /// Re-wrapping cannot fail, so this answers with the value rather than a
     /// `Result` no caller could act on.
+    #[must_use]
     pub fn render(self) -> Value {
         let mut payload = self.payload;
         if let Some(obj) = payload.as_object_mut() {

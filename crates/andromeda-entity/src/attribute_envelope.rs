@@ -87,15 +87,13 @@ fn validate_attr_instances(attr_name: &AttributeName, value: &Value) -> Result<(
         if (is_property || is_geo_property) && !obj.contains_key(expanded_properties::VALUE.as_str()) {
             let short_type = if is_geo_property { "GeoProperty" } else { "Property" };
             return Err(EntityError::validation(format!(
-                "{} '{}' is missing required field 'value'",
-                short_type, attr_name
+                "{short_type} '{attr_name}' is missing required field 'value'"
             )));
         }
 
         if is_relationship && !obj.contains_key(expanded_properties::OBJECT.as_str()) {
             return Err(EntityError::validation(format!(
-                "Relationship '{}' is missing required field 'object'",
-                attr_name
+                "Relationship '{attr_name}' is missing required field 'object'"
             )));
         }
 
@@ -249,7 +247,7 @@ mod tests {
         validate_attribute_envelopes(&payload).expect("several scope paths are one member, not two instances");
     }
 
-    /// Clause 4.5.18 gives a LanguageProperty one entry per language, which
+    /// Clause 4.5.18 gives a `LanguageProperty` one entry per language, which
     /// expand into several nodes under the one `languageMap` member. An
     /// attribute fragment carrying two languages is one instance, not two.
     #[test]

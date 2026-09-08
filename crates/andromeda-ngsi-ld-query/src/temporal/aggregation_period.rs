@@ -38,6 +38,7 @@ impl AggregationPeriod {
     /// This is the clause 4.5.19 form the client wrote. The rendering is only
     /// well formed because a zero duration cannot be constructed — the upstream
     /// `Display` writes a bare `P` for one, which is not a valid duration.
+    #[must_use]
     pub fn as_iso8601(&self) -> String {
         self.0.to_string()
     }

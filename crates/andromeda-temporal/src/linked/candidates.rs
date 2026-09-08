@@ -125,10 +125,7 @@ fn collect_from_instance(
     let Some(fields) = instance.as_object() else {
         return;
     };
-    let eligibility = match fields.contains_key("objectType") {
-        true => RemoteEligibility::Eligible,
-        false => RemoteEligibility::LocalOnly,
-    };
+    let eligibility = if fields.contains_key("objectType") { RemoteEligibility::Eligible } else { RemoteEligibility::LocalOnly };
 
     let objects = fields.get("object").into_iter().chain(fields.get("objectList"));
     for object in objects {
@@ -136,27 +133,24 @@ fn collect_from_instance(
             if visited.contains(&id) {
                 continue;
             }
-            match seen.get_index_of(&id) {
-                Some(index) => {
-                    if let Some(candidate) = candidates.get_mut(index) {
-                        if eligibility == RemoteEligibility::Eligible {
-                            candidate.eligibility = RemoteEligibility::Eligible;
-                        }
-                        if let Some(attribute) = attribute
-                            && !candidate.attributes.iter().any(|existing| existing == attribute)
-                        {
-                            candidate.attributes.push(attribute.clone()); // clone: the candidate owns its attribute association
-                        }
+            if let Some(index) = seen.get_index_of(&id) {
+                if let Some(candidate) = candidates.get_mut(index) {
+                    if eligibility == RemoteEligibility::Eligible {
+                        candidate.eligibility = RemoteEligibility::Eligible;
+                    }
+                    if let Some(attribute) = attribute
+                        && !candidate.attributes.iter().any(|existing| existing == attribute)
+                    {
+                        candidate.attributes.push(attribute.clone()); // clone: the candidate owns its attribute association
                     }
                 }
-                None => {
-                    seen.insert(id.clone()); // clone: the duplicate guard owns the ids it records
-                    candidates.push(TemporalLinkedCandidate {
-                        id,
-                        eligibility,
-                        attributes: attribute.cloned().into_iter().collect(), // clone: the candidate owns its attribute association
-                    });
-                }
+            } else {
+                seen.insert(id.clone()); // clone: the duplicate guard owns the ids it records
+                candidates.push(TemporalLinkedCandidate {
+                    id,
+                    eligibility,
+                    attributes: attribute.cloned().into_iter().collect(), // clone: the candidate owns its attribute association
+                });
             }
         }
     }

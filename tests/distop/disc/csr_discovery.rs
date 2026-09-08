@@ -31,7 +31,7 @@ pub async fn register(topology: &MultiBrokerTopology<BrokerRole>, body: &Value) 
 }
 
 /// Register a CSR of the given type carrying a `location` Point, so geo-queries
-/// have a GeoProperty to match against.
+/// have a `GeoProperty` to match against.
 pub async fn register_located(topology: &MultiBrokerTopology<BrokerRole>, id: &str, entity_type: &str, coordinates: [f64; 2]) {
     let mut body = CsrBuilder::new(id, PEER_ENDPOINT).entity_type(entity_type).build();
     body["location"] = json!({ "type": "Point", "coordinates": coordinates });

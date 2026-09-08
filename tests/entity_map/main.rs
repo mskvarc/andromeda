@@ -1,9 +1,9 @@
-//! EntityMap integration tests for the NGSI-LD context broker.
+//! `EntityMap` integration tests for the NGSI-LD context broker.
 //!
 //! Standalone test suite using `tokio::test` and `reqwest` directly.
 //! No libtest-mimic and no fixture loading helpers are used.
 //!
-//! The cases are grouped by what they exercise: the lifecycle of an EntityMap
+//! The cases are grouped by what they exercise: the lifecycle of an `EntityMap`
 //! resource, its creation from a query, the temporal variant, the entity query
 //! that creates one along the way, frozen-map pagination, and content
 //! negotiation. This module owns only what those groups share.
@@ -270,7 +270,7 @@ fn entity_map_header(headers: &HeaderMap) -> String {
         .to_owned()
 }
 
-/// The identifiers one EntityMap resource records.
+/// The identifiers one `EntityMap` resource records.
 fn mapped_ids(map: &Value) -> Vec<String> {
     map["entityMap"].as_object().expect("entityMap should be object").keys().cloned().collect()
 }

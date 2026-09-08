@@ -24,6 +24,7 @@ pub struct EntitySubscriptionVariant {
 
 impl EntitySubscriptionVariant {
     /// Construct entity-subscription-specific lifecycle behavior.
+    #[must_use]
     pub const fn new(engine: JsonLdEngine, contexts: Arc<ContextRegistryService>) -> EntitySubscriptionVariant {
         EntitySubscriptionVariant { engine, contexts }
     }
@@ -78,7 +79,7 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
     }
 
     async fn serialize_for_response(&self, subscription: &Subscription, context: &ContextSpec) -> Result<Value, SubscriptionError> {
-        let mut value = serde_json::to_value(subscription).map_err(|e| SubscriptionError::validation(format!("Serialization failed: {}", e)))?;
+        let mut value = serde_json::to_value(subscription).map_err(|e| SubscriptionError::validation(format!("Serialization failed: {e}")))?;
 
         normalization::fixup_expired_status(&mut value, subscription.lifecycle.expires_at);
         normalization::compact_subscription_iris(&self.engine, &mut value, context).await;

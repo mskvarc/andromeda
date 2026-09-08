@@ -32,6 +32,7 @@ pub struct UriParseError;
 
 impl Uri {
     /// The identifier as a string slice, in whichever form it was parsed.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
             Uri::Urn(urn) => urn.as_str(),

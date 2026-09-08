@@ -15,11 +15,13 @@ pub struct ContextUrl(pub ContextSpec);
 
 impl ContextUrl {
     /// Consume the extractor and return the inner [`ContextSpec`].
+    #[must_use]
     pub fn into_inner(self) -> ContextSpec {
         self.0
     }
 
     /// Merge with another context spec (e.g. from body).
+    #[must_use]
     pub fn merge(self, other: ContextSpec) -> ContextSpec {
         self.0.with_body_context(other.into_body_context())
     }

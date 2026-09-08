@@ -20,6 +20,7 @@ struct PgExtension;
 /// The setting name is bound rather than interpolated. This form errors if the
 /// setting is unknown; use [`current_setting_missing_ok`] for settings that may
 /// be absent.
+#[must_use]
 pub fn current_setting(name: &str) -> SimpleExpr {
     Func::cust(CurrentSetting).args([SimpleExpr::from(Expr::val(name.to_owned()))]).into()
 }
@@ -30,6 +31,7 @@ pub fn current_setting(name: &str) -> SimpleExpr {
 /// The `missing_ok` argument spares the caller a failed statement for an
 /// optional setting, such as a license marker an extension only sets when
 /// loaded.
+#[must_use]
 pub fn current_setting_missing_ok(name: &str) -> SimpleExpr {
     Func::cust(CurrentSetting)
         .args([SimpleExpr::from(Expr::val(name.to_owned())), SimpleExpr::from(Expr::val(true))])
@@ -41,6 +43,7 @@ pub fn current_setting_missing_ok(name: &str) -> SimpleExpr {
 ///
 /// The extension name is bound. The scalar subquery yields a single row because
 /// `pg_extension.extname` is unique.
+#[must_use]
 pub fn extension_version(name: &str) -> SimpleExpr {
     let subquery = SelectStatement::new()
         .expr(Expr::col(Alias::new("extversion")))
@@ -68,11 +71,13 @@ struct PgCurrentXactIdIfAssigned;
 /// every row the transaction's snapshot shows was committed by someone else;
 /// a read that asks this alongside its rows can tell a committed hit from one
 /// the transaction itself may still roll back.
+#[must_use]
 pub fn transaction_has_not_written() -> SimpleExpr {
     SimpleExpr::from(Func::cust(PgCurrentXactIdIfAssigned)).is_null()
 }
 
 /// `pg_column_size(to_jsonb(row))` - deterministic logical size of one relation row.
+#[must_use]
 pub fn jsonb_row_size(row: SimpleExpr) -> SimpleExpr {
     let json = SimpleExpr::from(Func::cust(ToJsonb).arg(row));
     Func::cust(PgColumnSize).arg(json).into()

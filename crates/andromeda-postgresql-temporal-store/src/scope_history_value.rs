@@ -24,6 +24,7 @@ pub enum ScopeHistoryValue {
 
 impl ScopeHistoryValue {
     /// The code the row records for this value's shape.
+    #[must_use]
     pub const fn kind(&self) -> ScopeValueKind {
         match self {
             ScopeHistoryValue::Tombstone { .. } => ScopeValueKind::Tombstone,
@@ -32,6 +33,7 @@ impl ScopeHistoryValue {
     }
 
     /// The instant this row records a deletion at, when it records one.
+    #[must_use]
     pub const fn deleted_at(&self) -> Option<DateTime<Utc>> {
         match self {
             ScopeHistoryValue::Tombstone { deleted_at } => Some(*deleted_at),
@@ -40,6 +42,7 @@ impl ScopeHistoryValue {
     }
 
     /// The scope path the row carries, when it carries one.
+    #[must_use]
     pub const fn path(&self) -> Option<&ScopeBuf> {
         match self {
             ScopeHistoryValue::Tombstone { .. } => None,

@@ -101,17 +101,14 @@ pub fn registered_types_of(pairs: &[RegisteredPair]) -> Result<Vec<RegisteredTyp
         let attribute = pair.attribute_name.as_deref().map(stored_attribute_name).transpose()?;
         for raw in pair.entity_types.iter().filter(|raw| raw.as_str() != ANY_TYPE) {
             let name = stored_type_name(raw)?;
-            let entry = match types.iter_mut().find(|entry| entry.name == name) {
-                Some(entry) => entry,
-                None => {
-                    types.push(RegisteredType {
-                        name,
-                        attribute_names: Vec::new(),
-                    });
-                    types
-                        .last_mut()
-                        .ok_or_else(|| EntityError::internal("a just-pushed registered type is missing"))?
-                }
+            let entry = if let Some(entry) = types.iter_mut().find(|entry| entry.name == name) { entry } else {
+                types.push(RegisteredType {
+                    name,
+                    attribute_names: Vec::new(),
+                });
+                types
+                    .last_mut()
+                    .ok_or_else(|| EntityError::internal("a just-pushed registered type is missing"))?
             };
             if let Some(attribute) = &attribute
                 && !entry.attribute_names.contains(attribute)
@@ -133,17 +130,14 @@ pub fn registered_attributes_of(pairs: &[RegisteredPair]) -> Result<Vec<Register
             continue;
         };
         let name = stored_attribute_name(raw_attribute)?;
-        let entry = match attributes.iter_mut().find(|entry| entry.name == name) {
-            Some(entry) => entry,
-            None => {
-                attributes.push(RegisteredAttribute {
-                    name,
-                    entity_types: Vec::new(),
-                });
-                attributes
-                    .last_mut()
-                    .ok_or_else(|| EntityError::internal("a just-pushed registered attribute is missing"))?
-            }
+        let entry = if let Some(entry) = attributes.iter_mut().find(|entry| entry.name == name) { entry } else {
+            attributes.push(RegisteredAttribute {
+                name,
+                entity_types: Vec::new(),
+            });
+            attributes
+                .last_mut()
+                .ok_or_else(|| EntityError::internal("a just-pushed registered attribute is missing"))?
         };
         for raw in pair.entity_types.iter().filter(|raw| raw.as_str() != ANY_TYPE) {
             let entity_type = stored_type_name(raw)?;

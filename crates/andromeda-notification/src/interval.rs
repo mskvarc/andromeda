@@ -134,12 +134,9 @@ impl IntervalNotificationOperation {
                     return;
                 }
 
-                let notification_id = match format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() {
-                    Ok(u) => u,
-                    Err(_) => {
-                        error!("Failed to construct notification URN for {}", sub.id);
-                        return;
-                    }
+                let notification_id = if let Ok(u) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() { u } else {
+                    error!("Failed to construct notification URN for {}", sub.id);
+                    return;
                 };
                 // clone: the notification owns its subscription id and the
                 // subscription is still needed below
@@ -175,7 +172,7 @@ impl IntervalNotificationOperation {
                     receiver_info: sub.notification.endpoint.receiver_info.as_deref(),
                     jsonld_context: sub.delivery.jsonld_context.as_ref(),
                     tenant: this.tenant.tenant_name(),
-                    snapshot: this.target.snapshot().map(|snapshot| snapshot.snapshot_id()),
+                    snapshot: this.target.snapshot().map(andromeda_context_space::snapshot_target::SnapshotTarget::snapshot_id),
                     subscription_id: &sub.id,
                 })
                 .assemble();

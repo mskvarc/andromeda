@@ -7,6 +7,7 @@
 /// the growth stops once a delivery has reached its retry limit and cannot be
 /// claimed again anyway. Saturating arithmetic keeps an absurd configured base
 /// from overflowing rather than panicking.
+#[must_use]
 pub fn backoff_seconds(base_backoff_secs: i64, attempt_count: i32, max_attempts: i32) -> i64 {
     let bounded_attempt = attempt_count.min(max_attempts).max(0);
     let exponent = bounded_attempt.unsigned_abs();

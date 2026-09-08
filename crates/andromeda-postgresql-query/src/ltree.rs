@@ -13,6 +13,7 @@ use andromeda_ngsi_ld_query::scope::pattern::{ScopePattern, ScopeSegment};
 /// # Examples
 /// - `/A/B/C` -> `A.B.C`
 /// - `/Madrid` -> `Madrid`
+#[must_use]
 pub fn scope_to_ltree(scope: &Scope) -> String {
     // Exactly one leading slash, because clause 4.18 admits no empty level.
     let path = scope.as_str();
@@ -27,6 +28,7 @@ pub fn scope_to_ltree(scope: &Scope) -> String {
 /// as well as its descendants; a bare `/#` is `*{1,}`, any non-empty scope.
 /// Total by construction, because [`ScopePattern`] validated every label
 /// against the same grammar `ltree` itself accepts.
+#[must_use]
 pub fn pattern_to_lquery(pattern: &ScopePattern) -> String {
     let mut lquery = String::new();
     for (index, segment) in pattern.segments().iter().enumerate() {
