@@ -12,12 +12,22 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Test binaries are run, not debugged, and full debug info is the single
+  # largest consumer of runner disk. Line tables keep backtraces readable at a
+  # fraction of the size. Incremental artifacts are pure overhead for a job that
+  # compiles each commit exactly once.
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
+
 jobs:
   unit-test:
     name: cargo test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/free-disk-space
       # rust-toolchain.toml pins the nightly the workspace builds on.
       - name: Install pinned toolchain
         run: rustup toolchain install --profile minimal
