@@ -23,6 +23,7 @@ use crate::{
         jsonld_link_value,
         unique_id,
         vehicle_entity,
+        vehicle_registration_auxiliary_retrieve_ops,
         vehicle_registration_redirection_ops,
         vehicle_registration_speed_redirection_ops,
     },
@@ -339,7 +340,7 @@ async fn distop_entity_attrs_append_auxiliary_no_forwarding() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Create auxiliary registration (retrieval only, no forwarding for provision)
-    let reg = vehicle_registration_redirection_ops(&reg_id, Some(&entity_id), &mock.url(""), Some("auxiliary"));
+    let reg = vehicle_registration_auxiliary_retrieve_ops(&reg_id, &entity_id, &mock.url(""));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 

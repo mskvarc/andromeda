@@ -9,7 +9,9 @@
 //! each dimension the documents declare, and that a query on each dimension
 //! still returns exactly the registrations the documents admit. An axis a row
 //! does not constrain carries a sentinel rather than `NULL` (`{'*'}`, `''`,
-//! `{0}`), and a registration constraining nothing is one row of sentinels.
+//! `{0}`). Table 5.2.10-1 -- "At least one element of `RegistrationInfo` shall be
+//! present" -- means no document can leave every axis unconstrained at once, so
+//! the sentinels are reached one axis pair at a time.
 
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
@@ -156,31 +158,56 @@ async fn one_row_is_projected_per_information_item_and_entity_selector() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Information items are disjunctive, so an item that bounds no axis makes the
-/// whole registration unconstrained: it projects one row carrying every
-/// sentinel and has to stay a candidate on every dimension a query narrows on.
+/// The axes are independent, so an item declaring only attribute names leaves
+/// both entity axes unconstrained and an item declaring only entities leaves
+/// both attribute axes unconstrained. Each projects one row carrying that pair
+/// of sentinels, and each has to stay a candidate on the dimensions it does not
+/// bound.
+///
+/// An item bounding no axis at all is not a document a broker accepts: Table
+/// 5.2.10-1 requires that "At least one element of `RegistrationInfo` shall be
+/// present", and clause 5.9.2.4 makes a registration that does not meet the
+/// clause 5.2.9 restrictions a `BadRequestData`.
 #[tokio::test]
-async fn an_unconstrained_registration_projects_one_wildcard_row_and_stays_a_candidate() {
+async fn an_item_leaving_an_axis_unconstrained_projects_its_sentinel_and_stays_a_candidate() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let client = scope.client();
-    let registration_id = scope.id("ContextSourceRegistration:routing-open");
+    let entity_open_id = scope.id("ContextSourceRegistration:routing-open-entities");
+    let attribute_open_id = scope.id("ContextSourceRegistration:routing-open-attributes");
 
-    let registration = json!({
-        "id": registration_id,
+    let entity_open = json!({
+        "id": entity_open_id,
         "type": "ContextSourceRegistration",
-        "information": [{}],
+        "information": [{"propertyNames": ["temperature"]}],
         "endpoint": "http://localhost:9/csource",
         "@context": [CORE_CONTEXT]
     });
-    let created = client.create_registration(&registration).await.expect("create registration request failed");
+    let created = client.create_registration(&entity_open).await.expect("create registration request failed");
     assert_eq!(created.status, StatusCode::CREATED, "create registration: {:?}", created.body);
 
-    let rows = routing_rows(scope.database_pool(), &registration_id).await;
-    assert_eq!(rows.len(), 1, "a registration that constrains nothing projects one wildcard row: {rows:?}");
+    let rows = routing_rows(scope.database_pool(), &entity_open_id).await;
+    assert_eq!(rows.len(), 1, "an item declaring no entity selector projects one row: {rows:?}");
     let row = &rows[0];
     assert_eq!(row["entity_types"], json!(["*"]), "the type axis carries the wildcard sentinel: {row}");
     assert_eq!(row["entity_id"], json!(""), "the identifier axis carries the empty sentinel: {row}");
     assert_eq!(row["entity_id_pattern"], Value::Null, "{row}");
+    assert_eq!(row["property_name_ids"], json!(1), "the declared property name is interned: {row}");
+    assert_eq!(row["property_wildcard"], json!(false), "a declared name is not the sentinel: {row}");
+
+    let attribute_open = json!({
+        "id": attribute_open_id,
+        "type": "ContextSourceRegistration",
+        "information": [{"entities": [{"type": "Device"}]}],
+        "endpoint": "http://localhost:9/csource",
+        "@context": [CORE_CONTEXT]
+    });
+    let created = client.create_registration(&attribute_open).await.expect("create registration request failed");
+    assert_eq!(created.status, StatusCode::CREATED, "create registration: {:?}", created.body);
+
+    let rows = routing_rows(scope.database_pool(), &attribute_open_id).await;
+    assert_eq!(rows.len(), 1, "an item declaring no attribute name projects one row: {rows:?}");
+    let row = &rows[0];
+    assert_eq!(row["entity_id"], json!(""), "the item declared no identifier: {row}");
     assert_eq!(row["property_wildcard"], json!(true), "the property axis carries the key sentinel: {row}");
     assert_eq!(
         row["relationship_wildcard"],
@@ -188,18 +215,25 @@ async fn an_unconstrained_registration_projects_one_wildcard_row_and_stays_a_can
         "the relationship axis carries the key sentinel: {row}"
     );
 
-    // Both entity dimensions the projection narrows on have to keep admitting
-    // it: the preselect may only discard registrations no unnesting could have
-    // matched, and this one matches every entity.
-    for query in ["type=Device", "idPattern=urn:ngsi-ld:.*"] {
+    // Every dimension a row wildcards has to keep admitting it: the preselect
+    // may only discard registrations no unnesting could have matched, and a
+    // wildcarded axis matches everything a query narrows it to.
+    let pattern_query = format!("type=Device&idPattern={}", urlencoding::encode("urn:ngsi-ld:.*"));
+    for query in ["type=Device", pattern_query.as_str()] {
         assert!(
-            discovered(&scope, query).await.contains(&registration_id),
-            "an unconstrained registration must survive the {query} preselect"
+            discovered(&scope, query).await.contains(&entity_open_id),
+            "a registration declaring no entity must survive the {query} preselect"
         );
     }
+    assert!(
+        discovered(&scope, "attrs=temperature").await.contains(&attribute_open_id),
+        "a registration declaring no attribute name must survive the attrs preselect"
+    );
 
-    let deleted = client.delete_registration(&registration_id).await.expect("delete registration request failed");
-    assert_eq!(deleted.status, StatusCode::NO_CONTENT, "delete registration: {:?}", deleted.body);
+    for id in [&entity_open_id, &attribute_open_id] {
+        let deleted = client.delete_registration(id).await.expect("delete registration request failed");
+        assert_eq!(deleted.status, StatusCode::NO_CONTENT, "delete registration: {:?}", deleted.body);
+    }
 
     scope.finish().await.expect("cleanup failed");
 }

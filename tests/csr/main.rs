@@ -86,23 +86,22 @@ fn csr_basic_json(id: &str) -> Value {
 }
 
 /// CSR with explicit mode and operations.
+///
+/// Clause 4.3.6.2: "An exclusive registration shall always relate to specific
+/// Attributes found on a single Entity. Thus, the registration shall define
+/// both: An entity id (i.e. an id pattern or Entity type defining a group of
+/// entities is not supported for exclusive registrations). Attributes." The
+/// entity is derived from the registration identifier so that each run pins a
+/// fresh entity and never trips the clause 5.9.2.4 overlap Conflict.
 fn csr_with_mode_and_operations(id: &str) -> Value {
     json!({
         "id": id,
         "type": "ContextSourceRegistration",
         "information": [
             {
-                "entities": [{"id": "urn:ngsi-ld:Vehicle:A456", "type": "Vehicle"}],
+                "entities": [{"id": id.replace("ContextSourceRegistration", "Vehicle"), "type": "Vehicle"}],
                 "propertyNames": ["brandName", "speed"],
                 "relationshipNames": ["isParked"]
-            },
-            {
-                "entities": [
-                    {"idPattern": ".*downtown$", "type": "OffStreetParking"},
-                    {"idPattern": ".*47$", "type": "OffStreetParking"}
-                ],
-                "propertyNames": ["availableSpotNumber", "totalSpotNumber"],
-                "relationshipNames": ["isNextToBuilding"]
             }
         ],
         "mode": "exclusive",
@@ -231,6 +230,34 @@ fn csr_detailed_information(id: &str) -> Value {
                 "relationshipNames": ["locatedAt"]
             }
         ],
+        "endpoint": "http://my.csource.org:1026/",
+        "@context": [COMPOUND_CONTEXT_URL]
+    })
+}
+
+/// The `Vehicle` entity an entity-id discovery asks for.
+const REGISTERED_VEHICLE_ID: &str = "urn:ngsi-ld:Vehicle:A456";
+
+/// A `Vehicle` entity no entity-id discovery in this suite asks for.
+const UNREGISTERED_VEHICLE_ID: &str = "urn:ngsi-ld:Vehicle:B789";
+
+/// CSR advertising `speed` on one named `Vehicle` entity.
+fn csr_vehicle_by_entity_id(id: &str, entity_id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [{"entities": [{"id": entity_id, "type": "Vehicle"}], "propertyNames": ["speed"]}],
+        "endpoint": "http://my.csource.org:1026/",
+        "@context": [COMPOUND_CONTEXT_URL]
+    })
+}
+
+/// CSR advertising `speed` on every `Vehicle` entity, naming none of them.
+fn csr_vehicle_by_type(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [{"entities": [{"type": "Vehicle"}], "propertyNames": ["speed"]}],
         "endpoint": "http://my.csource.org:1026/",
         "@context": [COMPOUND_CONTEXT_URL]
     })
@@ -404,8 +431,14 @@ fn expected_query_detailed(id: &str) -> Value {
     }])
 }
 
-/// Expected query result for basic CSR (expanded).
-fn expected_query_basic_expanded(id: &str) -> Value {
+/// Expected query result for the basic CSR when only its `Vehicle`
+/// `RegistrationInfo` matches.
+///
+/// Clause 5.10.2.5: "implementations should return filtered Context Source
+/// Registrations, which only contain context source registration information
+/// relevant for the query, in particular only matching `RegistrationInfo`
+/// elements."
+fn expected_query_basic_vehicle_information(id: &str) -> Value {
     json!([{
         "id": id,
         "type": "ContextSourceRegistration",
@@ -414,7 +447,21 @@ fn expected_query_basic_expanded(id: &str) -> Value {
                 "entities": [{"id": "urn:ngsi-ld:Vehicle:A456", "type": "Vehicle"}],
                 "propertyNames": ["brandName", "speed"],
                 "relationshipNames": ["isParked"]
-            },
+            }
+        ],
+        "endpoint": "http://my.csource.org:1026/",
+        "mode": "inclusive",
+        "operations": ["federationOps"]
+    }])
+}
+
+/// Expected query result for the basic CSR when only its `OffStreetParking`
+/// `RegistrationInfo` matches (clause 5.10.2.5).
+fn expected_query_basic_parking_information(id: &str) -> Value {
+    json!([{
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [
             {
                 "entities": [
                     {"idPattern": ".*downtown$", "type": "OffStreetParking"},
@@ -495,40 +542,29 @@ fn expected_query_with_csource_properties(id: &str) -> Value {
     }])
 }
 
-/// Expected query result for multi-ID query (basic + csource properties).
-fn expected_query_multi_ids(id1: &str, id3: &str) -> Value {
+/// Expected query result for an entity-id query: the registration pinned to the
+/// requested entity, and the one registering the whole type.
+///
+/// Clause 5.12: an `EntityInfo` matches when "One of the specified Entity
+/// identifiers matches the id in the `EntityInfo`" and, independently, when "The
+/// `EntityInfo` contains neither an id nor an idPattern".
+fn expected_query_matching_entity_ids(pinned_id: &str, type_wide_id: &str) -> Value {
     json!([
         {
-            "id": id1,
+            "id": pinned_id,
             "type": "ContextSourceRegistration",
-            "information": [
-                {
-                    "entities": [{"id": "urn:ngsi-ld:Vehicle:A456", "type": "Vehicle"}],
-                    "propertyNames": ["brandName", "speed"],
-                    "relationshipNames": ["isParked"]
-                },
-                {
-                    "entities": [
-                        {"idPattern": ".*downtown$", "type": "OffStreetParking"},
-                        {"idPattern": ".*47$", "type": "OffStreetParking"}
-                    ],
-                    "propertyNames": ["availableSpotNumber", "totalSpotNumber"],
-                    "relationshipNames": ["isNextToBuilding"]
-                }
-            ],
+            "information": [{"entities": [{"id": REGISTERED_VEHICLE_ID, "type": "Vehicle"}], "propertyNames": ["speed"]}],
             "endpoint": "http://my.csource.org:1026/",
             "mode": "inclusive",
             "operations": ["federationOps"]
         },
         {
-            "id": id3,
+            "id": type_wide_id,
             "type": "ContextSourceRegistration",
-            "information": [{"entities": [{"type": "Building"}]}],
+            "information": [{"entities": [{"type": "Vehicle"}], "propertyNames": ["speed"]}],
             "endpoint": "http://my.csource.org:1026/",
             "mode": "inclusive",
-            "operations": ["federationOps"],
-            "csourceProperty1": "aValue",
-            "csourceProperty2": "anotherValue"
+            "operations": ["federationOps"]
         }
     ])
 }

@@ -20,7 +20,9 @@ use crate::{
         jsonld_link_value,
         partial_update_attr,
         unique_id,
+        vehicle_entity,
         vehicle_entity_different,
+        vehicle_registration_auxiliary_retrieve_ops,
         vehicle_registration_redirection_ops,
         vehicle_registration_speed_redirection_ops,
     },
@@ -89,8 +91,10 @@ async fn distop_entity_attrs_partial_update_exclusive_forwards_not_local() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:partial-exc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:partial-exc");
 
-    // Create entity with speed attribute
-    let entity = vehicle_entity_different(&entity_id);
+    // Clause 5.9.2.4 refuses an exclusive registration with Conflict when the
+    // existing Entity already holds one of the Attributes it covers, so the
+    // local entity is created without speed.
+    let entity = vehicle_entity(&entity_id);
     let (status, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
@@ -111,11 +115,11 @@ async fn distop_entity_attrs_partial_update_exclusive_forwards_not_local() {
     let count = mock.get_count(Method::PATCH, &stub_path);
     assert!(count > 0, "forwarding should have happened");
 
-    // Verify local entity does NOT contain speed (exclusive), isParked2 unchanged
+    // Verify local entity does NOT contain speed (exclusive), isParked unchanged
     let (status, _, body) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body.get("speed").is_none(), "speed should not be in local entity");
-    assert!(body.get("isParked2").is_some(), "isParked2 should be unchanged");
+    assert!(body.get("isParked").is_some(), "isParked should be unchanged");
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
@@ -200,7 +204,7 @@ async fn distop_entity_attrs_partial_update_auxiliary_no_forwarding() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Create auxiliary registration (retrieval only)
-    let reg = vehicle_registration_redirection_ops(&reg_id, Some(&entity_id), &mock.url(""), Some("auxiliary"));
+    let reg = vehicle_registration_auxiliary_retrieve_ops(&reg_id, &entity_id, &mock.url(""));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 

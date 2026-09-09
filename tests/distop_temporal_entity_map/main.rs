@@ -54,6 +54,13 @@ fn temporal_vehicle_entity(id: &str) -> Value {
     })
 }
 
+/// A registration advertising `queryTemporal` over `Vehicle` entities.
+///
+/// Table 4.20-2 lists no temporal operation in any named operation group, so a
+/// temporal source has to advertise `queryTemporal` by name. Clause 5.9.2.4
+/// therefore bars `auxiliary` here: an auxiliary registration whose
+/// `operations` are not "retrieveOps", "retrieveEntity" or "queryEntity", or a
+/// combination thereof, is rejected with `BadRequestData`.
 fn vehicle_registration_temporal(reg_id: &str, endpoint: &str, mode: &str) -> Value {
     json!({
         "id": reg_id,
@@ -140,6 +147,29 @@ async fn get_temporal_entity_with_entity_map(client: &Client, id: &str, entity_m
     (status, headers, body)
 }
 
+/// The Entity ids an `EntityMap` holds.
+///
+/// Table 5.2.39-2 gives an `EntityMap` exactly two output-only members,
+/// `entityMap` and `linkedMaps`; `entityMap` is "a set of key-value pairs whose
+/// keys shall be strings representing Entity ids". There is no `ids` member.
+fn entity_map_ids(map: &Value) -> Vec<&str> {
+    map["entityMap"]
+        .as_object()
+        .expect("entityMap should be an object")
+        .keys()
+        .map(String::as_str)
+        .collect()
+}
+
+/// The sources an `EntityMap` attributes one Entity to: every
+/// `CSourceRegistration` id relevant to the request, with `"@none"` standing
+/// for an Entity "that is held locally" (Table 5.2.39-2).
+fn entity_map_sources<'map>(map: &'map Value, entity_id: &str) -> Vec<&'map str> {
+    map["entityMap"][entity_id]
+        .as_array()
+        .map_or_else(Vec::new, |sources| sources.iter().filter_map(Value::as_str).collect())
+}
+
 async fn get_entity_map(client: &Client, id: &str, link: &str) -> (StatusCode, Value) {
     let resp = client
         .get(format!("{BASE_URL}/entityMaps/{}", encode(id)))
@@ -180,7 +210,7 @@ async fn distop_temporal_entity_map_includes_forwarded_ids() {
         .await;
 
     // Register context source
-    let reg = vehicle_registration_temporal(&reg_id, &mock.url(""), "auxiliary");
+    let reg = vehicle_registration_temporal(&reg_id, &mock.url(""), "inclusive");
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
@@ -207,12 +237,19 @@ async fn distop_temporal_entity_map_includes_forwarded_ids() {
         .expect("get entity map failed");
     let map_body: Value = resp.json().await.unwrap_or_default();
 
-    let ids = map_body["ids"].as_array().expect("ids should be an array");
-    let id_strings: Vec<&str> = ids.iter().filter_map(Value::as_str).collect();
+    let id_strings = entity_map_ids(&map_body);
     assert!(id_strings.contains(&local_id.as_str()), "EntityMap should contain local temporal entity ID");
     assert!(
         id_strings.contains(&remote_id.as_str()),
         "EntityMap should contain remote (forwarded) temporal entity ID"
+    );
+    assert!(
+        entity_map_sources(&map_body, &local_id).contains(&"@none"),
+        "the locally held entity is attributed to \"@none\""
+    );
+    assert!(
+        entity_map_sources(&map_body, &remote_id).contains(&reg_id.as_str()),
+        "the forwarded entity is attributed to the registration that returned it"
     );
 
     delete_temporal_entity(&c, &local_id).await;
@@ -240,7 +277,7 @@ async fn distop_temporal_entity_map_local_only_when_local_true() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/temporal/entities", 200, &Value::Array(vec![mock_entity]))
         .await;
 
-    let reg = vehicle_registration_temporal(&reg_id, &mock.url(""), "auxiliary");
+    let reg = vehicle_registration_temporal(&reg_id, &mock.url(""), "inclusive");
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
@@ -263,8 +300,7 @@ async fn distop_temporal_entity_map_local_only_when_local_true() {
         .expect("get entity map failed");
     let map_body: Value = resp.json().await.unwrap_or_default();
 
-    let ids = map_body["ids"].as_array().expect("ids should be an array");
-    let id_strings: Vec<&str> = ids.iter().filter_map(Value::as_str).collect();
+    let id_strings = entity_map_ids(&map_body);
     assert!(id_strings.contains(&local_id.as_str()), "should contain local ID");
     assert!(!id_strings.contains(&remote_id.as_str()), "should NOT contain remote ID when local=true");
 
@@ -300,7 +336,7 @@ async fn distop_temporal_entity_map_scopes_subsequent_query() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/temporal/entities", 200, &Value::Array(vec![mock_entity]))
         .await;
 
-    let reg = vehicle_registration_temporal(&reg_id, &mock.url(""), "auxiliary");
+    let reg = vehicle_registration_temporal(&reg_id, &mock.url(""), "inclusive");
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
@@ -418,11 +454,22 @@ async fn distop_temporal_entity_map_echoed_in_response() {
     delete_entity_map(&c, &map_id).await;
 }
 
-/// Retrieve returns 404 when entity not in `EntityMap`.
-/// Spec ref: 5.7.3.4 - entity not in map returns 404.
+/// Retrieve of a locally held Entity absent from the supplied `EntityMap` still
+/// returns that Entity.
+///
+/// Clause 5.7.3.4 gives the map one job on a temporal retrieve: "If the data
+/// has not expired, only the retrieved Entity Map shall be used to determine
+/// which Context Source Registrations match the Entity ID." It narrows
+/// registration matching, not the local Temporal Evolution, which clause 5.7.3.4
+/// takes as "the Temporal Evolution of the Entity [...] as it is available
+/// locally" before the map is consulted at all. `ResourceNotFound` is reserved
+/// for an Entity that is neither "held locally" nor covered by a matching
+/// registration. Clause 5.5.14's "queries shall be filtered to only consider
+/// the Entities listed" governs the query operations of clauses 5.7.2 and
+/// 5.7.4, not this single-Entity retrieval.
 #[tokio::test]
 #[serial]
-async fn distop_temporal_entity_map_retrieve_not_in_map_returns_404() {
+async fn distop_temporal_entity_map_retrieve_not_in_map_returns_local_entity() {
     let _serialized_environment = clean_database().await;
     let c = client();
 
@@ -448,8 +495,13 @@ async fn distop_temporal_entity_map_retrieve_not_in_map_returns_404() {
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &fixture_b).await.0, StatusCode::CREATED);
 
     // Retrieve entity B using EntityMap that only contains A
-    let (status, _, _) = get_temporal_entity_with_entity_map(&c, &entity_b, &map_id, &jsonld_link_value()).await;
-    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND, "entity B is not in the map, should be 404");
+    let (status, _, body) = get_temporal_entity_with_entity_map(&c, &entity_b, &map_id, &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(
+        status,
+        StatusCode::OK,
+        "entity B is held locally, so the map narrows only the registrations consulted"
+    );
+    pretty_assertions::assert_eq!(body["id"].as_str(), Some(entity_b.as_str()));
 
     delete_temporal_entity(&c, &entity_a).await;
     delete_temporal_entity(&c, &entity_b).await;

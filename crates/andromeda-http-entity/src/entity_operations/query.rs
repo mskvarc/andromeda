@@ -90,13 +90,13 @@ pub(crate) async fn query(
         target,
         snapshot: _,
     }: EntityTenantState,
+    accept: AcceptFormat,
     NgsiLdRequestEnvelope {
         uri,
         context,
         incoming_via,
         headers,
     }: NgsiLdRequestEnvelope,
-    accept: AcceptFormat,
     protocol: NgsiLdProtocolHeaders,
     ValidatedQuery(qparams): ValidatedQuery<PostQueryParams>,
     JsonLd {

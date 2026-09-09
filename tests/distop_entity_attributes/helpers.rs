@@ -226,6 +226,32 @@ pub fn vehicle_registration_speed_redirection_ops(reg_id: &str, entity_id: &str,
     reg
 }
 
+/// Auxiliary Vehicle registration for a single entity, advertising retrieval only.
+///
+/// Clause 5.9.2.4 admits only `retrieveOps`, `retrieveEntity` and `queryEntity`
+/// on an auxiliary registration, so the provision operations advertised by
+/// `vehicle_registration_redirection_ops` cannot be carried here.
+pub fn vehicle_registration_auxiliary_retrieve_ops(reg_id: &str, entity_id: &str, endpoint: &str) -> Value {
+    json!({
+        "id": reg_id,
+        "type": "ContextSourceRegistration",
+        "information": [
+            {
+                "entities": [
+                    {
+                        "id": entity_id,
+                        "type": "Vehicle"
+                    }
+                ]
+            }
+        ],
+        "endpoint": endpoint,
+        "mode": "auxiliary",
+        "operations": ["retrieveOps"],
+        "@context": COMPOUND_CONTEXT
+    })
+}
+
 // ---------------------------------------------------------------------------
 // HTTP helpers - Entity operations
 // ---------------------------------------------------------------------------

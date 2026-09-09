@@ -477,9 +477,14 @@ async fn notification_failed_delivery_sets_failed_status_and_last_failure_timest
     panic!("subscription notification status did not become failed within retry window");
 }
 
+// Clause 6.3.8: a notification whose `endpoint.accept` is `application/ld+json`
+// carries no `Link` header, and clause 6.3.6 requires that "the response payload
+// body provided by the HTTP response shall include a JSON-LD @context". The
+// payload body is the clause 5.3.1 Notification document, so the `@context` sits
+// at its root and scopes the entities in `data`, which carry none of their own.
 #[serial_test::serial]
 #[tokio::test]
-async fn notification_jsonld_accept_on_endpoint_omits_link_header_and_includes_entity_context() {
+async fn notification_jsonld_accept_on_endpoint_omits_link_header_and_includes_body_context() {
     let http_client = client();
     let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
@@ -495,7 +500,8 @@ async fn notification_jsonld_accept_on_endpoint_omits_link_header_and_includes_e
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
     assert!(notification.headers.get("link").is_none());
-    assert!(notification.body["data"][0].get("@context").is_some());
+    assert!(notification.body.get("@context").is_some());
+    pretty_assertions::assert_eq!(notification.body["data"][0]["id"], entity_id);
 }
 
 #[serial_test::serial]

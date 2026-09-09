@@ -1,6 +1,6 @@
-//! SPDX-FileCopyrightText: 2014-2025 Sean `McArthur`
-//! SPDX-License-Identifier: MIT
-//!
+// SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+// SPDX-License-Identifier: MIT
+
 //! Typed `NGSILD-Language` request header for language negotiation.
 //!
 //! Portions of this file are derived from the disabled `AcceptLanguage`

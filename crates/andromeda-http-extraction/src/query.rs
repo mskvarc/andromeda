@@ -4,7 +4,6 @@
 //! mapping parse failures to the correct `InvalidRequest` or `BadRequestData` type.
 
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
-use andromeda_ngsi_ld_request::query::deserialization::GEOREL_WITHOUT_GEOMETRY;
 use axum::{
     extract::FromRequestParts,
     http::{Uri, request::Parts},
@@ -62,16 +61,19 @@ pub fn classify_query_parse_error(error_str: &str, error_msg: String, uri: Uri) 
     // `format` and `options` are syntax-level representation selectors. Their
     // custom deserializers report invalid tokens as ordinary serde strings,
     // so preserve the clause distinction here instead of treating them like
-    // invalid data values such as `limit=abc`. A `georel` with nothing to
-    // relate to is a parameter the operation cannot use (clause 6.3.20,
-    // `InvalidRequest`); a reference geometry without a relation is a geoquery
-    // that is not valid as per clause 4.10, which clauses 5.7.2.4 and 5.10.2.4
-    // make a `BadRequestData`.
+    // invalid data values such as `limit=abc`.
+    //
+    // A half-specified geoquery is not one of these. Clause 4.10 names
+    // `georel`, `geometry` and `coordinates` as the three parameters needed to
+    // fully specify a geoquery, so a request carrying only some of them --
+    // whichever ones -- is a geoquery that is not valid as per clause 4.10, and
+    // clauses 5.7.2.4 and 5.10.2.4 both make that `BadRequestData`. Clause
+    // 6.3.20's `InvalidRequest` is for parameters the operation cannot use at
+    // all, which `georel` is not.
     if error_str.contains("unknown field")
         || error_str.contains("invalid format")
         || error_str.contains("invalid options")
         || error_str.contains("invalid temporal format")
-        || error_str.contains(GEOREL_WITHOUT_GEOMETRY)
     {
         ExtractorRejection::invalid_request(error_msg, uri)
     } else {
@@ -82,7 +84,7 @@ pub fn classify_query_parse_error(error_str: &str, error_msg: String, uri: Uri) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_ngsi_ld_request::query::deserialization::INCOMPLETE_GEOQUERY;
+    use andromeda_ngsi_ld_request::query::deserialization::{GEOREL_WITHOUT_GEOMETRY, INCOMPLETE_GEOQUERY};
     use axum::{extract::FromRequestParts, http::Request};
     use serde::Deserialize;
 
@@ -136,10 +138,12 @@ mod tests {
     }
 
     #[test]
-    fn a_relation_without_a_reference_geometry_is_invalid_request() {
-        // Clause 6.3.20: a `georel` alone is a parameter the operation cannot use.
+    fn a_relation_without_a_reference_geometry_is_bad_request_data() {
+        // Clause 4.10 needs all three of `georel`, `geometry` and `coordinates`
+        // for a geoquery, so a lone `georel` is as incomplete as a lone
+        // geometry, and clauses 5.7.2.4 and 5.10.2.4 make both `BadRequestData`.
         let rejection = classify_query_parse_error(GEOREL_WITHOUT_GEOMETRY, "georel alone".to_owned(), "/test".parse().expect("valid URI"));
-        assert!(matches!(rejection, ExtractorRejection::InvalidRequest { .. }));
+        assert!(matches!(rejection, ExtractorRejection::BadRequestData { .. }));
     }
 
     #[test]

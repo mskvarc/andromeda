@@ -10,8 +10,8 @@ use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
-use std::time::Duration;
-use tokio::time::sleep;
+use std::{future::Future, time::Duration};
+use tokio::time::{Instant, sleep};
 
 async fn create(client: &TestClient, entity: &Value) {
     let response = client.post_entity(entity).send().await.expect("create entity failed");
@@ -373,8 +373,38 @@ async fn expiration_expires_at_updatable_via_merge_patch() {
 // Each test sleeps ~12 s to span a worker cycle. Rows are scoped by id
 // prefix so the worker's actions on other tests' rows do not affect us.
 
-async fn wait_for_worker_cycle() {
-    sleep(Duration::from_secs(12)).await;
+/// The broker's configured `entity.expiration_check_interval_secs`.
+const EXPIRY_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Wait until the expiry sweep has left the entity in `expected` shape.
+///
+/// The worker runs on `expiration_check_interval_secs`, 30 seconds by default,
+/// so any fixed sleep either burns that on every test or races the sweep. A
+/// twelve-second one did the latter: it passed only when the test happened to
+/// land late in the interval, which is what made this suite fail one test per
+/// run under an alternating name.
+async fn wait_for_expiry_sweep<F, Fut>(what: &str, mut settled: F)
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = bool>,
+{
+    let deadline = Instant::now() + Duration::from_secs(75);
+    loop {
+        if settled().await {
+            return;
+        }
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        sleep(Duration::from_millis(500)).await;
+    }
+}
+
+/// The earliest instance expiry the write path recorded on the entity's row.
+async fn recorded_minimum_expiry(scope: &TestEnvironment, id: &str) -> Option<String> {
+    sqlx::query_scalar("SELECT to_char(min_attribute_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') FROM entities WHERE id = $1")
+        .bind(id)
+        .fetch_one(scope.database_pool())
+        .await
+        .expect("the entity row must be readable")
 }
 
 #[tokio::test]
@@ -397,22 +427,22 @@ async fn expiration_worker_partial_multi_instance_expired_instance_removed() {
     )
     .await;
 
-    wait_for_worker_cycle().await;
+    // The sweep finds the entity through the earliest instance expiry the write
+    // path records on its row; after the purge that record must have moved on
+    // to the surviving instance's expiry, or the next sweep would read the
+    // entity as due again. That row is the only sweep-observable signal here:
+    // the read path filters an expired instance out on its own, so the array
+    // length below is already correct before any sweep runs.
+    wait_for_expiry_sweep("the purge to re-record the surviving instance's expiry", || async {
+        recorded_minimum_expiry(&scope, &id).await.as_deref() == Some("2099-12-31T23:59:59Z")
+    })
+    .await;
 
     let body = fetch(client, &id, "options=sysAttrs").await;
     let speed = body["speed"].as_array().expect("speed must be multi-instance array");
     assert_eq!(speed.len(), 2, "expired instance must be removed");
 
-    // The sweep found the entity through the earliest instance expiry the
-    // write path records on its row; after the purge that record must have
-    // moved on to the surviving instance's expiry, or the next sweep would
-    // read the entity as due again.
-    let recorded: Option<String> =
-        sqlx::query_scalar("SELECT to_char(min_attribute_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') FROM entities WHERE id = $1")
-            .bind(&id)
-            .fetch_one(scope.database_pool())
-            .await
-            .expect("the entity row must be readable");
+    let recorded = recorded_minimum_expiry(&scope, &id).await;
     assert_eq!(
         recorded.as_deref(),
         Some("2099-12-31T23:59:59Z"),
@@ -438,7 +468,10 @@ async fn expiration_worker_all_instances_expired_attribute_absent_from_entity() 
     )
     .await;
 
-    wait_for_worker_cycle().await;
+    wait_for_expiry_sweep("the expired attribute to disappear", || async {
+        fetch(client, &id, "options=sysAttrs").await.get("speed").is_none()
+    })
+    .await;
 
     let body = fetch(client, &id, "options=sysAttrs").await;
     assert!(body.get("speed").is_none());
@@ -462,7 +495,9 @@ async fn expiration_worker_attribute_without_expires_at_never_removed() {
     )
     .await;
 
-    wait_for_worker_cycle().await;
+    // Nothing to poll for: the claim is that a sweep leaves the attribute
+    // alone, so the wait has to outlast one whole `expiration_check_interval`.
+    sleep(EXPIRY_SWEEP_INTERVAL + Duration::from_secs(5)).await;
     let body = fetch(client, &id, "").await;
     assert!(body.get("speed").is_some());
     scope.finish().await.expect("cleanup failed");
@@ -489,7 +524,10 @@ async fn expiration_worker_expired_location_removed_and_excluded_from_geo_querie
     )
     .await;
 
-    wait_for_worker_cycle().await;
+    wait_for_expiry_sweep("the expired location to be purged", || async {
+        fetch(client, &id, "options=sysAttrs").await.get("location").is_none()
+    })
+    .await;
 
     let body = fetch(client, &id, "options=sysAttrs").await;
     assert!(body.get("location").is_none(), "expired location must be removed");
@@ -527,7 +565,10 @@ async fn expiration_worker_attribute_expiry_does_not_affect_entity_level_expires
     )
     .await;
 
-    wait_for_worker_cycle().await;
+    wait_for_expiry_sweep("the expired attribute to disappear", || async {
+        fetch(client, &id, "options=sysAttrs").await.get("speed").is_none()
+    })
+    .await;
 
     let body = fetch(client, &id, "options=sysAttrs").await;
     assert!(body.get("speed").is_none());

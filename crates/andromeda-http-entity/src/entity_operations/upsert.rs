@@ -41,10 +41,10 @@ pub(crate) async fn batch_upsert(
         target,
         snapshot: _,
     }: EntityTenantState,
+    accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope {
         uri, context, incoming_via, ..
     }: NgsiLdRequestEnvelope,
-    accept: AcceptFormatNoGeo,
     prefer: PreferHeader,
     ValidatedQuery(params): ValidatedQuery<UpsertParams>,
     BatchBody { headers, body }: BatchBody,

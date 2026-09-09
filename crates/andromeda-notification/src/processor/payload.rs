@@ -9,6 +9,7 @@ use crate::processor::payload::{
     projection::apply_notification_projection,
     representation::{compact_for_notification, render_format},
 };
+use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     query::EntityQueryService,
@@ -33,6 +34,47 @@ use serde_json::Value;
 use std::mem::take;
 use tracing::debug;
 
+/// Whether the entity the notification is about outlived the change.
+///
+/// Clause 5.8.6 shapes a notification "triggered by the deletion of an Entity"
+/// down to `deletedAt` alone, plus `createdAt` and `modifiedAt` under
+/// `sysAttrs`. Deleting an entity raises one `AttributeDeleted` event per
+/// attribute as well as the `EntityDeleted` one, so a subscription watching an
+/// attribute is notified through the attribute trigger and the trigger alone
+/// cannot say whether the entity is still there. This does.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum EntitySurvival {
+    /// The entity outlived the change; a deleted attribute is reported against
+    /// the entity that survived it.
+    Survived,
+    /// The entity itself is gone.
+    Deleted,
+}
+
+/// Whether `event` leaves the entity behind.
+///
+/// An `EntityDeleted` event says so outright. An `AttributeDeleted` event says
+/// so by carrying a pre-deletion snapshot and no post-mutation payload, which
+/// is the shape both the immediate path (`EntityService`'s delete raises one
+/// such event per attribute) and the durable path replay produce; an ordinary
+/// attribute deletion carries the entity that survived it instead.
+pub(super) const fn entity_survival(event: &ChangeEvent) -> EntitySurvival {
+    match event.trigger_reason {
+        NotificationTrigger::EntityDeleted => EntitySurvival::Deleted,
+        NotificationTrigger::AttributeDeleted => {
+            if event.current_payload.is_none() && event.entity_snapshot.is_some() {
+                EntitySurvival::Deleted
+            } else {
+                EntitySurvival::Survived
+            }
+        }
+        NotificationTrigger::EntityCreated
+        | NotificationTrigger::EntityUpdated
+        | NotificationTrigger::AttributeCreated
+        | NotificationTrigger::AttributeUpdated => EntitySurvival::Survived,
+    }
+}
+
 pub(super) struct NotificationBuildParams<'a> {
     pub(super) target: &'a ContextTarget,
     pub(super) engine: &'a JsonLdEngine,
@@ -40,6 +82,7 @@ pub(super) struct NotificationBuildParams<'a> {
     pub(super) previous_attributes: Option<&'a Value>,
     pub(super) sub: &'a CompiledSubscription,
     pub(super) trigger_reason: &'a NotificationTrigger,
+    pub(super) survival: EntitySurvival,
     pub(super) changed_attributes: &'a [AttributeName],
     pub(super) changed_dataset_id: Option<&'a Uri>,
     pub(super) occurred_at: DateTime<Utc>,
@@ -98,17 +141,23 @@ fn expanded_entity_node(document: &Value) -> Value {
 /// went. A deleted attribute is materialised back into what survived it. Every
 /// other trigger notifies the entity as the write left it.
 fn apply_deletion_shape(entity: &mut Value, params: &NotificationBuildParams<'_>) {
-    match params.trigger_reason {
-        NotificationTrigger::EntityDeleted => {
-            if params.sub.notification_show_changes {
-                nullify_entity_attributes(entity);
-            } else {
-                let structural = strip_to_structural_keys(entity, params.sub.notification_sys_attrs);
-                *entity = structural;
-            }
+    // Clause 5.8.6 keys this on what the notification was triggered by, not on
+    // which clause 5.2.12 trigger matched the subscription: an entity deletion
+    // reaches an `attributeDeleted` subscriber too, and it owes that subscriber
+    // the same `deletedAt`-only document.
+    if params.survival == EntitySurvival::Deleted {
+        if params.sub.notification_show_changes {
+            nullify_entity_attributes(entity);
+        } else {
+            let structural = strip_to_structural_keys(entity, params.sub.notification_sys_attrs);
+            *entity = structural;
         }
+        return;
+    }
+    match params.trigger_reason {
         NotificationTrigger::AttributeDeleted => apply_attribute_deletion(entity, params),
-        NotificationTrigger::EntityCreated
+        NotificationTrigger::EntityDeleted
+        | NotificationTrigger::EntityCreated
         | NotificationTrigger::EntityUpdated
         | NotificationTrigger::AttributeCreated
         | NotificationTrigger::AttributeUpdated => (),

@@ -3,6 +3,12 @@
 //! `orderBy=location;dist-asc` sorts by the same geodesic distance the `near`
 //! georel measures, so co-located entities at different altitudes tie at zero
 //! and an altitude never reorders a result set.
+//!
+//! Every query here carries `local=true`: clause 5.7.2.4 raises `BadRequestData`
+//! for an `orderBy` whose execution is not limited to the local scope (clause
+//! 5.5.13), which clause 6.3.18 Table 6.3.18-1 binds to the `local` parameter,
+//! and clause 4.23.1 restates it as "Sort ordering is never applied to
+//! distributed operations".
 
 use crate::fixtures::{building_point_3d, create, encode_json, id_filter, ids_of, p_2d, query};
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
@@ -49,7 +55,11 @@ async fn ordering_dist_asc_3d_orderfrom_is_horizontal() {
 
     let filter = id_filter(&[&ground, &mid, &top, &offset]);
     let order_from = encode_json(&json!([13.4, 52.52, 0.0]));
-    let (status, _, body) = query(client, &format!("type=Building&id={filter}&orderBy=location;dist-asc&orderFrom={order_from}")).await;
+    let (status, _, body) = query(
+        client,
+        &format!("type=Building&id={filter}&local=true&orderBy=location;dist-asc&orderFrom={order_from}"),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     assert_pillar_first_then_offset(&ids_of(&body), [&ground, &mid, &top], &offset);
@@ -65,7 +75,11 @@ async fn ordering_dist_2d_orderfrom_with_3d_entities() {
 
     let filter = id_filter(&[&ground, &mid, &top, &offset]);
     let order_from = encode_json(&p_2d());
-    let (status, _, body) = query(client, &format!("type=Building&id={filter}&orderBy=location;dist-asc&orderFrom={order_from}")).await;
+    let (status, _, body) = query(
+        client,
+        &format!("type=Building&id={filter}&local=true&orderBy=location;dist-asc&orderFrom={order_from}"),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     // A 2D reference must produce exactly the ordering a 3D one produced.
@@ -102,7 +116,7 @@ async fn ordering_dist_asc_on_a_custom_geoproperty_sorts_by_that_geoproperty() {
     let order_from = encode_json(&json!([13.4, 52.52]));
     let (status, _, body) = query(
         client,
-        &format!("type=Building&id={filter}&orderBy=observationPoint;dist-asc&orderFrom={order_from}"),
+        &format!("type=Building&id={filter}&local=true&orderBy=observationPoint;dist-asc&orderFrom={order_from}"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -116,7 +130,7 @@ async fn ordering_dist_asc_on_a_custom_geoproperty_sorts_by_that_geoproperty() {
     // producing an unrelated order.
     let (status, _, body) = query(
         client,
-        &format!("type=Building&id={filter}&orderBy=observationPoint;dist-desc&orderFrom={order_from}"),
+        &format!("type=Building&id={filter}&local=true&orderBy=observationPoint;dist-desc&orderFrom={order_from}"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -159,7 +173,7 @@ async fn ordering_dist_asc_on_a_custom_geoproperty_measures_the_nearest_instance
     let order_from = encode_json(&json!([13.4, 52.52]));
     let (status, _, body) = query(
         client,
-        &format!("type=Building&id={filter}&orderBy=observationPoint;dist-asc&orderFrom={order_from}"),
+        &format!("type=Building&id={filter}&local=true&orderBy=observationPoint;dist-asc&orderFrom={order_from}"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);

@@ -97,6 +97,30 @@ pub fn geo_property_instance_geometries<'a>(expanded: &'a Value, iri: &str) -> i
         .filter_map(geometry_of_instance)
 }
 
+/// The IRI of every `GeoProperty` the entity conveys with at least one
+/// decodable geometry.
+///
+/// The order is the expanded document's own member order and carries no
+/// meaning; callers use the result as a set.
+///
+/// Clause 4.7.1 lets a Context Producer define `GeoProperty` attributes of its
+/// own beyond `location`, `observationSpace` and `operationSpace`, and clause
+/// 4.10 lets a geoquery target any of them through `geoproperty`. A caller that
+/// has to enumerate an entity's geometries therefore cannot work from a fixed
+/// list of names, nor from the attributes one change happened to touch: it has
+/// to read what the entity actually carries.
+#[must_use]
+pub fn geo_property_iris(expanded: &Value) -> Vec<&str> {
+    let Some(object) = expanded_object_ref(expanded) else {
+        return Vec::new();
+    };
+    object
+        .keys()
+        .map(String::as_str)
+        .filter(|iri| geo_property_instance_geometries(expanded, iri).next().is_some())
+        .collect()
+}
+
 /// The instance array of one expanded attribute, if the entity conveys it.
 fn geo_property_instances<'a>(expanded: &'a Value, iri: &str) -> Option<&'a [Value]> {
     expanded_object_ref(expanded)?.get(iri)?.as_array().map(Vec::as_slice)
@@ -317,6 +341,7 @@ mod tests {
         extract_location_expiry,
         extract_location_geometry,
         geo_property_instance_geometries,
+        geo_property_iris,
         validate_expanded_geo_node,
     };
     use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geojson::GeometryError, geometry::Geometry, position::PositionError};
@@ -332,6 +357,32 @@ mod tests {
             "@id": "urn:ngsi-ld:Building:001",
             LOCATION: [{ "https://uri.etsi.org/ngsi-ld/hasValue": [{ "@value": value }] }]
         }])
+    }
+
+    #[test]
+    fn every_geo_property_the_entity_carries_is_named_and_nothing_else_is() {
+        let custom = "https://example.org/observationPoint";
+        let plain = "https://example.org/brandName";
+        let expanded = json!([{
+            "@id": "urn:ngsi-ld:Building:001",
+            LOCATION: [{ "https://uri.etsi.org/ngsi-ld/hasValue": [{ "@value": {"type": "Point", "coordinates": [30.0, 10.0]} }] }],
+            custom: [{ "https://uri.etsi.org/ngsi-ld/hasValue": [{ "@value": {"type": "Point", "coordinates": [13.4, 52.52]} }] }],
+            plain: [{ "https://uri.etsi.org/ngsi-ld/hasValue": [{ "@value": "Mercedes" }] }],
+        }]);
+        let mut iris = geo_property_iris(&expanded);
+        iris.sort_unstable();
+        // Clause 4.7.1 lets a producer name its own GeoProperty, so the custom
+        // one counts; a Property whose value is not a geometry does not.
+        assert_eq!(iris, vec![custom, LOCATION]);
+    }
+
+    #[test]
+    fn an_entity_carrying_no_geo_property_names_none() {
+        let expanded = json!([{
+            "@id": "urn:ngsi-ld:Building:002",
+            "https://example.org/brandName": [{ "https://uri.etsi.org/ngsi-ld/hasValue": [{ "@value": "Mercedes" }] }],
+        }]);
+        assert_eq!(geo_property_iris(&expanded), [] as [&str; 0]);
     }
 
     /// Build the expected [`Geometry`] for a known compact-GeoJSON object by

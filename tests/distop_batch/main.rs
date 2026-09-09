@@ -137,8 +137,14 @@ fn batch_ops_redirect_registration(reg_id: &str, endpoint: &str) -> Value {
     })
 }
 
-/// CSR with exclusive mode, covering only speed property for Vehicle entities.
-fn batch_ops_exclusive_speed_registration(reg_id: &str, endpoint: &str) -> Value {
+/// CSR with exclusive mode, covering only the speed property of the two named vehicles.
+///
+/// Clause 4.3.6.2: "An exclusive registration shall always relate to specific
+/// Attributes found on a single Entity. Thus, the registration shall define
+/// both: An entity id (i.e. an id pattern or Entity type defining a group of
+/// entities is not supported for exclusive registrations). Attributes." Each
+/// selector therefore names its entity by `id`, never by `idPattern`.
+fn batch_ops_exclusive_speed_registration(reg_id: &str, endpoint: &str, entity_id1: &str, entity_id2: &str) -> Value {
     json!({
         "id": reg_id,
         "type": "ContextSourceRegistration",
@@ -146,7 +152,11 @@ fn batch_ops_exclusive_speed_registration(reg_id: &str, endpoint: &str) -> Value
             {
                 "entities": [
                     {
-                        "idPattern": "urn:ngsi-ld:Vehicle:*",
+                        "id": entity_id1,
+                        "type": "Vehicle"
+                    },
+                    {
+                        "id": entity_id2,
                         "type": "Vehicle"
                     }
                 ],
@@ -261,11 +271,13 @@ async fn distop_batch_create_exclusive_forwards_to_csr() {
     let entity_id2 = unique_id("urn:ngsi-ld:Vehicle:batch-create-exc-2");
     let reg_id = unique_id("urn:ngsi-ld:Registration:batch-create-exc");
 
-    // Create 2 entities locally first (without speed, so they exist for the exclusive CSR to intercept)
-    pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_mercedes(&entity_id1)).await, StatusCode::CREATED);
-    pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_mercedes(&entity_id2)).await, StatusCode::CREATED);
-
-    let reg = batch_ops_exclusive_speed_registration(&reg_id, &mock.url("/broker1"));
+    // Nothing is seeded locally. Clause 5.6.7.4 makes an already-existing
+    // identifier an `AlreadyExists` error and the batch a 207, and the batch
+    // payload's unregistered `isParked2` is exactly the part that would land
+    // locally and collide. Forwarding is decided by the registration matching
+    // the input data (clause 5.11), not by what the broker already holds, so
+    // the seed proved nothing and only cost the 201 this test is about.
+    let reg = batch_ops_exclusive_speed_registration(&reg_id, &mock.url("/broker1"), &entity_id1, &entity_id2);
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/create", 201).await;
@@ -388,7 +400,7 @@ async fn distop_batch_upsert_replace_exclusive_forwards_to_csr() {
     pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id1)).await, StatusCode::CREATED);
     pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id2)).await, StatusCode::CREATED);
 
-    let reg = batch_ops_exclusive_speed_registration(&reg_id, &mock.url("/broker1"));
+    let reg = batch_ops_exclusive_speed_registration(&reg_id, &mock.url("/broker1"), &entity_id1, &entity_id2);
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert", 204).await;
@@ -508,7 +520,7 @@ async fn distop_batch_upsert_update_exclusive_forwards_to_csr() {
     pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id1)).await, StatusCode::CREATED);
     pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id2)).await, StatusCode::CREATED);
 
-    let reg = batch_ops_exclusive_speed_registration(&reg_id, &mock.url("/broker1"));
+    let reg = batch_ops_exclusive_speed_registration(&reg_id, &mock.url("/broker1"), &entity_id1, &entity_id2);
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert", 204).await;
@@ -664,7 +676,7 @@ async fn distop_batch_delete_exclusive_forwards_to_csr_and_deletes_locally() {
     pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id1)).await, StatusCode::CREATED);
     pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id2)).await, StatusCode::CREATED);
 
-    let reg = batch_ops_exclusive_speed_registration(&reg_id, &mock.url("/broker1"));
+    let reg = batch_ops_exclusive_speed_registration(&reg_id, &mock.url("/broker1"), &entity_id1, &entity_id2);
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/delete", 204).await;

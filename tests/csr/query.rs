@@ -6,20 +6,25 @@ use serial_test::serial;
 
 use crate::{
     BAD_REQUEST_DATA_TYPE,
+    REGISTERED_VEHICLE_ID,
+    UNREGISTERED_VEHICLE_ID,
     clean_database,
     client,
     create_registration,
     csr_basic_jsonld,
     csr_detailed_information,
     csr_only_properties,
+    csr_vehicle_by_entity_id,
+    csr_vehicle_by_type,
     csr_with_csource_properties,
     csr_with_location,
     csr_with_management_interval,
     csr_with_observation_interval,
-    expected_query_basic_expanded,
+    expected_query_basic_parking_information,
+    expected_query_basic_vehicle_information,
     expected_query_detailed,
     expected_query_detailed_expanded,
-    expected_query_multi_ids,
+    expected_query_matching_entity_ids,
     expected_query_only_properties,
     expected_query_with_csource_properties,
     expected_query_with_location,
@@ -33,6 +38,16 @@ use serde_json::Value;
 
 const TEST_SUITE_CONTEXT_URL: &str =
     "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld";
+
+/// The `timeAt` a `before` or `after` discovery has to carry to match the
+/// interval the interval fixtures register (2020-08-01T22:07:00Z to
+/// 2021-08-01T21:07:00Z).
+///
+/// Clause 5.10.2.4: "The semantics of the match is that the timeAt in the case
+/// of the 'before' and 'after' relation is contained in or is an endpoint of a
+/// time period included in the specified time interval." An instant past the
+/// registered `endAt` is therefore not a match, however far "before" it reads.
+const WITHIN_REGISTERED_INTERVAL: &str = "2021-08-01T20:00:00Z";
 
 /// Query helper with Link header context for test suite context.
 async fn query_with_context(client: &reqwest::Client, qs: &str) -> (StatusCode, Value) {
@@ -191,7 +206,8 @@ async fn query_fully_qualified_type_without_context_returns_200() {
 // 5.10.2 -- Query matching EntityInfo of RegistrationInfo
 // ---------------------------------------------------------------------------
 
-/// Query with type+idPattern matching `EntityInfo` -- 200 (5.10.2).
+/// Query with type+idPattern matching `EntityInfo` -- 200, trimmed to the
+/// matching `RegistrationInfo` (5.10.2, 5.10.2.5).
 #[tokio::test]
 #[serial]
 async fn query_entity_info_with_type_and_id_pattern_returns_matching() {
@@ -208,7 +224,7 @@ async fn query_entity_info_with_type_and_id_pattern_returns_matching() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ignored = &["@context", "createdAt", "modifiedAt", "status"];
-    let mut expected = expected_query_basic_expanded(&id);
+    let mut expected = expected_query_basic_parking_information(&id);
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
@@ -362,7 +378,7 @@ async fn query_without_temporal_query_returns_matching() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ignored = &["@context", "createdAt", "modifiedAt", "status"];
-    let mut expected = expected_query_basic_expanded(&id);
+    let mut expected = expected_query_basic_vehicle_information(&id);
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
@@ -386,7 +402,7 @@ async fn query_observation_interval_with_observed_at_returns_matching() {
 
     let qs = format!(
         "type=Building&timeproperty=observedAt&timerel=before&timeAt={}",
-        urlencoding::encode("2021-08-01T22:00:00Z")
+        urlencoding::encode(WITHIN_REGISTERED_INTERVAL)
     );
     let (status, mut actual) = query_with_context(&c, &qs).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
@@ -410,7 +426,7 @@ async fn query_observation_interval_without_timeproperty_returns_matching() {
     let (s, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);
 
-    let qs = format!("type=Building&timerel=before&timeAt={}", urlencoding::encode("2021-08-01T22:00:00Z"));
+    let qs = format!("type=Building&timerel=before&timeAt={}", urlencoding::encode(WITHIN_REGISTERED_INTERVAL));
     let (status, mut actual) = query_with_context(&c, &qs).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
@@ -435,7 +451,7 @@ async fn query_management_interval_with_created_at_returns_matching() {
 
     let qs = format!(
         "type=Building&timeproperty=createdAt&timerel=before&timeAt={}",
-        urlencoding::encode("2021-08-01T22:00:00Z")
+        urlencoding::encode(WITHIN_REGISTERED_INTERVAL)
     );
     let (status, mut actual) = query_with_context(&c, &qs).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
@@ -461,7 +477,7 @@ async fn query_management_interval_with_modified_at_returns_matching() {
 
     let qs = format!(
         "type=Building&timeproperty=modifiedAt&timerel=before&timeAt={}",
-        urlencoding::encode("2021-08-01T22:00:00Z")
+        urlencoding::encode(WITHIN_REGISTERED_INTERVAL)
     );
     let (status, mut actual) = query_with_context(&c, &qs).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
@@ -477,7 +493,13 @@ async fn query_management_interval_with_modified_at_returns_matching() {
 // 5.10.2 -- Query with entity IDs
 // ---------------------------------------------------------------------------
 
-/// Query filtering by multiple registration IDs -- returns matching subset (5.10.2).
+/// Query filtering by entity id -- returns the registrations that can serve
+/// that entity, not the others (5.10.2, 5.12).
+///
+/// `id` carries "List of entity ids to be retrieved" (Table 6.8.3.2-1), and
+/// clause 5.10.2.3 forbids retrieving registrations "by only specifying desired
+/// Entity identifiers, without further specifying restrictions on the entities'
+/// types or attributes", so the entity id is paired with a type selector.
 #[tokio::test]
 #[serial]
 async fn query_by_entity_ids_returns_matching_subset() {
@@ -487,9 +509,9 @@ async fn query_by_entity_ids_returns_matching_subset() {
     let id2 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-ids-b");
     let id3 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-ids-c");
 
-    let reg1 = csr_basic_jsonld(&id1);
-    let reg2 = csr_detailed_information(&id2);
-    let reg3 = csr_with_csource_properties(&id3);
+    let reg1 = csr_vehicle_by_entity_id(&id1, REGISTERED_VEHICLE_ID);
+    let reg2 = csr_vehicle_by_entity_id(&id2, UNREGISTERED_VEHICLE_ID);
+    let reg3 = csr_vehicle_by_type(&id3);
 
     let (s, _, _) = create_registration(&c, &reg1).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);
@@ -498,14 +520,14 @@ async fn query_by_entity_ids_returns_matching_subset() {
     let (s, _, _) = create_registration(&c, &reg3).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);
 
-    let (status, actual) = query_with_context(&c, &format!("id={id1},{id3}")).await;
+    let (status, actual) = query_with_context(&c, &format!("type=Vehicle&id={REGISTERED_VEHICLE_ID}")).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ignored = &["@context", "createdAt", "modifiedAt", "status"];
     let arr = actual.as_array().expect("response should be an array");
     pretty_assertions::assert_eq!(arr.len(), 2, "should return 2 registrations");
 
-    let expected = expected_query_multi_ids(&id1, &id3);
+    let expected = expected_query_matching_entity_ids(&id1, &id3);
 
     let mut actual_arr: Vec<Value> = arr.clone();
     actual_arr.sort_by(|a, b| a["id"].as_str().unwrap_or("").cmp(b["id"].as_str().unwrap_or("")));

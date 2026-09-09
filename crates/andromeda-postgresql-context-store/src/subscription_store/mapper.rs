@@ -32,7 +32,6 @@ use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use serde_json::Value;
 use sqlx::{Row, postgres::PgRow};
-use tracing::warn;
 use url::Url;
 
 /// Parse a subscription identifier read from PostgreSQL.
@@ -182,35 +181,23 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
     })
 }
 
-/// Map every row that maps, and omit the ones that do not.
+/// Map a whole result set, failing the read on the first row that does not map.
 ///
-/// The resource holds its filters and selectors parsed, so a row written by an
-/// older build -- or edited by hand -- can carry a value this build's grammars
-/// reject. Failing the whole read for one of them takes every other
-/// subscription with it: a listing becomes a 500, and `list_active` empties the
-/// matching cache so no subscription fires at all. A multi-row read therefore
-/// reports what it can read and logs what it cannot, while a single-row read
-/// calls [`row_from_pg`] directly and keeps its hard error for `get`, where the
-/// client named that one subscription and has to be told it is unreadable.
+/// A row this build cannot decode is a hard error rather than an omission: the
+/// listing's total is counted by a separate query, so dropping a row would make
+/// the page disagree with its own count, and `list_active` feeds the matching
+/// cache, where an omitted subscription silently stops firing.
 ///
-/// A listing's total still counts the stored rows, so it can exceed the number
-/// returned. That is the honest figure: the rows are there, this build cannot
-/// read them.
-#[must_use]
-pub fn rows_to_stored_subscriptions(rows: &[PgRow], dataset_id_presence: DatasetIdPresence) -> Vec<StoredSubscription> {
+/// # Errors
+///
+/// Returns the [`ContextStoreError`] of the first row whose stored columns do
+/// not decode back into a [`SubscriptionRow`].
+pub fn rows_to_stored_subscriptions(rows: &[PgRow], dataset_id_presence: DatasetIdPresence) -> Result<Vec<StoredSubscription>, ContextStoreError> {
     let mut subscriptions = Vec::with_capacity(rows.len());
     for pg_row in rows {
-        match row_from_pg(pg_row, dataset_id_presence) {
-            Ok(row) => subscriptions.push(row_to_stored_subscription(row)),
-            Err(error) => {
-                // The identifier is read raw, because the value that failed to
-                // parse may be the identifier itself.
-                let identifier = pg_row.try_get::<&str, _>("id").unwrap_or("<unreadable>");
-                warn!(subscription_id = %identifier, %error, "subscription row could not be read and was omitted");
-            }
-        }
+        subscriptions.push(row_to_stored_subscription(row_from_pg(pg_row, dataset_id_presence)?));
     }
-    subscriptions
+    Ok(subscriptions)
 }
 
 /// Convert a persistence-shaped `SubscriptionRow` into the resource paired with

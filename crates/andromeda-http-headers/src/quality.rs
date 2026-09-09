@@ -1,6 +1,6 @@
-//! SPDX-FileCopyrightText: 2014-2025 Sean `McArthur`
-//! SPDX-License-Identifier: MIT
-//!
+// SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+// SPDX-License-Identifier: MIT
+
 //! Quality factors for HTTP content negotiation.
 //!
 //! Portions of this file are derived from the disabled quality utilities in

@@ -5,8 +5,10 @@ use andromeda_context_commit::{change_event::ChangeEvent, context_change_event::
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::{expanded::geo_property::geo_property_instance_geometries, notification::NotificationTrigger};
-use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+use andromeda_ngsi_ld_model::{
+    expanded::geo_property::{geo_property_instance_geometries, geo_property_iris},
+    notification::NotificationTrigger,
+};
 use andromeda_spatial_index::{entity::index::SpatialEntityIndex, key::SpatialKey};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use iri_rs::IriBuf;
@@ -71,19 +73,28 @@ impl SpatialSynchronizer {
             }
         };
         self.index.remove(urn);
-        // clone: the loop below hands each partition key its own copy
-        let mut candidates: Vec<AttributeName> = event.changed_attributes.clone();
-        match expanded_properties::LOCATION.as_str().parse::<AttributeName>() {
-            Ok(location) if !candidates.contains(&location) => candidates.push(location),
-            Ok(_already_present) => {}
-            Err(error) => debug!(%error, "spatial synchronization could not name the default location geoproperty"),
-        }
-        for geoproperty in candidates {
+        // The removal above clears the entity from *every* partition, so every
+        // GeoProperty it conveys has to be written back -- not just the ones
+        // this event named. Rebuilding only the changed attributes left a hole
+        // in each partition the event did not mention, and nothing closed it:
+        // `SpatialReconciliation` rebuilds `location` alone, so a partition for
+        // any other GeoProperty stayed warm and short an entity for as long as
+        // the broker ran. `spatial_prefilter` reads a warm partition as
+        // authoritative, so the hole surfaced as a geoquery answering 200 with
+        // an empty array for an entity sitting on the reference point.
+        for iri in geo_property_iris(&payload) {
+            let geoproperty = match iri.parse::<AttributeName>() {
+                Ok(geoproperty) => geoproperty,
+                Err(error) => {
+                    debug!(%iri, %error, "spatial synchronization skipped a geoproperty whose IRI is not an attribute name");
+                    continue;
+                }
+            };
             // Clause 4.10: any instance of the GeoProperty meeting a restriction
             // matches, so every `datasetId` instance is indexed. Reading them
             // through the model's one reader is what keeps the index and the
             // residual filter agreeing on what an entity's geometries are.
-            let geometries: Vec<Geometry> = geo_property_instance_geometries(&payload, geoproperty.as_str()).collect();
+            let geometries: Vec<Geometry> = geo_property_instance_geometries(&payload, iri).collect();
             if geometries.is_empty() {
                 continue;
             }

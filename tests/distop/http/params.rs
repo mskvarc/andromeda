@@ -13,7 +13,7 @@ use crate::{
     oracle::{assert_problem_details, assert_status, entity_map_header, json_body},
     topology::{self, BrokerRole},
 };
-use andromeda_test_fixtures::problem_detail::INVALID_REQUEST;
+use andromeda_test_fixtures::problem_detail::{BAD_REQUEST_DATA, INVALID_REQUEST};
 use reqwest::Method;
 use serde_json::json;
 use std::time::Duration;
@@ -246,10 +246,19 @@ async fn dist_http_snapshot_op_ignores_local_false() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Incompatible query parameters (a geo relation with no geometry) are rejected
-/// with `InvalidRequest` (clause 6.3.10). Confirms REQ-HTTP-44.
+/// A half-specified geoquery (a geo relation with no reference geometry) is
+/// rejected with `BadRequestData` (clause 5.7.2.4). Confirms REQ-HTTP-44.
+///
+/// Clause 4.10 names `georel`, `geometry` and `coordinates` as the three
+/// parameters that "are defined in order to fully specify an NGSI-LD
+/// Geoquery", and clause 5.7.2.4 rules that when "the query, geoquery or
+/// context source filter are not syntactically valid (as per the referred
+/// clauses 4.9 and 4.10) an error of type `BadRequestData` shall be raised".
+/// Clause 6.3.20's `InvalidRequest` covers parameters the operation cannot use
+/// at all; `georel` is a parameter Query Entities accepts, merely incomplete
+/// here.
 #[tokio::test]
-async fn dist_http_incompatible_params_return_invalid_request() {
+async fn dist_http_incomplete_geoquery_returns_bad_request_data() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = topology
         .broker(BrokerRole::A)
@@ -259,7 +268,7 @@ async fn dist_http_incompatible_params_return_invalid_request() {
         .await
         .expect("incompatible-param query");
     assert_status(&response, 400);
-    assert_problem_details(&response, INVALID_REQUEST);
+    assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
 }
 

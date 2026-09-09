@@ -141,11 +141,19 @@ fn time_interval_subscription_payload(subscription_id: &str, endpoint_uri: &str)
     payload
 }
 
+/// A Context Source Registration Subscription whose `temporalQ` selects the
+/// interval-bearing registrations of clause 5.11.2.4.
+///
+/// Clause 5.11.2.4: for the `before` and `after` relations "the timeAt ... is
+/// contained in or is an endpoint of a time period included in the specified
+/// time interval". The `timeAt` below therefore lies inside the interval the
+/// observation-interval and management-interval registration payloads declare;
+/// an instant before their `startAt` would correctly match nothing.
 fn temporal_query_subscription_payload(subscription_id: &str, endpoint_uri: &str, time_property: &str) -> Value {
     let mut payload = base_subscription_payload(subscription_id, endpoint_uri);
     payload["temporalQ"] = json!({
         "timerel": "after",
-        "timeAt": "2020-06-01T22:07:00Z",
+        "timeAt": "2020-09-01T22:07:00Z",
         "timeproperty": time_property
     });
     payload

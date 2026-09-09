@@ -39,10 +39,10 @@ pub(crate) async fn batch_update(
         target,
         snapshot: _,
     }: EntityTenantState,
+    _accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope {
         uri, context, incoming_via, ..
     }: NgsiLdRequestEnvelope,
-    _accept: AcceptFormatNoGeo,
     prefer: PreferHeader,
     ValidatedQuery(params): ValidatedQuery<UpdateParams>,
     BatchBody { headers, body }: BatchBody,

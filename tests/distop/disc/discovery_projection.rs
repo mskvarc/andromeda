@@ -1,5 +1,5 @@
 //! Discovery-response shaping (Table 6.8.3.2-1): `pick`/`omit` (clause 4.21),
-//! `lang` (clause 4.15) and `geometryProperty` (clause 4.5.16) applied to the
+//! `lang` (clause 4.15) applied to the
 //! returned Context Source Registration documents. All `T-LOCAL`: the
 //! registrations are created and read back on the front broker, and each case
 //! asserts the shape of the document it created, found by id, so unrelated
@@ -10,7 +10,7 @@ use crate::{
         PEER_ENDPOINT,
         csr_discovery::{find, query, register},
     },
-    oracle::{assert_status, json_body},
+    oracle::assert_status,
     registration::CsrBuilder,
     topology::{self, BrokerRole},
 };
@@ -90,11 +90,20 @@ async fn query_csr_lang_reduces_languagemap() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `geometryProperty` selects the named `GeoProperty` as the `GeoJSON` geometry of
-/// the returned registration Feature (clause 4.5.16). Confirms REQ-DISC
-/// `GeoJSON` geometry selection.
+/// A Context Source Registration query refuses `application/geo+json`
+/// (clause 6.3.4). Confirms REQ-DISC `GeoJSON` negotiation.
+///
+/// Clause 6.3.4 admits `GeoJSON` for "Context Information Consumption
+/// operations only, specifically 'Retrieve Entity' (see clause 5.7.1) and
+/// 'Query Entity' (clause 5.7.2)", and rules that "for all other operations,
+/// the request will result in a Not Acceptable Media Type error, returning a
+/// 406 HTTP status code". Query Context Source Registrations is clause 5.10.2,
+/// and clause 5.10.2.5 gives its output as "A JSON-LD array of matching Context
+/// Source Registrations as defined by clause 5.2.9". Clause 4.5.16 defines the
+/// `GeoJSON` representation of *Entities* and never extends it to a
+/// registration, so `geometryProperty` cannot select a Feature geometry here.
 #[tokio::test]
-async fn query_csr_geometry_property_selects_geometry() {
+async fn query_csr_geojson_is_not_acceptable() {
     let topology = topology::single().await.expect("single-broker topology");
     let reg_id = topology.id("registration:geometry-projection");
     let mut body = CsrBuilder::new(&reg_id, PEER_ENDPOINT).entity_type("Vehicle").build();
@@ -112,30 +121,7 @@ async fn query_csr_geometry_property_selects_geometry() {
         .send()
         .await
         .expect("GeoJSON discovery query");
-    assert_status(&response, 200);
-
-    let collection = json_body(&response);
-    assert_eq!(
-        collection["type"].as_str(),
-        Some("FeatureCollection"),
-        "a GeoJSON discovery answers a FeatureCollection: {collection}"
-    );
-    let feature = collection["features"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|feature| feature["id"].as_str() == Some(reg_id.as_str()) || feature["properties"]["id"].as_str() == Some(reg_id.as_str()))
-        .unwrap_or_else(|| panic!("the created registration is a Feature in the collection: {collection}"));
-    assert_eq!(
-        feature["geometry"]["type"].as_str(),
-        Some("Point"),
-        "geometryProperty selects the location geometry: {feature}"
-    );
-    assert_eq!(
-        feature["geometry"]["coordinates"],
-        json!([13.4, 52.5]),
-        "the selected geometry carries the location coordinates: {feature}"
-    );
+    assert_status(&response, 406);
 
     topology.finish().await.expect("topology cleanup");
 }

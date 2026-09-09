@@ -1,6 +1,6 @@
-//! SPDX-FileCopyrightText: 2014-2025 Sean `McArthur`
-//! SPDX-License-Identifier: MIT
-//!
+// SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+// SPDX-License-Identifier: MIT
+
 //! Strict `Warning` response header (RFC 9110, section 5.5).
 //!
 //! The structure and wire-format handling are adapted from the disabled

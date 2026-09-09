@@ -33,10 +33,10 @@ pub(crate) async fn batch_create(
         target,
         snapshot: _,
     }: EntityTenantStateOrCreate,
+    accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope {
         uri, context, incoming_via, ..
     }: NgsiLdRequestEnvelope,
-    accept: AcceptFormatNoGeo,
     prefer: PreferHeader,
     BatchBody { headers, body }: BatchBody,
 ) -> Result<Response, ProblemResponse> {

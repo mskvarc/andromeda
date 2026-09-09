@@ -155,6 +155,7 @@ macro_rules! impl_subscription_store {
                 // A listing renders resources, so the surrogate key each row
                 // carries is dropped rather than threaded into the response.
                 let subscriptions = rows_to_stored_subscriptions(&pg_rows, $hdi)
+                    .map_err(persistence_error)?
                     .into_iter()
                     .map(|stored| stored.subscription)
                     .collect();
@@ -200,7 +201,7 @@ macro_rules! impl_subscription_store {
                     .fetch_all(&self.pool)
                     .await
                     .map_err(persistence_error)?;
-                Ok(rows_to_stored_subscriptions(&pg_rows, $hdi))
+                rows_to_stored_subscriptions(&pg_rows, $hdi).map_err(persistence_error)
             }
 
             async fn claim_notification_slot(
@@ -317,6 +318,7 @@ macro_rules! impl_subscription_store {
                 // An interval notification is sent straight to the endpoint and
                 // never enqueues a delivery, so it needs no surrogate key.
                 Ok(rows_to_stored_subscriptions(&pg_rows, $hdi)
+                    .map_err(persistence_error)?
                     .into_iter()
                     .map(|stored| stored.subscription)
                     .collect())

@@ -23,6 +23,7 @@ use crate::{
         unique_id,
         vehicle_entity,
         vehicle_entity_two_speed_datasets,
+        vehicle_registration_auxiliary_retrieve_ops,
         vehicle_registration_redirection_ops,
         vehicle_registration_speed_redirection_ops,
     },
@@ -131,12 +132,9 @@ async fn distop_entity_attrs_delete_redirect_forwards_to_multiple() {
     let reg_id1 = unique_id("urn:ngsi-ld:Registration:delete-red-1");
     let reg_id2 = unique_id("urn:ngsi-ld:Registration:delete-red-2");
 
-    // Create entity
-    let entity = vehicle_entity_two_speed_datasets(&entity_id);
-    let (status, _) = create_entity(&c, &entity).await;
-    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
-
-    // Create two redirect registrations
+    // Two redirect registrations. Clause 5.9.2.4 refuses a redirect registration
+    // with Conflict when an existing Entity already matches it, so the entity is
+    // held only by the registered context sources.
     let reg1 = vehicle_registration_redirection_ops(&reg_id1, Some(&entity_id), &mock.url("/broker1"), Some("redirect"));
     let (status, _) = create_registration(&c, &reg1).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -158,7 +156,6 @@ async fn distop_entity_attrs_delete_redirect_forwards_to_multiple() {
     assert!(mock.get_count(Method::DELETE, &stub_path1) > 0);
     assert!(mock.get_count(Method::DELETE, &stub_path2) > 0);
 
-    delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
     mock.shutdown().await;
@@ -267,12 +264,9 @@ async fn distop_entity_attrs_delete_all_redirect_forwards_to_multiple() {
     let reg_id1 = unique_id("urn:ngsi-ld:Registration:delete-all-red-1");
     let reg_id2 = unique_id("urn:ngsi-ld:Registration:delete-all-red-2");
 
-    // Create entity
-    let entity = vehicle_entity_two_speed_datasets(&entity_id);
-    let (status, _) = create_entity(&c, &entity).await;
-    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
-
-    // Create two redirect registrations
+    // Two redirect registrations. Clause 5.9.2.4 refuses a redirect registration
+    // with Conflict when an existing Entity already matches it, so the entity is
+    // held only by the registered context sources.
     let reg1 = vehicle_registration_redirection_ops(&reg_id1, Some(&entity_id), &mock.url("/broker1"), Some("redirect"));
     let (status, _) = create_registration(&c, &reg1).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -294,7 +288,6 @@ async fn distop_entity_attrs_delete_all_redirect_forwards_to_multiple() {
     assert!(mock.get_count(Method::DELETE, &stub_path1) > 0);
     assert!(mock.get_count(Method::DELETE, &stub_path2) > 0);
 
-    delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
     mock.shutdown().await;
@@ -333,7 +326,7 @@ async fn distop_entity_attrs_delete_auxiliary_no_forwarding() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Create auxiliary registration (retrieval only)
-    let reg = vehicle_registration_redirection_ops(&reg_id, Some(&entity_id), &mock.url(""), Some("auxiliary"));
+    let reg = vehicle_registration_auxiliary_retrieve_ops(&reg_id, &entity_id, &mock.url(""));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 

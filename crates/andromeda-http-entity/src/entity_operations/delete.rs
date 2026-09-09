@@ -34,13 +34,13 @@ pub(crate) async fn batch_delete(
         target,
         snapshot: _,
     }: EntityTenantState,
+    _accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope {
         uri,
         context,
         incoming_via,
         headers,
     }: NgsiLdRequestEnvelope,
-    _accept: AcceptFormatNoGeo,
     prefer: PreferHeader,
     body: Bytes,
 ) -> Result<Response, ProblemResponse> {

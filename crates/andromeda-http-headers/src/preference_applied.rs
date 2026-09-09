@@ -1,6 +1,6 @@
-//! SPDX-FileCopyrightText: 2014-2025 Sean `McArthur`
-//! SPDX-License-Identifier: MIT
-//!
+// SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+// SPDX-License-Identifier: MIT
+
 //! Typed `Preference-Applied` response header for NGSI-LD (RFC 7240, clause 6.3.6).
 //!
 //! Portions of this file are derived from the disabled `PreferenceApplied`

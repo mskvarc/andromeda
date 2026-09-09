@@ -131,8 +131,11 @@ async fn prefer_version_retrieve_older_version_returns_non_authoritative_with_pr
 
     let (status, headers, _) = get_entity(client, &id, "application/ld+json", Some("ngsi-ld=1.3"), "").await;
     assert_eq!(status, StatusCode::NON_AUTHORITATIVE_INFORMATION);
+    // Clause 6.3.6 names the echoed token "ngsi-ld=<conformant-version>", which clause 4.3.6.8
+    // defines as "the version of the specification the returned payload actually conforms to" --
+    // the version the body was amended down to, not the version the broker itself conforms to.
     let pref = headers.get("preference-applied").and_then(|v| v.to_str().ok());
-    assert_eq!(pref, Some("ngsi-ld=1.9"));
+    assert_eq!(pref, Some("ngsi-ld=1.3"));
     scope.finish().await.expect("cleanup failed");
 }
 
@@ -151,8 +154,9 @@ async fn prefer_version_query_older_version_returns_non_authoritative_with_prefe
     )
     .await;
     assert_eq!(status, StatusCode::NON_AUTHORITATIVE_INFORMATION);
+    // Clause 6.3.6 / clause 4.3.6.8: the echo names the version the amended collection conforms to.
     let pref = headers.get("preference-applied").and_then(|v| v.to_str().ok());
-    assert_eq!(pref, Some("ngsi-ld=1.9"));
+    assert_eq!(pref, Some("ngsi-ld=1.4"));
     scope.finish().await.expect("cleanup failed");
 }
 
@@ -180,8 +184,9 @@ async fn prefer_combined_body_json_and_version_returns_non_authoritative_without
     assert_eq!(status, StatusCode::NON_AUTHORITATIVE_INFORMATION);
     assert!(body.get("@context").is_none());
     assert!(headers.get("link").is_some());
+    // Clause 6.3.6 / clause 4.3.6.8: the echo names the version the amended body conforms to.
     let pref = headers.get("preference-applied").and_then(|v| v.to_str().ok());
-    assert_eq!(pref, Some("ngsi-ld=1.9"));
+    assert_eq!(pref, Some("ngsi-ld=1.3"));
     scope.finish().await.expect("cleanup failed");
 }
 

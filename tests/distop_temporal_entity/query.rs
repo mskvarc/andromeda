@@ -60,6 +60,13 @@ fn temporal_vehicle_entity_with_scope(id: &str, scope: &str) -> Value {
     })
 }
 
+/// A registration advertising `queryTemporal` over `Vehicle` entities.
+///
+/// Table 4.20-2 lists no temporal operation in any named operation group, so a
+/// temporal source has to advertise `queryTemporal` by name. Clause 5.9.2.4
+/// therefore bars `auxiliary` here: an auxiliary registration whose
+/// `operations` are not "retrieveOps", "retrieveEntity" or "queryEntity", or a
+/// combination thereof, is rejected with `BadRequestData`.
 fn vehicle_registration_temporal(reg_id: &str, endpoint: &str, mode: &str) -> Value {
     json!({
         "id": reg_id,
@@ -179,6 +186,11 @@ fn vehicle_registration_with_mode(reg_id: &str, entity_id: &str, endpoint: &str,
 // ---------------------------------------------------------------------------
 
 /// Temporal splitEntities with q filter: only matching entities remain after post-merge filtering.
+///
+/// The source is inclusive because clause 5.7.4.4 merges the Entity Array of an
+/// "exclusive, redirect and inclusive" source into S4, while an auxiliary source
+/// contributes only where an instance "is not already present in S4"; a
+/// remote-only Entity therefore never reaches the post-merge filters.
 #[tokio::test]
 #[serial]
 async fn distop_temporal_split_entities_q_filter_post_merge() {
@@ -200,7 +212,7 @@ async fn distop_temporal_split_entities_q_filter_post_merge() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/temporal/entities", 200, &Value::Array(vec![mock_entity]))
         .await;
 
-    let reg = vehicle_registration_temporal(&reg_id, &mock.url(""), "auxiliary");
+    let reg = vehicle_registration_temporal(&reg_id, &mock.url(""), "inclusive");
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
@@ -246,7 +258,7 @@ async fn distop_temporal_split_entities_returns_all_without_filter() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/temporal/entities", 200, &Value::Array(vec![mock_entity]))
         .await;
 
-    let reg = vehicle_registration_temporal(&reg_id, &mock.url(""), "auxiliary");
+    let reg = vehicle_registration_temporal(&reg_id, &mock.url(""), "inclusive");
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
@@ -285,7 +297,7 @@ async fn distop_temporal_split_entities_scope_filter_post_merge() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/temporal/entities", 200, &Value::Array(vec![mock_entity]))
         .await;
 
-    let reg = vehicle_registration_temporal(&reg_id, &mock.url(""), "auxiliary");
+    let reg = vehicle_registration_temporal(&reg_id, &mock.url(""), "inclusive");
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
@@ -386,8 +398,16 @@ async fn distop_temporal_query_inclusive_mode_merges_attributes() {
 
 /// Auxiliary mode supplements existing entities only, does not add new ones.
 /// Spec ref: 5.7.4.4 - auxiliary mode supplements only, does not add new entities.
+///
+/// Clause 5.7.4.4 forwards a temporal query only to sources that "support the
+/// "queryTemporal" operation", and Table 4.20-2 lists that operation in no
+/// named group. Clause 5.9.2.4 in turn rejects an auxiliary registration whose
+/// `operations` are anything but "retrieveOps", "retrieveEntity" or
+/// "queryEntity". No auxiliary source can therefore be reached by a temporal
+/// query, so this scenario is unreachable until the two clauses are reconciled.
 #[tokio::test]
 #[serial]
+#[ignore = "SPEC-CONFLICT: clause 5.9.2.4 limits auxiliary registrations to retrieveOps, retrieveEntity and queryEntity, so an auxiliary temporal source cannot be registered"]
 async fn distop_temporal_query_auxiliary_mode_supplements_only() {
     let _serialized_environment = clean_database().await;
     let c = client();
@@ -448,8 +468,13 @@ async fn distop_temporal_query_exclusive_mode_returns_remote() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:tq-exclusive");
     let reg_id = unique_id("urn:ngsi-ld:Registration:tq-exclusive");
 
-    // Create CSR in exclusive mode (no local entity)
-    let reg = vehicle_registration_with_mode(&reg_id, &entity_id, &mock.url(""), Some("exclusive"));
+    // Create CSR in exclusive mode (no local entity). Clause 4.3.6.2: "An
+    // exclusive registration shall always relate to specific Attributes found
+    // on a single Entity. Thus, the registration shall define both: An entity
+    // id [...] Attributes." - the registration names `speed` alongside the id.
+    let mut reg = vehicle_registration_with_mode(&reg_id, &entity_id, &mock.url(""), Some("exclusive"));
+    reg["information"][0]["propertyNames"] = json!(["speed"]);
+    let reg = reg;
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await.0, StatusCode::CREATED);
 
     // Mock returns temporal entity

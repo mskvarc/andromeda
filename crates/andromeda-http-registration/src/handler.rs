@@ -5,7 +5,7 @@ use crate::{
     state::{RegistrationTenantState, RegistrationTenantStateOrCreate},
 };
 use andromeda_http_extraction::{
-    accept::{AcceptFormat, AcceptFormatNoGeo},
+    accept::AcceptFormatNoGeo,
     context::ContextUrl,
     jsonld::JsonLd,
     prefer::PreferHeader,
@@ -81,7 +81,11 @@ pub(crate) async fn get(
 pub(crate) async fn query(
     ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
-    accept: AcceptFormat,
+    // Clause 6.3.4: `application/geo+json` is acceptable only on Retrieve Entity
+    // and Query Entities; every other operation answers 406. Query Context
+    // Source Registrations is clause 5.10.2, and clause 5.10.2.5 gives its
+    // output as a JSON-LD array of registrations, which has no GeoJSON form.
+    accept: AcceptFormatNoGeo,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,

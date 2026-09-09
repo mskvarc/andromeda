@@ -171,13 +171,13 @@ async fn create_from_temporal_query(
 /// GET /ngsi-ld/v1/entityMaps -- Create an entity map from query entities (section 5.14.4, section 6.34.3.1).
 pub async fn create_from_query(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
+    accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope {
         uri,
         context,
         incoming_via,
         headers,
     }: NgsiLdRequestEnvelope,
-    accept: AcceptFormatNoGeo,
     prefer: PreferHeader,
     EntityQuery(query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
@@ -206,13 +206,13 @@ pub async fn create_from_query(
 /// POST /ngsi-ld/v1/entityMaps -- Create an entity map from query body (section 5.14.4, section 6.34.3.2).
 pub async fn create_from_query_post(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
+    accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope {
         uri,
         context,
         incoming_via,
         headers,
     }: NgsiLdRequestEnvelope,
-    accept: AcceptFormatNoGeo,
     prefer: PreferHeader,
     JsonLd {
         value: body,
@@ -246,13 +246,13 @@ pub async fn create_from_query_post(
 /// GET /ngsi-ld/v1/temporal/entityMaps -- Create an entity map from temporal query (section 5.14.5, section 6.35.3.1).
 pub async fn create_temporal_from_query(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
+    accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope {
         uri,
         context,
         incoming_via,
         headers,
     }: NgsiLdRequestEnvelope,
-    accept: AcceptFormatNoGeo,
     prefer: PreferHeader,
     TemporalQuery(params): TemporalQuery,
 ) -> Result<Response, ProblemResponse> {
@@ -280,13 +280,13 @@ pub async fn create_temporal_from_query(
 /// POST /ngsi-ld/v1/temporal/entityMaps -- Create an entity map from temporal query body (section 5.14.5, section 6.35.3.2).
 pub async fn create_temporal_from_query_post(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
+    accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope {
         uri,
         context,
         incoming_via,
         headers,
     }: NgsiLdRequestEnvelope,
-    accept: AcceptFormatNoGeo,
     prefer: PreferHeader,
     JsonLd {
         value: body,

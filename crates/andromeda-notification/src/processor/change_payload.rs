@@ -7,13 +7,11 @@
 //! deletion reads what remains, and an entity deletion reads what was
 //! deleted, stamped with `deletedAt`.
 
-use crate::processor::payload::context::strip_to_structural_keys;
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::port::reader::EntityReader;
 use andromeda_ngsi_ld_lexicon::rfc3339::whole_seconds;
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -41,20 +39,24 @@ async fn current_entity(reader: &dyn EntityReader, target: &ContextTarget, event
     }
 }
 
-/// What remains of the entity after an attribute deletion: the payload or
-/// snapshot the event carries, the stored entity, or -- when the entity is
-/// gone too -- the snapshot's structural members stamped with `deletedAt`.
+/// What the notification carries for an attribute deletion: the entity as the
+/// write left it, the deleted entity stamped with `deletedAt` when the
+/// attribute went with the whole entity, or the stored entity when the event
+/// carries neither.
 async fn attribute_deletion_entity(reader: &dyn EntityReader, target: &ContextTarget, event: &ChangeEvent) -> Option<Value> {
-    if let Some(payload) = event.current_payload.as_deref().or(event.entity_snapshot.as_deref()) {
+    if let Some(payload) = event.current_payload.as_deref() {
         return Some(payload.clone()); // clone: the notification owns its document while the event stays shared
     }
-    if let Some(entity) = read_entity(reader, target, event).await {
-        return Some(entity);
+    // Clause 5.8.6: "If the notification was triggered by the deletion of an
+    // Entity ... only the deletedAt system property shall be provided." Deleting
+    // an entity raises one `AttributeDeleted` event per attribute, each carrying
+    // the pre-deletion snapshot and no post-mutation payload -- so a snapshot
+    // without a payload describes what is gone, not what remains, and is owed
+    // the same `deletedAt` the `EntityDeleted` event is.
+    if event.entity_snapshot.is_some() {
+        return Some(entity_deletion_entity(event));
     }
-    let snapshot = event.entity_snapshot.as_ref()?;
-    let mut bare = strip_to_structural_keys(&entity_node(snapshot.as_ref()), SysAttrsInclusion::Strip);
-    stamp_deleted_at(&mut bare, event.occurred_at);
-    Some(Value::Array(vec![bare]))
+    read_entity(reader, target, event).await
 }
 
 /// The deleted entity: its snapshot stamped with `deletedAt`, or, without a

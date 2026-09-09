@@ -361,9 +361,15 @@ async fn notification_ngsi_ld_null_language_property_via_partial_update_triggers
     );
 }
 
+// Clause 5.8.6: "If the notification was triggered by the deletion of an Entity
+// and the notification.showChanges member is not set to true, only the deletedAt
+// system property shall be provided." Deleting the Entity is what triggers this
+// notification, so the payload carries the entity-level `deletedAt` and none of
+// the attributes the subscription watches -- the per-attribute nullification of
+// the same clause applies to the deletion of an Attribute, not of an Entity.
 #[serial_test::serial]
 #[tokio::test]
-async fn notification_entity_deletion_with_attribute_deleted_trigger_nullifies_watched_attribute() {
+async fn notification_entity_deletion_with_attribute_deleted_trigger_carries_only_deleted_at() {
     let http_client = client();
     let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
@@ -375,9 +381,16 @@ async fn notification_entity_deletion_with_attribute_deleted_trigger_nullifies_w
 
     let _ = delete_entity(&http_client, &entity_id).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    pretty_assertions::assert_eq!(notification.body["data"][0]["name"]["value"], "urn:ngsi-ld:null");
+    let entity = &notification.body["data"][0];
+    pretty_assertions::assert_eq!(entity["id"], entity_id);
+    assert!(entity.get("deletedAt").is_some());
+    assert!(entity.get("name").is_none());
 }
 
+// Clause 5.8.6: on the deletion of an Entity "only the deletedAt system property
+// shall be provided. In case notification.sysAttrs is set to true, also createdAt
+// and modifiedAt shall be provided." All three are members of the deleted Entity,
+// not of any Attribute of it.
 #[serial_test::serial]
 #[tokio::test]
 async fn notification_entity_deletion_with_attribute_deleted_and_sys_attrs_includes_deleted_at() {
@@ -392,8 +405,12 @@ async fn notification_entity_deletion_with_attribute_deleted_and_sys_attrs_inclu
 
     let _ = delete_entity(&http_client, &entity_id).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert!(notification.body["data"][0]["name"].get("deletedAt").is_some());
-    assert!(notification.body["data"][0]["name"].get("createdAt").is_some());
+    let entity = &notification.body["data"][0];
+    pretty_assertions::assert_eq!(entity["id"], entity_id);
+    assert!(entity.get("deletedAt").is_some());
+    assert!(entity.get("createdAt").is_some());
+    assert!(entity.get("modifiedAt").is_some());
+    assert!(entity.get("name").is_none());
 }
 
 #[serial_test::serial]

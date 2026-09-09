@@ -9,6 +9,7 @@
 use crate::{
     error::RegistrationError,
     geometry::unwrap_geo_property_to_geometry,
+    mode_rules::default_operations,
     nullable_member::NullableMember,
     store::{CreateCsrParams, CsrUpdateFragment},
 };
@@ -106,18 +107,17 @@ fn reject_empty_information(information: &[RegistrationInfo]) -> Result<(), Regi
     Ok(())
 }
 
-/// Clause 4.20: `federationOps` is the effective operation set when the
-/// registration omits an explicit subset. The effective value is what gets
-/// stored, so retrieval and routing read the same thing.
-fn effective_operations(operations: Option<Vec<CsrOperation>>) -> Vec<CsrOperation> {
-    operations.unwrap_or_else(|| vec![CsrOperation::FederationOps])
-}
-
 pub(super) fn extract_create_params(payload: &Value) -> Result<CreateCsrParams, RegistrationError> {
     // Table 5.2.9-1 gives `type`, `endpoint` and `information` cardinality 1.
     let _: ContextSourceRegistrationType = deserialize_required(payload, "type")?;
     let information = deserialize_required::<Vec<RegistrationInfo>>(payload, "information")?;
     reject_empty_information(&information)?;
+    // Table 5.2.9-1: absent `mode` is `inclusive`. The mode is read before
+    // `operations` because it decides which default set applies to it.
+    let mode = deserialize_member::<ForwardingMode>(payload, "mode")?.unwrap_or_default();
+    // The effective value is what gets stored, so retrieval and routing read
+    // the same thing the admission check saw.
+    let operations = deserialize_member::<Vec<CsrOperation>>(payload, "operations")?.unwrap_or_else(|| default_operations(mode).to_vec());
     Ok(CreateCsrParams {
         registration_name: deserialize_member::<NonEmptyText>(payload, "registrationName")?,
         description: deserialize_member::<NonEmptyText>(payload, "description")?,
@@ -132,8 +132,8 @@ pub(super) fn extract_create_params(payload: &Value) -> Result<CreateCsrParams, 
         expires_at: payload.get("expiresAt").map(|value| parse_datetime(value, "expiresAt")).transpose()?,
         endpoint: deserialize_required::<Url>(payload, "endpoint")?,
         accept: deserialize_member::<MediaTypeBuf>(payload, "accept")?,
-        mode: deserialize_member::<ForwardingMode>(payload, "mode")?.unwrap_or_default(),
-        operations: effective_operations(deserialize_member::<Vec<CsrOperation>>(payload, "operations")?),
+        mode,
+        operations,
         scope: deserialize_member(payload, "scope")?,
         refresh_rate: payload.get("refreshRate").map(|value| parse_duration_value(value, "refreshRate")).transpose()?,
         management: deserialize_member::<RegistrationManagementInfo>(payload, "management")?,

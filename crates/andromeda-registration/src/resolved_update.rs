@@ -5,7 +5,7 @@
 //! produced [`ResolvedCsrUpdate`](crate::resolved_update::ResolvedCsrUpdate) as
 //! an unconditional UPDATE.
 
-use crate::{error::RegistrationError, nullable_member::NullableMember, store::CsrUpdateFragment};
+use crate::{error::RegistrationError, mode_rules::default_operations, nullable_member::NullableMember, store::CsrUpdateFragment};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, non_empty_text::NonEmptyText, scope::grammar::ScopeBuf, tenant::TenantName};
 use andromeda_ngsi_ld_model::{
@@ -118,12 +118,12 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
     let endpoint = fragment.endpoint.clone().unwrap_or(existing.access.endpoint); // clone: own the borrowed update fragment when it supplied the URL.
     let accept = fragment.accept.resolve(existing.access.accept);
     let mode = fragment.mode.unwrap_or_else(|| existing.access.mode.unwrap_or_default());
-    // Clause 4.20: `federationOps` is the effective set whenever the
-    // registration, after the merge, names no explicit subset.
+    // Clause 4.20: the merged registration falls back to its mode's default set
+    // whenever it names no explicit subset.
     let operations = fragment
         .operations
         .resolve(existing.access.operations)
-        .unwrap_or_else(|| vec![CsrOperation::FederationOps]);
+        .unwrap_or_else(|| default_operations(mode).to_vec());
     let scope = fragment.scope.resolve(existing.coverage.scope);
     let refresh_rate = fragment.refresh_rate.resolve(existing.access.refresh_rate);
     let management = fragment.management.resolve(existing.access.management);

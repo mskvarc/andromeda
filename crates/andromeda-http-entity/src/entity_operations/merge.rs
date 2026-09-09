@@ -35,10 +35,10 @@ pub(crate) async fn batch_merge(
         target,
         snapshot: _,
     }: EntityTenantState,
+    _accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope {
         uri, context, incoming_via, ..
     }: NgsiLdRequestEnvelope,
-    _accept: AcceptFormatNoGeo,
     prefer: PreferHeader,
     BatchBody { headers, body }: BatchBody,
 ) -> Result<Response, ProblemResponse> {

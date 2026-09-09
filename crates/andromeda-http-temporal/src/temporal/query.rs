@@ -74,13 +74,13 @@ pub async fn query(
         target,
         snapshot: _,
     }: TenantState,
+    accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope {
         uri,
         context,
         incoming_via,
         headers,
     }: NgsiLdRequestEnvelope,
-    accept: AcceptFormatNoGeo,
     protocol: NgsiLdProtocolHeaders,
     ValidatedQuery(mut params): ValidatedQuery<TemporalQueryParameters>,
 ) -> Result<Response, ProblemResponse> {

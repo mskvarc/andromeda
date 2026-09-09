@@ -28,7 +28,10 @@ use crate::entity::{
     reject_unknown_attribute_types,
     strip_attributes_from_value,
 };
-use andromeda_federation::request::TriggeringRequest;
+use andromeda_federation::{
+    outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
+    request::TriggeringRequest,
+};
 use andromeda_http_extraction::context_target;
 use axum::http::Method;
 
@@ -96,16 +99,7 @@ pub(crate) async fn append_attrs(
             .await
             .with_entity_instance(&uri)?;
 
-        if not_appended.is_empty() {
-            return Ok(StatusCode::NO_CONTENT.into_response());
-        }
-        let updated: Vec<&AttributeName> = all_attrs.iter().filter(|attribute| !not_appended.contains(attribute)).collect();
-        let not_updated_details: Vec<serde_json::Value> = not_appended
-            .iter()
-            .map(|attr| serde_json::json!({ "attributeName": attr, "reason": "Already exists" }))
-            .collect();
-        let body = serde_json::json!({ "updated": updated, "notUpdated": not_updated_details });
-        return Ok((StatusCode::MULTI_STATUS, Json(body)).into_response());
+        return Ok(append_outcome_response(&all_attrs, &not_appended, Vec::new(), ForwardedCompleteness::Complete));
     }
 
     // Clause 5.6.3.4: the attributes proxied registrations cover leave the
@@ -113,13 +107,118 @@ pub(crate) async fn append_attrs(
     let proxied = collect_proxied_attrs(&forwarded);
     let mut local_fragment = fragment;
     strip_attributes_from_value(&mut local_fragment, &proxied);
-    let local = if local_fragment.as_object().is_some_and(serde_json::Map::is_empty) {
-        LocalOutcome::NothingRemained
+    let local_append = if local_fragment.as_object().is_some_and(serde_json::Map::is_empty) {
+        None
     } else {
-        LocalOutcome::processed(
-            service.append_attrs(&target, &id, local_fragment, overwrite, &context).await,
-            classify_entity_error,
-        )
+        Some(service.append_attrs(&target, &id, local_fragment, overwrite, &context).await)
+    };
+    // Clause 5.6.3.5: the status says "whether all the new Attributes were
+    // appended or only some of them", and Table 6.6.3.1-2 reserves 204 for
+    // "all the Attributes were appended successfully". Two things make it "only
+    // some" without anything having failed: an attribute the local part refused
+    // under `noOverwrite`, and a context source that answered 207 for the part
+    // forwarded to it. Neither survives the flattening below -- `LocalOutcome`
+    // keeps only success or failure, and a 207 is a success to
+    // `ForwardedWriteResult::is_failure` -- so both are answered here first.
+    let (local_appended, local_not_appended) = match &local_append {
+        Some(Ok((all_attrs, not_appended))) => (all_attrs.as_slice(), not_appended.as_slice()),
+        Some(Err(_)) | None => (&[][..], &[][..]),
+    };
+    let forwarded_completeness = forwarded_completeness(&forwarded);
+    let partly_appended = !local_not_appended.is_empty() || forwarded_completeness == ForwardedCompleteness::Partial;
+    if partly_appended && !forwarded.iter().any(ForwardedWriteResult::is_failure) {
+        let remote_not_appended = forwarded_not_appended(&forwarded);
+        return Ok(append_outcome_response(
+            local_appended,
+            local_not_appended,
+            remote_not_appended,
+            forwarded_completeness,
+        ));
+    }
+    let local = match local_append {
+        None => LocalOutcome::NothingRemained,
+        Some(result) => LocalOutcome::processed(result, classify_entity_error),
     };
     provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
+}
+
+/// The clause 5.6.3.5 answer to an append: 204 when every attribute landed,
+/// and otherwise the clause 5.2.18 `UpdateResult` naming what did and did not.
+///
+/// Table 6.6.3.1-2 pairs the two: 204 "All the Attributes were appended
+/// successfully", 207 "Only the Attributes included in the response payload
+/// body were successfully appended".
+fn append_outcome_response(
+    all_attrs: &[AttributeName],
+    not_appended: &[AttributeName],
+    remote_not_appended: Vec<Value>,
+    forwarded: ForwardedCompleteness,
+) -> Response {
+    if not_appended.is_empty() && forwarded == ForwardedCompleteness::Complete {
+        return StatusCode::NO_CONTENT.into_response();
+    }
+    let updated: Vec<&AttributeName> = all_attrs.iter().filter(|attribute| !not_appended.contains(attribute)).collect();
+    let mut not_updated_details: Vec<Value> = not_appended
+        .iter()
+        .map(|attribute| serde_json::json!({ "attributeName": attribute, "reason": "Already exists" }))
+        .collect();
+    not_updated_details.extend(remote_not_appended);
+    let body = serde_json::json!({ "updated": updated, "notUpdated": not_updated_details });
+    (StatusCode::MULTI_STATUS, Json(body)).into_response()
+}
+
+/// Whether the forwarded parts of an append each landed in full.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ForwardedCompleteness {
+    /// Every contacted source appended everything it was sent.
+    Complete,
+    /// At least one source answered that it appended only part of it.
+    Partial,
+}
+
+/// Read the sources' own verdict on whether they appended everything.
+///
+/// Table 6.6.3.1-2 makes 207 exactly the statement "only the Attributes
+/// included in the response payload body were successfully appended", so the
+/// status decides this even when a source omits the `UpdateResult` body the
+/// table pairs with it. What must not happen either way is relaying that as
+/// 204, which asserts the opposite.
+fn forwarded_completeness(forwarded: &[ForwardedWriteResult]) -> ForwardedCompleteness {
+    let partial = forwarded.iter().any(|result| match &result.outcome {
+        ForwardedWriteOutcome::Completed { status, .. } => *status == StatusCode::MULTI_STATUS.as_u16(),
+        ForwardedWriteOutcome::RemoteHttpFailure { .. }
+        | ForwardedWriteOutcome::Transport(_)
+        | ForwardedWriteOutcome::LoopDetected
+        | ForwardedWriteOutcome::NotAdvertised
+        | ForwardedWriteOutcome::UpsertFollowUpNotAdvertised => false,
+    });
+    if partial {
+        ForwardedCompleteness::Partial
+    } else {
+        ForwardedCompleteness::Complete
+    }
+}
+
+/// The `notUpdated` entries the forwarded context sources reported.
+///
+/// Table 6.6.3.1-2 gives a context source's own 207 the same clause 5.2.18
+/// `UpdateResult` body this operation answers with, so a source that appended
+/// only part of what it was sent names the part it refused. Those entries
+/// belong in this broker's answer: relaying a source's "only some" as 204 would
+/// assert the opposite of what the source said.
+fn forwarded_not_appended(forwarded: &[ForwardedWriteResult]) -> Vec<Value> {
+    forwarded
+        .iter()
+        .filter_map(|result| match &result.outcome {
+            ForwardedWriteOutcome::Completed { status, body } if *status == StatusCode::MULTI_STATUS.as_u16() => body.as_ref(),
+            ForwardedWriteOutcome::Completed { .. }
+            | ForwardedWriteOutcome::RemoteHttpFailure { .. }
+            | ForwardedWriteOutcome::Transport(_)
+            | ForwardedWriteOutcome::LoopDetected
+            | ForwardedWriteOutcome::NotAdvertised
+            | ForwardedWriteOutcome::UpsertFollowUpNotAdvertised => None,
+        })
+        .filter_map(|body| body.get("notUpdated").and_then(Value::as_array))
+        .flat_map(|entries| entries.iter().cloned()) // clone: the answer owns the entries the forwarded bodies still hold
+        .collect()
 }

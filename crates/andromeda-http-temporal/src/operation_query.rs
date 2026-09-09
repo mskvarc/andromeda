@@ -31,13 +31,13 @@ pub async fn query(
         target,
         snapshot: _,
     }: TemporalTenantState,
+    accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope {
         uri,
         context,
         incoming_via,
         headers,
     }: NgsiLdRequestEnvelope,
-    accept: AcceptFormatNoGeo,
     JsonLd {
         value: request,
         context: body_context,

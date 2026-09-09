@@ -739,13 +739,17 @@ async fn distop_entity_map_includes_forwarded_entity_ids() {
         .expect("get entity map failed");
     let map_body: Value = resp.json().await.unwrap_or_default();
 
-    // EntityMap should contain both local and remote IDs
-    let ids = map_body["ids"].as_array().expect("ids should be an array");
-    let id_strings: Vec<&str> = ids.iter().filter_map(Value::as_str).collect();
-    assert!(id_strings.contains(&local_id.as_str()), "EntityMap should contain local entity ID");
+    // Table 5.2.39-2: the entity ids of a map are the keys of its `entityMap`
+    // index map, whose values name the sources holding each entity. The
+    // representation has no `ids` member.
+    let entity_map = map_body["entityMap"].as_object().expect("entityMap should be an object");
     assert!(
-        id_strings.contains(&remote_id.as_str()),
-        "EntityMap should contain remote (forwarded) entity ID"
+        entity_map.contains_key(local_id.as_str()),
+        "EntityMap should contain local entity ID: {map_body}"
+    );
+    assert!(
+        entity_map.contains_key(remote_id.as_str()),
+        "EntityMap should contain remote (forwarded) entity ID: {map_body}"
     );
 
     delete_entity(&c, &local_id).await;
@@ -791,10 +795,13 @@ async fn distop_entity_map_local_true_excludes_remote() {
         .expect("get entity map failed");
     let map_body: Value = resp.json().await.unwrap_or_default();
 
-    let ids = map_body["ids"].as_array().expect("ids should be an array");
-    let id_strings: Vec<&str> = ids.iter().filter_map(Value::as_str).collect();
-    assert!(id_strings.contains(&local_id.as_str()), "should contain local ID");
-    assert!(!id_strings.contains(&remote_id.as_str()), "should NOT contain remote ID when local=true");
+    // Table 5.2.39-2: entity ids are the keys of the `entityMap` index map.
+    let entity_map = map_body["entityMap"].as_object().expect("entityMap should be an object");
+    assert!(entity_map.contains_key(local_id.as_str()), "should contain local ID: {map_body}");
+    assert!(
+        !entity_map.contains_key(remote_id.as_str()),
+        "should NOT contain remote ID when local=true: {map_body}"
+    );
 
     delete_entity(&c, &local_id).await;
     delete_registration(&c, &reg_id).await;
@@ -826,7 +833,11 @@ async fn distop_entity_split_entities_q_filter_post_merge() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &Value::Array(vec![mock_entity]))
         .await;
 
-    let reg = vehicle_registration(&reg_id, None, &mock.url(""), Some("auxiliary"));
+    // Clause 5.7.2.4 merges the Entity Arrays of exclusive, redirect and
+    // inclusive sources with the local result; an auxiliary source only
+    // supplements entities already present, so an inclusive (default) mode is
+    // what puts a remote-only entity into the aggregate the filters run over.
+    let reg = vehicle_registration(&reg_id, None, &mock.url(""), None);
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
@@ -872,7 +883,11 @@ async fn distop_entity_split_entities_returns_all_without_filter() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &Value::Array(vec![mock_entity]))
         .await;
 
-    let reg = vehicle_registration(&reg_id, None, &mock.url(""), Some("auxiliary"));
+    // Clause 5.7.2.4 merges the Entity Arrays of exclusive, redirect and
+    // inclusive sources with the local result; an auxiliary source only
+    // supplements entities already present, so an inclusive (default) mode is
+    // what puts a remote-only entity into the aggregate the filters run over.
+    let reg = vehicle_registration(&reg_id, None, &mock.url(""), None);
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
@@ -912,7 +927,11 @@ async fn distop_entity_split_entities_scope_filter_post_merge() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &Value::Array(vec![mock_entity]))
         .await;
 
-    let reg = vehicle_registration(&reg_id, None, &mock.url(""), Some("auxiliary"));
+    // Clause 5.7.2.4 merges the Entity Arrays of exclusive, redirect and
+    // inclusive sources with the local result; an auxiliary source only
+    // supplements entities already present, so an inclusive (default) mode is
+    // what puts a remote-only entity into the aggregate the filters run over.
+    let reg = vehicle_registration(&reg_id, None, &mock.url(""), None);
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 

@@ -36,13 +36,13 @@ pub async fn query(
         target,
         snapshot,
     }: EntityTenantState,
+    accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope {
         uri,
         context,
         incoming_via,
         headers,
     }: NgsiLdRequestEnvelope,
-    accept: AcceptFormatNoGeo,
     ValidatedQuery(params): ValidatedQuery<DiscoveryListParams>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entity_discovery;
@@ -146,13 +146,13 @@ pub async fn get(
         target,
         snapshot,
     }: EntityTenantState,
+    accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope {
         uri,
         context,
         incoming_via,
         headers,
     }: NgsiLdRequestEnvelope,
-    accept: AcceptFormatNoGeo,
     TypedPath(type_): TypedPath<EntityTypeName>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
 ) -> Result<Response, ProblemResponse> {

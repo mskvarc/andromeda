@@ -38,6 +38,7 @@ use crate::{
         vehicle_entity_second,
         vehicle_entity_second_ld,
         vehicle_entity_speed_only,
+        vehicle_registration,
         vehicle_registration_redirection_ops,
         vehicle_registration_speed_default_ops,
         vehicle_registration_speed_redirection_ops,
@@ -275,10 +276,18 @@ async fn distop_entity_create_existing_locally_returns_207() {
     mock.shutdown().await;
 }
 
-/// Create entity already existing on both returns 207.
+/// Create entity that already exists both locally and at the registered
+/// context source returns 409 `AlreadyExists`.
+///
+/// Clause 5.6.1.4: "If the Entity already exists locally this shall result in
+/// an error of type `AlreadyExists`, if the complete Create Entity operation has
+/// failed or in a partial success if some parts of it has succeeded." No part
+/// succeeds here -- the local entity exists and the only matching source also
+/// answers 409 -- so the complete operation failed and the error is raised
+/// instead of a 207 Multi-Status.
 #[tokio::test]
 #[serial]
-async fn distop_entity_create_existing_on_both_returns_207() {
+async fn distop_entity_create_existing_on_both_returns_409() {
     let _serialized_environment = clean_database().await;
     let c = client();
     let mock = MockServer::start().await;
@@ -298,7 +307,7 @@ async fn distop_entity_create_existing_on_both_returns_207() {
     // Remote also returns conflict
     mock.set_stub(Method::POST, "/ngsi-ld/v1/entities", 409).await;
 
-    // Create same entity again -> 207 (both conflict)
+    // Create same entity again -> 409, the complete create having failed
     let entity = vehicle_entity(&entity_id);
     let resp = c
         .post(format!("{BASE_URL}/entities"))
@@ -307,11 +316,16 @@ async fn distop_entity_create_existing_on_both_returns_207() {
         .send()
         .await
         .expect("request failed");
-    pretty_assertions::assert_eq!(resp.status(), StatusCode::MULTI_STATUS);
+    pretty_assertions::assert_eq!(resp.status(), StatusCode::CONFLICT);
 
     let body: Value = resp.json().await.unwrap();
-    let errors = body["errors"].as_array().unwrap();
-    assert!(errors.iter().any(|e| e["error"]["status"] == 409));
+    assert!(
+        body["type"].as_str().unwrap_or_default().contains("AlreadyExists"),
+        "the complete create failed, so AlreadyExists is raised: {body}"
+    );
+
+    // The create was still forwarded to the matching inclusive registration.
+    assert!(mock.get_count(Method::POST, "/ngsi-ld/v1/entities") > 0);
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
@@ -917,8 +931,10 @@ async fn distop_entity_create_auxiliary_creates_locally_only() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:create-aux");
     let reg_id = unique_id("urn:ngsi-ld:Registration:create-aux");
 
-    // Auxiliary registration - should not forward provision operations
-    let reg = vehicle_registration_redirection_ops(&reg_id, Some(&entity_id), &mock.url(""), Some("auxiliary"));
+    // Clause 5.9.2.4: an auxiliary registration whose operations are not
+    // retrieveOps, retrieveEntity or queryEntity is rejected with
+    // BadRequestData, so the source is registered with the default operations.
+    let reg = vehicle_registration(&reg_id, Some(&entity_id), &mock.url(""), Some("auxiliary"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
@@ -951,7 +967,10 @@ async fn distop_entity_delete_auxiliary_deletes_locally_only() {
     let (status, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    let reg = vehicle_registration_redirection_ops(&reg_id, Some(&entity_id), &mock.url(""), Some("auxiliary"));
+    // Clause 5.9.2.4: an auxiliary registration whose operations are not
+    // retrieveOps, retrieveEntity or queryEntity is rejected with
+    // BadRequestData, so the source is registered with the default operations.
+    let reg = vehicle_registration(&reg_id, Some(&entity_id), &mock.url(""), Some("auxiliary"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 

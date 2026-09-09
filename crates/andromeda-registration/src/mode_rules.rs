@@ -22,6 +22,25 @@ use iri_rs::IriBuf;
 /// The operations clause 5.9.2.4 admits on an auxiliary registration.
 const AUXILIARY_OPERATIONS: [CsrOperation; 3] = [CsrOperation::RetrieveOps, CsrOperation::RetrieveEntity, CsrOperation::QueryEntity];
 
+/// The effective operation set of a registration that names no explicit subset.
+///
+/// Clause 4.20 makes `federationOps` the default, and Table 5.2.9-1 repeats it.
+/// That group reaches well beyond the consumption operations clause 4.3.6.2
+/// confines an auxiliary Context Source to, and clause 5.9.2.4 refuses an
+/// auxiliary registration whose `operations` leave `retrieveOps`,
+/// `retrieveEntity` and `queryEntity`. Handing the general default to an
+/// auxiliary registration would therefore make every one of them unregistrable,
+/// against clause 4.3.6.2's "Auxiliary Context Source Registrations are always
+/// accepted as there can never be a conflict". The default narrows instead to
+/// `retrieveOps` -- the widest group the auxiliary restriction admits, and a
+/// subset of `federationOps`, so nothing outside auxiliary mode moves.
+pub(super) const fn default_operations(mode: ForwardingMode) -> [CsrOperation; 1] {
+    match mode {
+        ForwardingMode::Auxiliary => [CsrOperation::RetrieveOps],
+        ForwardingMode::Inclusive | ForwardingMode::Exclusive | ForwardingMode::Redirect => [CsrOperation::FederationOps],
+    }
+}
+
 /// The mode-dependent shape rules that need nothing beyond the registration.
 pub(super) fn validate_structure(mode: ForwardingMode, information: &[RegistrationInfo], operations: &[CsrOperation]) -> Result<(), RegistrationError> {
     match mode {
@@ -199,7 +218,7 @@ mod tests {
         error::RegistrationError,
         fixed_probe::FixedProbe,
         fixed_store::{FixedStore, registration},
-        mode_rules::{check_conflicts, validate_structure},
+        mode_rules::{check_conflicts, default_operations, validate_structure},
     };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_model::registration::{CsrOperation, ForwardingMode, RegistrationInfo};
@@ -247,6 +266,23 @@ mod tests {
             Err(RegistrationError::Validation { .. })
         ));
         assert!(validate_structure(ForwardingMode::Auxiliary, &[entry], &[CsrOperation::RetrieveEntity, CsrOperation::QueryEntity]).is_ok());
+    }
+
+    #[test]
+    fn the_default_operation_set_of_an_auxiliary_registration_survives_its_own_admission_rule() {
+        let entry = info(json!({"entities": [{"type": VEHICLE}]}));
+        // Clause 4.3.6.2 promises an auxiliary registration is always accepted;
+        // it can only keep that promise if its default set is one clause
+        // 5.9.2.4 admits.
+        assert_eq!(default_operations(ForwardingMode::Auxiliary), [CsrOperation::RetrieveOps]);
+        assert!(validate_structure(ForwardingMode::Auxiliary, &[entry], &default_operations(ForwardingMode::Auxiliary)).is_ok());
+    }
+
+    #[test]
+    fn every_other_mode_keeps_the_clause_4_20_default_operation_set() {
+        for mode in [ForwardingMode::Inclusive, ForwardingMode::Exclusive, ForwardingMode::Redirect] {
+            assert_eq!(default_operations(mode), [CsrOperation::FederationOps], "{mode} must default to federationOps");
+        }
     }
 
     #[test]
