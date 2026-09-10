@@ -12,6 +12,7 @@ use crate::{
     error::TemporalStoreError,
     history_row_decode::decode_history_row,
     repo::TemporalRepository,
+    scope_history_read::decode_scope_history,
     stored_attribute_shape::StoredAttributeShape,
     temporal_query_execution::TemporalStatement,
 };
@@ -28,6 +29,7 @@ use andromeda_postgresql_temporal_query::{
     aggregation_group::ensure_uniform_aggregation_groups,
     history::build_temporal_history_query,
     recorded_shape::RecordedShape,
+    scope_history::{build_scope_history_query, scope_is_selected},
     stage1::build_stage1_entity_ids,
 };
 use andromeda_temporal::{
@@ -38,6 +40,7 @@ use andromeda_temporal::{
         HistoryVisibility,
         RecordedAttributeShape,
         RecordedValueKind,
+        TemporalHistoryObservation,
         TemporalHistoryOutcome,
         TemporalHistoryReader,
         TemporalReaderCapabilities,
@@ -79,6 +82,34 @@ const fn neutral_attribute_shape(stored: StoredAttributeShape) -> RecordedAttrib
     RecordedAttributeShape {
         family: attribute_type_of(stored.kind),
         value_kind: recorded_value_kind(stored.shape),
+    }
+}
+
+impl TemporalRepository {
+    /// Read the reified temporal scope of one entity over the compiled window.
+    ///
+    /// Clause 4.18 makes the Scope "a special scope Property that is
+    /// non-reified in the normalized Entity representation and reified in the
+    /// temporal representation of an Entity", and Table 6.18.3.2-1 lets a
+    /// request narrow to it through `attrs` — which annex C clause C.5.16 does
+    /// with `attrs=speed,scope`. An `attrs` that names other members alone
+    /// therefore skips the read entirely rather than reading rows the response
+    /// would drop.
+    async fn read_scope_history(
+        &self,
+        target: &ContextTarget,
+        entity_id: &Uri,
+        compiled: &CompiledTemporalQuery,
+    ) -> Result<Vec<TemporalHistoryObservation>, TemporalError> {
+        if !scope_is_selected(compiled) {
+            return Ok(Vec::new());
+        }
+        let statement = build_scope_history_query(target.key(), entity_id, compiled);
+        let pg_rows = self
+            .execute_temporal_query(TemporalStatement::ScopeHistory, statement)
+            .await
+            .map_err(|e| TemporalStoreError::Query(e.to_string()))?;
+        decode_scope_history(&pg_rows).map_err(TemporalError::from)
     }
 }
 
@@ -204,12 +235,18 @@ impl TemporalHistoryReader for TemporalRepository {
             .await
             .map_err(|e| TemporalStoreError::Query(e.to_string()))?;
 
-        let mut rows = Vec::with_capacity(pg_rows.len());
+        // Clause 4.18 reifies the Scope in the temporal representation, and it
+        // is stored apart from attribute history because clause 4.5.4 gives it
+        // no attribute stream, so the representation is assembled from two
+        // reads. The scope leads, which is the order annex C clause C.5.16
+        // renders it in.
+        let mut observations = self.read_scope_history(target, entity_id, compiled).await?;
+        observations.reserve(pg_rows.len());
         for pg_row in &pg_rows {
-            rows.push(decode_history_row(pg_row).map_err(TemporalError::from)?);
+            observations.push(decode_history_row(pg_row).map_err(TemporalError::from)?);
         }
 
-        Ok(TemporalHistoryOutcome { observations: rows })
+        Ok(TemporalHistoryOutcome { observations })
     }
 
     async fn query_entity_aggregation(

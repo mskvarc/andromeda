@@ -23,7 +23,13 @@ const VALUE_KEYWORD: &str = "@value";
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum UnitCodeMetadataError {
     /// The expanded member was not a single `@value` string entry.
-    #[error("the expanded unitCode member is not a single string @value entry")]
+    ///
+    /// Clause 4.5.2.2 makes `unitCode` "a string representing the measurement
+    /// unit", so the only well-formed expansion is one plain string node. The
+    /// message names what the client wrote rather than the storage shape it
+    /// failed to match, because this refusal reaches the client as the detail
+    /// of a `BadRequestData` problem.
+    #[error("'unitCode' shall be a single string holding a UN/CEFACT common code, not a reified attribute or a repeated member")]
     Malformed,
     /// The code is not one the catalog has an identity for.
     #[error("'{code}' is not a UN/CEFACT common code the unit catalog registers")]

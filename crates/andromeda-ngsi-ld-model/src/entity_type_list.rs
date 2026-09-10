@@ -3,7 +3,6 @@
 use crate::attribute_list::AttributeDetail;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, entity_type_name::EntityTypeName, ngsi_ld_urn::EntityTypeListId};
 use iri_rs::IriBuf;
-use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 
@@ -14,23 +13,16 @@ constant_string!(EntityTypeInfoType, "EntityTypeInfo");
 /// NGSI-LD `EntityTypeList` representation (ETSI GS CIM 009 clause 5.2.24).
 ///
 /// Lists all entity types known to the broker.
-#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(
-    type = "ngsi:EntityTypeList",
-    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
-)]
 pub struct EntityTypeList {
     /// Generated identifier of this list resource.
-    #[jsonld(id)]
     pub id: EntityTypeListId,
     /// Fixed `EntityTypeList` discriminator.
     #[serde(rename = "type")]
-    #[jsonld(skip)]
     pub type_: EntityTypeListType,
     /// Names of every entity type the broker holds, compacted against the
     /// request's context where one applies.
-    #[jsonld(property = "ngsi:typeList", coerce = "@id", vec)]
     pub type_list: Vec<EntityTypeName>,
 }
 
@@ -38,25 +30,20 @@ pub struct EntityTypeList {
 ///
 /// Provides the type name and all attribute names associated with entities
 /// of this type.
-#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(
-    type = "ngsi:EntityType",
-    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
-)]
 pub struct EntityType {
-    /// Expanded IRI of the entity type.
-    #[jsonld(id)]
+    /// The URI that identifies the entity type (clause 4.5.11).
+    ///
+    /// Table 5.2.25-1 restricts the member to the "Fully Qualified Name (FQN)
+    /// of the entity type being described", so it is never shortened.
     pub id: IriBuf,
     /// Fixed `EntityType` discriminator.
     #[serde(rename = "type")]
-    #[jsonld(skip)]
     pub type_: EntityTypeType,
     /// Compacted name of the entity type.
-    #[jsonld(property = "ngsi:typeName", coerce = "@id")]
     pub type_name: EntityTypeName,
     /// Names of every attribute seen on entities of this type.
-    #[jsonld(property = "ngsi:attributeNames", coerce = "@id", vec)]
     pub attribute_names: Vec<AttributeName>,
 }
 
@@ -64,29 +51,23 @@ pub struct EntityType {
 ///
 /// Provides the type name, entity count, and details of all attributes
 /// associated with entities of this type.
-#[derive(Debug, Clone, Serialize, Deserialize, Expandable, TypedBuilder)]
+#[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(
-    type = "ngsi:EntityTypeInfo",
-    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
-)]
 pub struct EntityTypeInfo {
-    /// Expanded IRI of the entity type.
-    #[jsonld(id)]
+    /// The URI that identifies the entity type (clause 4.5.12).
+    ///
+    /// Table 5.2.26-1 restricts the member to the "Fully Qualified Name (FQN)
+    /// of the entity type being described", so it is never shortened.
     pub id: IriBuf,
     /// Fixed `EntityTypeInfo` discriminator.
     #[serde(rename = "type")]
-    #[jsonld(skip)]
     #[builder(default = Default::default())]
     pub type_: EntityTypeInfoType,
     /// Compacted name of the entity type.
-    #[jsonld(property = "ngsi:typeName", coerce = "@id")]
     pub type_name: EntityTypeName,
     /// Number of entities currently held for this type.
-    #[jsonld(property = "ngsi:entityCount")]
     pub entity_count: i64,
     /// One record per attribute seen on entities of this type.
-    #[jsonld(property = "ngsi:attributeDetails", nested, vec)]
     #[builder(default = Default::default())]
     pub attribute_details: Vec<AttributeDetail>,
 }

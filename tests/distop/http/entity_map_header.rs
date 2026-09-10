@@ -7,7 +7,7 @@ use crate::{
     context_source_adapter::ContextSourceAdapter,
     entity::vehicle,
     http::forwarding::{FORWARDED_ENTITIES_PATH, context_link, context_link_header, retrieval_source},
-    oracle::{assert_status, entity_map_header},
+    oracle::{assert_status, entity_map_header, json_body},
     topology::{self, BrokerRole},
 };
 use reqwest::Method;
@@ -100,46 +100,82 @@ async fn dist_http_query_with_entity_map_request_header_uses_named_map() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A purge accepts the `NGSILD-EntityMap` request header (clause 6.3.15).
-/// Confirms REQ-HTTP-60.
+/// A purge under an `NGSILD-EntityMap` request header determines its entity set
+/// from the map and returns the map's location (Table 6.4.3.3-2: "If present,
+/// the `EntityMap` supplied is used for determining the set of Entities requested
+/// during the purge operation. The location of the `EntityMap` used in the purge
+/// operation is returned in the response"). Confirms REQ-HTTP-60.
 #[tokio::test]
 async fn dist_http_purge_supports_entity_map_request_header() {
     let topology = topology::single().await.expect("single-broker topology");
-    let entity_id = topology.id("Vehicle:map-purge");
+    let mapped_id = topology.id("Vehicle:map-purge-mapped");
+    let unmapped_id = topology.id("Vehicle:map-purge-unmapped");
     let reg_id = topology.id("registration:map-purge");
     let mock = ContextSourceAdapter::start().await;
+    let broker = topology.broker(BrokerRole::A).expect("topology broker A");
 
     assert_status(
-        &topology
-            .broker(BrokerRole::A)
-            .expect("topology broker A")
+        &broker
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &mapped_id, "inclusive"))
             .await
             .expect("register source"),
         201,
     );
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
-    let map = topology
-        .broker(BrokerRole::A)
-        .expect("topology broker A")
+    for id in [&mapped_id, &unmapped_id] {
+        assert_status(
+            &broker.client().post_entity(&vehicle(id, 5)).with_ld_json().send().await.expect("local create"),
+            201,
+        );
+    }
+
+    // The map fixes one of the two vehicles, so a purge held to it must leave
+    // the other alone even though the purge's own query matches both.
+    let map = broker
         .client()
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", Some(context_link()))
+        .query_entities(
+            &format!("type=Vehicle&id={}&entityMap=true", urlencoding::encode(&mapped_id)),
+            "application/ld+json",
+            Some(context_link()),
+        )
         .await
         .expect("entity-map query");
     let map_id = entity_map_header(&map).unwrap_or_else(|| panic!("query yields an entity map"));
 
-    let response = topology
-        .broker(BrokerRole::A)
-        .expect("topology broker A")
+    let both = format!("{},{}", urlencoding::encode(&mapped_id), urlencoding::encode(&unmapped_id));
+    let response = broker
         .client()
-        .raw(Method::DELETE, "/ngsi-ld/v1/entities?type=Vehicle")
+        .raw(Method::DELETE, &format!("/ngsi-ld/v1/entities?type=Vehicle&id={both}"))
         .header("link", context_link_header())
         .header("ngsild-entitymap", map_id.as_str())
         .send()
         .await
         .expect("purge with entity-map header");
     assert_status(&response, 204);
+    assert_eq!(
+        entity_map_header(&response).as_deref(),
+        Some(map_id.as_str()),
+        "the purge answers with the location of the EntityMap it used"
+    );
+
+    let survivors = broker
+        .client()
+        .query_entities(&format!("type=Vehicle&id={both}&local=true"), "application/ld+json", Some(context_link()))
+        .await
+        .expect("survivor query");
+    assert_status(&survivors, 200);
+    let surviving_ids: Vec<String> = json_body(&survivors)
+        .as_array()
+        .unwrap_or_else(|| panic!("entity query returns an array"))
+        .iter()
+        .filter_map(|entity| entity["id"].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(
+        surviving_ids,
+        vec![unmapped_id],
+        "only the entity the EntityMap listed is purged, got {surviving_ids:?}"
+    );
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

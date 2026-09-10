@@ -1,0 +1,50 @@
+{
+  "@context": {
+    "id": "@id",
+    "type": "@type",
+    "Property": "https://uri.etsi.org/ngsi-ld/Property",
+    "Relationship": "https://uri.etsi.org/ngsi-ld/Relationship",
+    "value": "https://uri.etsi.org/ngsi-ld/hasValue",
+    "object": {
+      "@type": "@id",
+      "@id": "https://uri.etsi.org/ngsi-ld/hasObject"
+    },
+    "observedAt": {
+      "@type": "https://uri.etsi.org/ngsi-ld/DateTime",
+      "@id": "https://uri.etsi.org/ngsi-ld/observedAt"
+    },
+    "datasetId": {
+      "@id": "https://uri.etsi.org/ngsi-ld/datasetId",
+      "@type": "@id"
+    },
+    "location": "https://uri.etsi.org/ngsi-ld/location",
+    "GeoProperty": "https://uri.etsi.org/ngsi-ld/GeoProperty",
+    "Vehicle": "http://example.org/vehicle/Vehicle",
+    "street": "http://example.org/vehicle/street",
+    "brandName": "http://example.org/vehicle/brandName",
+    "category": "http://example.org/vehicle/category",
+    "tyreTreadDepths": "http://example.org/vehicle/tyreTreadDepths",
+    "passengers": "http://example.org/vehicle/passengers",
+    "speed": "http://example.org/vehicle/speed",
+    "isParked": {
+      "@type": "@id",
+      "@id": "http://example.org/common/isParked"
+    },
+    "OffStreetParking": "http://example.org/parking/OffStreetParking",
+    "availableSpotNumber": "http://example.org/parking/availableSpotNumber",
+    "totalSpotNumber": "http://example.org/parking/totalSpotNumber",
+    "isNextToBuilding": {
+      "@type": "@id",
+      "@id": "http://example.org/common/isNextToBuilding"
+    },
+    "reliability": "http://example.org/common/reliability",
+    "providedBy": {
+      "@type": "@id",
+      "@id": "http://example.org/common/providedBy"
+    },
+    "name": "http://example.org/common/name",
+    "commercial": "http://example.org/vehicle/commercial",
+    "non-commercial": "http://example.org/vehicle/non-commercial",
+    "Integer": "http://www.w3.org/2001/XMLSchema#Integer"
+  }
+}

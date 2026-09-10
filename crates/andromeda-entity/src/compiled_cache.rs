@@ -15,6 +15,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     entity::compiled::CompiledEntityQuery,
+    filter::serialize::serialize_attr_path,
     geo::input::GeoQueryInput,
     ordering::{
         collation::IcuCollation,
@@ -197,7 +198,10 @@ fn push_geo_query(buffer: &mut String, value: Option<&GeoQueryInput>) {
 fn push_order_terms(buffer: &mut String, terms: &[OrderTerm]) {
     push_field(buffer, Some(&terms.len().to_string()));
     for term in terms {
-        push_field(buffer, Some(term.attr.as_str()));
+        // The whole path, not just its head: `a.b`, `a[b]` and `a` are three
+        // different orderings, and a key spelling only `a` would serve one
+        // compiled query for all of them.
+        push_field(buffer, Some(&serialize_attr_path(&term.attr)));
         let direction = match term.direction {
             OrderDirection::Asc => "asc",
             OrderDirection::Desc => "desc",

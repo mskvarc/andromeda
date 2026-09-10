@@ -1,11 +1,9 @@
 //! Notification representation: the `concise`, `simplified`, and default
 //! `normalized` formats, the `pick`/`omit` member projections, entity `join`,
-//! and conformance amendment on delivery (clauses 5.8.6, 4.5.15, 4.5.23). Local
-//! rows use a live receiver; the conformance row captures on a mock (`T-MOCK`,
-//! seeded `UNKNOWN`).
+//! and conformance amendment on delivery (clauses 5.8.6, 4.5.15, 4.5.23). Every
+//! row uses a live receiver and asserts the delivered body.
 
 use crate::{
-    context_source_adapter::ContextSourceAdapter,
     entity::{entity, property, relationship, vehicle},
     map::{notification_inspection::notified_entities, subscription_document::subscription},
     notification_adapter::{CapturedNotification, NotificationAdapter},
@@ -13,7 +11,6 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
-use axum::http::Method;
 use serde_json::{Value, json};
 use std::time::Duration;
 
@@ -270,16 +267,16 @@ async fn notif_join_includes_linked_entities() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Delivery amends the body to the receiver's declared NGSI-LD conformance
-/// (clause 5.8.6). Confirms REQ-MAP-91.
+/// Delivery amends the body to the NGSI-LD version the Subscription's
+/// `ngsildConformance` names (clause 5.8.6, the last step before "A
+/// Notification shall be sent"; Tables 4.3.6.8-1 and -2). Confirms REQ-MAP-91.
 #[tokio::test]
 async fn notif_ngsild_conformance_amends_body_to_version() {
     let topology = topology::single().await.expect("single-broker topology");
-    let sink = ContextSourceAdapter::start().await;
-    sink.set_stub(Method::POST, "/notify", 200).await;
+    let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:conformance");
-    let mut body = subscription(&id, &sink.url("/notify"));
-    body["notification"]["endpoint"]["notifierInfo"] = json!([{ "key": "ngsild-attribute-representation", "value": "normalized" }]);
+    let mut body = subscription(&id, &receiver.endpoint_url());
+    body["ngsildConformance"] = json!("1.0");
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -290,25 +287,47 @@ async fn notif_ngsild_conformance_amends_body_to_version() {
             .expect("create subscription"),
         201,
     );
+    let entity_id = topology.id("Vehicle:conformance");
+    let watched = entity(
+        &entity_id,
+        "Vehicle",
+        &[
+            // Table 4.3.6.8-2: `observedAt` was introduced in 1.3.
+            ("speed", json!({ "type": "Property", "value": 20, "observedAt": "2025-01-01T00:00:00Z" })),
+            // Table 4.3.6.8-1: the LanguageProperty was introduced in 1.4.
+            ("label", json!({ "type": "LanguageProperty", "languageMap": { "en": "car", "es": "coche" } })),
+        ],
+    );
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&topology.id("Vehicle:conformance"), 20))
+            .post_entity(&watched)
             .with_ld_json()
             .send()
             .await
             .expect("create entity"),
         201,
     );
-    let captured = sink.next_request(DELIVER).await;
-    let notification: Value = captured.json().expect("notification body is JSON");
-    assert_eq!(
-        notification["type"].as_str(),
-        Some("Notification"),
-        "the amended body is a Notification: {notification}"
+    let notification = receiver.wait_for_subscription_notification(&id, DELIVER).await;
+    let notified = notified_entity(&notification, &entity_id);
+
+    assert!(
+        notified["speed"].get("observedAt").is_none(),
+        "Table 4.3.6.8-2 removes observedAt for a 1.0 target: {notified}"
     );
-    sink.shutdown().await;
+    assert_eq!(
+        notified["label"]["type"].as_str(),
+        Some("Property"),
+        "Table 4.3.6.8-1 reformats a LanguageProperty as a Property for a 1.0 target: {notified}"
+    );
+    assert_eq!(
+        notified["label"]["value"],
+        json!({ "en": "car", "es": "coche" }),
+        "the language map becomes the Property value: {notified}"
+    );
+
+    receiver.shutdown().await;
     topology.finish().await.expect("topology cleanup");
 }

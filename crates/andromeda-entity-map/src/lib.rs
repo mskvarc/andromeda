@@ -13,6 +13,8 @@ pub mod expiry;
 pub mod fingerprint;
 /// Which entities a prepared result page sheds from the Entity Map it ran under.
 pub mod pruning;
+/// Holding a query's entity selection to the entities a reused map lists.
+pub mod query_scoping;
 /// Recording what a read did to the Entity Map it ran under.
 pub mod recording;
 /// What a read does about Entity Maps: reuse, mint, or neither.

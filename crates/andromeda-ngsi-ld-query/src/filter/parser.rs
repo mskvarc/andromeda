@@ -6,36 +6,28 @@
 //! ABNF recogniser does not express — so it is the reference this parser is
 //! checked against, and the two are kept in step by hand.
 //!
-//! All three attribute axes are implemented: `.` sub-attributes and `[]`
-//! compound values, which stay inside one entity and build an [`AttrPath`], and
-//! `{}` linked-entity traversal (`LinkedEntityRelation`), which crosses a
-//! Relationship and builds a [`QueryPath::Linked`] hop around the predicate
-//! parsed inside the braces.
+//! This module owns the expression grammar: the boolean structure of a `Query`,
+//! and the `QueryTerm` that combines an attribute axis with an operator and an
+//! operand. The productions it composes each live with the concept they belong
+//! to, because `q` is not the only parameter that derives from them —
+//! [`value_path`] holds the `ValuePath` axis clause 4.23.3 shares,
+//! [`linked_entity`] the `LinkedEntityRelation` hop, [`operand`] the
+//! right-hand-side literals, and [`token_cursor`] the position all of them
+//! advance.
 
 use crate::{
     error::QueryError,
     filter::{
         expression::Expr,
         lexer::{Token, tokenize},
-        path::{AttrPath, QueryPath},
+        linked_entity::parse_hop_guard,
+        operand::{parse_compare_value, parse_pattern_string, parse_scalar},
+        path::QueryPath,
         predicate::{OrderingOp, Predicate, SetMembership},
-        quoting::Quoting,
-        scalar::{CompareValue, Scalar},
+        token_cursor::{TokenCursor, attribute_name},
+        value_path::{check_depth, parse_value_path},
     },
-    pattern::Pattern,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_number::JsonNumber;
-
-/// The most segments an attribute path may nest, counting sub-attributes and
-/// linked-entity hops alike.
-///
-/// Far above any legitimate NGSI-LD nesting (an attribute's sub-attributes are
-/// rarely more than one deep, and a linked-entity traversal rarely more than two
-/// hops), this only rejects a pathological path whose backend rendering would
-/// otherwise grow with its depth — a hop compiles to a correlated subquery per
-/// level, so `a{a{a{…}}}` is as expensive as it is deep.
-const MAX_SUB_ATTRIBUTE_DEPTH: usize = 16;
 
 /// Parses an NGSI-LD `q` filter expression string into an AST.
 ///
@@ -56,511 +48,205 @@ pub fn parse(input: &str) -> Result<Expr, QueryError> {
         return Err(QueryError::QEmpty);
     }
     let tokens = tokenize(input)?;
-    let mut parser = Parser::new(&tokens);
-    let expr = parser.parse_or()?;
-    if parser.pos < parser.tokens.len() {
+    let mut cursor = TokenCursor::new(&tokens);
+    let expr = parse_or(&mut cursor)?;
+    if !cursor.is_exhausted() {
         return Err(QueryError::QUnexpectedToken {
-            position: parser.pos,
-            token: format!("{:?}", parser.tokens[parser.pos]),
+            position: cursor.position(),
+            token: cursor.found_description(),
         });
     }
     Ok(expr)
 }
 
-/// What the head of a linked-entity hop contributed before its inner path.
-struct HopGuard<'a> {
-    /// The entity types the hop is constrained to, empty when it carried none.
-    types: Vec<AttributeName>,
-    /// The inner path's leading name when the tokeniser glued it to the guard's
-    /// terminating colon; `None` when the inner path starts at the next token.
-    inner_leading: Option<&'a str>,
+/// Parse a disjunction: `and_expr ('|' and_expr)*`.
+fn parse_or(cursor: &mut TokenCursor<'_>) -> Result<Expr, QueryError> {
+    let mut left = parse_and(cursor)?;
+    let mut terms = Vec::new();
+
+    while cursor.peek() == Some(&Token::Pipe) {
+        cursor.advance();
+        terms.push(left);
+        left = parse_and(cursor)?;
+    }
+
+    if terms.is_empty() {
+        Ok(left)
+    } else {
+        terms.push(left);
+        Ok(Expr::Or(terms))
+    }
 }
 
-/// Read an identifier as an attribute name.
+/// Parse a conjunction: `primary (';' primary)*`.
+fn parse_and(cursor: &mut TokenCursor<'_>) -> Result<Expr, QueryError> {
+    let mut left = parse_primary(cursor)?;
+    let mut terms = Vec::new();
+
+    while cursor.peek() == Some(&Token::Semi) {
+        cursor.advance();
+        terms.push(left);
+        left = parse_primary(cursor)?;
+    }
+
+    if terms.is_empty() {
+        Ok(left)
+    } else {
+        terms.push(left);
+        Ok(Expr::And(terms))
+    }
+}
+
+/// Parse a primary: either a parenthesised group or a single predicate.
+fn parse_primary(cursor: &mut TokenCursor<'_>) -> Result<Expr, QueryError> {
+    if cursor.peek() == Some(&Token::LParen) {
+        cursor.advance();
+        let expr = parse_or(cursor)?;
+        cursor.expect(&Token::RParen)?;
+        Ok(expr)
+    } else {
+        Ok(Expr::Pred(parse_predicate(cursor)?))
+    }
+}
+
+/// Parse one predicate: an attribute axis optionally followed by an operator.
+fn parse_predicate(cursor: &mut TokenCursor<'_>) -> Result<Predicate, QueryError> {
+    let leading = cursor.parse_ident()?;
+    parse_predicate_from(cursor, leading, 0)
+}
+
+/// Parse one predicate whose leading attribute name has already been read.
 ///
-/// The clause 4.6.2 name grammar accepts a short name, a prefixed name and an
-/// expanded IRI, which is the whole range a filter can carry before and after
-/// expansion, so validating here rejects nothing a client may write.
-fn attribute_name(raw: &str) -> Result<AttributeName, QueryError> {
-    raw.parse().map_err(|source| QueryError::AttributeNameInvalid {
-        value: raw.to_string(),
-        source,
-    })
+/// `depth` counts the path segments consumed so far — sub-attributes and
+/// linked-entity hops together — so a chain of hops is bounded by the same
+/// budget a chain of sub-attributes is.
+///
+/// A `{` after the leading name opens a clause 4.9 `LinkedEntityRelation`.
+/// Its contents are a whole predicate, operator and operand included, so the
+/// inner predicate is parsed first and the hop is wrapped around it.
+fn parse_predicate_from<'a>(cursor: &mut TokenCursor<'a>, leading: &'a str, depth: usize) -> Result<Predicate, QueryError> {
+    if cursor.peek() != Some(&Token::LBrace) {
+        let path = parse_value_path(cursor, leading, depth)?;
+        return parse_operator_and_operand(cursor, QueryPath::Local(path));
+    }
+
+    let relationship = attribute_name(leading)?;
+    cursor.advance();
+    check_depth(depth + 1)?;
+    let guard = parse_hop_guard(cursor)?;
+    let inner = if let Some(text) = guard.inner_leading {
+        parse_predicate_from(cursor, text, depth + 1)?
+    } else {
+        let leading = cursor.parse_ident()?;
+        parse_predicate_from(cursor, leading, depth + 1)?
+    };
+    cursor.expect(&Token::RBrace)?;
+    Ok(inner.nest_under_hop(relationship, guard.types))
 }
 
-/// How a parse failure describes the token it found, or its absence.
-fn describe(token: Option<&Token>) -> String {
-    match token {
-        Some(token) => token.spelling().to_string(),
-        None => "end of input".to_string(),
-    }
-}
-
-/// Cursor over a tokenised `q` expression.
-struct Parser<'a> {
-    /// The token stream being consumed.
-    tokens: &'a [Token],
-    /// Index of the next token to consume.
-    pos: usize,
-}
-
-impl<'a> Parser<'a> {
-    /// Start at the beginning of a token stream.
-    const fn new(tokens: &'a [Token]) -> Parser<'a> {
-        Parser { tokens, pos: 0 }
-    }
-
-    /// The next token without consuming it.
-    fn peek(&self) -> Option<&Token> {
-        self.tokens.get(self.pos)
-    }
-
-    /// The token `offset` positions ahead without consuming anything.
-    fn peek_ahead(&self, offset: usize) -> Option<&Token> {
-        self.tokens.get(self.pos + offset)
-    }
-
-    /// Consume and return the next token.
-    fn advance(&mut self) -> Option<&'a Token> {
-        let tok = self.tokens.get(self.pos);
-        if tok.is_some() {
-            self.pos += 1;
-        }
-        tok
-    }
-
-    /// Consume the next token, requiring it to equal `expected`.
-    fn expect(&mut self, expected: &Token) -> Result<(), QueryError> {
-        if self.peek() == Some(expected) {
-            self.advance();
-            Ok(())
-        } else {
-            Err(QueryError::QExpected {
-                expected: expected.spelling().to_string(),
-                found: self.found_description(),
+/// Read the comparison operator and operand that follow an attribute axis,
+/// or accept the axis on its own as an existence predicate.
+fn parse_operator_and_operand(cursor: &mut TokenCursor<'_>, path: QueryPath) -> Result<Predicate, QueryError> {
+    match cursor.peek() {
+        Some(Token::Eq) => {
+            cursor.advance();
+            let rhs = parse_compare_value(cursor)?;
+            Ok(Predicate::Equality {
+                path,
+                membership: SetMembership::Within,
+                rhs,
             })
         }
-    }
-
-    /// How a parse failure describes whatever stands where a token was required.
-    fn found_description(&self) -> String {
-        describe(self.peek())
-    }
-
-    /// Parse a disjunction: `and_expr ('|' and_expr)*`.
-    fn parse_or(&mut self) -> Result<Expr, QueryError> {
-        let mut left = self.parse_and()?;
-        let mut terms = Vec::new();
-
-        while self.peek() == Some(&Token::Pipe) {
-            self.advance();
-            terms.push(left);
-            left = self.parse_and()?;
+        Some(Token::Neq) => {
+            cursor.advance();
+            let rhs = parse_compare_value(cursor)?;
+            Ok(Predicate::Equality {
+                path,
+                membership: SetMembership::Outside,
+                rhs,
+            })
         }
-
-        if terms.is_empty() {
-            Ok(left)
-        } else {
-            terms.push(left);
-            Ok(Expr::Or(terms))
+        Some(Token::Gt) => {
+            cursor.advance();
+            let rhs = parse_scalar(cursor)?;
+            Ok(Predicate::Ordering {
+                path,
+                op: OrderingOp::Greater,
+                rhs,
+            })
         }
-    }
-
-    /// Parse a conjunction: `primary (';' primary)*`.
-    fn parse_and(&mut self) -> Result<Expr, QueryError> {
-        let mut left = self.parse_primary()?;
-        let mut terms = Vec::new();
-
-        while self.peek() == Some(&Token::Semi) {
-            self.advance();
-            terms.push(left);
-            left = self.parse_primary()?;
+        Some(Token::Ge) => {
+            cursor.advance();
+            let rhs = parse_scalar(cursor)?;
+            Ok(Predicate::Ordering {
+                path,
+                op: OrderingOp::GreaterEq,
+                rhs,
+            })
         }
-
-        if terms.is_empty() {
-            Ok(left)
-        } else {
-            terms.push(left);
-            Ok(Expr::And(terms))
+        Some(Token::Lt) => {
+            cursor.advance();
+            let rhs = parse_scalar(cursor)?;
+            Ok(Predicate::Ordering {
+                path,
+                op: OrderingOp::Less,
+                rhs,
+            })
         }
-    }
-
-    /// Parse a primary: either a parenthesised group or a single predicate.
-    fn parse_primary(&mut self) -> Result<Expr, QueryError> {
-        if self.peek() == Some(&Token::LParen) {
-            self.advance();
-            let expr = self.parse_or()?;
-            self.expect(&Token::RParen)?;
-            Ok(expr)
-        } else {
-            Ok(Expr::Pred(self.parse_predicate()?))
+        Some(Token::Le) => {
+            cursor.advance();
+            let rhs = parse_scalar(cursor)?;
+            Ok(Predicate::Ordering {
+                path,
+                op: OrderingOp::LessEq,
+                rhs,
+            })
         }
-    }
-
-    /// Parse one predicate: an attribute axis optionally followed by an operator.
-    fn parse_predicate(&mut self) -> Result<Predicate, QueryError> {
-        let leading = self.parse_ident()?;
-        self.parse_predicate_from(leading, 0)
-    }
-
-    /// Parse one predicate whose leading attribute name has already been read.
-    ///
-    /// `depth` counts the path segments consumed so far — sub-attributes and
-    /// linked-entity hops together — so a chain of hops is bounded by the same
-    /// budget a chain of sub-attributes is.
-    ///
-    /// A `{` after the leading name opens a clause 4.9 `LinkedEntityRelation`.
-    /// Its contents are a whole predicate, operator and operand included, so the
-    /// inner predicate is parsed first and the hop is wrapped around it.
-    fn parse_predicate_from(&mut self, leading: &'a str, depth: usize) -> Result<Predicate, QueryError> {
-        if self.peek() != Some(&Token::LBrace) {
-            let path = self.parse_attr_path_from(leading, depth)?;
-            return self.parse_operator_and_operand(QueryPath::Local(path));
+        Some(Token::Match) => {
+            cursor.advance();
+            let pattern = parse_pattern_string(cursor)?;
+            Ok(Predicate::MatchPattern { path, pattern })
         }
-
-        let relationship = attribute_name(leading)?;
-        self.advance();
-        Self::check_depth(depth + 1)?;
-        let guard = self.parse_hop_guard()?;
-        let inner = if let Some(text) = guard.inner_leading {
-            self.parse_predicate_from(text, depth + 1)?
-        } else {
-            let leading = self.parse_ident()?;
-            self.parse_predicate_from(leading, depth + 1)?
-        };
-        self.expect(&Token::RBrace)?;
-        Ok(inner.nest_under_hop(relationship, guard.types))
-    }
-
-    /// Reject a path that nests deeper than the budget.
-    const fn check_depth(depth: usize) -> Result<(), QueryError> {
-        if depth > MAX_SUB_ATTRIBUTE_DEPTH {
-            return Err(QueryError::QAttributePathTooDeep {
-                depth,
-                limit: MAX_SUB_ATTRIBUTE_DEPTH,
-            });
+        Some(Token::NotMatch) => {
+            cursor.advance();
+            let pattern = parse_pattern_string(cursor)?;
+            Ok(Predicate::NotMatchPattern { path, pattern })
         }
-        Ok(())
-    }
-
-    /// Parse the optional entity-type guard at the head of a linked-entity hop.
-    ///
-    /// Clause 4.9 spells the guard `*1(EntityType 1*("," EntityType) ":")`: two
-    /// or more comma-separated types, then a colon. The tokeniser is
-    /// context-free and `:` is a legal identifier character, so the colon
-    /// arrives glued to whatever the client wrote next — `Store:category` is one
-    /// identifier. The guard is therefore recognised from shape, not from a
-    /// colon token: a comma directly after the first name inside the braces
-    /// means a guard, and nothing else in the grammar puts a comma there. A lone
-    /// `prefix:name` has no comma and is an ordinary prefixed attribute name.
-    fn parse_hop_guard(&mut self) -> Result<HopGuard<'a>, QueryError> {
-        let opens_guard = matches!(self.peek(), Some(Token::Ident(_) | Token::QuotedStr(_))) && self.peek_ahead(1) == Some(&Token::Comma);
-        if !opens_guard {
-            return Ok(HopGuard {
-                types: Vec::new(),
-                inner_leading: None,
-            });
-        }
-
-        let mut types = Vec::new();
-        loop {
-            let (name, quoting) = self.parse_guard_name()?;
-            if let Some((last, inner_leading)) = self.split_guard_terminator(name, quoting)? {
-                types.push(attribute_name(last)?);
-                return Ok(HopGuard { types, inner_leading });
-            }
-            types.push(attribute_name(name)?);
-            self.expect(&Token::Comma)?;
-        }
-    }
-
-    /// Consume one name of a type guard, reporting whether it was written bare.
-    ///
-    /// The distinction decides how the guard's terminating colon is found: only
-    /// a bare identifier can have the colon glued to it, because a quoted string
-    /// ends at its closing quote — and a quoted name is an expanded IRI, whose
-    /// own colons are part of the IRI rather than the grammar.
-    fn parse_guard_name(&mut self) -> Result<(&'a str, Quoting), QueryError> {
-        match self.advance() {
-            Some(Token::Ident(name)) => Ok((name.as_str(), Quoting::Bare)),
-            Some(Token::QuotedStr(name)) => Ok((name.as_str(), Quoting::Quoted)),
-            other => Err(QueryError::QExpected {
-                expected: "entity type".to_string(),
-                found: describe(other),
-            }),
-        }
-    }
-
-    /// Split the guard's last type from the inner path that follows its colon,
-    /// or report that this name is not the last one.
-    ///
-    /// A comma is checked first: it says another type follows, so this name
-    /// cannot be carrying the terminator and whatever colons it holds are part
-    /// of the name — `rel{ex:A,ex:B:attr}` has a prefixed type in each position
-    /// and only the last one is split.
-    ///
-    /// For the last name the colon reaches the parser in one of two shapes,
-    /// both of which the tokeniser produces without any state: glued to the type
-    /// it terminates (`Store:` or `Store:category`, since `:` continues an
-    /// identifier), or as its own `:`-prefixed identifier when the type was
-    /// quoted — which is how an expanded filter round-trips, its IRIs being
-    /// quoted. An empty remainder means the inner path starts at the next token.
-    ///
-    /// A bare last name holding *two* colons is ambiguous and is rejected rather
-    /// than resolved by guesswork: `ex:Store:category` reads equally well as the
-    /// prefixed type `ex:Store` before the attribute `category` or as the type
-    /// `ex` before the prefixed attribute `Store:category`, and clause 4.9
-    /// decides neither — its `EntityType` production admits no colon at all,
-    /// while real filters do carry prefixed names. Quoting the type says which
-    /// was meant, which is what the error asks for.
-    fn split_guard_terminator(&mut self, name: &'a str, quoting: Quoting) -> Result<Option<(&'a str, Option<&'a str>)>, QueryError> {
-        if self.peek() == Some(&Token::Comma) {
-            return Ok(None);
-        }
-        if quoting == Quoting::Bare
-            && let Some((last, rest)) = name.split_once(':')
-        {
-            if rest.contains(':') {
-                return Err(QueryError::QExpected {
-                    expected: "a quoted entity type, so the colon ending the type guard is unambiguous".to_string(),
-                    found: name.to_string(),
-                });
-            }
-            let inner_leading = (!rest.is_empty()).then_some(rest);
-            return Ok(Some((last, inner_leading)));
-        }
-        if let Some(Token::Ident(next)) = self.tokens.get(self.pos)
-            && let Some(rest) = next.strip_prefix(':')
-        {
-            self.pos += 1;
-            let inner_leading = (!rest.is_empty()).then_some(rest);
-            return Ok(Some((name, inner_leading)));
-        }
-        Err(QueryError::QExpected {
-            expected: ":".to_string(),
-            found: self.found_description(),
-        })
-    }
-
-    /// Parse an attribute path whose leading name has already been read:
-    /// `('.' ident)* ('[' ident ('.' ident)* ']')?`.
-    fn parse_attr_path_from(&mut self, leading: &'a str, depth: usize) -> Result<AttrPath, QueryError> {
-        let attr = attribute_name(leading)?;
-        let mut sub_attrs = Vec::new();
-        let mut value_path = Vec::new();
-        let mut match_all_languages = false;
-
-        while self.peek() == Some(&Token::Dot) {
-            self.advance();
-            sub_attrs.push(self.parse_attribute_name()?);
-            Self::check_depth(depth + sub_attrs.len())?;
-        }
-
-        if self.peek() == Some(&Token::LBracket) {
-            self.advance();
-            if self.peek() == Some(&Token::Star) {
-                // `[*]` is the language-suppression marker, not a value-path
-                // key: it matches every language of a LanguageProperty.
-                self.advance();
-                match_all_languages = true;
-            } else {
-                value_path.push(self.parse_attribute_name()?);
-                while self.peek() == Some(&Token::Dot) {
-                    self.advance();
-                    value_path.push(self.parse_attribute_name()?);
-                }
-            }
-            self.expect(&Token::RBracket)?;
-        }
-
-        // clone: `value_path_compact` starts as the same terms as `value_path`
-        // and stays that way until expansion overwrites `value_path` alone, so
-        // each field needs its own owned copy of the freshly parsed names.
-        let value_path_compact = value_path.clone();
-        Ok(AttrPath {
-            attr,
-            sub_attrs,
-            value_path,
-            value_path_compact,
-            match_all_languages,
-        })
-    }
-
-    /// Read the comparison operator and operand that follow an attribute axis,
-    /// or accept the axis on its own as an existence predicate.
-    fn parse_operator_and_operand(&mut self, path: QueryPath) -> Result<Predicate, QueryError> {
-        match self.peek() {
-            Some(Token::Eq) => {
-                self.advance();
-                let rhs = self.parse_compare_value()?;
-                Ok(Predicate::Equality {
-                    path,
-                    membership: SetMembership::Within,
-                    rhs,
-                })
-            }
-            Some(Token::Neq) => {
-                self.advance();
-                let rhs = self.parse_compare_value()?;
-                Ok(Predicate::Equality {
-                    path,
-                    membership: SetMembership::Outside,
-                    rhs,
-                })
-            }
-            Some(Token::Gt) => {
-                self.advance();
-                let rhs = self.parse_scalar()?;
-                Ok(Predicate::Ordering {
-                    path,
-                    op: OrderingOp::Greater,
-                    rhs,
-                })
-            }
-            Some(Token::Ge) => {
-                self.advance();
-                let rhs = self.parse_scalar()?;
-                Ok(Predicate::Ordering {
-                    path,
-                    op: OrderingOp::GreaterEq,
-                    rhs,
-                })
-            }
-            Some(Token::Lt) => {
-                self.advance();
-                let rhs = self.parse_scalar()?;
-                Ok(Predicate::Ordering {
-                    path,
-                    op: OrderingOp::Less,
-                    rhs,
-                })
-            }
-            Some(Token::Le) => {
-                self.advance();
-                let rhs = self.parse_scalar()?;
-                Ok(Predicate::Ordering {
-                    path,
-                    op: OrderingOp::LessEq,
-                    rhs,
-                })
-            }
-            Some(Token::Match) => {
-                self.advance();
-                let pattern = self.parse_pattern_string()?;
-                Ok(Predicate::MatchPattern { path, pattern })
-            }
-            Some(Token::NotMatch) => {
-                self.advance();
-                let pattern = self.parse_pattern_string()?;
-                Ok(Predicate::NotMatchPattern { path, pattern })
-            }
-            // A path with no operator is a bare existence predicate; every other
-            // token belongs to the enclosing expression and is left for it.
-            Some(
-                Token::Ident(_)
-                | Token::QuotedStr(_)
-                | Token::NumberLit(_)
-                | Token::True
-                | Token::False
-                | Token::Dots
-                | Token::Semi
-                | Token::Pipe
-                | Token::LParen
-                | Token::RParen
-                | Token::LBracket
-                | Token::RBracket
-                | Token::LBrace
-                | Token::RBrace
-                | Token::Star
-                | Token::Dot
-                | Token::Comma,
-            )
-            | None => Ok(Predicate::Exists(path)),
-        }
-    }
-
-    /// Consume an identifier naming an attribute, quoted or bare.
-    fn parse_attribute_name(&mut self) -> Result<AttributeName, QueryError> {
-        attribute_name(self.parse_ident()?)
-    }
-
-    /// Consume an identifier, quoted or bare.
-    fn parse_ident(&mut self) -> Result<&'a str, QueryError> {
-        match self.advance() {
-            Some(Token::Ident(s) | Token::QuotedStr(s)) => Ok(s.as_str()),
-            other => Err(QueryError::QExpected {
-                expected: "identifier".to_string(),
-                found: describe(other),
-            }),
-        }
-    }
-
-    /// Parse the right-hand side of a comparison: a scalar, a range, or a list.
-    fn parse_compare_value(&mut self) -> Result<CompareValue, QueryError> {
-        let first = self.parse_scalar()?;
-
-        if self.peek() == Some(&Token::Dots) {
-            self.advance();
-            let second = self.parse_scalar()?;
-            return Ok(CompareValue::Range { min: first, max: second });
-        }
-
-        if self.peek() == Some(&Token::Comma) {
-            let mut values = vec![first];
-            while self.peek() == Some(&Token::Comma) {
-                self.advance();
-                values.push(self.parse_scalar()?);
-            }
-            return Ok(CompareValue::ValueList(values));
-        }
-
-        Ok(CompareValue::Scalar(first))
-    }
-
-    /// Parse a single scalar operand, classifying temporal literals by shape.
-    ///
-    /// The two literal tokens are kept apart rather than collapsed: clause 4.9's
-    /// `quotedStr` production carries the quotes, so which productions can
-    /// derive an operand depends on whether the client wrote them.
-    fn parse_scalar(&mut self) -> Result<Scalar, QueryError> {
-        match self.advance() {
-            Some(Token::NumberLit(s)) => {
-                // clone: only on the error path, where the message owns the literal
-                let num = s
-                    .parse::<JsonNumber>()
-                    .map_err(|source| QueryError::QInvalidNumber { value: s.clone(), source })?;
-                Ok(Scalar::Number(num))
-            }
-            Some(Token::QuotedStr(s)) => Scalar::from_literal(s, Quoting::Quoted),
-            Some(Token::Ident(s)) => Scalar::from_literal(s, Quoting::Bare),
-            Some(Token::True) => Ok(Scalar::Bool(true)),
-            Some(Token::False) => Ok(Scalar::Bool(false)),
-            other => Err(QueryError::QExpected {
-                expected: "value".to_string(),
-                found: describe(other),
-            }),
-        }
-    }
-
-    /// Consume the operand of `~=` / `!~=`, which may be quoted or bare.
-    ///
-    /// The operand is compiled here rather than at evaluation time, so a
-    /// malformed regular expression is a rejected request instead of a filter
-    /// that quietly matches nothing.
-    fn parse_pattern_string(&mut self) -> Result<Pattern, QueryError> {
-        match self.advance() {
-            Some(Token::QuotedStr(s) | Token::Ident(s)) => Pattern::parse(s),
-            other => Err(QueryError::QExpected {
-                expected: "pattern string".to_string(),
-                found: describe(other),
-            }),
-        }
+        // A path with no operator is a bare existence predicate; every other
+        // token belongs to the enclosing expression and is left for it.
+        Some(
+            Token::Ident(_)
+            | Token::QuotedStr(_)
+            | Token::NumberLit(_)
+            | Token::True
+            | Token::False
+            | Token::Dots
+            | Token::Semi
+            | Token::Pipe
+            | Token::LParen
+            | Token::RParen
+            | Token::LBracket
+            | Token::RBracket
+            | Token::LBrace
+            | Token::RBrace
+            | Token::Star
+            | Token::Dot
+            | Token::Comma,
+        )
+        | None => Ok(Predicate::Exists(path)),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::filter::{
+        path::AttrPath,
+        scalar::{CompareValue, Scalar},
+        value_path::MAX_SUB_ATTRIBUTE_DEPTH,
+    };
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_number::JsonNumber;
     use chrono::SecondsFormat;
 
     #[test]

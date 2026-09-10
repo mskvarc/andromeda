@@ -108,20 +108,64 @@ fn read_scope_nodes(nodes: &[Value]) -> Result<ScopeMember, ScopeMemberError> {
     Ok(ScopeMember::Deleted)
 }
 
-/// Every scope path the expanded payload's `scope` member carries.
+/// Every scope path the expanded payload's `scope` member carries, in either of
+/// the two shapes clause 4.18 gives it.
+///
+/// Clause 4.18: the Scope "is non-reified in the normalized Entity
+/// representation and reified in the temporal representation of an Entity". The
+/// two put the path at different depths — a bare value node in the first, the
+/// `hasValue` of a Property instance in the second, and the first element of a
+/// clause 4.5.9 pair in the `temporalValues` projection of that — so the member
+/// is walked to whatever depth it puts them at. Clause 5.7.4.4 is what makes
+/// the reified reading load-bearing: under `splitEntities` the Scope query
+/// leaves the local temporal query and is applied to the merged Entities, which
+/// carry the reified form.
 ///
 /// Lenient by design, because this reads state the broker itself stored and
 /// state a query matches against: a value that is not a scope path — the
-/// NGSI-LD Null of a deleted scope included — places the entity nowhere, so it
-/// is skipped rather than reported. A write validates the same member through
-/// [`read_scope_member`] before it is ever stored.
+/// NGSI-LD Null of a deleted scope, and the Temporal Property instants the
+/// reified form carries beside the value, included — places the entity nowhere,
+/// so it is skipped rather than reported. The clause 4.18 grammar is what tells
+/// them apart, and it admits neither the sentinel nor a `DateTime`. A write
+/// validates the same member through [`read_scope_member`] before it is ever
+/// stored, and that reading stays confined to the non-reified shape a request
+/// may carry.
 #[must_use]
 pub fn extract_scopes(expanded: &Value) -> Vec<ScopePath> {
-    expanded_nodes(expanded)
-        .iter()
-        .filter_map(|node| scope_member_nodes(node).ok().flatten())
-        .flat_map(|nodes| nodes.iter().filter_map(scope_value).filter_map(|raw| raw.parse().ok()))
-        .collect()
+    let mut paths = Vec::new();
+    for node in expanded_nodes(expanded) {
+        let Some(members) = scope_member_nodes(node).ok().flatten() else {
+            continue;
+        };
+        for member in members {
+            collect_scope_paths(member, &mut paths);
+        }
+    }
+    paths
+}
+
+/// Collect every scope path one node of the `scope` member carries, at whatever
+/// depth the representation puts it.
+fn collect_scope_paths(node: &Value, paths: &mut Vec<ScopePath>) {
+    match node {
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        Value::Array(members) => {
+            for member in members {
+                collect_scope_paths(member, paths);
+            }
+        }
+        Value::Object(members) => {
+            if let Some(raw) = scope_value(node) {
+                if let Ok(path) = raw.parse::<ScopePath>() {
+                    paths.push(path);
+                }
+                return;
+            }
+            for value in members.values() {
+                collect_scope_paths(value, paths);
+            }
+        }
+    }
 }
 
 /// The nodes of one expanded node's `scope` member, when it carries one.
@@ -270,6 +314,89 @@ mod tests {
             {"@id": "urn:ngsi-ld:Vehicle:2", "https://uri.etsi.org/ngsi-ld/scope": [node("/Madrid")]}
         ]);
         pretty_assertions::assert_eq!(extract_scopes(&scoped), vec!["/Madrid".parse::<ScopePath>().expect("a valid scope path")]);
+    }
+
+    /// Clause 4.18 reifies the Scope in the temporal representation of an
+    /// Entity, and clause 5.7.4.4 has the Scope query applied to the merged
+    /// Entities under `splitEntities`, so the reified form has to answer it.
+    #[test]
+    fn the_reified_temporal_scope_reads_as_the_paths_its_value_carries() {
+        let reified = json!([{
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "/Madrid/Centro"}],
+            "https://uri.etsi.org/ngsi-ld/observedAt": [
+                {"@value": "2018-08-01T11:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}
+            ]
+        }]);
+        pretty_assertions::assert_eq!(
+            extract_scopes(&entity_scoped(&reified)),
+            vec!["/Madrid/Centro".parse::<ScopePath>().expect("a valid scope path")]
+        );
+    }
+
+    /// Clause 4.18: "The value of scope is represented as a JSON array in case
+    /// there is more than one Scope", which annex C clause C.5.16 renders for
+    /// Vehicle A8311.
+    #[test]
+    fn a_reified_scope_naming_several_paths_reads_as_all_of_them() {
+        let reified = json!([{
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "/Madrid/Centro"}, {"@value": "/Company123/UnitA"}]
+        }]);
+        pretty_assertions::assert_eq!(
+            extract_scopes(&entity_scoped(&reified)),
+            vec![
+                "/Madrid/Centro".parse::<ScopePath>().expect("a valid scope path"),
+                "/Company123/UnitA".parse::<ScopePath>().expect("a valid scope path"),
+            ]
+        );
+    }
+
+    /// Clause 4.5.9 collapses the reified Scope into `[value, timestamp]`
+    /// pairs, so a `temporalValues` projection puts the path one list deeper
+    /// still and the timestamp beside it — which the clause 4.18 grammar
+    /// refuses, so only the path is read.
+    #[test]
+    fn the_temporal_values_projection_of_a_reified_scope_reads_as_its_paths_alone() {
+        let collapsed = json!([{
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValues": [{"@list": [
+                {"@list": [{"@value": "/Madrid/Centro"}, {"@value": "2018-08-01T11:00:00Z"}]}
+            ]}]
+        }]);
+        pretty_assertions::assert_eq!(
+            extract_scopes(&entity_scoped(&collapsed)),
+            vec!["/Madrid/Centro".parse::<ScopePath>().expect("a valid scope path")]
+        );
+    }
+
+    /// A removed Scope renders as the NGSI-LD Null, which places the Entity
+    /// nowhere however deeply the representation nests it.
+    #[test]
+    fn a_reified_removal_contributes_no_path() {
+        let removed = json!([{
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "urn:ngsi-ld:null"}],
+            "https://uri.etsi.org/ngsi-ld/deletedAt": [
+                {"@value": "2018-08-01T13:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}
+            ]
+        }]);
+        pretty_assertions::assert_eq!(extract_scopes(&entity_scoped(&removed)), Vec::<ScopePath>::new());
+    }
+
+    /// The write-side reading stays confined to the non-reified shape a request
+    /// carries: it is the validator of what a client may send, not a reader of
+    /// what the broker renders back.
+    #[test]
+    fn the_write_side_reading_does_not_follow_the_reified_shape() {
+        let reified = json!([{
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "/Madrid/Centro"}]
+        }]);
+        pretty_assertions::assert_eq!(
+            read_scope_member(&entity_scoped(&reified)).expect_err("a reified instance is not a scope a request may set"),
+            ScopeMemberError::NotAString
+        );
     }
 
     #[test]

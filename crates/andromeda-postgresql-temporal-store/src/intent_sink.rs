@@ -317,6 +317,13 @@ fn stored_value(row: &TemporalHistoryRow) -> Result<AttributeHistoryValue, Tempo
         TemporalValue::DateTime(value) => Ok(AttributeHistoryValue::DateTime(*value)),
         TemporalValue::Uri(value) => Ok(AttributeHistoryValue::Uri(value.clone())), // clone: the persisted row owns the URI.
         TemporalValue::Tombstone { deleted_at } => Ok(AttributeHistoryValue::Tombstone { deleted_at: *deleted_at }),
+        // Clause 4.5.4 gives a Scope no attribute stream, so it is carried by
+        // `TemporalAppendEntry::Scope` and stored in `scope_history`; one that
+        // reached the attribute conversion would have to invent the stream the
+        // clause denies it.
+        TemporalValue::Scopes(_) => Err(TemporalStoreError::Validation(
+            "an entity scope has no attribute history row; clause 4.5.4 gives it no attribute stream".to_owned(),
+        )),
     }
 }
 

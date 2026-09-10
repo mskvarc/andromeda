@@ -1,7 +1,6 @@
 //! The distributed part of a single-entity retrieval: the two clause 5.7.1.4
 //! forwarding phases and what they bring back.
 
-use crate::entity::single_source_declined;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_federation::{
@@ -13,7 +12,7 @@ use andromeda_federation::{
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_http_response::problem_response::ProblemResponse;
+use andromeda_http_response::{declined_representation::single_source_declined, problem_response::ProblemResponse};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{entity::Entity, entity_type::EntityTypeValue};

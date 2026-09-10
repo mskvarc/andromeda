@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 mod attribute_info;
 mod attribute_list;
-mod compaction_fixups;
 mod registry_union;
+mod rendered_names;
 mod stored_names;
 mod type_details;
 mod type_info;

@@ -26,6 +26,14 @@ pub enum ProjectedValueUnrepresentable {
     /// The observation carried a geometry that is not valid `GeoJSON`.
     #[error(transparent)]
     Geometry(#[from] GeometryError),
+    /// The observation is an Entity's Scope rather than an Attribute value.
+    ///
+    /// Clause 4.18 makes the Scope "a special scope Property" that clause 4.5.4
+    /// gives no attribute family and no dataset dimension, so it has no row in
+    /// a projection of Attribute instances: current state holds it on the
+    /// entity's own scope paths instead.
+    #[error("an entity scope is not an attribute value; it is projected on the entity's scope paths instead")]
+    Scope,
 }
 
 impl TryFrom<&TemporalValue> for ProjectedAttributeValue {
@@ -44,6 +52,7 @@ impl TryFrom<&TemporalValue> for ProjectedAttributeValue {
             // clone: the projected row owns the URI it writes.
             TemporalValue::Uri(uri) => Ok(ProjectedAttributeValue::Uri(uri.clone())),
             TemporalValue::Tombstone { .. } => Err(ProjectedValueUnrepresentable::Deletion),
+            TemporalValue::Scopes(_) => Err(ProjectedValueUnrepresentable::Scope),
         }
     }
 }

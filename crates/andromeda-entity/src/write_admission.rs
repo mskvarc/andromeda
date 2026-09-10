@@ -22,9 +22,15 @@
 //! [`EntityService::admit_entity_write`], [`EntityService::admit_attribute_write`]
 //! and `EntityService::admit_batch_write`, which expand the payload the way the
 //! write path would. What a client wrote before expansion
-//! -- the attribute types of clause 5.2.4 and the seals of clause 4.5.2.2 --
-//! is decided on the compact payload, which is the transport layer's own half
-//! of the same admission.
+//! -- the attribute types of clause 5.2.4, the seals of clause 4.5.2.2 and the
+//! `@context` clause 5.5.7 admits only at the document's top level -- is decided
+//! on the compact payload, which is the transport layer's own half of the same
+//! admission.
+//!
+//! [`EntityService::admit_write_context`] is the one rule here that reads the
+//! request's `@context` instead of its payload: clause 5.5.7 refuses a user
+//! `@context` declaring a JSON-LD Scoped Context, and that is a property of the
+//! request rather than of any one entity in it.
 
 use crate::{
     EntityService,
@@ -35,7 +41,7 @@ use crate::{
     null_sentinel_admission::{NullSentinelAdmission, reject_null_placements_in_attribute, reject_null_placements_in_entity},
     scope_admission::validate_scope_member,
 };
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::{attribute_fragment::expand_attribute_fragment, context_spec::ContextSpec, scoped_context_admission::reject_scoped_user_contexts};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_representation::normalization::{normalize_attribute_node, normalize_entity_attributes, normalize_merge_fragment};
 use serde_json::Value;
@@ -174,6 +180,31 @@ pub(crate) fn admit_expanded_attribute(expanded: &Value, attribute: &AttributeNa
 }
 
 impl EntityService {
+    /// Refuse a request `@context` clause 5.5.7 does not admit, before the
+    /// operation forwards anything or expands the payload against it.
+    ///
+    /// Clause 5.5.7 states that the user `@context` "shall not contain JSON-LD
+    /// Scoped Contexts", and that a part of a user `@context` breaking that
+    /// "should result in an error of type `BadRequestData`, because JSON-LD
+    /// Scoped Contexts and nested embedded @context could be used to modify
+    /// terms defined in the Core @context or to reshape NGSI-LD Elements during
+    /// the expansion of terms". It is the request's context that is refused and
+    /// not one entity's, which is why this stands beside the per-payload
+    /// screening rather than inside it: a batch whose `@context` is refused has
+    /// no admissible entity in it.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::JsonLd`] carrying
+    /// [`JsonLdError::ScopedUserContext`](andromeda_jsonld::error::JsonLdError::ScopedUserContext),
+    /// which the HTTP binding answers with `BadRequestData`, and the typed
+    /// context-loading failure when one of the request's contexts does not
+    /// resolve.
+    pub async fn admit_write_context(&self, context: &ContextSpec) -> Result<(), EntityError> {
+        reject_scoped_user_contexts(&self.engine, context).await?;
+        Ok(())
+    }
+
     /// Run the clause 5.5.4 screening of `write` over the entity-shaped payload
     /// a client sent, before the operation forwards any of it.
     ///
@@ -189,6 +220,7 @@ impl EntityService {
     /// against `context`, and the [`EntityError::Validation`] of
     /// [`admit_expanded_entity`].
     pub async fn admit_entity_write(&self, write: EntityWrite, payload: &Value, context: &ContextSpec) -> Result<(), EntityError> {
+        self.admit_write_context(context).await?;
         let mut payload = payload.clone(); // clone: expansion consumes the document, which the caller still has to forward and to write
         write.normalize(&mut payload);
         let expanded = self.engine.expand(payload, context).await?;
@@ -210,9 +242,10 @@ impl EntityService {
         payload: &Value,
         context: &ContextSpec,
     ) -> Result<(), EntityError> {
+        self.admit_write_context(context).await?;
         let mut payload = payload.clone(); // clone: expansion consumes the document, which the caller still has to forward and to write
-        normalize_attribute_node(&mut payload);
-        let expanded = self.engine.expand(payload, context).await?;
+        normalize_attribute_node(attribute.as_str(), &mut payload);
+        let expanded = expand_attribute_fragment(&self.engine, attribute.as_str(), payload, context).await?;
         admit_expanded_attribute(&expanded, attribute, write.null_sentinel_admission())
     }
 }

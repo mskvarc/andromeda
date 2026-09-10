@@ -8,7 +8,7 @@
 //! selection remains in delivery bindings and is not compiled here.
 
 use andromeda_context_commit::subscription_key::SubscriptionKey;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, positive_milliseconds::PositiveMilliseconds, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, positive_milliseconds::PositiveMilliseconds, spec_version::SpecVersion, uri::Uri};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     notification::NotificationTrigger,
@@ -160,4 +160,8 @@ pub struct CompiledSubscription {
     pub compiled_csf: Option<Expr>,
     /// When true, this subscription only matches locally-stored entities (clause 5.5.13).
     pub local_only: bool,
+    /// The NGSI-LD version the Entities of a notification are amended to
+    /// conform to before they are sent (Table 5.2.12-1 `ngsildConformance`,
+    /// clauses 5.8.6 and 4.3.6.8); `None` amends nothing.
+    pub ngsild_conformance: Option<SpecVersion>,
 }

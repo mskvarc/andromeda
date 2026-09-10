@@ -61,3 +61,57 @@ pub fn with_location(mut response: Response, location: impl AsRef<str>) -> Respo
     }
     response
 }
+
+/// Attach the `NGSILD-EntityMap` header to an existing response.
+///
+/// Table 6.4.3.3-2: "The location of the `EntityMap` used in the purge
+/// operation is returned in the response." A purge answers 204 or 207 with no
+/// rendered body, so its map location joins a finished response here rather
+/// than travelling through the rendering pipeline [`NgsiLdResponse`] serves.
+///
+/// [`NgsiLdResponse`]: crate::single::NgsiLdResponse
+#[must_use]
+pub fn with_entity_map(mut response: Response, identifier: &Uri) -> Response {
+    response.headers_mut().typed_insert(NgsiLdEntityMap::new(identifier.clone())); // clone: the typed header owns the identifier it encodes
+    response
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::headers::{with_entity_map, with_location};
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use axum::{
+        http::StatusCode,
+        response::{IntoResponse, Response},
+    };
+
+    /// A finished response with no headers of its own.
+    fn no_content() -> Response {
+        StatusCode::NO_CONTENT.into_response()
+    }
+
+    /// The value of one header, as wire text.
+    fn header_text<'a>(response: &'a Response, name: &str) -> Option<&'a str> {
+        response.headers().get(name).and_then(|value| value.to_str().ok())
+    }
+
+    /// Table 6.4.3.3-2: the location of the map an operation used travels back
+    /// on a response that carries no rendered body.
+    #[test]
+    fn the_entity_map_location_joins_a_finished_response() {
+        let identifier: Uri = "urn:ngsi-ld:EntityMap:used".parse().expect("valid URI");
+        let response = with_entity_map(no_content(), &identifier);
+        pretty_assertions::assert_eq!(response.status(), StatusCode::NO_CONTENT, "attaching a header does not change the status");
+        pretty_assertions::assert_eq!(header_text(&response, "ngsild-entitymap"), Some("urn:ngsi-ld:EntityMap:used"));
+    }
+
+    /// The two attachments are independent, so a response may carry either or
+    /// both without one displacing the other.
+    #[test]
+    fn a_location_and_an_entity_map_location_do_not_displace_each_other() {
+        let identifier: Uri = "urn:ngsi-ld:EntityMap:used".parse().expect("valid URI");
+        let response = with_entity_map(with_location(no_content(), "/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:1"), &identifier);
+        pretty_assertions::assert_eq!(header_text(&response, "location"), Some("/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:1"));
+        pretty_assertions::assert_eq!(header_text(&response, "ngsild-entitymap"), Some("urn:ngsi-ld:EntityMap:used"));
+    }
+}

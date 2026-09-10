@@ -19,6 +19,8 @@ pub(crate) enum TemporalStatement {
     Stage1Count,
     /// Stage 2: the history rows of one selected entity.
     History,
+    /// Stage 2: the reified scope events of one selected entity (clause 4.18).
+    ScopeHistory,
     /// Stage 2: the aggregated history of one selected entity.
     Aggregation,
 }
@@ -30,6 +32,7 @@ impl TemporalStatement {
             TemporalStatement::Stage1 => StatementName("temporal-stage1"),
             TemporalStatement::Stage1Count => StatementName("temporal-stage1-count"),
             TemporalStatement::History => StatementName("temporal-history"),
+            TemporalStatement::ScopeHistory => StatementName("temporal-scope-history"),
             TemporalStatement::Aggregation => StatementName("temporal-aggregation"),
         }
     }

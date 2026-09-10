@@ -14,7 +14,6 @@ use crate::entity::{
     collect_warnings,
     contributions_of,
     expand_q_expr,
-    single_source_declined,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
@@ -26,6 +25,7 @@ use andromeda_federation::{
     request::{EntityMapInUse, TriggeringRequest},
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_http_response::declined_representation::single_source_declined;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity::Entity;

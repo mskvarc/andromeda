@@ -1,0 +1,61 @@
+{
+  "id": "urn:ngsi-ld:Vehicle:A4567",
+  "type": "Vehicle",
+  "brandName": "Mercedes",
+  "street": {
+    "languageMap": {
+      "fr": "Grand Place",
+      "nl": "Grote Markt"
+    }
+  },
+  "isParked": {
+    "id": "urn:ngsi-ld:OffStreetParking:Downtown1",
+    "type": "OffStreetParking",
+    "name": "Top Parking",
+    "operatedBy": "urn:ngsi-ld:Company:BigParkingCorp"
+  },
+  "category": {
+    "vocab": "non-commercial"
+  },
+  "tyreTreadDepths": [
+    300,
+    300,
+    120,
+    6
+  ],
+  "passengers": [
+    {
+      "id": "urn:ngsi-ld:Person:Alice",
+      "type": "Person",
+      "name": "Alice"
+    },
+    {
+      "id": "urn:ngsi-ld:Person:Bob",
+      "type": "Person",
+      "name": "Bob"
+    }
+  ],
+  "route": [
+    {
+      "id": "urn:ngsi-ld:City:Antwerp",
+      "type": "City",
+      "name": "Antwerp"
+    },
+    {
+      "id": "urn:ngsi-ld:City:Rotterdam",
+      "type": "City",
+      "name": "Rotterdam"
+    },
+    {
+      "id": "urn:ngsi-ld:City:Amsterdam",
+      "type": "City",
+      "name": "Amsterdam"
+    }
+  ],
+  "@context": [
+    "http://example.org/ngsi-ld/latest/commonTerms.jsonld",
+    "http://example.org/ngsi-ld/latest/vehicle.jsonld",
+    "http://example.org/ngsi-ld/latest/parking.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"
+  ]
+}

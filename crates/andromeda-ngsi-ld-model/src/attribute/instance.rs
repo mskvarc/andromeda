@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     iter::once,
-    slice::{Iter, from_ref},
+    slice::{Iter, IterMut, from_mut, from_ref},
 };
 
 /// One instance of any NGSI-LD attribute family, discriminated by its `type` member.
@@ -107,6 +107,25 @@ impl Attribute {
         }
     }
 
+    /// The system members every attribute family carries, for mutation.
+    ///
+    /// The mutable twin of [`Attribute::common`]. Clause 4.5.5.2 rewrites the
+    /// `expiresAt` of an instance in place while the versions of an Entity are
+    /// still separate, which is the only way to reach it without rebuilding
+    /// the family struct the instance happens to be.
+    pub const fn common_mut(&mut self) -> &mut CommonAttributeFields {
+        match self {
+            Attribute::Property(p) => &mut p.common,
+            Attribute::Relationship(r) => &mut r.common,
+            Attribute::VocabProperty(v) => &mut v.common,
+            Attribute::GeoProperty(g) => &mut g.common,
+            Attribute::LanguageProperty(l) => &mut l.common,
+            Attribute::JsonProperty(j) => &mut j.common,
+            Attribute::ListProperty(lp) => &mut lp.common,
+            Attribute::ListRelationship(lr) => &mut lr.common,
+        }
+    }
+
     /// Returns the `expiresAt` value of the underlying attribute instance, if set.
     #[must_use]
     pub const fn expires_at(&self) -> Option<DateTime<Utc>> {
@@ -147,6 +166,19 @@ impl AttributeValue {
             AttributeValue::Single(attr) => from_ref(attr.as_ref()).iter(),
             AttributeValue::Multiple(attrs) => attrs.iter(),
             AttributeValue::Raw(_) => Iter::default(),
+        }
+    }
+
+    /// Iterate the attribute instances this member holds, for mutation.
+    ///
+    /// The mutable twin of [`AttributeValue::instances`], and it makes the
+    /// same distinction: a [`AttributeValue::Raw`] member is not an attribute
+    /// instance, so it yields nothing and is left exactly as it was.
+    pub fn instances_mut(&mut self) -> IterMut<'_, Attribute> {
+        match self {
+            AttributeValue::Single(attr) => from_mut(attr.as_mut()).iter_mut(),
+            AttributeValue::Multiple(attrs) => attrs.iter_mut(),
+            AttributeValue::Raw(_) => IterMut::default(),
         }
     }
 }

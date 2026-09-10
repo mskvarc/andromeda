@@ -33,12 +33,13 @@ use crate::{
         start_rendering,
         with_linked_resolution_warnings,
     },
-    read_rendering::{EntityRepresentation, render_entity, render_joined_entities},
+    read_rendering::{EntityRepresentation, apply_representation_names, render_entity, render_joined_entities},
 };
 use andromeda_federation::request::{EntityMapInUse, TriggeringRequest};
 use andromeda_http_extraction::context_target;
-use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
-use std::slice::from_ref;
+use andromeda_http_headers::{ngsild_entity_map::NgsiLdEntityMap, ngsild_warning::NgsiLdWarning};
+use andromeda_ngsi_ld_render::response::ResponseRenderer;
+use std::slice::{from_mut, from_ref};
 
 /// What a retrieval writes into the response body.
 enum RetrievedPayload {
@@ -71,6 +72,40 @@ fn joined_payload(
         // narrowing each nested copy by the sub-projection its own
         // Relationship carried (clause 4.21).
         RetrievingJoin::Inline => Ok(RetrievedPayload::Single(render_entity(entity, Some(resolved), representation, instance)?)),
+    }
+}
+
+/// The HTTP response a retrieval's rendered body becomes.
+///
+/// A clause 4.5.23 flat join answers a collection where every other retrieval
+/// answers a single Entity, and each carries the Table 6.5.3.1-1 `entityMap`
+/// header and the clause 6.3.17 warnings the read gathered. Which of the two
+/// shapes is written is the only thing that differs, so the choice is made once
+/// here rather than inside the handler that gathered them.
+fn retrieval_response(
+    payload: RetrievedPayload,
+    rendering: ResponseRenderer<'_>,
+    warnings: Vec<NgsiLdWarning>,
+    entity_map_uri: Option<Uri>,
+    uri: &HttpUri,
+) -> Result<Response, ProblemResponse> {
+    match payload {
+        RetrievedPayload::Single(value) => {
+            let rendered = rendering.with_payload(ResponsePayload::Single(value)).render().with_entity_instance(uri)?;
+            let mut response = NgsiLdResponse::ok(rendered).with_warnings(warnings);
+            if let Some(map_uri) = entity_map_uri {
+                response = response.with_entity_map_uri(map_uri);
+            }
+            Ok(response.into_response())
+        }
+        RetrievedPayload::Collection(values) => {
+            let rendered = rendering.with_payload(ResponsePayload::Collection(values)).render().with_entity_instance(uri)?;
+            let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings);
+            if let Some(map_uri) = entity_map_uri {
+                response = response.with_entity_map_uri(map_uri);
+            }
+            Ok(response.into_response())
+        }
     }
 }
 
@@ -125,7 +160,7 @@ pub(crate) async fn get(
     let map_use = resolve_retrieval_map_use(&state.entity_maps, &target, &params, referenced, &uri).await?;
 
     // If local=true, skip distributed forwarding
-    let (entity, warnings, entity_map_uri) = if is_local {
+    let (mut entity, warnings, entity_map_uri) = if is_local {
         (local_result.with_entity_instance(&uri)?, Vec::new(), None)
     } else {
         let local_entity = local_result.ok();
@@ -173,7 +208,7 @@ pub(crate) async fn get(
         sys_attrs,
         projection: projection.as_ref(),
     };
-    let resolved = ResolvedJoin::prepare(service, &target, from_ref(&entity), &context, &request)
+    let mut resolved = ResolvedJoin::prepare(service, &target, from_ref(&entity), &context, &request)
         .await
         .with_entity_instance(&uri)?;
     // Clause 6.3.17: a Linked Entity the join could not reach leaves the body
@@ -182,6 +217,9 @@ pub(crate) async fn get(
         Some(resolved) => with_linked_resolution_warnings(warnings, &resolved.failures),
         None => warnings,
     };
+    apply_representation_names(service, &representation, &context, from_mut(&mut entity), resolved.as_mut(), &uri).await?;
+    let entity = entity;
+
     let payload = match &resolved {
         Some(resolved) => joined_payload(&entity, resolved, &representation, &uri)?,
         None => RetrievedPayload::Single(render_entity(&entity, None, &representation, &uri)?),
@@ -191,25 +229,5 @@ pub(crate) async fn get(
         params.geometry_property.as_ref(),
         params.dataset_id.as_deref().unwrap_or_default(),
     ));
-    match payload {
-        RetrievedPayload::Single(value) => {
-            let rendered = rendering.with_payload(ResponsePayload::Single(value)).render().with_entity_instance(&uri)?;
-            let mut response = NgsiLdResponse::ok(rendered).with_warnings(warnings);
-            if let Some(map_uri) = entity_map_uri {
-                response = response.with_entity_map_uri(map_uri);
-            }
-            Ok(response.into_response())
-        }
-        RetrievedPayload::Collection(values) => {
-            let rendered = rendering
-                .with_payload(ResponsePayload::Collection(values))
-                .render()
-                .with_entity_instance(&uri)?;
-            let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings);
-            if let Some(map_uri) = entity_map_uri {
-                response = response.with_entity_map_uri(map_uri);
-            }
-            Ok(response.into_response())
-        }
-    }
+    retrieval_response(payload, rendering, warnings, entity_map_uri, &uri)
 }

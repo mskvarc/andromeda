@@ -20,6 +20,7 @@ pub mod alias;
 pub mod axis;
 pub mod history;
 pub mod recorded_shape;
+pub mod scope_history;
 pub mod stage1;
 
 #[cfg(test)]
@@ -28,6 +29,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-context-space",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-query",
+        "andromeda-ngsi-ld-vocabulary",
         "andromeda-postgresql-codes",
         "andromeda-postgresql-query",
         "andromeda-postgresql-schema",

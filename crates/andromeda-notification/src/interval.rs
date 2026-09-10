@@ -25,6 +25,7 @@ use andromeda_ngsi_ld_model::{
     subscription::Subscription,
 };
 use andromeda_ngsi_ld_query::filter::eval;
+use andromeda_ngsi_ld_render::notification_conformance::amend_notification_entities;
 use andromeda_subscription::{
     compilation::{compile_geo_q, notification_projection},
     notification_slot::{NotificationSlot, NotificationSlotGate},
@@ -303,7 +304,10 @@ impl IntervalNotificationOperation {
             results.push(render_format(compacted, format, sub.notification.join));
         }
 
-        Ok(results)
+        // Clause 5.8.6 places the `ngsildConformance` amendment last, after the
+        // format rendering: a periodic notification is sent the same way a
+        // change-driven one is, so it is amended the same way too.
+        Ok(amend_notification_entities(results, sub.delivery.ngsild_conformance, format))
     }
 }
 

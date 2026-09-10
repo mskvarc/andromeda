@@ -542,6 +542,7 @@ mod tests {
             | TemporalValue::Geometry(_)
             | TemporalValue::Object(_)
             | TemporalValue::Uri(_)
+            | TemporalValue::Scopes(_)
             | TemporalValue::Tombstone { .. }) => panic!("a string literal is not {other:?}"),
         }
     }

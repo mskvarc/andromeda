@@ -7,6 +7,7 @@ use crate::{
 use andromeda_http_headers::{ngsild_tenant::NgsiLdTenant, x_request_id::XRequestId};
 use andromeda_http_tenancy::propagation::echo_tenant_header;
 use axum::{
+    Extension,
     Router,
     extract::{DefaultBodyLimit, MatchedPath, Request},
     http::{StatusCode, header},
@@ -48,6 +49,11 @@ impl HttpStack {
     /// Apply middleware scoped to the complete NGSI-LD API subtree.
     pub fn apply_api(&self, router: Router) -> Router {
         router
+            // Every absolute URL the broker mints from a request origin reads
+            // the operator's trust decision from this extension, so a router
+            // assembled without the stack treats every forwarded-protocol field
+            // as untrusted rather than inheriting a permissive default.
+            .layer(Extension(self.config.forwarded_headers))
             .layer(DefaultBodyLimit::max(self.request_body_limit.bytes()))
             .layer(HelmetLayer::with_defaults())
     }
@@ -130,9 +136,11 @@ mod tests {
         config::{CorsMode, HttpFeatureMode, HttpStackConfig},
         stack::HttpStack,
     };
+    use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
     use axum::{
+        Extension,
         Router,
-        body::Body,
+        body::{Body, to_bytes},
         extract::{Request, State},
         http::StatusCode,
         middleware::{Next, from_fn_with_state},
@@ -142,6 +150,18 @@ mod tests {
     use std::{error::Error, sync::Arc};
     use tokio::sync::Mutex;
     use tower::{Layer, ServiceExt};
+
+    /// A stack configuration with every optional feature switched off.
+    fn disabled_config() -> HttpStackConfig {
+        HttpStackConfig {
+            request_timeout_secs: 30,
+            response_compression: HttpFeatureMode::Disabled,
+            request_decompression: HttpFeatureMode::Disabled,
+            cors: CorsMode::Disabled,
+            max_request_body_bytes: 1024,
+            forwarded_headers: ForwardedHeaderTrust::Untrusted,
+        }
+    }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum Phase {
@@ -279,16 +299,30 @@ mod tests {
         Ok(())
     }
 
+    /// The API stack hands every route the operator's trust decision, so the
+    /// origin extractor never has to guess it.
+    #[tokio::test]
+    async fn the_api_stack_installs_the_configured_forwarded_header_trust() -> Result<(), Box<dyn Error>> {
+        for declared in [ForwardedHeaderTrust::Untrusted, ForwardedHeaderTrust::Trusted] {
+            let stack = HttpStack::new(HttpStackConfig {
+                forwarded_headers: declared,
+                ..disabled_config()
+            });
+            let router = stack.apply_api(Router::new().route(
+                "/probe",
+                get(|Extension(trust): Extension<ForwardedHeaderTrust>| async move { trust.to_string() }),
+            ));
+            let response = router.oneshot(Request::get("/probe").body(Body::empty())?).await?;
+            pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
+            let body = to_bytes(response.into_body(), usize::MAX).await?;
+            pretty_assertions::assert_eq!(String::from_utf8(body.to_vec())?, declared.to_string());
+        }
+        Ok(())
+    }
+
     #[tokio::test]
     async fn process_stack_normalizes_paths_before_route_matching() -> Result<(), Box<dyn Error>> {
-        let config = HttpStackConfig {
-            request_timeout_secs: 30,
-            response_compression: HttpFeatureMode::Disabled,
-            request_decompression: HttpFeatureMode::Disabled,
-            cors: CorsMode::Disabled,
-            max_request_body_bytes: 1024,
-        };
-        let stack = HttpStack::new(config);
+        let stack = HttpStack::new(disabled_config());
         let service = stack.apply_process(Router::new().route("/health", get(|| async { StatusCode::OK })));
         let response = service.oneshot(Request::get("/health/").body(Body::empty())?).await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::OK);

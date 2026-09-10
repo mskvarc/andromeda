@@ -20,6 +20,7 @@ pub mod intent_retry_policy;
 /// Clause 4.5.23 join over the temporal evolution of Linked Entities.
 pub mod linked;
 pub mod outcome;
+mod pending_observation;
 /// Read overlay combining stored history with committed pending intents.
 pub mod pending_overlay;
 pub mod port;

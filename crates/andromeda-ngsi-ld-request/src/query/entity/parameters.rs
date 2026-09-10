@@ -221,7 +221,7 @@ mod tests {
         let p = params_from_query("orderBy=temperature");
         let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr.as_str(), "temperature");
+        pretty_assertions::assert_eq!(order[0].attr.attr.as_str(), "temperature");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
     }
 
@@ -230,7 +230,7 @@ mod tests {
         let p = params_from_query("orderBy=!temperature");
         let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr.as_str(), "temperature");
+        pretty_assertions::assert_eq!(order[0].attr.attr.as_str(), "temperature");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Desc);
     }
 
@@ -248,7 +248,7 @@ mod tests {
         let p = params_from_query("orderBy=temperature;asc");
         let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr.as_str(), "temperature");
+        pretty_assertions::assert_eq!(order[0].attr.attr.as_str(), "temperature");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
     }
 
@@ -257,7 +257,7 @@ mod tests {
         let p = params_from_query("orderBy=temperature;desc");
         let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr.as_str(), "temperature");
+        pretty_assertions::assert_eq!(order[0].attr.attr.as_str(), "temperature");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Desc);
     }
 
@@ -266,7 +266,7 @@ mod tests {
         let p = params_from_query("orderBy=location;dist-asc");
         let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr.as_str(), "location");
+        pretty_assertions::assert_eq!(order[0].attr.attr.as_str(), "location");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::DistAsc);
         assert!(order[0].direction.is_distance());
     }
@@ -276,7 +276,7 @@ mod tests {
         let p = params_from_query("orderBy=location;dist-desc");
         let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr.as_str(), "location");
+        pretty_assertions::assert_eq!(order[0].attr.attr.as_str(), "location");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::DistDesc);
         assert!(order[0].direction.is_distance());
     }

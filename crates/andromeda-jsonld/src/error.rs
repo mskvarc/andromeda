@@ -80,6 +80,18 @@ pub enum JsonLdError {
     #[error("Inline context invalid: {0}")]
     InlineContextInvalid(String),
 
+    /// A user `@context` declares a JSON-LD Scoped Context.
+    ///
+    /// ETSI GS CIM 009 v1.9.1 clause 5.5.7: the user `@context` "shall not
+    /// contain JSON-LD Scoped Contexts", because one "could be used to modify
+    /// terms defined in the Core `@context` or to reshape NGSI-LD Elements
+    /// during the expansion of terms".
+    #[error("The user @context defines the term {term} with a scoped @context, which clause 5.5.7 does not admit")]
+    ScopedUserContext {
+        /// The term whose definition carries the scoped `@context`.
+        term: String,
+    },
+
     /// The HTTP client could not be constructed from the configured settings.
     #[error("Failed to build JSON-LD HTTP client")]
     ClientBuild(#[source] reqwest::Error),
@@ -280,6 +292,7 @@ mod tests {
             JsonLdError::InlineContextInvalid("boom".to_string()),
             JsonLdError::InvalidIri("boom".to_string()),
             JsonLdError::InvalidDocument("boom".to_string()),
+            JsonLdError::ScopedUserContext { term: "speed".to_string() },
         ];
         for error in &internal {
             assert!(!error.is_context_not_available(), "{error} must not report as a loading failure");

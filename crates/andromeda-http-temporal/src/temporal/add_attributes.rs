@@ -56,7 +56,7 @@ pub async fn add_attrs(
     let context = context.merge(body_context);
     // Clause 5.6.12.4 runs the clause 5.5.4 validation before the forwarding
     // phase.
-    admit_written_evolution(&payload, &uri)?;
+    admit_written_evolution(service.engine(), &payload, &context, &uri).await?;
 
     if params.local.unwrap_or(false) {
         service.add_attrs(&target, &id, payload, &context).await.with_instance(&uri)?;

@@ -62,6 +62,17 @@ pub(crate) fn prepare(
                 attribute_type: removed.attribute_type,
                 instance: InstanceIdentity::generate(),
             }),
+            // Clause 4.18 ends a Scope's validity when it is "explicitly
+            // removed by an update or delete operation", and the write that
+            // removed it declared no instant of its own, so the removal is
+            // dated at the write — which is also what clause 4.5.6 asks of a
+            // Scope changed through the Core API, "the observedAt sub-Property
+            // should be set as a copy of the modifiedAt sub-Property".
+            HistoryRecord::ScopeRemoval => entries.push(TemporalAppendEntry::Scope {
+                observation: ScopeObservation::Deleted,
+                observed_at: Some(recorded_at),
+                instance: InstanceIdentity::generate(),
+            }),
         }
     }
     Ok(Some(TemporalAppendIntent {

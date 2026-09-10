@@ -1,20 +1,17 @@
 //! Asking the registered context sources for their part of a queried history
 //! (clauses 5.7.4.4 and 6.3.18).
 
-use crate::{
-    error::single_source_declined,
-    temporal::{
-        ContextSpec,
-        ContextualExpander,
-        CsrModeFilter,
-        ForwardTemporalQueryRequest,
-        ForwardingOperation,
-        JsonKeyAttributes,
-        ProblemResponse,
-        ResultInstanceExt,
-        TemporalQueryParameters,
-        expand_q_expr,
-    },
+use crate::temporal::{
+    ContextSpec,
+    ContextualExpander,
+    CsrModeFilter,
+    ForwardTemporalQueryRequest,
+    ForwardingOperation,
+    JsonKeyAttributes,
+    ProblemResponse,
+    ResultInstanceExt,
+    TemporalQueryParameters,
+    expand_q_expr,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::reuse::EntityMapUse;
@@ -24,6 +21,7 @@ use andromeda_federation::{
     outcome::{ForwardReadOutcome, ForwardedTemporalEntities},
     request::{EntityMapInUse, TriggeringRequest},
 };
+use andromeda_http_response::declined_representation::single_source_declined;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use axum::http::Uri;
 use tracing::warn;

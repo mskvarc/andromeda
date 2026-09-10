@@ -187,14 +187,7 @@ impl FederationService {
                 let outcome = self
                     .forward_get(&registration, url_of(&registration, &query), context, triggering, cacheability, linked_map)
                     .await;
-                let error_status = match &outcome {
-                    ForwardGetOutcome::ErrorStatus(status) => Some(*status),
-                    ForwardGetOutcome::Success(_)
-                    | ForwardGetOutcome::NotFound(_)
-                    | ForwardGetOutcome::InvalidPayload(_)
-                    | ForwardGetOutcome::Transport(_)
-                    | ForwardGetOutcome::LoopDetected => None,
-                };
+                let error_status = outcome.error_status();
                 SourceAnswer {
                     mode: registration.access.mode.unwrap_or_default(),
                     error_status,

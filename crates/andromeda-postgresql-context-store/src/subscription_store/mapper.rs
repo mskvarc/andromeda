@@ -10,7 +10,7 @@ use crate::{
     subscription_store::{params::DatasetIdPresence, rows::SubscriptionRow},
 };
 use andromeda_context_commit::subscription_key::SubscriptionKey;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion, uri::Uri};
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     subscription::{
@@ -34,7 +34,7 @@ use langtag::LangTagBuf;
 use sea_query::Iden;
 use serde_json::Value;
 use sqlx::{Row, postgres::PgRow};
-use std::num::NonZeroU32;
+use std::{num::NonZeroU32, str::FromStr};
 use url::Url;
 
 /// Parse a subscription identifier read from PostgreSQL.
@@ -152,6 +152,12 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
         .map(|raw| Url::parse(&raw).map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription jsonldContext '{raw}': {error}"))))
         .transpose()?;
     let status_label: String = row.try_get(Subscriptions::Status.unquoted())?;
+    let ngsild_conformance_raw: Option<String> = row.try_get(Subscriptions::NgsildConformance.unquoted())?;
+    let ngsild_conformance = ngsild_conformance_raw
+        .map(|raw| {
+            SpecVersion::from_str(&raw).map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription ngsildConformance '{raw}': {error}")))
+        })
+        .transpose()?;
     Ok(SubscriptionRow {
         id,
         key: stored_subscription_key(row.try_get(Subscriptions::SubscriptionKey.unquoted())?)?,
@@ -179,6 +185,7 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
         jsonld_context,
         local_only: row.try_get(Subscriptions::LocalOnly.unquoted())?,
         split_entities: row.try_get(Subscriptions::SplitEntities.unquoted())?,
+        ngsild_conformance,
         times_sent: row.try_get(SubscriptionDeliveryState::TimesSent.unquoted())?,
         times_failed: row.try_get(SubscriptionDeliveryState::TimesFailed.unquoted())?,
         last_notification: row.try_get(SubscriptionDeliveryState::LastNotification.unquoted())?,
@@ -280,6 +287,7 @@ fn row_to_subscription(row: SubscriptionRow) -> Subscription {
                 .jsonld_context(row.jsonld_context)
                 .local_only(if row.local_only { Some(true) } else { None })
                 .split_entities(row.split_entities)
+                .ngsild_conformance(row.ngsild_conformance)
                 .build(),
         )
         .lifecycle(

@@ -127,6 +127,20 @@ fn write_query_path(buf: &mut String, path: &QueryPath) -> usize {
     }
 }
 
+/// Render one attribute path back into clause 4.9 syntax.
+///
+/// The result parses back to an equal path through
+/// [`parse_attribute_path`](crate::filter::value_path::parse_attribute_path),
+/// which is what lets an `orderBy` term round-trip: clause 4.23.3 carries its
+/// path in the request text, so the parsed term has to be able to spell itself
+/// again.
+#[must_use]
+pub fn serialize_attr_path(path: &AttrPath) -> String {
+    let mut buffer = String::new();
+    write_attr_path(&mut buffer, path);
+    buffer
+}
+
 /// Write an attribute path, including sub-attributes and compound value keys.
 fn write_attr_path(buf: &mut String, path: &AttrPath) {
     write_ident(buf, path.attr.as_str());

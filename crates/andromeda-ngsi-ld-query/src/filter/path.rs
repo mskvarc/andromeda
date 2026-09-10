@@ -73,6 +73,18 @@ impl PartialEq for AttrPath {
 impl Eq for AttrPath {}
 
 impl AttrPath {
+    /// Whether this path names one attribute and navigates no further.
+    ///
+    /// The clause 4.23 keywords `id`, `type` and `scope` name structural
+    /// members of the entity representation, and the grammar spells each as a
+    /// bare `AttrName`. A path that descends into one of them is therefore an
+    /// attribute path that happens to start with the keyword's spelling, not
+    /// the keyword.
+    #[must_use]
+    pub const fn is_simple(&self) -> bool {
+        self.sub_attrs.is_empty() && self.value_path.is_empty() && !self.match_all_languages
+    }
+
     /// Build a path addressing an attribute's own value, with no sub-attribute
     /// and no compound value navigation.
     #[must_use]

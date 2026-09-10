@@ -66,6 +66,7 @@ mod tests {
         routes::EntityMapRoutes,
         state::{EntityMapRouteServices, EntityMapStateResolver},
     };
+    use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
     use andromeda_http_health::routes::HealthRoutes;
     use andromeda_http_notification_receiver::{
         routes::NotificationReceiverRoutes,
@@ -99,6 +100,7 @@ mod tests {
     use andromeda_telemetry::recorder::TelemetryRecorder;
     use andromeda_tenancy::{
         administration::{OrphanTenantEvictor, TenantDirectory},
+        context_source_alias::ContextSourceAliases,
         creation_policy::TenantCreationPolicy,
         error::TenancyError,
         tenant_ref::TenantRef,
@@ -184,7 +186,7 @@ mod tests {
             .snapshot(SnapshotRoutes::new(Arc::new(RejectSnapshot)))
             .source_identity(SourceIdentityRoutes::new(SourceIdentityState::new(
                 "urn:ngsi-ld:ContextSourceIdentity:test".parse::<Uri>()?,
-                "test".parse::<ContextSourcePseudonym>()?,
+                ContextSourceAliases::new("test".parse::<ContextSourcePseudonym>()?),
                 Utc::now(),
                 None,
             )))
@@ -202,6 +204,7 @@ mod tests {
             request_decompression: HttpFeatureMode::Disabled,
             cors: CorsMode::Disabled,
             max_request_body_bytes: 1024 * 1024,
+            forwarded_headers: ForwardedHeaderTrust::Untrusted,
         });
         Ok(HttpApi::assemble(routes, &stack))
     }

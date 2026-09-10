@@ -9,11 +9,15 @@ use crate::{
     delivery_drain::{DeliveryDisposition, NotificationDeliveryTransport},
     delivery_entry::DeliveryEntry,
     error::NotificationError,
-    processor::NotificationProcessor,
+    notification_event::NotificationEvent,
+    processor::{NotificationProcessor, payload::EntitySurvival},
 };
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger, SysAttrsSnapshot};
+use andromeda_ngsi_ld_model::{
+    expanded::instance_key::attribute_instance_family,
+    notification::{ChangeOrigin, NotificationTrigger, SysAttrsSnapshot},
+};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
@@ -24,12 +28,16 @@ impl NotificationDeliveryTransport for NotificationProcessor {
     fn deliver<'a>(&'a self, entry: &'a DeliveryEntry) -> BoxFuture<'a, Result<DeliveryDisposition, NotificationError>> {
         Box::pin(async move {
             let stored = &entry.event;
-            let is_deletion = matches!(stored.trigger, NotificationTrigger::EntityDeleted | NotificationTrigger::AttributeDeleted);
+            let survival = stored_entity_survival(stored);
             let snapshot = stored.entity_snapshot.clone(); // clone: the change event owns the durable payload while the leased delivery remains available for acknowledgement.
             // The deleted row is gone, so its system attributes are read back
             // from the snapshot the delete write embedded them into, restoring
-            // the typed carrier the in-process path would have supplied.
-            let sys_attrs_snapshot = is_deletion.then(|| sys_attrs_from_snapshot(snapshot.as_ref())).flatten();
+            // the typed carrier the in-process path would have supplied. An
+            // Entity that survived its change still has a row to read them from.
+            let sys_attrs_snapshot = match survival {
+                EntitySurvival::Deleted => sys_attrs_from_snapshot(snapshot.as_ref()),
+                EntitySurvival::Survived => None,
+            };
             let event = ChangeEvent::builder()
                 .entity_id(stored.entity_id.clone()) // clone: the change event and the stored event independently own the identifier.
                 .entity_types(entity_types_from_snapshot(snapshot.as_ref()))
@@ -37,11 +45,23 @@ impl NotificationDeliveryTransport for NotificationProcessor {
                 .changed_attributes(stored.changed_attributes.clone()) // clone: the change event owns its attribute names through delivery.
                 .changed_dataset_id(stored.changed_dataset_id.clone()) // clone: the event owns the instance discriminator.
                 .occurred_at(stored.created_at)
-                .entity_snapshot(is_deletion.then(|| snapshot.clone()).flatten()) // clone: deletion evaluation consumes its own snapshot value.
+                // Which of the two members the stored snapshot fills is what
+                // tells the notification path whether the Entity is still
+                // there: `entity_snapshot` alone is the shape clause 5.8.6
+                // reduces to `deletedAt`, while `current_payload` is the Entity
+                // the change left behind.
+                .entity_snapshot(match survival {
+                    // clone: deletion evaluation consumes its own snapshot value.
+                    EntitySurvival::Deleted => snapshot.clone(),
+                    EntitySurvival::Survived => None,
+                })
                 .previous_attributes(stored.previous_snapshot.clone()) // clone: showChanges evaluation owns the prior representation.
                 .sys_attrs_snapshot(sys_attrs_snapshot)
                 .origin(ChangeOrigin::Local)
-                .current_payload((!is_deletion).then(|| snapshot.map(Arc::new)).flatten())
+                .current_payload(match survival {
+                    EntitySurvival::Deleted => None,
+                    EntitySurvival::Survived => snapshot.map(Arc::new),
+                })
                 .build();
             let outcome = self.apply_entity_change_for(entry.target.clone(), event, Some(&entry.subscription_id)).await;
             if outcome.delivered > 0 {
@@ -59,6 +79,68 @@ impl NotificationDeliveryTransport for NotificationProcessor {
             }
         })
     }
+}
+
+/// Whether the Entity a durably queued delivery names outlived the change it
+/// records.
+///
+/// Every trigger but the two deletions leaves the Entity behind. An
+/// `entityDeleted` delivery says outright that it does not. An
+/// `attributeDeleted` delivery is the ambiguous one, and the ambiguity is what
+/// this resolves: the queue stores one `entity_snapshot` per delivery, and both
+/// kinds of deletion fill it.
+///
+/// Getting this wrong is not a cosmetic difference. Clause 5.8.6 reduces a
+/// notification "triggered by the deletion of an Entity" to the `deletedAt`
+/// system property alone, so a surviving Entity misread as a deleted one is
+/// notified without the very attribute whose deletion triggered it -- the
+/// `urn:ngsi-ld:null` that clause 5.5.4 bullet 2 expressly admits "in
+/// notifications and the temporal evolution" never reaches the subscriber.
+fn stored_entity_survival(stored: &NotificationEvent) -> EntitySurvival {
+    match stored.trigger {
+        NotificationTrigger::EntityDeleted => EntitySurvival::Deleted,
+        NotificationTrigger::AttributeDeleted => attribute_deletion_survival(stored),
+        NotificationTrigger::EntityCreated
+        | NotificationTrigger::EntityUpdated
+        | NotificationTrigger::AttributeCreated
+        | NotificationTrigger::AttributeUpdated => EntitySurvival::Survived,
+    }
+}
+
+/// Whether an `attributeDeleted` delivery is an ordinary Attribute deletion or
+/// the fan-out of an Entity deletion.
+///
+/// Clause 5.6.5 removes one Attribute and leaves the Entity, so the write
+/// stores the Entity it left behind -- which no longer carries the instance the
+/// delivery names. Clause 5.6.6 removes the Entity and raises one
+/// `attributeDeleted` delivery per Attribute it held, and stores the Entity as
+/// it stood *before* the removal, because the notification still has to render
+/// its clause 4.8 system attributes once the row is gone; that snapshot does
+/// still carry the instance. The instance the delivery names is therefore what
+/// tells the two apart, and it is the only thing in the stored row that does.
+///
+/// A delivery carrying no snapshot at all cannot be placed, and is treated as a
+/// surviving Entity so the notification path reads the Entity from the store
+/// and drops the notification if it is genuinely gone -- the same reading
+/// `crate::processor::payload::entity_survival` gives that shape in process.
+fn attribute_deletion_survival(stored: &NotificationEvent) -> EntitySurvival {
+    let Some(snapshot) = stored.entity_snapshot.as_ref() else {
+        return EntitySurvival::Survived;
+    };
+    if snapshot_carries_deleted_instance(snapshot, stored) {
+        EntitySurvival::Deleted
+    } else {
+        EntitySurvival::Survived
+    }
+}
+
+/// Whether `snapshot` still holds one of the Attribute instances the delivery
+/// reports as deleted.
+fn snapshot_carries_deleted_instance(snapshot: &Value, stored: &NotificationEvent) -> bool {
+    stored
+        .changed_attributes
+        .iter()
+        .any(|attribute| attribute_instance_family(snapshot, attribute, stored.changed_dataset_id.as_ref()).is_some())
 }
 
 /// Reconstruct the clause-4.8 system attributes from a persisted deletion
@@ -117,10 +199,113 @@ fn entity_types_from_snapshot(snapshot: Option<&Value>) -> Vec<EntityTypeName> {
 
 #[cfg(test)]
 mod tests {
-    use crate::processor::durable_delivery::{entity_types_from_snapshot, sys_attrs_from_snapshot};
+    use crate::{
+        notification_event::{NotificationEvent, NotificationEventId},
+        processor::{
+            durable_delivery::{entity_types_from_snapshot, stored_entity_survival, sys_attrs_from_snapshot},
+            payload::EntitySurvival,
+        },
+    };
+    use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+    use andromeda_ngsi_ld_model::notification::NotificationTrigger;
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-    use serde_json::json;
+    use chrono::Utc;
+    use serde_json::{Value, json};
+    use uuid::Uuid;
+
+    /// The attribute the deletion deliveries below name.
+    const NAME: &str = "https://uri.etsi.org/ngsi-ld/default-context/name";
+
+    /// An expanded Entity carrying `name` and `airQualityLevel`.
+    fn entity_with_name() -> Value {
+        json!([{
+            "@id": "urn:ngsi-ld:Building:1",
+            "@type": ["https://uri.etsi.org/ngsi-ld/default-context/Building"],
+            expanded_properties::CREATED_AT.as_str(): [{"@value": "2024-01-01T00:00:00Z"}],
+            NAME: [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "Tower"}]}],
+            "https://uri.etsi.org/ngsi-ld/default-context/airQualityLevel": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 3}]
+            }]
+        }])
+    }
+
+    /// The same Entity as a clause 5.6.5 Attribute deletion leaves it.
+    fn entity_without_name() -> Value {
+        json!([{
+            "@id": "urn:ngsi-ld:Building:1",
+            "@type": ["https://uri.etsi.org/ngsi-ld/default-context/Building"],
+            "https://uri.etsi.org/ngsi-ld/default-context/airQualityLevel": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 3}]
+            }]
+        }])
+    }
+
+    /// One queued delivery of `trigger` for the `name` Attribute.
+    fn queued(trigger: NotificationTrigger, snapshot: Option<Value>) -> NotificationEvent {
+        NotificationEvent::builder()
+            .id(NotificationEventId::from(1_i64))
+            .write_id(WriteId::from_uuid(Uuid::nil()))
+            .event_ordinal(WriteOrdinal::at(0))
+            .trigger(trigger)
+            .entity_id("urn:ngsi-ld:Building:1".parse().expect("valid entity URI"))
+            .changed_attributes(vec![NAME.parse().expect("valid attribute name")])
+            .entity_snapshot(snapshot)
+            .created_at(Utc::now())
+            .build()
+    }
+
+    /// Clause 5.6.5 removes one Attribute and leaves the Entity, so the stored
+    /// snapshot is the Entity that survived and no longer carries the deleted
+    /// instance. Read as a deleted Entity, clause 5.8.6 would reduce the
+    /// notification to `deletedAt` and the `urn:ngsi-ld:null` clause 5.5.4
+    /// bullet 2 admits "in notifications" would never be delivered.
+    #[test]
+    fn a_queued_attribute_deletion_that_left_the_entity_behind_is_not_an_entity_deletion() {
+        let stored = queued(NotificationTrigger::AttributeDeleted, Some(entity_without_name()));
+        pretty_assertions::assert_eq!(stored_entity_survival(&stored), EntitySurvival::Survived);
+    }
+
+    /// Clause 5.6.6 deletes the Entity and raises one `attributeDeleted`
+    /// delivery per Attribute it held, storing the Entity as it stood before
+    /// the removal so the notification can still render its clause 4.8 system
+    /// attributes. That snapshot still carries the instance.
+    #[test]
+    fn a_queued_attribute_deletion_that_went_with_its_entity_is_an_entity_deletion() {
+        let stored = queued(NotificationTrigger::AttributeDeleted, Some(entity_with_name()));
+        pretty_assertions::assert_eq!(stored_entity_survival(&stored), EntitySurvival::Deleted);
+    }
+
+    /// An `entityDeleted` delivery says so outright, whatever it stored.
+    #[test]
+    fn a_queued_entity_deletion_is_always_an_entity_deletion() {
+        let stored = queued(NotificationTrigger::EntityDeleted, Some(entity_with_name()));
+        pretty_assertions::assert_eq!(stored_entity_survival(&stored), EntitySurvival::Deleted);
+    }
+
+    /// A delivery with no snapshot cannot be placed, so the Entity is read from
+    /// the store instead of being assumed gone.
+    #[test]
+    fn a_queued_attribute_deletion_without_a_snapshot_leaves_the_entity_to_be_read() {
+        let stored = queued(NotificationTrigger::AttributeDeleted, None);
+        pretty_assertions::assert_eq!(stored_entity_survival(&stored), EntitySurvival::Survived);
+    }
+
+    /// Every trigger that is not a deletion leaves the Entity behind.
+    #[test]
+    fn a_queued_change_that_is_not_a_deletion_leaves_the_entity_behind() {
+        for trigger in [
+            NotificationTrigger::EntityCreated,
+            NotificationTrigger::EntityUpdated,
+            NotificationTrigger::AttributeCreated,
+            NotificationTrigger::AttributeUpdated,
+        ] {
+            let stored = queued(trigger, Some(entity_with_name()));
+            pretty_assertions::assert_eq!(stored_entity_survival(&stored), EntitySurvival::Survived, "{trigger}");
+        }
+    }
 
     #[test]
     fn a_deletion_snapshot_gives_back_its_system_attributes() {

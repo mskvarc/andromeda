@@ -20,13 +20,11 @@ pub fn classify_tenancy_error(error: &TenancyError) -> ClassifiedReport {
     }
 }
 
-/// Classify malformed request-origin headers at the shared extraction boundary.
+/// Classify a malformed request-origin header at the shared extraction boundary.
 #[must_use]
 pub fn classify_request_origin_error(error: &RequestOriginError) -> ClassifiedReport {
     match error {
-        RequestOriginError::InvalidText { .. } | RequestOriginError::InvalidOrigin { .. } => {
-            ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string())
-        }
+        RequestOriginError::InvalidOrigin { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
     }
 }
 
@@ -78,6 +76,9 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
     match error {
         QueryError::QEmpty
         | QueryError::QUnterminatedString
+        | QueryError::QInvalidStringEscape { .. }
+        | QueryError::QInvalidUnicodeEscape { .. }
+        | QueryError::QUnescapedControlCharacter { .. }
         | QueryError::QUnexpectedToken { .. }
         | QueryError::QExpected { .. }
         | QueryError::QUnexpectedChar { .. }
@@ -90,13 +91,19 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::TypeExprInvalidName { .. }
         | QueryError::GeoIncomplete
         | QueryError::ProjectionUnbalancedBrace { .. }
-        | QueryError::ProjectionEmptyTerm { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
+        | QueryError::ProjectionEmptyTerm { .. }
+        // A name outside the clause 4.6.2 grammar is a syntactically invalid
+        // request parameter, not a broker fault: every one of these reaches the
+        // parser from `q`, `attrs`, `orderBy`, `pick`/`omit` or `geoproperty`,
+        // all of them client text.
+        | QueryError::AttributeNameInvalid { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
         QueryError::QInvalidNumber { .. }
         | QueryError::QInvalidDateTime { .. }
         | QueryError::QInvalidDate { .. }
         | QueryError::QInvalidTime { .. }
         | QueryError::PatternRegex(_)
         | QueryError::PatternRepeatedQuantifier
+        | QueryError::PatternNonPosixConstruct { .. }
         | QueryError::GeoRel(_)
         | QueryError::GeoCoordinatesInvalid(_)
         | QueryError::ReferenceGeometry(_)
@@ -112,8 +119,18 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::ParamAggrPeriodDurationInvalid(_)
         | QueryError::ParamDatasetIdInvalid(_)
         | QueryError::ParamEndTimeAtRequired
-        | QueryError::ProjectionKeywordWithLinkedTerm { .. } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
-        QueryError::TermExpansion { .. } | QueryError::AttributeNameInvalid { .. } | QueryError::TermNotAnIri { .. } => ClassifiedReport::internal(error),
+        | QueryError::ProjectionKeywordWithLinkedTerm { .. }
+        // A term that does not expand to an absolute IRI names nothing the
+        // broker can address. The term and the `@context` that failed to
+        // resolve it both come from the request, so this is input the operation
+        // cannot accept rather than a broker fault — and answering a malformed
+        // query parameter with `500 InternalError` told the client to retry
+        // something that can only ever fail.
+        | QueryError::TermNotAnIri { .. } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
+        // The expander's own failure is the one arm that can still be a broker
+        // fault: it carries whatever the JSON-LD processor raised, which
+        // includes conditions no request text can provoke.
+        QueryError::TermExpansion { .. } => ClassifiedReport::internal(error),
     }
 }
 
@@ -125,10 +142,13 @@ pub fn classify_jsonld_error(error: &JsonLdError) -> ClassifiedReport {
             ClassifiedReport::public(NgsiLdErrorType::LdContextNotAvailable, error.to_string())
         }
         JsonLdError::Json(source) if source.is_syntax() || source.is_eof() => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
+        // Clause 5.5.7: parts of a user @context that contain a JSON-LD Scoped
+        // Context "should result in an error of type BadRequestData".
         JsonLdError::ProtectedContextPreload { .. }
         | JsonLdError::ContextInvalid { .. }
         | JsonLdError::EmbeddedContextInvalid(_)
         | JsonLdError::InlineContextInvalid(_)
+        | JsonLdError::ScopedUserContext { .. }
         | JsonLdError::ClientBuild(_)
         | JsonLdError::Expansion(_)
         | JsonLdError::Compaction(_)

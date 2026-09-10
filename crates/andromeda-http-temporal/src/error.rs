@@ -4,7 +4,7 @@ use andromeda_entity_map::error::EntityMapError;
 use andromeda_federation::error::FederationError;
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error, classify_tenancy_error};
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse, provision::classify_forwarding_error};
-use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
+use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_render::{error::RenderError, temporal::simplify::TemporalSimplifyError};
 use andromeda_ngsi_ld_request::error::ParameterError;
@@ -43,17 +43,6 @@ pub fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
 /// Convert one temporal-policy failure into its wire response for `instance`.
 pub(crate) fn temporal_problem(error: &TemporalError, instance: &Uri) -> ProblemResponse {
     classify_temporal_error(error).with_instance(instance.clone())
-}
-
-/// The response a temporal read gives when the one exclusive or redirect
-/// source holding all of its data declined the representation with `status`
-/// (Table 6.4.3.2-3, clause 6.3.7): the source's 501 is the operation's answer.
-pub(crate) fn single_source_declined(status: u16, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::public_binding(
-        ProblemClassification::NotImplemented,
-        format!("the registered context source holding the requested data answered HTTP {status}: it does not support the requested representation"),
-    )
-    .with_instance(instance.clone())
 }
 
 impl TemporalHttpClassify for EntityMapError {
@@ -143,8 +132,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::error::{classify_temporal_error, single_source_declined};
+    use crate::error::classify_temporal_error;
     use andromeda_context_commit::error::CommitError;
+    use andromeda_http_response::declined_representation::single_source_declined;
     use andromeda_jsonld::error::JsonLdError;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use andromeda_ngsi_ld_query::error::QueryError;

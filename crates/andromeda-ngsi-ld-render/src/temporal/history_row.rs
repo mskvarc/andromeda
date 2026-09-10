@@ -76,6 +76,13 @@ fn insert_observed_value(instance: &mut Map<String, Value>, row: &TemporalHistor
         TemporalValue::Object(object) => expanded_structured_value(object, row.attribute_type),
         TemporalValue::DateTime(instant) => expanded_datetime(*instant),
         TemporalValue::Uri(uri) => json!([{"@id": uri}]),
+        // Clause 4.18: "The value of scope is represented as a JSON array in
+        // case there is more than one Scope". A multi-valued string is several
+        // value nodes in the expanded form — a JSON-LD value node cannot hold
+        // an array — and compaction gives back the bare string for one Scope
+        // and the array for several, which is what annex C clause C.5.16
+        // renders for Vehicles B9211 and A8311 respectively.
+        TemporalValue::Scopes(paths) => Value::Array(paths.iter().map(|path| json!({"@value": path.as_str()})).collect()),
         // A deleted instance renders through `insert_deleted_value` instead,
         // before this is ever reached.
         TemporalValue::Tombstone { .. } => return,
@@ -118,7 +125,29 @@ fn expanded_structured_value(object: &Value, attribute_type: AttributeType) -> V
             || json!([{"@list": [expanded_object_list_member(object)]}]),
             |targets| json!([{"@list": targets.iter().map(expanded_object_list_member).collect::<Vec<Value>>()}]),
         ),
-        AttributeType::Property | AttributeType::GeoProperty => json!([{"@value": object}]),
+        AttributeType::Property | AttributeType::GeoProperty => expanded_property_value(object),
+    }
+}
+
+/// The expanded shape a structured Property or `GeoProperty` value renders in.
+///
+/// Clause 5.2.5 puts no restriction on a Property `value`, so an array and a
+/// JSON object are both admissible, and a JSON-LD value node holds neither: it
+/// admits a string, number, boolean or null and nothing else. The write path
+/// stores what JSON-LD expansion made of the value, and that is what decides
+/// the reading here. `crates/andromeda-temporal/src/attribute_instance_value.rs`
+/// stores an array-valued Property as the elements of the several value nodes
+/// expansion produced — which is why `["a"]` is stored as the string `"a"` and
+/// `[["a"],["b","c"]]` as `["a","b","c"]` — so the array renders back as those
+/// value nodes and compacts to the array the current representation of the same
+/// Attribute answers with. An object-valued Property is stored as the node
+/// object expansion produced, so it renders as that node.
+fn expanded_property_value(object: &Value) -> Value {
+    match object {
+        Value::Array(elements) => Value::Array(elements.iter().map(|element| json!({"@value": element})).collect()),
+        // clone: the rendered instance owns the expanded node the row holds.
+        Value::Object(_) => Value::Array(vec![object.clone()]),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => json!([{"@value": object}]),
     }
 }
 
@@ -400,6 +429,56 @@ mod tests {
             let rendered = neutral_row_to_expanded_instance(&row(TemporalValue::Number(number)), SysAttrsInclusion::Strip);
             pretty_assertions::assert_eq!(member(&rendered, AttributeType::Property.value_key_str()), Some(&json!([{"@value": expected}])));
         }
+    }
+
+    /// Clause 5.2.5 puts no restriction on a Property `value`, and a JSON-LD
+    /// value node holds a string, number, boolean or null and nothing else, so
+    /// an array-valued Property renders as the several value nodes its stored
+    /// elements came from. One node holding the array would be a document no
+    /// compaction could read.
+    #[test]
+    fn an_array_valued_property_renders_one_value_node_per_element() {
+        let cases = [
+            (json!(["a", "b"]), json!([{"@value": "a"}, {"@value": "b"}])),
+            (json!([1, 2, 3]), json!([{"@value": 1}, {"@value": 2}, {"@value": 3}])),
+            (json!([true, false]), json!([{"@value": true}, {"@value": false}])),
+        ];
+        for (stored, expected) in cases {
+            let rendered = neutral_row_to_expanded_instance(&row(TemporalValue::Object(stored)), SysAttrsInclusion::Strip);
+            pretty_assertions::assert_eq!(member(&rendered, AttributeType::Property.value_key_str()), Some(&expected));
+        }
+    }
+
+    /// The same holds for a `GeoProperty` whose stored value is structured
+    /// rather than a geometry: the two families share one value reading.
+    #[test]
+    fn an_array_valued_geo_property_renders_the_same_value_nodes() {
+        let mut geo = row(TemporalValue::Object(json!(["a", "b"])));
+        geo.attribute_type = AttributeType::GeoProperty;
+        let rendered = neutral_row_to_expanded_instance(&geo, SysAttrsInclusion::Strip);
+        pretty_assertions::assert_eq!(
+            member(&rendered, AttributeType::GeoProperty.value_key_str()),
+            Some(&json!([{"@value": "a"}, {"@value": "b"}]))
+        );
+    }
+
+    /// An object-valued Property is stored as the node object JSON-LD expansion
+    /// produced, so it renders as that node rather than being wrapped in a
+    /// value node that could not hold it.
+    #[test]
+    fn an_object_valued_property_renders_the_expanded_node_it_was_stored_as() {
+        let node = json!({"https://uri.etsi.org/ngsi-ld/default-context/unit": [{"@value": "km"}]});
+        // clone: the fixture keeps its own copy of the node it asserts on.
+        let rendered = neutral_row_to_expanded_instance(&row(TemporalValue::Object(node.clone())), SysAttrsInclusion::Strip);
+        pretty_assertions::assert_eq!(member(&rendered, AttributeType::Property.value_key_str()), Some(&json!([node])));
+    }
+
+    /// A scalar keeps the single value node it always had, so the array and
+    /// object readings are additions rather than a change of the common case.
+    #[test]
+    fn a_scalar_structured_value_still_renders_one_value_node() {
+        let rendered = neutral_row_to_expanded_instance(&row(TemporalValue::Object(json!("free"))), SysAttrsInclusion::Strip);
+        pretty_assertions::assert_eq!(member(&rendered, AttributeType::Property.value_key_str()), Some(&json!([{"@value": "free"}])));
     }
 
     /// A client-supplied identifier renders in the exact spelling it arrived

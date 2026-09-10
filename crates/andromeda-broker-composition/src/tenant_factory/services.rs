@@ -45,7 +45,7 @@ use andromeda_temporal::{
     remote_linked::RemoteTemporalLinkedSource,
     service::TemporalService,
 };
-use andromeda_tenancy::tenant_ref::TenantRef;
+use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
 use std::{sync::Arc, time::Duration};
 
 /// Request-facing state and the scheduled snapshot preparation operation composed with it.
@@ -69,14 +69,19 @@ pub(super) fn construct_services(
         TenantRef::Named(_) => config.tenancy.tenant_max_connections as usize,
     };
     let entities = compose_entity_service(config, storage, signals, writes, pool_size);
+    // Table 5.2.40-1: the alias this tenant writes into the outgoing `Via`
+    // chain identifies the tenant within this context source, so a request that
+    // has traversed one tenant is not mistaken for a loop at another (clause
+    // 4.3.6.4 considers each Tenant of a registered Context Source separately).
+    let aliases = ContextSourceAliases::new(config.info.source_alias.clone()); // clone: the alias family owns the configured default-tenant alias.
     // Forwarding is constructed ahead of the services that join through it:
     // both the entity and the temporal join resolve an `objectType`-annotated
     // Linked Entity this broker does not hold through the same registrations.
     let forwarding = Arc::new(
         FederationService::new(
             Arc::clone(&storage.registration_store),
-            storage.engine.clone(),           // clone: each tenant service owns its JSON-LD engine handle.
-            config.info.source_alias.clone(), // clone: each forwarding service owns the validated alias.
+            storage.engine.clone(), // clone: each tenant service owns its JSON-LD engine handle.
+            aliases.for_tenant(&storage.tenant),
             &config.federation,
         )
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?,

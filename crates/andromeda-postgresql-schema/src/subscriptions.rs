@@ -67,6 +67,8 @@ pub enum Subscriptions {
     LocalOnly,
     /// Whether entities are assumed split across sources (`splitEntities`), `NULL` deferring to the deployment default
     SplitEntities,
+    /// The `ngsildConformance` version notifications are amended to (clause 5.2.12), as `major.minor` text
+    NgsildConformance,
     /// The instant the subscription was created (clause 4.8 `createdAt`)
     CreatedAt,
     /// The instant the subscription was last modified (clause 4.8 `modifiedAt`)
@@ -120,6 +122,7 @@ mod tests {
         assert_eq!(Subscriptions::JsonldContext.to_string(), "jsonld_context");
         assert_eq!(Subscriptions::LocalOnly.to_string(), "local_only");
         assert_eq!(Subscriptions::SplitEntities.to_string(), "split_entities");
+        assert_eq!(Subscriptions::NgsildConformance.to_string(), "ngsild_conformance");
         assert_eq!(Subscriptions::ModifiedAt.to_string(), "modified_at");
     }
 

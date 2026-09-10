@@ -8,7 +8,7 @@
 //! [`DatasetIdPresence`]: crate::subscription_store::params::DatasetIdPresence
 
 use andromeda_context_commit::subscription_key::SubscriptionKey;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion, uri::Uri};
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     subscription::{EntitySelector, NotificationParams, SubscriptionStatus},
@@ -72,6 +72,8 @@ pub struct SubscriptionRow {
     pub local_only: bool,
     /// Whether entities are assumed split across sources (`NULL` defers to the deployment default).
     pub split_entities: Option<bool>,
+    /// The `ngsildConformance` version notifications are amended to (clause 5.2.12); `NULL` amends nothing.
+    pub ngsild_conformance: Option<SpecVersion>,
     /// Counter for notifications sent.
     pub times_sent: i32,
     /// Counter for deliveries that drew an unsuccessful response or timed out.

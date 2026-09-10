@@ -1,0 +1,12 @@
+{
+  "id": "http://example.org/vehicle/brandName",
+  "type": "Attribute",
+  "attributeName": "brandName",
+  "attributeTypes": [
+    "Property"
+  ],
+  "typeNames": [
+    "Vehicle"
+  ],
+  "attributeCount": 2
+}

@@ -1,6 +1,6 @@
 //! Translation between NGSI-LD scope paths and PostgreSQL `ltree` / `lquery`.
 
-use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
+use andromeda_ngsi_ld_lexicon::scope::path::{ScopePath, ScopePathError};
 use andromeda_ngsi_ld_query::scope::pattern::{ScopePattern, ScopeSegment};
 
 /// Convert an NGSI-LD scope path to PostgreSQL ltree format for storage.
@@ -20,6 +20,29 @@ pub fn scope_to_ltree(scope: &ScopePath) -> String {
         ltree.push_str(level);
     }
     ltree
+}
+
+/// The NGSI-LD scope path a stored `ltree` label path names.
+///
+/// The inverse of [`scope_to_ltree`], up to the leading `/` that clause 4.18
+/// makes optional. Storage keeps the labels and not the spelling they arrived
+/// in, and the clause makes every scope absolute — "`Scope = [%x2F] ScopeLevel
+/// *(%x2F ScopeLevel)`" — so the path is rebuilt in the leading-slash form
+/// every example in the specification writes, rather than in whichever of the
+/// two equivalent spellings the client happened to use.
+///
+/// # Errors
+///
+/// Returns [`ScopePathError`] when the labels do not rebuild into a clause 4.18
+/// scope path, which is what a label path written by something other than
+/// [`scope_to_ltree`] can fail to do.
+pub fn ltree_to_scope(ltree: &str) -> Result<ScopePath, ScopePathError> {
+    let mut path = String::with_capacity(ltree.len() + 1);
+    for label in ltree.split('.') {
+        path.push('/');
+        path.push_str(label);
+    }
+    path.parse()
 }
 
 /// The PostgreSQL `lquery` a clause 4.18 scope pattern matches with.
@@ -118,5 +141,27 @@ mod tests {
         // Clause 4.18: every scope is absolute, so the leading `/` carries no
         // information and both spellings are the same path.
         assert_eq!(ltree("Madrid"), ltree("/Madrid"));
+    }
+
+    /// A stored label path rebuilds into the scope path it was stored from, in
+    /// the leading-slash spelling clause 4.18 writes every example in.
+    #[test]
+    fn a_stored_label_path_rebuilds_into_its_scope_path() {
+        for raw in ["/A/B/C", "/Madrid", "/M\u{00fc}nchen/Stra\u{00df}e"] {
+            let stored = ltree(raw);
+            assert_eq!(ltree_to_scope(&stored).expect("a stored label path is a scope path").as_str(), raw);
+        }
+    }
+
+    /// The leading `/` carries no information, so a scope stored from either
+    /// spelling comes back in the absolute one.
+    #[test]
+    fn both_spellings_of_one_scope_rebuild_into_the_absolute_form() {
+        assert_eq!(ltree_to_scope(&ltree("Madrid")).expect("a scope path").as_str(), "/Madrid");
+    }
+
+    #[test]
+    fn a_label_path_outside_the_scope_grammar_is_reported_rather_than_invented() {
+        assert!(ltree_to_scope("").is_err());
     }
 }

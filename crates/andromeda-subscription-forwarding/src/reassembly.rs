@@ -29,7 +29,7 @@ use andromeda_ngsi_ld_model::{
     notification::{Notification, NotificationType},
     registration::ForwardingMode,
 };
-use andromeda_ngsi_ld_render::entity::EntityRenderer;
+use andromeda_ngsi_ld_render::{entity::EntityRenderer, notification_conformance::amend_notification_entities};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::entity::GetEntityParams;
 use andromeda_subscription::{
@@ -186,6 +186,7 @@ impl SubscriptionForwardingService {
         // before the parts are merged and the result is rendered.
         let local_context = ContextSpec::for_subscription_context(subscription.delivery.jsonld_context.as_ref());
 
+        let format = subscription.notification.format.unwrap_or_default();
         let mut data = Vec::with_capacity(notification.data.len());
         for value in &notification.data {
             let received = match self.received_under(value, context, &local_context).await {
@@ -208,11 +209,16 @@ impl SubscriptionForwardingService {
             // makes both mandatory, so the copy's `data` carries Entities.
             self.narrow_entity(&mut entity, &compiled, &local_context).await?;
             let rendered = EntityRenderer::new(&entity)
-                .with_mode(subscription.notification.format.unwrap_or_default())
+                .with_mode(format)
                 .render()
                 .map_err(|error| SubscriptionForwardingError::internal(error.to_string()))?;
             data.push(rendered);
         }
+        // Clause 5.8.6: the copy is sent to the local subscription's endpoint,
+        // so it is the local subscription's `ngsildConformance` that the copy's
+        // Entities are amended to -- after the format rendering, which is where
+        // the clause places the amendment.
+        let data = amend_notification_entities(data, subscription.delivery.ngsild_conformance, format);
         if data.is_empty() {
             debug!(subscription = %local, "re-assembled notification carries no entity; nothing delivered");
             return Ok(());

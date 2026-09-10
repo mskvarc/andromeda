@@ -7,7 +7,7 @@ use crate::{
     expanded_member::attr_name_of,
     notification_plan::attribute_change_groups,
 };
-use andromeda_context_commit::history_record::tombstone;
+use andromeda_context_commit::history_record::{HistoryRecord, tombstone};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
@@ -16,6 +16,7 @@ use andromeda_ngsi_ld_model::expanded::{
     instance_key::attribute_instance_family,
     mutation::{attribute::delete_attr, selection::DatasetSelection},
 };
+use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use std::sync::Arc;
 
 impl EntityService {
@@ -69,16 +70,30 @@ impl EntityService {
                 let mut existing = previous.clone(); // clone: the deletion mutates its own copy of the stored payload
                 delete_attr(&mut existing, &attr_iri, selection)?;
 
-                let mut history = Vec::with_capacity(tombstone_targets.len());
-                for target in &tombstone_targets {
-                    // The family is read from the payload the deletion is
-                    // computed against, so the tombstone renders the null member
-                    // its family prescribes (clauses 4.5.7 and 4.5.8). A target
-                    // the catalogue knows and the payload does not is a Property
-                    // by clause 4.5.2.
-                    let attribute_type = attribute_instance_family(previous, &expanded_attr_name, target.as_ref()).unwrap_or(AttributeType::Property);
-                    history.push(tombstone(&expanded_attr_name, target.as_ref(), attribute_type));
-                }
+                // Clause 5.6.5.4 handles the Scope before the `deleteAll` and
+                // `datasetId` bullets — "If the target Attribute is scope,
+                // remove the scope Attribute from the target Entity" — so the
+                // removal is unconditional, and clause 4.18 ends the Scope's
+                // validity at that delete operation. The Scope has no attribute
+                // stream to tombstone: clause 4.5.4 gives it no dataset
+                // dimension and no attribute family, so its history is the
+                // scope removal and nothing else.
+                let history = if expanded_attr_name.as_str() == expanded_properties::SCOPE.as_str() {
+                    vec![HistoryRecord::ScopeRemoval]
+                } else {
+                    tombstone_targets
+                        .iter()
+                        .map(|target| {
+                            // The family is read from the payload the deletion is
+                            // computed against, so the tombstone renders the null member
+                            // its family prescribes (clauses 4.5.7 and 4.5.8). A target
+                            // the catalogue knows and the payload does not is a Property
+                            // by clause 4.5.2.
+                            let attribute_type = attribute_instance_family(previous, &expanded_attr_name, target.as_ref()).unwrap_or(AttributeType::Property);
+                            tombstone(&expanded_attr_name, target.as_ref(), attribute_type)
+                        })
+                        .collect()
+                };
 
                 let merged = Arc::new(existing);
                 let types = extract_types(&merged);

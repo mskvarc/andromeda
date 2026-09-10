@@ -37,6 +37,8 @@ pub mod selector_compilation;
 /// The service the read-path unit tests are built on.
 #[cfg(test)]
 pub(crate) mod service_test_double;
+/// The Attribute names the clause 4.5.4 simplified representation renders.
+pub mod simplified_names;
 /// Narrowing a geo-query to an identifier set through the spatial index.
 pub mod spatial_prefilter;
 

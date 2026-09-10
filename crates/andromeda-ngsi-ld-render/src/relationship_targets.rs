@@ -13,6 +13,36 @@ use crate::object_list::object_list_member_target;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use serde_json::Value;
 
+/// Which of the two spellings clause 4.5.3.2 admits a rendered `object` uses.
+///
+/// The distinction survives the reading of the targets because clause 4.5.23.2
+/// nests the Linked Entities under a member that mirrors it: a Relationship
+/// naming one target answers with one `entity` object, one naming an array of
+/// targets answers with an array of them. Deriving the answer from how many
+/// targets happened to resolve would turn a one-element array of targets into a
+/// bare object and change the shape a client reads back.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ObjectSpelling {
+    /// `object` is a single URI written as a bare string.
+    OneUri,
+    /// `object` is an array of URIs, whatever its length.
+    ArrayOfUris,
+    /// `object` is neither, so there is nothing to follow.
+    NoUri,
+}
+
+impl ObjectSpelling {
+    /// Read the spelling of one rendered `object` member.
+    #[must_use]
+    pub const fn of(value: &Value) -> ObjectSpelling {
+        match value {
+            Value::String(_) => ObjectSpelling::OneUri,
+            Value::Array(_) => ObjectSpelling::ArrayOfUris,
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => ObjectSpelling::NoUri,
+        }
+    }
+}
+
 /// The identifiers one rendered `object` or `objectList` value names, in order.
 ///
 /// A value that is not a URI at all is skipped rather than rejected: clause
@@ -37,9 +67,20 @@ fn member_target(member: &Value) -> Option<Uri> {
 
 #[cfg(test)]
 mod tests {
-    use crate::relationship_targets::rendered_relationship_targets;
+    use crate::relationship_targets::{ObjectSpelling, rendered_relationship_targets};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use serde_json::json;
+
+    /// Clause 4.5.3.2's two spellings are told apart by the JSON shape, not by
+    /// how many targets the array happens to hold.
+    #[test]
+    fn the_two_object_spellings_are_told_apart_by_shape_and_not_by_length() {
+        pretty_assertions::assert_eq!(ObjectSpelling::of(&json!("urn:ngsi-ld:T:B")), ObjectSpelling::OneUri);
+        pretty_assertions::assert_eq!(ObjectSpelling::of(&json!(["urn:ngsi-ld:T:B"])), ObjectSpelling::ArrayOfUris);
+        pretty_assertions::assert_eq!(ObjectSpelling::of(&json!(["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C"])), ObjectSpelling::ArrayOfUris);
+        pretty_assertions::assert_eq!(ObjectSpelling::of(&json!({"object": "urn:ngsi-ld:T:B"})), ObjectSpelling::NoUri);
+        pretty_assertions::assert_eq!(ObjectSpelling::of(&json!(null)), ObjectSpelling::NoUri);
+    }
 
     fn uri(raw: &str) -> Uri {
         raw.parse().expect("a valid URI")

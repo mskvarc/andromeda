@@ -17,11 +17,30 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties;
 /// Whether an expanded IRI names a member NGSI-LD defines rather than an attribute.
 ///
 /// Covers the system metadata of [`is_system_attribute`], the two Entity
-/// members that are not attributes, and every family's value carrier in both
-/// its singular and its plural (Temporal API) spelling.
+/// members that are not attributes, every family's value carrier in both its
+/// singular and its plural (Temporal API) spelling, and the two data-integrity
+/// seals of clause 4.5.2.2.
 #[must_use]
 pub fn is_reserved_member(name: &AttributeName) -> bool {
-    is_system_attribute(name) || is_entity_member(name) || is_value_carrier(name)
+    is_system_attribute(name) || is_entity_member(name) || is_value_carrier(name) || is_proof_seal(name)
+}
+
+/// Whether an expanded IRI names one of the two data-integrity seals of clause
+/// 4.5.2.2.
+///
+/// The clause calls `entityIdSealed` and `entityTypeSealed` "non-reified
+/// subproperties" of `ngsildproof`: each carries its value directly, so the
+/// node below one is a value or an IRI reference and never an attribute
+/// instance. Naming them here is what stops a walk from reading one as an
+/// instance and holding it to the multi-instance rules of clause 4.5.5.1.
+///
+/// No name test guards this. The two IRIs are reachable only through the scoped
+/// `@context` clause 4.4 attaches to the `ngsildproof` term, and a seal written
+/// under any other attribute is refused before expansion by
+/// `andromeda_ngsi_ld_representation::proof_seal_admission`, so an expanded
+/// payload carrying one carries it where the clause admits it.
+fn is_proof_seal(name: &AttributeName) -> bool {
+    name.as_str() == properties::ENTITY_ID_SEALED.as_str() || name.as_str() == properties::ENTITY_TYPE_SEALED.as_str()
 }
 
 /// Whether an expanded IRI names an Entity member that is not an attribute.
@@ -119,6 +138,24 @@ mod tests {
         ] {
             assert!(is_reserved_member(&name(reserved.as_str())), "{reserved} carries a value, not an attribute");
         }
+    }
+
+    /// Clause 4.5.2.2 calls `entityIdSealed` and `entityTypeSealed` "non-reified
+    /// subproperties", so each carries a value rather than an attribute
+    /// instance and a walk looking for attributes steps over both.
+    #[test]
+    fn the_two_data_integrity_seals_carry_a_value_rather_than_an_attribute() {
+        for reserved in [properties::ENTITY_ID_SEALED, properties::ENTITY_TYPE_SEALED] {
+            assert!(is_reserved_member(&name(reserved.as_str())), "{reserved} is non-reified, not an attribute");
+        }
+    }
+
+    /// The `ngsildproof` Property that carries the seals is an attribute in its
+    /// own right (clause 4.5.2.2 defines it as "a Property"), so it is not
+    /// reserved and a walk descends into it.
+    #[test]
+    fn the_ngsildproof_property_carrying_the_seals_is_itself_an_attribute() {
+        assert!(!is_reserved_member(&name(properties::NGSILDPROOF.as_str())));
     }
 
     #[test]

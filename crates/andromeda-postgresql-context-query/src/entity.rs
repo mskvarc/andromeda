@@ -701,7 +701,7 @@ mod tests {
     fn build_with_order_by_asc() {
         let mut q = empty_query();
         q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute("https://example.com/name".parse().expect("valid attribute name")),
+            target: OrderTarget::Attribute(AttrPath::simple("https://example.com/name".parse().expect("valid attribute name"))),
             direction: OrderDirection::Asc,
             collation: None,
         }];
@@ -717,7 +717,7 @@ mod tests {
     fn build_with_order_by_collation() {
         let mut q = empty_query();
         q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute("https://example.com/name".parse().expect("valid attribute name")),
+            target: OrderTarget::Attribute(AttrPath::simple("https://example.com/name".parse().expect("valid attribute name"))),
             direction: OrderDirection::Asc,
             collation: Some(IcuCollation::parse("und-u-ks-identic").expect("valid collation")),
         }];
@@ -738,7 +738,7 @@ mod tests {
             geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
         q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(LOCATION.as_str().parse().expect("valid attribute name")),
+            target: OrderTarget::Attribute(AttrPath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
@@ -751,7 +751,7 @@ mod tests {
     fn build_with_order_by_dist_without_geo_returns_error() {
         let mut q = empty_query();
         q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(LOCATION.as_str().parse().expect("valid attribute name")),
+            target: OrderTarget::Attribute(AttrPath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
@@ -771,7 +771,7 @@ mod tests {
         .unwrap();
         q.ordering.geometry = Some(OrderingGeometry::new(geometry));
         q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(LOCATION.as_str().parse().expect("valid attribute name")),
+            target: OrderTarget::Attribute(AttrPath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
@@ -803,7 +803,7 @@ mod tests {
         .unwrap();
         q.ordering.geometry = Some(OrderingGeometry::new(geometry));
         q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(LOCATION.as_str().parse().expect("valid attribute name")),
+            target: OrderTarget::Attribute(AttrPath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
@@ -824,7 +824,7 @@ mod tests {
     #[test]
     fn a_three_dimensional_ordering_geometry_renders_the_same_distance_sql() {
         let ordering_term = CompiledOrderTerm {
-            target: OrderTarget::Attribute(LOCATION.as_str().parse().expect("valid attribute name")),
+            target: OrderTarget::Attribute(AttrPath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
             direction: OrderDirection::DistAsc,
             collation: None,
         };
@@ -1040,7 +1040,7 @@ mod tests {
     fn an_order_by_attribute_iri_containing_an_apostrophe_does_not_terminate_the_sql_literal() {
         let mut q = empty_query();
         q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute("https://example.com/o'brien".parse().expect("valid attribute name")),
+            target: OrderTarget::Attribute(AttrPath::simple("https://example.com/o'brien".parse().expect("valid attribute name"))),
             direction: OrderDirection::Asc,
             collation: None,
         }];
@@ -1064,7 +1064,7 @@ mod tests {
         .unwrap();
         q.ordering.geometry = Some(OrderingGeometry::new(geometry));
         q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute("https://example.com/o'brien".parse().expect("valid attribute name")),
+            target: OrderTarget::Attribute(AttrPath::simple("https://example.com/o'brien".parse().expect("valid attribute name"))),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];

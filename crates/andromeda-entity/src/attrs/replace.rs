@@ -10,7 +10,7 @@ use crate::{
 };
 use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::{attribute_fragment::expand_attribute_fragment, context_spec::ContextSpec};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{entity_member::extract_types, mutation::attribute::replace_attr};
 use andromeda_ngsi_ld_representation::normalization::normalize_attribute_node;
@@ -63,8 +63,11 @@ impl EntityService {
         // Normalizing here is what applies the concise form and discards the
         // output-only `previous...` member clauses 5.2.5 to 5.2.38 require an
         // implementation to ignore when a Context Producer supplies one.
-        normalize_attribute_node(&mut fragment);
-        let expanded = Arc::new(self.engine.expand(fragment, context).await?);
+        // The expansion puts the Fragment back under the name the request URI
+        // carries, because a term's own definition decides what the members
+        // below it mean -- see `andromeda_jsonld::attribute_fragment`.
+        normalize_attribute_node(attr_name.as_str(), &mut fragment);
+        let expanded = Arc::new(expand_attribute_fragment(&self.engine, attr_name.as_str(), fragment, context).await?);
         admit_expanded_attribute(&expanded, attr_name, AttributeWrite::Replace.null_sentinel_admission())?;
 
         let MutatedEntity { events } = self

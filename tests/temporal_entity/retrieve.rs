@@ -869,11 +869,16 @@ async fn temporal_retrieve_deleted_at_scope_success() {
     let (status, body, _) = get_temporal_entity(&c, &id, "timeproperty=deletedAt", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
-    if let Some(scope_arr) = body.get("scope").and_then(|v| v.as_array())
-        && !scope_arr.is_empty()
-    {
-        assert!(scope_arr[0].get("deletedAt").is_some(), "deletedAt should be present on scope");
-    }
+    // Clause 4.18 reifies the Scope in the temporal representation, and clause
+    // 4.5.7 records a deleted instance "with its value set to the URI
+    // "urn:ngsi-ld:null" and the deletedAt Temporal Property set". A
+    // `timeproperty=deletedAt` window selects the instances that carry that
+    // axis, so the removal is the one instance the Scope answers with.
+    let scope = body.get("scope").expect("clause 4.18 reifies the scope in the temporal representation");
+    let instances = scope.as_array().cloned().unwrap_or_else(|| vec![scope.clone()]);
+    assert_eq!(instances.len(), 1, "the deletedAt window selects the removal alone: {scope}");
+    assert_eq!(instances[0]["value"], "urn:ngsi-ld:null", "{scope}");
+    assert!(instances[0].get("deletedAt").is_some(), "deletedAt should be present on scope: {scope}");
 }
 
 #[tokio::test]
@@ -900,10 +905,16 @@ async fn temporal_retrieve_deleted_at_temporal_values_scope_success() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    if let Some(scope) = body.get("scope")
-        && let Some(values) = scope.get("values").and_then(|v| v.as_array())
-        && !values.is_empty()
-    {
-        assert!(values[0].get(1).is_some());
-    }
+    // Clause 4.5.9 collapses the reified Scope into `[value, instant]` pairs
+    // like any other attribute-shaped member, and a deleted instance pairs the
+    // NGSI-LD Null with the `deletedAt` that stands in for the Temporal
+    // Property it never observed.
+    let scope = body.get("scope").expect("clause 4.18 reifies the scope in the temporal representation");
+    let values = scope
+        .get("values")
+        .and_then(|values| values.as_array())
+        .expect("a temporalValues member holds values");
+    assert_eq!(values.len(), 1, "the deletedAt window selects the removal alone: {scope}");
+    assert_eq!(values[0][0], "urn:ngsi-ld:null", "{scope}");
+    assert!(values[0].get(1).is_some(), "the deletion instant is the pair's second element: {scope}");
 }

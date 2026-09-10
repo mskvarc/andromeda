@@ -33,7 +33,7 @@ use crate::{
         start_rendering,
         with_linked_resolution_warnings,
     },
-    read_rendering::{EntityRepresentation, render_entities, render_joined_entities},
+    read_rendering::{EntityRepresentation, apply_representation_names, render_entities, render_joined_entities},
     state::EntityRouteServices,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -192,7 +192,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
             warnings,
             contributions,
         } = merge_and_filter(service, local_entities, forwarded, deferred, &query, &context, &uri).await?;
-        let (entities, total_count) = page.cut(entities, local_total);
+        let (mut entities, total_count) = page.cut(entities, local_total);
 
         // Clause 4.21: the request's `pick`/`omit` govern both the matching
         // entities' structural members and, through their clause 4.21 nested
@@ -204,7 +204,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
 
         // The join resolves before the EntityMap is recorded so a minted map
         // can include the linked ids (clauses 5.5.14 and 5.7.2.4).
-        let resolved = ResolvedJoin::of_query(service, &target, &entities, &context, &query, opts.sys_attrs, projection)
+        let mut resolved = ResolvedJoin::of_query(service, &target, &entities, &context, &query, opts.sys_attrs, projection)
             .await
             .with_entity_instance(&uri)?;
         // Clause 6.3.17: a Linked Entity the join could not reach leaves the
@@ -221,6 +221,8 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         let entity_map_uri = record_map_use(&state.entity_maps, map_use, contributions, map_entities, &uri).await?;
 
         let representation = EntityRepresentation::new(language_filter.as_ref(), opts.render_mode, projection);
+        apply_representation_names(service, &representation, &context, &mut entities, resolved.as_mut(), &uri).await?;
+        let entities = entities;
         let payload = match &resolved {
             Some(resolved) => render_joined_entities(&entities, resolved, &representation, &uri)?,
             None => render_entities(&entities, &representation, &uri)?,

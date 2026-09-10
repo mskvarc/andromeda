@@ -19,6 +19,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-problem-details",
         "andromeda-ngsi-ld-render",
+        "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [],
     allow_production_dependencies: ["axum", "confique"],

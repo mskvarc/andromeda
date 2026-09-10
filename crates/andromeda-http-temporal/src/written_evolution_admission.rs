@@ -20,6 +20,14 @@
 //! about one operation, so an instance modified through clause 5.6.14 is held
 //! to it too.
 //!
+//! Clause 5.5.7's two prohibitions on the user `@context` are screened here for
+//! the same reason and at the same point: a `@context` embedded below the
+//! document's top level is decidable on the payload, and whether the request's
+//! own contexts declare a JSON-LD Scoped Context is decidable once they are
+//! resolved. Both "should result in an error of type `BadRequestData`", and
+//! both have to be decided before the forwarding phase, because a payload or a
+//! context this broker refuses must reach no Context Source.
+//!
 //! The NGSI-LD Null is deliberately not screened here. Clause 5.5.4's second
 //! bullet excepts from its prohibition "the representation of deleted
 //! Properties, Relationships or Language Properties in notifications and the
@@ -36,12 +44,18 @@
 //! because reaching them needs the expanded payload the temporal write path
 //! does not build before it forwards.
 
+use andromeda_http_extraction::classification::classify_jsonld_error;
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, scoped_context_admission::reject_scoped_user_contexts};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_representation::attribute_type_validation::{validate_attribute_node, validate_fragment_attribute_types};
+use andromeda_ngsi_ld_representation::{
+    attribute_type_validation::{validate_attribute_node, validate_fragment_attribute_types},
+    embedded_context_admission::{reject_embedded_contexts_in_attribute, reject_embedded_contexts_in_fragment},
+};
 use axum::http::Uri as HttpUri;
 use serde_json::Value;
+use std::fmt::Display;
 
 /// Screen one written `EntityTemporal` payload (clauses 5.6.11 and 5.6.12)
 /// before it is forwarded or stored.
@@ -49,27 +63,54 @@ use serde_json::Value;
 /// # Errors
 ///
 /// Answers `BadRequestData` for the first attribute node clauses 5.2.4 and
-/// 4.5.2.2 do not admit.
-pub(crate) fn admit_written_evolution(payload: &Value, instance: &HttpUri) -> Result<(), ProblemResponse> {
-    validate_fragment_attribute_types(payload)
-        .map_err(|error| ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()).with_instance(instance.clone()))
-    // clone: the problem details own the instance the borrowed request names
+/// 4.5.2.2 do not admit, for a user `@context` clause 5.5.7 refuses, and for a
+/// `@context` embedded below the document's top level; a context the request
+/// names that does not resolve is answered `LdContextNotAvailable` instead.
+pub(crate) async fn admit_written_evolution(engine: &JsonLdEngine, payload: &Value, context: &ContextSpec, instance: &HttpUri) -> Result<(), ProblemResponse> {
+    admit_written_context(engine, context, instance).await?;
+    validate_fragment_attribute_types(payload).map_err(|error| bad_request_data(&error, instance))?;
+    reject_embedded_contexts_in_fragment(payload).map_err(|error| bad_request_data(&error, instance))
 }
 
 /// Screen the one attribute instance a clause 5.6.14 modification carries.
 ///
 /// # Errors
 ///
-/// Answers `BadRequestData` on the same terms as [`admit_written_evolution`].
-pub(crate) fn admit_written_instance(attribute: &AttributeName, payload: &Value, instance: &HttpUri) -> Result<(), ProblemResponse> {
-    validate_attribute_node(attribute.as_str(), payload)
-        .map_err(|error| ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()).with_instance(instance.clone()))
+/// Answers on the same terms as [`admit_written_evolution`].
+pub(crate) async fn admit_written_instance(
+    engine: &JsonLdEngine,
+    attribute: &AttributeName,
+    payload: &Value,
+    context: &ContextSpec,
+    instance: &HttpUri,
+) -> Result<(), ProblemResponse> {
+    admit_written_context(engine, context, instance).await?;
+    validate_attribute_node(attribute.as_str(), payload).map_err(|error| bad_request_data(&error, instance))?;
+    reject_embedded_contexts_in_attribute(attribute.as_str(), payload).map_err(|error| bad_request_data(&error, instance))
+}
+
+/// Refuse a request `@context` clause 5.5.7 does not admit.
+///
+/// The refusal is classified rather than fixed to `BadRequestData`, because the
+/// same walk reports a context that does not resolve, which clause 5.5.2 answers
+/// with `LdContextNotAvailable`.
+async fn admit_written_context(engine: &JsonLdEngine, context: &ContextSpec, instance: &HttpUri) -> Result<(), ProblemResponse> {
+    reject_scoped_user_contexts(engine, context)
+        .await
+        .map_err(|error| classify_jsonld_error(&error).with_instance(instance.clone()))
+    // clone: the problem details own the instance the borrowed request names
+}
+
+/// The clause 5.5.4 answer to a representation this broker refuses.
+fn bad_request_data<E: Display>(error: &E, instance: &HttpUri) -> ProblemResponse {
+    ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()).with_instance(instance.clone())
     // clone: the problem details own the instance the borrowed request names
 }
 
 #[cfg(test)]
 mod tests {
     use crate::written_evolution_admission::{admit_written_evolution, admit_written_instance};
+    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use axum::http::Uri as HttpUri;
     use serde_json::json;
@@ -82,11 +123,16 @@ mod tests {
         "belongsTo".parse().expect("a valid attribute name")
     }
 
+    /// An engine that resolves the embedded core context and nothing else.
+    fn engine() -> JsonLdEngine {
+        JsonLdEngine::builder().allow_remote(false).build().expect("engine builds")
+    }
+
     /// Clauses 4.5.3.2 and 4.5.3.3, "Prohibited": on a Relationship, in either
     /// representation, "'entityIdSealed' and 'entityTypeSealed' shall never be
     /// present" -- including in the instances of a Temporal Evolution.
-    #[test]
-    fn a_forged_seal_on_a_temporal_relationship_instance_is_refused() {
+    #[tokio::test]
+    async fn a_forged_seal_on_a_temporal_relationship_instance_is_refused() {
         for member in ["entityIdSealed", "entityTypeSealed"] {
             let payload = json!({
                 "id": "urn:ngsi-ld:Vehicle:1",
@@ -96,21 +142,28 @@ mod tests {
                     {"type": "Relationship", "object": "urn:ngsi-ld:Site:2", "observedAt": "2024-01-02T00:00:00Z", member: "urn:ngsi-ld:Vehicle:1"}
                 ]
             });
-            assert!(admit_written_evolution(&payload, &instance()).is_err(), "{member}");
+            assert!(
+                admit_written_evolution(&engine(), &payload, &ContextSpec::none(), &instance()).await.is_err(),
+                "{member}"
+            );
         }
     }
 
     /// The same seal forged on the single instance a clause 5.6.14
     /// modification carries.
-    #[test]
-    fn a_forged_seal_on_a_modified_instance_is_refused() {
+    #[tokio::test]
+    async fn a_forged_seal_on_a_modified_instance_is_refused() {
         let payload = json!({"type": "Relationship", "object": "urn:ngsi-ld:Site:1", "entityTypeSealed": "Vehicle"});
-        assert!(admit_written_instance(&attribute(), &payload, &instance()).is_err());
+        assert!(
+            admit_written_instance(&engine(), &attribute(), &payload, &ContextSpec::none(), &instance())
+                .await
+                .is_err()
+        );
     }
 
     /// An ordinary Temporal Evolution passes, instances and all.
-    #[test]
-    fn a_temporal_evolution_of_ordinary_instances_is_admitted() {
+    #[tokio::test]
+    async fn a_temporal_evolution_of_ordinary_instances_is_admitted() {
         let payload = json!({
             "id": "urn:ngsi-ld:Vehicle:1",
             "type": "Vehicle",
@@ -119,33 +172,100 @@ mod tests {
                 {"type": "Property", "value": 20, "observedAt": "2024-01-02T00:00:00Z"}
             ]
         });
-        assert!(admit_written_evolution(&payload, &instance()).is_ok());
-        assert!(admit_written_instance(&attribute(), &json!({"type": "Relationship", "object": "urn:ngsi-ld:Site:1"}), &instance()).is_ok());
+        assert!(admit_written_evolution(&engine(), &payload, &ContextSpec::none(), &instance()).await.is_ok());
+        assert!(
+            admit_written_instance(
+                &engine(),
+                &attribute(),
+                &json!({"type": "Relationship", "object": "urn:ngsi-ld:Site:1"}),
+                &ContextSpec::none(),
+                &instance()
+            )
+            .await
+            .is_ok()
+        );
     }
 
     /// Clause 5.5.4's second bullet excepts "the representation of deleted
     /// Properties, Relationships or Language Properties in notifications and
     /// the temporal evolution", so an instance recording a deletion is data a
     /// Temporal Evolution holds rather than a payload to refuse.
-    #[test]
-    fn an_instance_recording_a_deletion_is_admitted() {
+    #[tokio::test]
+    async fn an_instance_recording_a_deletion_is_admitted() {
         let payload = json!({
             "id": "urn:ngsi-ld:Vehicle:1",
             "type": "Vehicle",
             "speed": [{"type": "Property", "value": "urn:ngsi-ld:null", "observedAt": "2024-01-02T00:00:00Z"}]
         });
-        assert!(admit_written_evolution(&payload, &instance()).is_ok());
+        assert!(admit_written_evolution(&engine(), &payload, &ContextSpec::none(), &instance()).await.is_ok());
     }
 
     /// Clause 5.2.4 fixes the attribute types, so a token outside the eight is
     /// not an attribute wherever it is written.
-    #[test]
-    fn an_instance_declaring_a_token_outside_clause_5_2_4_is_refused() {
+    #[tokio::test]
+    async fn an_instance_declaring_a_token_outside_clause_5_2_4_is_refused() {
         let payload = json!({
             "id": "urn:ngsi-ld:Vehicle:1",
             "type": "Vehicle",
             "speed": [{"type": "NotAnAttributeType", "value": 10}]
         });
-        assert!(admit_written_evolution(&payload, &instance()).is_err());
+        assert!(admit_written_evolution(&engine(), &payload, &ContextSpec::none(), &instance()).await.is_err());
+    }
+
+    /// Clause 5.5.7: "there cannot be parts of the user @context other than at
+    /// the top level of the NGSI-LD document".
+    #[tokio::test]
+    async fn a_context_embedded_in_a_temporal_instance_is_refused() {
+        let payload = json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "speed": [{"type": "Property", "value": 10, "observedAt": "2024-01-01T00:00:00Z", "@context": {"speed": "https://example.org/speed"}}]
+        });
+        assert!(admit_written_evolution(&engine(), &payload, &ContextSpec::none(), &instance()).await.is_err());
+
+        let modified = json!({"type": "Property", "value": 10, "unit": {"@context": {}}});
+        assert!(
+            admit_written_instance(&engine(), &attribute(), &modified, &ContextSpec::none(), &instance())
+                .await
+                .is_err()
+        );
+    }
+
+    /// Clause 5.5.7: the user `@context` "shall not contain JSON-LD Scoped
+    /// Contexts", whichever operation carries it.
+    #[tokio::test]
+    async fn a_scoped_user_context_is_refused_on_the_temporal_write_path() {
+        let context = ContextSpec::none().with_body_context(Some(json!({
+            "speed": {"@id": "https://example.org/speed", "@context": {"observedAt": "https://example.org/rewritten"}}
+        })));
+        let payload = json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "speed": [{"type": "Property", "value": 10, "observedAt": "2024-01-01T00:00:00Z"}]
+        });
+        assert!(admit_written_evolution(&engine(), &payload, &context, &instance()).await.is_err());
+        assert!(
+            admit_written_instance(
+                &engine(),
+                &attribute(),
+                &json!({"type": "Relationship", "object": "urn:ngsi-ld:Site:1"}),
+                &context,
+                &instance()
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    /// The `json` element of a `JsonProperty` holds native JSON, so a key
+    /// spelled `@context` inside one is data (clause 5.5.7, closing note).
+    #[tokio::test]
+    async fn a_context_key_inside_a_temporal_json_property_is_admitted() {
+        let payload = json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "config": [{"type": "JsonProperty", "json": {"@context": "https://example.org/not-a-context"}, "observedAt": "2024-01-01T00:00:00Z"}]
+        });
+        assert!(admit_written_evolution(&engine(), &payload, &ContextSpec::none(), &instance()).await.is_ok());
     }
 }

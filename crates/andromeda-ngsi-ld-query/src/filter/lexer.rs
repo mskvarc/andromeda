@@ -1,6 +1,6 @@
 //! Tokeniser for the NGSI-LD Query Language (clause 4.9).
 
-use crate::error::QueryError;
+use crate::{error::QueryError, filter::json_string::scan_quoted_literal};
 
 /// A single lexical token of a `q` expression.
 #[derive(Debug, Clone, PartialEq)]
@@ -179,28 +179,15 @@ fn consume_digits(chars: &[char], from: usize) -> usize {
     cursor
 }
 
-/// Scan a double-quoted string literal, resolving backslash escapes.
+/// Scan a double-quoted literal, keeping its body verbatim.
 ///
-/// The contents are otherwise taken verbatim: percent-encoding is the HTTP
-/// binding's concern (clause 4.9) and is decoded once before a filter reaches
-/// this tokeniser, so a second decode here would rewrite a URN that legitimately
-/// carries `%2F`.
+/// Clause 4.9 gives a `quotedStr` and a `RegExp` the same lexical shape and
+/// different grammars, and the tokeniser cannot see which production the
+/// literal stands in. The escape rules therefore belong to whichever operand
+/// parser consumes the token, not here.
 fn scan_quoted_string(chars: &[char], start: usize) -> Result<(Token, usize), QueryError> {
-    let mut literal = String::new();
-    let mut cursor = start + 1;
-    while cursor < chars.len() && chars[cursor] != '"' {
-        if chars[cursor] == '\\' && cursor + 1 < chars.len() {
-            literal.push(chars[cursor + 1]);
-            cursor += 2;
-        } else {
-            literal.push(chars[cursor]);
-            cursor += 1;
-        }
-    }
-    if cursor >= chars.len() {
-        return Err(QueryError::QUnterminatedString);
-    }
-    Ok((Token::QuotedStr(literal), cursor + 1))
+    let (body, next) = scan_quoted_literal(chars, start)?;
+    Ok((Token::QuotedStr(body), next))
 }
 
 /// Consume the optional fraction and exponent of a numeric literal, starting at
@@ -473,9 +460,14 @@ mod tests {
     }
 
     #[test]
-    fn a_backslash_escapes_the_next_character_inside_a_quoted_literal() {
-        assert_eq!(lex(r#""say \"hi\"""#), vec![Token::QuotedStr("say \"hi\"".to_string())]);
-        assert_eq!(lex(r#""back\\slash""#), vec![Token::QuotedStr(r"back\slash".to_string())]);
+    fn a_backslash_defers_the_next_character_without_resolving_it() {
+        // The token carries the body as written. Clause 4.9 gives a `quotedStr`
+        // and a `RegExp` the same lexical shape and different grammars, so which
+        // escapes mean what is settled by the operand parser that knows the
+        // production, not here. The escaped quote still does not end the token.
+        assert_eq!(lex(r#""say \"hi\"""#), vec![Token::QuotedStr(r#"say \"hi\""#.to_string())]);
+        assert_eq!(lex(r#""back\\slash""#), vec![Token::QuotedStr(r"back\\slash".to_string())]);
+        assert_eq!(lex(r#""^example\.com$""#), vec![Token::QuotedStr(r"^example\.com$".to_string())]);
     }
 
     #[test]

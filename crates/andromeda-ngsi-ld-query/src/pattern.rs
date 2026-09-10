@@ -11,23 +11,24 @@
 //!
 //! A pattern is evaluated by two engines. In memory the broker uses the `regex`
 //! crate; in the store PostgreSQL applies its POSIX ARE operators (`~`, `!~`).
-//! The two grammars overlap but are not identical, so validation here is
-//! necessary but not sufficient: it rejects a pattern that neither engine could
-//! run, while a pattern that both accept may still mean subtly different things
-//! to each. What it removes is the failure mode where an unvalidated pattern
-//! reaches evaluation and is treated as matching nothing, which is
-//! indistinguishable from a filter that legitimately excluded every entity.
+//! Clause 4.9 and Table 5.2.8-1 both mandate IEEE 1003.2, which the two engines
+//! implement alike, but each extends it in its own direction and the extensions
+//! do not agree.
 //!
-//! The specification bounds how far that can matter. Table 5.2.8-1 defines an
-//! `idPattern` as a "Regular expression as per IEEE 1003.2", which is POSIX
-//! extended regular expressions — a strict subset of both engines, on which they
-//! agree. A pattern that means two things is therefore one that reaches outside
-//! what the specification permits a client to write, and the broker answers it
-//! consistently within one execution path rather than across all of them.
+//! Validation is therefore in two parts, and a pattern has to pass both: the
+//! `regex` crate compiles it, which is what the in-memory evaluator will run,
+//! and [`check_posix_dialect`] refuses the constructs PostgreSQL's engine either
+//! cannot run or reads differently. Accepting a pattern on one engine's terms
+//! alone let `\p{L}` reach SQL, where PostgreSQL's refusal surfaced as a
+//! `500 InternalError`, and let `\b` mean a word boundary in memory and a
+//! backspace in the store.
+//!
+//! What survives both checks is IEEE 1003.2 plus the extensions the two engines
+//! share, so nothing clause 4.9 mandates is turned away.
 
-use crate::error::QueryError;
+use crate::{error::QueryError, posix_dialect::check_posix_dialect};
 use regex::Regex;
-use regex_syntax::ast::{Ast, parse::Parser};
+use regex_syntax::ast::parse::Parser;
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
@@ -46,20 +47,20 @@ use std::{fmt, str::FromStr};
 pub struct Pattern(Regex);
 
 impl Pattern {
-    /// Compile and validate a pattern, rejecting one no engine could run.
+    /// Compile and validate a pattern, rejecting one either engine could not
+    /// run and one the two would read differently.
     ///
     /// # Errors
     ///
     /// Returns [`QueryError::PatternRegex`] when the `regex` crate rejects the
-    /// pattern, and [`QueryError::PatternRepeatedQuantifier`] when a repetition
-    /// operator is applied directly to another repetition, which PostgreSQL's
-    /// POSIX engine rejects.
+    /// pattern, and [`QueryError::PatternRepeatedQuantifier`] or
+    /// [`QueryError::PatternNonPosixConstruct`] when
+    /// [`check_posix_dialect`] finds a construct PostgreSQL's POSIX engine does
+    /// not share.
     pub fn parse(pattern: &str) -> Result<Pattern, QueryError> {
         let compiled = Regex::new(pattern)?;
         let ast = Parser::new().parse(pattern).map_err(|_| QueryError::PatternRepeatedQuantifier)?;
-        if has_repeated_quantifier(&ast) {
-            return Err(QueryError::PatternRepeatedQuantifier);
-        }
+        check_posix_dialect(&ast)?;
         Ok(Pattern(compiled))
     }
 
@@ -76,24 +77,6 @@ impl Pattern {
     #[must_use]
     pub fn is_match(&self, haystack: &str) -> bool {
         self.0.is_match(haystack)
-    }
-}
-
-/// Return whether an expression applies a repetition operator directly to another repetition.
-fn has_repeated_quantifier(ast: &Ast) -> bool {
-    match ast {
-        Ast::Repetition(repetition) => matches!(repetition.ast.as_ref(), Ast::Repetition(_)) || has_repeated_quantifier(&repetition.ast),
-        Ast::Group(group) => has_repeated_quantifier(&group.ast),
-        Ast::Alternation(alternation) => alternation.asts.iter().any(has_repeated_quantifier),
-        Ast::Concat(concatenation) => concatenation.asts.iter().any(has_repeated_quantifier),
-        Ast::Empty(_)
-        | Ast::Flags(_)
-        | Ast::Literal(_)
-        | Ast::Dot(_)
-        | Ast::Assertion(_)
-        | Ast::ClassUnicode(_)
-        | Ast::ClassPerl(_)
-        | Ast::ClassBracketed(_) => false,
     }
 }
 
@@ -160,12 +143,6 @@ mod tests {
         // nothing, which reads as an empty result set.
         let error = Pattern::parse("[").expect_err("must reject");
         assert!(matches!(error, QueryError::PatternRegex(_)), "got {error:?}");
-    }
-
-    #[test]
-    fn a_repeated_quantifier_rejected_by_postgresql_is_rejected_before_storage() {
-        let error = Pattern::parse("invalid_entity_id_pattern**").expect_err("must reject");
-        assert!(matches!(error, QueryError::PatternRepeatedQuantifier), "got {error:?}");
     }
 
     #[test]

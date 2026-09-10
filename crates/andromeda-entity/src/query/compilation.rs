@@ -13,10 +13,9 @@ use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::{ConsideredEntities, EntitySelection},
     filter::{
-        expansion::{apply_expand_values, expand_attribute_names, expand_q_expr},
+        expansion::{apply_expand_values, expand_attr_path, expand_attribute_names, expand_q_expr},
         expression::Expr,
         json_key_attributes::JsonKeyAttributes,
-        path::expanded_attribute_name,
     },
     geo::{compile as geo_compile, query::GeoQuery},
     ordering::{
@@ -168,9 +167,24 @@ impl EntityQueryService {
     }
 
     /// Compile the `orderBy` terms against the active context (clause 4.23).
+    ///
+    /// Every name of an ordering path is expanded, not just its head. Clause
+    /// 4.9 requires it of the attribute path clause 4.23.3 borrows — "Every name
+    /// in the list shall be expanded to a URI (Fully Qualified Name) as mandated
+    /// by clause 5.5.7" — and the members of a compound value expand for the
+    /// same reason, because expansion turns them into IRI-keyed nodes of the
+    /// graph. Expanding the head alone addressed `city` in a payload holding
+    /// the expansion of `city`, and ordered by nothing.
+    ///
+    /// The path is expanded under no `jsonKeys` declaration: an attribute whose
+    /// value is opaque JSON keeps literal member keys, and the ordering reads
+    /// that spelling from the path's own pre-expansion copy rather than from a
+    /// declaration `orderBy` has no parameter for.
     async fn compile_order_terms(&self, params: &EntityQueryParameters, context: &PreparedTermContext) -> Result<Vec<CompiledOrderTerm>, EntityError> {
         // Parsed and validated at the query boundary (clause 4.23).
         let collation = params.ordering.collation.clone();
+        let expander = ContextualExpander::new(self.engine(), context);
+        let json_keys = JsonKeyAttributes::default();
 
         let mut compiled = Vec::new();
         let order_terms = &params.ordering.order_by;
@@ -179,7 +193,9 @@ impl EntityQueryService {
                 RawOrderTarget::Id => OrderTarget::Id,
                 RawOrderTarget::Type => OrderTarget::Type,
                 RawOrderTarget::Scope => OrderTarget::Scope,
-                RawOrderTarget::Attribute(name) => OrderTarget::Attribute(expanded_attribute_name(&self.engine().expand_term(name.as_str(), context).await?)?),
+                // clone: expansion rewrites the path it consumes, and the cached
+                // request parameters stay immutable across compilations.
+                RawOrderTarget::Attribute(path) => OrderTarget::Attribute(expand_attr_path(path.clone(), &json_keys, &expander).await?),
             };
             compiled.push(CompiledOrderTerm {
                 target,

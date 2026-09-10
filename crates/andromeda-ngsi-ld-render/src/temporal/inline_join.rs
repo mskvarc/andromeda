@@ -12,8 +12,9 @@
 //! and compacted — so there is no entity type to render from, and the linked
 //! side arrives as the same kind of value the roots do.
 
-use crate::relationship_targets::rendered_relationship_targets;
+use crate::relationship_targets::{ObjectSpelling, rendered_relationship_targets};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
 use std::{collections::HashSet, slice};
@@ -67,21 +68,50 @@ fn join_guarded(entity: &mut Value, linked: &IndexMap<Uri, Value>, ancestors: &m
 
 /// Nest whatever one rendered attribute instance points at.
 fn join_instance(fields: &mut Map<String, Value>, linked: &IndexMap<Uri, Value>, ancestors: &mut HashSet<Uri>) {
-    if let Some(object) = fields.get("object").and_then(Value::as_str).and_then(|raw| raw.parse::<Uri>().ok())
-        && let Some(nested) = nested_entity(&object, linked, ancestors)
-    {
-        fields.insert("entity".to_owned(), nested);
-    }
-
-    if let Some(object_list) = fields.get("objectList") {
-        // The identifiers are read out first so the borrow of `fields` ends
-        // before the nested values are inserted back into it.
-        let objects = rendered_relationship_targets(object_list);
-        let nested: Vec<Value> = objects.iter().filter_map(|object| nested_entity(object, linked, ancestors)).collect();
-        if !nested.is_empty() {
-            fields.insert("entityList".to_owned(), Value::Array(nested));
+    // Clause 4.5.3.2 gives `object` "a URI or array of URIs", and the `entity`
+    // member clause 4.5.23.2 adds mirrors that spelling: one nested evolution
+    // for a bare URI, an ordered array for an array of them. The identifiers
+    // are read out first so the borrow of `fields` ends before the nested
+    // values are inserted back into it.
+    if let Some(object) = fields.get(compact_properties::OBJECT) {
+        let spelling = ObjectSpelling::of(object);
+        let mut nested = nested_entities(&rendered_relationship_targets(object), linked, ancestors);
+        match spelling {
+            ObjectSpelling::OneUri => {
+                if let Some(entity) = nested.pop() {
+                    fields.insert(compact_properties::ENTITY.to_owned(), entity);
+                }
+            }
+            ObjectSpelling::ArrayOfUris => {
+                if !nested.is_empty() {
+                    fields.insert(compact_properties::ENTITY.to_owned(), Value::Array(nested));
+                }
+            }
+            ObjectSpelling::NoUri => {}
         }
     }
+
+    if let Some(object_list) = fields.get(compact_properties::OBJECT_LIST) {
+        let nested = nested_entities(&rendered_relationship_targets(object_list), linked, ancestors);
+        if !nested.is_empty() {
+            fields.insert(compact_properties::ENTITY_LIST.to_owned(), Value::Array(nested));
+        }
+    }
+}
+
+/// The temporal evolutions a list of identifiers resolves to, in order.
+///
+/// Clause 4.5.23.1 retrieves only Relationships targeting a locally stored
+/// Entity, so an identifier that resolved to nothing contributes nothing rather
+/// than a hole in the list.
+fn nested_entities(objects: &[Uri], linked: &IndexMap<Uri, Value>, ancestors: &mut HashSet<Uri>) -> Vec<Value> {
+    let mut nested = Vec::with_capacity(objects.len());
+    for object in objects {
+        if let Some(entity) = nested_entity(object, linked, ancestors) {
+            nested.push(entity);
+        }
+    }
+    nested
 }
 
 /// The temporal evolution one identifier resolves to, expanded in turn unless
@@ -191,6 +221,57 @@ mod tests {
         apply_temporal_inline_join(&mut entity, &resolved(&["urn:ngsi-ld:T:B"]));
 
         pretty_assertions::assert_eq!(entity["parkedAt"]["entity"]["id"], "urn:ngsi-ld:T:B");
+    }
+
+    /// Clause 4.5.3.2 gives `object` "a URI or array of URIs", and a temporal
+    /// instance naming several targets nests all of them in the order it named
+    /// them.
+    #[test]
+    fn an_instance_naming_several_objects_nests_each_of_them_in_order() {
+        let mut entity = json!({
+            "id": "urn:ngsi-ld:T:A",
+            "type": "Thing",
+            "passengers": [
+                {"type": "Relationship", "object": ["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C"], "observedAt": "2024-01-01T00:00:00Z"}
+            ]
+        });
+
+        apply_temporal_inline_join(&mut entity, &resolved(&["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C"]));
+
+        let nested = entity["passengers"][0]["entity"].as_array().expect("an entity array");
+        pretty_assertions::assert_eq!(nested.len(), 2);
+        pretty_assertions::assert_eq!(nested[0]["id"], "urn:ngsi-ld:T:B");
+        pretty_assertions::assert_eq!(nested[1]["id"], "urn:ngsi-ld:T:C");
+    }
+
+    /// The nested member mirrors the spelling of the `object` beside it, so an
+    /// array of one target answers with an array of one entity.
+    #[test]
+    fn an_object_written_as_a_one_element_array_nests_a_one_element_array() {
+        let mut entity = json!({
+            "id": "urn:ngsi-ld:T:A",
+            "type": "Thing",
+            "passengers": [{"type": "Relationship", "object": ["urn:ngsi-ld:T:B"], "observedAt": "2024-01-01T00:00:00Z"}]
+        });
+
+        apply_temporal_inline_join(&mut entity, &resolved(&["urn:ngsi-ld:T:B"]));
+
+        pretty_assertions::assert_eq!(entity["passengers"][0]["entity"].as_array().expect("an entity array").len(), 1);
+    }
+
+    /// A multi-target instance none of whose targets resolved gains no member,
+    /// exactly as a single-target one does.
+    #[test]
+    fn a_multi_target_instance_that_resolves_to_nothing_is_left_untouched() {
+        let mut entity = json!({
+            "id": "urn:ngsi-ld:T:A",
+            "type": "Thing",
+            "passengers": [{"type": "Relationship", "object": ["urn:ngsi-ld:T:Missing"], "observedAt": "2024-01-01T00:00:00Z"}]
+        });
+
+        apply_temporal_inline_join(&mut entity, &resolved(&["urn:ngsi-ld:T:B"]));
+
+        assert!(entity["passengers"][0].get("entity").is_none(), "{}", entity["passengers"][0]);
     }
 
     /// A `ListRelationship` nests one entry per identifier that resolved, in list

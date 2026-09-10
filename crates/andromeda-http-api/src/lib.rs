@@ -27,6 +27,7 @@ andromeda_architecture_checks::dependency_boundary! {
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-health",
+        "andromeda-http-headers",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-subscription-forwarding",
         "andromeda-telemetry",

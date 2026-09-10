@@ -1,0 +1,24 @@
+[
+  {
+    "id": "urn:ngsi-ld:Place:27182",
+    "type": "Place",
+    "address": {
+      "type": "Property",
+      "value": "Pariser Platz, Berlin, Germany",
+      "valueType": "String"
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:Place:31415",
+    "type": "Place",
+    "address": {
+      "type": "Property",
+      "value": {
+        "street": "Straße des 17. Juni",
+        "city": "Berlin",
+        "country": "Germany"
+      },
+      "valueType": "PostalAddress"
+    }
+  }
+]

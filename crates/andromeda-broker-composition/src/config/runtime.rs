@@ -219,6 +219,7 @@ mod tests {
     use crate::config::observability::{LogLevel, MetricsExposure};
     use andromeda_entity::{config::EntityConfig, spatial_config::SpatialConfig};
     use andromeda_federation::config::{FederationConfig, SplitEntitiesDefault};
+    use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
     use andromeda_http_server::config::ServerConfig;
     use andromeda_http_source_identity::config::InfoConfig;
     use andromeda_http_stack::config::{CorsMode, HttpFeatureMode, HttpStackConfig};
@@ -284,6 +285,7 @@ mod tests {
             request_decompression: HttpFeatureMode::Enabled,
             cors: CorsMode::Permissive,
             max_request_body_bytes: 67_108_864,
+            forwarded_headers: ForwardedHeaderTrust::Untrusted,
         }
     }
 

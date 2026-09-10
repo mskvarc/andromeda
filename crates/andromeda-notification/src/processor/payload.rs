@@ -25,7 +25,7 @@ use andromeda_jsonld::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, notification::NotificationTrigger};
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
-use andromeda_ngsi_ld_render::{snapshot::SnapshotRenderer, uri_decoding::decode_percent_encoded_uris};
+use andromeda_ngsi_ld_render::{notification_conformance::amend_notification_entities, snapshot::SnapshotRenderer, uri_decoding::decode_percent_encoded_uris};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_subscription::compiled::CompiledSubscription;
@@ -323,10 +323,15 @@ async fn resolve_join_targets(notified: &Value, params: &NotificationBuildParams
 }
 
 /// Render every entity in the payload in the subscription's
-/// `notification.format` (clause 5.8.6).
+/// `notification.format` (clause 5.8.6), then amend it to the subscription's
+/// declared `ngsildConformance`.
+///
+/// Clause 5.8.6 puts the amendment last, after the format rendering and after
+/// `pick`, `omit` and `join`, so the fallback tables of clause 4.3.6.8 run over
+/// the representation the subscriber will actually receive.
 fn render_notification_entities(payload: Vec<Value>, sub: &CompiledSubscription) -> Vec<Value> {
     let format = sub.notification_format.unwrap_or_default();
-    payload
+    let rendered: Vec<Value> = payload
         .into_iter()
         .map(|entity| {
             let mut formatted = render_format(entity, format, sub.notification_join);
@@ -338,7 +343,8 @@ fn render_notification_entities(payload: Vec<Value>, sub: &CompiledSubscription)
             decode_percent_encoded_uris(&mut formatted);
             formatted
         })
-        .collect()
+        .collect();
+    amend_notification_entities(rendered, sub.ngsild_conformance, format)
 }
 
 pub(super) mod cache;

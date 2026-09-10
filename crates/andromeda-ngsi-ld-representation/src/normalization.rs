@@ -14,8 +14,15 @@
 //! assumed: an `object` member makes a Relationship, `languageMap` a
 //! `LanguageProperty`, a bare `GeoJSON` geometry a `GeoProperty`, and so on — only a
 //! value with no such marker becomes an implicit Property.
+//!
+//! The attribute's own name travels with it through the descent, because one
+//! of the reserved-member decisions is not a statement about the family alone:
+//! clause 4.5.2.2 calls `entityIdSealed` and `entityTypeSealed` "non-reified
+//! subproperties" of the `ngsildproof` Property, so under that one name they
+//! are envelope members and under every other name they are not members at
+//! all. [`crate::proof_seal_admission`] owns both halves of that rule.
 
-use crate::{entity_members::ENTITY_MEMBERS, output_only_member::discard_output_only_member};
+use crate::{entity_members::ENTITY_MEMBERS, output_only_member::discard_output_only_member, proof_seal_admission::is_admitted_proof_seal};
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use serde_json::{Map, Value};
 use std::{mem::take, str::FromStr};
@@ -32,7 +39,7 @@ pub fn normalize_entity_attributes(payload: &mut Value) {
         if ENTITY_MEMBERS.contains(&member.as_str()) {
             continue;
         }
-        normalize_attribute(value);
+        normalize_attribute(member, value);
     }
 }
 
@@ -50,11 +57,12 @@ pub fn normalize_merge_fragment(payload: &mut Value) {
         if ENTITY_MEMBERS.contains(&member.as_str()) || value.as_str() == Some("urn:ngsi-ld:null") {
             continue;
         }
-        normalize_attribute(value);
+        normalize_attribute(member, value);
     }
 }
 
-/// Rewrite one bare attribute node, as clauses 5.6.4 and 5.6.19 supply it.
+/// Rewrite one bare attribute node named `attribute_name`, as clauses 5.6.4
+/// and 5.6.19 supply it.
 ///
 /// Partial Attribute Update and Replace Attribute take an Attribute Fragment
 /// rather than an Entity Fragment, so they have no entity envelope to walk and
@@ -63,7 +71,12 @@ pub fn normalize_merge_fragment(payload: &mut Value) {
 /// it the discarding of the output-only `previous...` member clauses 5.2.5 to
 /// 5.2.38 require an implementation to ignore when a Context Producer supplies
 /// one.
-pub fn normalize_attribute_node(value: &mut Value) {
+///
+/// The name is the caller's because those two operations carry it in the
+/// request URI rather than in the payload, and clause 4.5.2.2 makes the name
+/// part of what an instance's members mean: only under `ngsildproof` are the
+/// two data-integrity seals envelope members instead of sub-attributes.
+pub fn normalize_attribute_node(attribute_name: &str, value: &mut Value) {
     let Some(instance) = value.as_object_mut() else {
         return;
     };
@@ -73,18 +86,19 @@ pub fn normalize_attribute_node(value: &mut Value) {
     // abbreviates, and a fragment updating only a sub-attribute -- which carries
     // neither `type` nor a value member -- would be wrapped as a value instead
     // of walked as an instance.
-    normalize_concise_instance(instance);
+    normalize_concise_instance(attribute_name, instance);
 }
 
-/// Rewrite one attribute slot: one instance, several, or a concise value.
-fn normalize_attribute(value: &mut Value) {
+/// Rewrite one attribute slot named `attribute_name`: one instance, several, or
+/// a concise value.
+fn normalize_attribute(attribute_name: &str, value: &mut Value) {
     if let Value::Object(instance) = value {
         // A declared type, or one clause 4.5 infers from a distinguishing
         // member (`object`, `languageMap`, ...), is an attribute instance:
         // name the type where it was omitted, then normalize its
         // sub-attributes.
         if declares_an_attribute_type(instance) || distinguishing_member_type(instance).is_some() {
-            normalize_concise_instance(instance);
+            normalize_concise_instance(attribute_name, instance);
             return;
         }
         // The geospatial exception (clause 4.5.2.3): a bare GeoJSON geometry is
@@ -106,7 +120,7 @@ fn normalize_attribute(value: &mut Value) {
     {
         for instance in instances {
             if let Value::Object(instance) = instance {
-                normalize_concise_instance(instance);
+                normalize_concise_instance(attribute_name, instance);
             }
         }
         return;
@@ -118,15 +132,16 @@ fn normalize_attribute(value: &mut Value) {
     *value = as_typed_value(AttributeType::Property, concise);
 }
 
-/// Normalize one attribute instance, naming its type first if it was left to
-/// be inferred from a distinguishing member (clause 4.5.3.3 and siblings).
-fn normalize_concise_instance(instance: &mut Map<String, Value>) {
+/// Normalize one instance of the attribute named `attribute_name`, naming its
+/// type first if it was left to be inferred from a distinguishing member
+/// (clause 4.5.3.3 and siblings).
+fn normalize_concise_instance(attribute_name: &str, instance: &mut Map<String, Value>) {
     if !declares_an_attribute_type(instance)
         && let Some(inferred) = distinguishing_member_type(instance)
     {
         instance.insert("type".to_string(), Value::String(inferred.to_string()));
     }
-    normalize_instance(instance);
+    normalize_instance(attribute_name, instance);
 }
 
 /// Whether an array holds nothing but attribute instances.
@@ -226,7 +241,7 @@ fn is_geojson_geometry(instance: &Map<String, Value>) -> bool {
 /// siblings say a `previous…` a Context Producer supplied "shall be ignored",
 /// so it is dropped here rather than normalized into a sub-attribute and
 /// stored.
-fn normalize_instance(instance: &mut Map<String, Value>) {
+fn normalize_instance(attribute_name: &str, instance: &mut Map<String, Value>) {
     let Some(declared) = attribute_type_of(instance) else {
         return;
     };
@@ -236,7 +251,16 @@ fn normalize_instance(instance: &mut Map<String, Value>) {
         if member == "type" || reserved.contains(&member.as_str()) {
             continue;
         }
-        normalize_attribute(value);
+        // Clause 4.5.2.2 calls `entityIdSealed` and `entityTypeSealed`
+        // "non-reified subproperties" of `ngsildproof`, so under that name each
+        // carries its value directly and wrapping one as a Property would store
+        // the reified shape the clause rules out. Under any other name the same
+        // clause forbids them outright, and `crate::attribute_type_validation`
+        // has already refused the payload before it reaches here.
+        if is_admitted_proof_seal(attribute_name, declared, member) {
+            continue;
+        }
+        normalize_attribute(member, value);
     }
 }
 
@@ -251,7 +275,7 @@ fn as_typed_value(attribute_type: AttributeType, value: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use crate::normalization::{normalize_entity_attributes, normalize_merge_fragment};
+    use crate::normalization::{normalize_attribute_node, normalize_entity_attributes, normalize_merge_fragment};
     use serde_json::json;
 
     #[test]
@@ -548,6 +572,155 @@ mod tests {
         normalize_entity_attributes(&mut payload);
 
         pretty_assertions::assert_eq!(payload["raw"], json!({ "type": "Property", "value": { "foo": 1, "bar": 2 } }));
+    }
+
+    /// Clause 4.5.2.2: `ngsildproof` is "a Property with the non-reified
+    /// subproperties `entityIdSealed` and `entityTypeSealed`". Non-reified
+    /// means each carries its value directly, so neither is wrapped into the
+    /// `{"type": "Property", "value": …}` envelope every other member of an
+    /// instance is wrapped into.
+    #[test]
+    fn the_two_seals_of_the_ngsildproof_property_are_left_unreified() {
+        let mut payload = json!({
+            "id": "urn:ngsi-ld:Store:002",
+            "type": "Store",
+            "address": {
+                "type": "Property",
+                "value": {"streetAddress": "Tiger Street 4"},
+                "ngsildproof": {
+                    "type": "Property",
+                    "entityIdSealed": "urn:ngsi-ld:Store:002",
+                    "entityTypeSealed": "Store",
+                    "value": {"type": "DataIntegrityProof", "proofValue": "z3XrH3"}
+                }
+            }
+        });
+
+        normalize_entity_attributes(&mut payload);
+
+        let proof = &payload["address"]["ngsildproof"];
+        pretty_assertions::assert_eq!(proof["entityIdSealed"], json!("urn:ngsi-ld:Store:002"));
+        pretty_assertions::assert_eq!(proof["entityTypeSealed"], json!("Store"));
+        pretty_assertions::assert_eq!(proof["value"], json!({"type": "DataIntegrityProof", "proofValue": "z3XrH3"}));
+    }
+
+    /// The exception belongs to the name, not to the member: under any other
+    /// attribute name the same two members are ordinary sub-attributes and are
+    /// wrapped like any other. Reaching that shape at all takes a payload
+    /// `crate::attribute_type_validation` has already refused, so this pins the
+    /// rewrite's own reading rather than an admissible input.
+    #[test]
+    fn a_seal_named_member_under_another_attribute_is_wrapped_like_any_sub_attribute() {
+        let mut payload = json!({
+            "id": "urn:ngsi-ld:Device:1",
+            "type": "Device",
+            "speed": {"type": "Property", "value": 42, "entityIdSealed": "urn:ngsi-ld:Device:1"}
+        });
+
+        normalize_entity_attributes(&mut payload);
+
+        pretty_assertions::assert_eq!(payload["speed"]["entityIdSealed"], json!({"type": "Property", "value": "urn:ngsi-ld:Device:1"}));
+    }
+
+    /// Clauses 4.5.3.2 and 4.5.3.3 prohibit both seals on a Relationship with
+    /// no exception, so the `ngsildproof` name alone does not make them
+    /// envelope members: clause 4.5.2.2 defines `ngsildproof` as a Property.
+    #[test]
+    fn a_seal_under_an_ngsildproof_that_is_a_relationship_is_not_an_envelope_member() {
+        let mut payload = json!({
+            "id": "urn:ngsi-ld:Device:1",
+            "type": "Device",
+            "ngsildproof": {"type": "Relationship", "object": "urn:ngsi-ld:Proof:1", "entityTypeSealed": "Device"}
+        });
+
+        normalize_entity_attributes(&mut payload);
+
+        pretty_assertions::assert_eq!(payload["ngsildproof"]["entityTypeSealed"], json!({"type": "Property", "value": "Device"}));
+    }
+
+    /// Clauses 5.6.4 and 5.6.19 carry the attribute's name in the request URI,
+    /// so the Attribute Fragment entry point is told the name rather than
+    /// reading it from the payload.
+    #[test]
+    fn an_attribute_fragment_named_ngsildproof_keeps_its_seals_unreified() {
+        let mut fragment = json!({
+            "type": "Property",
+            "entityIdSealed": "urn:ngsi-ld:Store:002",
+            "entityTypeSealed": "Store",
+            "value": {"type": "DataIntegrityProof", "proofValue": "z3XrH3"}
+        });
+
+        normalize_attribute_node("ngsildproof", &mut fragment);
+
+        pretty_assertions::assert_eq!(fragment["entityIdSealed"], json!("urn:ngsi-ld:Store:002"));
+        pretty_assertions::assert_eq!(fragment["entityTypeSealed"], json!("Store"));
+    }
+
+    /// The same fragment under another name gets the ordinary treatment, which
+    /// is what makes the name and not the payload the deciding input.
+    #[test]
+    fn an_attribute_fragment_named_otherwise_wraps_the_same_members() {
+        let mut fragment = json!({"type": "Property", "value": 42, "entityTypeSealed": "Device"});
+
+        normalize_attribute_node("speed", &mut fragment);
+
+        pretty_assertions::assert_eq!(fragment["entityTypeSealed"], json!({"type": "Property", "value": "Device"}));
+    }
+
+    /// A member named like a seal inside a Property's value is part of that
+    /// value, so it is preserved verbatim whatever the attribute is called.
+    #[test]
+    fn a_seal_name_inside_the_ngsildproof_value_is_left_untouched() {
+        let mut payload = json!({
+            "id": "urn:ngsi-ld:Store:002",
+            "type": "Store",
+            "ngsildproof": {"type": "Property", "value": {"entityIdSealed": "urn:ngsi-ld:Store:002"}}
+        });
+        let untouched = payload.clone(); // clone: the expectation compares against the input
+
+        normalize_entity_attributes(&mut payload);
+
+        pretty_assertions::assert_eq!(payload, untouched);
+    }
+
+    /// Every instance of a multi-instance `ngsildproof` is read the same way,
+    /// because the name is the attribute's and not one instance's.
+    #[test]
+    fn every_instance_of_a_multi_instance_ngsildproof_keeps_its_seals_unreified() {
+        let mut payload = json!({
+            "id": "urn:ngsi-ld:Store:002",
+            "type": "Store",
+            "address": {
+                "type": "Property",
+                "value": 1,
+                "ngsildproof": [
+                    {"type": "Property", "entityIdSealed": "urn:ngsi-ld:Store:002", "value": {"proofValue": "zA"}, "datasetId": "urn:ngsi-ld:Dataset:a"},
+                    {"type": "Property", "entityTypeSealed": "Store", "value": {"proofValue": "zB"}, "datasetId": "urn:ngsi-ld:Dataset:b"}
+                ]
+            }
+        });
+
+        normalize_entity_attributes(&mut payload);
+
+        pretty_assertions::assert_eq!(payload["address"]["ngsildproof"][0]["entityIdSealed"], json!("urn:ngsi-ld:Store:002"));
+        pretty_assertions::assert_eq!(payload["address"]["ngsildproof"][1]["entityTypeSealed"], json!("Store"));
+    }
+
+    /// A merge fragment goes through the same rewrite, so clause 5.5.12 does
+    /// not reintroduce the reification the other write paths avoid.
+    #[test]
+    fn a_merge_fragment_keeps_the_seals_of_an_ngsildproof_unreified() {
+        let mut payload = json!({
+            "address": {
+                "type": "Property",
+                "value": 1,
+                "ngsildproof": {"type": "Property", "entityIdSealed": "urn:ngsi-ld:Store:002", "value": {"proofValue": "zA"}}
+            }
+        });
+
+        normalize_merge_fragment(&mut payload);
+
+        pretty_assertions::assert_eq!(payload["address"]["ngsildproof"]["entityIdSealed"], json!("urn:ngsi-ld:Store:002"));
     }
 
     #[test]

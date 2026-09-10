@@ -1,7 +1,14 @@
 //! NGSI-LD subscription types (ETSI GS CIM 009 clause 5.2.12).
 
 use crate::{attribute_name_csv, key_value_pair::KeyValuePair, notification::NotificationTrigger};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, positive_milliseconds::PositiveMilliseconds, rfc3339, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    constant_string,
+    positive_milliseconds::PositiveMilliseconds,
+    rfc3339,
+    spec_version::SpecVersion,
+    uri::Uri,
+};
 use andromeda_ngsi_ld_query::{filter::expression::Expr, pattern::Pattern, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
 use chrono::{DateTime, Utc};
@@ -9,6 +16,7 @@ use langtag::LangTagBuf;
 use mediatype::MediaTypeBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serde_with::{DisplayFromStr, serde_as};
 use std::num::NonZeroU32;
 use strum::{Display, EnumIter, EnumString, IntoStaticStr};
 use typed_builder::TypedBuilder;
@@ -248,6 +256,7 @@ pub struct SubscriptionFilters {
 
 /// How and how often a matching change is turned into a notification
 /// (ETSI GS CIM 009 clauses 5.2.12 and 5.5.13).
+#[serde_as]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 #[builder(field_defaults(default = Default::default()))]
@@ -272,6 +281,17 @@ pub struct SubscriptionDelivery {
     /// `splitEntities`); absent defers to the deployment default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub split_entities: Option<bool>,
+    /// The NGSI-LD specification version the Entities of a notification are
+    /// amended to conform to (Table 5.2.12-1 `ngsildConformance`).
+    ///
+    /// Table 5.2.12-1 restricts the member to "a semantically versioned string
+    /// in the form major.minor", and clause 5.8.6 has a notification "undergo a
+    /// backwards compatibility operation as defined by clause 4.3.6.8" when it
+    /// is set. An absent member means no amendment: there is no default version
+    /// a notification falls back to.
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ngsild_conformance: Option<SpecVersion>,
 }
 
 /// Whether a subscription is running, and since when

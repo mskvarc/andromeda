@@ -1,0 +1,33 @@
+[
+  {
+    "id": "http://example.org/vehicle/Vehicle",
+    "type": "EntityType",
+    "typeName": "Vehicle",
+    "attributeNames": [
+      "brandName",
+      "isParked",
+      "location",
+      "speed"
+    ]
+  },
+  {
+    "id": "http://example.org/parking/OffStreetParking",
+    "type": "EntityType",
+    "typeName": "OffStreetParking",
+    "attributeNames": [
+      "availableSpotNumber",
+      "isNextToBuilding",
+      "location",
+      "totalSpotNumber"
+    ]
+  },
+  {
+    "id": "http://example.org/parking/ParkingSpot",
+    "type": "EntityType",
+    "typeName": "http://example.org/parking/ParkingSpot",
+    "attributeNames": [
+      "location",
+      "http://example.org/parking/status"
+    ]
+  }
+]

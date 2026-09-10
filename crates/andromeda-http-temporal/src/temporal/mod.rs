@@ -115,5 +115,7 @@ pub mod local_map_entities;
 pub mod query;
 /// Temporal retrieve handling.
 pub mod retrieve;
+/// The distributed half of a temporal retrieval.
+mod retrieve_forwarding;
 /// Temporal update attribute instance handling.
 pub mod update_attribute_instance;

@@ -1,0 +1,71 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "urn:ngsi-ld:OffStreetParking:Downtown1",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -8.5,
+          41.2
+        ]
+      },
+      "properties": {
+        "type": "OffStreetParking",
+        "name": "Downtown One",
+        "availableSpotNumber": {
+          "value": 121,
+          "observedAt": "2017-07-29T12:05:02Z",
+          "reliability": 0.7,
+          "providedBy": {
+            "object": "urn:ngsi-ld:Camera:C1"
+          }
+        },
+        "totalSpotNumber": 200,
+        "location": {
+          "type": "Point",
+          "coordinates": [
+            -8.5,
+            41.2
+          ]
+        }
+      }
+    },
+    {
+      "id": "urn:ngsi-ld:OffStreetParking:Downtown2",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -8.51,
+          41.1
+        ]
+      },
+      "properties": {
+        "type": "OffStreetParking",
+        "name": "Downtown Two",
+        "availableSpotNumber": {
+          "value": 99,
+          "observedAt": "2017-07-29T12:05:02Z",
+          "reliability": 0.8,
+          "providedBy": {
+            "object": "urn:ngsi-ld:Camera:C2"
+          }
+        },
+        "totalSpotNumber": 100,
+        "location": {
+          "type": "Point",
+          "coordinates": [
+            -8.51,
+            41.1
+          ]
+        }
+      }
+    }
+  ],
+  "@context": [
+    "http://example.org/ngsi-ld/latest/parking.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"
+  ]
+}

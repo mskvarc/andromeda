@@ -1,4 +1,4 @@
-//! Entity Map lifecycle and query-intersection semantics (clauses 5.5.14 and 5.14).
+//! Entity Map lifecycle against its store (clauses 5.5.14 and 5.14).
 
 use crate::{
     error::EntityMapError,
@@ -123,6 +123,30 @@ impl EntityMapService {
         Ok(decided)
     }
 
+    /// Resolve a map a request may only reuse and never create (Table
+    /// 6.4.3.3-2), holding the follow-up to the creating request's parameters.
+    ///
+    /// Clause 5.5.14 lists the operations that may occur as part of a
+    /// distributed transactional request, and Purge Entities is not among them,
+    /// so a purge is never the request a map is created for; and Table
+    /// 6.4.3.3-3 admits no 201 for it to report a creation through, where Table
+    /// 6.4.3.2-3 gives Query Entities one. A referenced map that expired or was
+    /// never stored therefore yields no inference and leaves the request scoped
+    /// by nothing but its own query.
+    ///
+    /// # Errors
+    ///
+    /// [`EntityMapError::RequestChanged`] when the request under the map
+    /// changed a filter parameter of the request that created it, and
+    /// [`EntityMapError::Persistence`] when the store cannot be read.
+    pub async fn resolve_reuse(&self, referenced: &Uri, fingerprint: &RequestFingerprint) -> Result<ReferencedEntityMap, EntityMapError> {
+        let resolved = self.referenced(referenced).await?;
+        if let ReferencedEntityMap::Live(map) = &resolved {
+            EntityMapService::require_same_request(map, fingerprint)?;
+        }
+        Ok(resolved)
+    }
+
     /// Clause 5.5.14: a follow-up under a map uses the creating request's
     /// parameters. A map created before fingerprints were recorded, or by a
     /// different operation, cannot be compared and is accepted.
@@ -187,19 +211,6 @@ impl EntityMapService {
         Ok(shed)
     }
 
-    /// Intersect query identifiers with a live map while preserving query order.
-    #[must_use]
-    pub fn scope_query_ids(map: &EntityMap, existing_ids: Option<&[Uri]>) -> Vec<Uri> {
-        match existing_ids {
-            Some(existing) => existing
-                .iter()
-                .filter(|identifier| map.contains(identifier))
-                .cloned() // clone: the result owns identifiers borrowed from the incoming query.
-                .collect(),
-            None => map.entity_ids().cloned().collect(), // clone: the result owns identifiers borrowed from the map.
-        }
-    }
-
     /// Delete a live Entity Map by identifier.
     ///
     /// # Errors
@@ -236,6 +247,7 @@ mod tests {
         error::EntityMapError,
         fingerprint::{FingerprintedRequest, fingerprint_of},
         pruning::PageCheck,
+        query_scoping::scope_query_ids,
         reuse::{EntityMapFlag, EntityMapUse},
         service::{EntityMapService, ReferencedEntityMap},
         store::{EntityMapMutation, EntityMapStore, EntityMapStoreFuture},
@@ -364,17 +376,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn intersection_preserves_incoming_query_order() -> Result<(), EntityMapError> {
-        let service = service();
-        let map = stored_map(&service, vec![identifier("urn:a")?, identifier("urn:b")?], any_fingerprint()).await?;
-        let incoming = [identifier("urn:b")?, identifier("urn:a")?, identifier("urn:c")?];
-        let scoped = EntityMapService::scope_query_ids(&map, Some(&incoming));
-        pretty_assertions::assert_eq!(scoped, vec![identifier("urn:b")?, identifier("urn:a")?]);
-        pretty_assertions::assert_eq!(EntityMapService::scope_query_ids(&map, None), vec![identifier("urn:a")?, identifier("urn:b")?]);
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn a_referenced_map_that_is_missing_is_an_outcome_not_an_error() -> Result<(), EntityMapError> {
         let service = service();
         let map = stored_map(&service, vec![identifier("urn:a")?], any_fingerprint()).await?;
@@ -428,6 +429,27 @@ mod tests {
         Ok(())
     }
 
+    /// Table 6.4.3.3-2: an operation that may only reuse a map takes the live
+    /// one it was handed, is left with none when the reference cannot be
+    /// resolved, and is still held to the creating request's filters.
+    #[tokio::test]
+    async fn a_reuse_only_reference_never_mints_a_replacement() -> Result<(), EntityMapError> {
+        let service = service();
+        let map = stored_map(&service, vec![identifier("urn:a")?], query("type=Vehicle")?).await?;
+
+        let live = service.resolve_reuse(&map.id, &query("type=Vehicle&id=urn:a")?).await?;
+        assert!(matches!(&live, ReferencedEntityMap::Live(stored) if stored.id == map.id));
+
+        let missing = service
+            .resolve_reuse(&identifier("urn:ngsi-ld:EntityMap:missing")?, &query("type=Vehicle")?)
+            .await?;
+        assert!(matches!(missing, ReferencedEntityMap::Unavailable));
+
+        let changed = service.resolve_reuse(&map.id, &query("type=Building")?).await;
+        assert!(matches!(changed, Err(EntityMapError::RequestChanged { identifier }) if identifier == map.id));
+        Ok(())
+    }
+
     #[tokio::test]
     async fn an_unavailable_reference_or_the_flag_alone_mints_a_map() -> Result<(), EntityMapError> {
         let service = service();
@@ -471,10 +493,7 @@ mod tests {
 
         let stored = service.retrieve(&map.id).await?;
         pretty_assertions::assert_eq!(stored.entity_ids().collect::<Vec<_>>(), vec![&identifier("urn:a")?, &identifier("urn:c")?]);
-        pretty_assertions::assert_eq!(
-            EntityMapService::scope_query_ids(&stored, None),
-            vec![identifier("urn:a")?, identifier("urn:c")?]
-        );
+        pretty_assertions::assert_eq!(scope_query_ids(&stored, None), vec![identifier("urn:a")?, identifier("urn:c")?]);
         Ok(())
     }
 

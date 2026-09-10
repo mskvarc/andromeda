@@ -27,7 +27,6 @@ use andromeda_http_extraction::{
 };
 use andromeda_http_response::{
     batch_projection::{batch_operation_result, forwarded_write_error},
-    classified_report::ClassifiedReport,
     collection::NgsiLdCollectionResponse,
     linked_resolution_warning::with_linked_resolution_warnings,
     problem_response::ProblemResponse,
@@ -42,7 +41,7 @@ use andromeda_ngsi_ld_model::{
     entity_type::EntityTypeValue,
     expanded::mutation::selection::{DatasetSelection, OverwritePolicy},
 };
-use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
+use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     filter::{expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes},
@@ -63,17 +62,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
-
-/// The response a read gives when the one exclusive or redirect source
-/// holding all of its data declined the representation with `status` (Table
-/// 6.4.3.2-3, clause 6.3.7): the source's 501 is the operation's answer.
-pub(crate) fn single_source_declined(status: u16, instance: &HttpUri) -> ProblemResponse {
-    ClassifiedReport::public_binding(
-        ProblemClassification::NotImplemented,
-        format!("the registered context source holding the requested data answered HTTP {status}: it does not support the requested representation"),
-    )
-    .with_instance(instance.clone())
-}
 
 const fn selected_dataset_uri(selector: Option<&DatasetSelector>) -> Option<&Uri> {
     match selector {
@@ -98,6 +86,8 @@ pub mod merge;
 pub mod missing_identifier;
 /// Partial attribute update handling.
 pub mod partial_update_attribute;
+/// The `EntityMap` a purge determines its entities from.
+pub mod purge_entity_map;
 /// Entity collection query handling.
 pub mod query;
 /// Which HTTP binding carried a Query Entities request.

@@ -1,7 +1,7 @@
 //! Conversion of the canonical clause-5.2.23 body into temporal-query parameters.
 
 use crate::{
-    attribute_selection::validate_attrs,
+    attribute_selection::{AttrsAdmission, validate_attrs},
     error::ParameterError,
     query::{deserialization::OptionalGeoQuery, entity_selector::EntitySelectorParams, temporal::TemporalQueryParameters},
 };
@@ -72,7 +72,10 @@ impl TryFrom<Query> for TemporalQueryParameters {
             expand_values: query.expand_values,
             json_keys: query.json_keys,
         };
-        validate_attrs(parameters.attrs.as_deref())?;
+        // Table 6.35.3.1-1 gives this body "the same URL parameters as Query
+        // Temporal Evolution of Entities ... Table 6.18.3.2-1", so `attrs` is
+        // the query's synonym for pick and q and may name the `scope` member.
+        validate_attrs(parameters.attrs.as_deref(), AttrsAdmission::ScopeAdmitted)?;
         // Clause 4.21 governs the POST body's projection exactly as it
         // governs the query string's, so the body cannot smuggle both members
         // past the rule the GET binding enforces.

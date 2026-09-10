@@ -26,9 +26,13 @@ pub enum MergePolicy {
 
 /// Fold `remote`'s attributes into `local` under `policy`.
 ///
-/// Top-level `id` and `type` are untouched. The entity-level `expiresAt`
-/// follows clause 4.5.5.3: it is kept only when every version carries one,
-/// and then as the furthest in the future.
+/// Top-level `id` and `type` are untouched. Under the instance policy the
+/// entity-level `expiresAt` follows clause 4.5.5.3: it is kept only when every
+/// version carries one, and then as the furthest in the future. Under the
+/// supplementing policy it is left alone, because clause 4.3.6.2 puts an
+/// auxiliary version outside that conflict. Clause 4.5.5.2 has already moved
+/// the transience of each version onto that version's own Attributes, before
+/// the first fold.
 pub fn merge_entity_attributes(local: &mut Entity, remote: Entity, policy: MergePolicy) {
     for (name, value) in remote.attrs {
         match local.attrs.get_mut(&name) {
@@ -57,9 +61,27 @@ pub fn merge_entity_attributes(local: &mut Entity, remote: Entity, policy: Merge
         (Some(held), None) => Some(held),
         (None, received) => received,
     };
-    local.expires_at = match (local.expires_at, remote.expires_at) {
-        (Some(held), Some(received)) => Some(held.max(received)),
-        (None, _) | (_, None) => None,
+    local.expires_at = match policy {
+        // Clause 4.5.5.3: "If an expiresAt attribute is missing from at least
+        // one version of the Entity received from registered Context Sources,
+        // the expiresAt attribute is removed from the Entity. Otherwise, the
+        // expiresAt attribute of the Entity is set to the DateTime
+        // corresponding to the expiresAt DateTime which is furthest in the
+        // future." The copy the broker holds itself is one of the versions the
+        // clause 5.7.1.4 merge builds on, so a locally held Entity carrying no
+        // expiresAt keeps the merged Entity non-transient -- the clause 4.5.5.2
+        // pass has already moved the transience a source did report onto that
+        // source's own Attributes.
+        MergePolicy::Instances => match (local.expires_at, remote.expires_at) {
+            (Some(held), Some(received)) => Some(held.max(received)),
+            (None, _) | (_, None) => None,
+        },
+        // Clause 4.3.6.2: an auxiliary Context Source Registration "never
+        // overrides data held directly within a Context Broker", so an
+        // auxiliary version can neither raise the Entity's expiry nor erase
+        // it by not reporting one. Every Entity this policy reaches exists
+        // already, so there is no missing member for it to supplement either.
+        MergePolicy::SupplementMissing => local.expires_at,
     };
 }
 
@@ -301,6 +323,34 @@ mod tests {
                 .map(|scope| scope.iter().map(|level| level.as_str().to_owned()).collect::<Vec<String>>()),
             Some(vec!["/madrid/gardens".to_owned()])
         );
+    }
+
+    /// Clause 4.3.6.2: an auxiliary Context Source Registration "never
+    /// overrides data held directly within a Context Broker", so an auxiliary
+    /// version that reports no `expiresAt` does not erase the one the primary
+    /// sources agreed on, and one that reports a later instant does not raise
+    /// it. The clause 4.5.5.3 removal is scoped to the versions that are
+    /// parties to the conflict.
+    #[test]
+    fn an_auxiliary_source_neither_erases_nor_raises_the_entity_expires_at() {
+        let mut local = entity(&json!({"expiresAt": "2030-01-01T00:00:00Z"}));
+        merge_entity_attributes(&mut local, entity(&json!({})), MergePolicy::SupplementMissing);
+        pretty_assertions::assert_eq!(local.expires_at.map(|at| at.to_rfc3339()), Some("2030-01-01T00:00:00+00:00".to_string()));
+
+        merge_entity_attributes(
+            &mut local,
+            entity(&json!({"expiresAt": "2040-01-01T00:00:00Z"})),
+            MergePolicy::SupplementMissing,
+        );
+        pretty_assertions::assert_eq!(local.expires_at.map(|at| at.to_rfc3339()), Some("2030-01-01T00:00:00+00:00".to_string()));
+
+        let mut without = entity(&json!({}));
+        merge_entity_attributes(
+            &mut without,
+            entity(&json!({"expiresAt": "2040-01-01T00:00:00Z"})),
+            MergePolicy::SupplementMissing,
+        );
+        assert!(without.expires_at.is_none(), "an auxiliary source cannot make locally held data transient");
     }
 
     /// The other half of clause 4.3.6.2: an auxiliary source does supply the

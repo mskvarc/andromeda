@@ -1,7 +1,7 @@
 //! Query parameter types for entity API endpoints.
 
 use crate::{
-    attribute_selection::validate_attrs,
+    attribute_selection::{AttrsAdmission, validate_attrs},
     case_insensitive_bool::deserialize_option_bool_case_insensitive,
     error::ParameterError,
     language_filter::deserialize_optional_language_filter,
@@ -189,7 +189,9 @@ impl GetEntityParams {
     /// projection term names a Linked Entity the requested traversal does not
     /// reach.
     pub fn validate(&self) -> Result<(), ParameterError> {
-        validate_attrs(self.attrs.as_deref())?;
+        // Table 6.5.3.1-1: on a retrieval `attrs` is "a synonym for the pick
+        // parameter, except that id, type, scope are not allowed".
+        validate_attrs(self.attrs.as_deref(), AttrsAdmission::AttributeNamesOnly)?;
         // Clause 4.21: pick and omit select opposite ends of the same
         // projection, so a request naming both is contradictory rather than
         // a request the broker can merge. The rule is the query's rule; the

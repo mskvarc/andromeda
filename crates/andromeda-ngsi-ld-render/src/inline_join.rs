@@ -10,7 +10,7 @@ use crate::{
     entity::EntityRenderer,
     error::RenderError,
     nested_projection::{LinkedProjection, NestedProjection},
-    relationship_targets::rendered_relationship_targets,
+    relationship_targets::{ObjectSpelling, rendered_relationship_targets},
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
@@ -111,10 +111,10 @@ fn inline_join_object(
 
 /// Expand a single attribute instance with inline-joined linked entities.
 ///
-/// For `Relationship` attributes, resolves the `object` URI against the linked
-/// entity map and inserts the rendered entity under the `"entity"` key.
-/// For `ListRelationship` attributes, resolves each URI in `objectList` and
-/// inserts the rendered entities under the `"entityList"` key. `target` is the
+/// For `Relationship` attributes, resolves the `object` member against the
+/// linked entity map and inserts what it names under the `"entity"` key. For
+/// `ListRelationship` attributes, resolves each URI in `objectList` and inserts
+/// the rendered entities under the `"entityList"` key. `target` is the
 /// sub-projection this attribute attached to whatever it links to.
 fn inline_join_attribute_instance(
     attr_obj: &mut Map<String, Value>,
@@ -125,29 +125,43 @@ fn inline_join_attribute_instance(
     let attr_type = attr_obj.get("type").and_then(Value::as_str).and_then(|raw| AttributeType::from_str(raw).ok());
     match attr_type {
         Some(AttributeType::Relationship) => {
-            if let Some(object_uri) = attr_obj.get("object").and_then(Value::as_str).and_then(|raw| raw.parse::<Uri>().ok())
-                && let Some(linked_entity) = context.linked.get(&object_uri)
-            {
-                let linked_val = render_linked(linked_entity, &object_uri, context, target, ancestors)?;
-                attr_obj.insert("entity".to_string(), linked_val);
+            // Clause 4.5.3.2 gives `object` "a URI or array of URIs", so both
+            // spellings name targets to follow. The `entity` member clause
+            // 4.5.23.2 adds mirrors the spelling beside it -- one nested Entity
+            // for a bare URI, an ordered array for an array of them -- rather
+            // than the number of targets that resolved.
+            //
+            // The URIs are read out first so the borrow of `attr_obj` is
+            // released before the recursive expansion, which needs the mutable
+            // ancestor set.
+            let object = attr_obj.get(compact_properties::OBJECT);
+            let spelling = object.map_or(ObjectSpelling::NoUri, ObjectSpelling::of);
+            let targets = object.map(rendered_relationship_targets).unwrap_or_default();
+            let mut nested = render_targets(&targets, context, target, ancestors)?;
+            match spelling {
+                ObjectSpelling::OneUri => {
+                    if let Some(linked_val) = nested.pop() {
+                        attr_obj.insert(compact_properties::ENTITY.to_owned(), linked_val);
+                    }
+                }
+                ObjectSpelling::ArrayOfUris => {
+                    if !nested.is_empty() {
+                        attr_obj.insert(compact_properties::ENTITY.to_owned(), Value::Array(nested));
+                    }
+                }
+                ObjectSpelling::NoUri => {}
             }
         }
         Some(AttributeType::ListRelationship) => {
-            // Collect the URIs first so the borrow of `attr_obj` is released
-            // before the recursive expansion, which needs the mutable ancestor
-            // set. Both representations clause 4.5.22 gives the member name the
-            // same targets, so the reading of them is the shared one.
-            let targets = attr_obj.get(compact_properties::OBJECT_LIST).map(rendered_relationship_targets);
-            if let Some(uris) = targets {
-                let mut entity_list = Vec::new();
-                for uri in &uris {
-                    if let Some(linked_entity) = context.linked.get(uri) {
-                        entity_list.push(render_linked(linked_entity, uri, context, target, ancestors)?);
-                    }
-                }
-                if !entity_list.is_empty() {
-                    attr_obj.insert("entityList".to_string(), Value::Array(entity_list));
-                }
+            // Both representations clause 4.5.22 gives the member name the same
+            // targets, so the reading of them is the shared one.
+            let targets = attr_obj
+                .get(compact_properties::OBJECT_LIST)
+                .map(rendered_relationship_targets)
+                .unwrap_or_default();
+            let entity_list = render_targets(&targets, context, target, ancestors)?;
+            if !entity_list.is_empty() {
+                attr_obj.insert(compact_properties::ENTITY_LIST.to_owned(), Value::Array(entity_list));
             }
         }
         // Only a Relationship or a ListRelationship names a linked entity; every
@@ -163,6 +177,26 @@ fn inline_join_attribute_instance(
         | None => {}
     }
     Ok(())
+}
+
+/// Render every target that resolved, in the order the member named them.
+///
+/// Clause 4.5.23.1 retrieves only "Relationships targeting a locally stored
+/// Entity", so an identifier the traversal did not resolve contributes nothing
+/// rather than a hole in the list.
+fn render_targets(
+    targets: &[Uri],
+    context: &InlineJoinContext<'_>,
+    projection: NestedProjection<'_>,
+    ancestors: &mut HashSet<Uri>,
+) -> Result<Vec<Value>, RenderError> {
+    let mut rendered = Vec::with_capacity(targets.len());
+    for uri in targets {
+        if let Some(linked_entity) = context.linked.get(uri) {
+            rendered.push(render_linked(linked_entity, uri, context, projection, ancestors)?);
+        }
+    }
+    Ok(rendered)
 }
 
 /// Render one linked entity, narrow it to the sub-projection the Relationship
@@ -400,6 +434,144 @@ mod tests {
         apply_inline_join(&mut entity, &linked_map, None, None).expect("inline join");
         let entity_list = entity["hasRooms"]["entityList"].as_array().expect("entityList array");
         pretty_assertions::assert_eq!(entity_list.len(), 2);
+    }
+
+    /// Clause 4.5.3.2 gives a Relationship's `object` "a URI or array of URIs",
+    /// and clause 4.5.23.2 nests what each names. `join=flat` already found both
+    /// Entities; `join=inline` added no `entity` member at all.
+    #[test]
+    fn inline_join_expands_a_multi_target_relationship_into_an_array_of_entities() {
+        let alice = parse_entity(json!({"id": "urn:ngsi-ld:Person:Alice", "type": "Person", "name": {"type": "Property", "value": "Alice"}}));
+        let bob = parse_entity(json!({"id": "urn:ngsi-ld:Person:Bob", "type": "Person", "name": {"type": "Property", "value": "Bob"}}));
+        let mut linked_map = IndexMap::new();
+        linked_map.insert("urn:ngsi-ld:Person:Alice".parse().expect("valid URI"), alice);
+        linked_map.insert("urn:ngsi-ld:Person:Bob".parse().expect("valid URI"), bob);
+
+        let mut entity = json!({
+            "id": "urn:ngsi-ld:Vehicle:A4567", "type": "Vehicle",
+            "passengers": {
+                "type": "Relationship",
+                "objectType": "Person",
+                "object": ["urn:ngsi-ld:Person:Alice", "urn:ngsi-ld:Person:Bob"]
+            }
+        });
+
+        apply_inline_join(&mut entity, &linked_map, None, None).expect("inline join");
+
+        let nested = entity["passengers"]["entity"].as_array().expect("an entity array");
+        pretty_assertions::assert_eq!(nested.len(), 2);
+        pretty_assertions::assert_eq!(nested[0]["id"], "urn:ngsi-ld:Person:Alice");
+        pretty_assertions::assert_eq!(nested[1]["id"], "urn:ngsi-ld:Person:Bob");
+        pretty_assertions::assert_eq!(nested[1]["name"]["value"], "Bob");
+    }
+
+    /// The `entity` member mirrors how `object` was spelled, not how many
+    /// targets resolved: an `object` written as a one-element array answers with
+    /// a one-element array so a client reads back the shape it wrote.
+    #[test]
+    fn inline_join_keeps_the_array_spelling_of_a_single_element_object_array() {
+        let room = parse_entity(json!({"id": "urn:a", "type": "Room", "name": {"type": "Property", "value": "A"}}));
+        let mut linked_map = IndexMap::new();
+        linked_map.insert("urn:a".parse().expect("valid URI"), room);
+
+        let mut entity = json!({"id": "urn:building", "type": "Building", "hasRoom": {"type": "Relationship", "object": ["urn:a"]}});
+
+        apply_inline_join(&mut entity, &linked_map, None, None).expect("inline join");
+
+        pretty_assertions::assert_eq!(
+            entity["hasRoom"]["entity"],
+            json!([{"id": "urn:a", "type": "Room", "name": {"type": "Property", "value": "A"}}])
+        );
+    }
+
+    /// Clause 4.5.23.1 retrieves only Relationships targeting a locally stored
+    /// Entity, so an unresolved target drops out and its siblings still nest.
+    #[test]
+    fn inline_join_of_a_multi_target_relationship_keeps_the_targets_that_resolved() {
+        let room = parse_entity(json!({"id": "urn:a", "type": "Room", "name": {"type": "Property", "value": "A"}}));
+        let mut linked_map = IndexMap::new();
+        linked_map.insert("urn:a".parse().expect("valid URI"), room);
+
+        let mut entity = json!({
+            "id": "urn:building", "type": "Building",
+            "hasRoom": {"type": "Relationship", "object": ["urn:missing", "urn:a"]},
+            "hasOther": {"type": "Relationship", "object": ["urn:missing", "urn:alsoMissing"]}
+        });
+
+        apply_inline_join(&mut entity, &linked_map, None, None).expect("inline join");
+
+        pretty_assertions::assert_eq!(entity["hasRoom"]["entity"].as_array().expect("an entity array").len(), 1);
+        pretty_assertions::assert_eq!(entity["hasRoom"]["entity"][0]["id"], "urn:a");
+        assert!(
+            entity["hasOther"].get("entity").is_none(),
+            "a Relationship none of whose targets resolved gains no member: {}",
+            entity["hasOther"]
+        );
+    }
+
+    /// A multi-target Relationship is descended through exactly as a
+    /// single-target one is, so a second hop nests under each target.
+    #[test]
+    fn inline_join_descends_a_second_hop_through_each_target_of_a_multi_target_relationship() {
+        let inner = parse_entity(json!({"id": "urn:c", "type": "C", "name": {"type": "Property", "value": "C"}}));
+        let first = parse_entity(json!({"id": "urn:a", "type": "B", "inner": {"type": "Relationship", "object": "urn:c"}}));
+        let second = parse_entity(json!({"id": "urn:b", "type": "B", "inner": {"type": "Relationship", "object": "urn:c"}}));
+        let mut linked_map = IndexMap::new();
+        linked_map.insert("urn:a".parse().expect("valid URI"), first);
+        linked_map.insert("urn:b".parse().expect("valid URI"), second);
+        linked_map.insert("urn:c".parse().expect("valid URI"), inner);
+
+        let mut entity = json!({"id": "urn:root", "type": "A", "outer": {"type": "Relationship", "object": ["urn:a", "urn:b"]}});
+
+        apply_inline_join(&mut entity, &linked_map, None, None).expect("inline join");
+
+        for index in 0..2 {
+            pretty_assertions::assert_eq!(entity["outer"]["entity"][index]["inner"]["entity"]["id"], "urn:c");
+        }
+    }
+
+    /// Clause 4.21 applies the sub-projection to every target of one
+    /// Relationship instance, not only to the first.
+    #[test]
+    fn inline_join_narrows_every_target_of_a_multi_target_relationship_by_the_sub_projection() {
+        let first = parse_entity(json!({
+            "id": "urn:a", "type": "T",
+            "category": {"type": "Property", "value": "commercial"},
+            "name": {"type": "Property", "value": "First"}
+        }));
+        let second = parse_entity(json!({
+            "id": "urn:b", "type": "T",
+            "category": {"type": "Property", "value": "residential"},
+            "name": {"type": "Property", "value": "Second"}
+        }));
+        let mut linked_map = IndexMap::new();
+        linked_map.insert("urn:a".parse().expect("valid URI"), first);
+        linked_map.insert("urn:b".parse().expect("valid URI"), second);
+
+        let projection = Projection {
+            pick: vec![term("rel", vec![term("category", Vec::new())])],
+            omit: Vec::new(),
+        };
+        let index = index(&["rel", "category", "name"]);
+
+        let mut entity = json!({"id": "urn:root", "type": "A", "rel": {"type": "Relationship", "object": ["urn:a", "urn:b"]}});
+
+        apply_inline_join(
+            &mut entity,
+            &linked_map,
+            None,
+            Some(LinkedProjection {
+                projection: &projection,
+                index: &index,
+            }),
+        )
+        .expect("inline join");
+
+        for index in 0..2 {
+            let nested = &entity["rel"]["entity"][index];
+            assert!(nested.get("category").is_some(), "{nested}");
+            assert!(nested.get("name").is_none(), "{nested}");
+        }
     }
 
     #[test]

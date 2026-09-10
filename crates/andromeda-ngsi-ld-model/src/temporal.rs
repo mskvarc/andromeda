@@ -5,6 +5,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     instance_identity::InstanceIdentity,
     ngsi_ld_time::NgsiLdTime,
+    scope::path::ScopePath,
     time_prop::TimeProp,
     uri::Uri,
 };
@@ -25,12 +26,34 @@ pub enum TemporalValue {
     Boolean(bool),
     /// A `GeoJSON` geometry in canonical JSON form.
     Geometry(Value),
-    /// A JSON object attribute value.
+    /// A structured attribute value, in the expanded shape the write path
+    /// stored it in.
+    ///
+    /// What the shape means is decided by the attribute family that carries it,
+    /// and nothing outside a family-aware reading may unwrap it: a
+    /// `LanguageProperty` holds its expanded language map, a `ListProperty` its
+    /// expanded members, the two Relationship families their bare target URIs,
+    /// and a Property either the elements of the several value nodes an
+    /// array-valued `value` expanded into or the node object an object-valued
+    /// one expanded into. A JSON-LD value node holds none of those, so a
+    /// rendering that wrapped this in one would produce a document no
+    /// compaction can read.
     Object(Value),
     /// A datetime attribute value.
     DateTime(DateTime<Utc>),
     /// A URI attribute value.
     Uri(Uri),
+    /// The Scopes one reified scope instance names (clause 4.18).
+    ///
+    /// Clause 4.18 gives the Scope a value shape of its own — "The value of
+    /// scope is represented as a JSON array in case there is more than one
+    /// Scope" — and no attribute value has that shape, so it is its own variant
+    /// rather than a JSON array carried through [`TemporalValue::Object`]: a
+    /// JSON-LD value node cannot hold an array at all, and several Scopes are
+    /// several value nodes. The paths are strongly typed for the same reason
+    /// storage holds them as label paths — a Scope is a validated clause 4.18
+    /// path, never free text.
+    Scopes(Vec<ScopePath>),
     /// A deletion marker observation, carrying the instant it deleted at.
     ///
     /// Clauses 4.5.7 and 4.5.8 give a deleted instance a `deletedAt` and the
@@ -84,7 +107,8 @@ impl TemporalValue {
             | TemporalValue::Geometry(_)
             | TemporalValue::Object(_)
             | TemporalValue::DateTime(_)
-            | TemporalValue::Uri(_) => None,
+            | TemporalValue::Uri(_)
+            | TemporalValue::Scopes(_) => None,
         }
     }
 }

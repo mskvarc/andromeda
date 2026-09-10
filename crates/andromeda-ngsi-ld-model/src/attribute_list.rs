@@ -8,7 +8,6 @@ use andromeda_ngsi_ld_lexicon::{
     ngsi_ld_urn::AttributeListId,
 };
 use iri_rs::IriBuf;
-use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 
@@ -18,23 +17,16 @@ constant_string!(AttributeResourceType, "Attribute");
 /// NGSI-LD `AttributeList` representation (ETSI GS CIM 009 clause 5.2.27).
 ///
 /// Lists all attributes known to the broker.
-#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(
-    type = "ngsi:AttributeList",
-    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
-)]
 pub struct AttributeList {
     /// Generated identifier of this list resource.
-    #[jsonld(id)]
     pub id: AttributeListId,
     /// Fixed `AttributeList` discriminator.
     #[serde(rename = "type")]
-    #[jsonld(skip)]
     pub type_: AttributeListType,
     /// Names of every attribute the broker holds, compacted against the
     /// request's context where one applies.
-    #[jsonld(property = "ngsi:attributeList", coerce = "@id", vec)]
     pub attribute_list: Vec<AttributeName>,
 }
 
@@ -42,58 +34,57 @@ pub struct AttributeList {
 ///
 /// Provides the attribute name, types, usage count, and associated entity
 /// type names.
-#[derive(Debug, Clone, Serialize, Deserialize, Expandable, TypedBuilder)]
+#[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(
-    type = "ngsi:Attribute",
-    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
-)]
 pub struct AttributeInfo {
-    /// Expanded IRI of the attribute.
-    #[jsonld(id)]
+    /// Full URI of the attribute name.
+    ///
+    /// Table 5.2.28-1 restricts the member to the "Full URI of attribute
+    /// name", so it is never shortened, whatever the request's `@context`
+    /// declares for the same name.
     pub id: IriBuf,
     /// Fixed `Attribute` discriminator.
     #[serde(rename = "type")]
-    #[jsonld(skip)]
     #[builder(default = Default::default())]
     pub type_: AttributeResourceType,
     /// Compacted name of the attribute.
-    #[jsonld(property = "ngsi:attributeName", coerce = "@id")]
     pub attribute_name: AttributeName,
     /// Attribute families this attribute has been seen as.
-    #[jsonld(property = "ngsi:attributeTypes", coerce = "@id", vec)]
+    ///
+    /// Table 5.2.28-1 gives the member cardinality 0..1, so a record that
+    /// names none omits it rather than carrying an empty array.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[builder(default = Default::default())]
     pub attribute_types: Vec<AttributeType>,
     /// Number of entity instances carrying this attribute.
-    #[jsonld(property = "ngsi:attributeCount")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]
     pub attribute_count: Option<i64>,
     /// Entity types on which this attribute appears.
-    #[jsonld(property = "ngsi:typeNames", coerce = "@id", vec)]
+    ///
+    /// Table 5.2.28-1 gives the member cardinality 0..1, so a record that
+    /// names none omits it rather than carrying an empty array.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[builder(default = Default::default())]
-    pub type_names: Option<Vec<EntityTypeName>>,
+    pub type_names: Vec<EntityTypeName>,
 }
 
 /// Detail record for a single attribute within an `EntityTypeInfo` (ETSI GS CIM 009 clause 5.2.26).
-#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(
-    type = "ngsi:Attribute",
-    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
-)]
 pub struct AttributeDetail {
-    /// Expanded IRI of the attribute.
-    #[jsonld(id)]
+    /// Full URI of the attribute name.
+    ///
+    /// Table 5.2.28-1 restricts the member to the "Full URI of attribute
+    /// name", so it is never shortened.
     pub id: IriBuf,
     /// Fixed `Attribute` discriminator.
     #[serde(rename = "type")]
-    #[jsonld(skip)]
     pub type_: AttributeResourceType,
     /// Compacted name of the attribute.
-    #[jsonld(property = "ngsi:attributeName", coerce = "@id")]
     pub attribute_name: AttributeName,
     /// Attribute families this attribute has been seen as.
-    #[jsonld(property = "ngsi:attributeTypes", coerce = "@id", vec)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attribute_types: Vec<AttributeType>,
 }
 
@@ -159,7 +150,7 @@ mod tests {
         .expect("parses");
         pretty_assertions::assert_eq!(info.type_, AttributeResourceType);
         pretty_assertions::assert_eq!(info.attribute_types, vec![AttributeType::Property, AttributeType::Relationship]);
-        pretty_assertions::assert_eq!(info.type_names, Some(vec!["Vehicle".parse::<EntityTypeName>().expect("valid type name")]));
+        pretty_assertions::assert_eq!(info.type_names, vec!["Vehicle".parse::<EntityTypeName>().expect("valid type name")]);
     }
 
     #[test]

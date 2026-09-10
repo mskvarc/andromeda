@@ -10,6 +10,7 @@ pub mod batch_projection;
 pub mod classified_report;
 pub mod collection;
 pub mod content_range;
+pub mod declined_representation;
 pub mod extraction_rejection;
 pub mod headers;
 pub mod linked_resolution_warning;

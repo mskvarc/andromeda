@@ -1,5 +1,6 @@
 //! Configuration for process-wide inbound HTTP mechanics.
 
+use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
 use confique::Config;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
@@ -58,6 +59,18 @@ pub struct HttpStackConfig {
     /// Maximum accepted HTTP request body size.
     #[config(env = "ANDROMEDA_HTTP_MAX_REQUEST_BODY_BYTES", default = 67_108_864)]
     pub max_request_body_bytes: usize,
+    /// Whether the `Forwarded` and `X-Forwarded-Proto` fields of an inbound
+    /// request may decide the scheme of the URLs the broker mints from the
+    /// request origin.
+    ///
+    /// Untrusted by default. Both fields are ordinary request fields, so
+    /// believing them without a reverse proxy that overwrites them lets any
+    /// client choose the scheme of a `Location` field, a pagination `Link`, and
+    /// the durably stored `@context` URL of clause 5.13. Turn it on only
+    /// together with the proxy configuration `docs/tls-deployment.md`
+    /// describes.
+    #[config(env = "ANDROMEDA_HTTP_FORWARDED_HEADERS", default = "untrusted")]
+    pub forwarded_headers: ForwardedHeaderTrust,
 }
 
 impl HttpStackConfig {
@@ -83,6 +96,8 @@ impl HttpStackConfig {
 #[cfg(test)]
 mod config_tests {
     use super::{CorsMode, HttpFeatureMode, HttpStackConfig, HttpStackConfigError};
+    use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
+    use confique::Config as _;
 
     fn valid_config() -> HttpStackConfig {
         HttpStackConfig {
@@ -91,7 +106,17 @@ mod config_tests {
             request_decompression: HttpFeatureMode::Enabled,
             cors: CorsMode::Permissive,
             max_request_body_bytes: 1024,
+            forwarded_headers: ForwardedHeaderTrust::Untrusted,
         }
+    }
+
+    /// A broker that has not been told about a proxy must not believe one, so
+    /// the declared default has to be the untrusted edge.
+    #[test]
+    fn forwarded_fields_are_untrusted_in_the_default_configuration() -> Result<(), confique::Error> {
+        let config = HttpStackConfig::builder().load()?;
+        pretty_assertions::assert_eq!(config.forwarded_headers, ForwardedHeaderTrust::Untrusted);
+        Ok(())
     }
 
     #[test]

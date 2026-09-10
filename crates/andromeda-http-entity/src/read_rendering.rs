@@ -8,8 +8,10 @@
 //! here.
 
 use crate::{error::EntityResultExt, join::ResolvedJoin};
+use andromeda_entity::query::EntityQueryService;
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_http_response::problem_response::ProblemResponse;
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::compiled::Projection;
 use andromeda_ngsi_ld_render::entity::{EntityRenderer, render_flat_join};
@@ -38,6 +40,38 @@ impl<'a> EntityRepresentation<'a> {
             projection,
         }
     }
+}
+
+/// Give every entity the Attribute names the representation about to be
+/// rendered uses.
+///
+/// Clause C.6: a `@context` term that coerces a datatype cannot name a reified
+/// Property, so the normalized and concise representations keep the Fully
+/// Qualified Name, while "in the simplified (keyValue) representation case,
+/// such an @context with the specification of testedAt could be used, as there
+/// is no reification". Every other representation renders the names the
+/// Entity's own compaction produced, so nothing is done for them.
+///
+/// # Errors
+///
+/// Returns a [`ProblemResponse`] when a context declares a term that is not a
+/// name the clause 4.6.2 grammar admits.
+pub(crate) async fn apply_representation_names(
+    service: &EntityQueryService,
+    representation: &EntityRepresentation<'_>,
+    context: &ContextSpec,
+    entities: &mut [Entity],
+    resolved: Option<&mut ResolvedJoin<'_>>,
+    instance: &HttpUri,
+) -> Result<(), ProblemResponse> {
+    if !representation.mode.is_simplified() {
+        return Ok(());
+    }
+    let linked = resolved.into_iter().flat_map(|resolved| resolved.linked.values_mut());
+    for entity in entities.iter_mut().chain(linked) {
+        service.apply_simplified_names(entity, context).await.with_entity_instance(instance)?;
+    }
+    Ok(())
 }
 
 /// Render the entities a read matched, without a join.

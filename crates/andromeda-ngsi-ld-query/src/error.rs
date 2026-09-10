@@ -21,7 +21,10 @@
 //! `QueryValidation`, and the few faults no client could have caused become
 //! internal errors.
 
-use crate::ordering::{collation::IcuCollationError, term::OrderDirection};
+use crate::{
+    filter::json_string::UnicodeEscapeFault,
+    ordering::{collation::IcuCollationError, term::OrderDirection},
+};
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRelParseError, geojson::GeometryError};
 use andromeda_ngsi_ld_lexicon::{
     ngsi_ld_date::NgsiLdDateError,
@@ -43,6 +46,32 @@ pub enum QueryError {
     /// A quoted string literal was not closed.
     #[error("Q expression: unterminated string literal")]
     QUnterminatedString,
+    /// A backslash escape named a character the clause 4.9 `char` production
+    /// does not define; IETF RFC 8259 section 7 lists exactly eight.
+    #[error("Q expression: invalid string escape '\\{escape}' at position {position}")]
+    QInvalidStringEscape {
+        /// The character that followed the backslash.
+        escape: char,
+        /// Zero-based character offset of the backslash.
+        position: usize,
+    },
+    /// A `\u` escape did not name a Unicode scalar value.
+    #[error("Q expression: invalid unicode escape at position {position}: {fault}")]
+    QInvalidUnicodeEscape {
+        /// Zero-based character offset of the backslash.
+        position: usize,
+        /// The RFC 8259 rule the escape broke.
+        fault: UnicodeEscapeFault,
+    },
+    /// A quoted string carried a raw control character, which the clause 4.9
+    /// `char` production requires to be written as an escape.
+    #[error("Q expression: unescaped control character U+{code_point:04X} at position {position}")]
+    QUnescapedControlCharacter {
+        /// The code point that had to be escaped.
+        code_point: u32,
+        /// Zero-based character offset of the character.
+        position: usize,
+    },
     /// A token remained after the parser reached end of expression.
     #[error("Q expression: unexpected token at position {position}: {token}")]
     QUnexpectedToken {
@@ -185,6 +214,18 @@ pub enum QueryError {
     /// A repetition operator immediately followed another repetition operator, which PostgreSQL's POSIX engine rejects.
     #[error("invalid POSIX regular expression: a repetition operator cannot follow another repetition operator")]
     PatternRepeatedQuantifier,
+    /// The pattern used a construct outside IEEE 1003.2 that only one of the
+    /// broker's two regular-expression engines supports.
+    ///
+    /// Clause 4.9 mandates IEEE 1003.2, which both engines implement; the
+    /// construct named here is an extension of one of them, and admitting it
+    /// would make the filter fail or mean something different depending on
+    /// which engine answered the request.
+    #[error("invalid POSIX regular expression: {construct} is not supported")]
+    PatternNonPosixConstruct {
+        /// How the unsupported construct is spelled.
+        construct: &'static str,
+    },
 
     // -----------------------------------------------------------------------
     // Geo query (NGSI-LD 4.10)

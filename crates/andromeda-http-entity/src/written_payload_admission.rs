@@ -30,6 +30,14 @@
 //!   and concise alike, into "'entityIdSealed' and 'entityTypeSealed' shall
 //!   never be present" -- an unconditional prohibition, since the `ngsildproof`
 //!   exception is a Property's.
+//! - A third is decidable on the compact payload for a different reason: the
+//!   `@context` clause 5.5.7 admits only at the top level of an NGSI-LD
+//!   document is lifted out of the payload by the transport layer, so every one
+//!   still standing in what arrives here is embedded.
+//!   [`reject_embedded_contexts_in_fragment`] holds it. Its companion rule --
+//!   that the user `@context` declares no JSON-LD Scoped Context -- reads the
+//!   request's contexts rather than its payload and needs them resolved, so
+//!   `andromeda_entity::write_admission` owns it beside the expanded rules.
 //! - The rest read the expanded payload -- where an NGSI-LD Null may stand,
 //!   what the `scope` member of clause 4.18 may hold, what an attribute
 //!   instance's envelope may carry, and whether a `GeoProperty` geometry is
@@ -56,7 +64,10 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
-use andromeda_ngsi_ld_representation::attribute_type_validation::{AttributeTypeError, validate_attribute_node, validate_fragment_attribute_types};
+use andromeda_ngsi_ld_representation::{
+    attribute_type_validation::{AttributeTypeError, validate_attribute_node, validate_fragment_attribute_types},
+    embedded_context_admission::{EmbeddedContextError, reject_embedded_contexts_in_attribute, reject_embedded_contexts_in_fragment},
+};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -70,6 +81,9 @@ pub(crate) enum WrittenPayloadRefusal {
     /// An attribute node is not one clauses 5.2.4 and 4.5.2.2 admit.
     #[error(transparent)]
     AttributeType(#[from] AttributeTypeError),
+    /// A `@context` stands below the top level of the document (clause 5.5.7).
+    #[error(transparent)]
+    EmbeddedContext(#[from] EmbeddedContextError),
     /// The expanded payload puts an NGSI-LD Null, a `scope`, an attribute
     /// envelope or a geometry where the operation does not admit it.
     #[error(transparent)]
@@ -85,6 +99,9 @@ impl EntityHttpClassify for WrittenPayloadRefusal {
             // Clause 5.5.4: data that is not syntactically correct according to
             // the API data type definitions is BadRequestData.
             WrittenPayloadRefusal::AttributeType(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
+            // Clause 5.5.7: a part of the user @context outside the document's
+            // top level "should result in an error of type BadRequestData".
+            WrittenPayloadRefusal::EmbeddedContext(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
             WrittenPayloadRefusal::Placement(source) => source.classify_for_entity_http(),
         }
     }
@@ -104,6 +121,7 @@ pub(crate) async fn admit_written_entity(
     context: &ContextSpec,
 ) -> Result<(), WrittenPayloadRefusal> {
     validate_fragment_attribute_types(payload)?;
+    reject_embedded_contexts_in_fragment(payload)?;
     service.admit_entity_write(write, payload, context).await?;
     Ok(())
 }
@@ -122,6 +140,7 @@ pub(crate) async fn admit_written_attribute(
     context: &ContextSpec,
 ) -> Result<(), WrittenPayloadRefusal> {
     validate_attribute_node(attribute.as_str(), payload)?;
+    reject_embedded_contexts_in_attribute(attribute.as_str(), payload)?;
     service.admit_attribute_write(write, attribute, payload, context).await?;
     Ok(())
 }
@@ -134,13 +153,21 @@ pub(crate) async fn admit_written_attribute(
 /// Screening runs before the forwarding phase of clauses 5.6.7.4 to 5.6.9.4
 /// and 5.6.20.4: a representation this broker refuses is not handed to a
 /// context source either.
+///
+/// # Errors
+///
+/// Returns the one refusal that is the request's rather than an entity's: a
+/// user `@context` clause 5.5.7 does not admit belongs to no entity in the
+/// array, so it fails the operation instead of being projected onto each of
+/// them.
 pub(crate) async fn admitted_batch_entities(
     service: &EntityService,
     write: BatchWrite,
     entities: Vec<Entity>,
     context: &ContextSpec,
     refused: &mut Vec<BatchEntityError>,
-) -> Vec<Entity> {
+) -> Result<Vec<Entity>, WrittenPayloadRefusal> {
+    service.admit_write_context(context).await?;
     let mut admitted = Vec::with_capacity(entities.len());
     for entity in entities {
         match render_and_validate(&entity) {
@@ -150,7 +177,7 @@ pub(crate) async fn admitted_batch_entities(
     }
     let placements = service.admit_batch_write(write, &admitted, context).await;
     if placements.is_empty() {
-        return admitted;
+        return Ok(admitted);
     }
     for (id, error) in placements {
         admitted.retain(|entity| entity.id != id);
@@ -160,7 +187,7 @@ pub(crate) async fn admitted_batch_entities(
             EntityHttpClassify::classify_for_entity_http,
         ));
     }
-    admitted
+    Ok(admitted)
 }
 
 /// The compact half of the admission for one decoded entity.
@@ -173,6 +200,7 @@ pub(crate) async fn admitted_batch_entities(
 fn render_and_validate(entity: &Entity) -> Result<(), WrittenPayloadRefusal> {
     let representation: Value = serde_json::to_value(entity)?;
     validate_fragment_attribute_types(&representation)?;
+    reject_embedded_contexts_in_fragment(&representation)?;
     Ok(())
 }
 

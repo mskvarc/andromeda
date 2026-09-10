@@ -17,8 +17,7 @@
 //! many keys the term contributes.
 
 use crate::attribute_value_datatype::{ARRAY_TYPE, ID_MEMBER, LIST_MEMBER, NUMBER_TYPE, VALUE_MEMBER, datatype_rank, datatype_token};
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::ordering::sort_direction::SortDirection;
+use andromeda_ngsi_ld_query::{filter::path::AttrPath, ordering::sort_direction::SortDirection};
 use andromeda_ngsi_ld_vocabulary::{
     expanded::classes::{DATE_TIME, TIME},
     prefix::NGSI_LD,
@@ -26,7 +25,7 @@ use andromeda_ngsi_ld_vocabulary::{
 use andromeda_postgresql_query::temporal_operand::{stored_date_time, stored_time};
 use andromeda_postgresql_seaquery::{
     collation::{PostgresCollation, collate},
-    jsonb::{escape_jsonpath_key, jsonb_array_length, jsonb_path_query_first, jsonb_typeof},
+    jsonb::{escape_jsonpath_key, jsonb_array_length, jsonb_build_array, jsonb_build_object, jsonb_path_query_first, jsonb_typeof},
     literal::{int_literal, text_literal},
     pg_operator::PgBinaryOperator,
 };
@@ -61,7 +60,7 @@ impl AttributeValue {
         self.alias.clone()
     }
 
-    /// The lateral body: one entity's value node for `attribute`, and the
+    /// The lateral body: one entity's value node for `path`, and the
     /// clause 4.23.2 datatype that node holds.
     ///
     /// The carrier is found by prefix rather than by name. Clause 5.2.5 gives
@@ -76,9 +75,9 @@ impl AttributeValue {
     /// rank and the key that breaks its ties be computed from two different
     /// readings of one value.
     #[must_use]
-    pub fn lateral(&self, payload: SimpleExpr, attribute: &AttributeName) -> SelectStatement {
+    pub fn lateral(&self, payload: &SimpleExpr, path: &AttrPath) -> SelectStatement {
         let mut carrier = Query::select();
-        carrier.expr_as(jsonb_path_query_first(payload, &value_carrier_jsonpath(attribute)), Alias::new(CARRIER_COLUMN));
+        carrier.expr_as(carrier_expression(payload, path), Alias::new(CARRIER_COLUMN));
 
         let value_node = carrier_column().json_get(int_literal(FIRST_VALUE_NODE));
         let arity = carrier_arity();
@@ -208,6 +207,9 @@ const FIRST_VALUE_NODE: i64 = 0;
 /// The local name every NGSI-LD value carrier's IRI opens with.
 const VALUE_CARRIER_LOCAL_PREFIX: &str = "has";
 
+/// The JSON-LD keyword a language-tagged value node carries its tag under.
+const LANGUAGE_MEMBER: &str = "@language";
+
 /// How many value nodes an attribute carries, `NULL` when its carrier is not an
 /// array at all.
 ///
@@ -228,34 +230,175 @@ fn carrier_column() -> SimpleExpr {
     SeaExpr::col((Alias::new(CARRIER_ALIAS), Alias::new(CARRIER_COLUMN)))
 }
 
-/// The jsonpath reaching the value carrier of one attribute inside the expanded
-/// payload: `$[0]."<attr>"[0].keyvalue() ? (@.key starts with "…has").value`.
+/// The jsonpath prefixes reaching the value-node array a path lands on.
 ///
-/// The attribute node's members are walked as key/value pairs so the carrier is
-/// selected by the prefix its key shares with every other carrier, rather than
-/// by naming one family's member and missing the rest.
-fn value_carrier_jsonpath(attribute: &AttributeName) -> String {
-    let mut jsonpath = String::from("$[0].\"");
-    jsonpath.push_str(&escape_jsonpath_key(attribute.as_str()));
-    jsonpath.push_str("\"[0].keyvalue() ? (@.key starts with \"");
-    jsonpath.push_str(&escape_jsonpath_key(NGSI_LD.as_str()));
-    jsonpath.push_str(VALUE_CARRIER_LOCAL_PREFIX);
-    jsonpath.push_str("\").value");
+/// The dotted segments of a clause 4.9 `ValuePath` walk the attribute axis, so
+/// each one is another node hop — clause 4.23.3 EXAMPLE 5 `?orderBy=name.observedAt`
+/// addresses the `observedAt` member of `name`, whose value is what orders.
+///
+/// What that last hop lands on has two shapes, and the payload alone says
+/// which. A sub-Property or sub-Relationship the client wrote is a node of the
+/// graph in its own right, carrying one of the clause 5.2.5 value members
+/// (`hasValue`, `hasObject`, `hasLanguageMap`, `hasVocab`, `hasValueList`,
+/// `hasObjectList`) — so the carrier is selected by the prefix their keys
+/// share, rather than by naming one family's member and missing the rest. A
+/// system sub-attribute such as `observedAt` or `unitCode` is expanded straight
+/// to a value-node array with no carrier at all, and *is* what orders. Both are
+/// read, because a path cannot tell them apart before the entity is fetched.
+fn carrier_jsonpaths(path: &AttrPath) -> Vec<String> {
+    let mut node = String::from("$[0].\"");
+    node.push_str(&escape_jsonpath_key(path.attr.as_str()));
+    node.push('"');
+    for sub_attr in &path.sub_attrs {
+        node.push_str("[0].\"");
+        node.push_str(&escape_jsonpath_key(sub_attr.as_str()));
+        node.push('"');
+    }
+
+    let mut carrier = node.clone(); // clone: the direct reading keeps the node the carrier reading descends from
+    carrier.push_str("[0].keyvalue() ? (@.key starts with \"");
+    carrier.push_str(&escape_jsonpath_key(NGSI_LD.as_str()));
+    carrier.push_str(VALUE_CARRIER_LOCAL_PREFIX);
+    carrier.push_str("\").value");
+
+    if path.sub_attrs.is_empty() {
+        // A top-level attribute is always a node carrying a value member.
+        return vec![carrier];
+    }
+    vec![carrier, node]
+}
+
+/// The jsonpath reaching a compound value's member as JSON-LD expansion leaves
+/// it: an IRI-keyed array of value nodes hanging off the carrier.
+///
+/// This is clause 4.23.3 EXAMPLE 4, `?orderBy=address[city]`. Expansion turns
+/// the members of a structured Property value into nodes of the graph, so the
+/// member key is its expanded IRI and the hop precedes the `@value` selector
+/// rather than indexing into it.
+fn structured_member_jsonpath(carrier: &str, path: &AttrPath) -> String {
+    let mut jsonpath = String::from(carrier);
+    for member in &path.value_path {
+        jsonpath.push_str("[0].\"");
+        jsonpath.push_str(&escape_jsonpath_key(member.as_str()));
+        jsonpath.push('"');
+    }
     jsonpath
+}
+
+/// The jsonpath reaching a member of a value expansion never entered.
+///
+/// A `JsonProperty`'s value, and any Property value whose contents are opaque
+/// JSON, sits inside one `@value`: its keys are the literal text the client
+/// wrote, never expanded through the `@context`. The member hop therefore
+/// descends *into* `@value` and uses the pre-expansion spelling the path kept
+/// for exactly this reading.
+fn raw_json_member_jsonpath(carrier: &str, path: &AttrPath) -> String {
+    let mut jsonpath = String::from(carrier);
+    jsonpath.push_str("[0].\"");
+    jsonpath.push_str(VALUE_MEMBER);
+    jsonpath.push('"');
+    for member in &path.value_path_compact {
+        jsonpath.push_str(".\"");
+        jsonpath.push_str(&escape_jsonpath_key(member.as_str()));
+        jsonpath.push('"');
+    }
+    jsonpath
+}
+
+/// The jsonpath selecting one language of a `LanguageProperty`'s carrier.
+///
+/// Clause 4.9 gives `attr[member]` a second reading: "If the target element is a
+/// `LanguageProperty` and a target language is specified, the target value is
+/// defined as the Value associated to the matching key-value pair held within
+/// the languageMap". A language tag is a bare name exactly as a JSON member is,
+/// so the query text cannot say which was meant and both are read.
+fn target_language_jsonpath(carrier: &str, tag: &str) -> String {
+    let mut jsonpath = String::from(carrier);
+    jsonpath.push_str("[*] ? (@.\"");
+    jsonpath.push_str(LANGUAGE_MEMBER);
+    jsonpath.push_str("\" == \"");
+    jsonpath.push_str(&escape_jsonpath_key(tag));
+    jsonpath.push_str("\")");
+    jsonpath
+}
+
+/// The carrier array one ordering term reads its value node from.
+///
+/// A path that names one attribute and navigates no further has one reading.
+/// Every further axis adds the readings clause 4.9 gives that axis, and only
+/// the stored entity says which applies — so each is looked up and the first
+/// that resolves is taken. They cannot collide: a structured value carries no
+/// `@language`, a `languageMap` carries no IRI-keyed members, and opaque JSON is
+/// reachable only through the `@value` no expanded member sits under.
+fn carrier_expression(payload: &SimpleExpr, path: &AttrPath) -> SimpleExpr {
+    let mut readings = Vec::new();
+    for carrier in &carrier_jsonpaths(path) {
+        if path.value_path.is_empty() {
+            // clone: every reading binds the same payload column into its own lookup.
+            readings.push(jsonb_path_query_first(payload.clone(), carrier));
+            continue;
+        }
+        readings.push(jsonb_path_query_first(payload.clone(), &structured_member_jsonpath(carrier, path)));
+        readings.push(as_value_node_array(jsonb_path_query_first(
+            payload.clone(),
+            &raw_json_member_jsonpath(carrier, path),
+        )));
+        if let [tag] = path.value_path_compact.as_slice() {
+            readings.push(as_node_array(jsonb_path_query_first(
+                payload.clone(),
+                &target_language_jsonpath(carrier, tag.as_str()),
+            )));
+        }
+    }
+    match <[SimpleExpr; 1]>::try_from(readings) {
+        Ok([single]) => single,
+        Err(readings) => Func::coalesce(readings).into(),
+    }
+}
+
+/// Wrap an opaque JSON value as the one-element carrier every key downstream
+/// expects, or `NULL` when the lookup found nothing.
+///
+/// The guard is what keeps the reading honest: `jsonb_build_object` over a
+/// `NULL` produces `{"@value": null}`, which is not `NULL` and would win the
+/// `COALESCE` over a reading that did resolve.
+fn as_value_node_array(raw: SimpleExpr) -> SimpleExpr {
+    // clone: the guard tests the same lookup the wrapped value reads.
+    CaseStatement::new()
+        .case(
+            raw.clone().is_not_null(),
+            jsonb_build_array(jsonb_build_object([text_literal(VALUE_MEMBER), raw])),
+        )
+        .into()
+}
+
+/// Wrap a single value node as a one-element carrier, or `NULL` when the lookup
+/// found nothing.
+fn as_node_array(node: SimpleExpr) -> SimpleExpr {
+    // clone: the guard tests the same lookup the wrapped node reads.
+    CaseStatement::new().case(node.clone().is_not_null(), jsonb_build_array(node)).into()
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute_value_order::{AttributeValue, value_carrier_jsonpath};
+    use crate::attribute_value_order::{AttributeValue, carrier_jsonpaths, structured_member_jsonpath};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::ordering::sort_direction::SortDirection;
+    use andromeda_ngsi_ld_query::{
+        filter::{path::AttrPath, value_path::parse_attribute_path},
+        ordering::sort_direction::SortDirection,
+    };
     use andromeda_postgresql_seaquery::collation::PostgresCollation;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
 
     const SPEED: &str = "https://example.com/speed";
 
-    fn speed() -> AttributeName {
-        SPEED.parse().expect("a valid attribute name")
+    fn speed() -> AttrPath {
+        AttrPath::simple(SPEED.parse().expect("a valid attribute name"))
+    }
+
+    /// A path as a client would write it in `orderBy`.
+    fn path(text: &str) -> AttrPath {
+        parse_attribute_path(text).expect("a clause 4.9 ValuePath")
     }
 
     fn payload() -> SimpleExpr {
@@ -270,7 +413,7 @@ mod tests {
     /// carrier is matched on the prefix they share instead of on one name.
     #[test]
     fn the_carrier_is_selected_by_the_prefix_every_value_member_shares() {
-        let jsonpath = value_carrier_jsonpath(&speed());
+        let jsonpath = carrier_jsonpaths(&speed()).remove(0);
         assert!(
             jsonpath.contains("keyvalue() ? (@.key starts with \"https://uri.etsi.org/ngsi-ld/has\")"),
             "{jsonpath}"
@@ -284,8 +427,83 @@ mod tests {
     #[test]
     fn an_attribute_iri_cannot_break_out_of_the_jsonpath() {
         let quoted: AttributeName = "https://example.com/a\"b".parse().expect("a valid attribute name");
-        let jsonpath = value_carrier_jsonpath(&quoted);
+        let jsonpath = carrier_jsonpaths(&AttrPath::simple(quoted)).remove(0);
         assert!(jsonpath.contains("a\\\"b"), "{jsonpath}");
+    }
+
+    /// Clause 4.23.3 EXAMPLE 5, `?orderBy=name.observedAt`: a dotted path walks
+    /// the attribute axis, so each segment is another attribute-node hop before
+    /// the carrier the value is read from.
+    #[test]
+    fn a_dotted_path_hops_each_sub_attribute_before_selecting_the_carrier() {
+        let jsonpaths = carrier_jsonpaths(&path("\"https://example.com/name\".\"https://uri.etsi.org/ngsi-ld/observedAt\""));
+        let node = "$[0].\"https://example.com/name\"[0].\"https://uri.etsi.org/ngsi-ld/observedAt\"";
+        assert!(jsonpaths.iter().all(|jsonpath| jsonpath.starts_with(node)), "{jsonpaths:?}");
+        // A sub-Property carries a value member; a system sub-attribute such as
+        // `observedAt` expands straight to a value-node array and is read as it
+        // stands. Both readings are built because the path cannot tell them
+        // apart before the entity is fetched.
+        assert!(jsonpaths.iter().any(|jsonpath| jsonpath.ends_with("\").value")), "{jsonpaths:?}");
+        assert!(jsonpaths.contains(&node.to_owned()), "{jsonpaths:?}");
+    }
+
+    /// Clause 4.23.3 EXAMPLE 4, `?orderBy=address[city]`: expansion turns the
+    /// members of a structured Property value into IRI-keyed nodes, so the
+    /// member hop comes after the carrier rather than inside a `@value`.
+    #[test]
+    fn a_compound_member_is_hopped_off_the_carrier() {
+        let compound = path("\"https://example.com/address\"[\"https://example.com/city\"]");
+        let jsonpath = structured_member_jsonpath(&carrier_jsonpaths(&compound).remove(0), &compound);
+        assert!(jsonpath.ends_with("\").value[0].\"https://example.com/city\""), "{jsonpath}");
+    }
+
+    /// A path with no trailing group reads one carrier and needs no disjunction:
+    /// the carrier projection is the lookup itself.
+    #[test]
+    fn a_path_that_stops_at_an_attribute_makes_a_single_lookup() {
+        let sql = AttributeValue::at(0).lateral(&payload(), &speed()).to_string(PostgresQueryBuilder);
+        assert!(sql.contains("(SELECT jsonb_path_query_first("), "the carrier is one lookup: {sql}");
+        assert!(!sql.contains("@language"), "no target language is read: {sql}");
+        assert!(!sql.contains("jsonb_build_object"), "no opaque-JSON wrap is needed: {sql}");
+    }
+
+    /// Clause 4.9 gives `attr[member]` more than one reading and only the stored
+    /// entity says which applies, so every reading is looked up and the first
+    /// that resolves is taken: the expanded member of a structured value, the
+    /// literal key of opaque JSON, and the target language of a
+    /// `LanguageProperty`.
+    #[test]
+    fn a_trailing_member_reads_every_shape_clause_4_9_gives_the_spelling() {
+        let sql = AttributeValue::at(0)
+            .lateral(&payload(), &path("\"https://example.com/address\"[city]"))
+            .to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#".value[0]."city""#), "the expanded member of a structured value: {sql}");
+        assert!(sql.contains(r#".value[0]."@value"."city""#), "the literal key of opaque JSON: {sql}");
+        assert!(sql.contains(r#"@language" == "city""#), "the target language of a LanguageProperty: {sql}");
+        assert!(sql.contains("jsonb_build_object"), "opaque JSON is wrapped as a value node: {sql}");
+    }
+
+    /// A nested trailing group names no language — clause 4.9 gives a target
+    /// language as one member — so only the two member readings apply.
+    #[test]
+    fn a_nested_trailing_group_reads_no_target_language() {
+        let sql = AttributeValue::at(0)
+            .lateral(&payload(), &path("\"https://example.com/sensor\"[a.b]"))
+            .to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#".value[0]."a"[0]."b""#), "the expanded members of a structured value: {sql}");
+        assert!(sql.contains(r#".value[0]."@value"."a"."b""#), "the literal keys of opaque JSON: {sql}");
+        assert!(!sql.contains("@language"), "no single member names a language: {sql}");
+    }
+
+    /// The opaque-JSON reading has to be guarded: `jsonb_build_object` over a
+    /// lookup that found nothing yields `{"@value": null}`, which is not NULL
+    /// and would win the COALESCE over a reading that did resolve.
+    #[test]
+    fn the_opaque_json_reading_is_guarded_against_winning_on_a_missing_value() {
+        let sql = AttributeValue::at(0)
+            .lateral(&payload(), &path("\"https://example.com/address\"[city]"))
+            .to_string(PostgresQueryBuilder);
+        assert!(sql.contains("IS NOT NULL"), "the wrap is guarded: {sql}");
     }
 
     /// The lateral evaluates the payload lookup once and names both of the
@@ -293,7 +511,7 @@ mod tests {
     /// and the rank agree on.
     #[test]
     fn the_lateral_projects_the_value_node_and_its_datatype_from_one_lookup() {
-        let sql = AttributeValue::at(0).lateral(payload(), &speed()).to_string(PostgresQueryBuilder);
+        let sql = AttributeValue::at(0).lateral(&payload(), &speed()).to_string(PostgresQueryBuilder);
         assert_eq!(sql.matches("jsonb_path_query_first(").count(), 1, "{sql}");
         assert!(sql.contains("AS \"value_node\""), "{sql}");
         assert!(sql.contains("AS \"value_datatype\""), "{sql}");

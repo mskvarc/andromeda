@@ -89,6 +89,14 @@ fn expand_instance(instance: &Map<String, Value>, term_map: &BatchTermMap) -> Op
         if key == "type" || key == kind.compact_value_key() {
             continue;
         }
+        // A JSON-LD keyword below the attribute level is not a metadata member.
+        // The processor applies it -- an embedded `@context` most of all, which
+        // clause 5.5.7 refuses outright -- while vocab-expanding it here would
+        // turn it into a plain member under an invented IRI, so the same
+        // payload would expand two ways depending on which path served it.
+        if key.starts_with('@') {
+            return None;
+        }
         let (iri, node) = expand_metadata(key, value, term_map)?;
         expanded.insert(iri, node);
     }

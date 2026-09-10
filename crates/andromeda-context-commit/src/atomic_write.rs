@@ -70,7 +70,7 @@ impl AtomicWrite {
                 .iter()
                 .find_map(|consequence| match consequence {
                     HistoryRecord::Observations(payload) => Some(extract_types(payload)),
-                    HistoryRecord::Tombstone(_) => None,
+                    HistoryRecord::Tombstone(_) | HistoryRecord::ScopeRemoval => None,
                 })
                 .unwrap_or_default(),
         }

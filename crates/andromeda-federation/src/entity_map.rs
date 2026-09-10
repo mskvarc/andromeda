@@ -14,7 +14,8 @@ use crate::{
     error::FederationError,
     forwarding_url::forwarding_url,
     operation::ForwardingOperation,
-    outcome::ForwardGetOutcome,
+    outcome::{ForwardGetOutcome, ForwardReadOutcome},
+    read_fan_out::{SourceAnswer, read_outcome},
     request::{CsrModeFilter, TriggeringRequest},
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
@@ -92,8 +93,9 @@ impl FederationService {
     /// [`FederationError::Registration`] when the matching registrations
     /// cannot be read. A source that fails to answer does not fail the
     /// call: its attempt is reported as a [`ForwardedEntityMap`] without a
-    /// map.
-    pub async fn forward_entity_map_query(&self, request: ForwardEntityMapRequest<'_>) -> Result<Vec<ForwardedEntityMap>, FederationError> {
+    /// map, except for the one case Table 6.34.3.1-1 relays, which the
+    /// returned [`ForwardReadOutcome`] carries on its `sources`.
+    pub async fn forward_entity_map_query(&self, request: ForwardEntityMapRequest<'_>) -> Result<ForwardReadOutcome<ForwardedEntityMap>, FederationError> {
         let ForwardEntityMapRequest {
             kind,
             entity_type_compact,
@@ -103,7 +105,7 @@ impl FederationService {
             triggering,
         } = request;
         if self.is_loop_detected(triggering.via) {
-            return Ok(Vec::new());
+            return Ok(ForwardReadOutcome::empty());
         }
         let prepared_context = self.engine.prepare_term_context(context);
         let expanded_type = if let Some(t) = entity_type_compact.and_then(TypeExprRaw::as_single_type) {
@@ -123,13 +125,15 @@ impl FederationService {
             .filter(|csr| mode_admitted(csr, CsrModeFilter::ExcludeAuxiliary))
             .collect();
         if registrations.is_empty() {
-            return Ok(Vec::new());
+            return Ok(ForwardReadOutcome::empty());
         }
-        let results = stream::iter(registrations)
+        let matched = registrations.len();
+        let answers = stream::iter(registrations)
             .map(|registration| async move {
                 let url = forwarding_url(&registration.access.endpoint, kind.path(), query_string);
                 // Clause 6.3.17 allows caching for `/entities` only.
                 let outcome = self.forward_get(&registration, url, context, triggering, Cacheability::Uncacheable, None).await;
+                let error_status = outcome.error_status();
                 let (map, warnings) = match outcome {
                     ForwardGetOutcome::Success(response) => match serde_json::from_value::<EntityMap>(response.body) {
                         Ok(map) => (Some(map), response.warnings),
@@ -150,16 +154,20 @@ impl FederationService {
                     | ForwardGetOutcome::Transport(_)
                     | ForwardGetOutcome::LoopDetected) => (None, other.warning(&registration.id).into_iter().collect()),
                 };
-                ForwardedEntityMap {
-                    registration_id: registration.id,
-                    map,
-                    warnings,
+                SourceAnswer {
+                    mode: registration.access.mode.unwrap_or_default(),
+                    error_status,
+                    entry: Some(ForwardedEntityMap {
+                        registration_id: registration.id,
+                        map,
+                        warnings,
+                    }),
                 }
             })
             .buffer_unordered(self.csr_concurrency)
             .collect()
             .await;
-        Ok(results)
+        Ok(read_outcome(answers, matched, None))
     }
 
     /// The registrations a request that references a live `EntityMap` contacts:

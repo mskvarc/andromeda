@@ -8,6 +8,11 @@ response_compression = "enabled"
 request_decompression = "enabled"
 cors = "permissive"
 max_request_body_bytes = 67108864
+# Whether the `Forwarded` and `X-Forwarded-Proto` fields of an inbound request
+# may decide the scheme of the URLs the broker mints. Set to "trusted" ONLY when
+# a reverse proxy in front of the broker sets them and overwrites whatever the
+# client sent -- see docs/tls-deployment.md.
+forwarded_headers = "untrusted"
 
 [database]
 url = "postgres://postgres:postgres@localhost:5432/postgres"

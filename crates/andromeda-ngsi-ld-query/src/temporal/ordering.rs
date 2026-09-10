@@ -2,6 +2,7 @@
 
 use crate::{
     error::QueryError,
+    filter::serialize::serialize_attr_path,
     ordering::{
         collation::IcuCollation,
         parameters::OrderingParameters,
@@ -75,7 +76,7 @@ fn check_term(term: &OrderTerm) -> Result<(), QueryError> {
     match RawOrderTarget::classify(&term.attr) {
         RawOrderTarget::Id => {}
         RawOrderTarget::Type | RawOrderTarget::Scope | RawOrderTarget::Attribute(_) => {
-            return Err(QueryError::TemporalOrderingMember(term.attr.to_string()));
+            return Err(QueryError::TemporalOrderingMember(serialize_attr_path(&term.attr)));
         }
     }
     match term.direction {

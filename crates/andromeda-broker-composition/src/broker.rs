@@ -47,6 +47,7 @@ use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_telemetry::{error::TelemetryError, recorder::TelemetryRecorder};
 use andromeda_tenancy::{
     administration::{OrphanTenantEvictor, TenantDirectory},
+    context_source_alias::ContextSourceAliases,
     creation_policy::TenantCreationPolicy,
     error::TenancyError,
     runtime::TenantRuntimeManager,
@@ -219,8 +220,10 @@ async fn construct(
         .entity_map(entity_map_routes)
         .snapshot(snapshot_routes)
         .source_identity(SourceIdentityRoutes::new(SourceIdentityState::new(
-            config.info.source_id.clone(),    // clone: configuration and immutable route state own the identifier
-            config.info.source_alias.clone(), // clone: configuration and immutable route state own the alias
+            config.info.source_id.clone(), // clone: configuration and immutable route state own the identifier
+            // Table 5.2.40-1: the configured alias is the default tenant's, and
+            // every other tenant's is derived from it.
+            ContextSourceAliases::new(config.info.source_alias.clone()), // clone: configuration and the alias family own the configured alias
             started_at,
             config.info.source_extras.clone(), // clone: configuration and immutable route state own the raw extras
         )))

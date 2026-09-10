@@ -4,6 +4,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::A
 use andromeda_ngsi_ld_model::expanded::{
     instance_key::{AttributeInstanceKey, attribute_instance_families},
     removed_instance::{RemovedAttributeInstance, removed_attribute_instances},
+    scope_member::extract_scopes,
 };
 use derive_more::IsVariant;
 use serde_json::Value;
@@ -16,6 +17,22 @@ pub enum HistoryRecord {
     Observations(Arc<Value>),
     /// End of one attribute instance that left current entity state.
     Tombstone(RemovedAttributeInstance),
+    /// End of the Entity's Scope, which left current entity state.
+    ///
+    /// Clause 4.18: "For the Temporal Evolution a given Scope is considered
+    /// valid from the time it has been set until the time it has been
+    /// explicitly removed by an update or delete operation." A write that
+    /// leaves the Entity with no Scope is such an operation — a Replace Entity
+    /// (clause 5.6.18.4: "completely replace the existing Entity ... with the
+    /// new Entity content provided") that omits `scope`, or the deletion of the
+    /// Entity itself — and without this record the reconstructed interval would
+    /// stay open for ever and report a Scope the Entity has not been in since.
+    ///
+    /// It carries nothing, because clause 4.18 gives an Entity at most one
+    /// instance of the scope Property: there is only ever one Scope value to
+    /// end, and `chk_scope_history_value_presence` forbids the stored removal
+    /// from naming it.
+    ScopeRemoval,
 }
 
 /// Build a tombstone for one validated attribute-instance identity.
@@ -35,12 +52,28 @@ pub fn tombstone(attr: &AttributeName, dataset_id: Option<&Uri>, attribute_type:
 }
 
 /// Build the observations and exact instance tombstones produced by a payload mutation.
+///
+/// A Scope the mutation left behind is recorded too. Clause 4.18 keeps a Scope
+/// valid "until the time it has been explicitly removed by an update or delete
+/// operation", and a Replace Entity that omits `scope` is such an operation:
+/// clause 5.6.18.4 replaces the Entity with the content provided, so the Scope
+/// is gone from current state and its temporal interval has to close with it.
+/// A mutation that names a different Scope needs no record of its own — the
+/// event it writes is itself what ends the interval before it.
 pub fn mutation_history(observed: &Arc<Value>, previous: &Value, current: &Value) -> Vec<HistoryRecord> {
     let removed = removed_attribute_instances(previous, current);
-    let mut history = Vec::with_capacity(removed.len() + 1);
+    let mut history = Vec::with_capacity(removed.len() + 2);
     history.push(HistoryRecord::Observations(Arc::clone(observed))); // clone: history and change-event paths share the observed payload.
     history.extend(removed.into_iter().map(HistoryRecord::Tombstone));
+    if scope_was_cleared(previous, current) {
+        history.push(HistoryRecord::ScopeRemoval);
+    }
     history
+}
+
+/// Whether the mutation left the Entity with no Scope at all, having had one.
+fn scope_was_cleared(previous: &Value, current: &Value) -> bool {
+    !extract_scopes(previous).is_empty() && extract_scopes(current).is_empty()
 }
 
 /// Build the tombstone every attribute instance of a deleted entity needs.
@@ -68,7 +101,14 @@ pub fn deletion_history(previous: &Value) -> Vec<HistoryRecord> {
                 .cmp(&right.key.dataset_id.as_ref().map(Uri::as_str))
         })
     });
-    removed.into_iter().map(HistoryRecord::Tombstone).collect()
+    let mut history: Vec<HistoryRecord> = removed.into_iter().map(HistoryRecord::Tombstone).collect();
+    // Clause 4.18 ends a Scope's validity at the "delete operation" as well as
+    // at an update, so an Entity that still held a Scope closes its interval
+    // here rather than leaving it open past the Entity itself.
+    if !extract_scopes(previous).is_empty() {
+        history.push(HistoryRecord::ScopeRemoval);
+    }
+    history
 }
 
 #[cfg(test)]
@@ -148,7 +188,7 @@ mod tests {
             .into_iter()
             .map(|entry| match entry {
                 HistoryRecord::Tombstone(removed) => (removed.key.attr.as_str().to_owned(), removed.key.dataset_id.map(|id| id.as_str().to_owned())),
-                HistoryRecord::Observations(_) => (String::new(), None),
+                HistoryRecord::Observations(_) | HistoryRecord::ScopeRemoval => (String::new(), None),
             })
             .collect::<Vec<_>>();
 

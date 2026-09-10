@@ -46,6 +46,22 @@ pub fn proof_seal_admission(attribute_name: &str, family: AttributeType, member:
     }
 }
 
+/// Whether `member` is a seal standing where clause 4.5.2.2 admits it, and so
+/// is part of the attribute's envelope rather than a sub-attribute of it.
+///
+/// Clause 4.5.2.2 calls `entityIdSealed` and `entityTypeSealed` "non-reified
+/// subproperties" of `ngsildproof`. Non-reified is the whole of it: each
+/// carries its value directly, not inside the `{"type": "Property", "value":
+/// …}` envelope clause 4.5.2.3 abbreviates, so a rewrite between the two
+/// representations has to step over them exactly as it steps over `unitCode`.
+/// Whether a seal stands where it is admitted is the same question
+/// [`proof_seal_admission`] answers, read the other way round, so the two
+/// cannot disagree about which attribute the exception belongs to.
+#[must_use]
+pub fn is_admitted_proof_seal(attribute_name: &str, family: AttributeType, member: &str) -> bool {
+    is_proof_seal(member) && proof_seal_admission(attribute_name, family, member) == MemberAdmission::Admitted
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{

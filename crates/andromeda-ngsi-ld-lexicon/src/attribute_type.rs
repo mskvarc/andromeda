@@ -234,7 +234,15 @@ impl AttributeType {
     #[must_use]
     pub const fn reserved_fields(self) -> &'static [&'static str] {
         match self {
-            Self::Property => reserved_compact_members![
+            // A `GeoProperty` reserves exactly what a Property reserves.
+            // Clause 4.7.3 closes with "an NGSI-LD GeoProperty which includes
+            // additional Properties or Relationships shall be treated in the
+            // same manner as an ordinary NGSI-LD Property", which is also why
+            // both families read their value out of the same `value` member in
+            // `AttributeType::value_key`. Table 5.2.7-1 does not restate the
+            // `unitCode` of clause 4.5.2.2; clause 4.7.3 is what carries it
+            // over.
+            Self::Property | Self::GeoProperty => reserved_compact_members![
                 compact_properties::VALUE,
                 compact_properties::VALUES,
                 compact_properties::PREVIOUS_VALUE,
@@ -247,12 +255,6 @@ impl AttributeType {
                 compact_properties::PREVIOUS_OBJECT,
                 compact_properties::OBJECT_TYPE,
                 compact_properties::ENTITY,
-            ],
-            Self::GeoProperty => reserved_compact_members![
-                compact_properties::VALUE,
-                compact_properties::VALUES,
-                compact_properties::PREVIOUS_VALUE,
-                compact_properties::VALUE_TYPE,
             ],
             Self::VocabProperty => reserved_compact_members![
                 compact_properties::VOCAB,
@@ -275,10 +277,20 @@ impl AttributeType {
             // The plural member is this family's own, `valueLists`, not the
             // generalized `values`: clause 4.5.21.2 prohibits the generalization
             // outright, and clause 4.5.9 gives the family `valueLists`.
+            //
+            // `unitCode` is inherited. Clause 4.5.21.2 makes a normalized
+            // ListProperty "the same as the JSON-LD object in NGSI-LD Property
+            // Representation defined in clause 4.5.2.2, with the following
+            // differences", and the differences replace `value` with
+            // `valueList` without touching the `unitCode` clause 4.5.2.2 lists
+            // as Optional -- unlike the four unitless families, whose own
+            // clauses each name `unitCode` under Prohibited. Table 5.2.36-1
+            // does not restate it; clause 4.5.21.2 is what carries it over.
             Self::ListProperty => reserved_compact_members![
                 compact_properties::VALUE_LIST,
                 compact_properties::VALUE_LISTS,
                 compact_properties::PREVIOUS_VALUE_LIST,
+                compact_properties::UNIT_CODE,
                 compact_properties::VALUE_TYPE,
             ],
             Self::ListRelationship => reserved_compact_members![
@@ -321,6 +333,7 @@ impl AttributeType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::unit_code_admission::{UnitCodeAdmission, unit_code_admission};
     use std::str::FromStr;
 
     #[test]
@@ -477,6 +490,21 @@ mod tests {
                 TemporalValueEncoding::Bare
             };
             pretty_assertions::assert_eq!(variant.temporal_value_encoding(), expected, "{variant}");
+        }
+    }
+
+    /// A family that admits a `unitCode` has to reserve it as an envelope
+    /// member, and one that does not must not. Without the reservation the
+    /// member is walked as a sub-attribute: normalization reifies the code into
+    /// `{"type": "Property", "value": "MMT"}` and the store, which reads the
+    /// unit out of a single `@value` node, then refuses a write the two
+    /// clauses admit.
+    #[test]
+    fn exactly_the_families_that_admit_a_unit_code_reserve_it_as_an_envelope_member() {
+        for variant in AttributeType::ALL {
+            let reserved = variant.reserved_fields().contains(&compact_properties::UNIT_CODE);
+            let admitted = unit_code_admission(variant) == UnitCodeAdmission::Admitted;
+            pretty_assertions::assert_eq!(reserved, admitted, "{variant}");
         }
     }
 

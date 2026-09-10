@@ -55,6 +55,7 @@ pub mod retention_sweep;
 pub mod schema_ddl;
 /// One scope observation offered to the scope-history bulk insert.
 pub mod scope_history_entry;
+pub(crate) mod scope_history_read;
 /// The value one scope-history row carries.
 pub mod scope_history_value;
 /// Bulk inserts into the rebuilt `scope_history` hypertable.

@@ -1,0 +1,12 @@
+{
+  "id": "urn:ngsi-ld:Building:B1",
+  "type": "Building",
+  "name": {
+    "type": "Property",
+    "value": "Empire State"
+  },
+  "location": {
+    "type": "Property",
+    "value": "20 West 34th Street, New York City, NY 10001"
+  }
+}

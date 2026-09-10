@@ -20,6 +20,7 @@ use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
     temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
 };
+use andromeda_postgresql_query::scope_predicate::{ScopeTarget, condition as scope_condition};
 use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
     temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
@@ -89,6 +90,18 @@ fn stage2_conditions(context_space_key: ContextSpaceKey, entity_id: &Uri, compil
                 .add(Expr::col((S, TemporalAttributeStreams::DatasetId)).is_null()),
         ),
     };
+
+    // Annex C, clause C.5.16 closes with "Vehicle A8311 only entered the Scope
+    // within the request interval. Thus in the latter case only Property values
+    // are included that have been observed after the Scope has become valid."
+    // A Scope query therefore bounds the instances as well as selecting the
+    // Entity: an instance is admitted only while the query held at the instant
+    // the instance is positioned on, which clause 4.18 answers from the scope
+    // event in force there.
+    if let Some(scope_q) = &compiled.entities.scope_q {
+        let target = ScopeTarget::valid_at((Te, TemporalEntities::EntityKey), compiled.window.timeproperty, Expr::col((Ah, axis)));
+        condition = condition.add(scope_condition(scope_q, &target));
+    }
 
     condition
 }

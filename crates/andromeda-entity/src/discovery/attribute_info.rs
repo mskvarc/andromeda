@@ -1,20 +1,13 @@
 //! Retrieve Available Attribute Information (clause 5.7.10).
 
 use crate::{
-    discovery::{
-        DiscoveryScope,
-        EntityDiscoveryService,
-        compaction_fixups::{ensure_array_fields, strip_ngsild_prefix},
-        registry_union::extend_without_repetition,
-        stored_names::parse_attribute_name,
-    },
+    discovery::{DiscoveryScope, EntityDiscoveryService, registry_union::extend_without_repetition, stored_names::parse_attribute_name},
     error::EntityError,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{context_spec::ContextSpec, engine::options::CompactOptions};
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::attribute_list::AttributeInfo;
-use jsonld::Expandable;
 use serde_json::Value;
 
 /// What is known about one attribute across the local store and the registry.
@@ -39,9 +32,8 @@ impl EntityDiscoveryService {
     /// # Errors
     ///
     /// Reports [`EntityError::JsonLd`] when `attr_id` cannot be expanded
-    /// against `context` or the result cannot be compacted,
-    /// [`EntityError::Validation`] when the expanded term is not a well-formed
-    /// attribute name, [`EntityError::AttributeNotFound`] when neither the
+    /// against `context`, [`EntityError::Internal`] when a stored name does not
+    /// read back as one, [`EntityError::AttributeNotFound`] when neither the
     /// local store nor the registry knows the attribute, and
     /// [`EntityError::Persistence`] when the store or the registry could not be
     /// consulted.
@@ -88,25 +80,13 @@ impl EntityDiscoveryService {
         // Clause 5.2.28 fixes `attributeTypes` to the attribute family names; the
         // store already mapped the payload's expanded `@type` IRIs to them.
         let attr = AttributeInfo::builder()
-            .attribute_name(attr_iri)
+            .attribute_name(self.compacted_attribute_name(&attr_iri, context).await?)
             .id(attr_iri_buf)
             .attribute_types(facts.attribute_types)
             .attribute_count(Some(facts.entity_count))
-            .type_names(Some(facts.entity_types))
+            .type_names(self.compacted_type_names(facts.entity_types, context).await?)
             .build();
 
-        let mut expanded_obj = attr.expand::<serde_json::Value>();
-        if let Some(obj) = expanded_obj.as_object_mut() {
-            obj.retain(|_, v| match v {
-                Value::Array(arr) => !arr.is_empty(),
-                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => true,
-            });
-        }
-
-        let expanded = serde_json::json!([expanded_obj]);
-        let mut compacted = self.engine.compact(expanded, context, CompactOptions::default()).await?;
-        strip_ngsild_prefix(&mut compacted);
-        ensure_array_fields(&mut compacted, &["attributeTypes", "typeNames"]);
-        Ok(compacted)
+        Ok(serde_json::to_value(attr)?)
     }
 }

@@ -8,11 +8,17 @@ use crate::{
 };
 use andromeda_federation::{
     entity_map::{EntityMapQueryKind, ForwardEntityMapRequest, ForwardedEntityMap},
+    outcome::ForwardReadOutcome,
     request::TriggeringRequest,
 };
 use andromeda_http_extraction::{accept::AcceptFormatNoGeo, prefer::PreferHeader};
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_http_response::{problem_response::ProblemResponse, render::start_rendering, single::NgsiLdResponse};
+use andromeda_http_response::{
+    declined_representation::single_source_declined,
+    problem_response::ProblemResponse,
+    render::start_rendering,
+    single::NgsiLdResponse,
+};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{entity_map::EntityMap, entity_map_fingerprint::RequestFingerprint};
@@ -74,7 +80,7 @@ pub(crate) async fn create_map(
     let mut warnings: Vec<NgsiLdWarning> = Vec::new();
     // Clause 5.5.13: local scope forwards nothing.
     if !creation.local {
-        let contributions: Vec<ForwardedEntityMap> = state
+        let forwarded: ForwardReadOutcome<ForwardedEntityMap> = state
             .forwarding
             .forward_entity_map_query(ForwardEntityMapRequest {
                 kind: creation.kind,
@@ -86,7 +92,16 @@ pub(crate) async fn create_map(
             })
             .await
             .with_entity_map_instance(rendering.uri)?;
-        for contribution in contributions {
+        // Table 6.34.3.1-1 lists a 501 `ProblemDetails` "used by Registered
+        // Context Sources to indicate that the data format of the request is
+        // unsupported see clause 6.3.7". The relay is the same one the entity
+        // reads make: it applies only where a single exclusive or redirect
+        // registration holds all of the data, so a source declining among
+        // several stays a clause 6.3.17 warning and the map is still created.
+        if let Some(status) = forwarded.sources.single_source_status {
+            return Err(single_source_declined(status, rendering.uri));
+        }
+        for contribution in forwarded.results {
             warnings.extend(contribution.warnings);
             if let Some(remote) = contribution.map {
                 map.add_remote(&contribution.registration_id, &remote);

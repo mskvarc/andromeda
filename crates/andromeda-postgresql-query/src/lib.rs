@@ -39,6 +39,7 @@ pub mod projected_attribute_names;
 pub mod projected_type_names;
 pub mod q_predicate;
 pub mod scope_predicate;
+pub mod scope_validity;
 pub mod temporal_operand;
 pub mod time_column;
 pub mod type_predicate;

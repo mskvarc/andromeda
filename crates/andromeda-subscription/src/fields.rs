@@ -1,7 +1,7 @@
 //! Typed subscription persistence values and update merging.
 
 use crate::{error::SubscriptionError, lifecycle::DatasetIdPolicy, store::SubscriptionFields};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion, uri::Uri};
 use andromeda_ngsi_ld_model::{
     attribute_name_csv,
     notification::{DEFAULT_NOTIFICATION_TRIGGERS, NotificationTrigger},
@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use std::str::FromStr;
 use url::Url;
 
 /// Owned, validated values for one subscription persistence write.
@@ -68,6 +69,9 @@ pub struct SubscriptionWriteValues {
     /// Whether entities are assumed split across sources; `None` defers to
     /// the deployment default (clause 5.2.12 `splitEntities`).
     pub split_entities: Option<bool>,
+    /// The NGSI-LD version a notification's Entities are amended to conform to
+    /// (Table 5.2.12-1 `ngsildConformance`); `None` amends nothing.
+    pub ngsild_conformance: Option<SpecVersion>,
 }
 
 impl SubscriptionWriteValues {
@@ -96,6 +100,7 @@ impl SubscriptionWriteValues {
             jsonld_context: self.jsonld_context.as_ref(),
             local_only: self.local_only,
             split_entities: self.split_entities,
+            ngsild_conformance: self.ngsild_conformance,
         }
     }
 }
@@ -163,6 +168,27 @@ fn expiration(payload: &Value) -> Result<Option<DateTime<Utc>>, SubscriptionErro
         .transpose()
 }
 
+/// Read the `ngsildConformance` member of a subscription payload.
+///
+/// Table 5.2.12-1 types the member as "a semantically versioned string in the
+/// form major.minor, which conforms to a version of the NGSI-LD
+/// specification", so a bare major, a patch component, a non-numeric token and
+/// a non-string are each syntactically incorrect according to the API data type
+/// definition and refused as clause 5.5.4 `BadRequestData`. Silently dropping
+/// one would leave a client that asked for an older payload receiving the
+/// current one with no indication that its request was not honoured.
+fn ngsild_conformance(payload: &Value) -> Result<Option<SpecVersion>, SubscriptionError> {
+    let Some(value) = payload.get("ngsildConformance") else {
+        return Ok(None);
+    };
+    let raw = value
+        .as_str()
+        .ok_or_else(|| SubscriptionError::validation("'ngsildConformance' must be a string of the form major.minor"))?;
+    SpecVersion::from_str(raw)
+        .map(Some)
+        .map_err(|error| SubscriptionError::validation(format!("Invalid 'ngsildConformance' value: {error}")))
+}
+
 /// Parse a create payload into validated persistence values.
 pub fn extract_create_fields(payload: &Value, dataset_id_policy: DatasetIdPolicy) -> Result<SubscriptionWriteValues, SubscriptionError> {
     Ok(SubscriptionWriteValues {
@@ -191,6 +217,7 @@ pub fn extract_create_fields(payload: &Value, dataset_id_policy: DatasetIdPolicy
         jsonld_context: deserialize_member(payload, "jsonldContext")?,
         local_only: payload.get("localOnly").and_then(Value::as_bool).unwrap_or(false),
         split_entities: payload.get("splitEntities").and_then(Value::as_bool),
+        ngsild_conformance: ngsild_conformance(payload)?,
     })
 }
 
@@ -246,6 +273,7 @@ pub fn merge_update_fields(payload: &Value, existing: Subscription, dataset_id_p
         jsonld_context: deserialize_member(payload, "jsonldContext")?.or(delivery.jsonld_context),
         local_only: payload.get("localOnly").and_then(Value::as_bool).or(delivery.local_only).unwrap_or(false),
         split_entities: payload.get("splitEntities").and_then(Value::as_bool).or(delivery.split_entities),
+        ngsild_conformance: ngsild_conformance(payload)?.or(delivery.ngsild_conformance),
     })
 }
 
@@ -256,7 +284,7 @@ mod tests {
         fields::{extract_create_fields, merged_attribute_name_csv},
         lifecycle::DatasetIdPolicy,
     };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
 
     #[test]
     fn entity_subscription_creation_retains_dataset_identifiers() -> Result<(), SubscriptionError> {
@@ -326,5 +354,56 @@ mod tests {
     fn malformed_expiration_is_rejected() {
         let result = extract_create_fields(&serde_json::json!({"expiresAt": "tomorrow"}), DatasetIdPolicy::Retain);
         assert!(matches!(result, Err(SubscriptionError::Validation { .. })));
+    }
+
+    /// Table 5.2.12-1 gives `ngsildConformance` the form `major.minor`, so a
+    /// well-formed one is carried through to the write values.
+    #[test]
+    fn a_well_formed_ngsild_conformance_is_parsed_into_a_spec_version() -> Result<(), SubscriptionError> {
+        let values = extract_create_fields(&serde_json::json!({"ngsildConformance": "1.4"}), DatasetIdPolicy::Retain)?;
+
+        pretty_assertions::assert_eq!(values.ngsild_conformance, Some(SpecVersion::V1_4));
+        Ok(())
+    }
+
+    /// A version the fallback tables of clause 4.3.6.8 do not name is still of
+    /// the form the table defines, so it is admitted; clause 4.3.6.8
+    /// introduces each fallback at a version and applies it to everything
+    /// older, which is what decides what `1.5` receives.
+    #[test]
+    fn a_version_the_fallback_tables_do_not_name_is_still_admitted() -> Result<(), SubscriptionError> {
+        let values = extract_create_fields(&serde_json::json!({"ngsildConformance": "1.5"}), DatasetIdPolicy::Retain)?;
+
+        pretty_assertions::assert_eq!(values.ngsild_conformance, Some(SpecVersion::new(1, 5)));
+        Ok(())
+    }
+
+    /// Anything outside the `major.minor` form Table 5.2.12-1 defines is
+    /// syntactically incorrect according to the API data type definition, and
+    /// clause 5.5.4 makes that `BadRequestData` rather than a dropped member.
+    #[test]
+    fn a_malformed_ngsild_conformance_is_rejected() {
+        for token in [
+            serde_json::json!("1"),
+            serde_json::json!("1.2.3"),
+            serde_json::json!("abc"),
+            serde_json::json!(""),
+            serde_json::json!("v1.4"),
+            serde_json::json!(1.4),
+            serde_json::json!(null),
+        ] {
+            let result = extract_create_fields(&serde_json::json!({"ngsildConformance": token}), DatasetIdPolicy::Retain);
+            assert!(matches!(result, Err(SubscriptionError::Validation { .. })), "{token} must be refused");
+        }
+    }
+
+    /// An absent member amends nothing, and there is no default version to
+    /// fall back to.
+    #[test]
+    fn an_absent_ngsild_conformance_leaves_no_version() -> Result<(), SubscriptionError> {
+        let values = extract_create_fields(&serde_json::json!({}), DatasetIdPolicy::Retain)?;
+
+        assert!(values.ngsild_conformance.is_none());
+        Ok(())
     }
 }

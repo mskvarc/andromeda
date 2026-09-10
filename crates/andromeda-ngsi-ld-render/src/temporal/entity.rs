@@ -102,7 +102,21 @@ impl TemporalEntityRenderer<'_> {
             // exactly that axis (clause 4.11 defaults it to `observedAt`). An
             // instance that carries no instant on the selected axis has no
             // position and takes no part in the cut.
-            let obs = row.time_axis(compiled.window.timeproperty);
+            //
+            // The reified Scope has no position at all. Clause 4.5.6 names it
+            // beside "each Property and Relationship" rather than among them,
+            // and clause 4.18 makes a Scope valid "from the time it has been
+            // set until the time it has been explicitly removed" rather than
+            // observed at an instant inside the window — annex C clause C.5.16
+            // renders one set an hour before the window it answers. Letting
+            // that instant into the cut would trim the attributes around it,
+            // and letting it into the range would report a window the request
+            // never asked for.
+            let obs = if is_scope_attribute(&attr_name) {
+                None
+            } else {
+                row.time_axis(compiled.window.timeproperty)
+            };
             if let Some(t) = obs {
                 min_time = Some(min_time.map_or(t, |m: DateTime<Utc>| m.min(t)));
                 max_time = Some(max_time.map_or(t, |m: DateTime<Utc>| m.max(t)));
@@ -135,7 +149,10 @@ impl TemporalEntityRenderer<'_> {
 
                         if let Some((_, keep_min, keep_max)) = keep_range {
                             let (keep_min, keep_max) = (*keep_min, *keep_max);
-                            for (_name, instances) in &mut attrs {
+                            for (name, instances) in &mut attrs {
+                                if is_scope_attribute(name) {
+                                    continue;
+                                }
                                 instances.retain(|(t, _)| t.is_some_and(|t| t >= keep_min && t <= keep_max));
                             }
                             min_time = Some(keep_min);

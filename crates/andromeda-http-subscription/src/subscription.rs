@@ -1,7 +1,7 @@
 //! Handlers for the `/subscriptions` endpoints.
 
 use crate::{
-    error::{SubscriptionResultExt, internal_problem, origin_problem, public_problem},
+    error::{SubscriptionResultExt, internal_problem, public_problem},
     state::{SubscriptionTenantState, SubscriptionTenantStateOrCreate},
 };
 use andromeda_http_extraction::{
@@ -9,7 +9,7 @@ use andromeda_http_extraction::{
     context::ContextUrl,
     context_target::{ExistingTargetedTenantState, ProvisionableTargetedTenantState},
     jsonld::JsonLd,
-    origin::request_origin,
+    origin::RequestOrigin,
     prefer::PreferHeader,
     query::ValidatedQuery,
     typed_path::TypedPath,
@@ -34,7 +34,7 @@ use andromeda_ngsi_ld_render::{
 use andromeda_ngsi_ld_request::{empty::EmptyParams, subscription::ListParams};
 use axum::{
     extract::OriginalUri,
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
@@ -43,7 +43,7 @@ use serde_json::Value;
 pub async fn create(
     ProvisionableTargetedTenantState { services: state, target, .. }: SubscriptionTenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
-    headers: HeaderMap,
+    RequestOrigin(base_url): RequestOrigin,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
@@ -53,7 +53,6 @@ pub async fn create(
     }: JsonLd<Value>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.subscriptions;
-    let base_url = request_origin(&headers).map_err(|error| origin_problem(&error, &uri))?;
     let context = context.merge(body_context);
     // Table 6.3.18-2: the created subscription must not forward a companion copy
     // back to any context source its request already passed through.
@@ -167,7 +166,7 @@ pub async fn query(
 pub async fn update(
     ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
-    headers: HeaderMap,
+    RequestOrigin(base_url): RequestOrigin,
     context: ContextUrl,
     TypedPath(subscription_id): TypedPath<Uri>,
     JsonLd {
@@ -176,7 +175,6 @@ pub async fn update(
     }: JsonLd<Value>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.subscriptions;
-    let base_url = request_origin(&headers).map_err(|error| origin_problem(&error, &uri))?;
     let context = context.merge(body_context);
 
     service

@@ -1,7 +1,7 @@
 //! Query parameters for the NGSI-LD Temporal API.
 
 use crate::{
-    attribute_selection::validate_attrs,
+    attribute_selection::{AttrsAdmission, validate_attrs},
     error::ParameterError,
     impl_shared_query_params,
     language_filter::deserialize_optional_language_filter,
@@ -221,6 +221,23 @@ impl_shared_query_params!(TemporalQueryParameters {
     offset: offset
 });
 
+/// Which Entity members `attrs` admits at each of the two temporal endpoints.
+///
+/// Table 6.18.3.2-1 makes `attrs` on the query "a synonym for a combination of
+/// the pick and q parameters", and `pick` names Entity members — "id", "type",
+/// "scope" or an Attribute name — so annex C clause C.5.16's
+/// `attrs=speed,scope` is a query the specification writes itself. Table
+/// 6.19.3.1-1 makes `attrs` on the retrieval "a synonym for the pick parameter,
+/// except that id, type, scope are not allowed", so the same spelling is a bad
+/// request there.
+const fn attrs_admission(require_temporal: bool) -> AttrsAdmission {
+    if require_temporal {
+        AttrsAdmission::ScopeAdmitted
+    } else {
+        AttrsAdmission::AttributeNamesOnly
+    }
+}
+
 impl TemporalQueryParameters {
     /// Returns whether the query should be local-only (no distributed forwarding).
     ///
@@ -291,7 +308,7 @@ impl TemporalQueryParameters {
     /// group is incomplete, and [`ParameterError::AggrMethodsRequired`] when
     /// `format=aggregatedValues` carries no aggregation methods.
     pub fn validate(&self, require_temporal: bool) -> Result<(), ParameterError> {
-        validate_attrs(self.attrs.as_deref())?;
+        validate_attrs(self.attrs.as_deref(), attrs_admission(require_temporal))?;
         // Clause 4.21: pick and omit select opposite ends of the same
         // projection, so a request naming both is contradictory rather than a
         // request the broker can merge. The temporal API inherits the rule

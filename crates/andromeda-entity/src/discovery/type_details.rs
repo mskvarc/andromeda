@@ -1,17 +1,11 @@
 //! Retrieve Details of Available Entity Types (clause 5.7.6).
 
 use crate::{
-    discovery::{
-        DiscoveryScope,
-        EntityDiscoveryService,
-        compaction_fixups::strip_ngsild_prefix,
-        registry_union::union_type_summaries,
-        stored_names::parse_discovery_iri,
-    },
+    discovery::{DiscoveryScope, EntityDiscoveryService, registry_union::union_type_summaries, stored_names::parse_discovery_iri},
     error::EntityError,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{context_spec::ContextSpec, engine::options::CompactOptions};
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::entity_type_list::{EntityType, EntityTypeType};
 use serde_json::Value;
@@ -25,9 +19,8 @@ impl EntityDiscoveryService {
     /// # Errors
     ///
     /// Reports [`EntityError::Persistence`] when a summary page or the registry
-    /// could not be read, [`EntityError::Validation`] when a stored type or
-    /// attribute name is not well formed, and [`EntityError::JsonLd`] when the
-    /// details cannot be compacted against `context`.
+    /// could not be read, and [`EntityError::Internal`] when a stored type or
+    /// attribute name does not read back as one.
     pub async fn type_details(&self, target: &ContextTarget, scope: DiscoveryScope, context: &ContextSpec) -> Result<Value, EntityError> {
         // Keyset-paginate the aggregation so a very large set of distinct
         // types does not require a single large result set.
@@ -48,29 +41,16 @@ impl EntityDiscoveryService {
         }
         union_type_summaries(&mut summaries, self.registered_types(scope).await?);
 
-        let entity_types: Vec<EntityType> = summaries
-            .into_iter()
-            .map(|(type_iri, attrs)| {
-                Ok(EntityType {
-                    id: parse_discovery_iri(type_iri.to_string())?,
-                    type_name: type_iri,
-                    type_: EntityTypeType,
-                    attribute_names: attrs,
-                })
-            })
-            .collect::<Result<_, EntityError>>()?;
-
-        // Expand and compact
-        let expanded = serde_json::json!(entity_types.iter().map(jsonld::Expandable::expand::<serde_json::Value>).collect::<Vec<_>>());
-        let mut compacted = self.engine.compact(expanded, context, CompactOptions::default()).await?;
-
-        // Extract the @graph array (compaction wraps multiple items in @graph)
-        if let Some(graph) = compacted.as_object_mut().and_then(|obj| obj.remove("@graph")) {
-            compacted = graph;
+        let mut entity_types: Vec<EntityType> = Vec::with_capacity(summaries.len());
+        for (type_iri, attrs) in summaries {
+            entity_types.push(EntityType {
+                id: parse_discovery_iri(type_iri.to_string())?,
+                type_name: self.compacted_type_name(&type_iri, context).await?,
+                type_: EntityTypeType,
+                attribute_names: self.compacted_attribute_names(attrs, context).await?,
+            });
         }
 
-        strip_ngsild_prefix(&mut compacted);
-
-        Ok(compacted)
+        Ok(serde_json::to_value(entity_types)?)
     }
 }

@@ -21,6 +21,7 @@
 
 pub mod administration;
 pub mod config;
+pub mod context_source_alias;
 pub mod creation_policy;
 pub mod database;
 pub mod database_name;

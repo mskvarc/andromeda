@@ -12,6 +12,7 @@ use crate::entity::{
     ForwardedPurgeResult,
     IncomingVia,
     IntoResponse,
+    NgsiLdProtocolHeaders,
     OriginalUri,
     ProblemResponse,
     PurgeMode,
@@ -23,12 +24,14 @@ use crate::entity::{
     classify_forwarding_error,
     forwarded_write_error,
     multi_status,
+    purge_entity_map::resolve_purge_map,
     reject_linked_retrieval,
     single_source_failure,
 };
 use andromeda_entity::side_effect::BatchSideEffectMode;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
+use andromeda_ngsi_ld_query::entity_selection::ConsideredEntities;
 use axum::http::HeaderMap;
 use std::slice;
 
@@ -55,6 +58,7 @@ pub(crate) async fn delete_by_query(
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
+    protocol: NgsiLdProtocolHeaders,
     headers: HeaderMap,
     EntityQuery(mut query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
@@ -70,6 +74,12 @@ pub(crate) async fn delete_by_query(
 
     let is_local = !target.permits_federation() || query.is_local();
     let context: ContextSpec = context.into_inner();
+
+    // Table 6.4.3.3-2: "If present, the EntityMap supplied is used for
+    // determining the set of Entities requested during the purge operation."
+    // The narrowing runs before the query is compiled, so both the local phase
+    // below and the identifiers it reports are the map's.
+    let entity_map = resolve_purge_map(&state.entity_maps, &target, &mut query, protocol.entity_map.as_ref(), &uri).await?;
 
     // Determine purge mode from drop/keep parameters (S5.6.21)
     let purge_mode = if let Some(ref drop_attrs) = query.drop {
@@ -111,9 +121,16 @@ pub(crate) async fn delete_by_query(
         }
     };
 
+    // Clause 5.5.14: an EntityMap "fixes the Entities to be considered for
+    // subsequent requests based on it", so a purge left considering none -- its
+    // identifiers and the map's do not intersect -- has no entity for any
+    // context source to purge, and forwarding could only widen what the map
+    // fixed.
+    let considers_nothing = matches!(ConsideredEntities::of_request(query.id.as_deref()), ConsideredEntities::NoEntity);
+
     // Clause 5.6.21.4: unless the request is local, the purge is forwarded to
     // every matching registration that supports it.
-    let forwarded = if is_local {
+    let forwarded = if is_local || considers_nothing {
         Vec::new()
     } else {
         state
@@ -138,7 +155,7 @@ pub(crate) async fn delete_by_query(
     let local_failed = !result.errors.is_empty();
     let remote_failed = forwarded.iter().any(|entry| entry.result.is_failure());
     if !local_failed && !remote_failed {
-        return Ok(StatusCode::NO_CONTENT.into_response());
+        return Ok(entity_map.attach_to(StatusCode::NO_CONTENT.into_response()));
     }
     // Clause 6.3.17: a purge that did nothing here and failed at its single
     // proxied source carries that source's error; anything else is partial.
@@ -149,5 +166,5 @@ pub(crate) async fn delete_by_query(
         return Err(classify_forwarding_error(&error).with_instance(uri));
     }
     merge_forwarded_purges(&mut result, &forwarded);
-    Ok(multi_status(result))
+    Ok(entity_map.attach_to(multi_status(result)))
 }

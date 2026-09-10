@@ -25,6 +25,8 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod accept;
+pub mod forwarded_header_trust;
+pub mod forwarded_protocol;
 pub mod geo_json_body;
 pub mod json_ld_accept;
 pub mod language;

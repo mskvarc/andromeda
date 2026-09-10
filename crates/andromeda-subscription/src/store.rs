@@ -10,7 +10,7 @@ use crate::{
     stored_subscription::StoredSubscription,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion, uri::Uri};
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     subscription::{EntitySelector, NotificationParams, Subscription, SubscriptionStatus},
@@ -72,6 +72,9 @@ pub struct SubscriptionFields<'a> {
     /// Whether entities are assumed split across sources (clause 5.2.12
     /// `splitEntities`); `None` defers to the deployment default.
     pub split_entities: Option<bool>,
+    /// The NGSI-LD version a notification's Entities are amended to conform to
+    /// (Table 5.2.12-1 `ngsildConformance`); `None` amends nothing.
+    pub ngsild_conformance: Option<SpecVersion>,
 }
 
 /// Fields that may be present in a subscription update request.

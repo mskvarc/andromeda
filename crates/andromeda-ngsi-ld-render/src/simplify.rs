@@ -190,7 +190,17 @@ fn simplify_attr_value(value: Value) -> Value {
             let Some(attr_type) = attr_type else { return Value::Object(attr_obj) };
 
             match attr_type {
-                AttributeType::Relationship => attr_obj.remove("entity").map_or_else(|| take_value_member(attr_obj, attr_type), simplify_value),
+                // Clause 4.5.4, the inline Linked Entity case: a Relationship
+                // naming one target answers with that Entity's key-value pairs
+                // (EXAMPLE 9), and one naming an array of targets answers with
+                // the ordered array of them (EXAMPLE 10). The `entity` member
+                // carries whichever shape clause 4.5.23.2 produced, and each
+                // Entity in it is simplified in turn.
+                AttributeType::Relationship => match attr_obj.remove("entity") {
+                    Some(Value::Array(entities)) => Value::Array(entities.into_iter().map(simplify_value).collect()),
+                    Some(single) => simplify_value(single),
+                    None => take_value_member(attr_obj, attr_type),
+                },
                 AttributeType::ListRelationship => match attr_obj.remove("entityList") {
                     Some(Value::Array(items)) => Value::Array(items.into_iter().map(simplify_value).collect()),
                     Some(other) => other,
@@ -348,6 +358,54 @@ mod tests {
             pretty_assertions::assert_eq!(rendered["spec"], json!({"json": {"a": 1}}));
             pretty_assertions::assert_eq!(rendered["kind"], json!({"vocab": "commercial"}));
         }
+    }
+
+    /// Clause 4.5.4, inline Linked Entity retrieval, EXAMPLE 9: a Relationship
+    /// naming one target answers with that Entity's key-value pairs.
+    #[test]
+    fn an_inline_joined_single_target_relationship_simplifies_to_the_nested_entity() {
+        let joined = json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "providedBy": {
+                "type": "Relationship",
+                "object": "urn:ngsi-ld:Device:31415",
+                "entity": {"id": "urn:ngsi-ld:Device:31415", "type": "Device", "brandName": {"type": "Property", "value": "Anemometer"}}
+            }
+        });
+
+        pretty_assertions::assert_eq!(
+            simplify_value(joined)["providedBy"],
+            json!({"id": "urn:ngsi-ld:Device:31415", "type": "Device", "brandName": "Anemometer"})
+        );
+    }
+
+    /// Clause 4.5.4, inline Linked Entity retrieval, EXAMPLE 10: a Relationship
+    /// naming an array of targets answers with the ordered array of simplified
+    /// Entities, each simplified in its own right.
+    #[test]
+    fn an_inline_joined_multi_target_relationship_simplifies_every_nested_entity() {
+        let joined = json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "passengers": {
+                "type": "Relationship",
+                "objectType": "Person",
+                "object": ["urn:ngsi-ld:Person:Alice", "urn:ngsi-ld:Person:Bob"],
+                "entity": [
+                    {"id": "urn:ngsi-ld:Person:Alice", "type": "Person", "name": {"type": "Property", "value": "Alice"}},
+                    {"id": "urn:ngsi-ld:Person:Bob", "type": "Person", "name": {"type": "Property", "value": "Bob"}}
+                ]
+            }
+        });
+
+        pretty_assertions::assert_eq!(
+            simplify_value(joined)["passengers"],
+            json!([
+                {"id": "urn:ngsi-ld:Person:Alice", "type": "Person", "name": "Alice"},
+                {"id": "urn:ngsi-ld:Person:Bob", "type": "Person", "name": "Bob"}
+            ])
+        );
     }
 
     #[test]

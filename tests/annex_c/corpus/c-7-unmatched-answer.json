@@ -1,0 +1,17 @@
+{
+  "id": "urn:ngsi-ld:OffStreetParking:Downtown1",
+  "type": "http://example.org/parking/OffStreetParking",
+  "http://example.org/parking/name": {
+    "type": "Property",
+    "value": "Downtown One"
+  },
+  "http://example.org/parking/availableSpotNumber": {
+    "type": "Property",
+    "value": 121,
+    "observedAt": "2017-07-29T12:05:02Z"
+  },
+  "http://example.org/parking/totalSpotNumber": {
+    "type": "Property",
+    "value": 200
+  }
+}

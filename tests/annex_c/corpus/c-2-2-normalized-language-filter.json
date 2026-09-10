@@ -1,0 +1,66 @@
+{
+  "id": "urn:ngsi-ld:Vehicle:A4567",
+  "type": "Vehicle",
+  "brandName": {
+    "type": "Property",
+    "value": "Mercedes"
+  },
+  "street": {
+    "type": "Property",
+    "value": "Grand Place",
+    "lang": "fr"
+  },
+  "isParked": {
+    "type": "Relationship",
+    "objectType": "OffStreetParking",
+    "object": "urn:ngsi-ld:OffStreetParking:Downtown1",
+    "observedAt": "2017-07-29T12:00:04Z",
+    "providedBy": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:Person:Bob"
+    }
+  },
+  "category": {
+    "type": "VocabProperty",
+    "vocab": "non-commercial"
+  },
+  "tyreTreadDepths": {
+    "type": "ListProperty",
+    "valueList": [
+      300,
+      300,
+      120,
+      6
+    ],
+    "valueType": "Integer"
+  },
+  "passengers": {
+    "type": "Relationship",
+    "objectType": "Person",
+    "object": [
+      "urn:ngsi-ld:Person:Alice",
+      "urn:ngsi-ld:Person:Bob"
+    ]
+  },
+  "route": {
+    "type": "ListRelationship",
+    "objectType": "City",
+    "objectList": [
+      {
+        "object": "urn:ngsi-ld:City:Antwerp"
+      },
+      {
+        "object": "urn:ngsi-ld:City:Rotterdam"
+      },
+      {
+        "object": "urn:ngsi-ld:City:Amsterdam"
+      }
+    ]
+  },
+  "@context": [
+    "http://example.org/ngsi-ld/latest/commonTerms.jsonld",
+    "http://example.org/ngsi-ld/latest/vehicle.jsonld",
+    "http://example.org/ngsi-ld/latest/parking.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"
+  ]
+}

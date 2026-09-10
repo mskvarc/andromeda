@@ -33,6 +33,7 @@ pub mod identifier;
 pub mod ordering;
 pub mod pagination;
 pub mod pattern;
+pub mod posix_dialect;
 pub mod projection;
 pub mod scope;
 pub mod temporal;

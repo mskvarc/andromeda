@@ -20,23 +20,21 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
+use crate::hosted_context::{forget_cached, serve};
 use andromeda_test_client::response::TestResponse;
 use andromeda_test_harness::environment::TestEnvironment;
 use andromeda_test_mocks::{callback_path::CallbackPath, jsonld_context_server::JsonLdContextServer, server_config::MockServerConfig};
-use axum::{
-    body::Bytes,
-    http::{
-        HeaderMap,
-        HeaderValue,
-        header::{CACHE_CONTROL, EXPIRES, HeaderName},
-    },
+use axum::http::{
+    HeaderMap,
+    HeaderValue,
+    header::{CACHE_CONTROL, EXPIRES, HeaderName},
 };
 use chrono::{TimeDelta, Utc};
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use sqlx::types::Json;
-use std::time::Duration;
+use std::{slice::from_ref, time::Duration};
 use tokio::time::{Instant, sleep};
 use urlencoding::encode;
 use uuid::Uuid;
@@ -88,16 +86,7 @@ fn cache_headers(name: HeaderName, value: &str) -> HeaderMap {
 
 /// Serve `body` under a path unique to this run.
 async fn serve_document(server: &JsonLdContextServer, label: &str, body: &'static [u8], headers: HeaderMap) -> (CallbackPath, String) {
-    let path = CallbackPath::parse(format!("/cache-expiry-{label}-{}.jsonld", Uuid::new_v4())).expect("absolute context path");
-    let url = server
-        .serve(
-            path.clone(), // clone: the server retains the route while the test counts requests against it
-            Bytes::from_static(body),
-            headers,
-        )
-        .await
-        .expect("context route must be configured");
-    (path, url.to_string())
+    serve(server, &format!("cache-expiry-{label}"), &String::from_utf8_lossy(body), headers).await
 }
 
 /// Serve `CONTEXT_DOCUMENT` under a path unique to this run.
@@ -125,18 +114,6 @@ async fn cached_payload(scope: &TestEnvironment, context_url: &str) -> Option<Va
         .await
         .expect("the stored context row must be readable");
     stored.map(|payload| payload.0)
-}
-
-/// Drop the `"Cached"` row a test left behind.
-///
-/// The environment cleans by identifier prefix, and a cached row is keyed by
-/// the origin server's URL instead, so it would outlive the run that made it.
-async fn forget_cached_context(scope: &TestEnvironment, context_url: &str) {
-    sqlx::query("DELETE FROM jsonld_contexts WHERE url = $1")
-        .bind(context_url)
-        .execute(scope.database_pool())
-        .await
-        .expect("the probe's cached context row must be removable");
 }
 
 /// The local identifier the broker generated for the Context it cached from
@@ -204,7 +181,7 @@ async fn regression_context_cache_expiry_max_age_governs_the_entry_lifetime() {
         server.request_count(&path)
     );
 
-    forget_cached_context(&scope, &context_url).await;
+    forget_cached(scope.database_pool(), from_ref(&context_url)).await;
     server.shutdown().await.expect("context server shutdown failed");
     scope.finish().await.expect("cleanup failed");
 }
@@ -235,7 +212,7 @@ async fn regression_context_cache_expiry_s_maxage_overrides_max_age() {
         server.request_count(&path)
     );
 
-    forget_cached_context(&scope, &context_url).await;
+    forget_cached(scope.database_pool(), from_ref(&context_url)).await;
     server.shutdown().await.expect("context server shutdown failed");
     scope.finish().await.expect("cleanup failed");
 }
@@ -268,7 +245,7 @@ async fn regression_context_cache_expiry_s_maxage_governs_even_when_it_is_the_lo
         "s-maxage overrides max-age outright, so an hour on s-maxage must survive a second on max-age"
     );
 
-    forget_cached_context(&scope, &context_url).await;
+    forget_cached(scope.database_pool(), from_ref(&context_url)).await;
     server.shutdown().await.expect("context server shutdown failed");
     scope.finish().await.expect("cleanup failed");
 }
@@ -297,7 +274,7 @@ async fn regression_context_cache_expiry_expires_header_alone_is_honoured() {
         server.request_count(&path)
     );
 
-    forget_cached_context(&scope, &context_url).await;
+    forget_cached(scope.database_pool(), from_ref(&context_url)).await;
     server.shutdown().await.expect("context server shutdown failed");
     scope.finish().await.expect("cleanup failed");
 }
@@ -332,7 +309,7 @@ async fn regression_context_cache_expiry_max_age_overrides_a_conflicting_expires
         "max-age is consulted before Expires, so the hour it grants must survive a date one second out"
     );
 
-    forget_cached_context(&scope, &context_url).await;
+    forget_cached(scope.database_pool(), from_ref(&context_url)).await;
     server.shutdown().await.expect("context server shutdown failed");
     scope.finish().await.expect("cleanup failed");
 }
@@ -361,7 +338,7 @@ async fn regression_context_cache_expiry_no_store_prevents_caching() {
         server.request_count(&path)
     );
 
-    forget_cached_context(&scope, &context_url).await;
+    forget_cached(scope.database_pool(), from_ref(&context_url)).await;
     server.shutdown().await.expect("context server shutdown failed");
     scope.finish().await.expect("cleanup failed");
 }
@@ -406,7 +383,7 @@ async fn regression_an_unreadable_cache_control_does_not_discard_no_store() {
         server.request_count(&path)
     );
 
-    forget_cached_context(&scope, &context_url).await;
+    forget_cached(scope.database_pool(), from_ref(&context_url)).await;
     server.shutdown().await.expect("context server shutdown failed");
     scope.finish().await.expect("cleanup failed");
 }
@@ -443,7 +420,7 @@ async fn regression_an_expires_of_zero_is_already_expired() {
         server.request_count(&path)
     );
 
-    forget_cached_context(&scope, &context_url).await;
+    forget_cached(scope.database_pool(), from_ref(&context_url)).await;
     server.shutdown().await.expect("context server shutdown failed");
     scope.finish().await.expect("cleanup failed");
 }
@@ -474,7 +451,7 @@ async fn regression_context_cache_expiry_no_directives_falls_back_to_the_configu
         "a response stating no expiration time must fall back to the configured lifetime, not re-download"
     );
 
-    forget_cached_context(&scope, &context_url).await;
+    forget_cached(scope.database_pool(), from_ref(&context_url)).await;
     server.shutdown().await.expect("context server shutdown failed");
     scope.finish().await.expect("cleanup failed");
 }
@@ -515,7 +492,7 @@ async fn regression_cached_contexts_are_periodically_invalidated() {
         "a Cached @context whose max-age of one second has passed must be invalidated by the periodic pass"
     );
 
-    forget_cached_context(&scope, &context_url).await;
+    forget_cached(scope.database_pool(), from_ref(&context_url)).await;
     server.shutdown().await.expect("context server shutdown failed");
     scope.finish().await.expect("cleanup failed");
 }
@@ -594,7 +571,7 @@ async fn regression_a_cached_document_discards_members_outside_the_context_subtr
         "a downloaded @context is stored as its subtree alone, not as the whole file the origin server served"
     );
 
-    forget_cached_context(&scope, &context_url).await;
+    forget_cached(scope.database_pool(), from_ref(&context_url)).await;
     server.shutdown().await.expect("context server shutdown failed");
     scope.finish().await.expect("cleanup failed");
 }
@@ -636,7 +613,7 @@ async fn regression_reloading_a_cached_context_replaces_it_with_the_download() {
     // wrapped document expands to nothing usable and refuses every entity.
     create_entity_naming(&scope, &context_url, "Device:reload-second").await;
 
-    forget_cached_context(&scope, &context_url).await;
+    forget_cached(scope.database_pool(), from_ref(&context_url)).await;
     server.shutdown().await.expect("context server shutdown failed");
     scope.finish().await.expect("cleanup failed");
 }
@@ -749,7 +726,7 @@ async fn regression_a_cached_context_is_not_served_on_demand() {
         metadata.body
     );
 
-    forget_cached_context(&scope, &context_url).await;
+    forget_cached(scope.database_pool(), from_ref(&context_url)).await;
     server.shutdown().await.expect("context server shutdown failed");
     scope.finish().await.expect("cleanup failed");
 }

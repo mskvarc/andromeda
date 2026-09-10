@@ -141,6 +141,7 @@ mod tests {
             | JsonLdError::Compaction(_)
             | JsonLdError::InvalidIri(_)
             | JsonLdError::InvalidDocument(_)
+            | JsonLdError::ScopedUserContext { .. }
             | JsonLdError::Json(_)) => panic!("expected ContextHttp, got {other}"),
         }
     }

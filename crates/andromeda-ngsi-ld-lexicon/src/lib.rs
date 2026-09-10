@@ -20,7 +20,6 @@ mod validated_name;
 
 pub mod aggr_method;
 pub mod attribute_name;
-pub mod attribute_path;
 pub mod attribute_type;
 pub mod constant_string;
 pub mod context_source_pseudonym;

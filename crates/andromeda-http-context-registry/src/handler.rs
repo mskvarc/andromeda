@@ -1,13 +1,10 @@
 //! Handlers for the `/jsonldContexts` endpoints.
 
-use crate::{
-    error::{ContextRegistryResultExt, origin_problem},
-    state::ContextRegistryTenantState,
-};
+use crate::{error::ContextRegistryResultExt, state::ContextRegistryTenantState};
 use andromeda_context_registry::{detail_level::ContextDetailLevel, removal::ContextRemoval};
 use andromeda_http_extraction::{
     content_length_precondition::DeclaredBodyLength,
-    origin::request_origin,
+    origin::RequestOrigin,
     query::ValidatedQuery,
     tenant_state::ExistingTenantState,
     typed_path::TypedPath,
@@ -20,7 +17,7 @@ use axum::{
     Json,
     body::Bytes,
     extract::OriginalUri,
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
@@ -37,13 +34,12 @@ pub(crate) async fn create(
     _body_length: DeclaredBodyLength,
     ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,
-    headers: HeaderMap,
+    RequestOrigin(base_url): RequestOrigin,
     body: Bytes,
 ) -> Result<Response, ProblemResponse> {
     let payload: Value = serde_json::from_slice(&body).map_err(|error| {
         ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, format!("Request body is not valid JSON: {error}")).with_instance(uri.clone())
     })?;
-    let base_url = request_origin(&headers).map_err(|error| origin_problem(&error, &uri))?;
     let identifier = state.contexts.create(payload, base_url.as_ref()).await.with_context_registry_instance(&uri)?;
     Ok(with_location(
         StatusCode::CREATED.into_response(),

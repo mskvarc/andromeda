@@ -123,7 +123,9 @@ const fn demand(needed: bool) -> Demand {
 fn reads_search_row(term: &CompiledOrderTerm) -> bool {
     match &term.target {
         OrderTarget::Type | OrderTarget::Scope => true,
-        OrderTarget::Attribute(name) => term.direction.is_distance() && name.as_str() == LOCATION.as_str(),
+        // Only a term naming the attribute itself can read the dedicated
+        // geometry column; a path descending into it reads the payload.
+        OrderTarget::Attribute(path) => term.direction.is_distance() && path.is_simple() && path.attr.as_str() == LOCATION.as_str(),
         OrderTarget::Id => false,
     }
 }
@@ -144,7 +146,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         entity::compiled::CompiledEntityQuery,
         entity_selection::{EntitySelection, EntitySelector},
-        filter::parser,
+        filter::{parser, path::AttrPath},
         geo::query::GeoQuery,
         ordering::term::{CompiledOrderTerm, OrderDirection, OrderTarget},
         scope::query::ScopeQuery,
@@ -231,7 +233,7 @@ mod tests {
         by_type.ordering.terms = vec![term(OrderTarget::Type, OrderDirection::Asc)];
         let mut by_distance = empty_query();
         by_distance.ordering.terms = vec![term(
-            OrderTarget::Attribute(LOCATION.as_str().parse().expect("valid attribute name")),
+            OrderTarget::Attribute(AttrPath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
             OrderDirection::DistAsc,
         )];
         for query in [typed, attrs, geo, scope, by_type, by_distance] {
@@ -246,7 +248,7 @@ mod tests {
         assert_eq!(EntityRelations::for_query(&filtered).documents, Demand::Joined);
         let mut ordered = empty_query();
         ordered.ordering.terms = vec![term(
-            OrderTarget::Attribute("https://example.com/speed".parse().expect("valid attribute name")),
+            OrderTarget::Attribute(AttrPath::simple("https://example.com/speed".parse().expect("valid attribute name"))),
             OrderDirection::Asc,
         )];
         assert_eq!(EntityRelations::for_query(&ordered).documents, Demand::Joined);

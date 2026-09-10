@@ -20,6 +20,12 @@
 //! object's `@context` subtree is discarded belongs to no single caller, so
 //! [`context_subtree`] owns it for the resolver and the Context Registry alike.
 //!
+//! One clause 5.5.7 rule is stated here for the same reason: whether the user
+//! `@context` of a request declares a JSON-LD Scoped Context is decidable only
+//! once every context it names has been resolved, which is this crate's
+//! capability and no caller's. [`scoped_context_admission`] holds it; which
+//! operations run it is the callers' decision.
+//!
 //! Two ports point outward and are declared here because this crate calls
 //! them: [`context_cache::ContextCache`], the durable cache a broker may
 //! attach, and `andromeda_ngsi_ld_query::term_expander::TermExpander`, which
@@ -30,6 +36,7 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod attribute_fragment;
 pub mod compaction;
 pub mod config;
 pub mod context_cache;
@@ -44,6 +51,7 @@ pub mod engine;
 pub mod error;
 pub mod hit_counter;
 pub mod loader;
+pub mod scoped_context_admission;
 pub mod term_compaction;
 pub mod term_expansion;
 

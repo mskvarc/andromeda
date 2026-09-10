@@ -1,0 +1,68 @@
+[
+  {
+    "id": "http://example.org/parking/availableSpotNumber",
+    "type": "Attribute",
+    "attributeName": "availableSpotNumber",
+    "typeNames": [
+      "OffStreetParking"
+    ]
+  },
+  {
+    "id": "http://example.org/vehicle/brandName",
+    "type": "Attribute",
+    "attributeName": "brandName",
+    "typeNames": [
+      "Vehicle"
+    ]
+  },
+  {
+    "id": "http://example.org/common/isNextToBuilding",
+    "type": "Attribute",
+    "attributeName": "isNextToBuilding",
+    "typeNames": [
+      "OffStreetParking"
+    ]
+  },
+  {
+    "id": "http://example.org/common/isParked",
+    "type": "Attribute",
+    "attributeName": "isParked",
+    "typeNames": [
+      "Vehicle"
+    ]
+  },
+  {
+    "id": "https://uri.etsi.org/ngsi-ld/location",
+    "type": "Attribute",
+    "attributeName": "location",
+    "typeNames": [
+      "OffStreetParking",
+      "Vehicle",
+      "http://example.org/parking/ParkingSpot"
+    ]
+  },
+  {
+    "id": "http://example.org/vehicle/speed",
+    "type": "Attribute",
+    "attributeName": "speed",
+    "typeNames": [
+      "Vehicle"
+    ]
+  },
+  {
+    "id": "http://example.org/parking/status",
+    "type": "Attribute",
+    "attributeName": "http://example.org/parking/status",
+    "typeNames": [
+      "http://example.org/parking/ParkingSpot"
+    ]
+  },
+  {
+    "id": "http://example.org/parking/totalSpotNumber",
+    "type": "Attribute",
+    "attributeName": "totalSpotNumber",
+    "typeNames": [
+      "OffStreetParking"
+    ]
+  }
+]

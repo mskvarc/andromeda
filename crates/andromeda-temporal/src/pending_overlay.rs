@@ -1,9 +1,10 @@
 //! Immediate logical temporal reads over a deferred history sink.
 
 use crate::{
-    append_intent::{SequencedTemporalAppendIntent, TemporalAppendEntry, TemporalObservationIdentity},
+    append_intent::TemporalObservationIdentity,
     error::TemporalError,
     outcome::{TemporalEntityCandidate, TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
+    pending_observation::{intent_matches_query, is_scope_row, pending_observations},
     port::{
         history_reader::{
             AggregationPushdown,
@@ -18,17 +19,10 @@ use crate::{
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::{query_residual::ResidualFilter, residual_filter};
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    entity_type_name::EntityTypeName,
-    instance_family::InstanceFamily,
-    time_prop::TimeProp,
-    uri::Uri,
-};
-use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow, TemporalValue};
+use andromeda_entity::query_residual::ResidualFilter;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, instance_family::InstanceFamily, uri::Uri};
+use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
 use andromeda_ngsi_ld_query::{
-    dataset::DatasetFilter,
     ordering::sort_direction::SortDirection,
     pagination::{CountPolicy, Pagination},
     temporal::{compiled::CompiledTemporalQuery, ordering::TemporalEntityOrdering, window::TimeInterval},
@@ -135,6 +129,7 @@ impl PendingTemporalHistoryOverlay {
                 }
             }
         }
+        retain_valid_scope_events(&mut stored, compiled);
         stored.sort_by(|left, right| {
             left.row
                 .attribute_name
@@ -264,107 +259,45 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
     }
 }
 
-/// Return whether an intent contributes both entity selection and history rows.
-fn intent_matches_query(sequenced: &SequencedTemporalAppendIntent, compiled: &CompiledTemporalQuery, selection: &ResidualFilter) -> bool {
-    let selection_matches = sequenced
-        .intent
-        .selection_value
-        .as_ref()
-        .is_some_and(|value| residual_filter::matches(selection, value));
-    selection_matches && !pending_observations(sequenced, compiled).is_empty()
+/// The instant a window opens at, when it opens at one.
+const fn window_start(interval: TimeInterval) -> Option<DateTime<Utc>> {
+    match interval {
+        TimeInterval::After(from) | TimeInterval::Between { from, .. } => Some(from),
+        TimeInterval::Before(_) | TimeInterval::Unbounded => None,
+    }
 }
 
-/// Project matching history entries from one pending intent.
-fn pending_observations(sequenced: &SequencedTemporalAppendIntent, compiled: &CompiledTemporalQuery) -> Vec<TemporalHistoryObservation> {
-    sequenced
-        .intent
-        .history_entries()
-        .filter_map(|(identity, entry)| pending_observation(identity, entry, sequenced.intent.record.recorded_at()))
-        .filter(|observation| matches_history_row(&observation.row, compiled))
-        .collect()
-}
-
-/// Convert one pending history entry into a provenance-bearing observation.
-fn pending_observation(identity: TemporalObservationIdentity, entry: &TemporalAppendEntry, recorded_at: DateTime<Utc>) -> Option<TemporalHistoryObservation> {
-    let row = match entry {
-        TemporalAppendEntry::Observation { row } => row.clone(), // clone: the overlay result owns a neutral row while the durable intent remains reusable.
-        TemporalAppendEntry::Tombstone {
-            attribute_name,
-            dataset_id,
-            attribute_type,
-            instance,
-        } => TemporalHistoryRow {
-            attribute_name: attribute_name.clone(), // clone: the overlay row owns its attribute identity.
-            // The family the ended instance belonged to, so a pending deletion
-            // renders the same null member the stored one will (clauses 4.5.7
-            // and 4.5.8).
-            attribute_type: *attribute_type,
-            dataset_id: dataset_id.clone(), // clone: the overlay row owns its dataset identity.
-            // A deletion is positioned on the `deletedAt` axis alone; it
-            // declares no observation instant and modifies nothing.
-            value: TemporalValue::Tombstone { deleted_at: recorded_at },
-            observed_at: None,
-            recorded_at,
-            created_at: None,
-            modified_at: None,
-            instance: instance.clone(), // clone: the overlay row owns its instance identity.
-            metadata: None,
-            partition_total: None,
-        },
-        TemporalAppendEntry::Scope { .. } => return None,
+/// Drop the Scope events a later one had already superseded when the window
+/// opened.
+///
+/// Clause 4.18 ends a Scope's validity at the next scope event of the same
+/// Entity, and the stored read cannot see an intent the sink has not applied
+/// yet: for the newest event it knows, it reports an interval running to the
+/// present. A pending event closes that interval at its own instant, so an
+/// event whose interval now ends at or before the window opened is no longer
+/// part of the answer. Only the last event at or before that instant survives,
+/// which is the same rule the stored statement applies to the events it can
+/// see.
+fn retain_valid_scope_events(observations: &mut Vec<TemporalHistoryObservation>, compiled: &CompiledTemporalQuery) {
+    let Some(from) = window_start(compiled.window.interval) else {
+        return;
     };
-    Some(TemporalHistoryObservation { row, identity: Some(identity) })
-}
-
-/// Apply query instance and temporal constraints to one pending row.
-fn matches_history_row(row: &TemporalHistoryRow, compiled: &CompiledTemporalQuery) -> bool {
-    if !compiled.instances.attr_filter.is_empty()
-        && !compiled
-            .instances
-            .attr_filter
-            .iter()
-            .any(|attribute| attribute.as_str() == row.attribute_name.as_str())
-    {
-        return false;
-    }
-    if !matches_dataset(row, compiled) {
-        return false;
-    }
-    if compiled.window.timeproperty == TimeProp::Deleted && !matches!(row.value, TemporalValue::Tombstone { .. }) {
-        return false;
-    }
-    matches_interval(row.time_axis(compiled.window.timeproperty), compiled.window.interval)
-}
-
-/// Apply the compiled dataset selector to one pending row.
-fn matches_dataset(row: &TemporalHistoryRow, compiled: &CompiledTemporalQuery) -> bool {
-    match DatasetFilter::from_selectors(&compiled.instances.dataset_id_filter) {
-        DatasetFilter::Unfiltered => true,
-        DatasetFilter::DefaultOnly => row.dataset_id.is_none(),
-        DatasetFilter::NamedOnly(named) => row.dataset_id.as_ref().is_some_and(|dataset| named.contains(dataset)),
-        DatasetFilter::DefaultOrNamed(named) => row.dataset_id.as_ref().is_none_or(|dataset| named.contains(dataset)),
-    }
+    let timeproperty = compiled.window.timeproperty;
+    let in_force = observations
+        .iter()
+        .filter(|observation| is_scope_row(&observation.row))
+        .filter_map(|observation| observation.row.time_axis(timeproperty))
+        .filter(|instant| *instant <= from)
+        .max();
+    let Some(in_force) = in_force else {
+        return;
+    };
+    observations.retain(|observation| !is_scope_row(&observation.row) || observation.row.time_axis(timeproperty).is_none_or(|instant| instant >= in_force));
 }
 
 /// The identifier a client would see for one pending row, used only to order rows.
 fn rendered_instance_id(row: &TemporalHistoryRow) -> String {
     row.instance.rendered(InstanceFamily::of_attribute_name(&row.attribute_name)).to_string()
-}
-
-/// Return whether a temporal position falls inside the half-open query interval.
-///
-/// A row that carries no instant on the selected axis takes no position, so it
-/// matches every bounded interval no better than a row outside it: clause 4.11
-/// filters on the requested Temporal Property, and admitting an observation
-/// that has none would answer the query with a match it cannot justify. An
-/// unbounded query asks for no Temporal Property at all and keeps the row.
-fn matches_interval(position: Option<DateTime<Utc>>, interval: TimeInterval) -> bool {
-    match interval {
-        TimeInterval::Unbounded => true,
-        TimeInterval::Before(instant) => position.is_some_and(|position| position < instant),
-        TimeInterval::After(instant) => position.is_some_and(|position| position >= instant),
-        TimeInterval::Between { from, to } => position.is_some_and(|position| position >= from && position < to),
-    }
 }
 
 /// Compare optional validated dataset identifiers without erasing their type.

@@ -67,7 +67,7 @@ pub async fn create_or_update(
     let context = context.merge(body_context);
     // Clause 5.6.11.4 opens with the clause 5.5.4 validation and forwards only
     // afterwards.
-    admit_written_evolution(&payload, &uri)?;
+    admit_written_evolution(service.engine(), &payload, &context, &uri).await?;
 
     if params.local.unwrap_or(false) {
         let result = service.create_or_update(&target, payload, &context).await;

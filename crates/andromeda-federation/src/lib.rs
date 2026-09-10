@@ -54,6 +54,8 @@ pub mod temporal;
 pub mod temporal_last_n;
 /// Temporal response merging.
 pub mod temporal_result;
+/// The clause 4.5.5.2 differentiation of conflicting transient entities.
+mod transient_entity_conflict;
 /// Shared forwarding HTTP transport.
 pub mod transport;
 

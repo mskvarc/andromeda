@@ -2,7 +2,7 @@
 
 use super::parameters::{EntityQueryParameters, EntityQueryParametersOptions};
 use crate::{
-    attribute_selection::validate_attrs,
+    attribute_selection::{AttrsAdmission, validate_attrs},
     error::ParameterError,
     linked_retrieval_consistency::{validate_filter_join_depth, validate_projection_join_depth},
 };
@@ -67,7 +67,7 @@ impl EntityQueryParameters {
     /// nested projection term or a `q` hop names a Linked Entity the requested
     /// traversal does not reach.
     pub fn validate(&self) -> Result<(), ParameterError> {
-        validate_attrs(self.attrs.as_deref())?;
+        validate_attrs(self.attrs.as_deref(), AttrsAdmission::AttributeNamesOnly)?;
         // Table 5.2.33-1: `type=*` implies local scope, which the request may
         // not then contradict with `local=false`.
         if self.selects_every_type() && matches!(self.local, Some(false)) {

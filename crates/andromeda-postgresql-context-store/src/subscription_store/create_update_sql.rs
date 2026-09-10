@@ -37,6 +37,16 @@ fn stored_triggers(fields: &SubscriptionFields<'_>) -> Option<Vec<i16>> {
         .map(|triggers| triggers.iter().map(|trigger| stored_trigger(*trigger).code()).collect())
 }
 
+/// The stored `major.minor` text of a subscription's `ngsildConformance`, or
+/// `None` when it declares no version.
+///
+/// Table 5.2.12-1 defines the member as text of that form, which is what a
+/// retrieve has to echo, so the column holds the rendering of the parsed
+/// version rather than a decomposed encoding no query compares.
+fn stored_conformance(fields: &SubscriptionFields<'_>) -> Option<String> {
+    fields.ngsild_conformance.map(|version| version.to_string())
+}
+
 /// The stored `TEXT[]` of one expanded attribute-name list, or `None` when the
 /// subscription carries none.
 fn expanded_names(names: Option<&[AttributeName]>) -> Option<Vec<&str>> {
@@ -79,6 +89,7 @@ pub fn bind_entity_create<'q>(
         .bind(fields.jsonld_context.map(Url::as_str))
         .bind(fields.local_only)
         .bind(fields.split_entities)
+        .bind(stored_conformance(fields))
         .bind(target.key().as_i64())
 }
 
@@ -117,6 +128,7 @@ pub fn bind_entity_update<'q>(
         .bind(fields.jsonld_context.map(Url::as_str))
         .bind(fields.local_only)
         .bind(fields.split_entities)
+        .bind(stored_conformance(fields))
         .bind(target.key().as_i64())
 }
 
@@ -153,6 +165,7 @@ pub fn bind_csource_create<'q>(
         .bind(fields.temporal_q.map(Json))
         .bind(fields.lang.map(ToString::to_string))
         .bind(fields.jsonld_context.map(Url::as_str))
+        .bind(stored_conformance(fields))
         .bind(target.key().as_i64())
 }
 
@@ -188,6 +201,7 @@ pub fn bind_csource_update<'q>(
         .bind(<&str>::from(status))
         .bind(fields.lang.map(ToString::to_string))
         .bind(fields.jsonld_context.map(Url::as_str))
+        .bind(stored_conformance(fields))
         .bind(target.key().as_i64())
 }
 
@@ -220,6 +234,7 @@ pub fn entity_create_sql() -> Result<String, SubscriptionError> {
         Subscriptions::JsonldContext,
         Subscriptions::LocalOnly,
         Subscriptions::SplitEntities,
+        Subscriptions::NgsildConformance,
         Subscriptions::ContextSpaceKey,
         Subscriptions::CreatedAt,
         Subscriptions::ModifiedAt,
@@ -251,6 +266,7 @@ pub fn entity_create_sql() -> Result<String, SubscriptionError> {
             external_placeholder(22),
             external_placeholder(23),
             external_placeholder(24),
+            external_placeholder(25),
             now(),
             now(),
         ])
@@ -286,10 +302,11 @@ pub fn entity_update_sql() -> String {
             (Subscriptions::JsonldContext, external_placeholder(20)),
             (Subscriptions::LocalOnly, external_placeholder(21)),
             (Subscriptions::SplitEntities, external_placeholder(22)),
+            (Subscriptions::NgsildConformance, external_placeholder(23)),
             (Subscriptions::ModifiedAt, now()),
         ])
         .and_where(Expr::col(Subscriptions::Id).eq(external_placeholder(1)))
-        .and_where(Expr::col(Subscriptions::ContextSpaceKey).eq(external_placeholder(23)))
+        .and_where(Expr::col(Subscriptions::ContextSpaceKey).eq(external_placeholder(24)))
         .and_where(of_kind(StoredKind::Entity));
     update.to_string(PostgresQueryBuilder)
 }
@@ -319,6 +336,7 @@ pub fn csource_create_sql() -> Result<String, SubscriptionError> {
         Subscriptions::TemporalQ,
         Subscriptions::Lang,
         Subscriptions::JsonldContext,
+        Subscriptions::NgsildConformance,
         Subscriptions::ContextSpaceKey,
         Subscriptions::CreatedAt,
         Subscriptions::ModifiedAt,
@@ -347,6 +365,7 @@ pub fn csource_create_sql() -> Result<String, SubscriptionError> {
             external_placeholder(19),
             external_placeholder(20),
             external_placeholder(21),
+            external_placeholder(22),
             now(),
             now(),
         ])
@@ -379,10 +398,11 @@ pub fn csource_update_sql() -> String {
             (Subscriptions::Status, cast(external_placeholder(17), PostgresType::SubscriptionStatus)),
             (Subscriptions::Lang, external_placeholder(18)),
             (Subscriptions::JsonldContext, external_placeholder(19)),
+            (Subscriptions::NgsildConformance, external_placeholder(20)),
             (Subscriptions::ModifiedAt, now()),
         ])
         .and_where(Expr::col(Subscriptions::Id).eq(external_placeholder(1)))
-        .and_where(Expr::col(Subscriptions::ContextSpaceKey).eq(external_placeholder(20)))
+        .and_where(Expr::col(Subscriptions::ContextSpaceKey).eq(external_placeholder(21)))
         .and_where(of_kind(StoredKind::Csource));
     update.to_string(PostgresQueryBuilder)
 }
@@ -398,10 +418,10 @@ mod tests {
         assert!(!sql.contains("'Subscription'"), "the constant type token is no longer a column: {sql}");
         assert!(sql.contains("$18::subscription_status"), "{sql}");
         assert!(sql.contains("NOW()"), "created_at and modified_at stamp the transaction clock: {sql}");
-        for marker in 1..=24 {
+        for marker in 1..=25 {
             assert!(sql.contains(&format!("${marker}")), "missing ${marker}: {sql}");
         }
-        assert!(!sql.contains("$25"), "the create binds exactly twenty-four values: {sql}");
+        assert!(!sql.contains("$26"), "the create binds exactly twenty-five values: {sql}");
         assert!(!sql.contains("is_active"), "the redundant is_active column is gone: {sql}");
     }
 
@@ -429,8 +449,24 @@ mod tests {
         let sql = csource_create_sql().expect("the fixed context-source insert builds");
         assert!(sql.contains("'csource'"), "{sql}");
         assert!(sql.contains("$17::subscription_status"), "{sql}");
-        assert!(!sql.contains("$22"), "the context-source create binds twenty-one values: {sql}");
+        assert!(!sql.contains("$23"), "the context-source create binds twenty-two values: {sql}");
         assert!(!sql.contains("dataset_id"), "a context-source subscription stores no datasetId: {sql}");
+    }
+
+    /// Table 5.2.12-1 gives `ngsildConformance` to the Subscription datatype,
+    /// which clause 5.11.2.3 makes the payload of a context-source
+    /// subscription too, so every statement carries the column and a retrieve
+    /// of either family echoes what its client wrote.
+    #[test]
+    fn every_statement_carries_the_clause_5_2_12_conformance_version() {
+        for sql in [
+            entity_create_sql().expect("builds"),
+            csource_create_sql().expect("builds"),
+            entity_update_sql(),
+            csource_update_sql(),
+        ] {
+            assert!(sql.contains("ngsild_conformance"), "{sql}");
+        }
     }
 
     #[test]

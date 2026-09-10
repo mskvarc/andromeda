@@ -30,6 +30,11 @@
 //! representation and nothing else, and because every layer that admits a
 //! written attribute has to agree on them.
 //!
+//! [`embedded_context_admission`] is the fourth of those representation rules
+//! and the only one about where a member may stand rather than which members
+//! there may be: clause 5.5.7 admits a user `@context` at the top level of an
+//! NGSI-LD document and nowhere else.
+//!
 //! How a client *asks* for one is not here. Media-type negotiation, version
 //! conformance and language ranges arrive as HTTP headers and are spelled by
 //! the header grammars that carry them, so they live in
@@ -40,6 +45,7 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod attribute_type_validation;
+pub mod embedded_context_admission;
 pub mod entity_members;
 pub mod family_member_admission;
 pub mod join_mode;

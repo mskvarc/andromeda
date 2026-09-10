@@ -1,0 +1,40 @@
+{
+  "id": "http://example.org/vehicle/Vehicle",
+  "type": "EntityTypeInfo",
+  "typeName": "Vehicle",
+  "entityCount": 2,
+  "attributeDetails": [
+    {
+      "id": "http://example.org/vehicle/brandName",
+      "type": "Attribute",
+      "attributeName": "brandName",
+      "attributeTypes": [
+        "Property"
+      ]
+    },
+    {
+      "id": "http://example.org/common/isParked",
+      "type": "Attribute",
+      "attributeName": "isParked",
+      "attributeTypes": [
+        "Relationship"
+      ]
+    },
+    {
+      "id": "https://uri.etsi.org/ngsi-ld/location",
+      "type": "Attribute",
+      "attributeName": "location",
+      "attributeTypes": [
+        "GeoProperty"
+      ]
+    },
+    {
+      "id": "http://example.org/vehicle/speed",
+      "type": "Attribute",
+      "attributeName": "speed",
+      "attributeTypes": [
+        "Property"
+      ]
+    }
+  ]
+}

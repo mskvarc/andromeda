@@ -3,14 +3,14 @@
 //! The JSON-LD processor resolves terms from a parsed context on every
 //! document. [`BatchTermMap`] does it once for a whole batch: the core
 //! context's compile-time table, merged with whatever the request's own
-//! contexts define, plus the active `@vocab` and a prefix table sorted
-//! longest-first as JSON-LD 1.1 clause 4.4 requires.
+//! contexts define, plus the active `@vocab`.
 //!
 //! It also decides whether the fastpath may run at all. Anything the merge
 //! cannot honour exactly — a user context that redefines a core term to a
 //! different IRI, a term carrying a scoped `@context`, a context that would
-//! not load — makes the whole batch ineligible rather than producing an
-//! expansion that differs from the processor's.
+//! not load, a term declaration whose IRI resolves against nothing — makes the
+//! whole batch ineligible rather than producing an expansion that differs from
+//! the processor's.
 
 use crate::{
     context_spec::{ContextSpec, CoreContextPolicy},
@@ -20,7 +20,10 @@ use crate::{
         core_term_semantics::core_term_semantics,
         term_map::{
             coercion::TermCoercion,
-            user_term::{ResolvedTerm, UserTermTable, UserTermTableCache, parse_user_context},
+            declared_iri::resolve_term_declarations,
+            resolved_term::ResolvedTerm,
+            user_term::{UserTermTable, UserTermTableCache, parse_user_context},
+            vocabulary::CoreVocabulary,
         },
     },
     loader::http::HttpContextLoader,
@@ -30,10 +33,10 @@ use serde_json::Value;
 use std::{borrow::Cow, collections::HashMap};
 
 pub(crate) mod coercion;
+pub(crate) mod declared_iri;
+pub(crate) mod resolved_term;
 pub(crate) mod user_term;
 pub(crate) mod vocabulary;
-
-use crate::engine::term_map::vocabulary::CoreVocabulary;
 
 /// The XSD namespace, available as `xsd:` without any context declaring it.
 static XSD_PREFIX: Iri<&'static str> = iri!("http://www.w3.org/2001/XMLSchema#");
@@ -50,9 +53,6 @@ pub struct BatchTermMap {
     terms: HashMap<Box<str>, ResolvedTerm>,
     /// The active `@vocab`, which any term not otherwise defined falls back to.
     vocab: IriBuf,
-    /// Prefix definitions, longest first so `exFoo:bar` beats `ex:` per
-    /// JSON-LD 1.1 clause 4.4.
-    prefix_table: Vec<(Box<str>, IriBuf)>,
     /// The core context URL this batch resolves versionless references to, so
     /// an entity's inline core context can be checked against it.
     core_url: IriBuf,
@@ -84,6 +84,10 @@ enum IneligibilityReason {
     /// not model but the processor honours (`@language`, `@base`, `@import`,
     /// `@reverse`, `@prefix`, …).
     UnsupportedContextFeature,
+    /// A term declaration names an IRI the active context resolves to nothing —
+    /// a bare name that only the `@vocab` fallback could expand, or a compact
+    /// IRI whose prefix chain closes on itself.
+    UnresolvableTermIri,
 }
 
 impl BatchTermMap {
@@ -96,8 +100,8 @@ impl BatchTermMap {
     /// Expand a term to its IRI.
     ///
     /// In order: an IRI is already one; then the merged term table; then the
-    /// prefix table longest-first; then the four built-in prefixes; then the
-    /// active `@vocab`.
+    /// prefix-flagged terms of that same table; then the three built-in
+    /// prefixes; then the active `@vocab`.
     pub(crate) fn expand_iri<'a>(&'a self, term: &'a str) -> Cow<'a, str> {
         if is_full_iri(term) {
             return Cow::Borrowed(term);
@@ -106,8 +110,8 @@ impl BatchTermMap {
             return Cow::Borrowed(resolved.iri.as_str());
         }
         if let Some((prefix, suffix)) = term.split_once(':') {
-            if let Some((_, expansion)) = self.prefix_table.iter().find(|(declared, _)| prefix == declared.as_ref()) {
-                return Cow::Owned(format!("{}{suffix}", expansion.as_str()));
+            if let Some(namespace) = self.terms.get(prefix).and_then(ResolvedTerm::prefix_mapping) {
+                return Cow::Owned(format!("{}{suffix}", namespace.as_str()));
             }
             if let Some(expansion) = builtin_prefix(prefix) {
                 return Cow::Owned(format!("{expansion}{suffix}"));
@@ -189,7 +193,10 @@ pub(crate) async fn build_batch_term_map(
                     coercion: declared.and_then(|term| term.coercion.clone()),
                     container: declared.and_then(|term| term.container),
                     has_scoped_context: declared.is_some_and(|term| term.has_scoped_context),
-                    // A core term is never a user prefix candidate.
+                    // A core term is never a user prefix candidate: the
+                    // processor keeps `ngsi-ld:Thing` and `geojson:Feature`
+                    // verbatim in a term declaration, and the fastpath has to
+                    // reach the same IRI.
                     simple: false,
                 },
             )
@@ -200,7 +207,6 @@ pub(crate) async fn build_batch_term_map(
     // context and never overwritten: clause 5.5.7 gives the core `@vocab`
     // absolute precedence, so a user `@vocab` does not change it.
     let vocab = IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/default-context/"));
-    let mut prefix_table: Vec<(Box<str>, IriBuf)> = Vec::new();
     let mut eligibility = FastpathEligibility::Eligible;
 
     // A spec that omits the core context resolves nothing the seeded table
@@ -219,7 +225,7 @@ pub(crate) async fn build_batch_term_map(
             continue;
         }
         match cache.get_or_load(loader, &url).await {
-            Ok(table) => merge_user_table(&mut terms, &mut prefix_table, &table, &mut eligibility),
+            Ok(table) => merge_user_table(&mut terms, &table, &mut eligibility),
             Err(_unresolved) => eligibility = FastpathEligibility::Ineligible(IneligibilityReason::ContextUnavailable),
         }
     }
@@ -238,7 +244,7 @@ pub(crate) async fn build_batch_term_map(
                         continue;
                     }
                     match cache.get_or_load(loader, &url).await {
-                        Ok(table) => merge_user_table(&mut terms, &mut prefix_table, &table, &mut eligibility),
+                        Ok(table) => merge_user_table(&mut terms, &table, &mut eligibility),
                         Err(_unresolved) => {
                             eligibility = FastpathEligibility::Ineligible(IneligibilityReason::ContextUnavailable);
                             break;
@@ -247,7 +253,7 @@ pub(crate) async fn build_batch_term_map(
                 }
                 Value::Object(_) => {
                     let table = parse_user_context(item);
-                    merge_user_table(&mut terms, &mut prefix_table, &table, &mut eligibility);
+                    merge_user_table(&mut terms, &table, &mut eligibility);
                 }
                 Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => {
                     eligibility = FastpathEligibility::Ineligible(IneligibilityReason::UnsupportedContextFeature);
@@ -257,21 +263,16 @@ pub(crate) async fn build_batch_term_map(
         }
     }
 
-    // Longest first, then alphabetically, so the order is total and the
-    // JSON-LD 1.1 clause 4.4 longest-match rule holds.
-    prefix_table.sort_by(|left, right| right.0.len().cmp(&left.0.len()).then_with(|| left.0.cmp(&right.0)));
-
     BatchTermMap {
         terms,
         vocab,
-        prefix_table,
         core_url: core_url.clone(),
         eligibility,
     }
 }
 
 /// Flatten a body `@context` while preserving JSON-LD declaration order.
-fn collect_context_items<'a>(value: &'a Value, items: &mut Vec<&'a Value>) {
+pub(crate) fn collect_context_items<'a>(value: &'a Value, items: &mut Vec<&'a Value>) {
     match value {
         Value::Array(values) => values.iter().for_each(|value| collect_context_items(value, items)),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => items.push(value),
@@ -281,20 +282,23 @@ fn collect_context_items<'a>(value: &'a Value, items: &mut Vec<&'a Value>) {
 /// Merge one request context into the accumulating batch table.
 ///
 /// Stops at the first thing the fastpath cannot honour: a scoped `@context`, a
-/// context feature it does not model, or a term that redefines one already
-/// recorded in a way the merge cannot honour. Redefining a term to the exact
-/// same IRI, coercion and container is not a conflict and does not disable
-/// anything. The `@vocab` is never touched — the core one wins (clause 5.5.7).
-fn merge_user_table(
-    terms: &mut HashMap<Box<str>, ResolvedTerm>,
-    prefix_table: &mut Vec<(Box<str>, IriBuf)>,
-    table: &UserTermTable,
-    eligibility: &mut FastpathEligibility,
-) {
+/// context feature it does not model, a term declaration whose IRI the active
+/// context resolves to nothing, or a term that redefines one already recorded
+/// in a way the merge cannot honour. Redefining a term to the exact same IRI,
+/// coercion and container is not a conflict and does not disable anything. The
+/// `@vocab` is never touched — the core one wins (clause 5.5.7).
+///
+/// The document's declarations are resolved against `terms` before any of them
+/// is compared or inserted, because clause 4.1.2 resolves a term definition's
+/// `@id` against the active context: `{"example": "http://example.org/",
+/// "Place": "example:Place"}` contributes `http://example.org/Place`, and
+/// comparing the unresolved text against an existing IRI would read a
+/// redefinition where there is none.
+fn merge_user_table(terms: &mut HashMap<Box<str>, ResolvedTerm>, table: &UserTermTable, eligibility: &mut FastpathEligibility) {
     if matches!(*eligibility, FastpathEligibility::Ineligible(_)) {
         return;
     }
-    if table.has_scoped_contexts {
+    if table.scoped_context_term.is_some() {
         *eligibility = FastpathEligibility::Ineligible(IneligibilityReason::HasScopedContexts);
         return;
     }
@@ -302,7 +306,11 @@ fn merge_user_table(
         *eligibility = FastpathEligibility::Ineligible(IneligibilityReason::UnsupportedContextFeature);
         return;
     }
-    for (term, resolved) in &table.terms {
+    let Ok(declared) = resolve_term_declarations(&table.terms, terms) else {
+        *eligibility = FastpathEligibility::Ineligible(IneligibilityReason::UnresolvableTermIri);
+        return;
+    };
+    for (term, resolved) in declared {
         // A redefinition that changes the IRI, the coercion or the container is
         // a conflict: comparing IRIs alone let a user context drop the coercion
         // off a protected core term (e.g. redeclaring `observedAt` to the same
@@ -313,14 +321,7 @@ fn merge_user_table(
             *eligibility = FastpathEligibility::Ineligible(IneligibilityReason::UserOverridesCoreTerm);
             return;
         }
-        // Only a *simple* `term: "iri"` definition whose IRI ends in `/` or `#`
-        // is a prefix by the JSON-LD 1.1 clause 4.4 convention; an expanded
-        // (object) definition would need `@prefix: true`, which the walker does
-        // not model, so it is never treated as one here.
-        if resolved.simple && (resolved.iri.ends_with('/') || resolved.iri.ends_with('#')) {
-            prefix_table.push((term.clone(), resolved.iri.clone())); // clone: the parsed table is cached and stays valid
-        }
-        terms.insert(term.clone(), resolved.clone()); // clone: the parsed table is cached and stays valid
+        terms.insert(term, resolved);
     }
 }
 
@@ -671,6 +672,168 @@ mod tests {
         let spec = body_spec(json!({ "parentOf": { "@reverse": "http://ex.com/childOf" } }));
         let handle = offline_engine().batch_context_handle(&spec).await;
         assert!(!handle.fast_eligible(), "@reverse in a term definition disables the fastpath");
+    }
+
+    /// The defect this resolution exists for. JSON-LD 1.1 clause 4.1.2 expands a
+    /// term definition's `@id` against the active context, so a `@id` written as
+    /// a compact IRI resolves through the prefix the same context declares. The
+    /// fastpath recorded `example:Place` verbatim -- it parses as an absolute
+    /// IRI under the scheme `example` -- and a batch write then stored the
+    /// entity under a type the processor never produces.
+    #[tokio::test]
+    async fn a_term_whose_id_is_a_compact_iri_expands_identically_on_both_paths() {
+        let engine = offline_engine();
+        let spec = body_spec(json!({"example": "http://example.org/", "Place": "example:Place", "address": "example:address"}));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(handle.fast_eligible(), "a compact-IRI term definition is a shape the fastpath resolves");
+
+        let document = json!({"id": "urn:ngsi-ld:Place:1", "type": "Place", "address": {"type": "Property", "value": "Pariser Platz"}});
+        let fast = engine.try_fast_expand(&document, &handle).expect("the fastpath expands");
+        let slow = engine.expand(document, &spec).await.expect("the processor expands");
+
+        let entity = fast[0].as_object().expect("an entity object");
+        pretty_assertions::assert_eq!(entity["@type"], json!(["http://example.org/Place"]));
+        assert!(entity.contains_key("http://example.org/address"), "{entity:?}");
+        assert_canonically_equal(&fast, &slow);
+    }
+
+    /// A prefix may itself be declared by a compact IRI, and the chain resolves
+    /// to the IRI at its root on both paths.
+    #[tokio::test]
+    async fn a_chain_of_compact_iri_prefixes_expands_identically_on_both_paths() {
+        let engine = offline_engine();
+        let spec = body_spec(json!({
+            "base": "http://example.org/",
+            "sub": "base:ontology/",
+            "Place": "sub:Place",
+            "address": "sub:address"
+        }));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(handle.fast_eligible());
+
+        let document = json!({"id": "urn:ngsi-ld:Place:2", "type": "Place", "address": {"type": "Property", "value": "Unter den Linden"}});
+        let fast = engine.try_fast_expand(&document, &handle).expect("the fastpath expands");
+        let slow = engine.expand(document, &spec).await.expect("the processor expands");
+
+        pretty_assertions::assert_eq!(fast[0]["@type"], json!(["http://example.org/ontology/Place"]));
+        assert_canonically_equal(&fast, &slow);
+    }
+
+    /// A JSON object states no member order, so a prefix written after the term
+    /// that uses it resolves exactly as one written before it.
+    #[tokio::test]
+    async fn a_prefix_declared_after_the_term_that_uses_it_expands_identically_on_both_paths() {
+        let engine = offline_engine();
+        let spec = body_spec(json!({"Place": {"@id": "example:Place"}, "example": "http://example.org/"}));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(handle.fast_eligible());
+
+        let document = json!({"id": "urn:ngsi-ld:Place:3", "type": "Place", "speed": {"type": "Property", "value": 1}});
+        let fast = engine.try_fast_expand(&document, &handle).expect("the fastpath expands");
+        let slow = engine.expand(document, &spec).await.expect("the processor expands");
+
+        pretty_assertions::assert_eq!(fast[0]["@type"], json!(["http://example.org/Place"]));
+        assert_canonically_equal(&fast, &slow);
+    }
+
+    /// Clause 4.1.3: with no term definition for the prefix, the declaration is
+    /// already an absolute IRI and stands as written.
+    #[tokio::test]
+    async fn a_term_whose_prefix_no_context_declares_expands_identically_on_both_paths() {
+        let engine = offline_engine();
+        let spec = body_spec(json!({"Place": "unknown:Place", "address": "unknown:address"}));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(handle.fast_eligible());
+
+        let document = json!({"id": "urn:ngsi-ld:Place:4", "type": "Place", "address": {"type": "Property", "value": "Nowhere"}});
+        let fast = engine.try_fast_expand(&document, &handle).expect("the fastpath expands");
+        let slow = engine.expand(document, &spec).await.expect("the processor expands");
+
+        pretty_assertions::assert_eq!(fast[0]["@type"], json!(["unknown:Place"]));
+        assert_canonically_equal(&fast, &slow);
+    }
+
+    /// JSON-LD 1.1 clause 4.1.2 gives the prefix flag to any simple declaration
+    /// ending with a gen-delim, so a URN namespace ending in `:` is a prefix
+    /// exactly as an HTTP namespace ending in `/` is.
+    #[tokio::test]
+    async fn a_urn_namespace_prefix_expands_identically_on_both_paths() {
+        let engine = offline_engine();
+        let spec = body_spec(json!({"ex": "urn:example:", "Place": "ex:Place"}));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(handle.fast_eligible());
+
+        let document = json!({"id": "urn:ngsi-ld:Place:5", "type": "Place", "speed": {"type": "Property", "value": 1}});
+        let fast = engine.try_fast_expand(&document, &handle).expect("the fastpath expands");
+        let slow = engine.expand(document, &spec).await.expect("the processor expands");
+
+        assert_canonically_equal(&fast, &slow);
+    }
+
+    /// A term definition's `@type` is IRI-expanded the same way its `@id` is, so
+    /// a datatype written as a compact IRI reaches the same datatype URI on both
+    /// paths.
+    #[tokio::test]
+    async fn a_declared_datatype_written_as_a_compact_iri_expands_identically_on_both_paths() {
+        let engine = offline_engine();
+        let spec = body_spec(json!({
+            "ex": "http://example.org/",
+            "reading": {"@id": "ex:reading", "@type": "ex:Celsius"}
+        }));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(handle.fast_eligible());
+
+        let document = json!({
+            "id": "urn:ngsi-ld:Device:1",
+            "type": "Device",
+            "speed": {"type": "Property", "value": 1, "reading": "21.5"}
+        });
+        let fast = engine.try_fast_expand(&document, &handle).expect("the fastpath expands");
+        let slow = engine.expand(document, &spec).await.expect("the processor expands");
+
+        assert_canonically_equal(&fast, &slow);
+    }
+
+    /// The prefixes the fastpath supplies without a context declaring them --
+    /// `xsd`, `ngsi-ld` and `geojson` -- are a convenience for expanding a
+    /// *document* term. A term *declaration* must not be resolved through them:
+    /// the processor keeps `geojson:Feature` and `xsd:Thing` as the absolute
+    /// IRIs they are, so resolving a declaration through the built-in table
+    /// would open the same divergence this resolution closes.
+    #[tokio::test]
+    async fn a_term_declared_through_a_built_in_prefix_stays_verbatim_on_both_paths() {
+        let engine = offline_engine();
+        let spec = body_spec(json!({"Shape": "geojson:Feature", "Kind": "xsd:Thing", "Node": "ngsi-ld:Thing"}));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(handle.fast_eligible());
+
+        for (declared_type, expected) in [("Shape", "geojson:Feature"), ("Kind", "xsd:Thing"), ("Node", "ngsi-ld:Thing")] {
+            let document = json!({"id": "urn:ngsi-ld:Shape:1", "type": declared_type, "speed": {"type": "Property", "value": 1}});
+            let fast = engine.try_fast_expand(&document, &handle).expect("the fastpath expands");
+            let slow = engine.expand(document, &spec).await.expect("the processor expands");
+
+            pretty_assertions::assert_eq!(fast[0]["@type"], json!([expected]));
+            assert_canonically_equal(&fast, &slow);
+        }
+    }
+
+    /// A declaration that names neither an absolute IRI nor a prefix the context
+    /// declares is an invalid IRI mapping, which the processor refuses. The
+    /// fastpath declines it rather than inventing an expansion, so the client
+    /// receives that refusal instead of a silently different entity.
+    #[tokio::test]
+    async fn a_term_declared_by_a_bare_name_falls_back_to_the_processors_refusal() {
+        let engine = offline_engine();
+        let spec = body_spec(json!({"Place": "Somewhere"}));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(!handle.fast_eligible(), "a declaration that names no IRI disables the fastpath");
+
+        let document = json!({"id": "urn:ngsi-ld:Place:6", "type": "Place", "speed": {"type": "Property", "value": 1}});
+        assert!(
+            engine.try_fast_expand(&document, &handle).is_none(),
+            "an unresolvable declaration must keep the fastpath from expanding"
+        );
+        engine.expand(document, &spec).await.expect_err("the processor refuses an invalid IRI mapping");
     }
 
     #[tokio::test]

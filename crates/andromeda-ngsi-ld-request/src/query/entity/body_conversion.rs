@@ -1,7 +1,7 @@
 //! Conversion of the canonical clause-5.2.23 body into entity-query parameters.
 
 use crate::{
-    attribute_selection::validate_attrs,
+    attribute_selection::{AttrsAdmission, validate_attrs},
     error::ParameterError,
     query::{deserialization::OptionalGeoQuery, entity::parameters::EntityQueryParameters, entity_selector::EntitySelectorParams},
 };
@@ -64,7 +64,7 @@ impl TryFrom<Query> for EntityQueryParameters {
             drop: None,
             keep: None,
         };
-        validate_attrs(parameters.attrs.as_deref())?;
+        validate_attrs(parameters.attrs.as_deref(), AttrsAdmission::AttributeNamesOnly)?;
         Ok(parameters)
     }
 }

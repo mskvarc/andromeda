@@ -5,3 +5,6 @@ conductor
 results*
 *.stderr
 **/grammar/.generated/
+
+# Self-signed TLS material for the docker/tls example stack (see docs/tls-deployment.md).
+/docker/tls/certs/

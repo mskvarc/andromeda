@@ -71,6 +71,7 @@ pub fn compile_subscription(stored: &StoredSubscription) -> CompiledSubscription
         notification_join_level: sub.notification.join_level.unwrap_or(NonZeroU32::MIN),
         compiled_csf: sub.filters.csf.clone(), // clone: compiled state owns its filter AST.
         local_only: sub.delivery.local_only.unwrap_or(false),
+        ngsild_conformance: sub.delivery.ngsild_conformance,
     }
 }
 

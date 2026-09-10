@@ -11,6 +11,7 @@ use crate::{attribute_value_order::AttributeValue, order_geography::geo_order_di
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     error::QueryError,
+    filter::path::AttrPath,
     geo::query::GeoQuery,
     ordering::{
         compiled::ResultOrdering,
@@ -70,11 +71,18 @@ pub fn apply(
             OrderTarget::Scope => {
                 select.order_by_expr_with_nulls(rows.search_column(EntitySearch::ScopePaths), sql_order(direction), NullOrdering::Last);
             }
-            OrderTarget::Attribute(name) => {
+            OrderTarget::Attribute(path) => {
+                // Only an attribute is a `GeoProperty`. Clause 4.23.1 sorts by
+                // distance when "Attribute is a GeoProperty"; a path descending
+                // into a sub-attribute or into a member of a compound value
+                // addresses a value held inside one, which has no geometry of
+                // its own, so such a term contributes the clause 4.23.2 value
+                // keys alone.
                 let distance = reference
                     .as_deref()
-                    .and_then(|reference| geo_order_distance(name, attribute_names, rows, reference));
-                order_by_attribute(select, rows.payload_column(), name, position, direction, &collation, distance);
+                    .filter(|_| path.is_simple())
+                    .and_then(|reference| geo_order_distance(&path.attr, attribute_names, rows, reference));
+                order_by_attribute(select, &rows.payload_column(), path, position, direction, &collation, distance);
             }
         }
     }
@@ -112,8 +120,8 @@ fn distance_reference(term: &CompiledOrderTerm, ordering: &ResultOrdering, geo: 
 /// two entities the same distance away.
 fn order_by_attribute(
     select: &mut SelectStatement,
-    payload: SimpleExpr,
-    attribute: &AttributeName,
+    payload: &SimpleExpr,
+    path: &AttrPath,
     position: usize,
     direction: SortDirection,
     collation: &PostgresCollation,
@@ -124,7 +132,7 @@ fn order_by_attribute(
     }
 
     let value = AttributeValue::at(position);
-    select.join_lateral(JoinType::LeftJoin, value.lateral(payload, attribute), value.alias(), SeaExpr::val(true));
+    select.join_lateral(JoinType::LeftJoin, value.lateral(payload, path), value.alias(), SeaExpr::val(true));
     // The rank runs ascending whichever way the term does: the sequence it is
     // read from already runs the term's way, and reversing the key as well
     // would move Null and the absent attribute to the front of a descending

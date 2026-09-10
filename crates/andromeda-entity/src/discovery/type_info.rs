@@ -4,19 +4,17 @@ use crate::{
     discovery::{
         DiscoveryScope,
         EntityDiscoveryService,
-        compaction_fixups::{ensure_array_fields, strip_ngsild_prefix},
         stored_names::{extract_attribute_types, parse_discovery_iri, parse_type_name},
     },
     error::EntityError,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{context_spec::ContextSpec, engine::options::CompactOptions};
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::{
     attribute_list::{AttributeDetail, AttributeResourceType},
     entity_type_list::{EntityTypeInfo, EntityTypeInfoType},
 };
-use jsonld::Expandable;
 use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
@@ -35,9 +33,8 @@ impl EntityDiscoveryService {
     /// # Errors
     ///
     /// Reports [`EntityError::JsonLd`] when `type_name` cannot be expanded
-    /// against `context` or the result cannot be compacted,
-    /// [`EntityError::Validation`] when the expanded term is not a well-formed
-    /// entity type name, [`EntityError::TypeNotFound`] when neither the local
+    /// against `context`, [`EntityError::Internal`] when a stored name does not
+    /// read back as one, [`EntityError::TypeNotFound`] when neither the local
     /// store nor the registry knows the type, and [`EntityError::Persistence`]
     /// when the store or the registry could not be consulted.
     pub async fn type_info(
@@ -97,12 +94,12 @@ impl EntityDiscoveryService {
         }
 
         // Build typed attribute details
-        let mut attribute_details: Vec<AttributeDetail> = Vec::new();
+        let mut attribute_details: Vec<AttributeDetail> = Vec::with_capacity(attributes.len());
         for (name, types) in &attributes {
             attribute_details.push(AttributeDetail {
                 id: parse_discovery_iri(name.to_string())?,
                 type_: AttributeResourceType,
-                attribute_name: name.clone(), // clone: the map owns the key and the record owns its name
+                attribute_name: self.compacted_attribute_name(name, context).await?,
                 attribute_types: types.iter().copied().collect(),
             });
         }
@@ -114,18 +111,11 @@ impl EntityDiscoveryService {
         let type_info = EntityTypeInfo::builder()
             .id(type_iri)
             .type_(EntityTypeInfoType)
-            .type_name(parse_type_name(type_name)?)
+            .type_name(self.compacted_type_name(&type_key, context).await?)
             .entity_count(count)
             .attribute_details(attribute_details)
             .build();
 
-        // Convert to expanded JSON-LD using the trait, then compact
-        let expanded = serde_json::json!([type_info.expand::<serde_json::Value>()]);
-        let mut compacted = self.engine.compact(expanded, context, CompactOptions::default()).await?;
-
-        strip_ngsild_prefix(&mut compacted);
-        ensure_array_fields(&mut compacted, &["attributeTypes"]);
-
-        Ok(compacted)
+        Ok(serde_json::to_value(type_info)?)
     }
 }

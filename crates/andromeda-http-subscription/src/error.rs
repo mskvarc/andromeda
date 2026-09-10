@@ -1,9 +1,6 @@
 //! Exhaustive HTTP classification for subscription failures.
 
-use andromeda_http_extraction::{
-    classification::{classify_jsonld_error, classify_query_error, classify_request_origin_error},
-    origin::RequestOriginError,
-};
+use andromeda_http_extraction::classification::{classify_jsonld_error, classify_query_error};
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_render::error::RenderError;
@@ -62,10 +59,6 @@ where
 
 pub(crate) fn public_problem(detail: impl Into<String>, instance: &Uri) -> ProblemResponse {
     ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail).with_instance(instance.clone())
-}
-
-pub(crate) fn origin_problem(error: &RequestOriginError, instance: &Uri) -> ProblemResponse {
-    classify_request_origin_error(error).with_instance(instance.clone())
 }
 
 /// Sanitize a failure that no client input can provoke, attaching `instance`.

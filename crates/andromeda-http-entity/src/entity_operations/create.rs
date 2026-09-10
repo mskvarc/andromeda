@@ -52,7 +52,9 @@ pub(crate) async fn batch_create(
     // new BatchEntityError shall be added to E containing the failed Entity ID
     // and the related ProblemDetails": the clause 5.5.4 validation an entity
     // fails is that entity's failure, not the request's.
-    let entities = admitted_batch_entities(service, BatchWrite::Create, entities, &context, &mut entity_errors).await;
+    let entities = admitted_batch_entities(service, BatchWrite::Create, entities, &context, &mut entity_errors)
+        .await
+        .with_entity_instance(&uri)?;
 
     if entities.is_empty() && entity_errors.is_empty() {
         return Err(public_error(

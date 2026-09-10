@@ -53,7 +53,9 @@ pub(crate) async fn batch_merge(
     // included in the input Array", each entity answering for itself: the
     // clause 5.5.4 validation an entity fails contributes a BatchEntityError of
     // its own rather than failing the whole request.
-    let entities = admitted_batch_entities(service, BatchWrite::Merge, entities, &context, &mut entity_errors).await;
+    let entities = admitted_batch_entities(service, BatchWrite::Merge, entities, &context, &mut entity_errors)
+        .await
+        .with_entity_instance(&uri)?;
 
     if entities.is_empty() && entity_errors.is_empty() {
         return Err(public_error(

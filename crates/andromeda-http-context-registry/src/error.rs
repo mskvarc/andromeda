@@ -1,7 +1,6 @@
 //! Exhaustive HTTP classification for Context Registry failures.
 
 use andromeda_context_registry::error::ContextRegistryError;
-use andromeda_http_extraction::{classification::classify_request_origin_error, origin::RequestOriginError};
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::http::Uri;
@@ -41,11 +40,6 @@ impl<T> ContextRegistryResultExt<T> for Result<T, ContextRegistryError> {
     fn with_context_registry_instance(self, instance: &Uri) -> Result<T, ProblemResponse> {
         self.map_err(|error| classify_context_registry_error(&error).with_instance(instance.clone()))
     }
-}
-
-/// Convert a typed request-origin failure without an aggregate broker error.
-pub(crate) fn origin_problem(error: &RequestOriginError, instance: &Uri) -> ProblemResponse {
-    classify_request_origin_error(error).with_instance(instance.clone())
 }
 
 #[cfg(test)]

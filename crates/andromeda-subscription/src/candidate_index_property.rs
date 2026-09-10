@@ -176,6 +176,7 @@ fn build_subscription(ordinal: usize, desc: &SubscriptionDesc) -> Result<Compile
         notification_join_level: NonZeroU32::MIN,
         compiled_csf: None,
         local_only: false,
+        ngsild_conformance: None,
         notification_projection: Projection::default(),
     })
 }

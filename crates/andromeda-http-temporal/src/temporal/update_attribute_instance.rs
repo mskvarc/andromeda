@@ -60,8 +60,9 @@ pub async fn update_attr_instance(
     // identity column rather than searching both.
     let instance = InstanceIdentity::from_uri(instance_id, InstanceFamily::Attribute);
     // Clauses 4.5.3.2 and 4.5.3.3 prohibit the two seals on a Relationship in
-    // every representation, so a modified instance is held to them as well.
-    admit_written_instance(&attr_id, &payload, &uri)?;
+    // every representation, so a modified instance is held to them as well, and
+    // clause 5.5.7 refuses a user `@context` written anywhere but the top level.
+    admit_written_instance(service.engine(), &attr_id, &payload, &context, &uri).await?;
 
     if params.local.unwrap_or(false) {
         service

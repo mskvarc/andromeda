@@ -3,6 +3,7 @@
 use crate::{
     attribute_instance_merge::{MergePolicy, merge_entity_attributes},
     outcome::{ForwardedEntities, ForwardedTemporalEntities, ForwardedWriteResult},
+    transient_entity_conflict::differentiate_transient_versions,
 };
 use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
@@ -63,7 +64,7 @@ fn holds_attributes(entity: &Entity) -> bool {
 }
 
 /// The clause 4.5.5 merge policy a registration mode calls for.
-const fn policy_of(mode: ForwardingMode) -> MergePolicy {
+pub(crate) const fn policy_of(mode: ForwardingMode) -> MergePolicy {
     match mode {
         ForwardingMode::Inclusive | ForwardingMode::Exclusive | ForwardingMode::Redirect => MergePolicy::Instances,
         ForwardingMode::Auxiliary => MergePolicy::SupplementMissing,
@@ -77,10 +78,18 @@ const fn policy_of(mode: ForwardingMode) -> MergePolicy {
 /// added, except from an auxiliary source, which only supplements entities
 /// present already (clause 4.3.6.2).
 #[must_use]
-pub fn merge_query_results(local_entities: Vec<Entity>, remote_results: Vec<ForwardedEntities>) -> Vec<Entity> {
+pub fn merge_query_results(mut local_entities: Vec<Entity>, mut remote_results: Vec<ForwardedEntities>) -> Vec<Entity> {
     if remote_results.is_empty() {
         return local_entities;
     }
+
+    // Clause 4.5.5.2 differentiates the versions while they are still
+    // separate: the fold below resolves the entity-level `expiresAt` away, and
+    // after the first version is folded no value on the base belongs to any
+    // one source any more.
+    differentiate_transient_versions(&mut local_entities, &mut remote_results);
+    let local_entities = local_entities;
+    let remote_results = remote_results;
 
     let mut entity_map: IndexMap<Uri, Entity> = IndexMap::with_capacity(local_entities.len());
 
@@ -110,8 +119,12 @@ pub fn merge_query_results(local_entities: Vec<Entity>, remote_results: Vec<Forw
 ///
 /// Returns the merged entity, or `None` when no source held it.
 #[must_use]
-pub fn merge_retrieve_results(local_entity: Option<Entity>, remote_results: Vec<ForwardedEntities>) -> Option<Entity> {
+pub fn merge_retrieve_results(local_entity: Option<Entity>, mut remote_results: Vec<ForwardedEntities>) -> Option<Entity> {
     let mut result = local_entity;
+
+    // Clause 4.5.5.2, for the same reason the query merge runs it first.
+    differentiate_transient_versions(result.as_mut_slice(), &mut remote_results);
+    let remote_results = remote_results;
 
     for forwarded in remote_results {
         let policy = policy_of(forwarded.mode);

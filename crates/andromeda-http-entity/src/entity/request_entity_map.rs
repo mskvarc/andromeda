@@ -16,6 +16,7 @@ use andromeda_entity::query::EntityQueryService;
 use andromeda_entity_map::{
     contribution::SourceContribution,
     fingerprint::{FingerprintedRequest, fingerprint_of},
+    query_scoping::hold_selection_to_map,
     recording::{LocalMapEntities, MapListing, PageFiltering, RecordingFailure},
     reuse::{EntityMapFlag, EntityMapUse},
     service::EntityMapService,
@@ -149,6 +150,9 @@ impl LocalMapEntities for LocalEntitySource<'_> {
 /// filters; an expired or unknown one yields no inference, so a fresh map is
 /// created instead. The fingerprint is taken before the query is narrowed, so
 /// that a follow-up under the map is compared against the request as written.
+/// Both the query string's flat identifier list and a clause 5.2.23 body's
+/// clause 5.2.33 selectors are narrowed, since compilation reads the selectors
+/// alone whenever the body carried one.
 ///
 /// # Errors
 ///
@@ -175,7 +179,7 @@ pub(crate) async fn resolve_query_map_use(
         .await
         .with_entity_instance(instance)?;
     if let Some(map) = map_use.reused() {
-        query.id = Some(EntityMapService::scope_query_ids(map, query.id.as_deref()));
+        hold_selection_to_map(map, &mut query.id, &mut query.entity_selectors);
     }
     Ok(map_use)
 }
