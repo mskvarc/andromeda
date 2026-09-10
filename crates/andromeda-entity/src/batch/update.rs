@@ -18,6 +18,7 @@ use crate::{
     expanded_member::unwrap_expanded_ref,
     notification_plan::attribute_change_groups,
     side_effect::BatchSideEffectMode,
+    write_admission::BatchWrite,
 };
 use andromeda_context_commit::precondition::Precondition;
 use andromeda_context_space::context_target::ContextTarget;
@@ -58,7 +59,26 @@ impl EntityService {
         overwrite: OverwritePolicy,
         mode: BatchSideEffectMode,
     ) -> Result<BatchResult, EntityError> {
-        let (prepared, mut errors) = self.prepare_entity_refs(entities, context).await;
+        // Clause 5.5.4 excepts only the fragments "used in partial update and
+        // merge operations" from its NGSI-LD Null prohibitions, and clause 5.2.1
+        // makes every other placement of the sentinel `BadRequestData`. A batch
+        // update is neither: clause 5.6.9.4's local phase names "the behaviour
+        // defined by clause 5.6.3" -- Append Attributes, which carries no
+        // NGSI-LD Null support of its own -- and clause 5.6.9 does not carry the
+        // "NGSI-LD Nulls should be supported by this operation" sentence that
+        // clauses 5.6.2, 5.6.4 and 5.6.17 do. The sentinel therefore has no
+        // deletion semantics to be given here, and storing it would put
+        // "urn:ngsi-ld:null" in a value the broker later serves back.
+        //
+        // What the code below runs is not clause 5.6.3 for the overwriting
+        // default of clause 5.6.9.3: an overwriting update applies the clause
+        // 5.6.2 patch first and appends what it left, and only `noOverwrite`
+        // appends alone. That deviation is recorded in
+        // `docs/spec-conformance-sweep.md`; it does not move the admission,
+        // because clause 5.6.2's NGSI-LD Null support is a statement about the
+        // Update Attributes operation and its Entity Fragment, not about a
+        // whole Entity submitted to a batch.
+        let (prepared, mut errors) = self.prepare_entity_refs(entities, context, BatchWrite::Update.null_sentinel_admission()).await;
         if prepared.is_empty() {
             return Ok(BatchResult { success: Vec::new(), errors });
         }

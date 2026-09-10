@@ -9,14 +9,13 @@ use crate::error::TemporalStoreError;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
-    ngsi_ld_date::NgsiLdDate,
     ngsi_ld_date_time::NgsiLdDateTime,
-    ngsi_ld_time::NgsiLdTime,
+    time_value::{TimeValue, TimeValueError},
     uri::Uri,
 };
 use andromeda_ngsi_ld_model::expanded::geo_property::expanded_geo_node_to_geometry;
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
+use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_temporal::attribute_instance_value::{object_list_target_iri, relationship_target_uri};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
@@ -301,8 +300,16 @@ fn property_value(instance: &Value) -> Result<AttributeValue, TemporalStoreError
     }
 }
 
-/// Decode a Property value the client typed as one of the three clause 4.6.3
-/// temporal forms, or `None` when the declared type is not one of them.
+/// Decode a Property value that is one of the three clause 4.6.3 time values, or
+/// `None` when it is an ordinary JSON string.
+///
+/// The classification is [`TimeValue::admitted`]'s, the same one the current
+/// projection and the `q` operand parser read: a `@type` the client declared
+/// names the form, and with none declared the clause 4.6.3 lexical form of the
+/// literal does, because the representation of those three data types *is* the
+/// string. A history row that classified a value differently from the row the
+/// projection wrote for it would answer a temporal `q` differently from the
+/// current-state one over the same value.
 ///
 /// A `DateTime` reaches its own column. A `Time` and a `Date` reach the string
 /// column, and are stored in the canonical rendering their type defines rather
@@ -310,30 +317,36 @@ fn property_value(instance: &Value) -> Result<AttributeValue, TemporalStoreError
 /// orders `Time` and `Date` values chronologically, and byte-wise order over the
 /// string column is chronological order only for a fixed-width canonical form.
 fn temporal_attribute_value(type_hint: Option<&str>, raw: &str) -> Option<Result<AttributeValue, TemporalStoreError>> {
-    let hint = type_hint?;
-    if hint == expanded_classes::DATE_TIME.as_str() {
-        return Some(raw.parse::<NgsiLdDateTime>().map(AttributeValue::DateTime).map_err(TemporalStoreError::from));
+    TimeValue::admitted(type_hint, raw).map(|admitted| admitted.map(recorded_time_value).map_err(|error| time_value_refusal(raw, error)))
+}
+
+/// Report a clause 4.6.3 refusal in the store's own vocabulary.
+///
+/// A `DateTime` keeps its typed source: it is the one of the three whose
+/// storable range and microsecond resolution are the column's, so a caller
+/// distinguishing that refusal from any other malformed value still can.
+fn time_value_refusal(raw: &str, error: TimeValueError) -> TemporalStoreError {
+    match error {
+        TimeValueError::DateTime(source) => TemporalStoreError::TimestampPrecision(source),
+        source @ (TimeValueError::Date(_) | TimeValueError::Time(_) | TimeValueError::NoTimeValueForm { .. }) => {
+            TemporalStoreError::Validation(format!("invalid time value property '{raw}': {source}"))
+        }
     }
-    if hint == expanded_classes::TIME.as_str() {
-        return Some(
-            raw.parse::<NgsiLdTime>()
-                .map(|time| AttributeValue::String(time.to_string()))
-                .map_err(|error| TemporalStoreError::Validation(format!("invalid Time property '{raw}': {error}"))),
-        );
+}
+
+/// The history value one clause 4.6.3 time value is recorded as.
+fn recorded_time_value(value: TimeValue) -> AttributeValue {
+    match value {
+        TimeValue::DateTime(instant) => AttributeValue::DateTime(instant),
+        TimeValue::Date(date) => AttributeValue::String(date.to_string()),
+        TimeValue::Time(time) => AttributeValue::String(time.to_string()),
     }
-    if hint == expanded_classes::DATE.as_str() {
-        return Some(
-            raw.parse::<NgsiLdDate>()
-                .map(|date| AttributeValue::String(date.to_string()))
-                .map_err(|error| TemporalStoreError::Validation(format!("invalid Date property '{raw}': {error}"))),
-        );
-    }
-    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 
     /// One expanded Property instance carrying a typed literal value.
     fn typed_property(type_iri: &str, value: &str) -> Value {
@@ -344,12 +357,27 @@ mod tests {
 
     #[test]
     fn a_time_typed_property_is_canonicalised_before_it_reaches_the_string_column() {
-        // Clause 4.6.3 admits any offset; the string column orders byte-wise, so
-        // only one fixed-width UTC rendering may be stored.
-        let columns = extract_attribute_value(&typed_property(expanded_classes::TIME.as_str(), "13:00:00+01:00"), AttributeType::Property)
-            .expect("a Time property")
-            .into_columns();
-        pretty_assertions::assert_eq!(columns.value_string.as_deref(), Some("12:00:00.000000Z"));
+        // Clause 4.6.3 admits a decimal fraction of one to six digits, written
+        // with a point or -- as a request-side compatibility form -- a comma.
+        // The string column orders byte-wise, so every accepted spelling has to
+        // reach it as the one fixed-width UTC rendering.
+        for spelling in ["12:00:00.5Z", "12:00:00,5Z"] {
+            let columns = extract_attribute_value(&typed_property(expanded_classes::TIME.as_str(), spelling), AttributeType::Property)
+                .expect("a Time property")
+                .into_columns();
+            pretty_assertions::assert_eq!(columns.value_string.as_deref(), Some("12:00:00.500000Z"), "{spelling}");
+        }
+    }
+
+    #[test]
+    fn a_time_typed_property_carrying_a_numeric_offset_is_refused() {
+        // Clause 4.6.3, Time: "The string shall not contain expressions of the
+        // difference between local time and UTC." Resolving `13:00:00+01:00` to
+        // `12:00:00Z`, as this path used to, let a spelling the clause forbids
+        // reach storage as a valid value.
+        let error = extract_attribute_value(&typed_property(expanded_classes::TIME.as_str(), "13:00:00+01:00"), AttributeType::Property)
+            .expect_err("a numeric offset is forbidden");
+        assert!(matches!(error, TemporalStoreError::Validation(_)), "got {error:?}");
     }
 
     #[test]
@@ -382,6 +410,40 @@ mod tests {
         let columns = value.into_columns();
         assert!(columns.value_datetime.is_some());
         assert!(columns.value_string.is_none());
+    }
+
+    /// Clause 4.6.3 names a "`DateTime` string for encoding a timestamp" as one of
+    /// the data types a Value may have, and the string is its whole
+    /// representation. History has to read that the same way the current
+    /// projection does, or a temporal `q` and a current-state `q` answer
+    /// differently over one value.
+    #[test]
+    fn a_bare_timestamp_literal_lands_in_the_datetime_column() {
+        let instance = serde_json::json!({ expanded_properties::VALUE.as_str(): [{"@value": "2026-07-25T10:00:00.250000Z"}] });
+        let columns = extract_attribute_value(&instance, AttributeType::Property)
+            .expect("a conformant DateTime literal")
+            .into_columns();
+        assert!(columns.value_string.is_none(), "a timestamp is not text");
+        pretty_assertions::assert_eq!(
+            columns
+                .value_datetime
+                .map(|instant| instant.to_rfc3339_opts(chrono::SecondsFormat::Micros, true)),
+            Some("2026-07-25T10:00:00.250000Z".to_owned())
+        );
+    }
+
+    /// A bare `Time` reaches the string column in the canonical rendering, and a
+    /// literal that only resembles a time value stays the string it is written
+    /// as — clause 4.6.3 admits "all the JSON native data types" too.
+    #[test]
+    fn a_bare_time_literal_is_canonicalised_and_a_resemblance_is_left_alone() {
+        for (literal, stored) in [("12:00:00Z", "12:00:00.000000Z"), ("13:00:00+01:00", "13:00:00+01:00")] {
+            let instance = serde_json::json!({ expanded_properties::VALUE.as_str(): [{"@value": literal}] });
+            let columns = extract_attribute_value(&instance, AttributeType::Property)
+                .expect("a Property value")
+                .into_columns();
+            pretty_assertions::assert_eq!(columns.value_string.as_deref(), Some(stored), "{literal}");
+        }
     }
 
     #[test]

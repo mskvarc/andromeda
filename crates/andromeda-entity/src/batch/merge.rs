@@ -16,6 +16,7 @@ use crate::{
     error::EntityError,
     notification_plan::attribute_change_groups,
     side_effect::BatchSideEffectMode,
+    write_admission::BatchWrite,
 };
 use andromeda_context_commit::precondition::Precondition;
 use andromeda_context_space::context_target::ContextTarget;
@@ -32,7 +33,9 @@ impl EntityService {
         context: &ContextSpec,
         mode: BatchSideEffectMode,
     ) -> Result<BatchResult, EntityError> {
-        let (prepared, mut errors) = self.prepare_entity_refs(entities, context).await;
+        // Clause 5.6.20 is the batch form of Merge Entity, whose fragments carry
+        // the NGSI-LD Null to arbitrary depth (clause 5.5.12).
+        let (prepared, mut errors) = self.prepare_entity_refs(entities, context, BatchWrite::Merge.null_sentinel_admission()).await;
         if prepared.is_empty() {
             return Ok(BatchResult { success: Vec::new(), errors });
         }

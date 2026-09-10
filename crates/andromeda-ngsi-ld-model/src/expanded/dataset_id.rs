@@ -5,6 +5,13 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde_json::Value;
 
 /// Extract the `datasetId` (`@id` value) from an expanded attribute instance.
+///
+/// `urn:ngsi-ld:null` is read as the identifier it literally is, not as a
+/// deletion: clauses 5.5.8 and 5.5.12 state that "a datasetId cannot be deleted
+/// by setting it to the value `urn:ngsi-ld:null`", so a payload carrying one is
+/// refused before any write path reaches this function. Answering `None` for it
+/// instead would retarget the default instance of clause 4.5.5, which is a
+/// different attribute instance than the one the request named.
 #[must_use]
 pub fn get_instance_dataset_id(instance: &Value) -> Option<Uri> {
     instance

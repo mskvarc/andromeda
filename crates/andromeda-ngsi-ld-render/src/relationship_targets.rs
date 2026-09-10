@@ -9,8 +9,8 @@
 //! of any of them is one rule, so it lives in one place rather than once per
 //! traversal that needs it.
 
+use crate::object_list::object_list_member_target;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use serde_json::Value;
 
 /// The identifiers one rendered `object` or `objectList` value names, in order.
@@ -32,15 +32,12 @@ pub fn rendered_relationship_targets(value: &Value) -> Vec<Uri> {
 /// bare string doubles as one element of the array of URIs clause 4.5.3.2 gives
 /// a multi-target `object`.
 fn member_target(member: &Value) -> Option<Uri> {
-    member
-        .as_str()
-        .or_else(|| member.get(compact_properties::OBJECT).and_then(Value::as_str))
-        .and_then(|raw| raw.parse().ok())
+    object_list_member_target(member).and_then(|raw| raw.parse().ok())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::temporal::relationship_targets::rendered_relationship_targets;
+    use crate::relationship_targets::rendered_relationship_targets;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use serde_json::json;
 

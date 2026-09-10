@@ -1,30 +1,33 @@
 //! HTTP handling for the merge entity operation (clause 5.6.17, bound by
 //! clause 6.5.3.4 with the parameters of Table 6.5.3.4-1).
 
-use crate::entity::{
-    EntityPatch,
-    EntityResultExt,
-    EntityTenantState,
-    ForwardProvisionRequest,
-    ForwardingOperation,
-    IntoResponse,
-    JsonLd,
-    LocalOutcome,
-    MergeOptions,
-    MergeParams,
-    NgsiLdRequestEnvelope,
-    ProblemResponse,
-    ProvisionResource,
-    Response,
-    StatusCode,
-    TypedPath,
-    Uri,
-    ValidatedQuery,
-    classify_entity_error,
-    collect_proxied_attrs,
-    provision_response,
-    reject_unknown_attribute_types,
+use crate::{
+    entity::{
+        EntityPatch,
+        EntityResultExt,
+        EntityTenantState,
+        ForwardProvisionRequest,
+        ForwardingOperation,
+        IntoResponse,
+        JsonLd,
+        LocalOutcome,
+        MergeOptions,
+        MergeParams,
+        NgsiLdRequestEnvelope,
+        ProblemResponse,
+        ProvisionResource,
+        Response,
+        StatusCode,
+        TypedPath,
+        Uri,
+        ValidatedQuery,
+        classify_entity_error,
+        collect_proxied_attrs,
+        provision_response,
+    },
+    written_payload_admission::admit_written_entity,
 };
+use andromeda_entity::write_admission::EntityWrite;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
 use axum::http::Method;
@@ -59,7 +62,12 @@ pub(crate) async fn merge(
         type_selector: params.entity_type.as_ref(),
     };
     let patch_value = serde_json::to_value(&patch).with_entity_instance(&uri)?;
-    reject_unknown_attribute_types(&patch_value, &uri)?;
+    // Clause 5.6.17.4 runs the clause 5.5.4 validation before the forwarding
+    // phase, so a fragment this broker refuses reaches no context source and a
+    // merge left with nothing local is still validated.
+    admit_written_entity(service, EntityWrite::MergeEntity, &patch_value, &context)
+        .await
+        .with_entity_instance(&uri)?;
 
     if is_local {
         service.merge(&target, &id, &patch, &context, options).await.with_entity_instance(&uri)?;

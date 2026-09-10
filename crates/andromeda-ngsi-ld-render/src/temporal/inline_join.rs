@@ -12,7 +12,7 @@
 //! and compacted — so there is no entity type to render from, and the linked
 //! side arrives as the same kind of value the roots do.
 
-use crate::temporal::relationship_targets::rendered_relationship_targets;
+use crate::relationship_targets::rendered_relationship_targets;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use indexmap::IndexMap;
 use serde_json::{Map, Value};

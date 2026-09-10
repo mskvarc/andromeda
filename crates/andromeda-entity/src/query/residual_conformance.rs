@@ -36,8 +36,9 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
     use andromeda_ngsi_ld_model::{
         expanded::{
-            entity_member::{extract_id, extract_scopes, extract_types},
+            entity_member::{extract_id, extract_types},
             geo_property::geo_property_instance_geometries,
+            scope_member::extract_scopes,
         },
         notification::SysAttrsSnapshot,
     };

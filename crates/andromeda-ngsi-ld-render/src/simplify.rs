@@ -7,27 +7,49 @@
 //! carry. The typed reading used to live on `Entity` itself, in the
 //! specification model crate — a resource does not render itself.
 
+use crate::object_list::bare_uri_object_list;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, rfc3339::whole_seconds};
 use andromeda_ngsi_ld_model::{
     attribute::instance::{Attribute, AttributeValue},
     entity::Entity,
 };
+use andromeda_ngsi_ld_query::dataset::DEFAULT_INSTANCE_TOKEN;
 use andromeda_ngsi_ld_representation::entity_members::ENTITY_MEMBERS;
+use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use serde_json::{Map, Value};
 use std::str::FromStr;
 
-/// Whether clause 4.5.4 keeps an attribute family's value member in the
-/// simplified form rather than collapsing to a bare value.
+/// The clause 4.5.4 simplified rendering of one attribute family's value.
 ///
-/// A `LanguageProperty`, `JsonProperty` and `VocabProperty` each keep their single
-/// distinguishing member (`{"languageMap": …}`, `{"json": …}`, `{"vocab": …}`),
-/// so the simplified value reads back as the same family rather than as a
-/// Property whose value happens to be a map, document or string.
-const fn keeps_value_wrapper(attr_type: AttributeType) -> bool {
-    matches!(
-        attr_type,
-        AttributeType::LanguageProperty | AttributeType::JsonProperty | AttributeType::VocabProperty
-    )
+/// A `LanguageProperty`, `JsonProperty` and `VocabProperty` each keep their
+/// single distinguishing member (`{"languageMap": …}`, `{"json": …}`,
+/// `{"vocab": …}`), so the simplified value reads back as the same family
+/// rather than as a Property whose value happens to be a map, document or
+/// string. A `ListRelationship` is the one family whose simplified value is not
+/// the member it was read from: clause 4.5.4 gives it "an ordered array holding
+/// the `ListRelationship`'s Objects (represented as URIs)", while the
+/// normalized `objectList` those are read from holds the `object`-keyed
+/// Relationship Objects clause 4.5.22.2 mandates. Every other family carries
+/// its value across bare.
+fn simplified_family_value(attr_type: AttributeType, value: Value) -> Value {
+    match attr_type {
+        AttributeType::LanguageProperty | AttributeType::JsonProperty | AttributeType::VocabProperty => wrap_value_member(attr_type, value),
+        AttributeType::ListRelationship => bare_uri_object_list(value),
+        AttributeType::Property | AttributeType::GeoProperty | AttributeType::Relationship | AttributeType::ListProperty => value,
+    }
+}
+
+/// The clause 4.5.4 multi-attribute rendering of one attribute.
+///
+/// Clause 4.5.4: in the multi-attribute case the value is "a JSON Object
+/// containing a single Attribute with a key called `dataset` and its value in
+/// turn is a JSON Object holding a series of key-value pairs, one for each
+/// datasetId … The default datasetId (where present) is represented by the
+/// JSON-LD keyword `@none`."
+fn dataset_map_member(datasets: Map<String, Value>) -> Value {
+    let mut wrapper = Map::with_capacity(1);
+    wrapper.insert(compact_properties::DATASET.to_owned(), Value::Object(datasets));
+    Value::Object(wrapper)
 }
 
 /// Wrap a family's raw value in its clause 4.5.4 single member.
@@ -38,17 +60,8 @@ fn wrap_value_member(attr_type: AttributeType, value: Value) -> Value {
 }
 
 /// The clause 4.5.4 simplified value of one typed attribute instance.
-///
-/// The raw payload for most families; the wrapped member for the three
-/// [`keeps_value_wrapper`] families.
 fn simplify_instance(attr: &Attribute) -> Value {
-    let attr_type = attr.attribute_type();
-    let value = attr.value();
-    if keeps_value_wrapper(attr_type) {
-        wrap_value_member(attr_type, value)
-    } else {
-        value
-    }
+    simplified_family_value(attr.attribute_type(), attr.value())
 }
 
 /// Render an entity in the clause 4.5.4 simplified (`keyValues`) form.
@@ -110,10 +123,10 @@ fn simplify_attribute_value(attr: &AttributeValue) -> Value {
             // Clause 4.5.4 dataset map: {"dataset": {"<datasetId>": v, "@none": v}}.
             let mut dataset_map = Map::new();
             for attr in list {
-                let ds_key = attr.dataset_id().map_or_else(|| "@none".to_string(), ToString::to_string);
+                let ds_key = attr.dataset_id().map_or_else(|| DEFAULT_INSTANCE_TOKEN.to_string(), ToString::to_string);
                 dataset_map.insert(ds_key, simplify_instance(attr));
             }
-            serde_json::json!({"dataset": dataset_map})
+            dataset_map_member(dataset_map)
         }
         AttributeValue::Raw(v) => simplify_raw_envelope(v),
     }
@@ -124,8 +137,8 @@ fn simplify_attribute_value(attr: &AttributeValue) -> Value {
 ///
 /// The value member is read through [`AttributeType::compact_value_key`] rather
 /// than a hand-written key list, so a `VocabProperty` reads its `vocab` member
-/// rather than a `value` it never carries, and the three [`keeps_value_wrapper`]
-/// families keep their clause 4.5.4 member.
+/// rather than a `value` it never carries, and each family is rendered by
+/// [`simplified_family_value`].
 fn simplify_raw_envelope(envelope: &Value) -> Value {
     // clone: the simplified form is owned and the envelope is only borrowed.
     let Some(obj) = envelope.as_object() else {
@@ -139,11 +152,7 @@ fn simplify_raw_envelope(envelope: &Value) -> Value {
     let Some(value) = obj.get(attr_type.compact_value_key()) else {
         return envelope.clone();
     };
-    if keeps_value_wrapper(attr_type) {
-        wrap_value_member(attr_type, value.clone()) // clone: the wrapper owns its member
-    } else {
-        value.clone() // clone: the bare value is handed back owned
-    }
+    simplified_family_value(attr_type, value.clone()) // clone: the simplified value is handed back owned
 }
 
 /// Render an already-serialised entity in the clause 4.5.4 simplified form.
@@ -207,10 +216,10 @@ fn simplify_attr_value(value: Value) -> Value {
                     .as_object()
                     .and_then(|instance| instance.get("datasetId"))
                     .and_then(Value::as_str)
-                    .map_or_else(|| "@none".to_string(), str::to_string);
+                    .map_or_else(|| DEFAULT_INSTANCE_TOKEN.to_string(), str::to_string);
                 dataset_map.insert(ds_key, simplify_attr_value(item));
             }
-            serde_json::json!({"dataset": dataset_map})
+            dataset_map_member(dataset_map)
         }
         other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) => other,
     }
@@ -224,8 +233,7 @@ fn simplify_attr_value(value: Value) -> Value {
 /// answer that does not invent one.
 fn take_value_member(mut attr_obj: Map<String, Value>, attr_type: AttributeType) -> Value {
     match attr_obj.remove(attr_type.compact_value_key()) {
-        Some(value) if keeps_value_wrapper(attr_type) => wrap_value_member(attr_type, value),
-        Some(value) => value,
+        Some(value) => simplified_family_value(attr_type, value),
         None => Value::Object(attr_obj),
     }
 }
@@ -261,6 +269,25 @@ mod tests {
             "type": "Vehicle",
             "speed": {"type": "Property", "value": 25}
         }));
+    }
+
+    /// Clause 4.5.4, `ListRelationship` bullet: the simplified rendering is
+    /// "an ordered array holding the `ListRelationship`'s Objects (represented
+    /// as URIs)", not the `object`-keyed Relationship Objects clause 4.5.22.2
+    /// gives the normalized member those are read from.
+    #[test]
+    fn both_readings_agree_on_a_list_relationship_rendered_as_bare_uris() {
+        both_readings_agree(json!({
+            "id": "urn:ngsi-ld:Vehicle:4",
+            "type": "Vehicle",
+            "hasParts": {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Part:1", "urn:ngsi-ld:Part:2"]}
+        }));
+        let entity = parse_entity(json!({
+            "id": "urn:ngsi-ld:Vehicle:5",
+            "type": "Vehicle",
+            "hasParts": {"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:Part:1"}]}
+        }));
+        pretty_assertions::assert_eq!(simplify_entity(&entity)["hasParts"], json!(["urn:ngsi-ld:Part:1"]));
     }
 
     #[test]

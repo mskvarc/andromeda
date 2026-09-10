@@ -1,7 +1,7 @@
 //! One scope path pattern of a `scopeQ` expression (clause 4.19).
 
 use crate::error::QueryError;
-use andromeda_ngsi_ld_lexicon::scope::level::{ScopeLevel, ScopeLevelBuf};
+use andromeda_ngsi_ld_lexicon::scope::level::{ScopeLevel, ScopeLevelBuf, level_characters_beyond_limit};
 use std::fmt::{self, Write};
 
 /// The `+` wildcard: exactly one level, whatever it is named.
@@ -36,8 +36,13 @@ impl ScopeLabel {
     /// # Errors
     ///
     /// Returns [`QueryError::ScopePatternInvalid`] when `raw` is outside the
-    /// clause 4.18 level-name production.
+    /// clause 4.18 level-name production, or carries more characters than a
+    /// label the pattern is answered through can hold — which would otherwise
+    /// reach PostgreSQL as an `lquery` cast and fail there.
     pub fn parse(raw: &str) -> Result<ScopeLabel, QueryError> {
+        if level_characters_beyond_limit(raw).is_some() {
+            return Err(QueryError::ScopePatternInvalid(raw.to_string()));
+        }
         ScopeLevel::new(raw)
             .map(|level| ScopeLabel(level.to_owned()))
             .map_err(|_| QueryError::ScopePatternInvalid(raw.to_string()))
@@ -163,9 +168,24 @@ impl fmt::Display for ScopePattern {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_ngsi_ld_lexicon::scope::level::LEVEL_CHARACTER_LIMIT;
 
     fn segments(raw: &str) -> Vec<ScopeSegment> {
         ScopePattern::parse(raw).expect("valid pattern").segments().to_vec()
+    }
+
+    /// A label beyond the widest one the label-path index can hold is a
+    /// malformed `scopeQ`, refused here rather than sent to PostgreSQL as an
+    /// `lquery` cast that fails and reports an internal error.
+    #[test]
+    fn a_label_beyond_the_character_bound_is_a_malformed_pattern() {
+        let longest = "a".repeat(LEVEL_CHARACTER_LIMIT);
+        assert!(ScopePattern::parse(&format!("/{longest}")).is_ok(), "the bound itself is admitted");
+        assert!(matches!(ScopePattern::parse(&format!("/{longest}a")), Err(QueryError::ScopePatternInvalid(_))));
+        assert!(matches!(
+            ScopePattern::parse(&format!("/A/{longest}a/C")),
+            Err(QueryError::ScopePatternInvalid(_))
+        ));
     }
 
     #[test]

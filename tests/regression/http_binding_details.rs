@@ -1,13 +1,16 @@
 //! HTTP binding details that diverged from ETSI GS CIM 009 v1.9.1.
 //!
-//! Three defects, each asserted against the clause that fixes its behaviour:
+//! Four defects, each asserted against the clause that fixes its behaviour:
 //! the clause 6.3.10 temporal `Content-Range` (its range unit, its size under
 //! `lastN`, and its forwards `range-start`), the clause 5.6.2.5 list of
-//! attributes actually updated, and the clause 6.3.8 placement of a `GeoJSON`
-//! notification's `@context`.
+//! attributes actually updated, the clause 6.3.8 placement of a `GeoJSON`
+//! notification's `@context`, and Table 6.23.3.1-1's `EntityMap` answer on
+//! `POST /entityOperations/query`, which clause 6.23.1 makes a second decoder
+//! of the clause 6.4.3.2 operation rather than a second implementation of it.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
+use andromeda_test_client::{header::jsonld_link_header, response::TestResponse, test_client::TestClient};
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use andromeda_test_mocks::{notification_server::NotificationServer, server_config::MockServerConfig};
@@ -15,6 +18,35 @@ use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use std::time::Duration;
+
+/// Send a clause 5.2.23 body to the clause 6.23.3.1 POST binding of Query
+/// Entities, with the URL half of the query the body has no member for.
+async fn post_entity_query(client: &TestClient, url_query: &str, body: &Value) -> TestResponse {
+    let path = if url_query.is_empty() {
+        "entityOperations/query".to_owned()
+    } else {
+        format!("entityOperations/query?{url_query}")
+    };
+    client
+        .raw(Method::POST, &path)
+        .header("Content-Type", "application/json")
+        .header("Link", jsonld_link_header(TEST_SUITE_CONTEXT).expect("test-suite context Link must be valid"))
+        .json(body)
+        .send()
+        .await
+        .expect("entity POST query failed")
+}
+
+/// Every `Link` field value a response carries, joined for inspection.
+fn link_values(response: &TestResponse) -> String {
+    response
+        .headers
+        .get_all("link")
+        .into_iter()
+        .filter_map(|value| value.to_str().ok())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// The `Content-Range` field value of a response, as the broker rendered it.
 fn content_range(headers: &HeaderMap) -> Option<String> {
@@ -399,5 +431,157 @@ async fn regression_geo_json_notification_preferring_json_carries_its_context_in
     );
 
     receiver.shutdown().await.expect("notification server shutdown failed");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Table 6.23.3.1-1 answers `POST /entityOperations/query` with "200 OK / 201
+/// Created (in case an `EntityMap` has been (re)created)" and requires that
+/// "the HTTP response shall include an 'NGSILD-EntityMap' HTTP header that
+/// contains the resource URI of the `EntityMap` resource created in the
+/// operation"; clause 6.23.1 adds that "the behaviour of this clause mirrors
+/// the one in clause 6.4.3.2".
+///
+/// The binding was a second implementation that hard-coded "no map in use": it
+/// minted none, reported none, and answered 200 to a request that asked for
+/// one. It now decodes and delegates to the run the GET binding calls.
+#[tokio::test]
+async fn regression_entity_query_post_binding_creates_and_reports_its_map() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+
+    let ids: Vec<String> = (1..=2).map(|index| scope.id(&format!("Building:ent-mint-{index}"))).collect();
+    for id in &ids {
+        let created = client
+            .post_entity(&json!({"id": id, "type": "Building", "@context": [TEST_SUITE_CONTEXT]}))
+            .with_ld_json()
+            .send()
+            .await
+            .expect("create entity request");
+        assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
+    }
+
+    let response = post_entity_query(
+        client,
+        "",
+        &json!({
+            "type": "Query",
+            "entities": [{"type": "Building", "id": ids}],
+            "entityMap": true
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        response.status,
+        StatusCode::CREATED,
+        "Table 6.23.3.1-1: a query that (re)created an EntityMap answers 201: {:?}",
+        response.body
+    );
+    let map_id = response
+        .headers
+        .get("NGSILD-EntityMap")
+        .and_then(|value| value.to_str().ok())
+        .expect("Table 6.23.3.1-1 requires the location of the map the operation created")
+        .to_owned();
+
+    let map = client
+        .raw(Method::GET, &format!("entityMaps/{map_id}"))
+        .send()
+        .await
+        .expect("retrieve EntityMap");
+    assert_eq!(map.status, StatusCode::OK, "the reported map is retrievable: {:?}", map.body);
+    let mut mapped: Vec<String> = map.json_value().expect("EntityMap body must be JSON")["entityMap"]
+        .as_object()
+        .expect("an EntityMap renders its entityMap member")
+        .keys()
+        .cloned()
+        .collect();
+    mapped.sort();
+    let mut expected = ids;
+    expected.sort();
+    assert_eq!(mapped, expected, "the reported map lists exactly the entities the query matched");
+
+    client
+        .raw(Method::DELETE, &format!("entityMaps/{map_id}"))
+        .send()
+        .await
+        .expect("delete EntityMap");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 6.3.10 asks a pagination pointer to be "a URI-reference that could be
+/// dereferenced by an NGSI-LD Client to retrieve the next page of NGSI-LD
+/// Elements", and clause 5.5.9.1 that the pointers carry "all the parameters
+/// needed to allow NGSI-LD Clients to retrieve the next and previous page,
+/// without further interactions with the API".
+///
+/// `POST /entityOperations/query` carries its query in a clause 5.2.23 body, so
+/// no URI-reference can satisfy either sentence and the binding emits no
+/// pointer; the clause 6.4.3.2 GET binding, whose whole query is in the request
+/// URI, emits one that a client can follow.
+#[tokio::test]
+async fn regression_entity_query_post_binding_points_at_no_page_it_cannot_serve() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+
+    let ids: Vec<String> = (1..=3).map(|index| scope.id(&format!("Building:ent-page-{index}"))).collect();
+    for id in &ids {
+        let created = client
+            .post_entity(&json!({"id": id, "type": "Building", "@context": [TEST_SUITE_CONTEXT]}))
+            .with_ld_json()
+            .send()
+            .await
+            .expect("create entity request");
+        assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
+    }
+    let selection = ids.iter().map(|id| urlencoding::encode(id).into_owned()).collect::<Vec<_>>().join(",");
+
+    // Clauses 6.3.10 and 6.3.13 apply to "HTTP operations corresponding to the
+    // operations listed in clause 4.12", and Table 6.2-1 lists this binding
+    // among the HTTP operations of clause 5.7.2, so `limit`, `offset` and
+    // `count` reach it through the URL that Table 5.2.23-1 gives the body no
+    // member for.
+    let body = json!({"type": "Query", "entities": [{"type": "Building", "id": ids}]});
+    let posted = post_entity_query(client, "limit=2&offset=0&count=true", &body).await;
+    assert_eq!(posted.status, StatusCode::OK, "{:?}", posted.body);
+    assert_eq!(
+        posted.json_value().expect("a query answers with a JSON array").as_array().map(Vec::len),
+        Some(2),
+        "the page is cut where the URL asked: {:?}",
+        posted.body
+    );
+    let posted_links = link_values(&posted);
+    assert!(
+        !posted_links.contains("rel=\"next\"") && !posted_links.contains("rel=\"prev\""),
+        "no URI-reference carries the clause 5.2.23 body, so the binding points at nothing: {posted_links}"
+    );
+    assert_eq!(
+        posted.headers.get("NGSILD-Results-Count").and_then(|value| value.to_str().ok()),
+        Some("3"),
+        "clause 6.3.13: the count is how this binding flags the elements left to traverse"
+    );
+
+    let remainder = post_entity_query(client, "limit=2&offset=2", &body).await;
+    assert_eq!(remainder.status, StatusCode::OK, "{:?}", remainder.body);
+    assert_eq!(
+        remainder.json_value().expect("a query answers with a JSON array").as_array().map(Vec::len),
+        Some(1),
+        "a client pages by sending the same body again with the next window: {:?}",
+        remainder.body
+    );
+
+    let got = client
+        .raw(Method::GET, &format!("entities?type=Building&id={selection}&limit=2&offset=0"))
+        .header("Link", jsonld_link_header(TEST_SUITE_CONTEXT).expect("test-suite context Link must be valid"))
+        .send()
+        .await
+        .expect("entity GET query");
+    assert_eq!(got.status, StatusCode::OK, "{:?}", got.body);
+    assert!(
+        link_values(&got).contains("rel=\"next\""),
+        "the GET binding's query is in its URI, so its pointer is dereferenceable: {}",
+        link_values(&got)
+    );
+
     scope.finish().await.expect("cleanup failed");
 }

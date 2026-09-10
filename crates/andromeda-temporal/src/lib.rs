@@ -34,6 +34,8 @@ pub mod service;
 pub mod storage_policy;
 mod unit_code_admission;
 mod write;
+/// What one temporal write is for, and what an absent evolution means for it.
+pub mod write_purpose;
 
 #[cfg(test)]
 mod deferred_history_tests;

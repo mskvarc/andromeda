@@ -43,7 +43,11 @@ use andromeda_ngsi_ld_model::{
     registration::ForwardingMode,
 };
 use andromeda_ngsi_ld_query::{
-    filter::{eval::evaluate, expansion::expand_q_expr},
+    filter::{
+        eval::evaluate,
+        expansion::{expand_attribute_names, expand_q_expr},
+        json_key_attributes::JsonKeyAttributes,
+    },
     geo::compile::compile_geo_query,
 };
 use andromeda_ngsi_ld_render::{

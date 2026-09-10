@@ -1,10 +1,13 @@
 //! Readers for the entity-level members of an expanded payload: `@id`,
-//! `@type`, `scope`, `expiresAt` and the names of the attributes it carries. A named `GeoProperty`'s geometry is read by
+//! `@type`, `expiresAt` and the names of the attributes it carries. A named
+//! `GeoProperty`'s geometry is read by
 //! [`crate::expanded::geo_property::extract_geo_property_geometry`], the single
-//! reader shared by the write/index and read/match paths.
+//! reader shared by the write/index and read/match paths, and the `scope`
+//! member by [`crate::expanded::scope_member`], which owns the two readings
+//! clause 4.18 gives it.
 
 use crate::expanded::node::expanded_object_ref;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::grammar::ScopeBuf, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -45,27 +48,6 @@ pub fn extract_attribute_names(expanded: &Value) -> Vec<AttributeName> {
         .unwrap_or_default()
 }
 
-/// Extract scope strings from an expanded entity payload.
-#[must_use]
-pub fn extract_scopes(expanded: &Value) -> Vec<ScopeBuf> {
-    let Some(obj) = expanded_object_ref(expanded) else {
-        return Vec::new();
-    };
-    let Some(scope_value) = obj.get(properties::SCOPE.as_str()) else {
-        return Vec::new();
-    };
-    match scope_value {
-        Value::Array(arr) => arr
-            .iter()
-            // A value that does not satisfy the clause 4.18 scope grammar
-            // cannot name a scope, so it is skipped rather than stored as one.
-            .filter_map(|v| v.as_object().and_then(|obj| obj.get("@value")).and_then(|v| v.as_str()))
-            .filter_map(|raw| ScopeBuf::new(raw.to_string()).ok())
-            .collect(),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => Vec::new(),
-    }
-}
-
 /// Extract the `expiresAt` value from an expanded JSON-LD entity payload
 /// (ETSI GS CIM 009 clause 4.22).
 #[must_use]
@@ -82,8 +64,8 @@ pub fn extract_expires_at(expanded: &Value) -> Option<DateTime<Utc>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::expanded::entity_member::{extract_attribute_names, extract_expires_at, extract_id, extract_scopes};
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, scope::grammar::ScopeBuf, uri::Uri};
+    use crate::expanded::entity_member::{extract_attribute_names, extract_expires_at, extract_id};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
     use chrono::Datelike;
     use serde_json::json;
 
@@ -121,19 +103,6 @@ mod tests {
             extract_attribute_names(&json!({"@id": "urn:x", "@type": ["https://example.com/T"]})),
             Vec::<AttributeName>::new()
         );
-    }
-
-    #[test]
-    fn extract_scopes_from_entity() {
-        let entity = json!([{
-            "@type": ["https://example.com/Vehicle"],
-            "https://uri.etsi.org/ngsi-ld/scope": [
-                {"@value": "/Madrid"},
-                {"@value": "/Traffic"}
-            ]
-        }]);
-        let scopes = extract_scopes(&entity);
-        pretty_assertions::assert_eq!(scopes.iter().map(ScopeBuf::as_str).collect::<Vec<&str>>(), vec!["/Madrid", "/Traffic"]);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! Filters held back from the local query when `splitEntities` is in effect.
 
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::input::GeoQueryInput, scope::query::ScopeQuery};
 
 /// The `q`, `geoQ` and `scopeQ` parameters a `splitEntities` request removes
@@ -21,4 +22,15 @@ pub struct DeferredSplitFilters {
     pub geo: Option<GeoQueryInput>,
     /// Deferred `scopeQ` scope query.
     pub scope_q: Option<ScopeQuery>,
+    /// The request's `jsonKeys` declaration, which travels with the deferred
+    /// `q` because it decides how that filter's terms expand.
+    ///
+    /// Clause 4.9 EXAMPLE 11: with
+    /// `?q=parkingTickets[value]=="Overstay 60 minutes"&jsonKeys=parkingTickets`
+    /// "the target value raw is JSON, and is not expanded to ngsi-ld:hasValue
+    /// using the core @context". Expanding the deferred filter without the
+    /// declaration would address `ngsi-ld:hasValue` where the entity holds a
+    /// literal `value` key, and every entity the client asked for would be
+    /// dropped after the merge.
+    pub json_keys: Option<Vec<AttributeName>>,
 }

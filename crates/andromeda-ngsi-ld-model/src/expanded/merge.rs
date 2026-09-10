@@ -123,8 +123,9 @@ fn instance_type_changed(existing_inst: &Value, patch_inst: &Value) -> bool {
 /// A leaf node (one carrying `@value` or `@id`) is replaced wholesale. Two
 /// structured nodes are merged member-by-member: a language map merges per
 /// language tag, a member carrying the `urn:ngsi-ld:null` sentinel deletes its
-/// key, and every other member recurses so a Property value object is merged to
-/// arbitrary depth.
+/// key — every member but `datasetId`, which clause 5.5.12 states cannot be
+/// deleted that way — and every other member recurses so a Property value
+/// object is merged to arbitrary depth.
 fn merge_node(base: &mut Value, patch: &Value) {
     // Only two non-leaf structured nodes deep-merge; a leaf value or any shape
     // mismatch is atomic and the patch replaces the base wholesale.
@@ -149,7 +150,14 @@ fn merge_node(base: &mut Value, patch: &Value) {
             continue;
         }
         if member_is_null(patch_member) {
-            base_obj.remove(key);
+            // Clause 5.5.12 closes its deletion rule with one member it does
+            // not reach: "A datasetId cannot be deleted by setting it to the
+            // value urn:ngsi-ld:null." Removing it here would move the instance
+            // to the default one of clause 4.5.5, silently rewriting an
+            // identity the fragment was never allowed to touch.
+            if key != properties::DATASET_ID.as_str() {
+                base_obj.remove(key);
+            }
             continue;
         }
         match base_obj.get_mut(key) {
@@ -387,6 +395,33 @@ mod tests {
         pretty_assertions::assert_eq!(value["https://example.com/street"], json!([{"@value": "new"}]));
         pretty_assertions::assert_eq!(value["https://example.com/city"], json!([{"@value": "town"}]));
         assert!(value.get("https://example.com/country").is_none(), "the null-sentinel member is deleted");
+    }
+
+    #[test]
+    fn deep_merge_never_deletes_a_dataset_id_with_the_null_sentinel() {
+        // ETSI GS CIM 009 v1.9.1 clause 5.5.12: "A datasetId cannot be deleted
+        // by setting it to the value urn:ngsi-ld:null." The deletion rule this
+        // clause states in the bullet above therefore steps over that one
+        // member: deleting it would move the instance onto the default
+        // instance of clause 4.5.5, which is a different instance altogether.
+        // The write paths refuse such a fragment before it reaches here
+        // (clause 5.5.4), so the fixture is an instance already carrying the
+        // sentinel, which is what makes the two identities match.
+        let mut object = entity_with(vec![instance(10, Some("urn:ngsi-ld:null"))]);
+        let patch = json!({
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 20}],
+            "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:null"}]
+        });
+        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch], InstancePatchDepth::DeepMerge);
+
+        let instances = object["https://example.com/speed"].as_array().expect("instances");
+        pretty_assertions::assert_eq!(instances.len(), 1);
+        pretty_assertions::assert_eq!(
+            instances[0]["https://uri.etsi.org/ngsi-ld/datasetId"],
+            json!([{"@id": "urn:ngsi-ld:null"}]),
+            "the datasetId member survives the merge"
+        );
+        pretty_assertions::assert_eq!(instances[0]["https://uri.etsi.org/ngsi-ld/hasValue"], json!([{"@value": 20}]));
     }
 
     #[test]

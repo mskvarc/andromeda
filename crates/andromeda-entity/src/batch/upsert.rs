@@ -11,7 +11,10 @@
 //! them would re-tombstone already-deleted attributes on every upsert.
 //!
 //! Update mode merges instead of replacing, so only explicit null-sentinel
-//! removals imply tombstones.
+//! removals imply tombstones. Clause 5.6.8.4 is what puts them there: its
+//! update mode runs "the behaviour defined by clause 5.6.2 [...] limited to a
+//! local operation", and clause 5.6.2.4 is one of the three clauses that say
+//! "NGSI-LD Nulls should be supported by this operation".
 //!
 //! Neither mode sees an identifier twice: clause 5.5.11.2 requires the
 //! instances an array repeats to be replaced or updated "in chronological
@@ -22,12 +25,15 @@ use crate::{
     EntityService,
     batch::{
         BatchResult,
+        UpsertPolicy,
         chunk::{ChunkWrite, UpdatedPayloads},
+        prepare::PreparedEntity,
     },
     error::EntityError,
     expanded_member::unwrap_expanded_ref,
     notification_plan::attribute_change_groups,
     side_effect::BatchSideEffectMode,
+    write_admission::BatchWrite,
 };
 use andromeda_context_commit::{precondition::Precondition, write_retry::WRITE_ATTEMPTS};
 use andromeda_context_space::context_target::ContextTarget;
@@ -35,7 +41,10 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     entity::Entity,
-    expanded::{entity_member::extract_attribute_names, mutation::entity::update_entity_attrs},
+    expanded::{
+        entity_member::extract_attribute_names,
+        mutation::entity::{DroppedSentinels, drop_deletion_sentinels, update_entity_attrs},
+    },
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -57,7 +66,16 @@ impl EntityService {
         errors: &mut Vec<(Uri, EntityError)>,
         mode: BatchSideEffectMode,
     ) -> Result<UpsertOutcome, EntityError> {
-        let (prepared, mut chunk_errors) = self.prepare_entity_refs(entities, context).await;
+        // Clause 5.6.8.4 gives replace mode two branches and neither admits the
+        // sentinel: an Entity that does not exist is created by "the behaviour
+        // defined by clause 5.6.1", and one that does "shall be completely
+        // replaced by the new Entity content provided", which is the Replace
+        // Entity of clause 5.6.18 -- whose clause 5.6.18.4 states outright that
+        // NGSI-LD Nulls are not supported. Clause 5.5.4 excepts only partial
+        // update and merge fragments, and a replacement is neither.
+        let (prepared, mut chunk_errors) = self
+            .prepare_entity_refs(entities, context, BatchWrite::Upsert(UpsertPolicy::Replace).null_sentinel_admission())
+            .await;
         errors.append(&mut chunk_errors);
         if prepared.is_empty() {
             return Ok((
@@ -139,7 +157,23 @@ impl EntityService {
         errors: &mut Vec<(Uri, EntityError)>,
         mode: BatchSideEffectMode,
     ) -> Result<UpsertOutcome, EntityError> {
-        let (prepared, mut chunk_errors) = self.prepare_entity_refs(entities, context).await;
+        // Clause 5.6.8.4: "If there were an existing Entity with the same Entity
+        // ID, the behaviour defined by clause 5.6.2 shall be executed, but
+        // limited to a local operation, if the requested update mode is
+        // 'update'." Clause 5.6.2.4 is one of the three clauses carrying "NGSI-LD
+        // Nulls should be supported by this operation", so this mode takes the
+        // partial update fragment's admission and not the create branch's.
+        //
+        // Whether an Entity exists is not known while the payload is screened,
+        // and the same payload creates it when it does not. The screening
+        // therefore states the update branch's admission, and the create branch
+        // drops the deletions rather than storing them: clause 5.5.8 deletes
+        // "each member of the Fragment, whose value is an NGSI-LD Null,
+        // contained by the target", and a target that does not exist contains
+        // none of them.
+        let (prepared, mut chunk_errors) = self
+            .prepare_entity_refs(entities, context, BatchWrite::Upsert(UpsertPolicy::Update).null_sentinel_admission())
+            .await;
         errors.append(&mut chunk_errors);
         if prepared.is_empty() {
             return Ok((
@@ -165,7 +199,7 @@ impl EntityService {
                 // created by someone else, and this request has nothing to add
                 // to it. Reported as neither a success nor a failure, which is
                 // what this path has always done.
-                writes.push(self.chunk_insert(target, entity, Precondition::None));
+                writes.push(self.chunk_insert_created(target, entity));
                 continue;
             };
 
@@ -209,6 +243,24 @@ impl EntityService {
 }
 
 impl EntityService {
+    /// The write that creates an entity the upsert's update mode found absent.
+    ///
+    /// Clause 5.6.8.4 routes it to "the behaviour defined by clause 5.6.1",
+    /// where the deletions the update branch admits have nothing to delete:
+    /// they are dropped, and only a payload that carried one is re-derived,
+    /// so an ordinary create keeps the columns the preparation pass computed.
+    fn chunk_insert_created(&self, target: &ContextTarget, prepared: PreparedEntity) -> ChunkWrite {
+        let mut prepared = prepared;
+        match drop_deletion_sentinels(&mut prepared.expanded) {
+            DroppedSentinels::Unchanged => self.chunk_insert(target, prepared, Precondition::None),
+            DroppedSentinels::Dropped => {
+                let payload = Arc::new(prepared.expanded);
+                let changed_attributes = extract_attribute_names(&payload);
+                self.chunk_insert_payload(target, prepared.id, payload, changed_attributes, Precondition::None)
+            }
+        }
+    }
+
     /// The write that replaces `previous` with `payload`, tombstoning whatever
     /// the replacement drops (NGSI-LD 5.6.8).
     ///

@@ -1,13 +1,16 @@
 //! `GeoJSON` Feature and `FeatureCollection` mapping for NGSI-LD entities.
 //!
-//! Handles the conversion of NGSI-LD entity JSON objects into `GeoJSON` Features
-//! and `FeatureCollections` per NGSI-LD spec clause 4.5.16.  Uses the `geojson`
+//! Clauses 4.5.16.2 and 4.5.16.3 give the envelope an entity and a collection of
+//! entities take; clauses 4.5.17.1 and 4.5.17.2 give the simplified rendering
+//! the same envelope. Which geometry goes into it is a separate rule, clause
+//! 4.5.16.1, and it lives in [`crate::geometry_selection`]. Uses the `geojson`
 //! crate for type-safe construction; `@context` is injected post-serialization
 //! because it is an NGSI-LD extension absent from the `GeoJSON` spec.
 
-use crate::error::{RenderError, RenderedShape};
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, expanded::properties as expanded_properties};
+use crate::{
+    error::{RenderError, RenderedShape},
+    geometry_selection::GeometrySelection,
+};
 use geojson::{Feature, FeatureCollection, feature::Id};
 use serde_json::{Map, Value};
 
@@ -28,8 +31,8 @@ pub(crate) struct GeoJsonRenderer<'a> {
     payload: Value,
     /// The `@context` to inject into the envelope, if it goes in the body.
     context_value: Option<Value>,
-    /// The attribute the geometry is taken from; `location` when absent.
-    geometry_property: Option<&'a AttributeName>,
+    /// The clause 4.5.16.1 selection the geometry is taken by.
+    selection: GeometrySelection<'a>,
     /// Which envelope to build.
     shape: GeoJsonShape,
 }
@@ -40,7 +43,7 @@ impl<'a> GeoJsonRenderer<'a> {
         GeoJsonRenderer {
             payload,
             context_value: None,
-            geometry_property: None,
+            selection: GeometrySelection::new(None, &[]),
             shape: GeoJsonShape::Feature,
         }
     }
@@ -51,9 +54,9 @@ impl<'a> GeoJsonRenderer<'a> {
         self
     }
 
-    /// Set a custom geometry property name (e.g. `observationSpace`).
-    pub const fn with_geometry_property(mut self, prop: Option<&'a AttributeName>) -> Self {
-        self.geometry_property = prop;
+    /// Set the clause 4.5.16.1 geometry selection.
+    pub const fn with_geometry_selection(mut self, selection: GeometrySelection<'a>) -> Self {
+        self.selection = selection;
         self
     }
 
@@ -74,12 +77,12 @@ impl GeoJsonRenderer<'_> {
     pub fn render(self) -> Result<Value, RenderError> {
         let mut value = match self.shape {
             GeoJsonShape::Feature => {
-                let feature = entity_to_feature(&self.payload, self.geometry_property);
+                let feature = entity_to_feature(&self.payload, self.selection);
                 serde_json::to_value(feature).map_err(|error| RenderError::serialization(RenderedShape::GeoJsonFeature, error))?
             }
             GeoJsonShape::FeatureCollection => {
                 let features = match &self.payload {
-                    Value::Array(items) => items.iter().map(|e| entity_to_feature(e, self.geometry_property)).collect(),
+                    Value::Array(items) => items.iter().map(|entity| entity_to_feature(entity, self.selection)).collect(),
                     Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => Vec::new(),
                 };
                 let collection = FeatureCollection {
@@ -100,7 +103,7 @@ impl GeoJsonRenderer<'_> {
 }
 
 /// Convert a single NGSI-LD entity JSON object into a `GeoJSON` [`Feature`].
-fn entity_to_feature(entity: &Value, geometry_property: Option<&AttributeName>) -> Feature {
+fn entity_to_feature(entity: &Value, selection: GeometrySelection<'_>) -> Feature {
     let Some(obj) = entity.as_object() else {
         return Feature {
             bbox: None,
@@ -113,7 +116,10 @@ fn entity_to_feature(entity: &Value, geometry_property: Option<&AttributeName>) 
 
     let id = obj.get("id").and_then(Value::as_str).map(|s| Id::String(s.to_string()));
 
-    let geometry = extract_geometry(obj, geometry_property);
+    // Clause 4.5.16.1 decides which geometry this is; a value it selects that
+    // the `geojson` crate cannot read is "not a valid GeoJSON geometry object"
+    // and leaves the member null, exactly as the same clause requires.
+    let geometry = selection.geometry(obj).and_then(|value| serde_json::from_value(value).ok());
 
     // Properties: keep all attributes including the geometry source.
     // Remove `id` (promoted to Feature.id); keep `type` per NGSI-LD clause 4.5.16.
@@ -127,60 +133,6 @@ fn entity_to_feature(entity: &Value, geometry_property: Option<&AttributeName>) 
         properties: Some(props),
         foreign_members: None,
     }
-}
-
-/// Extract a `GeoJSON` [`geojson::Geometry`] from an entity object using the
-/// configured geometry property name.
-fn extract_geometry(obj: &Map<String, Value>, geometry_property: Option<&AttributeName>) -> Option<geojson::Geometry> {
-    let geom_key = geometry_property.map_or(compact_properties::LOCATION, AttributeName::as_str);
-    let location_keys: &[&str] = &[compact_properties::LOCATION, expanded_properties::LOCATION.as_str()];
-    let keys: &[&str] = if geom_key == compact_properties::LOCATION {
-        location_keys
-    } else {
-        // Single custom key -- use a local slice
-        &[geom_key]
-    };
-
-    let located = keys.iter().find_map(|key| obj.get(*key))?;
-    let geojson_value = geojson_from_instance(default_geo_instance(located))?;
-    serde_json::from_value(geojson_value).ok()
-}
-
-/// Select the instance a `GeoJSON` geometry is taken from.
-///
-/// A `GeoProperty` may carry several datasetId-separated instances as a JSON
-/// array; clause 4.5.16 takes the geometry from the default instance (the one
-/// with no `datasetId`), falling back to the first when every instance is
-/// dataset-scoped. A single-object value is itself the instance.
-fn default_geo_instance(located: &Value) -> &Value {
-    match located {
-        Value::Array(instances) => instances
-            .iter()
-            .find(|instance| instance.as_object().is_some_and(|object| !object.contains_key("datasetId")))
-            .or_else(|| instances.first())
-            .unwrap_or(located),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => located,
-    }
-}
-
-/// Read the `GeoJSON` geometry value out of one `GeoProperty` instance.
-fn geojson_from_instance(instance: &Value) -> Option<Value> {
-    // Normalized: {"type": "GeoProperty", "value": {<geojson>}}
-    if let Some(value) = instance.get("value") {
-        return Some(value.clone());
-    }
-    // Simplified/keyValues: the instance is the GeoJSON geometry directly.
-    // GeometryCollection is absent by design: ETSI GS CIM 009 v1.9.1 clause
-    // 4.7.1 excludes it from GeoProperty geometries, so no stored GeoProperty
-    // can be one.
-    if instance
-        .get("type")
-        .and_then(Value::as_str)
-        .is_some_and(|kind| matches!(kind, "Point" | "MultiPoint" | "LineString" | "MultiLineString" | "Polygon" | "MultiPolygon"))
-    {
-        return Some(instance.clone());
-    }
-    None
 }
 
 #[cfg(test)]
@@ -240,18 +192,17 @@ mod tests {
         });
         let geometry_property = "observationSpace".parse().ok();
         let geo = GeoJsonRenderer::new(entity)
-            .with_geometry_property(geometry_property.as_ref())
+            .with_geometry_selection(GeometrySelection::new(geometry_property.as_ref(), &[]))
             .render()
             .expect("GeoJSON entity");
         pretty_assertions::assert_eq!(geo["geometry"]["type"], "Polygon");
     }
 
+    /// Clause 4.5.16.1: a `GeoProperty` may carry several datasetId-separated
+    /// instances, and with no `datasetId` specified "a default attribute
+    /// instance exists, which is then selected".
     #[test]
     fn multi_instance_location_renders_the_default_instances_geometry() {
-        // Clause 4.5.16: a GeoProperty may carry several datasetId-separated
-        // instances; the GeoJSON geometry is taken from the default instance
-        // (the one with no datasetId), not left null because the value was an
-        // array rather than a single object.
         let entity = json!({
             "id": "urn:x", "type": "T",
             "location": [

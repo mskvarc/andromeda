@@ -256,7 +256,7 @@ mod tests {
     use super::*;
     use crate::{
         error::QueryError,
-        filter::{expansion::expand_q_expression, parser::parse},
+        filter::{expansion::expand_q_expression, json_key_attributes::JsonKeyAttributes, parser::parse},
         term_expander::TermExpander,
     };
     use iri_rs::IriBuf;
@@ -579,13 +579,13 @@ mod tests {
     /// exercise this: `path.value_path` there is already the compact spelling.
     #[tokio::test]
     async fn a_json_property_compound_member_is_still_reached_after_the_path_is_expanded() {
-        let expanded = expand_q_expression(Some("myJson[city]==\"Berlin\""), &PrefixExpander)
+        let expanded = expand_q_expression(Some("myJson[city]==\"Berlin\""), &JsonKeyAttributes::default(), &PrefixExpander)
             .await
             .expect("expands")
             .expect("present");
         assert!(evaluate(&expanded, &entity_with_json_property()));
 
-        let non_matching = expand_q_expression(Some("myJson[city]==\"Paris\""), &PrefixExpander)
+        let non_matching = expand_q_expression(Some("myJson[city]==\"Paris\""), &JsonKeyAttributes::default(), &PrefixExpander)
             .await
             .expect("expands")
             .expect("present");

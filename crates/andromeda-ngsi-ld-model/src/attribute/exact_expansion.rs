@@ -17,7 +17,6 @@ use crate::{
     },
     entity::Entity,
 };
-use andromeda_ngsi_ld_lexicon::rfc3339::whole_seconds;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use jsonld::Expandable;
 use jsonld_expandable_core::ToJsonValue;
@@ -238,10 +237,6 @@ fn list_nodes(values: &[NgsiLdValue]) -> Value {
 fn ngsi_ld_value(value: &NgsiLdValue) -> Value {
     match value {
         NgsiLdValue::Json(value) => value.clone(),
-        NgsiLdValue::Uri(value) => Value::String(value.to_string()),
-        NgsiLdValue::DateTime(value) => Value::String(whole_seconds(*value)),
-        NgsiLdValue::Date(value) => Value::String(value.to_string()),
-        NgsiLdValue::Time(value) => Value::String(value.to_string()),
         NgsiLdValue::Geometry(value) => ToJsonValue::<Value>::to_json_value(value),
     }
 }

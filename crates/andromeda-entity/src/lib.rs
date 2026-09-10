@@ -48,8 +48,8 @@ pub mod notification_plan;
 /// A recording notification harness shared by the durable-match tests.
 #[cfg(test)]
 mod notification_recording_harness;
-/// Rejecting the `urn:ngsi-ld:null` sentinel on non-fragment writes (clause 5.5.4).
-pub mod null_content;
+/// Where a write payload may carry the NGSI-LD Null (clauses 5.5.4, 5.5.8 and 5.5.12).
+mod null_sentinel_admission;
 /// Store-applied or policy-applied pagination state.
 pub mod pagination_outcome;
 /// Caller-shaped ports consumed by entity policy.
@@ -68,6 +68,8 @@ pub mod read_modify_write;
 pub mod residual_filter;
 /// One named query predicate a store may decline.
 pub mod residual_predicate;
+/// Which value a write may give the entity `scope` member (clause 4.18).
+mod scope_admission;
 /// Work a batch write produces but need not finish before answering.
 pub mod side_effect;
 pub mod side_effect_drain;
@@ -81,6 +83,8 @@ pub mod spatial_synchronization;
 pub mod storage_profile;
 /// Injecting clause 4.8 system attributes into an expanded entity.
 pub mod sys_attrs;
+/// The clause 5.5.4 screening a write payload passes before anything else.
+pub mod write_admission;
 
 use crate::{
     batch::execution::BatchExecutionConfig,

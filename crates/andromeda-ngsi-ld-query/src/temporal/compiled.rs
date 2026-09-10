@@ -4,7 +4,7 @@ use crate::{
     entity_selection::EntitySelection,
     pagination::Pagination,
     projection::compiled::Projection,
-    temporal::{instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
+    temporal::{instance_selection::InstanceSelection, ordering::TemporalEntityOrdering, representation::Representation, window::TemporalWindow},
 };
 use typed_builder::TypedBuilder;
 
@@ -36,4 +36,13 @@ pub struct CompiledTemporalQuery {
     /// response (clause 4.21 `pick` / `omit`).
     #[builder(default = Default::default())]
     pub projection: Projection,
+    /// How the matching entities are ordered, when the request asked for an
+    /// order at all (clause 5.7.4.3).
+    ///
+    /// `None` is not "ascending by default": clause 5.5.9 needs a consistent
+    /// order across pages whether or not one was requested, so the store's own
+    /// stable order stands, and only a requested ordering carries a client
+    /// collation into the comparison.
+    #[builder(default = Default::default())]
+    pub ordering: Option<TemporalEntityOrdering>,
 }

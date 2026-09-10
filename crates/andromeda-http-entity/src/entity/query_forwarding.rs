@@ -8,6 +8,7 @@ use crate::entity::{
     EntityResultExt,
     ForwardQueryRequest,
     ForwardingOperation,
+    JsonKeyAttributes,
     ProblemResponse,
     SourceContribution,
     collect_warnings,
@@ -118,6 +119,9 @@ pub(crate) struct QueryForwarding<'a> {
     pub(crate) triggering: TriggeringRequest<'a>,
     /// The `EntityMap` the query runs under.
     pub(crate) entity_map: EntityMapInUse<'a>,
+    /// The operation a registration has to declare for the query to reach it,
+    /// which the binding the query arrived on decides (Table 5.2.9-1).
+    pub(crate) operation: ForwardingOperation,
 }
 
 impl QueryForwarding<'_> {
@@ -130,11 +134,20 @@ impl QueryForwarding<'_> {
         // The CSR filter was parsed while extracting the request. The expanded
         // copy selects the registrations; the raw expression is forwarded as
         // the client wrote it (clause 5.7.2.4 propagates it into discovery).
+        //
+        // No `jsonKeys` declaration applies: Table 5.2.12-1 scopes that member
+        // to Entity attribute names, while `csf` addresses the Context Source
+        // Properties of a registration (clause 4.10), which no entity-level
+        // declaration can name.
         let csf_expr: Option<Expr> = match &self.query.csf {
             Some(expr) => {
                 let prepared_context = self.engine.prepare_term_context(self.context);
                 let csf_expander = ContextualExpander::new(self.engine, &prepared_context);
-                Some(expand_q_expr(expr.clone(), &csf_expander).await.with_entity_instance(self.uri)?) // clone: the raw filter stays in the query for forwarding
+                Some(
+                    expand_q_expr(expr.clone(), &JsonKeyAttributes::default(), &csf_expander)
+                        .await
+                        .with_entity_instance(self.uri)?,
+                ) // clone: the raw filter stays in the query for forwarding
             }
             None => None,
         };
@@ -167,7 +180,7 @@ impl QueryForwarding<'_> {
                     client_query: ClientQuery::EntityQuery(self.query),
                     split: self.split,
                     context: self.context,
-                    operation: ForwardingOperation::QueryEntity,
+                    operation: self.operation,
                     triggering: self.triggering,
                     csf_expr,
                     mode_filter,

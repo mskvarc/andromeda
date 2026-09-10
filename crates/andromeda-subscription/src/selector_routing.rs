@@ -123,6 +123,8 @@ mod tests {
             endpoint_accept: None,
             endpoint_receiver_info: None,
             endpoint_notifier_info: None,
+            endpoint_cooldown: None,
+            endpoint_timeout: None,
             triggers: Vec::new(),
             watched_attrs: None,
             selectors,

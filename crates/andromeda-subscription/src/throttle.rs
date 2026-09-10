@@ -4,6 +4,7 @@
 //! policy layer converts the subscription's configured throttling interval
 //! into the earliest `last_notification` that still permits a new slot.
 
+use crate::suppression_window::window_ceiling;
 use chrono::{DateTime, TimeDelta, Utc};
 use std::time::Duration;
 
@@ -16,10 +17,6 @@ use std::time::Duration;
 ///
 /// The window is built from the fractional seconds themselves rather than from
 /// a whole number of them, so sub-second throttling (e.g. `0.5`) stays precise.
-/// A window too wide for the calendar to express saturates at the earliest
-/// representable instant rather than collapsing to `None`: every prior
-/// notification lies inside such a window, so the subscription is maximally
-/// throttled, not unthrottled.
 #[must_use]
 pub fn ceiling_for_throttle(now: DateTime<Utc>, throttling_secs: Option<f64>) -> Option<DateTime<Utc>> {
     let secs = throttling_secs?;
@@ -27,7 +24,7 @@ pub fn ceiling_for_throttle(now: DateTime<Utc>, throttling_secs: Option<f64>) ->
         return None;
     }
     let window = Duration::try_from_secs_f64(secs).ok().and_then(|window| TimeDelta::from_std(window).ok());
-    Some(window.and_then(|window| now.checked_sub_signed(window)).unwrap_or(DateTime::<Utc>::MIN_UTC))
+    Some(window_ceiling(now, window))
 }
 
 #[cfg(test)]

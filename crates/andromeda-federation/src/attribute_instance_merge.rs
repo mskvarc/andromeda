@@ -41,9 +41,22 @@ pub fn merge_entity_attributes(local: &mut Entity, remote: Entity, policy: Merge
     merge_optional_attribute(&mut local.location, remote.location, policy);
     merge_optional_attribute(&mut local.observation_space, remote.observation_space, policy);
     merge_optional_attribute(&mut local.operation_space, remote.operation_space, policy);
-    if local.scope.is_none() {
-        local.scope = remote.scope;
-    }
+    // Clause 4.18: when representations of the same Entity are merged, "the
+    // values of scope are merged" -- keeping only the local set would drop
+    // Scopes a Context Source legitimately placed the Entity in. Clause 4.3.6.2
+    // bounds that for an auxiliary source: it "never overrides data held
+    // directly within a Context Broker", and its data "is only included if it
+    // is supplementary to the context data otherwise available", so it supplies
+    // the member only where nothing else did -- the same rule every other
+    // member of this merge follows.
+    local.scope = match (local.scope.take(), remote.scope) {
+        (Some(held), Some(received)) => Some(match policy {
+            MergePolicy::Instances => held.merged_with(received),
+            MergePolicy::SupplementMissing => held,
+        }),
+        (Some(held), None) => Some(held),
+        (None, received) => received,
+    };
     local.expires_at = match (local.expires_at, remote.expires_at) {
         (Some(held), Some(received)) => Some(held.max(received)),
         (None, _) | (_, None) => None,
@@ -133,7 +146,7 @@ mod tests {
     use crate::attribute_instance_merge::{MergePolicy, merge_entity_attributes};
     use andromeda_ngsi_ld_model::{
         attribute::instance::{Attribute, AttributeValue},
-        entity::Entity,
+        entity::{Entity, ScopeValue},
     };
     use serde_json::{Value, json};
 
@@ -236,5 +249,72 @@ mod tests {
         let mut without = entity(&json!({}));
         merge_entity_attributes(&mut without, entity(&json!({"expiresAt": "2031-01-01T00:00:00Z"})), MergePolicy::Instances);
         assert!(without.expires_at.is_none());
+    }
+
+    /// Clause 4.18: "In case multiple representations of the same Entity have
+    /// to be merged, e.g. when combining the results of distributed queries,
+    /// the values of scope are merged." Keeping only the local set, as the
+    /// merge did before, discarded every Scope the remote source reported.
+    #[test]
+    fn scopes_from_every_representation_are_merged_without_duplicates() {
+        let mut local = entity(&json!({"scope": "/madrid/gardens"}));
+        let remote = entity(&json!({"scope": ["/madrid/gardens", "/berlin/parks"]}));
+        merge_entity_attributes(&mut local, remote, MergePolicy::Instances);
+        pretty_assertions::assert_eq!(
+            local
+                .scope
+                .as_ref()
+                .map(|scope| scope.iter().map(|level| level.as_str().to_owned()).collect::<Vec<String>>()),
+            Some(vec!["/madrid/gardens".to_owned(), "/berlin/parks".to_owned()])
+        );
+
+        // A lone survivor stays bare: "The value of scope is represented as a
+        // JSON array in case there is more than one Scope."
+        let mut single = entity(&json!({"scope": "/madrid/gardens"}));
+        merge_entity_attributes(&mut single, entity(&json!({"scope": "/madrid/gardens"})), MergePolicy::Instances);
+        assert!(matches!(single.scope, Some(ScopeValue::Single(_))));
+
+        // A representation with no scope contributes nothing and removes nothing.
+        let mut held = entity(&json!({"scope": "/madrid/gardens"}));
+        merge_entity_attributes(&mut held, entity(&json!({})), MergePolicy::Instances);
+        assert!(held.scope.is_some());
+
+        let mut absent = entity(&json!({}));
+        merge_entity_attributes(&mut absent, entity(&json!({"scope": "/berlin/parks"})), MergePolicy::Instances);
+        assert!(absent.scope.is_some());
+    }
+
+    /// Clause 4.3.6.2: "An auxiliary Context Source Registration never
+    /// overrides data held directly within a Context Broker", and its data "is
+    /// only included if it is supplementary to the context data otherwise
+    /// available to the Context Broker". An Entity that already carries Scopes
+    /// therefore keeps exactly the ones it had.
+    #[test]
+    fn an_auxiliary_source_adds_no_scope_to_an_entity_that_already_has_one() {
+        let mut local = entity(&json!({"scope": "/madrid/gardens"}));
+        let auxiliary = entity(&json!({"scope": ["/berlin/parks", "/oslo/forests"]}));
+        merge_entity_attributes(&mut local, auxiliary, MergePolicy::SupplementMissing);
+        pretty_assertions::assert_eq!(
+            local
+                .scope
+                .as_ref()
+                .map(|scope| scope.iter().map(|level| level.as_str().to_owned()).collect::<Vec<String>>()),
+            Some(vec!["/madrid/gardens".to_owned()])
+        );
+    }
+
+    /// The other half of clause 4.3.6.2: an auxiliary source does supply the
+    /// member when nothing else did, which is what "supplementary" means.
+    #[test]
+    fn an_auxiliary_source_supplies_a_scope_no_other_source_held() {
+        let mut local = entity(&json!({}));
+        merge_entity_attributes(&mut local, entity(&json!({"scope": "/berlin/parks"})), MergePolicy::SupplementMissing);
+        pretty_assertions::assert_eq!(
+            local
+                .scope
+                .as_ref()
+                .map(|scope| scope.iter().map(|level| level.as_str().to_owned()).collect::<Vec<String>>()),
+            Some(vec!["/berlin/parks".to_owned()])
+        );
     }
 }

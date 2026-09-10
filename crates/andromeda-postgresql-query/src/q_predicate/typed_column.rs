@@ -156,12 +156,12 @@ mod tests {
         }
     }
 
-    /// Clause 4.6.3 admits any offset for a `full-time`, and the write path
-    /// stores one canonical rendering, so an operand that cannot be normalised
-    /// is one nothing stored could equal.
+    /// Clause 4.6.3 admits a `Time` only with the literal `Z` designator, and
+    /// the write path stores one canonical rendering, so an operand that cannot
+    /// be normalised is one nothing stored could equal.
     #[test]
     fn a_time_operand_that_normalises_compares_against_its_canonical_text() {
-        let time = parse_time("13:00:00+01:00").expect("valid full-time");
+        let time = parse_time("12:00:00,5Z").expect("the comma compatibility form");
         let sql = render(typed_column_condition(&Scalar::Time(time), CmpOp::Equal));
         assert!(sql.contains("value_string"), "{sql}");
     }

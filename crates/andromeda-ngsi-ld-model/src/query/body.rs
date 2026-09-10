@@ -1,6 +1,9 @@
 //! The canonical model-owned `Query` resource.
 
-use crate::query::{aggregation_parameters::AggregationParameters, entity_selector::QueryEntitySelector, temporal_query::TemporalQuery};
+use crate::{
+    attribute_name_csv,
+    query::{aggregation_parameters::AggregationParameters, entity_selector::QueryEntitySelector, temporal_query::TemporalQuery},
+};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, uri::Uri};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
@@ -111,57 +114,6 @@ pub struct Query {
     /// Whether distributed entity fragments must be reassembled before filters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub split_entities: Option<bool>,
-}
-
-/// Serde support for comma-separated attribute-name members.
-///
-/// The module is public because it names the wire form of `expandValues` and
-/// `jsonKeys`: the pair of functions is the encoding those members have, and a
-/// caller rendering one of them outside a `Query` needs the same encoding.
-pub mod attribute_name_csv {
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use serde::{Deserialize, Deserializer, Serializer, de::Error as DeserializeError};
-
-    /// Deserialize a comma-separated member into validated names.
-    ///
-    /// # Errors
-    ///
-    /// Returns the deserializer's own error when the member is neither absent
-    /// nor a string, and a custom error when the list carries an empty member
-    /// or a member that does not satisfy the NGSI-LD attribute-name grammar.
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<AttributeName>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Option::<String>::deserialize(deserializer)?
-            .map(|raw| {
-                raw.split(',')
-                    .map(str::trim)
-                    .map(|name| {
-                        if name.is_empty() {
-                            return Err(DeserializeError::custom("attribute-name list contains an empty member"));
-                        }
-                        name.parse().map_err(DeserializeError::custom)
-                    })
-                    .collect()
-            })
-            .transpose()
-    }
-
-    /// Serialize validated names as the comma-separated member the spec defines.
-    ///
-    /// # Errors
-    ///
-    /// Returns the serializer's own error when the member cannot be written.
-    pub fn serialize<S>(value: &Option<Vec<AttributeName>>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match value {
-            Some(names) => serializer.serialize_str(&names.iter().map(AttributeName::as_str).collect::<Vec<_>>().join(",")),
-            None => serializer.serialize_none(),
-        }
-    }
 }
 
 /// Serde support for the `pick` / `omit` clause 4.21 member.

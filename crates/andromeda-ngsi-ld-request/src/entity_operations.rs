@@ -33,11 +33,23 @@ pub struct UpdateParams {
 
 /// Query parameters for `POST /entityOperations/query`.
 ///
-/// Supports format selection, language negotiation, join traversal,
-/// dataset selection, and local-only mode.
+/// Table 5.2.23-1 gives the `Query` data type no pagination member, no
+/// representation member and no local-scope flag, while Table 6.2-1 lists
+/// `POST /entityOperations/query` among the HTTP operations of clause 5.7.2 —
+/// one of the operations clause 4.12 lists. Clauses 6.3.10 and 6.3.13
+/// therefore require `limit`, `offset` and `count` on this binding as much as
+/// on the GET one, and they can only reach it through the URL.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PostQueryParams {
+    /// The page size (clause 6.3.10 `limit`).
+    pub limit: Option<u32>,
+    /// How many matches to skip before the page (clause 6.3.10 `offset`).
+    pub offset: Option<u32>,
+    /// Whether the response reports the total number of matches
+    /// (clause 6.3.13 `count`).
+    #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
+    pub count: Option<bool>,
     /// Typed representation and system-attribute options (`options`).
     #[serde(default, deserialize_with = "deserialize_entity_representation_options")]
     pub options: Option<EntityRepresentationOptions>,

@@ -3,7 +3,7 @@ use crate::{
     error::SubscriptionError,
     lifecycle::{DatasetIdPolicy, SubscriptionVariant},
     normalization,
-    validation,
+    term_expansion,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
@@ -55,7 +55,7 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
             }
         }
 
-        validation::expand_common_subscription_terms(&self.engine, payload, context).await
+        term_expansion::expand_common_subscription_terms(&self.engine, payload, context).await
     }
 
     async fn serialize_for_response(&self, subscription: &Subscription, context: &ContextSpec) -> Result<Value, SubscriptionError> {

@@ -1,6 +1,7 @@
 //! Error types for the context store crate.
 
 use crate::{entity::types_present::EntityTypesMissing, jsonld_context::mapper::ContextMapperError, schema_contract::error::SchemaContractError};
+use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 use andromeda_postgresql_encoding::{copy::CopyFieldError, ewkb::EwkbError};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
 use andromeda_postgresql_query::error::RenderError;
@@ -21,6 +22,9 @@ pub enum ContextStoreError {
     /// EWKB geometry encoding failed.
     #[error("context store encoding: {0}")]
     Encoding(#[from] EwkbError),
+    /// An ICU collation a clause-4.23 ordering named could not be created.
+    #[error("context store collation: {0}")]
+    Collation(#[from] CollationProvisioningError),
     /// A value could not be staged as a binary COPY field: it is longer than
     /// the format's 32-bit field prefix can announce, or it does not
     /// serialise.

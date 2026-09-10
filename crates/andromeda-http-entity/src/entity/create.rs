@@ -1,28 +1,32 @@
 //! HTTP handling for the create entity operation.
 
-use crate::entity::{
-    ContextUrl,
-    Entity,
-    EntityResultExt,
-    EntityTenantStateOrCreate,
-    EntityTypeValue,
-    ForwardProvisionRequest,
-    ForwardingOperation,
-    IncomingVia,
-    IntoResponse,
-    JsonLd,
-    LocalOnlyParams,
-    LocalOutcome,
-    OriginalUri,
-    ProblemResponse,
-    ProvisionResource,
-    Response,
-    StatusCode,
-    ValidatedQuery,
-    classify_entity_error,
-    collect_proxied_attrs,
-    provision_response,
+use crate::{
+    entity::{
+        ContextUrl,
+        Entity,
+        EntityResultExt,
+        EntityTenantStateOrCreate,
+        EntityTypeValue,
+        ForwardProvisionRequest,
+        ForwardingOperation,
+        IncomingVia,
+        IntoResponse,
+        JsonLd,
+        LocalOnlyParams,
+        LocalOutcome,
+        OriginalUri,
+        ProblemResponse,
+        ProvisionResource,
+        Response,
+        StatusCode,
+        ValidatedQuery,
+        classify_entity_error,
+        collect_proxied_attrs,
+        provision_response,
+    },
+    written_payload_admission::admit_written_entity,
 };
+use andromeda_entity::write_admission::EntityWrite;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
 use andromeda_http_response::headers::with_location;
@@ -46,6 +50,18 @@ pub(crate) async fn create(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
     let context = context.merge(body_context);
+    // Clause 5.6.1.4 opens with the clause 5.5.4 validation and forwards only
+    // afterwards, so the whole screening runs here: a representation this
+    // broker refuses reaches no context source, and a create whose attributes
+    // a proxied registration claims in full is still validated rather than
+    // answered 201 unexamined. Half of it is decidable only on the compact
+    // payload -- after expansion a seal forged outside `ngsildproof` is
+    // indistinguishable from a sub-attribute (clauses 4.5.2.2, 4.5.3.2 and
+    // 4.5.3.3).
+    let representation = serde_json::to_value(&entity).with_entity_instance(&uri)?;
+    admit_written_entity(service, EntityWrite::Create, &representation, &context)
+        .await
+        .with_entity_instance(&uri)?;
     let is_local = params.local.unwrap_or(false);
 
     if is_local {

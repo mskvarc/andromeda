@@ -1,6 +1,7 @@
 //! Delivering one notification as an HTTP POST.
 
 use crate::{
+    delivery_deadline::delivery_deadline,
     error::TransportError,
     host_port::HostPort,
     http::{
@@ -118,25 +119,27 @@ impl HttpTransport {
             }),
         }
     }
+}
 
-    /// Turn a `reqwest` send failure into the transport failure it was.
-    fn send_failure(&self, endpoint: Url, error: &reqwest::Error) -> TransportError {
-        if error.is_timeout() {
-            return TransportError::Timeout {
-                endpoint,
-                duration: self.config.timeout,
-            };
+/// Turn a `reqwest` send failure into the transport failure it was.
+///
+/// `deadline` is the bound the attempt actually ran under: the endpoint's own
+/// Table 5.2.15-1 `timeout` where it named one shorter than the system bound,
+/// and the system bound otherwise, so a reported timeout names the deadline
+/// that expired rather than one that did not apply.
+fn send_failure(endpoint: Url, deadline: Duration, error: &reqwest::Error) -> TransportError {
+    if error.is_timeout() {
+        return TransportError::Timeout { endpoint, duration: deadline };
+    }
+    if chain_indicates_tls(error) {
+        TransportError::TlsError {
+            endpoint,
+            detail: error.to_string(),
         }
-        if chain_indicates_tls(error) {
-            TransportError::TlsError {
-                endpoint,
-                detail: error.to_string(),
-            }
-        } else {
-            TransportError::ConnectionFailed {
-                endpoint,
-                detail: error.to_string(),
-            }
+    } else {
+        TransportError::ConnectionFailed {
+            endpoint,
+            detail: error.to_string(),
         }
     }
 }
@@ -216,11 +219,19 @@ impl NotificationTransport for HttpTransport {
         if let Some(snapshot) = req.snapshot.as_ref() {
             header_map.typed_insert(snapshot.clone());
         }
+        // Table 5.2.15-1: the endpoint's `timeout` is the "maximum period of
+        // time in milliseconds which may elapse before a notification is
+        // assumed to have failed", and "the NGSI-LD system can override this
+        // value" — which the broker-wide bound below does, in the one direction
+        // an override runs. The row also confines the member to a binding whose
+        // "protocol always returns a response".
+        let deadline = delivery_deadline(req.timeout, self.config.timeout);
         let mut request = self
             .client
             // clone: `reqwest` takes the `Url` by value, and cloning a parsed URL is cheaper than reparsing the string
             .post(req.endpoint_uri.clone())
             .headers(header_map)
+            .timeout(deadline)
             .body(body); // the serialised notification, moved into the request
 
         for pair in &req.receiver_info {
@@ -243,7 +254,7 @@ impl NotificationTransport for HttpTransport {
         }
 
         let start = Instant::now();
-        let response = request.send().await.map_err(|error| self.send_failure(req.endpoint_uri.clone(), &error))?; // clone: the error path owns the endpoint it names
+        let response = request.send().await.map_err(|error| send_failure(req.endpoint_uri.clone(), deadline, &error))?; // clone: the error path owns the endpoint it names
         let status = response.status().as_u16();
         let duration = start.elapsed();
 

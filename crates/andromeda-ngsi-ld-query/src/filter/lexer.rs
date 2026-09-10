@@ -231,21 +231,27 @@ fn scan_signed_number(chars: &[char], start: usize) -> (Token, usize) {
 
 /// Scan a token that opens with an ASCII digit.
 ///
-/// Clause 4.6.3 operands are unquoted, so a digit run followed by `-` and
-/// another digit is an RFC 3339 date-like literal rather than a number followed
-/// by punctuation.
+/// Clause 4.9 writes its `dateTime`, `date` and `time` operands unquoted, and
+/// each of the three opens with a digit run that a `Number` cannot continue
+/// with: RFC 8259's `number` production carries neither `-` after its integer
+/// digits nor `:` at all, and clause 4.6.2 makes every `AttrName` open with a
+/// letter, so a digit run followed by either separator is a clause 4.6.3
+/// literal rather than a number followed by punctuation. Without the `:` case
+/// the `time` production had no unquoted spelling at all: `q=readingTime==\
+/// 12:00:00Z` lexed as the number `12` followed by an unexpected identifier.
 fn scan_digit_run(chars: &[char], start: usize) -> (Token, usize) {
     let after_digits = consume_digits(chars, start);
-    if is_at(chars, after_digits, '-') && starts_digit(chars, after_digits + 1) {
-        return scan_date_like(chars, start, after_digits);
+    let opens_time_value = (is_at(chars, after_digits, '-') || is_at(chars, after_digits, ':')) && starts_digit(chars, after_digits + 1);
+    if opens_time_value {
+        return scan_time_value(chars, start, after_digits);
     }
     let end = scan_number_tail(chars, after_digits);
     (Token::NumberLit(chars[start..end].iter().collect()), end)
 }
 
-/// Consume an RFC 3339 date-like literal as one identifier, stopping before the
-/// `..` range separator so that `2017-12-24..2017-12-25` stays a range.
-fn scan_date_like(chars: &[char], start: usize, from: usize) -> (Token, usize) {
+/// Consume a clause 4.6.3 time value literal as one identifier, stopping before
+/// the `..` range separator so that `2017-12-24..2017-12-25` stays a range.
+fn scan_time_value(chars: &[char], start: usize, from: usize) -> (Token, usize) {
     let mut cursor = from;
     while chars.get(cursor).copied().is_some_and(is_temporal_char) {
         if is_at(chars, cursor, '.') && is_at(chars, cursor + 1, '.') {
@@ -256,7 +262,12 @@ fn scan_date_like(chars: &[char], start: usize, from: usize) -> (Token, usize) {
     (Token::Ident(chars[start..cursor].iter().collect()), cursor)
 }
 
-/// Whether `current` may appear inside an unquoted RFC 3339 temporal literal.
+/// Whether `current` may appear inside an unquoted clause 4.6.3 time value.
+///
+/// Wider than the conformant forms on purpose: a numeric zone offset is
+/// consumed into the literal so that the operand parser can refuse it as a
+/// malformed `dateTime` or `time`, rather than the tokeniser splitting it and
+/// reporting an unexpected character at some position inside it.
 fn is_temporal_char(current: char) -> bool {
     current.is_alphanumeric() || matches!(current, '-' | ':' | '.' | '+')
 }
@@ -398,14 +409,32 @@ mod tests {
         assert_eq!(lex("2017-12-24..2017-12-25"), vec![ident("2017-12-24"), Token::Dots, ident("2017-12-25")]);
     }
 
-    /// A bare time of day does not survive the tokeniser: a leading digit run
-    /// stays a number unless a `-` follows it, so `12:00:00Z` splits. This is
-    /// why `serialize` quotes a `Scalar::Time` operand — the constraint is
-    /// recorded here rather than left to be rediscovered.
+    /// Clause 4.9's `ComparableValue` admits a bare `time` beside `dateTime`
+    /// and `date`, so a time of day survives the tokeniser whole. It used to
+    /// split — `12:00:00Z` lexed as the number `12` followed by the identifier
+    /// `:00:00Z` — which left the `time` production with no unquoted spelling
+    /// at all and made every such filter a `BadRequestData`.
     #[test]
-    fn a_bare_time_of_day_splits_because_the_digit_branch_requires_a_dash() {
-        assert_eq!(lex("12:00:00Z"), vec![number("12"), ident(":00:00Z")]);
+    fn a_bare_time_of_day_is_one_literal() {
+        assert_eq!(lex("12:00:00Z"), vec![ident("12:00:00Z")]);
+        assert_eq!(lex("12:00:00.500000Z"), vec![ident("12:00:00.500000Z")]);
         assert_eq!(lex("\"12:00:00Z\""), vec![Token::QuotedStr("12:00:00Z".to_string())]);
+    }
+
+    /// A digit run that no clause 4.6.3 separator continues is still the
+    /// `Number` production of clause 4.9.
+    #[test]
+    fn a_digit_run_that_no_separator_continues_is_still_a_number() {
+        assert_eq!(lex("12"), vec![number("12")]);
+        assert_eq!(lex("12.5"), vec![number("12.5")]);
+        assert_eq!(lex("12..20"), vec![number("12"), Token::Dots, number("20")]);
+    }
+
+    /// A time-of-day range stops at the range separator exactly as a date range
+    /// does: the `..` is clause 4.9's `dots`, not a fractional part.
+    #[test]
+    fn a_time_of_day_range_stops_at_the_range_separator() {
+        assert_eq!(lex("09:00:00Z..17:00:00Z"), vec![ident("09:00:00Z"), Token::Dots, ident("17:00:00Z")]);
     }
 
     #[test]

@@ -106,6 +106,7 @@ dependencies = [
  "clap",
  "clap-themes",
  "futures",
+ "http",
  "iri-rs",
  "mimalloc",
  "pretty_assertions",
@@ -960,6 +961,7 @@ dependencies = [
  "indexmap 2.14.2",
  "iri-rs",
  "pretty_assertions",
+ "regex",
  "serde",
  "serde_json",
  "static-regular-grammar",
@@ -1044,6 +1046,7 @@ dependencies = [
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
  "chrono",
+ "derive_more",
  "iri-rs",
  "iso8601-duration",
  "langtag",
@@ -1217,6 +1220,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-postgresql-collation"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-ngsi-ld-query",
+ "dashmap",
+ "sqlx",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "andromeda-postgresql-context-query"
 version = "0.1.0"
 dependencies = [
@@ -1258,6 +1272,7 @@ dependencies = [
  "andromeda-ngsi-ld-query",
  "andromeda-notification",
  "andromeda-postgresql-codes",
+ "andromeda-postgresql-collation",
  "andromeda-postgresql-context-query",
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-name-dictionary",
@@ -1275,7 +1290,6 @@ dependencies = [
  "bigdecimal",
  "chrono",
  "confique",
- "dashmap",
  "derive_more",
  "futures",
  "hex",
@@ -1438,6 +1452,7 @@ dependencies = [
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-postgresql-codes",
+ "andromeda-postgresql-collation",
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-name-dictionary",
  "andromeda-postgresql-query",

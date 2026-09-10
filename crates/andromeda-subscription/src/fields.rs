@@ -3,6 +3,7 @@
 use crate::{error::SubscriptionError, lifecycle::DatasetIdPolicy, store::SubscriptionFields};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
+    attribute_name_csv,
     notification::{DEFAULT_NOTIFICATION_TRIGGERS, NotificationTrigger},
     subscription::{EntitySelector, NotificationParams, Subscription},
 };
@@ -52,6 +53,12 @@ pub struct SubscriptionWriteValues {
     pub throttling: Option<f64>,
     /// Temporal query object.
     pub temporal_q: Option<Value>,
+    /// Attributes whose `q` operands were coerced through the `@context`
+    /// (Table 5.2.12-1 `expandValues`).
+    pub expand_values: Option<Vec<AttributeName>>,
+    /// Attributes whose `q` object keys were expanded while their values were
+    /// left uninterpreted (Table 5.2.12-1 `jsonKeys`).
+    pub json_keys: Option<Vec<AttributeName>>,
     /// Validated preferred language.
     pub lang: Option<LangTagBuf>,
     /// Validated JSON-LD context URL.
@@ -83,6 +90,8 @@ impl SubscriptionWriteValues {
             expires_at: self.expires_at,
             throttling: self.throttling,
             temporal_q: self.temporal_q.as_ref(),
+            expand_values: self.expand_values.as_deref(),
+            json_keys: self.json_keys.as_deref(),
             lang: self.lang.as_ref(),
             jsonld_context: self.jsonld_context.as_ref(),
             local_only: self.local_only,
@@ -105,6 +114,41 @@ where
             })
         })
         .transpose()
+}
+
+/// Read one comma-separated attribute-name member of a payload.
+///
+/// Table 5.2.12-1 types `expandValues` and `jsonKeys` as a single `String`
+/// holding a comma separated list, which is the encoding
+/// [`attribute_name_csv`] owns; an absent member stays absent so an update
+/// fragment that does not mention it leaves the stored list alone.
+///
+/// # Errors
+///
+/// Returns [`SubscriptionError::Validation`] when the member is not a string,
+/// or names something outside the NGSI-LD attribute-name grammar.
+pub(crate) fn attribute_name_csv_member(payload: &Value, member: &str) -> Result<Option<Vec<AttributeName>>, SubscriptionError> {
+    let Some(value) = payload.get(member) else {
+        return Ok(None);
+    };
+    attribute_name_csv::deserialize(value).map_err(|error| SubscriptionError::validation(format!("Invalid '{member}' value: {error}")))
+}
+
+/// Merge one comma-separated attribute-name member of an update fragment over
+/// the list already stored (Table 5.2.12-1 `expandValues` / `jsonKeys`).
+///
+/// Clause 5.8.3 updates a Subscription with "a fragment of the Subscription",
+/// so a member the fragment does not mention leaves the stored list alone. An
+/// explicit `null` is how the fragment names a member it wants gone -- the same
+/// way `geoQ` and `temporalQ` are removed -- and without it an opt-in list
+/// could be replaced but never cleared. Anything else replaces the stored list
+/// once [`attribute_name_csv_member`] has validated it.
+fn merged_attribute_name_csv(payload: &Value, member: &str, stored: Option<Vec<AttributeName>>) -> Result<Option<Vec<AttributeName>>, SubscriptionError> {
+    match payload.get(member) {
+        None => Ok(stored),
+        Some(Value::Null) => Ok(None),
+        Some(Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_)) => attribute_name_csv_member(payload, member),
+    }
 }
 
 fn expiration(payload: &Value) -> Result<Option<DateTime<Utc>>, SubscriptionError> {
@@ -141,6 +185,8 @@ pub fn extract_create_fields(payload: &Value, dataset_id_policy: DatasetIdPolicy
         expires_at: expiration(payload)?,
         throttling: payload.get("throttling").and_then(Value::as_f64),
         temporal_q: payload.get("temporalQ").cloned(), // clone: the write values own request JSON across the database await.
+        expand_values: attribute_name_csv_member(payload, "expandValues")?,
+        json_keys: attribute_name_csv_member(payload, "jsonKeys")?,
         lang: deserialize_member(payload, "lang")?,
         jsonld_context: deserialize_member(payload, "jsonldContext")?,
         local_only: payload.get("localOnly").and_then(Value::as_bool).unwrap_or(false),
@@ -194,6 +240,8 @@ pub fn merge_update_fields(payload: &Value, existing: Subscription, dataset_id_p
             .cloned() // clone: the merged values own a member borrowed from the update payload.
             .or(filters.temporal_q)
             .filter(|value| !value.is_null()),
+        expand_values: merged_attribute_name_csv(payload, "expandValues", filters.expand_values)?,
+        json_keys: merged_attribute_name_csv(payload, "jsonKeys", filters.json_keys)?,
         lang: deserialize_member(payload, "lang")?.or(delivery.lang),
         jsonld_context: deserialize_member(payload, "jsonldContext")?.or(delivery.jsonld_context),
         local_only: payload.get("localOnly").and_then(Value::as_bool).or(delivery.local_only).unwrap_or(false),
@@ -203,7 +251,12 @@ pub fn merge_update_fields(payload: &Value, existing: Subscription, dataset_id_p
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::SubscriptionError, fields::extract_create_fields, lifecycle::DatasetIdPolicy};
+    use crate::{
+        error::SubscriptionError,
+        fields::{extract_create_fields, merged_attribute_name_csv},
+        lifecycle::DatasetIdPolicy,
+    };
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
     #[test]
     fn entity_subscription_creation_retains_dataset_identifiers() -> Result<(), SubscriptionError> {
@@ -225,6 +278,47 @@ mod tests {
         let values = extract_create_fields(&serde_json::json!({"datasetId": ["urn:ngsi-ld:Dataset:one"]}), DatasetIdPolicy::Discard)?;
 
         assert!(values.dataset_id.is_none());
+        Ok(())
+    }
+
+    /// The stored opt-in list an update fragment is merged over.
+    fn stored_names() -> Vec<AttributeName> {
+        vec!["status".parse().expect("a valid attribute name")]
+    }
+
+    /// One merged opt-in list, as wire text.
+    fn spelled(names: Option<&[AttributeName]>) -> Vec<&str> {
+        names.unwrap_or_default().iter().map(AttributeName::as_str).collect()
+    }
+
+    /// Clause 5.8.3 updates a Subscription with "a fragment of the
+    /// Subscription", so a member the fragment does not mention is left alone.
+    #[test]
+    fn an_update_that_names_no_opt_in_leaves_the_stored_lists_alone() -> Result<(), SubscriptionError> {
+        let merged = merged_attribute_name_csv(&serde_json::json!({}), "expandValues", Some(stored_names()))?;
+
+        pretty_assertions::assert_eq!(spelled(merged.as_deref()), vec!["status"]);
+        Ok(())
+    }
+
+    /// An explicit `null` is how a fragment names a member it wants gone, the
+    /// same way `geoQ` and `temporalQ` are removed. Without it an opt-in list
+    /// could be replaced but never cleared.
+    #[test]
+    fn an_explicit_null_clears_a_stored_opt_in_list() -> Result<(), SubscriptionError> {
+        let merged = merged_attribute_name_csv(&serde_json::json!({"expandValues": null}), "expandValues", Some(stored_names()))?;
+
+        assert!(merged.is_none(), "an explicit null removes the member");
+        Ok(())
+    }
+
+    /// Anything else replaces the stored list, once the comma-separated form
+    /// Table 5.2.12-1 defines has been validated.
+    #[test]
+    fn a_named_list_replaces_the_stored_one() -> Result<(), SubscriptionError> {
+        let merged = merged_attribute_name_csv(&serde_json::json!({"jsonKeys": "payload,extra"}), "jsonKeys", Some(stored_names()))?;
+
+        pretty_assertions::assert_eq!(spelled(merged.as_deref()), vec!["payload", "extra"]);
         Ok(())
     }
 

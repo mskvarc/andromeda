@@ -2,6 +2,7 @@
 
 use crate::{duplicate_instance_claim::DuplicateInstanceClaimError, unit_code_metadata::UnitCodeMetadataError};
 use andromeda_ngsi_ld_lexicon::ngsi_ld_date_time::NgsiLdDateTimeError;
+use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 use andromeda_postgresql_encoding::{copy::CopyFieldError, ewkb::EwkbError};
 use andromeda_postgresql_temporal_query::aggregation_group::MixedAggregationGroup;
 use andromeda_temporal::error::TemporalError;
@@ -26,6 +27,9 @@ pub enum TemporalStoreError {
     /// A geometry value could not be encoded for persistence.
     #[error("temporal store encoding: {0}")]
     Encoding(#[from] EwkbError),
+    /// An ICU collation a clause-4.23 ordering named could not be created.
+    #[error("temporal store collation: {0}")]
+    Collation(#[from] CollationProvisioningError),
     /// A value could not be staged as a binary COPY field: it is longer than
     /// the format's 32-bit field prefix can announce, or it does not
     /// serialise.
@@ -73,11 +77,21 @@ impl From<TemporalStoreError> for TemporalError {
             TemporalStoreError::TimestampPrecision(_) | TemporalStoreError::MixedAggregationGroup(_) | TemporalStoreError::DuplicateInstanceClaim(_) => {
                 TemporalError::validation(error.to_string())
             }
+            // Clause 5.7.4.4: "if a preferred collation setting is present and
+            // it does not conform to a valid ICU collation (see IETF RFC 6067)
+            // then an error of type BadRequestData shall be raised". Whether
+            // ICU holds a collation for a locale is a question only the
+            // database can answer, so its refusal of the client's own
+            // `collation` reaches policy here rather than as a broker fault.
+            TemporalStoreError::Collation(CollationProvisioningError::NotAnIcuCollation { collation, .. }) => {
+                TemporalError::validation(format!("'{collation}' does not conform to a valid ICU collation"))
+            }
             TemporalStoreError::Database(_)
             | TemporalStoreError::Decode(_)
             | TemporalStoreError::Query(_)
             | TemporalStoreError::Encoding(_)
             | TemporalStoreError::CopyField(_)
+            | TemporalStoreError::Collation(CollationProvisioningError::Statement { .. })
             | TemporalStoreError::NameLookup(_) => TemporalError::persistence(error.to_string()),
         }
     }

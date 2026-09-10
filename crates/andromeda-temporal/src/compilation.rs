@@ -6,11 +6,10 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedT
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_query::{
     entity_selection::{ConsideredEntities, EntitySelection},
-    error::QueryError,
     filter::{
-        expansion::{apply_expand_values, apply_json_keys, expand_q_expr},
+        expansion::{apply_expand_values, expand_attribute_names, expand_q_expr},
         expression::Expr,
-        path::expanded_attribute_name,
+        json_key_attributes::JsonKeyAttributes,
     },
     geo::{compile as geo_compile, query::GeoQuery},
     pagination::{CountPolicy, Pagination},
@@ -22,6 +21,7 @@ use andromeda_ngsi_ld_query::{
         compiled::CompiledTemporalQuery,
         instance_selection::InstanceSelection,
         last_n::LastNOrigin,
+        ordering::TemporalEntityOrdering,
         representation::Representation,
         window::{TemporalWindow, TimeInterval},
     },
@@ -29,7 +29,6 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, temporal::TemporalQueryParameters};
-use iri_rs::IriBuf;
 use std::collections::HashSet;
 
 impl TemporalService {
@@ -38,9 +37,10 @@ impl TemporalService {
     /// # Errors
     ///
     /// Returns [`TemporalError::Query`] when a selector, `q` filter, geo
-    /// selection or projection term is not well formed, or when the
+    /// selection or projection term is not well formed, when the
     /// `timerel` / `timeAt` / `endTimeAt` triple does not describe an interval
-    /// (clause 5.7.4.4), and [`TemporalError::JsonLd`] when a term cannot be
+    /// (clause 5.7.4.4), or when the ordering names something clause 5.7.4.3
+    /// does not admit, and [`TemporalError::JsonLd`] when a term cannot be
     /// expanded against `context`.
     pub async fn compile_temporal_query(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<CompiledTemporalQuery, TemporalError> {
         let prepared_context = self.engine.prepare_term_context(context);
@@ -105,6 +105,12 @@ impl TemporalService {
             .representation(compile_representation(params, format))
             .pagination(compile_pagination(params))
             .projection(projection)
+            // Clause 5.7.4.5: "If Entity ordering is specified (see clause
+            // 4.23), then the JSON-LD array returned shall be ordered according
+            // to the member names specified." The ordering needs no context
+            // expansion: clause 5.7.4.3 confines it to the `id` member, which
+            // names no term.
+            .ordering(TemporalEntityOrdering::of_parameters(&params.ordering)?)
             .build())
     }
 
@@ -122,25 +128,22 @@ async fn compile_q_filter(params: &TemporalQueryParameters, expander: &impl Term
     let Some(expr) = params.q.clone() else {
         return Ok(None);
     };
-    let expr = expand_q_expr(expr, expander).await?;
+    // `jsonKeys` (clause 4.9): the values of the listed attributes are raw
+    // JSON, so the object keys the filter addresses under them stay literal
+    // rather than being expanded against the supplied `@context`. That decides
+    // how the filter's terms expand, so it is resolved first.
+    let json_keys: JsonKeyAttributes = match params.json_keys.as_deref() {
+        Some(attributes) => expand_attribute_names(attributes, expander).await?.into_iter().collect(),
+        None => JsonKeyAttributes::default(),
+    };
+    let expr = expand_q_expr(expr, &json_keys, expander).await?;
 
     // `expandValues`: expand string right-hand-side values for the attributes
     // that opted in (spec temporal params).
     let expr = match params.expand_values.as_deref() {
         Some(attributes) => {
-            let opted_in = opted_in_attribute_names(&expand_attrs(attributes, expander).await?)?;
+            let opted_in: HashSet<AttributeName> = expand_attribute_names(attributes, expander).await?.into_iter().collect();
             apply_expand_values(expr, &opted_in, expander).await?
-        }
-        None => expr,
-    };
-
-    // `jsonKeys` for the attributes that opted in (clause 6.18.3.2). Per the
-    // spec, the listed keys are kept literal rather than expanded against the
-    // supplied `@context`.
-    let expr = match params.json_keys.as_deref() {
-        Some(attributes) => {
-            let opted_in = opted_in_attribute_names(&expand_attrs(attributes, expander).await?)?;
-            apply_json_keys(expr, &opted_in, expander).await?
         }
         None => expr,
     };
@@ -206,11 +209,6 @@ fn compile_pagination(params: &TemporalQueryParameters) -> Pagination {
             Some(false) | None => CountPolicy::Omit,
         },
     }
-}
-
-/// Convert explicitly selected attribute IRIs into validated attribute names.
-fn opted_in_attribute_names(iris: &[IriBuf]) -> Result<HashSet<AttributeName>, QueryError> {
-    iris.iter().map(expanded_attribute_name).collect()
 }
 
 /// Expand `pick` / `omit` into a compiled clause 4.21 [`Projection`].

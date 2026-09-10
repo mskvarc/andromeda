@@ -13,6 +13,7 @@ pub mod content_range;
 pub mod extraction_rejection;
 pub mod headers;
 pub mod linked_resolution_warning;
+pub mod not_acceptable;
 pub mod pagination;
 pub mod problem_response;
 pub mod provision;

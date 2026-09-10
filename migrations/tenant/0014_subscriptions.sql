@@ -20,7 +20,8 @@
 -- JSONB columns are used for nested spec structures that vary in shape:
 --   * entities:     array of EntitySelector {type, id, idPattern}
 --   * notification: NotificationParams {format, endpoint{uri, accept,
---                   receiverInfo, notifierInfo}, attributes, sysAttrs, ...}
+--                   cooldown, timeout, receiverInfo, notifierInfo},
+--                   attributes, sysAttrs, ...}
 --   * geo_q:        GeoQuery {georel, geometry, coordinates, geoproperty}
 --   * temporal_q:   TemporalQuery (only for CSR subscriptions)
 --
@@ -34,17 +35,18 @@
 -- deliveries through ON DELETE CASCADE with no read-modify-write loop in the
 -- broker.
 --
--- The delivery counters of clause 5.2.15 (`timesSent`, `lastNotification`,
--- `lastSuccess`, `lastFailure`) are not columns of this table. Every
--- notification sent moves them, and a popular subscription is moved by many
--- workers at once, so keeping them here would rewrite the wide subscription
--- row -- its JSONB selectors, its query strings, its endpoint -- on every
--- delivery. They live in `subscription_delivery_state` below: one narrow row
--- per subscription, keyed by `subscription_key`, with no index but its primary
--- key and a fillfactor of 50, so every claim and every mark is a heap-only
--- tuple update on a page that keeps room for it. `subscriptions.modified_at`
--- is the resource's clause 4.8 modification instant and moves only when the
--- client changes the subscription, never on delivery.
+-- The delivery counters of clauses 5.2.14.2 and 5.2.15 (`timesSent`,
+-- `timesFailed`, `lastNotification`, `lastSuccess`, `lastFailure`) are not
+-- columns of this table. Every notification sent moves them, and a popular
+-- subscription is moved by many workers at once, so keeping them here would
+-- rewrite the wide subscription row -- its JSONB selectors, its query strings,
+-- its endpoint -- on every delivery. They live in
+-- `subscription_delivery_state` below: one narrow row per subscription, keyed
+-- by `subscription_key`, with no index but its primary key and a fillfactor of
+-- 50, so every claim and every mark is a heap-only tuple update on a page that
+-- keeps room for it. `subscriptions.modified_at` is the resource's clause 4.8
+-- modification instant and moves only when the client changes the
+-- subscription, never on delivery.
 --
 -- `id` is byte-collated: it is a URI, compared and matched byte-wise
 -- everywhere the broker uses it, and byte order is what lets a prefix match
@@ -97,8 +99,11 @@ CREATE TABLE subscriptions (
     id TEXT COLLATE "C" NOT NULL,
 
     -- Notification configuration (required by spec):
-    -- {format, endpoint: {uri, accept, receiverInfo, notifierInfo},
-    --  attributes, sysAttrs, showChanges, ...}
+    -- {format, endpoint: {uri, accept, cooldown, timeout, receiverInfo,
+    --  notifierInfo}, attributes, sysAttrs, showChanges, ...}
+    -- The endpoint's clause 5.2.15 `cooldown` and `timeout` live here rather
+    -- than in columns of their own: they are read once per delivery, on the
+    -- subscription the cache already holds, and never queried across rows.
     notification JSONB COMPRESSION lz4 NOT NULL,
 
     -- Optional human-readable name.
@@ -134,6 +139,15 @@ CREATE TABLE subscriptions (
 
     -- Context source filter query string.
     csf TEXT,
+
+    -- Attribute names (expanded IRIs) whose `q` operands were coerced through
+    -- the subscription @context (clause 5.2.12 `expandValues`), and whose `q`
+    -- object keys were expanded while their values were left uninterpreted
+    -- (clause 5.2.12 `jsonKeys`). Both are stored for the representation only:
+    -- the coercion they ask for is applied to `q` when the subscription is
+    -- written, so `q` above is already the expression matching evaluates.
+    expand_values TEXT[] COMPRESSION lz4,
+    json_keys TEXT[] COMPRESSION lz4,
 
     -- Dataset IDs to filter notifications by.
     dataset_id TEXT[] COMPRESSION lz4,
@@ -173,13 +187,16 @@ CREATE INDEX idx_subscriptions_kind_status ON subscriptions(context_space_key, k
 -- the index.
 CREATE INDEX idx_subscriptions_expires_at ON subscriptions(context_space_key, expires_at) WHERE expires_at IS NOT NULL;
 
--- Notification delivery statistics (spec clause 5.2.15), one row per
--- subscription, created together with the subscription in the same
+-- Notification delivery statistics (spec clauses 5.2.14.2 and 5.2.15), one row
+-- per subscription, created together with the subscription in the same
 -- transaction and reclaimed with it through the cascade. `times_sent` and
 -- `last_notification` move on every claimed notification slot; `last_success`
--- and `last_failure` on the outcome of each delivery. No column here is
--- indexed, and the fillfactor leaves half of every page free, so each of
--- those writes is a heap-only tuple update. The autovacuum settings are the
+-- on a delivery the endpoint accepted, and `times_failed` together with
+-- `last_failure` on one it did not. `last_failure` is also read on the way in:
+-- a claim is refused while it lies inside the endpoint's clause 5.2.15
+-- `cooldown` window, which is what suppresses the notification entirely. No
+-- column here is indexed, and the fillfactor leaves half of every page free, so
+-- each of those writes is a heap-only tuple update. The autovacuum settings are the
 -- ones the queue relations use: the row count is small and the update rate
 -- is the delivery rate, so the default scale factors would let dead tuples
 -- outnumber live rows many times over before a vacuum ran.
@@ -187,13 +204,21 @@ CREATE TABLE subscription_delivery_state (
     context_space_key BIGINT NOT NULL,
     subscription_key BIGINT PRIMARY KEY,
     times_sent INTEGER NOT NULL DEFAULT 0,
+    times_failed INTEGER NOT NULL DEFAULT 0,
     last_notification TIMESTAMPTZ,
     last_success TIMESTAMPTZ,
     last_failure TIMESTAMPTZ,
     CONSTRAINT fk_subscription_delivery_state_context_subscription
         FOREIGN KEY (context_space_key, subscription_key)
         REFERENCES subscriptions(context_space_key, subscription_key) ON DELETE CASCADE,
-    CONSTRAINT chk_subscription_delivery_state_times_sent_non_negative CHECK (times_sent >= 0)
+    -- The floor is zero, not one, and that is not the "Greater than 0" of
+    -- Table 5.2.14.2-1: the table restricts the `timesSent` and `timesFailed`
+    -- *members* of a rendered NotificationParams, which are 0..1, so a counter
+    -- that has not moved is an absent member. The column has no absence to
+    -- offer -- a counter has to be somewhere before it is first advanced -- so
+    -- it holds zero and the representation omits it.
+    CONSTRAINT chk_subscription_delivery_state_times_sent_non_negative CHECK (times_sent >= 0),
+    CONSTRAINT chk_subscription_delivery_state_times_failed_non_negative CHECK (times_failed >= 0)
 ) WITH (
     fillfactor = 50,
     autovacuum_vacuum_scale_factor = 0.005,

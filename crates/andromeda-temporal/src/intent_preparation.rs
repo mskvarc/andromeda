@@ -10,10 +10,11 @@ use andromeda_context_commit::{history_record::HistoryRecord, write_ordinal::Wri
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
+    entity_type_name::EntityTypeName,
     instance_family::InstanceFamily,
     instance_identity::InstanceIdentity,
     ngsi_ld_date_time::NgsiLdDateTime,
-    scope::grammar::ScopeBuf,
+    scope::path::ScopePath,
     uri::Uri,
 };
 use andromeda_ngsi_ld_model::{
@@ -31,8 +32,14 @@ use std::slice::from_ref;
 /// commit lands shares the commit's single write identity, and this intent's
 /// entries are numbered starting at `base` in the commit's one running
 /// ordinal counter rather than each entity restarting its own count at zero.
+///
+/// `entity_types` is likewise the write's, not the history's: clause 4.5.6
+/// makes the Temporal Evolution "the Entity [...] as mandated by clause 4.5.1",
+/// and the observed payload of an ordinary attribute write is an Entity
+/// Fragment whose `type` clauses 5.6.2.4, 5.6.3.4 and 5.6.17.4 leave optional.
 pub(crate) fn prepare(
     entity_id: &Uri,
+    entity_types: &[EntityTypeName],
     history: &[HistoryRecord],
     record: WriteRecord,
     base: WriteOrdinal,
@@ -61,6 +68,7 @@ pub(crate) fn prepare(
         record,
         base,
         entity_id: entity_id.clone(), // clone: the durable intent owns the validated identifier.
+        entity_types: entity_types.to_vec(),
         entries,
         selection_value,
     }))
@@ -221,7 +229,7 @@ fn append_scopes(value: &Value, recorded_at: DateTime<Utc>, entries: &mut Vec<Te
             let observation = if raw == NULL_URI.as_str() {
                 ScopeObservation::Deleted
             } else {
-                match ScopeBuf::new(raw.to_owned()) {
+                match raw.parse::<ScopePath>() {
                     Ok(path) => ScopeObservation::Path(path),
                     Err(_) => continue,
                 }
@@ -318,7 +326,7 @@ mod tests {
         write_ordinal::WriteOrdinal,
         write_record::WriteRecord,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, scope::grammar::ScopeBuf, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, scope::path::ScopePath, uri::Uri};
     use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
     use andromeda_ngsi_ld_number::JsonNumber;
     use chrono::{DateTime, TimeZone, Utc};
@@ -351,7 +359,7 @@ mod tests {
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
         let observed = Utc.with_ymd_and_hms(2020, 6, 1, 0, 0, 0).single().expect("valid instant");
 
-        let intent = prepare(&entity_id, &history, record(recorded_at), WriteOrdinal::at(0))
+        let intent = prepare(&entity_id, &[], &history, record(recorded_at), WriteOrdinal::at(0))
             .expect("scopes prepare")
             .expect("the scopes produce an intent");
 
@@ -363,7 +371,7 @@ mod tests {
                 TemporalAppendEntry::Observation { .. } | TemporalAppendEntry::Tombstone { .. } => None,
             })
             .collect();
-        let path = |raw: &str| ScopeObservation::Path(ScopeBuf::new(raw.to_owned()).expect("a valid scope"));
+        let path = |raw: &str| ScopeObservation::Path(raw.parse::<ScopePath>().expect("a valid scope path"));
         pretty_assertions::assert_eq!(
             scopes,
             vec![
@@ -393,7 +401,7 @@ mod tests {
         ];
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
 
-        let intent = prepare(&entity_id, &history, record(recorded_at), WriteOrdinal::at(0))
+        let intent = prepare(&entity_id, &[], &history, record(recorded_at), WriteOrdinal::at(0))
             .expect("null sentinel must not fail temporal preparation")
             .expect("the tombstone produces an intent");
 
@@ -430,9 +438,15 @@ mod tests {
         }]));
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
 
-        let intent = prepare(&entity_id, &[HistoryRecord::Observations(payload)], record(recorded_at), WriteOrdinal::at(0))
-            .expect("plural temporal values must be valid")
-            .expect("observations produce an intent");
+        let intent = prepare(
+            &entity_id,
+            &[],
+            &[HistoryRecord::Observations(payload)],
+            record(recorded_at),
+            WriteOrdinal::at(0),
+        )
+        .expect("plural temporal values must be valid")
+        .expect("observations produce an intent");
 
         pretty_assertions::assert_eq!(intent.entries.len(), 2);
         let rows = intent
@@ -465,9 +479,15 @@ mod tests {
         }]));
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
 
-        let intent = prepare(&entity_id, &[HistoryRecord::Observations(payload)], record(recorded_at), WriteOrdinal::at(0))
-            .expect("encoded relationship target must be valid")
-            .expect("the relationship produces an intent");
+        let intent = prepare(
+            &entity_id,
+            &[],
+            &[HistoryRecord::Observations(payload)],
+            record(recorded_at),
+            WriteOrdinal::at(0),
+        )
+        .expect("encoded relationship target must be valid")
+        .expect("the relationship produces an intent");
 
         assert!(matches!(
             &intent.entries[0],
@@ -498,9 +518,15 @@ mod tests {
                 }]
             }]));
 
-            let intent = prepare(&entity_id, &[HistoryRecord::Observations(payload)], record(recorded_at), WriteOrdinal::at(0))
-                .expect("an object list must be valid")
-                .expect("the list relationship produces an intent");
+            let intent = prepare(
+                &entity_id,
+                &[],
+                &[HistoryRecord::Observations(payload)],
+                record(recorded_at),
+                WriteOrdinal::at(0),
+            )
+            .expect("an object list must be valid")
+            .expect("the list relationship produces an intent");
 
             assert!(
                 matches!(
@@ -534,7 +560,16 @@ mod tests {
         }]));
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
 
-        assert!(prepare(&entity_id, &[HistoryRecord::Observations(payload)], record(recorded_at), WriteOrdinal::at(0)).is_err());
+        assert!(
+            prepare(
+                &entity_id,
+                &[],
+                &[HistoryRecord::Observations(payload)],
+                record(recorded_at),
+                WriteOrdinal::at(0)
+            )
+            .is_err()
+        );
     }
 
     /// Build the expanded payload of one `DateTime`-typed Property value.
@@ -561,8 +596,14 @@ mod tests {
         let payload = datetime_property_payload(&entity_id, "2026-07-25T12:00:00+02:00");
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
 
-        let error = prepare(&entity_id, &[HistoryRecord::Observations(payload)], record(recorded_at), WriteOrdinal::at(0))
-            .expect_err("a non-Z offset must be refused, not silently reinterpreted");
+        let error = prepare(
+            &entity_id,
+            &[],
+            &[HistoryRecord::Observations(payload)],
+            record(recorded_at),
+            WriteOrdinal::at(0),
+        )
+        .expect_err("a non-Z offset must be refused, not silently reinterpreted");
         assert!(matches!(error, TemporalError::Validation { .. }), "{error:?}");
     }
 
@@ -575,8 +616,14 @@ mod tests {
         let payload = datetime_property_payload(&entity_id, "2026-07-25T12:00:00.1234567Z");
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
 
-        let error = prepare(&entity_id, &[HistoryRecord::Observations(payload)], record(recorded_at), WriteOrdinal::at(0))
-            .expect_err("seven fractional digits must be refused, not rounded");
+        let error = prepare(
+            &entity_id,
+            &[],
+            &[HistoryRecord::Observations(payload)],
+            record(recorded_at),
+            WriteOrdinal::at(0),
+        )
+        .expect_err("seven fractional digits must be refused, not rounded");
         assert!(matches!(error, TemporalError::Validation { .. }), "{error:?}");
     }
 }

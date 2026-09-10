@@ -10,7 +10,7 @@ use crate::{
         PEER_ENDPOINT,
         csr_discovery::{find, query, register},
     },
-    oracle::assert_status,
+    oracle::{assert_status, json_body},
     registration::CsrBuilder,
     topology::{self, BrokerRole},
 };
@@ -122,6 +122,14 @@ async fn query_csr_geojson_is_not_acceptable() {
         .await
         .expect("GeoJSON discovery query");
     assert_status(&response, 406);
+    // The same clause fixes the body of that refusal: it "shall contain the
+    // list of the available representations of the resources", which for a
+    // registration resource is the two JSON representations and not the
+    // GeoJSON it just refused.
+    assert_eq!(
+        json_body(&response),
+        json!({"availableRepresentations": ["application/json", "application/ld+json"]})
+    );
 
     topology.finish().await.expect("topology cleanup");
 }

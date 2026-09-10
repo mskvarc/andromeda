@@ -414,17 +414,30 @@ async fn unsupported_media_type_post_temporal_entities_returns_415() {
 // NGSI-LD 6.3.4
 // ---------------------------------------------------------------------------
 
+// Clause 6.3.4: a 406 "shall result in a 406 HTTP status code and the body of
+// the message shall contain the list of the available representations of the
+// resources". The list is the refusing endpoint's own, in the significant
+// order the clause gives it, so an endpoint with no GeoJSON form (clause
+// 6.3.15) publishes only the two JSON representations.
+const JSON_REPRESENTATIONS: [&str; 2] = ["application/json", "application/ld+json"];
+const GEO_JSON_REPRESENTATIONS: [&str; 3] = ["application/json", "application/ld+json", "application/geo+json"];
+
+fn assert_available_representations(body: &Value, expected: &[&str]) {
+    pretty_assertions::assert_eq!(body["availableRepresentations"], json!(expected));
+}
+
 #[tokio::test]
 async fn not_acceptable_get_entity_xml_returns_406() {
     let c = client();
-    let (status, _, _) = raw_request(&c, Method::GET, "/entities/urn:ngsi-ld:Building:dummy", None, None, Some("application/xml")).await;
+    let (status, _, body) = raw_request(&c, Method::GET, "/entities/urn:ngsi-ld:Building:dummy", None, None, Some("application/xml")).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    assert_available_representations(&body, &GEO_JSON_REPRESENTATIONS);
 }
 
 #[tokio::test]
 async fn not_acceptable_get_subscription_xml_returns_406() {
     let c = client();
-    let (status, _, _) = raw_request(
+    let (status, _, body) = raw_request(
         &c,
         Method::GET,
         "/subscriptions/urn:ngsi-ld:Subscription:dummy",
@@ -434,26 +447,29 @@ async fn not_acceptable_get_subscription_xml_returns_406() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    assert_available_representations(&body, &JSON_REPRESENTATIONS);
 }
 
 #[tokio::test]
 async fn not_acceptable_get_registrations_xml_returns_406() {
     let c = client();
-    let (status, _, _) = raw_request(&c, Method::GET, "/csourceRegistrations?type=Building", None, None, Some("application/xml")).await;
+    let (status, _, body) = raw_request(&c, Method::GET, "/csourceRegistrations?type=Building", None, None, Some("application/xml")).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    assert_available_representations(&body, &JSON_REPRESENTATIONS);
 }
 
 #[tokio::test]
 async fn not_acceptable_get_csource_subscriptions_xml_returns_406() {
     let c = client();
-    let (status, _, _) = raw_request(&c, Method::GET, "/csourceSubscriptions", None, None, Some("application/xml")).await;
+    let (status, _, body) = raw_request(&c, Method::GET, "/csourceSubscriptions", None, None, Some("application/xml")).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    assert_available_representations(&body, &JSON_REPRESENTATIONS);
 }
 
 #[tokio::test]
 async fn not_acceptable_get_temporal_entities_xml_returns_406() {
     let c = client();
-    let (status, _, _) = raw_request(
+    let (status, _, body) = raw_request(
         &c,
         Method::GET,
         "/temporal/entities?type=Vehicle&timerel=after&timeAt=2020-08-01T12:00:00Z",
@@ -463,12 +479,13 @@ async fn not_acceptable_get_temporal_entities_xml_returns_406() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    assert_available_representations(&body, &JSON_REPRESENTATIONS);
 }
 
 #[tokio::test]
 async fn not_acceptable_get_subscription_geojson_returns_406() {
     let c = client();
-    let (status, _, _) = raw_request(
+    let (status, _, body) = raw_request(
         &c,
         Method::GET,
         "/subscriptions/urn:ngsi-ld:Subscription:dummy",
@@ -478,12 +495,13 @@ async fn not_acceptable_get_subscription_geojson_returns_406() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    assert_available_representations(&body, &JSON_REPRESENTATIONS);
 }
 
 #[tokio::test]
 async fn not_acceptable_get_temporal_entities_geojson_returns_406() {
     let c = client();
-    let (status, _, _) = raw_request(
+    let (status, _, body) = raw_request(
         &c,
         Method::GET,
         "/temporal/entities?type=Vehicle&timerel=after&timeAt=2020-08-01T12:00:00Z",
@@ -493,13 +511,15 @@ async fn not_acceptable_get_temporal_entities_geojson_returns_406() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    assert_available_representations(&body, &JSON_REPRESENTATIONS);
 }
 
 #[tokio::test]
 async fn not_acceptable_get_registrations_geojson_returns_406() {
     let c = client();
-    let (status, _, _) = raw_request(&c, Method::GET, "/csourceRegistrations?type=Building", None, None, Some("application/geo+json")).await;
+    let (status, _, body) = raw_request(&c, Method::GET, "/csourceRegistrations?type=Building", None, None, Some("application/geo+json")).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    assert_available_representations(&body, &JSON_REPRESENTATIONS);
 }
 
 // ---------------------------------------------------------------------------
@@ -906,8 +926,9 @@ async fn invalid_parameters_get_registrations_returns_400() {
 #[tokio::test]
 async fn not_acceptable_get_entity_text_plain_returns_406() {
     let c = client();
-    let (status, _, _) = raw_request(&c, Method::GET, "/entities/urn:ngsi-ld:Building:dummy", None, None, Some("text/plain")).await;
+    let (status, _, body) = raw_request(&c, Method::GET, "/entities/urn:ngsi-ld:Building:dummy", None, None, Some("text/plain")).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    assert_available_representations(&body, &GEO_JSON_REPRESENTATIONS);
 }
 
 // NGSI-LD 6.3.4: unsupported Content-Type text/plain on POST
@@ -938,16 +959,18 @@ async fn unsupported_media_type_patch_entity_returns_415() {
 #[tokio::test]
 async fn not_acceptable_get_types_xml_returns_406() {
     let c = client();
-    let (status, _, _) = raw_request(&c, Method::GET, "/types", None, None, Some("application/xml")).await;
+    let (status, _, body) = raw_request(&c, Method::GET, "/types", None, None, Some("application/xml")).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    assert_available_representations(&body, &JSON_REPRESENTATIONS);
 }
 
 // NGSI-LD 6.3.4: Accept application/xml on GET /attributes -> 406
 #[tokio::test]
 async fn not_acceptable_get_attributes_xml_returns_406() {
     let c = client();
-    let (status, _, _) = raw_request(&c, Method::GET, "/attributes", None, None, Some("application/xml")).await;
+    let (status, _, body) = raw_request(&c, Method::GET, "/attributes", None, None, Some("application/xml")).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    assert_available_representations(&body, &JSON_REPRESENTATIONS);
 }
 
 // Smoke: creating duplicate entity -> 409 Conflict

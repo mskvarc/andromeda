@@ -243,6 +243,97 @@ mod tests {
         }
     }
 
+    /// Clause 4.5.3.2, "Prohibited": on a Relationship in the normalized
+    /// representation, "`entityIdSealed` and `entityTypeSealed` shall never be
+    /// present". The clause states it without the `ngsildproof` exception
+    /// clause 4.5.2.2 grants a Property, because that exception is a
+    /// Property's.
+    #[test]
+    fn a_data_integrity_seal_on_a_normalized_relationship_is_rejected() {
+        for member in ["entityIdSealed", "entityTypeSealed"] {
+            let fragment = json!({
+                "id": "urn:ngsi-ld:Vehicle:1",
+                "type": "Vehicle",
+                "belongsTo": { "type": "Relationship", "object": "urn:ngsi-ld:Site:1", member: "urn:ngsi-ld:Vehicle:1" }
+            });
+            pretty_assertions::assert_eq!(
+                validate_fragment_attribute_types(&fragment),
+                Err(AttributeTypeError::ProofSealOutsideNgsildproof {
+                    attribute: "belongsTo".to_string(),
+                    member: member.to_string(),
+                }),
+                "{member}"
+            );
+        }
+    }
+
+    /// Clause 4.5.3.3 repeats the same prohibition for the concise
+    /// representation, where a Relationship declares no `type` at all. The
+    /// family the rule needs comes from
+    /// [`distinguishing_member_type`](crate::normalization::distinguishing_member_type),
+    /// which reads the `object` member the clause makes the Relationship's
+    /// distinguishing one -- so the seal rule is reached on a node that names
+    /// no family of its own.
+    #[test]
+    fn a_data_integrity_seal_on_a_concise_relationship_is_rejected_through_family_inference() {
+        for member in ["entityIdSealed", "entityTypeSealed"] {
+            let fragment = json!({
+                "id": "urn:ngsi-ld:Vehicle:1",
+                "type": "Vehicle",
+                "belongsTo": { "object": "urn:ngsi-ld:Site:1", member: "urn:ngsi-ld:Vehicle:1" }
+            });
+            pretty_assertions::assert_eq!(
+                validate_fragment_attribute_types(&fragment),
+                Err(AttributeTypeError::ProofSealOutsideNgsildproof {
+                    attribute: "belongsTo".to_string(),
+                    member: member.to_string(),
+                }),
+                "{member}"
+            );
+        }
+    }
+
+    /// The name alone does not admit a seal: clauses 4.5.3.2 and 4.5.3.3
+    /// prohibit both members on a Relationship with no exception, and clause
+    /// 4.5.2.2 defines `ngsildproof` as a Property. An attribute that takes the
+    /// name and declares -- or, concisely, implies -- a Relationship carries no
+    /// admissible seal.
+    #[test]
+    fn a_seal_on_an_ngsildproof_that_is_a_relationship_is_rejected_in_both_representations() {
+        for node in [
+            json!({ "type": "Relationship", "object": "urn:ngsi-ld:Proof:1", "entityIdSealed": "urn:ngsi-ld:Vehicle:1" }),
+            json!({ "object": "urn:ngsi-ld:Proof:1", "entityIdSealed": "urn:ngsi-ld:Vehicle:1" }),
+        ] {
+            let fragment = json!({ "id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "ngsildproof": node });
+            pretty_assertions::assert_eq!(
+                validate_fragment_attribute_types(&fragment),
+                Err(AttributeTypeError::ProofSealOutsideNgsildproof {
+                    attribute: "ngsildproof".to_string(),
+                    member: "entityIdSealed".to_string(),
+                })
+            );
+        }
+    }
+
+    /// A seal forged on a concise Relationship written as a sub-attribute is
+    /// refused too: clause 4.5.2.2 makes a sub-attribute an attribute, and the
+    /// walk infers its family the same way.
+    #[test]
+    fn a_seal_on_a_concise_relationship_sub_attribute_is_rejected() {
+        let fragment = json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "speed": { "type": "Property", "value": 1, "providedBy": { "object": "urn:ngsi-ld:Device:1", "entityTypeSealed": "Vehicle" } }
+        });
+        pretty_assertions::assert_eq!(
+            validate_fragment_attribute_types(&fragment),
+            Err(AttributeTypeError::ProofSealOutsideNgsildproof {
+                attribute: "providedBy".to_string(),
+                member: "entityTypeSealed".to_string(),
+            })
+        );
+    }
+
     /// The same two members under the `ngsildproof` Property clause 4.5.2.2
     /// defines them for are the intended shape and are accepted.
     #[test]

@@ -1,6 +1,7 @@
 //! Publishing one notification to one MQTT endpoint.
 
 use crate::{
+    delivery_deadline::delivery_deadline,
     endpoint::mqtt::{MqttEndpointConfig, MqttQoS},
     error::TransportError,
     mqtt::{ack::AckKind, connection::MqttClientVariant, envelope::build_envelope, metadata::transported_headers, pool::MqttTransportPool},
@@ -138,7 +139,17 @@ impl NotificationTransport for MqttTransportHandle {
         // QoS 1/2: the delivery is confirmed only once the broker acknowledges
         // it (PUBACK / PUBCOMP). Until then it must not be reported delivered, or
         // an unacked packet the event loop later drops would never retransmit.
-        match timeout(self.pool.publish_ack_timeout(), ack_receiver).await {
+        //
+        // Table 5.2.15-1 confines the endpoint's `timeout` to a binding whose
+        // "protocol always returns a response". This is the branch where MQTT
+        // is one -- the acknowledgement above is that response -- so the
+        // endpoint's deadline is honoured here, under the same rule the HTTP
+        // binding follows: "the NGSI-LD system can override this value", and
+        // the pool's acknowledgement window is that system value. The QoS 0
+        // branch returned above without waiting for anything, which is where
+        // the member genuinely does not apply.
+        let deadline = delivery_deadline(request.timeout, self.pool.publish_ack_timeout());
+        match timeout(deadline, ack_receiver).await {
             Ok(Ok(())) => Ok(self.succeeded(start)),
             // The connection failed before the acknowledgement arrived.
             Ok(Err(_cancelled)) => Err(TransportError::ConnectionFailed {
@@ -149,7 +160,7 @@ impl NotificationTransport for MqttTransportHandle {
             // retransmits rather than assuming it arrived.
             Err(_elapsed) => Err(TransportError::Timeout {
                 endpoint: self.config.endpoint_uri.clone(), // clone: same
-                duration: self.pool.publish_ack_timeout(),
+                duration: deadline,
             }),
         }
     }

@@ -2,13 +2,11 @@
 
 use crate::{
     EntityService,
-    attribute_envelope::validate_attribute_envelopes,
     attrs::attribute_write::payload_write,
     error::EntityError,
     expanded_member::unwrap_expanded_ref,
-    geo_property_geometry::validate_geo_property_geometries,
     notification_plan::attribute_change_groups,
-    null_content::reject_null_content,
+    write_admission::{EntityWrite, admit_expanded_entity},
 };
 use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_context_space::context_target::ContextTarget;
@@ -56,9 +54,11 @@ impl EntityService {
 
         normalize_entity_attributes(&mut fragment);
         let expanded = Arc::new(self.engine.expand(fragment, context).await?);
-        validate_attribute_envelopes(&expanded)?;
-        reject_null_content(&expanded)?;
-        validate_geo_property_geometries(&expanded)?;
+        // Clause 5.6.3.4 folds the fragment's `scope` into the target's; it is
+        // not one of the partial update or merge fragments clause 5.5.4 excepts
+        // from its first-level NGSI-LD Null prohibition, so a deletion sentinel
+        // has no reading here.
+        admit_expanded_entity(&expanded, EntityWrite::AppendAttributes.null_sentinel_admission())?;
 
         // Clause 5.6.3.5 reports "the list of Attributes actually appended", so
         // the reported set starts from the fragment's own attributes. Reading it

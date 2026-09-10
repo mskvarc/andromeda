@@ -7,20 +7,21 @@
 //! order the clause reads them: whether a geometry was measured, the measured
 //! distance, the datatype rank, then the value.
 
-use crate::{attribute_value_order::AttributeValue, order_geography::geo_order_distance, sort_direction::SortDirection};
+use crate::{attribute_value_order::AttributeValue, order_geography::geo_order_distance};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     error::QueryError,
     geo::query::GeoQuery,
     ordering::{
-        collation::IcuCollation,
         compiled::ResultOrdering,
+        sort_direction::SortDirection,
         term::{CompiledOrderTerm, OrderTarget},
     },
 };
 use andromeda_postgresql_encoding::ewkb::encode;
 use andromeda_postgresql_query::{
     dictionary::resolved_names::ResolvedNames,
+    entity_ordering::{order_by_entity_identifier, ordering_collation, sql_order},
     entity_row_refs::EntityRowRefs,
     entity_type_names::type_names_of,
     error::RenderError,
@@ -52,24 +53,22 @@ pub fn apply(
 ) -> Result<(), RenderError> {
     for (position, term) in ordering.terms.iter().enumerate() {
         let direction = SortDirection::from(term.direction);
-        let collation = PostgresCollation::new(term.collation.as_ref().map_or(IcuCollation::ROOT, IcuCollation::as_str));
+        let collation = ordering_collation(term.collation.as_ref());
         // Clause 5.7.2.4 rejects a distance ordering with no location to
         // measure from, whatever the term names: the reference is a property of
         // the request, not of the attribute it happens to address.
         let reference = distance_reference(term, ordering, geo)?;
         match &term.target {
-            OrderTarget::Id => {
-                select.order_by_expr_with_nulls(collate(rows.identity_column(Entities::Id), &collation), direction.into(), NullOrdering::Last);
-            }
+            OrderTarget::Id => order_by_entity_identifier(select, rows.identity_column(Entities::Id), direction, &collation),
             // The interned keys sort by dictionary id, which is meaningless to a
             // client; the IRIs are read back through the dictionary and sorted.
             OrderTarget::Type => {
                 let names = type_names_of(rows.search_column(EntitySearch::TypeIds));
-                select.order_by_expr_with_nulls(collate(names, &collation), direction.into(), NullOrdering::Last);
+                select.order_by_expr_with_nulls(collate(names, &collation), sql_order(direction), NullOrdering::Last);
             }
             // The scope path column is an `ltree[]`, which no client collation applies to.
             OrderTarget::Scope => {
-                select.order_by_expr_with_nulls(rows.search_column(EntitySearch::ScopePaths), direction.into(), NullOrdering::Last);
+                select.order_by_expr_with_nulls(rows.search_column(EntitySearch::ScopePaths), sql_order(direction), NullOrdering::Last);
             }
             OrderTarget::Attribute(name) => {
                 let distance = reference
@@ -121,7 +120,7 @@ fn order_by_attribute(
     distance: Option<SimpleExpr>,
 ) {
     if let Some(distance) = distance {
-        select.order_by_expr_with_nulls(distance, direction.into(), NullOrdering::Last);
+        select.order_by_expr_with_nulls(distance, sql_order(direction), NullOrdering::Last);
     }
 
     let value = AttributeValue::at(position);
@@ -131,7 +130,7 @@ fn order_by_attribute(
     // would move Null and the absent attribute to the front of a descending
     // sort, which clause 4.23.2 pins to the back.
     select.order_by_expr_with_nulls(value.datatype_rank(direction), Order::Asc, NullOrdering::Last);
-    select.order_by_expr(value.numeric_key(), direction.into());
-    select.order_by_expr(value.instant_key(), direction.into());
-    select.order_by_expr(value.text_key(collation), direction.into());
+    select.order_by_expr(value.numeric_key(), sql_order(direction));
+    select.order_by_expr(value.instant_key(), sql_order(direction));
+    select.order_by_expr(value.text_key(collation), sql_order(direction));
 }

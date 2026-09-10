@@ -7,6 +7,7 @@ use crate::{
         Entity,
         EntityResultExt,
         EntityTenantState,
+        GeometrySelection,
         GetEntityParams,
         HttpUri,
         IntoResponse,
@@ -186,7 +187,10 @@ pub(crate) async fn get(
         None => RetrievedPayload::Single(render_entity(&entity, None, &representation, &uri)?),
     };
 
-    let rendering = start_rendering(accept.media_type(), &context, prefer.rendering_preferences()).with_geometry_property(params.geometry_property.as_ref());
+    let rendering = start_rendering(accept.media_type(), &context, prefer.rendering_preferences()).with_geometry_selection(GeometrySelection::new(
+        params.geometry_property.as_ref(),
+        params.dataset_id.as_deref().unwrap_or_default(),
+    ));
     match payload {
         RetrievedPayload::Single(value) => {
             let rendered = rendering.with_payload(ResponsePayload::Single(value)).render().with_entity_instance(&uri)?;

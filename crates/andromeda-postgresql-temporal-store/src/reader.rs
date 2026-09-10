@@ -116,8 +116,9 @@ impl TemporalHistoryReader for TemporalRepository {
     }
 
     async fn query_entity_ids(&self, target: &ContextTarget, compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
-        // A temporal query orders by time rather than by distance, so it
-        // contributes no ordering terms.
+        // Clause 5.7.4.3 confines a temporal ordering to the `id` member, which
+        // is a column of the temporal catalogue and names no attribute, so the
+        // dictionary lookup below has no ordering term to resolve.
         let attribute_names = projected_attribute_names(&[], compiled.entities.q_expr.as_ref(), compiled.entities.geo.as_ref(), &[]);
         // The projection is written inside the transaction that writes the
         // entity, so a dictionary hit is already backed by committed projection
@@ -142,6 +143,14 @@ impl TemporalHistoryReader for TemporalRepository {
                 .map_err(|e| TemporalStoreError::Query(e.to_string()))?
         };
         let names = QueryNames { attributes, types };
+
+        // The statement compares identifiers under the collation the ordering
+        // names, and PostgreSQL pre-imports only the `<locale>-x-icu` forms; a
+        // keyword form clause 4.23.3 demonstrates has no object until one is
+        // created, and ordering under it would fail the statement outright.
+        if let Some(collation) = compiled.ordering.as_ref().and_then(|ordering| ordering.collation.as_ref()) {
+            self.collations.ensure(collation).await.map_err(TemporalStoreError::from)?;
+        }
 
         let stage1 = build_stage1_entity_ids(target.key(), compiled, &names).map_err(|e| TemporalStoreError::Query(e.to_string()))?;
 

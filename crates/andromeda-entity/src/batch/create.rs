@@ -1,6 +1,6 @@
 //! Batch entity creation (clause 5.6.7).
 
-use crate::{EntityService, batch::BatchResult, error::EntityError, side_effect::BatchSideEffectMode};
+use crate::{EntityService, batch::BatchResult, error::EntityError, side_effect::BatchSideEffectMode, write_admission::BatchWrite};
 use andromeda_context_commit::precondition::Precondition;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -38,7 +38,10 @@ impl EntityService {
         context: &ContextSpec,
         mode: BatchSideEffectMode,
     ) -> Result<BatchResult, EntityError> {
-        let (prepared, mut errors) = self.prepare_entity_refs(entities, context).await;
+        // Clause 5.6.7.4 runs the behaviour of Create Entity for each item, and
+        // clause 5.5.4 excepts only the fragments of a partial update or a
+        // merge from its NGSI-LD Null prohibitions.
+        let (prepared, mut errors) = self.prepare_entity_refs(entities, context, BatchWrite::Create.null_sentinel_admission()).await;
 
         if prepared.is_empty() {
             return Ok(BatchResult { success: Vec::new(), errors });

@@ -285,6 +285,49 @@ async fn regression_ordering_mixed_datatypes_follow_the_clause_4_23_2_comparison
     scope.finish().await.expect("cleanup failed");
 }
 
+/// Clause 4.23.2 ranks a `Time`, a `Date` and a `DateTime` after every String,
+/// and clause 4.6.3 names those three as data types whose whole representation
+/// *is* the string: "`DateTime` string for encoding a timestamp", "Date string
+/// for encoding a calendar date", "Time string for encoding a local time
+/// expressed in UTC". A Property holding one therefore declares no `@type`, and
+/// clause 4.8 NOTE 3 confirms it stays an ordinary Property — so the value's own
+/// lexical form is the only thing that says which data type it has.
+///
+/// The write projection and the clause 4.9 `q` compiler both read it that way.
+/// The ordering read the JSON-LD `@type` alone, so the same value was a
+/// `DateTime` to a filter and a String to the sort, and the entity landed in the
+/// wrong clause 4.23.2 bucket: it ranked among the Strings and ordered against
+/// them by collated text.
+#[tokio::test]
+async fn regression_ordering_an_undeclared_time_value_ranks_by_its_clause_4_6_3_form() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+
+    // Every text value here collates before "text" under ICU root order, so
+    // reading them as Strings would put each of them ahead of it rather than
+    // behind it in the datatype order.
+    let ids = create_named(
+        &scope,
+        client,
+        &[
+            ("undeclared-number", json!(42)),
+            ("undeclared-string", json!("text")),
+            ("undeclared-time", json!("10:00:00Z")),
+            ("undeclared-date", json!("2020-01-01")),
+            ("undeclared-datetime", json!("2020-01-01T00:00:00Z")),
+        ],
+    )
+    .await;
+
+    let borrowed: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let filter = id_filter(&borrowed);
+    let (status, body) = query(client, &format!("type={FIXTURE_TYPE}&id={filter}&local=true&orderBy={ORDERED_ATTRIBUTE}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(ids_from_response(&body), ids, "clause 4.23.2: Numbers, Strings, then Time, Date, DateTime");
+
+    scope.finish().await.expect("cleanup failed");
+}
+
 /// Clause 4.23.2 puts "Attribute does not exist" at the end of the comparison
 /// order and pins null values last, which is a statement about the order
 /// itself: reversing the sort reverses the datatypes, not the position of the

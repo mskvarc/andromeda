@@ -46,6 +46,136 @@ async fn assert_create_refused(client: &TestClient, entity: &Value, scenario: &s
     assert_bad_request_data(&response, scenario);
 }
 
+/// One `Building` carrying nothing but an ordinary Property, used to bring the
+/// targets of an update or a merge into existence.
+fn plain_building(id: &str) -> Value {
+    building_with(id, "temperature", &json!({"type": "Property", "value": 21.5}))
+}
+
+/// One `Building` whose Property carries the `ngsildproof` sub-Property clause
+/// 4.5.2.2 defines the two seals for. This is the positive control: the same
+/// members the Relationship clauses prohibit are the intended shape here.
+fn proof_sealed_building(id: &str) -> Value {
+    building_with(
+        id,
+        "temperature",
+        &json!({
+            "type": "Property",
+            "value": 21.5,
+            "ngsildproof": {
+                "type": "Property",
+                "value": {"type": "DataIntegrityProof", "cryptosuite": "eddsa-jcs-2022", "proofValue": "z2aB"},
+                "entityIdSealed": id,
+                "entityTypeSealed": "Building"
+            }
+        }),
+    )
+}
+
+/// The four prohibited spellings, each on its own `Building`: both members of
+/// the clause 4.5.3.2 and 4.5.3.3 "Prohibited" lists, on a Relationship that
+/// declares its `type` (normalized, clause 4.5.3.2) and on one that leaves
+/// `object` to imply it (concise, clause 4.5.3.3).
+fn sealed_relationship_entities(scope: &TestEnvironment, label: &str) -> Vec<(String, Value)> {
+    let mut entities = Vec::new();
+    for (member, sealed) in [("entityIdSealed", "urn:ngsi-ld:Building:sealed"), ("entityTypeSealed", "Building")] {
+        for (spelling, node) in [
+            ("normalized", json!({"type": "Relationship", "object": "urn:ngsi-ld:Site:1", member: sealed})),
+            ("concise", json!({"object": "urn:ngsi-ld:Site:1", member: sealed})),
+        ] {
+            let id = scope.id(&format!("Building:{label}-{spelling}-{member}"));
+            let entity = building_with(&id, "belongsTo", &node);
+            entities.push((id, entity));
+        }
+    }
+    entities
+}
+
+/// The batch operations whose input array carries entity representations
+/// (clause 5.6.7.3, 5.6.8.3, 5.6.9.3 and 5.6.20.3). Batch Entity Delete
+/// (clause 5.6.10.3) takes identifiers alone and is therefore not one of them.
+#[derive(Clone, Copy, Debug)]
+enum BatchWrite {
+    /// Batch Entity Creation (clause 5.6.7).
+    Create,
+    /// Batch Entity Creation or Update, "upsert" (clause 5.6.8).
+    Upsert,
+    /// Batch Entity Update (clause 5.6.9).
+    Update,
+    /// Batch Entity Merge (clause 5.6.20).
+    Merge,
+}
+
+/// Whether a batch operation acts on entities that must already be there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TargetExistence {
+    /// Clauses 5.6.9.4 and 5.6.20.4 update or merge an existing Entity.
+    Required,
+    /// Clauses 5.6.7.4 and 5.6.8.4 bring the Entity into being themselves.
+    NotRequired,
+}
+
+impl BatchWrite {
+    /// What the operation expects of its targets before it runs.
+    const fn target_existence(self) -> TargetExistence {
+        match self {
+            BatchWrite::Create | BatchWrite::Upsert => TargetExistence::NotRequired,
+            BatchWrite::Update | BatchWrite::Merge => TargetExistence::Required,
+        }
+    }
+
+    /// Send `body` to this operation's endpoint.
+    async fn send(self, client: &TestClient, body: &Value) -> TestResponse {
+        let response = match self {
+            BatchWrite::Create => client.batch_create(body).await,
+            BatchWrite::Upsert => client.batch_upsert(body).await,
+            BatchWrite::Update => client.batch_update(body).await,
+            BatchWrite::Merge => client.batch_merge(body).await,
+        };
+        response.expect("batch entity request")
+    }
+}
+
+/// Assert a clause 5.2.16 batch result refused every identifier in `refused`
+/// as `BadRequestData`, and left `admitted` out of its error list.
+fn assert_batch_refusals(response: &TestResponse, refused: &[String], admitted: &str, scenario: &str) {
+    assert_eq!(response.status, StatusCode::MULTI_STATUS, "{scenario}: {:?}", response.body);
+    let result = response.json_value().expect("a batch answers with a clause 5.2.16 result");
+    let errors = result["errors"].as_array().expect("the clause 5.2.16 result lists its errors");
+    for id in refused {
+        let error = errors.iter().find(|error| error["entityId"] == json!(id)).unwrap_or(&Value::Null);
+        assert_eq!(error["error"]["type"], json!(BAD_REQUEST_DATA), "{scenario}: {id}: {result}");
+    }
+    assert!(
+        !errors.iter().any(|error| error["entityId"] == json!(admitted)),
+        "{scenario}: clause 4.5.2.2 admits the seals of the ngsildproof Property: {result}"
+    );
+}
+
+/// Send the four prohibited spellings plus the admitted `ngsildproof` control
+/// through one batch operation and assert exactly the four are refused.
+///
+/// One request carries all five so the assertion covers the per-entity
+/// reporting clauses 5.6.7.4 to 5.6.9.4 and 5.6.20.4 require as well as the
+/// refusal itself: an entity the validation refuses contributes a
+/// `BatchEntityError` of its own, leaving the rest of the batch to be applied.
+async fn assert_batch_refuses_relationship_seals(scope: &TestEnvironment, operation: BatchWrite, label: &str) {
+    let client = scope.client();
+    let (refused_ids, mut items): (Vec<String>, Vec<Value>) = sealed_relationship_entities(scope, label).into_iter().unzip();
+    let admitted = scope.id(&format!("Building:{label}-ngsildproof"));
+
+    if operation.target_existence() == TargetExistence::Required {
+        let mut seeded: Vec<Value> = refused_ids.iter().map(|id| plain_building(id)).collect();
+        seeded.push(plain_building(&admitted));
+        let created = client.batch_create(&Value::Array(seeded)).await.expect("batch create request");
+        assert_eq!(created.status, StatusCode::CREATED, "{label} seeding: {:?}", created.body);
+    }
+
+    items.push(proof_sealed_building(&admitted));
+    let response = operation.send(client, &Value::Array(items)).await;
+    assert_batch_refusals(&response, &refused_ids, &admitted, label);
+}
+
 /// Clause 4.5.3.2: an NGSI-LD Relationship "shall never include" `value`,
 /// "as they define a Property value". Storing one would leave the entity
 /// naming two families at once, and the rendering of clause 4.5.1 reads only
@@ -228,6 +358,89 @@ async fn regression_attribute_member_a_data_integrity_seal_is_refused_outside_ng
     scope.finish().await.expect("cleanup failed");
 }
 
+/// Clauses 4.5.3.2 and 4.5.3.3 close the Relationship's "Prohibited" list with
+/// the same sentence in both representations: "'entityIdSealed' and
+/// 'entityTypeSealed' shall never be present". No `ngsildproof` exception
+/// applies, because clause 4.5.2.2 grants that one to a Property.
+///
+/// Create Entity (clause 5.6.1) was the one entity-shaped write path that
+/// never ran the pre-expansion check, so a seal forged on a Relationship was
+/// created with a 201 and reified into a Property on the way in. The seals are
+/// declared only inside `ngsildproof`'s own scoped `@context` (clause 4.4), so
+/// after expansion nothing downstream can still tell one from an ordinary
+/// sub-attribute.
+#[tokio::test]
+async fn regression_attribute_member_a_seal_on_a_relationship_is_refused_on_entity_creation() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+
+    for (id, entity) in sealed_relationship_entities(&scope, "create") {
+        assert_create_refused(client, &entity, &format!("clauses 4.5.3.2 and 4.5.3.3 prohibit the seal on {id}")).await;
+    }
+
+    let admitted = scope.id("Building:create-ngsildproof");
+    let created = client
+        .post_entity(&proof_sealed_building(&admitted))
+        .with_ld_json()
+        .send()
+        .await
+        .expect("create entity request");
+    assert_eq!(
+        created.status,
+        StatusCode::CREATED,
+        "clause 4.5.2.2 defines the ngsildproof Property as the place these two belong: {:?}",
+        created.body
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.6.7.4: Batch Entity Creation runs clause 5.6.1 "for each of the
+/// NGSI-LD Entities included in the input Array", so the prohibition of
+/// clauses 4.5.3.2 and 4.5.3.3 holds there too, reported per entity.
+#[tokio::test]
+async fn regression_attribute_member_a_seal_on_a_relationship_is_refused_by_batch_creation() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+
+    assert_batch_refuses_relationship_seals(&scope, BatchWrite::Create, "batch-create").await;
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.6.8.4: Batch Entity Upsert takes the same Entity Array of clause
+/// 5.2.4 and carries the same prohibition.
+#[tokio::test]
+async fn regression_attribute_member_a_seal_on_a_relationship_is_refused_by_batch_upsert() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+
+    assert_batch_refuses_relationship_seals(&scope, BatchWrite::Upsert, "batch-upsert").await;
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.6.9.4: Batch Entity Update takes the same Entity Array and carries
+/// the same prohibition.
+#[tokio::test]
+async fn regression_attribute_member_a_seal_on_a_relationship_is_refused_by_batch_update() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+
+    assert_batch_refuses_relationship_seals(&scope, BatchWrite::Update, "batch-update").await;
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.6.20.4: Batch Entity Merge runs clause 5.6.17 for each entity of
+/// the input array, so a seal forged on a Relationship is refused there as
+/// well.
+#[tokio::test]
+async fn regression_attribute_member_a_seal_on_a_relationship_is_refused_by_batch_merge() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+
+    assert_batch_refuses_relationship_seals(&scope, BatchWrite::Merge, "batch-merge").await;
+
+    scope.finish().await.expect("cleanup failed");
+}
+
 /// Clause 5.2.5: `previousValue` is an output-only member that is "read-only
 /// and shall be generated by NGSI-LD implementations; they shall not be
 /// provided by Context Producers, and if provided in update or create
@@ -330,6 +543,82 @@ async fn regression_attribute_member_a_subscription_asking_for_show_changes_unde
     });
     let response = client.create_subscription(&subscription).await.expect("create subscription request");
     assert_bad_request_data(&response, "clause 5.2.14.1 forbids showChanges under keyValues");
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clauses 5.6.11.4 and 5.6.12.4 both open with "Execute the behaviour defined
+/// in clause 5.5.4 on JSON-LD validation", and clauses 4.5.3.2 and 4.5.3.3
+/// prohibit `entityIdSealed` and `entityTypeSealed` on a Relationship in every
+/// representation with no exception at all -- the `ngsildproof` exception of
+/// clause 4.5.2.2 is a Property's. The temporal write verbs ran no such
+/// validation, so a forged seal could be written through
+/// `POST /temporal/entities` and through its `/attrs` sibling.
+#[tokio::test]
+async fn regression_attribute_member_a_temporal_write_refuses_a_relationship_seal() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Building:temporal-sealed");
+
+    let sealed_instances = json!([
+        {"type": "Relationship", "object": "urn:ngsi-ld:Site:1", "observedAt": "2024-01-01T00:00:00Z"},
+        {
+            "type": "Relationship",
+            "object": "urn:ngsi-ld:Site:2",
+            "observedAt": "2024-01-02T00:00:00Z",
+            "entityIdSealed": "urn:ngsi-ld:Building:sealed"
+        }
+    ]);
+    let created = client
+        .create_temporal_entity(&json!({
+            "id": id,
+            "type": "Building",
+            "belongsTo": sealed_instances,
+            "@context": [TEST_SUITE_CONTEXT]
+        }))
+        .await
+        .expect("create temporal entity request");
+    assert_bad_request_data(&created, "clause 5.6.11.4 runs the clause 5.5.4 validation");
+
+    let retrieved = client
+        .get_temporal_entity(&id, "", Some(TEST_SUITE_CONTEXT))
+        .await
+        .expect("retrieve temporal entity request");
+    assert_eq!(
+        retrieved.status,
+        StatusCode::NOT_FOUND,
+        "a refused temporal write stores nothing: {:?}",
+        retrieved.body
+    );
+
+    // The same seal through the add-attributes verb of clause 5.6.12, on an
+    // evolution that does exist.
+    let target = scope.id("Building:temporal-sealed-target");
+    let seeded = client
+        .create_temporal_entity(&json!({
+            "id": target,
+            "type": "Building",
+            "temperature": [{"type": "Property", "value": 21.5, "observedAt": "2024-01-01T00:00:00Z"}],
+            "@context": [TEST_SUITE_CONTEXT]
+        }))
+        .await
+        .expect("create temporal entity request");
+    assert!(seeded.status.is_success(), "temporal seeding: {:?}", seeded.body);
+
+    let appended = client
+        .raw(
+            http::Method::POST,
+            &format!("/ngsi-ld/v1/temporal/entities/{}/attrs", urlencoding::encode(&target)),
+        )
+        .header("content-type", "application/ld+json")
+        .json(&json!({
+            "belongsTo": [{"type": "Relationship", "object": "urn:ngsi-ld:Site:1", "entityTypeSealed": "Building"}],
+            "@context": [TEST_SUITE_CONTEXT]
+        }))
+        .send()
+        .await
+        .expect("temporal add attributes request");
+    assert_bad_request_data(&appended, "clause 5.6.12.4 runs the clause 5.5.4 validation");
 
     scope.finish().await.expect("cleanup failed");
 }

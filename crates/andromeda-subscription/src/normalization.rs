@@ -6,10 +6,18 @@ use andromeda_jsonld::{
     engine::processor::JsonLdEngine,
     term_compaction::ContextualCompactor,
 };
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::subscription::{SubscriptionFilters, SubscriptionStatus};
-use andromeda_ngsi_ld_query::{filter::compaction::compact_q_expr, projection::term::ProjectionTerm};
+use andromeda_ngsi_ld_query::{
+    filter::{
+        compaction::{compact_q_expr, revert_expand_values},
+        expression::Expr,
+    },
+    projection::term::ProjectionTerm,
+};
 use chrono::{DateTime, Utc};
 use serde_json::{Number, Value};
+use std::collections::HashSet;
 
 /// Render `timeInterval` and `throttling` as JSON integers whenever they hold
 /// a whole number of seconds.
@@ -153,18 +161,52 @@ pub async fn compact_subscription_iris(engine: &JsonLdEngine, value: &mut Value,
 /// the subscription was written; the serialized document carries them as
 /// their expanded text. `scopeQ` is a clause 4.19 scope path and carries no
 /// attribute terms, so it is rendered as stored.
+///
+/// The `q` operands `expandValues` coerced are put back too. Table 5.2.12-1
+/// makes that coercion something done "prior to executing the query", so it
+/// belongs to the filter a match runs and not to the Subscription resource: a
+/// client that created `q=status=="active"` with `expandValues=status` reads
+/// back the filter it wrote. `csf` is exempt because `expandValues` names
+/// Entity attributes, while `csf` addresses a registration's Context Source
+/// Properties.
 pub async fn compact_subscription_filters(engine: &JsonLdEngine, value: &mut Value, filters: &SubscriptionFilters, context: &ContextSpec) {
     let compactor = ContextualCompactor::new(engine, context);
-    for (member, expr) in [("q", filters.q.as_ref()), ("csf", filters.csf.as_ref())] {
-        let Some(expr) = expr else {
+    if let Some(expr) = filters.q.as_ref() {
+        let opted_in: HashSet<AttributeName> = filters.expand_values.iter().flatten().cloned().collect(); // clone: the opt-in list stays on the stored resource
+        // clone: the stored filter stays in the resource while the compacted copy is rendered
+        let reverted = revert_expand_values(expr.clone(), &opted_in, &compactor).await;
+        insert_compacted(value, "q", &compact_q_expr(reverted, &compactor).await);
+    }
+    if let Some(expr) = filters.csf.as_ref() {
+        // clone: the stored filter stays in the resource while the compacted copy is rendered
+        insert_compacted(value, "csf", &compact_q_expr(expr.clone(), &compactor).await);
+    }
+    for (member, names) in [("expandValues", filters.expand_values.as_deref()), ("jsonKeys", filters.json_keys.as_deref())] {
+        let Some(names) = names else {
             continue;
         };
-        // clone: the stored filter stays in the resource while the compacted copy is rendered
-        let compacted = compact_q_expr(expr.clone(), &compactor).await;
+        let compacted = compact_opt_in_names(engine, names, context).await;
         if let Some(obj) = value.as_object_mut() {
-            obj.insert(member.to_string(), Value::String(compacted.to_string()));
+            obj.insert(member.to_string(), Value::String(compacted));
         }
     }
+}
+
+/// Write one compacted filter expression back into the serialized document.
+fn insert_compacted(value: &mut Value, member: &str, expr: &Expr) {
+    if let Some(object) = value.as_object_mut() {
+        object.insert(member.to_owned(), Value::String(expr.to_string()));
+    }
+}
+
+/// Spell one stored `expandValues` / `jsonKeys` list in the reader's terms,
+/// in the comma-separated form Table 5.2.12-1 defines.
+async fn compact_opt_in_names(engine: &JsonLdEngine, names: &[AttributeName], context: &ContextSpec) -> String {
+    let mut compacted = Vec::with_capacity(names.len());
+    for name in names {
+        compacted.push(compact_attr_iri(engine, name.as_str(), context).await);
+    }
+    compacted.join(",")
 }
 
 #[cfg(test)]
@@ -236,6 +278,24 @@ mod tests {
 
         pretty_assertions::assert_eq!(value["q"], json!("speed>10"));
         pretty_assertions::assert_eq!(value["csf"], json!("tier==\"gold\""));
+    }
+
+    /// Table 5.2.12-1: `expandValues` and `jsonKeys` are stored expanded and
+    /// read back in the reader's terms, still as one comma-separated String.
+    #[tokio::test]
+    async fn the_stored_opt_in_lists_are_compacted_into_the_readers_terms() {
+        let engine = offline_engine();
+        let filters: SubscriptionFilters = serde_json::from_value(json!({
+            "expandValues": "https://uri.etsi.org/ngsi-ld/default-context/speed,https://uri.etsi.org/ngsi-ld/default-context/colour",
+            "jsonKeys": "https://uri.etsi.org/ngsi-ld/default-context/payload"
+        }))
+        .expect("valid filters");
+        let mut value = serde_json::to_value(&filters).expect("serialises");
+
+        compact_subscription_filters(&engine, &mut value, &filters, &ContextSpec::none()).await;
+
+        pretty_assertions::assert_eq!(value["expandValues"], json!("speed,colour"));
+        pretty_assertions::assert_eq!(value["jsonKeys"], json!("payload"));
     }
 
     /// Clause 4.21: the `pick`/`omit` keywords are structural members and

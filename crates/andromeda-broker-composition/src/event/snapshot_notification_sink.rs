@@ -132,6 +132,11 @@ impl DeliverySnapshotNotificationSink {
             tenant: None,
             snapshot: None,
             receiver_info: delivery.receiver_info.clone().unwrap_or_default(),
+            // A Snapshot status callback is addressed by a Snapshot's own
+            // notification target, not by the clause 5.2.15 `Endpoint` of a
+            // Subscription, so there is no per-endpoint `timeout` to honour and
+            // the broker-wide deadline applies.
+            timeout: None,
             subscription_id: delivery.snapshot_id.clone(),
         };
         self.transport.deliver(&EndpointTransport::Http, &request).await

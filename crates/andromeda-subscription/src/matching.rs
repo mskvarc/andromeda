@@ -201,6 +201,8 @@ mod tests {
             endpoint_accept: None,
             endpoint_receiver_info: None,
             endpoint_notifier_info: None,
+            endpoint_cooldown: None,
+            endpoint_timeout: None,
             triggers: vec![NotificationTrigger::EntityCreated, NotificationTrigger::EntityUpdated],
             watched_attrs: None,
             selectors: Vec::new(),

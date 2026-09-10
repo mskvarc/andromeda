@@ -1,30 +1,33 @@
 //! HTTP handling for the replace attribute entity operation.
 
-use crate::entity::{
-    AttributeName,
-    EntityResultExt,
-    EntityTenantState,
-    ForwardProvisionRequest,
-    ForwardingOperation,
-    IntoResponse,
-    JsonLd,
-    LocalOutcome,
-    NgsiLdRequestEnvelope,
-    ProblemResponse,
-    ProvisionResource,
-    ReplaceAttrParams,
-    Response,
-    StatusCode,
-    TypedPath,
-    Uri,
-    ValidatedQuery,
-    Value,
-    classify_entity_error,
-    collect_proxied_attrs,
-    provision_response,
-    reject_unknown_attribute_node_type,
-    selected_dataset_uri,
+use crate::{
+    entity::{
+        AttributeName,
+        EntityResultExt,
+        EntityTenantState,
+        ForwardProvisionRequest,
+        ForwardingOperation,
+        IntoResponse,
+        JsonLd,
+        LocalOutcome,
+        NgsiLdRequestEnvelope,
+        ProblemResponse,
+        ProvisionResource,
+        ReplaceAttrParams,
+        Response,
+        StatusCode,
+        TypedPath,
+        Uri,
+        ValidatedQuery,
+        Value,
+        classify_entity_error,
+        collect_proxied_attrs,
+        provision_response,
+        selected_dataset_uri,
+    },
+    written_payload_admission::admit_written_attribute,
 };
+use andromeda_entity::write_admission::AttributeWrite;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
 use axum::http::Method;
@@ -51,7 +54,12 @@ pub(crate) async fn replace_attr(
     let service = &state.entities;
     let dataset_id = selected_dataset_uri(params.dataset_id.as_ref());
     let context = context.merge(body_context);
-    reject_unknown_attribute_node_type(&attr_id, &fragment, &uri)?;
+    // Clause 5.6.19.4 runs the clause 5.5.4 validation before the forwarding
+    // phase, so a fragment this broker refuses reaches no context source and an
+    // attribute a proxied registration claims is still validated.
+    admit_written_attribute(service, AttributeWrite::Replace, &attr_id, &fragment, &context)
+        .await
+        .with_entity_instance(&uri)?;
     let fragment_body = serde_json::to_vec(&fragment).with_entity_instance(&uri)?;
     let path_suffix = format!("/attrs/{attr_id}");
     let qs = params.dataset_id.as_ref().map(|dataset_id| format!("datasetId={dataset_id}"));

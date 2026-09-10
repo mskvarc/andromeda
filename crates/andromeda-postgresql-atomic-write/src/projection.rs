@@ -136,7 +136,7 @@ mod tests {
         attribute_name::AttributeName,
         attribute_type::AttributeType,
         instance_identity::InstanceIdentity,
-        scope::grammar::ScopeBuf,
+        scope::path::ScopePath,
         uri::Uri,
     };
     use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
@@ -168,6 +168,7 @@ mod tests {
             record: WriteRecord::mint(Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant")),
             base: WriteOrdinal::at(0),
             entity_id: "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("a valid entity URI"),
+            entity_types: Vec::new(),
             entries,
             selection_value: None,
         }
@@ -231,7 +232,7 @@ mod tests {
         let mut work = ProjectionWork::default();
         let entries = vec![
             TemporalAppendEntry::Scope {
-                observation: ScopeObservation::Path(ScopeBuf::new("/a".to_owned()).expect("a valid scope")),
+                observation: ScopeObservation::Path("/a".parse::<ScopePath>().expect("a valid scope path")),
                 observed_at: None,
                 instance: InstanceIdentity::Generated(Uuid::nil()),
             },

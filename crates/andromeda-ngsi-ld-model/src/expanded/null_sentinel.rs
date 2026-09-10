@@ -18,6 +18,23 @@ pub fn member_is_null_sentinel(instance: &Value) -> bool {
         .is_some_and(|value| value == NULL_URI.as_str() || value == NULL_IRI.as_str())
 }
 
+/// Whether one member of an expanded `@list` is the NGSI-LD Null.
+///
+/// Clause 4.5.22.2 makes each element of a normalized `objectList` "a JSON
+/// object containing a single Attribute with a key called `object`", while
+/// clause 4.5.22.3 lets a Context Producer write the concise spelling, where
+/// "each string in the array holds a valid URI". The single NGSI-LD Null of
+/// clause 4.5.0 therefore reaches the list either as a bare null node or
+/// wrapped in that object, and both spell the same deletion.
+fn list_member_is_null_sentinel(member: &Value) -> bool {
+    member_is_null_sentinel(member)
+        || member
+            .get(properties::OBJECT.as_str())
+            .and_then(Value::as_array)
+            .and_then(|nodes| nodes.first())
+            .is_some_and(member_is_null_sentinel)
+}
+
 /// Returns `true` if the expanded attribute instance is a deletion sentinel.
 ///
 /// Clauses 4.5.2.2 and 4.5.3.2 put the NGSI-LD Null on the right-hand side of
@@ -49,7 +66,7 @@ pub fn instance_is_null_sentinel(instance: &Value) -> bool {
             .and_then(|arr| arr.first())
             .and_then(|v| v.get("@list"))
             .and_then(|v| v.as_array())
-            .is_some_and(|members| members.len() == 1 && members.iter().all(member_is_null_sentinel))
+            .is_some_and(|members| members.len() == 1 && members.iter().all(list_member_is_null_sentinel))
     };
 
     check_value_null(properties::VALUE.as_str(), "@value")
@@ -150,6 +167,21 @@ mod tests {
             });
             assert!(instance_is_null_sentinel(&instance), "{instance}");
         }
+    }
+
+    /// Clause 4.5.22.2 spells each element of a normalized `objectList` as "a
+    /// JSON object containing a single Attribute with a key called `object`",
+    /// so a `ListRelationship` deletion written that way carries the null one
+    /// level deeper than the concise spelling does.
+    #[test]
+    fn a_normalized_object_list_of_one_null_is_a_list_relationship_deletion() {
+        let instance = json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/ListRelationship"],
+            "https://uri.etsi.org/ngsi-ld/hasObjectList": [{
+                "@list": [{"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:null"}]}]
+            }]
+        });
+        assert!(instance_is_null_sentinel(&instance), "{instance}");
     }
 
     /// Clause 4.5.0 admits exactly one NGSI-LD Null in the array, so a list

@@ -3,6 +3,7 @@ use crate::{
     error::SubscriptionError,
     lifecycle::{DatasetIdPolicy, SubscriptionVariant},
     normalization,
+    term_expansion,
     validation,
 };
 use andromeda_context_registry::service::ContextRegistryService;
@@ -75,7 +76,7 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
             }
         }
 
-        validation::expand_common_subscription_terms(&self.engine, payload, context).await
+        term_expansion::expand_common_subscription_terms(&self.engine, payload, context).await
     }
 
     async fn serialize_for_response(&self, subscription: &Subscription, context: &ContextSpec) -> Result<Value, SubscriptionError> {

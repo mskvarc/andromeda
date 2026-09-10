@@ -26,16 +26,14 @@
 //!
 //! The policy and its consequences are set out in `docs/timestamp-precision.md`.
 
+use crate::fractional_seconds::{FractionalSecondsError, accept_comma_decimal_separator, reject_excess_fractional_digits};
 use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, SecondsFormat, Timelike, Utc, format::ParseErrorKind};
 use derive_more::{AsRef, Deref, Display};
-use std::{borrow::Cow, str::FromStr};
+use std::str::FromStr;
 use thiserror::Error;
 
 /// The number of nanoseconds in one microsecond, the resolution [`NgsiLdDateTime::normalise`] truncates to.
 const NANOSECONDS_PER_MICROSECOND: u32 = 1_000;
-
-/// The maximum number of fractional-second digits clause 4.6.3 admits.
-const MAX_FRACTIONAL_DIGITS: usize = 6;
 
 /// The proleptic Gregorian calendar date of Julian day zero, as `(year, month, day)`.
 ///
@@ -60,9 +58,9 @@ pub enum NgsiLdDateTimeError {
         /// The rejected text.
         value: String,
     },
-    /// The text carries a zone designator other than the literal `Z` character.
-    #[error("NGSI-LD DateTime value does not use the mandatory 'Z' UTC designator: {value}")]
-    NonUtcOffset {
+    /// The text's trailing zone designator is not the literal `Z` character.
+    #[error("NGSI-LD DateTime value's trailing zone designator is not the literal character 'Z': {value}")]
+    ZoneDesignator {
         /// The rejected text.
         value: String,
     },
@@ -130,10 +128,8 @@ impl FromStr for NgsiLdDateTime {
     type Err = NgsiLdDateTimeError;
 
     fn from_str(value: &str) -> Result<NgsiLdDateTime, NgsiLdDateTimeError> {
-        let candidate = accept_comma_decimal_separator(value)?;
-        if fractional_digit_count(&candidate).is_some_and(|count| count > MAX_FRACTIONAL_DIGITS) {
-            return Err(NgsiLdDateTimeError::TooManyFractionalDigits { value: value.to_string() });
-        }
+        let candidate = accept_comma_decimal_separator(value).map_err(|error| clause_463_error(error, value))?;
+        reject_excess_fractional_digits(&candidate).map_err(|error| clause_463_error(error, value))?;
         // `chrono` refuses a year beyond its own ceiling as a parse failure, so a
         // lexically valid timestamp that overflows is reported as out of range
         // rather than as malformed text.
@@ -144,11 +140,13 @@ impl FromStr for NgsiLdDateTime {
                 NgsiLdDateTimeError::Malformed { value: value.to_string() }
             }
         })?;
-        // Clause 4.6.3 requires the literal `Z` character; `+00:00` and every
-        // other numeric offset name the same instant but are not that
-        // character, so both are refused rather than accepted as synonyms.
+        // Clause 4.6.3: the trailing component "shall always be equal to the
+        // character 'Z'". `+00:00` names the same instant and RFC 3339's own
+        // lowercase `z` names the same designator, but neither is that
+        // character, so the refusal names the designator rather than an offset
+        // the value may not carry at all.
         if !candidate.ends_with('Z') {
-            return Err(NgsiLdDateTimeError::NonUtcOffset { value: value.to_string() });
+            return Err(NgsiLdDateTimeError::ZoneDesignator { value: value.to_string() });
         }
         NgsiLdDateTime::normalise(parsed.with_timezone(&Utc)).map_err(|_| NgsiLdDateTimeError::OutOfRange { value: value.to_string() })
     }
@@ -164,24 +162,12 @@ impl TryFrom<String> for NgsiLdDateTime {
     }
 }
 
-/// Rewrite a client-supplied comma decimal separator to the canonical dot.
-///
-/// Clause 4.6.3 carries a compatibility note accepting a comma in requests.
-/// Exactly one comma is the form that note describes; text with more than one
-/// comma can never be a valid timestamp either way, so it is reported as
-/// malformed rather than silently collapsed.
-fn accept_comma_decimal_separator(value: &str) -> Result<Cow<'_, str>, NgsiLdDateTimeError> {
-    match value.matches(',').count() {
-        0 => Ok(Cow::Borrowed(value)),
-        1 => Ok(Cow::Owned(value.replacen(',', ".", 1))),
-        _ => Err(NgsiLdDateTimeError::Malformed { value: value.to_string() }),
+/// Report a shared clause 4.6.3 fractional-seconds failure in this type's own vocabulary.
+fn clause_463_error(error: FractionalSecondsError, value: &str) -> NgsiLdDateTimeError {
+    match error {
+        FractionalSecondsError::AmbiguousSeparator => NgsiLdDateTimeError::Malformed { value: value.to_string() },
+        FractionalSecondsError::TooManyDigits => NgsiLdDateTimeError::TooManyFractionalDigits { value: value.to_string() },
     }
-}
-
-/// Count the fractional-second digits in a dot-normalised candidate, if it declares any.
-fn fractional_digit_count(candidate: &str) -> Option<usize> {
-    let (_, after_dot) = candidate.split_once('.')?;
-    Some(after_dot.chars().take_while(char::is_ascii_digit).count())
 }
 
 /// Discard the sub-microsecond remainder of an instant.
@@ -321,7 +307,7 @@ mod tests {
         // character 'Z'". A numeric offset names a valid RFC 3339 instant but
         // is not that character, so it is refused rather than normalised.
         let error = "2026-07-25T12:00:00.5+02:00".parse::<NgsiLdDateTime>().expect_err("a non-Z offset is rejected");
-        assert!(matches!(error, NgsiLdDateTimeError::NonUtcOffset { .. }), "got {error:?}");
+        assert!(matches!(error, NgsiLdDateTimeError::ZoneDesignator { .. }), "got {error:?}");
     }
 
     #[test]
@@ -331,7 +317,21 @@ mod tests {
         let error = "2026-07-25T12:00:00+00:00"
             .parse::<NgsiLdDateTime>()
             .expect_err("+00:00 is not the literal Z designator");
-        assert!(matches!(error, NgsiLdDateTimeError::NonUtcOffset { .. }), "got {error:?}");
+        assert!(matches!(error, NgsiLdDateTimeError::ZoneDesignator { .. }), "got {error:?}");
+    }
+
+    /// Clause 4.6.3 spells the designator "the character 'Z'" and requires the
+    /// trailing component to "always be equal" to it. RFC 3339 admits the
+    /// lowercase `z` and `chrono` parses it, so only this check refuses it — and
+    /// the refusal names the designator, because such a value carries no offset
+    /// to complain about.
+    #[test]
+    fn a_lowercase_z_designator_is_refused_as_the_designator_it_is_not() {
+        let error = "2026-07-25T12:00:00z"
+            .parse::<NgsiLdDateTime>()
+            .expect_err("lowercase z is not the character the clause mandates");
+        assert!(matches!(error, NgsiLdDateTimeError::ZoneDesignator { .. }), "got {error:?}");
+        assert!(error.to_string().contains("literal character 'Z'"), "{error}");
     }
 
     #[test]

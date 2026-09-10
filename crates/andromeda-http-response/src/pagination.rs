@@ -44,6 +44,49 @@ pub enum PageExtent {
     },
 }
 
+impl PageExtent {
+    /// The extent a page of a collection reports.
+    ///
+    /// Clause 6.3.10 needs to know whether a following page exists. A query
+    /// that asked for a count knows its total and decides from it; one that did
+    /// not carries no total, and the page having come back full is what stands
+    /// in for it. Both entity and temporal queries make the decision this way,
+    /// so it is made once here.
+    #[must_use]
+    pub fn of_page(total: Option<i64>, returned: usize) -> PageExtent {
+        match total {
+            Some(count) => PageExtent::Total(count),
+            None => PageExtent::PageFullness {
+                returned: i64::try_from(returned).unwrap_or(i64::MAX),
+            },
+        }
+    }
+}
+
+/// Whether a response can carry the clause 6.3.10 pointers to its neighbouring
+/// pages at all.
+///
+/// Clause 6.3.10 requires of the `next` pointer that "the Link Target shall be
+/// a URI-reference that could be dereferenced by an NGSI-LD Client to retrieve
+/// the next page of NGSI-LD Elements", and clause 5.5.9.1 that "the pointers to
+/// NGSI-LD Elements shall contain all the parameters needed to allow NGSI-LD
+/// Clients to retrieve the next and previous page, without further interactions
+/// with the API". A query carried in a request body meets neither: the resource
+/// it names answers only POST, so dereferencing the pointer cannot work, and
+/// the pointer carries `limit` and `offset` without the query they page over.
+/// Such a binding emits no pointer rather than one that misleads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PagePointers {
+    /// The request URI carries the whole query, so a pointer built from it is
+    /// dereferenceable and complete.
+    OverRequestUri,
+    /// The query reached the broker in the request body, which no URI-reference
+    /// can carry. Clause 4.12's requirement to "flag NGSI-LD Clients when there
+    /// are remaining NGSI-LD Elements to be traversed" is met on such a binding
+    /// by the clause 6.3.13 `NGSILD-Results-Count` a counted query asks for.
+    NotDereferenceable,
+}
+
 /// Build a pagination link URL by replacing pagination parameters in the query string.
 fn build_page_link(uri: &Uri, style: PaginationStyle, param1: (&str, i64), param2: (&str, i64)) -> String {
     let strip_params: &[&str] = match style {
@@ -368,6 +411,20 @@ mod tests {
         let link_str = link.to_str().expect("valid string");
         assert!(link_str.contains("rel=\"next\""), "{link_str}");
         assert!(!link_str.contains("rel=\"prev\""), "{link_str}");
+    }
+
+    /// Clause 6.3.13: a query that asked for a count knows its total, so the
+    /// total is what decides whether a following page exists.
+    #[test]
+    fn a_counted_page_reports_its_total_as_the_extent() {
+        pretty_assertions::assert_eq!(PageExtent::of_page(Some(25), 10), PageExtent::Total(25));
+    }
+
+    /// A query that did not ask for a count has no total, so the fullness of
+    /// the page it returned stands in for one (clause 6.3.10).
+    #[test]
+    fn an_uncounted_page_reports_its_fullness_as_the_extent() {
+        pretty_assertions::assert_eq!(PageExtent::of_page(None, 10), PageExtent::PageFullness { returned: 10 });
     }
 
     /// A short final page under the page-fullness rule offers no `next`.

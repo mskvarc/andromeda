@@ -27,6 +27,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::filter::eval;
 use andromeda_subscription::{
     compilation::{compile_geo_q, notification_projection},
+    notification_slot::{NotificationSlot, NotificationSlotGate},
     store::SubscriptionStore,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -130,16 +131,18 @@ impl IntervalNotificationOperation {
                 }
 
                 // Claim slot only once we know we are actually going to send a notification.
-                let claimed = match this.sub_repo.claim_notification_slot(&this.target, &sub.id, None).await {
-                    Ok(c) => c,
-                    Err(e) => {
-                        debug!("IntervalWorker failed to claim slot for {}: {}", sub.id, e);
+                // Table 5.2.15-1: a periodic subscription carries no
+                // `throttling` (Table 5.2.12-1 makes the pair mutually
+                // exclusive), but its endpoint's `cooldown` still suppresses a
+                // notification that would follow too soon after a failure.
+                let gate = NotificationSlotGate::at(Utc::now(), None, sub.notification.endpoint.cooldown);
+                match this.sub_repo.claim_notification_slot(&this.target, &sub.id, gate).await {
+                    Ok(NotificationSlot::Claimed) => {}
+                    Ok(NotificationSlot::Suppressed) => return,
+                    Err(error) => {
+                        debug!("IntervalWorker failed to claim slot for {}: {}", sub.id, error);
                         return;
                     }
-                };
-
-                if !claimed {
-                    return;
                 }
 
                 let Ok(notification_id) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() else {
@@ -181,6 +184,7 @@ impl IntervalNotificationOperation {
                     jsonld_context: sub.delivery.jsonld_context.as_ref(),
                     tenant: this.tenant.tenant_name(),
                     snapshot: this.target.snapshot().map(SnapshotTarget::snapshot_id),
+                    timeout: sub.notification.endpoint.timeout,
                     subscription_id: &sub.id,
                 })
                 .assemble();

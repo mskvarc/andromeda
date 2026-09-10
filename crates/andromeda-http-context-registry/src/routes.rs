@@ -38,8 +38,8 @@ mod tests {
     use crate::state::{ContextRegistryRouteServices, ContextRegistryStateResolver};
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
-        body::Body,
-        http::{Error as HttpError, Method, Request, StatusCode},
+        body::{Body, to_bytes},
+        http::{Error as HttpError, Method, Request, StatusCode, header::CONTENT_LENGTH},
     };
     use futures::future::BoxFuture;
     use std::sync::Arc;
@@ -80,6 +80,54 @@ mod tests {
             assert_ne!(response.status(), StatusCode::NOT_FOUND, "{method} {path} was not routed");
             assert_ne!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{method} {path} lost its method");
         }
+        Ok(())
+    }
+
+    /// Clause 6.3.4: "'Content-Length' HTTP header absence, shall result in
+    /// just a 411 HTTP status code (without any payload body)". Creating a
+    /// hosted `@context` (clause 5.13.2) is an HTTP POST with a payload body,
+    /// so the precondition holds for it, and it holds before the addressed
+    /// tenant is resolved.
+    #[tokio::test]
+    async fn creating_a_context_without_a_declared_length_is_the_bare_411() -> Result<(), HttpError> {
+        let routes = super::ContextRegistryRoutes::new(Arc::new(RejectingResolver)).into_router();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/jsonldContexts")
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))?;
+
+        // A `Router`'s service error type is uninhabited, so the call has no
+        // failure case to propagate.
+        let response = match routes.oneshot(request).await {
+            Ok(response) => response,
+            Err(never) => match never {},
+        };
+
+        assert_eq!(response.status(), StatusCode::LENGTH_REQUIRED);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap_or_default();
+        assert!(body.is_empty(), "clause 6.3.4 forbids a payload body on a 411: {body:?}");
+        Ok(())
+    }
+
+    /// A declared length lets the request through the precondition and on to
+    /// the operation, which the rejecting resolver then refuses.
+    #[tokio::test]
+    async fn a_declared_length_carries_the_request_past_the_precondition() -> Result<(), HttpError> {
+        let routes = super::ContextRegistryRoutes::new(Arc::new(RejectingResolver)).into_router();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/jsonldContexts")
+            .header("content-type", "application/json")
+            .header(CONTENT_LENGTH, "2")
+            .body(Body::from("{}"))?;
+
+        let response = match routes.oneshot(request).await {
+            Ok(response) => response,
+            Err(never) => match never {},
+        };
+
+        assert_ne!(response.status(), StatusCode::LENGTH_REQUIRED);
         Ok(())
     }
 }

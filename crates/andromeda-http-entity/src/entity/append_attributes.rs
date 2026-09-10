@@ -1,33 +1,36 @@
 //! HTTP handling for the append attributes entity operation.
 
-use crate::entity::{
-    AppendParams,
-    AttributeName,
-    EntityResultExt,
-    EntityTenantState,
-    ForwardProvisionRequest,
-    ForwardingOperation,
-    IntoResponse,
-    JsonLd,
-    LocalOutcome,
-    NgsiLdRequestEnvelope,
-    OverwritePolicy,
-    ProblemResponse,
-    ProvisionResource,
-    RequestOverwritePolicy,
-    Response,
-    StatusCode,
-    TypedPath,
-    Uri,
-    ValidatedQuery,
-    Value,
-    classify_entity_error,
-    collect_proxied_attrs,
-    provision_response,
-    reject_unknown_attribute_types,
-    strip_attributes_from_value,
-    update_result::{NotUpdatedReason, update_result_response},
+use crate::{
+    entity::{
+        AppendParams,
+        AttributeName,
+        EntityResultExt,
+        EntityTenantState,
+        ForwardProvisionRequest,
+        ForwardingOperation,
+        IntoResponse,
+        JsonLd,
+        LocalOutcome,
+        NgsiLdRequestEnvelope,
+        OverwritePolicy,
+        ProblemResponse,
+        ProvisionResource,
+        RequestOverwritePolicy,
+        Response,
+        StatusCode,
+        TypedPath,
+        Uri,
+        ValidatedQuery,
+        Value,
+        classify_entity_error,
+        collect_proxied_attrs,
+        provision_response,
+        strip_attributes_from_value,
+        update_result::{NotUpdatedReason, update_result_response},
+    },
+    written_payload_admission::admit_written_entity,
 };
+use andromeda_entity::write_admission::EntityWrite;
 use andromeda_federation::{
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
     request::TriggeringRequest,
@@ -56,7 +59,12 @@ pub(crate) async fn append_attrs(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
     let context = context.merge(body_context);
-    reject_unknown_attribute_types(&fragment, &uri)?;
+    // Clause 5.6.3.4 runs the clause 5.5.4 validation before the forwarding
+    // phase, so a fragment this broker refuses reaches no context source and an
+    // append left with nothing local is still validated.
+    admit_written_entity(service, EntityWrite::AppendAttributes, &fragment, &context)
+        .await
+        .with_entity_instance(&uri)?;
     let no_overwrite = params.options == Some(RequestOverwritePolicy::NoOverwrite);
     let overwrite = if no_overwrite {
         OverwritePolicy::Preserve

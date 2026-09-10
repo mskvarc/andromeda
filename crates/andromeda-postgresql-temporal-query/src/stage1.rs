@@ -23,6 +23,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
+    entity_ordering::{order_by_entity_identifier, ordering_collation},
     entity_row_refs::{DocumentsRef, EntityRowRefs},
     error::RenderError,
     geo_predicate as geo_sql,
@@ -76,7 +77,28 @@ pub fn build_stage1_entity_ids(context_space_key: ContextSpaceKey, compiled: &Co
         .expr_as(SeaExpr::col((E, TemporalEntities::Id)), EntityIdColumn)
         .from_as(TemporalEntities::Table, E)
         .cond_where(entity_conditions.clone()) // clone: the count query applies the same entity predicate
-        .cond_where(SeaExpr::exists(temporal_match_subquery(context_space_key, compiled)))
+        .cond_where(SeaExpr::exists(temporal_match_subquery(context_space_key, compiled)));
+
+    // Clause 5.7.4.5: "If Entity ordering is specified (see clause 4.23), then
+    // the JSON-LD array returned shall be ordered according to the member names
+    // specified." Only `id` can be named (clause 5.7.4.3), and the collation is
+    // written out rather than left to the column: `temporal_entities.id` is
+    // declared `COLLATE "C"`, so an unstated comparison is byte-wise and the
+    // collation Table 6.18.3.2-1 says the payload "shall be ordered according
+    // to" would have no effect at all.
+    if let Some(ordering) = compiled.ordering.as_ref() {
+        order_by_entity_identifier(
+            &mut select,
+            SeaExpr::col((E, TemporalEntities::Id)),
+            ordering.direction,
+            &ordering_collation(ordering.collation.as_ref()),
+        );
+    }
+
+    // Clause 5.5.9 asks for a consistent order across pages whether or not one
+    // was requested: `LIMIT`/`OFFSET` over an otherwise unordered result can
+    // repeat and skip rows between pages.
+    select
         .order_by((E, TemporalEntities::Id), Order::Asc)
         .limit(u64::from(compiled.pagination.limit))
         .offset(u64::from(compiled.pagination.offset));
@@ -284,8 +306,9 @@ mod tests {
         entity_selection::{EntitySelection, EntitySelector},
         filter::parser,
         geo::query::GeoQuery,
+        ordering::{collation::IcuCollation, sort_direction::SortDirection},
         scope::query::ScopeQuery,
-        temporal::{instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
+        temporal::{instance_selection::InstanceSelection, ordering::TemporalEntityOrdering, representation::Representation, window::TemporalWindow},
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -665,5 +688,76 @@ mod tests {
         // Every literal contributes a balanced pair of quotes, so the total is
         // even unless a literal was terminated early.
         assert_eq!(sql.matches('\'').count() % 2, 0, "unbalanced SQL literal: {sql}");
+    }
+
+    /// Clause 5.7.4.5: "If Entity ordering is specified (see clause 4.23), then
+    /// the JSON-LD array returned shall be ordered according to the member
+    /// names specified", and Table 6.18.3.2-1 makes the collation the
+    /// comparison the payload "shall be ordered according to". The identifier
+    /// column is `COLLATE "C"`, so the requested collation has to be written
+    /// into the key or the ordering is byte-wise whatever was asked for.
+    #[test]
+    fn a_requested_ordering_collates_the_identifier_key() {
+        let mut compiled = minimal_compiled();
+        compiled.ordering = Some(TemporalEntityOrdering {
+            direction: SortDirection::Ascending,
+            collation: Some(IcuCollation::parse("de-u-co-phonebk").expect("valid collation")),
+        });
+        let (sql, _) = built(&compiled, &QueryNames::default());
+        assert!(sql.contains(r#"("e"."id") COLLATE "de-u-co-phonebk" ASC NULLS LAST"#), "{sql}");
+    }
+
+    /// Clause 4.23.1 makes ICU "root" (`und-x-icu`) the default collation
+    /// order, so an ordering that named none still names one rather than
+    /// falling back to the column's byte-wise `COLLATE "C"`.
+    #[test]
+    fn an_ordering_without_a_collation_compares_under_the_icu_root_order() {
+        let mut compiled = minimal_compiled();
+        compiled.ordering = Some(TemporalEntityOrdering::builder().direction(SortDirection::Ascending).build());
+        let (sql, _) = built(&compiled, &QueryNames::default());
+        assert!(sql.contains(r#"("e"."id") COLLATE "und-x-icu" ASC NULLS LAST"#), "{sql}");
+    }
+
+    /// Table 6.18.3.2-1 gives `desc` as one of the two sorting styles.
+    #[test]
+    fn a_descending_ordering_reverses_the_identifier_key() {
+        let mut compiled = minimal_compiled();
+        compiled.ordering = Some(TemporalEntityOrdering::builder().direction(SortDirection::Descending).build());
+        let (sql, _) = built(&compiled, &QueryNames::default());
+        assert!(sql.contains(r#"("e"."id") COLLATE "und-x-icu" DESC NULLS LAST"#), "{sql}");
+    }
+
+    /// The clause 5.5.9 tiebreaker survives an explicit ordering, so a page
+    /// boundary never falls inside a group the requested key left tied.
+    #[test]
+    fn the_stable_identifier_tiebreaker_follows_a_requested_ordering() {
+        let mut compiled = minimal_compiled();
+        compiled.ordering = Some(TemporalEntityOrdering::builder().direction(SortDirection::Descending).build());
+        let (sql, _) = built(&compiled, &QueryNames::default());
+        let collated = sql.find("COLLATE").expect("the requested key is written");
+        let tiebreaker = sql.rfind(r#""e"."id" ASC"#).expect("the stable key is written");
+        assert!(collated < tiebreaker, "{sql}");
+    }
+
+    /// Table 6.18.3.2-1 makes `collation` "part of Entity ordering", so a query
+    /// that ordered nothing keeps the store's own stable order and pays for no
+    /// collation at all.
+    #[test]
+    fn a_query_that_requested_no_ordering_keeps_the_stable_identifier_order() {
+        let compiled = minimal_compiled();
+        let (sql, _) = built(&compiled, &QueryNames::default());
+        assert!(!sql.contains("COLLATE"), "{sql}");
+        assert!(sql.contains(r#"ORDER BY "e"."id" ASC"#), "{sql}");
+    }
+
+    /// The count answers "how many", which no ordering changes, so clause 5.5.9
+    /// gets its total without a sort the planner would have to perform.
+    #[test]
+    fn the_count_statement_carries_no_ordering() {
+        let mut compiled = minimal_compiled();
+        compiled.pagination.count = CountPolicy::Emit;
+        compiled.ordering = Some(TemporalEntityOrdering::builder().direction(SortDirection::Ascending).build());
+        let sql = built_count(&compiled, &QueryNames::default());
+        assert!(!sql.contains("ORDER BY"), "{sql}");
     }
 }

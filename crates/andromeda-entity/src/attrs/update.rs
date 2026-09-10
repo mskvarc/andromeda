@@ -2,12 +2,11 @@
 
 use crate::{
     EntityService,
-    attribute_envelope::validate_attribute_envelopes,
     attrs::attribute_write::payload_write,
     error::EntityError,
     expanded_member::unwrap_expanded_ref,
-    geo_property_geometry::validate_geo_property_geometries,
     notification_plan::attribute_change_groups,
+    write_admission::{EntityWrite, admit_expanded_entity},
 };
 use andromeda_context_commit::{change_event::ChangeEvent, history_record::mutation_history};
 use andromeda_context_space::context_target::ContextTarget;
@@ -42,7 +41,8 @@ impl EntityService {
     /// Reports [`EntityError::JsonLd`] when `fragment` cannot be expanded
     /// against `context`, [`EntityError::Validation`] when an attribute
     /// instance omits the member its family requires, carries a `unitCode` the
-    /// family does not define or holds a malformed `GeoProperty` geometry,
+    /// family does not define, places the NGSI-LD Null where clause 5.5.4 does
+    /// not admit it or holds a malformed `GeoProperty` geometry,
     /// [`EntityError::NotFound`] when no entity carries `id`,
     /// [`EntityError::Contention`] when concurrent writers superseded the
     /// computed write on every attempt, and [`EntityError::Persistence`] when
@@ -58,8 +58,13 @@ impl EntityService {
 
         normalize_entity_attributes(&mut fragment);
         let expanded = Arc::new(self.engine.expand(fragment, context).await?);
-        validate_attribute_envelopes(&expanded)?;
-        validate_geo_property_geometries(&expanded)?;
+        // Clause 5.5.8 EXAMPLE 3 deletes an Attribute by setting its value to
+        // the NGSI-LD Null, so an Update Attributes fragment carries the
+        // sentinel at the first level and in the value position; clause 5.5.4
+        // excepts merge operations alone from nesting it inside a value object.
+        // Clause 5.5.8 reads the same sentinel on `scope` as the deleted scope
+        // of clause 4.18.
+        admit_expanded_entity(&expanded, EntityWrite::UpdateAttributes.null_sentinel_admission())?;
         // Clause 5.6.2.5 reports the attributes this request asked for, so the
         // set is read from the fragment before the write merges it away.
         let requested = extract_attribute_names(unwrap_expanded_ref(&expanded));

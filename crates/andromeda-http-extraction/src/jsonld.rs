@@ -4,6 +4,7 @@
 //! preventing false positives (e.g. `application/json-patch+json` no longer
 //! matches `application/json`).
 
+use crate::content_length_precondition::{ContentLengthPreconditionError, declared_body_length};
 use andromeda_http_headers::link::header::Link;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -11,10 +12,7 @@ use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exa
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},
-    http::{
-        StatusCode,
-        header::{CONTENT_LENGTH, LINK},
-    },
+    http::{StatusCode, header::LINK},
 };
 use headers::HeaderMapExt;
 use mediatype::{MediaTypeBuf, names};
@@ -179,18 +177,10 @@ where
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let uri = req.uri().clone();
-        let content_length = req
-            .headers()
-            .get(CONTENT_LENGTH)
-            .ok_or(ExtractorRejection::Empty(StatusCode::LENGTH_REQUIRED))?;
-        let content_length = content_length
-            .to_str()
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .ok_or_else(|| ExtractorRejection::invalid_request("Content-Length shall be a non-negative decimal integer", uri.clone()))?;
-        if content_length == 0 {
-            return Err(ExtractorRejection::invalid_request("Request body shall not be empty", uri));
-        }
+        // Clause 6.3.4: the payload length is checked before the payload is
+        // looked at, so an absent Content-Length is the bare 411 the clause
+        // requires rather than a decoding failure.
+        declared_body_length(req.headers()).map_err(|error| error.into_rejection(uri.clone()))?;
         let content_type_raw = req
             .headers()
             .typed_get::<headers::ContentType>()
@@ -229,8 +219,11 @@ where
             .await
             .map_err(|e| ExtractorRejection::invalid_request(format!("Invalid request body: {e}"), uri.clone()))?;
 
+        // A declared length the payload did not carry leaves clause 5.5.4 with
+        // no JSON document to read, which is the refusal the `Content-Length`
+        // precondition already owns.
         if bytes.is_empty() {
-            return Err(ExtractorRejection::invalid_request("Request body shall not be empty", uri.clone()));
+            return Err(ContentLengthPreconditionError::Empty.into_rejection(uri.clone()));
         }
 
         let mut value: serde_json::Value =
@@ -286,7 +279,11 @@ mod tests {
     use super::*;
     use axum::{
         body::{Body, HttpBody},
-        http::{HeaderValue, Request, header::CONTENT_TYPE},
+        http::{
+            HeaderValue,
+            Request,
+            header::{CONTENT_LENGTH, CONTENT_TYPE},
+        },
     };
     use serde_json::Value;
 
@@ -484,6 +481,24 @@ mod tests {
                 assert!(detail.contains("/property/value/nested/0"), "{detail}");
             }
             _other => panic!("expected BadRequestData"),
+        }
+    }
+
+    /// Clause 6.3.4: "'Content-Length' HTTP header absence, shall result in
+    /// just a 411 HTTP status code (without any payload body)", and it is
+    /// checked before the `Content-Type` precondition, so a request that fails
+    /// both is answered by the header it did not send.
+    #[tokio::test]
+    async fn a_request_declaring_no_length_is_the_bare_411_of_clause_6_3_4() {
+        let req = Request::builder()
+            .uri("/ngsi-ld/v1/entities")
+            .header(CONTENT_TYPE, "application/xml")
+            .body(Body::from("{}"))
+            .expect("request builds");
+
+        match JsonLd::<Value>::from_request(req, &()).await {
+            Err(ExtractorRejection::Empty(status)) => pretty_assertions::assert_eq!(status, StatusCode::LENGTH_REQUIRED),
+            _other => panic!("expected a bare 411"),
         }
     }
 }

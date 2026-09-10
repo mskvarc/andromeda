@@ -9,7 +9,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
-    filter::{expansion::expand_q_expr, path::expanded_attribute_name, referenced_attributes::referenced_attributes},
+    filter::{expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes, path::expanded_attribute_name, referenced_attributes::referenced_attributes},
     geo::compile as geo_compile,
     pagination::{CountPolicy, Pagination},
     projection::expansion::expand_attrs,
@@ -91,7 +91,7 @@ impl RegistrationService {
         // it; the filter itself is not evaluated against a registration.
         if let Some(expression) = params.q.clone() {
             // clone: expansion owns and rewrites the request expression without mutating cached parameters.
-            let expanded_filter = expand_q_expr(expression, &expander).await?;
+            let expanded_filter = expand_q_expr(expression, &JsonKeyAttributes::default(), &expander).await?;
             for name in referenced_attributes(&expanded_filter) {
                 let iri = IriBuf::new(name.as_str().to_owned())
                     .map_err(|error| RegistrationError::csr_validation(format!("q names a non-IRI attribute: {error}")))?;
@@ -108,7 +108,7 @@ impl RegistrationService {
             }
         }
         let csf_expr = match params.csf.clone() {
-            Some(expression) => Some(expand_q_expr(expression, &expander).await?), // clone: same reason as `q`.
+            Some(expression) => Some(expand_q_expr(expression, &JsonKeyAttributes::default(), &expander).await?), // clone: same reason as `q`.
             None => None,
         };
         let temporal = if let (Some(timerel), Some(time_at)) = (&params.timerel, &params.time_at) {

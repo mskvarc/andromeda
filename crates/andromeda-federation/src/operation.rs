@@ -139,7 +139,7 @@ impl ForwardingOperation {
             ForwardingOperation::UpdateBatch => &[CsrOperation::UpdateBatch],
             ForwardingOperation::DeleteBatch => &[CsrOperation::DeleteBatch],
             ForwardingOperation::MergeBatch => &[CsrOperation::MergeBatch],
-            ForwardingOperation::PurgeEntity => &[CsrOperation::PurgeEntity],
+            ForwardingOperation::PurgeEntity => &[CsrOperation::PurgeEntity, CsrOperation::RedirectionOps],
             ForwardingOperation::UpsertTemporalEntity => &[CsrOperation::UpsertTemporal],
             ForwardingOperation::AppendTemporalAttributes => &[CsrOperation::AppendAttrsTemporal],
             ForwardingOperation::DeleteTemporalAttribute => &[CsrOperation::DeleteAttrsTemporal],
@@ -269,6 +269,11 @@ mod tests {
         assert!(ForwardingOperation::CreateEntity.matches(&redirection));
         assert!(ForwardingOperation::RetrieveEntity.matches(&redirection));
         assert!(ForwardingOperation::RetrieveEntityTypes.matches(&redirection));
+        // Table 4.20-2 lists purgeEntity under redirectionOps and under no
+        // other group, so it is the one operation the two assertions differ on.
+        assert!(ForwardingOperation::PurgeEntity.matches(&redirection));
+        assert!(!ForwardingOperation::PurgeEntity.matches(&federation));
+        assert!(!ForwardingOperation::PurgeEntity.matches(&association));
         assert!(!ForwardingOperation::QueryBatch.matches(&redirection));
         assert!(!ForwardingOperation::CreateBatch.matches(&redirection));
 
@@ -282,9 +287,9 @@ mod tests {
     }
 
     #[test]
-    fn the_temporal_provision_operations_and_purge_are_advertised_by_name_only() {
-        // Table 4.20-1 names each temporal provision operation and purgeEntity;
-        // no Table 4.20-2 group lists any of them, so a group advertises none.
+    fn the_temporal_provision_operations_are_advertised_by_name_only() {
+        // Table 4.20-1 names each temporal provision operation; no Table 4.20-2
+        // group lists any of them, so a group advertises none.
         let cases = [
             (ForwardingOperation::UpsertTemporalEntity, "upsertTemporal"),
             (ForwardingOperation::AppendTemporalAttributes, "appendAttrsTemporal"),
@@ -292,7 +297,6 @@ mod tests {
             (ForwardingOperation::UpdateTemporalAttributeInstance, "updateAttrInstanceTemporal"),
             (ForwardingOperation::DeleteTemporalAttributeInstance, "deleteAttrInstanceTemporal"),
             (ForwardingOperation::DeleteTemporalEntity, "deleteTemporal"),
-            (ForwardingOperation::PurgeEntity, "purgeEntity"),
         ];
         for (operation, token) in cases {
             pretty_assertions::assert_eq!(

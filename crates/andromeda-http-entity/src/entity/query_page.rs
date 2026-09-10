@@ -8,7 +8,7 @@
 
 use crate::entity::query_forwarding::ForwardedQueryResults;
 use andromeda_http_headers::media_type::ResponseMediaType;
-use andromeda_http_response::pagination::{PageExtent, PaginationStyle, append_pagination_links};
+use andromeda_http_response::pagination::{PageExtent, PagePointers, PaginationStyle, append_pagination_links};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, entity::parameters::EntityQueryParameters};
 use axum::{http::Uri as HttpUri, response::Response};
@@ -42,6 +42,9 @@ pub(crate) struct QueryPage {
     count: ResultCount,
     /// Which collection the window is cut from.
     cut_at: PageCut,
+    /// Whether the binding the query arrived on can carry a pointer to the
+    /// neighbouring pages at all.
+    pointers: PagePointers,
 }
 
 impl QueryPage {
@@ -51,7 +54,7 @@ impl QueryPage {
     /// merged collection rather than from the local rows, so the local query is
     /// widened to the whole result here and the requested window is applied by
     /// [`QueryPage::cut`] once the merge is done.
-    pub(crate) fn of(query: &mut EntityQueryParameters, forwarded: Option<&ForwardedQueryResults>) -> QueryPage {
+    pub(crate) fn of(query: &mut EntityQueryParameters, forwarded: Option<&ForwardedQueryResults>, pointers: PagePointers) -> QueryPage {
         let page = QueryPage {
             limit: query.effective_limit(),
             offset: query.effective_offset(),
@@ -64,6 +67,7 @@ impl QueryPage {
             } else {
                 PageCut::Local
             },
+            pointers,
         };
         if matches!(page.cut_at, PageCut::AfterMerge) {
             query.limit = Some(u32::MAX);
@@ -100,19 +104,22 @@ impl QueryPage {
     /// A query that asked for a count knows its total and drives `next` from
     /// it; one that did not carries no total and signals a following page by
     /// the page coming back full.
+    ///
+    /// A binding that carried its query in the request body emits no link:
+    /// clause 6.3.10 asks for a target "that could be dereferenced by an
+    /// NGSI-LD Client to retrieve the next page", and the clause 5.2.23 body of
+    /// clause 6.23.3.1 is not in any URI-reference that could be.
     pub(crate) fn append_links(&self, response: &mut Response, instance: &HttpUri, media_type: ResponseMediaType, total: Option<i64>, returned: usize) {
-        let extent = match total {
-            Some(count) => PageExtent::Total(count),
-            None => PageExtent::PageFullness {
-                returned: i64::try_from(returned).unwrap_or(i64::MAX),
-            },
-        };
+        match self.pointers {
+            PagePointers::NotDereferenceable => return,
+            PagePointers::OverRequestUri => {}
+        }
         append_pagination_links(
             response,
             instance,
             i64::from(self.limit),
             i64::from(self.offset),
-            extent,
+            PageExtent::of_page(total, returned),
             PaginationStyle::OffsetPrevNext,
             media_type,
         );

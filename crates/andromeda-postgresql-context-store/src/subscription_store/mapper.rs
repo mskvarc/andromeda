@@ -27,11 +27,14 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
 use andromeda_postgresql_codes::notification_trigger::NotificationTriggerCode;
+use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
 use andromeda_subscription::stored_subscription::StoredSubscription;
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
+use sea_query::Iden;
 use serde_json::Value;
 use sqlx::{Row, postgres::PgRow};
+use std::num::NonZeroU32;
 use url::Url;
 
 /// Parse a subscription identifier read from PostgreSQL.
@@ -47,7 +50,7 @@ pub fn stored_subscription_uri(raw: &str) -> Result<Uri, ContextStoreError> {
 
 /// The entity selectors the `entities` column holds.
 fn stored_entities(row: &PgRow) -> Result<Option<Vec<EntitySelector>>, ContextStoreError> {
-    let entities_json: Option<Value> = row.try_get("entities")?;
+    let entities_json: Option<Value> = row.try_get(Subscriptions::Entities.unquoted())?;
     entities_json
         .map(|value| {
             serde_json::from_value::<Vec<EntitySelector>>(value)
@@ -56,16 +59,16 @@ fn stored_entities(row: &PgRow) -> Result<Option<Vec<EntitySelector>>, ContextSt
         .transpose()
 }
 
-/// The attribute names the `watched_attributes` column holds.
-fn stored_watched_attributes(row: &PgRow) -> Result<Option<Vec<AttributeName>>, ContextStoreError> {
-    let stored: Option<Vec<String>> = row.try_get("watched_attributes")?;
+/// The attribute names one `TEXT[]` column of expanded names holds.
+fn stored_attribute_names(row: &PgRow, column: &str) -> Result<Option<Vec<AttributeName>>, ContextStoreError> {
+    let stored: Option<Vec<String>> = row.try_get(column)?;
     stored
         .map(|names| {
             names
                 .into_iter()
                 .map(|raw| {
                     raw.parse()
-                        .map_err(|error| ContextStoreError::Internal(format!("Invalid stored watched attribute '{raw}': {error}")))
+                        .map_err(|error| ContextStoreError::Internal(format!("Invalid stored attribute name '{raw}' in column '{column}': {error}")))
                 })
                 .collect()
         })
@@ -74,7 +77,7 @@ fn stored_watched_attributes(row: &PgRow) -> Result<Option<Vec<AttributeName>>, 
 
 /// The clause 5.3.3 triggers the `notification_trigger` registry codes name.
 fn stored_notification_triggers(row: &PgRow) -> Result<Option<Vec<NotificationTrigger>>, ContextStoreError> {
-    let trigger_codes: Option<Vec<i16>> = row.try_get("notification_trigger")?;
+    let trigger_codes: Option<Vec<i16>> = row.try_get(Subscriptions::NotificationTrigger.unquoted())?;
     trigger_codes
         .map(|codes| {
             codes
@@ -106,78 +109,83 @@ fn stored_subscription_key(raw: i64) -> Result<SubscriptionKey, ContextStoreErro
 /// context URL, or the status label.
 pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Result<SubscriptionRow, ContextStoreError> {
     let dataset_id_raw: Option<Vec<String>> = match dataset_id_presence {
-        DatasetIdPresence::Present => row.try_get("dataset_id")?,
+        DatasetIdPresence::Present => row.try_get(Subscriptions::DatasetId.unquoted())?,
         DatasetIdPresence::Absent => None,
     };
     let dataset_id = dataset_id_raw
         .map(|ids| ids.iter().map(String::as_str).map(stored_subscription_uri).collect())
         .transpose()?;
-    let id = stored_subscription_uri(row.try_get("id")?)?;
+    let id = stored_subscription_uri(row.try_get(Subscriptions::Id.unquoted())?)?;
     let entities = stored_entities(row)?;
-    let watched_attributes = stored_watched_attributes(row)?;
+    let watched_attributes = stored_attribute_names(row, Subscriptions::WatchedAttributes.unquoted())?;
     let notification_trigger = stored_notification_triggers(row)?;
-    let q_raw: Option<String> = row.try_get("q")?;
+    let q_raw: Option<String> = row.try_get(Subscriptions::Q.unquoted())?;
     let q = q_raw
         .map(|raw| {
             raw.parse()
                 .map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription q filter '{raw}': {error}")))
         })
         .transpose()?;
-    let scope_q_raw: Option<String> = row.try_get("scope_q")?;
+    let scope_q_raw: Option<String> = row.try_get(Subscriptions::ScopeQ.unquoted())?;
     let scope_q = scope_q_raw
         .map(|raw| ScopeQuery::parse(&raw).map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription scopeQ '{raw}': {error}"))))
         .transpose()?;
-    let csf_raw: Option<String> = row.try_get("csf")?;
+    let csf_raw: Option<String> = row.try_get(Subscriptions::Csf.unquoted())?;
     let csf = csf_raw
         .map(|raw| {
             raw.parse()
                 .map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription csf filter '{raw}': {error}")))
         })
         .transpose()?;
-    let notification_json: Value = row.try_get("notification")?;
+    let expand_values = stored_attribute_names(row, Subscriptions::ExpandValues.unquoted())?;
+    let json_keys = stored_attribute_names(row, Subscriptions::JsonKeys.unquoted())?;
+    let notification_json: Value = row.try_get(Subscriptions::Notification.unquoted())?;
     let notification =
         serde_json::from_value(notification_json).map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription notification: {error}")))?;
-    let lang_raw: Option<String> = row.try_get("lang")?;
+    let lang_raw: Option<String> = row.try_get(Subscriptions::Lang.unquoted())?;
     let lang = lang_raw
         .map(LangTagBuf::new)
         .transpose()
         .map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription lang: {error}")))?;
-    let jsonld_context_raw: Option<String> = row.try_get("jsonld_context")?;
+    let jsonld_context_raw: Option<String> = row.try_get(Subscriptions::JsonldContext.unquoted())?;
     let jsonld_context = jsonld_context_raw
         .map(|raw| Url::parse(&raw).map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription jsonldContext '{raw}': {error}"))))
         .transpose()?;
-    let status_label: String = row.try_get("status")?;
+    let status_label: String = row.try_get(Subscriptions::Status.unquoted())?;
     Ok(SubscriptionRow {
         id,
-        key: stored_subscription_key(row.try_get("subscription_key")?)?,
-        subscription_name: row.try_get("subscription_name")?,
-        description: row.try_get("description")?,
+        key: stored_subscription_key(row.try_get(Subscriptions::SubscriptionKey.unquoted())?)?,
+        subscription_name: row.try_get(Subscriptions::SubscriptionName.unquoted())?,
+        description: row.try_get(Subscriptions::Description.unquoted())?,
         entities,
         watched_attributes,
         notification_trigger,
-        time_interval: row.try_get("time_interval")?,
+        time_interval: row.try_get(Subscriptions::TimeInterval.unquoted())?,
         q,
-        geo_q: row.try_get("geo_q")?,
+        geo_q: row.try_get(Subscriptions::GeoQ.unquoted())?,
         scope_q,
         csf,
+        expand_values,
+        json_keys,
         dataset_id,
         notification,
-        expires_at: row.try_get("expires_at")?,
-        throttling: row.try_get("throttling")?,
+        expires_at: row.try_get(Subscriptions::ExpiresAt.unquoted())?,
+        throttling: row.try_get(Subscriptions::Throttling.unquoted())?,
         status: status_label
             .parse()
             .map_err(|e| ContextStoreError::Internal(format!("Invalid subscription status '{status_label}': {e}")))?,
-        temporal_q: row.try_get("temporal_q")?,
+        temporal_q: row.try_get(Subscriptions::TemporalQ.unquoted())?,
         lang,
         jsonld_context,
-        local_only: row.try_get("local_only")?,
-        split_entities: row.try_get("split_entities")?,
-        times_sent: row.try_get("times_sent")?,
-        last_notification: row.try_get("last_notification")?,
-        last_success: row.try_get("last_success")?,
-        last_failure: row.try_get("last_failure")?,
-        created_at: row.try_get("created_at")?,
-        modified_at: row.try_get("modified_at")?,
+        local_only: row.try_get(Subscriptions::LocalOnly.unquoted())?,
+        split_entities: row.try_get(Subscriptions::SplitEntities.unquoted())?,
+        times_sent: row.try_get(SubscriptionDeliveryState::TimesSent.unquoted())?,
+        times_failed: row.try_get(SubscriptionDeliveryState::TimesFailed.unquoted())?,
+        last_notification: row.try_get(SubscriptionDeliveryState::LastNotification.unquoted())?,
+        last_success: row.try_get(SubscriptionDeliveryState::LastSuccess.unquoted())?,
+        last_failure: row.try_get(SubscriptionDeliveryState::LastFailure.unquoted())?,
+        created_at: row.try_get(Subscriptions::CreatedAt.unquoted())?,
+        modified_at: row.try_get(Subscriptions::ModifiedAt.unquoted())?,
     })
 }
 
@@ -211,6 +219,16 @@ pub fn row_to_stored_subscription(row: SubscriptionRow) -> StoredSubscription {
     }
 }
 
+/// The member a delivery counter renders as (Table 5.2.14.2-1).
+///
+/// The column floors at zero because a counter has to be somewhere before it is
+/// first advanced; the member is restricted to "Greater than 0", so a counter
+/// still at rest is absent. A negative count is not reachable through the
+/// column's own `CHECK`, and is read the same way as a counter at rest.
+fn positive_counter(counted: i32) -> Option<NonZeroU32> {
+    u32::try_from(counted).ok().and_then(NonZeroU32::new)
+}
+
 /// Convert a persistence-shaped `SubscriptionRow` into the domain [`Subscription`].
 ///
 /// Parses JSON columns into typed domain values and derives the notification
@@ -218,7 +236,13 @@ pub fn row_to_stored_subscription(row: SubscriptionRow) -> StoredSubscription {
 fn row_to_subscription(row: SubscriptionRow) -> Subscription {
     let mut notification: NotificationParams = row.notification;
 
-    notification.times_sent = Some(row.times_sent);
+    // Clause 5.2.14.2 makes these output only: whatever a client stored in the
+    // notification JSONB is replaced by the counters the delivery state holds.
+    // Table 5.2.14.2-1 restricts both counters to "Greater than 0" at
+    // cardinality 0..1, so one that has not moved is an absent member rather
+    // than a zero the client has to interpret.
+    notification.times_sent = positive_counter(row.times_sent);
+    notification.times_failed = positive_counter(row.times_failed);
     notification.last_notification = row.last_notification;
     notification.last_success = row.last_success;
     notification.last_failure = row.last_failure;
@@ -243,6 +267,8 @@ fn row_to_subscription(row: SubscriptionRow) -> Subscription {
                 .csf(row.csf)
                 .dataset_id(row.dataset_id)
                 .temporal_q(row.temporal_q)
+                .expand_values(row.expand_values)
+                .json_keys(row.json_keys)
                 .build(),
         )
         .notification(notification)

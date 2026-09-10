@@ -22,6 +22,18 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 
+/// A clause 4.6.3 `DateTime` carrying a fractional second, held inside a
+/// `valueList`.
+///
+/// Clause 4.6.3 makes the fraction part of the value — "the string shall contain
+/// two integer digits, followed by a decimal point and then one or more
+/// fractional digits" — so the array holds this exact text and an operand that
+/// names the value has to carry it too.
+const FRACTIONAL_INSTANT: &str = "2024-01-01T00:00:00.250Z";
+
+/// The same for clause 4.6.3's `Time` form.
+const FRACTIONAL_TIME: &str = "09:30:00.250Z";
+
 /// One entity carrying every attribute family whose clause 4.9 target value is
 /// not a single scalar, plus the two plain Properties whose target value is one.
 ///
@@ -42,6 +54,8 @@ fn structured_entity(id: &str) -> serde_json::Value {
         "roomLabel": {"type": "LanguageProperty", "languageMap": {"en": "Door", "de": "Tuer"}},
         "roomAliases": {"type": "LanguageProperty", "languageMap": {"fr": ["chat", "rouge"], "en": ["red", "cat"]}},
         "roomTags": {"type": "ListProperty", "valueList": ["residential", "commercial"]},
+        "roomInstants": {"type": "ListProperty", "valueList": [FRACTIONAL_INSTANT, "2024-01-02T00:00:00Z"]},
+        "roomTimes": {"type": "ListProperty", "valueList": [FRACTIONAL_TIME, "13:00:00Z"]},
         "roomSpeeds": {"type": "ListProperty", "valueList": [1, 2, 3]},
         "roomLinks": {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Room:1", "urn:ngsi-ld:Room:2"]},
         "roomVocab": {"type": "VocabProperty", "vocab": ["http://example.org/Male", "http://example.org/Other"]},
@@ -184,6 +198,38 @@ async fn regression_query_targets_list_property_matches_a_member_of_its_value_li
             ("roomSpeeds==2", true),
             ("roomTags==\"industrial\"", false),
             ("roomSpeeds==9", false),
+        ],
+    )
+    .await;
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 4.9 p. 87 names "the valueList array associated to such a
+/// `ListProperty`" as the target value, and clause 4.6.3 gives a `DateTime`'s
+/// Seconds component "one or more fractional digits, up to a maximum of six".
+/// The two together mean the array holds the client's text, fraction included,
+/// and the operand that names one of its members is compared against that text.
+///
+/// The `DateTime` operand was rendered at whole seconds for every backend
+/// binding, so `roomInstants=="2024-01-01T00:00:00.250Z"` reached the JSONB
+/// containment probe as `"2024-01-01T00:00:00Z"` — a value no stored list holds,
+/// and a filter that could never match whatever the client wrote.
+#[tokio::test]
+async fn regression_query_targets_a_fractional_temporal_operand_matches_a_value_list_member() {
+    let (scope, id) = seeded("Building:q-fractional-list").await;
+
+    assert_selection(
+        &scope,
+        &id,
+        &[
+            ("roomInstants==\"2024-01-01T00:00:00.250Z\"", true),
+            ("roomInstants==2024-01-01T00:00:00.250Z", true),
+            ("roomInstants==\"2024-01-02T00:00:00Z\"", true),
+            ("roomInstants==\"2024-01-01T00:00:00.750Z\"", false),
+            ("roomTimes==\"09:30:00.250Z\"", true),
+            ("roomTimes==\"13:00:00Z\"", true),
+            ("roomTimes==\"09:30:00.750Z\"", false),
         ],
     )
     .await;

@@ -10,10 +10,12 @@ use crate::{
     entity::EntityRenderer,
     error::RenderError,
     nested_projection::{LinkedProjection, NestedProjection},
+    relationship_targets::rendered_relationship_targets,
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
 use std::{collections::HashSet, str::FromStr};
@@ -131,11 +133,12 @@ fn inline_join_attribute_instance(
             }
         }
         Some(AttributeType::ListRelationship) => {
-            if let Some(object_list) = attr_obj.get("objectList").and_then(Value::as_array) {
-                // Collect the URIs first so the borrow of `attr_obj` is released
-                // before the recursive expansion, which needs the mutable
-                // ancestor set.
-                let uris: Vec<Uri> = object_list.iter().filter_map(Value::as_str).filter_map(|raw| raw.parse::<Uri>().ok()).collect();
+            // Collect the URIs first so the borrow of `attr_obj` is released
+            // before the recursive expansion, which needs the mutable ancestor
+            // set. Both representations clause 4.5.22 gives the member name the
+            // same targets, so the reading of them is the shared one.
+            let targets = attr_obj.get(compact_properties::OBJECT_LIST).map(rendered_relationship_targets);
+            if let Some(uris) = targets {
                 let mut entity_list = Vec::new();
                 for uri in &uris {
                     if let Some(linked_entity) = context.linked.get(uri) {

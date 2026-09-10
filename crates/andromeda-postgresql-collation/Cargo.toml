@@ -1,0 +1,17 @@
+[package]
+name = "andromeda-postgresql-collation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-ngsi-ld-query.workspace = true
+dashmap = { version = "6.2.1", features = ["inline"] }
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres"] }
+thiserror = "2.0.20"
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true

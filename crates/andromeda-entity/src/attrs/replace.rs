@@ -2,13 +2,11 @@
 
 use crate::{
     EntityService,
-    attribute_envelope::validate_attribute_envelopes,
     attrs::attribute_write::{MutatedEntity, payload_write},
     error::EntityError,
     expanded_member::unwrap_expanded_ref,
-    geo_property_geometry::validate_geo_property_geometries,
     notification_plan::attribute_change_groups,
-    null_content::reject_null_content,
+    write_admission::{AttributeWrite, admit_expanded_attribute},
 };
 use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_context_space::context_target::ContextTarget;
@@ -67,9 +65,7 @@ impl EntityService {
         // implementation to ignore when a Context Producer supplies one.
         normalize_attribute_node(&mut fragment);
         let expanded = Arc::new(self.engine.expand(fragment, context).await?);
-        validate_attribute_envelopes(&expanded)?;
-        reject_null_content(&expanded)?;
-        validate_geo_property_geometries(&expanded)?;
+        admit_expanded_attribute(&expanded, attr_name, AttributeWrite::Replace.null_sentinel_admission())?;
 
         let MutatedEntity { events } = self
             .commit_computed_write(target, &entity_uri, |previous| {

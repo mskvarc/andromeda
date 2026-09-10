@@ -35,6 +35,7 @@ use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::{aggregate::count_all, cast::cast, literal::text_literal, pg_type::PostgresType};
 use andromeda_subscription::{
     error::SubscriptionError,
+    notification_slot::{NotificationSlot, NotificationSlotGate},
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
 };
@@ -64,6 +65,8 @@ fn project_subscription(select: &mut SelectStatement, kind: StoredKind) {
         .column((Subscriptions::Table, Subscriptions::GeoQ))
         .column((Subscriptions::Table, Subscriptions::ScopeQ))
         .column((Subscriptions::Table, Subscriptions::Csf))
+        .column((Subscriptions::Table, Subscriptions::ExpandValues))
+        .column((Subscriptions::Table, Subscriptions::JsonKeys))
         .column((Subscriptions::Table, Subscriptions::Notification))
         .column((Subscriptions::Table, Subscriptions::ExpiresAt))
         .column((Subscriptions::Table, Subscriptions::Throttling))
@@ -208,14 +211,20 @@ macro_rules! impl_subscription_store {
                 &self,
                 target: &ContextTarget,
                 id: &Uri,
-                earliest_allowed_last_notification: Option<chrono::DateTime<chrono::Utc>>,
-            ) -> Result<bool, SubscriptionError> {
-                let (sql, values) = claim_statement(target, id, $kind, earliest_allowed_last_notification).build_sqlx(PostgresQueryBuilder);
+                gate: NotificationSlotGate,
+            ) -> Result<NotificationSlot, SubscriptionError> {
+                let (sql, values) = claim_statement(target, id, $kind, gate).build_sqlx(PostgresQueryBuilder);
                 let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .execute(&self.pool)
                     .await
                     .map_err(persistence_error)?;
-                Ok(result.rows_affected() > 0)
+                // The gate is the statement's own `WHERE`, so a state row it
+                // did not match is a slot the ceilings refused.
+                if result.rows_affected() > 0 {
+                    Ok(NotificationSlot::Claimed)
+                } else {
+                    Ok(NotificationSlot::Suppressed)
+                }
             }
 
             async fn mark_success(&self, target: &ContextTarget, id: &Uri) -> Result<(), SubscriptionError> {

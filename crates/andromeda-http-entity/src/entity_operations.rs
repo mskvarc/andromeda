@@ -10,21 +10,13 @@ use crate::{
         merge_forwarded,
     },
     error::{EntityResultExt, public_error},
-    join::ResolvedJoin,
-    request_projection::RequestProjection,
     state::{EntityTenantState, EntityTenantStateOrCreate},
 };
 use andromeda_entity::{
     batch::UpsertPolicy,
-    query::EntityQueryService,
     side_effect::{AsyncPreference, BatchSideEffectMode},
 };
-use andromeda_federation::{
-    entity_result::collect_warnings,
-    operation::ForwardingOperation,
-    provision_batch::BatchProvisionOperation,
-    request::{CsrModeFilter, ForwardQueryRequest, TriggeringRequest},
-};
+use andromeda_federation::{provision_batch::BatchProvisionOperation, request::TriggeringRequest};
 use andromeda_http_extraction::{
     accept::{AcceptFormat, AcceptFormatNoGeo},
     entity_batch::{BatchBody, parse_batch_entities},
@@ -38,8 +30,6 @@ use andromeda_http_headers::{media_type::ResponseMediaType, preference::RespondM
 use andromeda_http_response::{
     batch::NgsiLdBatchResponse,
     batch_projection::batch_operation_result,
-    collection::NgsiLdCollectionResponse,
-    linked_resolution_warning::with_linked_resolution_warnings,
     problem_response::ProblemResponse,
     render::start_rendering,
 };

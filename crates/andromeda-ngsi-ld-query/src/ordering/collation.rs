@@ -1,5 +1,7 @@
 //! ICU collation identifiers for `orderBy` string sorting (clause 4.23).
 
+use crate::ordering::unicode_collation_keyword::{UnregisteredKeyword, unregistered_collation_keyword};
+use derive_more::Display;
 use langtag::LangTagBuf;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -11,7 +13,8 @@ use thiserror::Error;
 /// collation settings in a `-u-` extension (IETF RFC 6067), and keeping the
 /// parsed form is what stops the tag being re-derived wherever the identifier
 /// is used.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[display("{}", _0.as_str())]
 #[serde(try_from = "String", into = "String")]
 pub struct IcuCollation(LangTagBuf);
 
@@ -26,20 +29,41 @@ impl IcuCollation {
 
     /// Parses and validates an ICU collation identifier.
     ///
-    /// A bare language tag names an ICU collation — clause 4.23.1's own default
-    /// `und-x-icu` is one, and it carries no `-u-` extension at all — so no
-    /// extension is required. When one is present, every keyword key it
-    /// declares has to be a collation setting: clause 5.7.2.4 raises
-    /// `BadRequestData` for "a preferred collation setting [that] does not
-    /// conform to a valid ICU collation", and a tag whose keywords select a
-    /// numbering system or a calendar states no collation preference at all.
+    /// Clauses 5.7.2.4 and 5.7.4.4 raise `BadRequestData` for "a preferred
+    /// collation setting [that] does not conform to a valid ICU collation (see
+    /// IETF RFC 6067)". Two things are decided here and one deliberately is
+    /// not.
+    ///
+    /// The tag has to be a well-formed BCP47 language tag, because an ICU
+    /// collation is named by one — clause 4.23.1's own default `und-x-icu` is
+    /// one, and it carries no `-u-` extension at all, so no extension is
+    /// required.
+    ///
+    /// Where an extension is present, every keyword it declares has to be one
+    /// RFC 6067 registers for collation: both the key, because a keyword
+    /// selecting a numbering system or a calendar states no collation
+    /// preference, and the type, because ICU accepts an unregistered collation
+    /// type and silently substitutes the key's default for it — a request
+    /// naming `de-u-co-nonsense` would otherwise be answered, successfully, in
+    /// an order it never asked for.
+    ///
+    /// Whether the locale itself names a collation ICU holds is not decided
+    /// here. ICU's set of known languages is its own — it excludes ISO 639-2
+    /// codes such as `mul` and `zxx` that any embedded language table would
+    /// admit — so a copy of it kept in this process would refuse tags ICU
+    /// accepts and accept tags it does not. The store that provisions the
+    /// collation asks ICU instead, under a validation level that refuses an
+    /// unknown locale rather than silently creating a root-sorting object, and
+    /// classifies that refusal as this same `BadRequestData`.
     ///
     /// # Errors
     ///
     /// Returns [`IcuCollationError::Empty`] when `raw` is blank,
     /// [`IcuCollationError::InvalidTag`] when it is not a BCP47 language tag,
-    /// and [`IcuCollationError::UnknownCollationKeyword`] when its Unicode
-    /// extension declares a keyword RFC 6067 does not define for collation.
+    /// [`IcuCollationError::UnknownCollationKeyword`] when its Unicode
+    /// extension declares a keyword key RFC 6067 does not define for collation,
+    /// and [`IcuCollationError::UnknownCollationKeywordType`] when a collation
+    /// key carries a type the registry does not list for it.
     pub fn parse(raw: &str) -> Result<IcuCollation, IcuCollationError> {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
@@ -51,10 +75,15 @@ impl IcuCollation {
             source,
         })?;
 
-        match unicode_keyword_that_is_not_a_collation_setting(trimmed) {
-            Some(keyword) => Err(IcuCollationError::UnknownCollationKeyword {
+        match unregistered_collation_keyword(trimmed) {
+            Some(UnregisteredKeyword::Key(keyword)) => Err(IcuCollationError::UnknownCollationKeyword {
                 value: trimmed.to_string(),
                 keyword: keyword.to_string(),
+            }),
+            Some(UnregisteredKeyword::Type { key, value }) => Err(IcuCollationError::UnknownCollationKeywordType {
+                value: trimmed.to_string(),
+                keyword: key.to_string(),
+                keyword_type: value.to_string(),
             }),
             None => Ok(IcuCollation(tag)),
         }
@@ -81,60 +110,6 @@ impl From<IcuCollation> for String {
     }
 }
 
-/// The BCP47 singleton that introduces the Unicode locale extension, `u`.
-///
-/// IETF RFC 6067 defines this extension, and clause 4.23.3 spells its examples
-/// (`und-u-ks-identic`, `de-u-co-phonebk`) with it.
-const UNICODE_EXTENSION_SINGLETON: &str = "u";
-
-/// The length of a BCP47 singleton subtag, which introduces an extension.
-const SINGLETON_LENGTH: usize = 1;
-
-/// The subtag length that distinguishes a Unicode keyword *key* from a value.
-///
-/// RFC 6067 fixes keys at two characters and keyword values and attributes at
-/// three or more, so the length alone decides which of the two a subtag is.
-const KEYWORD_KEY_LENGTH: usize = 2;
-
-/// The first Unicode keyword key in `tag` that names no collation setting.
-///
-/// The already-validated tag text is walked subtag by subtag rather than
-/// through the language-tag crate's extension accessor, which indexes one byte
-/// past the end of any tag that carries no extension at all — `de-DE` among
-/// them — and so cannot be asked whether an extension is present.
-///
-/// A singleton opens an extension and closes the previous one, so the keys are
-/// exactly the two-character subtags between the `u` singleton and the next
-/// singleton. Only those are examined: a two-character subtag anywhere else in
-/// the tag is a language or a region, not a keyword.
-fn unicode_keyword_that_is_not_a_collation_setting(tag: &str) -> Option<&str> {
-    let mut in_unicode_extension = false;
-    for subtag in tag.split('-') {
-        if subtag.len() == SINGLETON_LENGTH {
-            in_unicode_extension = subtag.eq_ignore_ascii_case(UNICODE_EXTENSION_SINGLETON);
-        } else if in_unicode_extension && subtag.len() == KEYWORD_KEY_LENGTH && !is_collation_keyword_key(subtag) {
-            return Some(subtag);
-        }
-    }
-    None
-}
-
-/// The Unicode keyword keys that carry a collation setting.
-///
-/// The collation keys of the Unicode BCP47 extension registry RFC 6067 governs:
-/// collation type, alternate handling, backward second level, case level, case
-/// first, hiragana quaternary, normalisation, numeric ordering, reordering,
-/// strength, maximum variable and variable top.
-const COLLATION_KEYWORD_KEYS: [&str; 12] = ["co", "ka", "kb", "kc", "kf", "kh", "kk", "kn", "kr", "ks", "kv", "vt"];
-
-/// Whether `key` names a collation setting.
-///
-/// BCP47 subtags are case-insensitive, so a client that spells its keyword key
-/// in upper case names the same setting.
-fn is_collation_keyword_key(key: &str) -> bool {
-    COLLATION_KEYWORD_KEYS.iter().any(|collation_key| key.eq_ignore_ascii_case(collation_key))
-}
-
 /// Reasons an ICU collation identifier is rejected.
 #[derive(Debug, Error)]
 pub enum IcuCollationError {
@@ -150,6 +125,17 @@ pub enum IcuCollationError {
         /// The keyword key that names no collation setting.
         keyword: String,
     },
+    /// A collation keyword carried a type IETF RFC 6067 does not register for
+    /// that key.
+    #[error("collation identifier '{value}' sets '{keyword}' to '{keyword_type}', which IETF RFC 6067 does not register for it")]
+    UnknownCollationKeywordType {
+        /// The rejected value.
+        value: String,
+        /// The collation key the unregistered type was written under.
+        keyword: String,
+        /// The type the registry does not list for that key.
+        keyword_type: String,
+    },
     /// The identifier was not a well-formed BCP47 language tag.
     #[error("invalid BCP47 collation identifier '{value}'")]
     InvalidTag {
@@ -163,7 +149,14 @@ pub enum IcuCollationError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::ordering::collation::{IcuCollation, IcuCollationError};
+
+    /// The identifier renders as the tag it parsed, which is what an error
+    /// message and a `CREATE COLLATION` both name it by.
+    #[test]
+    fn a_collation_identifier_displays_as_its_tag() {
+        assert_eq!(IcuCollation::parse("de-u-co-phonebk").expect("valid identifier").to_string(), "de-u-co-phonebk");
+    }
 
     #[test]
     fn a_collation_identifier_keeps_the_tag_it_parsed() {
@@ -219,6 +212,21 @@ mod tests {
         for rejected in ["de-u-nu-latn", "de-u-ca-buddhist", "und-u-zz-nonsense"] {
             let error = IcuCollation::parse(rejected).expect_err("must reject");
             assert!(matches!(error, IcuCollationError::UnknownCollationKeyword { .. }), "{rejected}: got {error:?}");
+        }
+    }
+
+    /// IETF RFC 6067 registers the types as well as the keys. ICU accepts an
+    /// unregistered collation type and silently sorts by the key's default, so
+    /// clause 5.7.4.4's `BadRequestData` has to be raised here rather than
+    /// waiting for a refusal that never comes.
+    #[test]
+    fn a_collation_keyword_carrying_an_unregistered_type_is_rejected() {
+        for rejected in ["de-u-co-nonsense", "de-u-ks-zzz", "de-u-ka-bogus", "de-u-kf-true"] {
+            let error = IcuCollation::parse(rejected).expect_err("must reject");
+            assert!(
+                matches!(error, IcuCollationError::UnknownCollationKeywordType { .. }),
+                "{rejected}: got {error:?}"
+            );
         }
     }
 

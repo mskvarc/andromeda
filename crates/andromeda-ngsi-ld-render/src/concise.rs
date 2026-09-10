@@ -6,8 +6,10 @@
 //! is the same eight-way table the model owns, so it is read from
 //! `AttributeType` rather than restated here.
 
+use crate::object_list::bare_uri_object_list;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_ngsi_ld_representation::entity_members::ENTITY_MEMBERS;
+use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use serde_json::{Map, Value};
 use std::str::FromStr;
 
@@ -89,9 +91,14 @@ fn concise_single_instance(mut attr_obj: Map<String, Value>) -> Value {
 
     // Drop `type` and keep the value member; recursively concise sub-attributes.
     attr_obj.remove("type");
+    let previous_key = attr_type.previous_key();
     let mut result = Map::with_capacity(attr_obj.len());
     for (k, v) in attr_obj {
-        if k == value_key || ATTRIBUTE_METADATA.contains(&k.as_str()) {
+        if k == value_key || k == previous_key {
+            result.insert(k, concise_family_value(attr_type, v));
+        } else if linked_entity_member(attr_type) == Some(k.as_str()) {
+            result.insert(k, concise_linked_entities(v));
+        } else if ATTRIBUTE_METADATA.contains(&k.as_str()) {
             result.insert(k, v);
         } else {
             // Sub-attribute: recursively concise.
@@ -99,6 +106,65 @@ fn concise_single_instance(mut attr_obj: Map<String, Value>) -> Value {
         }
     }
     Value::Object(result)
+}
+
+/// The member an inline join attaches the target Linked Entities under, for the
+/// two families that name one (clause 4.5.23.2).
+///
+/// Every other family, and a sub-attribute of any family that happens to carry a
+/// member of the same name, is left to the ordinary attribute walk: clauses
+/// 4.5.3.3 and 4.5.22.3 make these two members Output Only on exactly these two
+/// attribute types.
+const fn linked_entity_member(attr_type: AttributeType) -> Option<&'static str> {
+    match attr_type {
+        AttributeType::Relationship => Some(compact_properties::ENTITY),
+        AttributeType::ListRelationship => Some(compact_properties::ENTITY_LIST),
+        AttributeType::Property
+        | AttributeType::GeoProperty
+        | AttributeType::VocabProperty
+        | AttributeType::LanguageProperty
+        | AttributeType::JsonProperty
+        | AttributeType::ListProperty => None,
+    }
+}
+
+/// The concise rendering of the Linked Entities an inline join attached.
+///
+/// Clause 4.5.3.3 gives `entity` "the target Linked Entity of a Relationship's
+/// `object` in concise representation", and clause 4.5.22.3 gives `entityList`
+/// "the target Linked Entities of a `ListRelationship`'s `objectList` in
+/// concise representation". The members hold entities rather than attribute
+/// values, so they are conciseed as entities — walked as attribute instances
+/// they were left in the normalized form their `type` member made
+/// unrecognisable as an attribute type.
+fn concise_linked_entities(value: Value) -> Value {
+    match value {
+        Value::Array(entities) => Value::Array(entities.into_iter().map(concise_value).collect()),
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => concise_value(other),
+    }
+}
+
+/// The concise rendering of one family's own value member, and of the
+/// `showChanges` member that shadows it.
+///
+/// Only a `ListRelationship` changes shape: Table 5.2.37-1 gives the concise
+/// form "each string in the array holds a valid URI" where the normalized one
+/// holds `object`-keyed Relationship Objects. Every other family carries its
+/// value member across unchanged, and none of them is walked as a
+/// sub-attribute, because clause 4.5.22.2 and its siblings make the previous
+/// member "the same representation" as the value it shadows rather than an
+/// attribute of its own.
+fn concise_family_value(attr_type: AttributeType, value: Value) -> Value {
+    match attr_type {
+        AttributeType::ListRelationship => bare_uri_object_list(value),
+        AttributeType::Property
+        | AttributeType::GeoProperty
+        | AttributeType::Relationship
+        | AttributeType::VocabProperty
+        | AttributeType::LanguageProperty
+        | AttributeType::JsonProperty
+        | AttributeType::ListProperty => value,
+    }
 }
 
 #[cfg(test)]
@@ -226,6 +292,65 @@ mod tests {
         });
         let result = concise_value(input);
         pretty_assertions::assert_eq!(result["refs"], json!({"objectList": ["urn:a", "urn:b"]}));
+    }
+
+    /// Table 5.2.37-1: the normalized form holds `object`-keyed Relationship
+    /// Objects, while "in the concise form, each string in the array holds a
+    /// valid URI", so the collapse rewrites the members it is given. Clause
+    /// 4.5.22.2 gives `previousObjectList` "the same as that of `objectList`".
+    #[test]
+    fn concise_list_relationship_collapses_its_normalized_members_to_bare_uris() {
+        let input = json!({
+            "id": "urn:x", "type": "T",
+            "refs": {
+                "type": "ListRelationship",
+                "objectList": [{"object": "urn:a"}, {"object": "urn:b"}],
+                "previousObjectList": [{"object": "urn:c"}]
+            }
+        });
+        let result = concise_value(input);
+        pretty_assertions::assert_eq!(result["refs"], json!({"objectList": ["urn:a", "urn:b"], "previousObjectList": ["urn:c"]}));
+    }
+
+    /// Clause 4.5.22.3, Output Only: `entityList` "is used to define the target
+    /// Linked Entities of a `ListRelationship`'s `objectList` in concise
+    /// representation", and clause 4.5.3.3 says the same of a Relationship's
+    /// `entity`. Walked as an attribute value the nested entities kept their
+    /// normalized shape, because an entity's `type` names no attribute type.
+    #[test]
+    fn concise_renders_the_inline_joined_linked_entities_concisely() {
+        let input = json!({
+            "id": "urn:x", "type": "T",
+            "refs": {
+                "type": "ListRelationship",
+                "objectList": [{"object": "urn:a"}],
+                "entityList": [{"id": "urn:a", "type": "Room", "temp": {"type": "Property", "value": 25}}]
+            },
+            "ref": {
+                "type": "Relationship",
+                "object": "urn:b",
+                "entity": {"id": "urn:b", "type": "Room", "temp": {"type": "Property", "value": 30}}
+            }
+        });
+        let result = concise_value(input);
+        pretty_assertions::assert_eq!(
+            result["refs"],
+            json!({"objectList": ["urn:a"], "entityList": [{"id": "urn:a", "type": "Room", "temp": 25}]})
+        );
+        pretty_assertions::assert_eq!(result["ref"], json!({"object": "urn:b", "entity": {"id": "urn:b", "type": "Room", "temp": 30}}));
+    }
+
+    /// The two members are Output Only on exactly the two families clauses
+    /// 4.5.3.3 and 4.5.22.3 name them for, so a sub-attribute of any other
+    /// family that carries the same name stays an attribute.
+    #[test]
+    fn a_sub_attribute_named_like_a_linked_entity_member_is_still_an_attribute() {
+        let input = json!({
+            "id": "urn:x", "type": "T",
+            "temp": {"type": "Property", "value": 25, "entity": {"type": "Property", "value": 7}}
+        });
+        let result = concise_value(input);
+        pretty_assertions::assert_eq!(result["temp"], json!({"value": 25, "entity": 7}));
     }
 
     #[test]

@@ -249,15 +249,22 @@ mod tests {
     /// Clause 4.5.22.2: `previousObjectList` "represents the previous
     /// `ListRelationship` `objectList` ... The representation is the same as that
     /// of `objectList`", and `object` / `previousObject` "shall never be
-    /// present as object is a generalization of `objectList`".
+    /// present as object is a generalization of `objectList`". The same clause
+    /// makes that representation "an ordered array of Relationship Objects each
+    /// consisting of a JSON object containing a single Attribute with a key
+    /// called `object`", so the array lifted out of the previous instance is
+    /// the array the previous instance held, member shapes included.
     #[test]
     fn show_changes_on_a_list_relationship_carries_the_previous_object_list_array() {
-        let mut current = json!({"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Room:3"]});
-        let previous = json!({"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Room:1", "urn:ngsi-ld:Room:2"]});
+        let mut current = json!({"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:Room:3"}]});
+        let previous = json!({"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:Room:1"}, {"object": "urn:ngsi-ld:Room:2"}]});
 
         inject_previous_for_dataset(&mut current, &previous, None, false);
 
-        assert_eq!(current["previousObjectList"], json!(["urn:ngsi-ld:Room:1", "urn:ngsi-ld:Room:2"]));
+        assert_eq!(
+            current["previousObjectList"],
+            json!([{"object": "urn:ngsi-ld:Room:1"}, {"object": "urn:ngsi-ld:Room:2"}])
+        );
         assert!(current.get("previousObject").is_none(), "{current}");
         assert!(current.get("object").is_none(), "{current}");
     }
@@ -288,9 +295,9 @@ mod tests {
             (json!({"type": "JsonProperty", "json": {"id": "1"}}), "previousJson", json!({"id": "1"})),
             (json!({"type": "ListProperty", "valueList": [1, 2]}), "previousValueList", json!([1, 2])),
             (
-                json!({"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Room:1"]}),
+                json!({"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:Room:1"}]}),
                 "previousObjectList",
-                json!(["urn:ngsi-ld:Room:1"]),
+                json!([{"object": "urn:ngsi-ld:Room:1"}]),
             ),
         ];
         for (previous, previous_member, expected) in cases {

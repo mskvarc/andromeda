@@ -1,23 +1,25 @@
 //! Translation between NGSI-LD scope paths and PostgreSQL `ltree` / `lquery`.
 
-use andromeda_ngsi_ld_lexicon::scope::grammar::Scope;
+use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
 use andromeda_ngsi_ld_query::scope::pattern::{ScopePattern, ScopeSegment};
 
 /// Convert an NGSI-LD scope path to PostgreSQL ltree format for storage.
 ///
-/// Strips the optional leading `/` and replaces the remaining `/` separators
-/// with `.` to form a valid ltree label path. Total by construction: every
-/// level of a [`Scope`] already satisfies the clause 4.18 label grammar, which
-/// is the same grammar `ltree` accepts.
-///
-/// # Examples
-/// - `/A/B/C` -> `A.B.C`
-/// - `/Madrid` -> `Madrid`
+/// The levels become dot-separated labels, so `/A/B/C` is `A.B.C` and
+/// `/Madrid` is `Madrid`. Total by construction: a [`ScopePath`] is a
+/// hierarchical clause 4.18 path whose levels satisfy the same label grammar
+/// `ltree` accepts and stay within the label length it can hold, and the
+/// NGSI-LD Null of a deleted scope is not one of its values.
 #[must_use]
-pub fn scope_to_ltree(scope: &Scope) -> String {
-    // Exactly one leading slash, because clause 4.18 admits no empty level.
-    let path = scope.as_str();
-    path.strip_prefix('/').unwrap_or(path).replace('/', ".")
+pub fn scope_to_ltree(scope: &ScopePath) -> String {
+    let mut ltree = String::with_capacity(scope.as_str().len());
+    for (index, level) in scope.levels().enumerate() {
+        if index > 0 {
+            ltree.push('.');
+        }
+        ltree.push_str(level);
+    }
+    ltree
 }
 
 /// The PostgreSQL `lquery` a clause 4.18 scope pattern matches with.
@@ -102,7 +104,7 @@ mod tests {
     }
 
     fn ltree(raw: &str) -> String {
-        scope_to_ltree(Scope::new(raw).expect("valid scope"))
+        scope_to_ltree(&raw.parse::<ScopePath>().expect("valid scope path"))
     }
 
     #[test]

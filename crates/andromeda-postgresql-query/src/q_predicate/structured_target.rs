@@ -315,7 +315,7 @@ mod tests {
         // A value inside a structure is stored as the client wrote it, and JSON
         // carries no instant type, so the comparison is against the one
         // canonical rendering the query language defines.
-        let instant = parse_date_time("2024-01-01T01:00:00+01:00").expect("valid date-time");
+        let instant = parse_date_time("2024-01-01T00:00:00,000Z").expect("valid date-time");
         let (sql, binds) = render(carries_operand(&column(), StructuredTarget::AnyValue, &Scalar::DateTime(instant)));
         assert!(sql.contains("$1::text"), "{sql}");
         assert!(

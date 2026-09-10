@@ -1,6 +1,6 @@
 //! The value one scope-history row carries.
 
-use andromeda_ngsi_ld_lexicon::scope::grammar::ScopeBuf;
+use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
 use andromeda_postgresql_codes::scope_value_kind::ScopeValueKind;
 use chrono::{DateTime, Utc};
 
@@ -19,7 +19,7 @@ pub enum ScopeHistoryValue {
         deleted_at: DateTime<Utc>,
     },
     /// The row records a scope path.
-    Path(ScopeBuf),
+    Path(ScopePath),
 }
 
 impl ScopeHistoryValue {
@@ -43,7 +43,7 @@ impl ScopeHistoryValue {
 
     /// The scope path the row carries, when it carries one.
     #[must_use]
-    pub const fn path(&self) -> Option<&ScopeBuf> {
+    pub const fn path(&self) -> Option<&ScopePath> {
         match self {
             ScopeHistoryValue::Tombstone { .. } => None,
             ScopeHistoryValue::Path(path) => Some(path),
@@ -54,13 +54,13 @@ impl ScopeHistoryValue {
 #[cfg(test)]
 mod tests {
     use crate::scope_history_value::ScopeHistoryValue;
-    use andromeda_ngsi_ld_lexicon::scope::grammar::ScopeBuf;
+    use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
     use andromeda_postgresql_codes::scope_value_kind::ScopeValueKind;
     use chrono::{TimeZone, Utc};
 
     #[test]
     fn a_path_row_declares_the_path_kind_and_records_no_deletion() {
-        let path = "/Madrid/Gardens".parse::<ScopeBuf>().expect("a valid scope path");
+        let path = "/Madrid/Gardens".parse::<ScopePath>().expect("a valid scope path");
         let value = ScopeHistoryValue::Path(path);
         pretty_assertions::assert_eq!(value.kind(), ScopeValueKind::ScopePath);
         assert!(value.deleted_at().is_none());

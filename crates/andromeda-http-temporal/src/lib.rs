@@ -9,6 +9,7 @@ mod operation_query;
 pub mod routes;
 pub mod state;
 mod temporal;
+mod written_evolution_admission;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

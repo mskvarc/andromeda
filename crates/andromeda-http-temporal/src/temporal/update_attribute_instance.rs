@@ -1,31 +1,34 @@
 //! HTTP handling for temporal update attribute instance (clause 5.6.14).
 
-use crate::temporal::{
-    AttributeName,
-    ForwardProvisionRequest,
-    ForwardingOperation,
-    InstanceFamily,
-    InstanceIdentity,
-    IntoResponse,
-    JsonLd,
-    LocalOnlyParams,
-    LocalOutcome,
-    Method,
-    NgsiLdRequestEnvelope,
-    ProblemResponse,
-    ProvisionResource,
-    Response,
-    ResultInstanceExt,
-    StatusCode,
-    TenantState,
-    TriggeringRequest,
-    TypedPath,
-    Uri,
-    ValidatedQuery,
-    Value,
-    collect_proxied_attrs,
-    local_temporal_outcome,
-    provision_response,
+use crate::{
+    temporal::{
+        AttributeName,
+        ForwardProvisionRequest,
+        ForwardingOperation,
+        InstanceFamily,
+        InstanceIdentity,
+        IntoResponse,
+        JsonLd,
+        LocalOnlyParams,
+        LocalOutcome,
+        Method,
+        NgsiLdRequestEnvelope,
+        ProblemResponse,
+        ProvisionResource,
+        Response,
+        ResultInstanceExt,
+        StatusCode,
+        TenantState,
+        TriggeringRequest,
+        TypedPath,
+        Uri,
+        ValidatedQuery,
+        Value,
+        collect_proxied_attrs,
+        local_temporal_outcome,
+        provision_response,
+    },
+    written_evolution_admission::admit_written_instance,
 };
 use andromeda_http_extraction::context_target;
 use andromeda_http_response::classified_report::ClassifiedReport;
@@ -56,6 +59,9 @@ pub async fn update_attr_instance(
     // shapes it names is decided here, at the edge, so the store addresses one
     // identity column rather than searching both.
     let instance = InstanceIdentity::from_uri(instance_id, InstanceFamily::Attribute);
+    // Clauses 4.5.3.2 and 4.5.3.3 prohibit the two seals on a Relationship in
+    // every representation, so a modified instance is held to them as well.
+    admit_written_instance(&attr_id, &payload, &uri)?;
 
     if params.local.unwrap_or(false) {
         service

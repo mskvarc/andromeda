@@ -4,7 +4,11 @@
 //! context-source subscriptions (clause 5.11): the two differ in what they
 //! select and how they are notified, not in how they are stored.
 
-use crate::{error::SubscriptionError, stored_subscription::StoredSubscription};
+use crate::{
+    error::SubscriptionError,
+    notification_slot::{NotificationSlot, NotificationSlotGate},
+    stored_subscription::StoredSubscription,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
@@ -53,6 +57,12 @@ pub struct SubscriptionFields<'a> {
     pub throttling: Option<f64>,
     /// Temporal query specification as a JSON value.
     pub temporal_q: Option<&'a Value>,
+    /// Expanded attribute names whose `q` operands were coerced through the
+    /// `@context` (Table 5.2.12-1 `expandValues`).
+    pub expand_values: Option<&'a [AttributeName]>,
+    /// Expanded attribute names whose `q` object keys were expanded while
+    /// their values were left uninterpreted (Table 5.2.12-1 `jsonKeys`).
+    pub json_keys: Option<&'a [AttributeName]>,
     /// Preferred language for notifications.
     pub lang: Option<&'a LangTagBuf>,
     /// JSON-LD context URI associated with the subscription.
@@ -135,16 +145,16 @@ pub trait SubscriptionStore: Send + Sync + 'static {
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
-    /// Atomically claim a notification slot. `earliest_allowed_last_notification`,
-    /// when provided, gates the claim on `last_notification IS NULL OR
-    /// last_notification <= $2`. The policy layer computes this timestamp from
-    /// the subscription's throttling configuration.
+    /// Atomically claim a notification slot, gated on the ceilings the policy
+    /// layer computed from the subscription's `throttling` and its endpoint's
+    /// `cooldown`: each ceiling that is present narrows the claim to a state
+    /// row whose corresponding instant is null or at or before it.
     fn claim_notification_slot<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
         id: &'life2 Uri,
-        earliest_allowed_last_notification: Option<DateTime<Utc>>,
-    ) -> BoxFuture<'async_trait, Result<bool, SubscriptionError>>
+        gate: NotificationSlotGate,
+    ) -> BoxFuture<'async_trait, Result<NotificationSlot, SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

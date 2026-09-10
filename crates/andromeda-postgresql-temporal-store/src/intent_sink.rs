@@ -17,16 +17,14 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::{
-    expanded::entity_member::extract_types,
-    temporal::{TemporalHistoryRow, TemporalValue},
-};
+use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
 use andromeda_postgresql_codes::{stream_key::StreamKey, temporal_entity_key::TemporalEntityKey};
 use andromeda_temporal::{
     append_intent::{TemporalAppendEntry, TemporalAppendIntent, TemporalObservationIdentity},
     error::TemporalError,
     port::temporal_history_sink::TemporalHistorySink,
     scope_observation::ScopeObservation,
+    write_purpose::TemporalWritePurpose,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -61,12 +59,19 @@ impl PostgresTemporalHistorySink {
     /// one history insert and one scope insert. Per-intent ordinal derivation
     /// stays per-intent; only the statements are hoisted to the chunk.
     ///
+    /// An intent that only ends instances is passed over when the entity has no
+    /// Temporal Evolution left: clause 5.6.16 deletes one independently of
+    /// clause 5.6.6's deletion of current state, so a client can delete history
+    /// first and there is then no sequence for clauses 4.5.7 and 4.5.8 to record
+    /// an ending in.
+    ///
     /// # Errors
     ///
-    /// Returns [`TemporalStoreError::NotFound`] when an intent extends a
-    /// Temporal Evolution that does not exist and declares no entity type to
-    /// create it with, [`TemporalStoreError::Validation`] when an entry cannot
-    /// be encoded, and [`TemporalStoreError::Database`] when a statement fails.
+    /// Returns [`TemporalStoreError::NotFound`] when an intent records an
+    /// observation against a Temporal Evolution that does not exist and declares
+    /// no entity type to create it with, [`TemporalStoreError::Validation`] when
+    /// an entry cannot be encoded, and [`TemporalStoreError::Database`] when a
+    /// statement fails.
     pub(crate) async fn append_entries_batch(
         repository: &TemporalRepository,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -87,7 +92,9 @@ impl PostgresTemporalHistorySink {
         let mut scopes = Vec::new();
         for intent in intents {
             let recorded_at = intent.record.recorded_at();
-            let entity_key = catalog.entity_keys.get(&intent.entity_id).copied();
+            let Some(entity_key) = recording_entity_key(&catalog, intent)? else {
+                continue;
+            };
             for (position, entry) in intent.entries.iter().enumerate() {
                 let delta = u32::try_from(position)
                     .map_err(|error| TemporalStoreError::Validation(format!("temporal intent entry position {position} is out of range: {error}")))?;
@@ -101,7 +108,7 @@ impl PostgresTemporalHistorySink {
                 };
                 match entry {
                     TemporalAppendEntry::Observation { row } => {
-                        let stream_key = resolve_stream(&catalog, entity_key, &intent.entity_id, &row.attribute_name, row.dataset_id.as_ref())?;
+                        let stream_key = resolve_stream(&catalog, entity_key, &row.attribute_name, row.dataset_id.as_ref())?;
                         history.push(observation_row(stream_key, row, recorded_at, identity)?);
                     }
                     TemporalAppendEntry::Tombstone {
@@ -110,7 +117,7 @@ impl PostgresTemporalHistorySink {
                         attribute_type,
                         instance,
                     } => {
-                        let stream_key = resolve_stream(&catalog, entity_key, &intent.entity_id, attribute_name, dataset_id.as_ref())?;
+                        let stream_key = resolve_stream(&catalog, entity_key, attribute_name, dataset_id.as_ref())?;
                         history.push(AttributeHistoryRow {
                             recorded_at,
                             identity,
@@ -184,12 +191,16 @@ impl TemporalHistorySink for PostgresTemporalHistorySink {
 
 /// The catalogue rows one intent needs before its history rows can be stored.
 ///
-/// Entity types come from the observation payload the intent was prepared from,
-/// which is the only place a write states what the entity is; an intent that
-/// carries none — an attribute deletion, say — extends a Temporal Evolution that
-/// must already exist.
+/// Entity types come from the intent, which carries what the write said the
+/// entity is (clause 4.5.6: the Temporal Evolution is "the Entity [...] as
+/// mandated by clause 4.5.1"). They are not re-derived from the observation
+/// payload: that payload is the request's Entity Fragment, whose `type` clauses
+/// 5.6.2.4, 5.6.3.4 and 5.6.17.4 leave optional, and a bare Attribute Fragment
+/// (clauses 5.6.4 and 5.6.19) carries an attribute family there rather than an
+/// entity type at all. The intent's purpose travels beside the types, because
+/// an evolution that is not there stops an observation and does not stop a
+/// deletion.
 fn catalog_upsert(intent: &TemporalAppendIntent) -> TemporalCatalogUpsert {
-    let types = intent.selection_value.as_ref().map(extract_types).unwrap_or_default();
     let mut streams: Vec<TemporalStreamKey> = Vec::with_capacity(intent.entries.len());
     for entry in &intent.entries {
         let key = match entry {
@@ -209,8 +220,33 @@ fn catalog_upsert(intent: &TemporalAppendIntent) -> TemporalCatalogUpsert {
     }
     TemporalCatalogUpsert {
         entity_id: intent.entity_id.clone(), // clone: the catalogue upsert owns the entity identity.
-        types,
+        types: intent.entity_types.clone(),  // clone: the catalogue upsert owns the entity types it may create the evolution with.
+        purpose: intent.write_purpose(),
         streams,
+    }
+}
+
+/// The narrow key one intent's entries are recorded against, if it has any to
+/// record.
+///
+/// Clause 5.6.16 deletes a Temporal Evolution on its own and clause 5.6.6
+/// deletes current state on its own, so a deletion can reach an entity that no
+/// longer has an evolution. Clauses 4.5.7 and 4.5.8 record a deletion as one
+/// more instance of a sequence, and an entity with no evolution has no sequence
+/// to add one to, so the intent records nothing and the chunk carries on. An
+/// observation is different: the catalogue resolves or creates a key for every
+/// one of them, so a missing key there is a catalogue invariant violation
+/// rather than a routine outcome.
+fn recording_entity_key(catalog: &TemporalCatalog, intent: &TemporalAppendIntent) -> Result<Option<TemporalEntityKey>, TemporalStoreError> {
+    match catalog.entity_keys.get(&intent.entity_id).copied() {
+        Some(entity_key) => Ok(Some(entity_key)),
+        None => match intent.write_purpose() {
+            TemporalWritePurpose::Deletion => Ok(None),
+            TemporalWritePurpose::Observation => Err(TemporalStoreError::Query(format!(
+                "temporal catalogue resolved no narrow key for entity {}",
+                intent.entity_id
+            ))),
+        },
     }
 }
 
@@ -219,18 +255,15 @@ fn catalog_upsert(intent: &TemporalAppendIntent) -> TemporalCatalogUpsert {
 ///
 /// A grain resolves against the entity it belongs to: the chunk catalogue keys
 /// each stream by the narrow entity key beside the grain, so a history row needs
-/// its entity's key before it can name its stream. An entity with no resolved
-/// key never reaches here for an observation or tombstone — the catalogue
-/// resolves every entity a chunk carries — so a missing key is a catalogue
-/// invariant violation rather than a routine outcome.
+/// its entity's key before it can name its stream. The caller has already
+/// resolved that key, so an entity whose evolution the chunk passed over never
+/// reaches here.
 fn resolve_stream(
     catalog: &TemporalCatalog,
-    entity_key: Option<TemporalEntityKey>,
-    entity_id: &Uri,
+    entity_key: TemporalEntityKey,
     attribute_name: &AttributeName,
     dataset_id: Option<&Uri>,
 ) -> Result<StreamKey, TemporalStoreError> {
-    let entity_key = entity_key.ok_or_else(|| TemporalStoreError::Query(format!("temporal catalogue resolved no narrow key for entity {entity_id}")))?;
     let key = TemporalStreamKey {
         attribute_name: attribute_name.clone(), // clone: the lookup key follows the catalogue's owned natural key.
         dataset_id: dataset_id.cloned(),
@@ -290,4 +323,105 @@ fn stored_value(row: &TemporalHistoryRow) -> Result<AttributeHistoryValue, Tempo
 /// Classify one store failure at the temporal port boundary.
 fn persistence(error: impl Display) -> TemporalError {
     TemporalError::persistence(error.to_string())
+}
+#[cfg(test)]
+mod tests {
+    use crate::{error::TemporalStoreError, intent_sink::recording_entity_key, temporal_catalog_write::TemporalCatalog};
+    use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_identity::InstanceIdentity, uri::Uri};
+    use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
+    use andromeda_ngsi_ld_number::JsonNumber;
+    use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
+    use andromeda_temporal::append_intent::{TemporalAppendEntry, TemporalAppendIntent};
+    use chrono::{TimeZone, Utc};
+    use std::collections::HashMap;
+
+    const SPEED: &str = "https://example.com/speed";
+
+    /// One intent over `urn:ngsi-ld:Vehicle:1` carrying exactly `entries`.
+    fn intent(entries: Vec<TemporalAppendEntry>) -> TemporalAppendIntent {
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant");
+        TemporalAppendIntent {
+            record: WriteRecord::restored(WriteId::mint(), recorded_at),
+            base: WriteOrdinal::at(0),
+            entity_id: "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity URI"),
+            entity_types: Vec::new(),
+            entries,
+            selection_value: None,
+        }
+    }
+
+    /// The end of the default instance of `speed`.
+    fn tombstone() -> TemporalAppendEntry {
+        TemporalAppendEntry::Tombstone {
+            attribute_name: SPEED.parse::<AttributeName>().expect("valid attribute name"),
+            dataset_id: None,
+            attribute_type: AttributeType::Property,
+            instance: InstanceIdentity::generate(),
+        }
+    }
+
+    /// One observation of `speed`.
+    fn observation() -> TemporalAppendEntry {
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant");
+        TemporalAppendEntry::Observation {
+            row: TemporalHistoryRow {
+                attribute_name: SPEED.parse::<AttributeName>().expect("valid attribute name"),
+                attribute_type: AttributeType::Property,
+                dataset_id: None,
+                value: TemporalValue::Number(JsonNumber::from(42)),
+                observed_at: None,
+                recorded_at,
+                created_at: Some(recorded_at),
+                modified_at: Some(recorded_at),
+                instance: InstanceIdentity::generate(),
+                metadata: None,
+                partition_total: None,
+            },
+        }
+    }
+
+    /// A catalogue that resolved nothing, as one whose entities all had their
+    /// Temporal Evolution removed by clause 5.6.16 would.
+    fn empty_catalog() -> TemporalCatalog {
+        TemporalCatalog {
+            entity_keys: HashMap::new(),
+            streams: HashMap::new(),
+        }
+    }
+
+    /// Clause 5.6.16 removes a Temporal Evolution on its own while clause 5.6.6
+    /// removes current state on its own, so a deletion can meet an entity that
+    /// has no evolution left. Clauses 4.5.7 and 4.5.8 record a deletion as one
+    /// more instance of a sequence, and there is no sequence: the intent is
+    /// passed over instead of failing the chunk.
+    #[test]
+    fn a_deletion_whose_evolution_is_gone_records_nothing_rather_than_failing() {
+        let resolved = recording_entity_key(&empty_catalog(), &intent(vec![tombstone()])).expect("a deletion tolerates a missing evolution");
+        assert!(resolved.is_none());
+    }
+
+    /// The catalogue resolves or creates a key for every observation, so an
+    /// observation that reaches the sink without one is a catalogue invariant
+    /// violation and has to be reported rather than silently dropped.
+    #[test]
+    fn an_observation_whose_evolution_is_gone_is_reported_rather_than_dropped() {
+        let error = recording_entity_key(&empty_catalog(), &intent(vec![observation()])).expect_err("an observation needs its evolution");
+        assert!(matches!(error, TemporalStoreError::Query(_)), "{error:?}");
+    }
+
+    /// A resolved key is handed back whatever the intent is for.
+    #[test]
+    fn a_resolved_key_is_returned_for_a_deletion_and_for_an_observation() {
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity URI");
+        let entity_key = TemporalEntityKey::try_from(7_i64).expect("a positive narrow key");
+        let catalog = TemporalCatalog {
+            entity_keys: HashMap::from([(entity_id, entity_key)]),
+            streams: HashMap::new(),
+        };
+        for entries in [vec![tombstone()], vec![observation()]] {
+            let resolved = recording_entity_key(&catalog, &intent(entries)).expect("a resolved key is not an error");
+            pretty_assertions::assert_eq!(resolved, Some(entity_key));
+        }
+    }
 }

@@ -13,7 +13,10 @@ use andromeda_delivery::{
 };
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::notification::{CsourceNotification, CsourceNotificationType, CsrTriggerReason};
-use andromeda_subscription::{compiled::CompiledCsrSubscription, throttle::ceiling_for_throttle};
+use andromeda_subscription::{
+    compiled::CompiledCsrSubscription,
+    notification_slot::{NotificationSlot, NotificationSlotGate},
+};
 use chrono::Utc;
 use serde_json::Value;
 use tracing::{debug, error};
@@ -42,25 +45,30 @@ impl CsourceNotificationProcessor {
             jsonld_context: compiled_sub.jsonld_context.as_ref(),
             tenant: self.tenant.tenant_name(),
             snapshot: None,
+            timeout: compiled_sub.endpoint_timeout,
             subscription_id: &compiled_sub.id,
         }
     }
 
     /// Deliver `data` -- the notified registrations -- to `compiled_sub` with
-    /// `trigger_reason`, honouring the subscription's throttling and recording
-    /// the outcome on it (clause 5.11.7).
+    /// `trigger_reason`, honouring the subscription's `throttling` and its
+    /// endpoint's `cooldown`, and recording the outcome on it (clause 5.11.7).
     pub(super) async fn deliver_csr_notification(&self, compiled_sub: &CompiledCsrSubscription, data: Vec<Value>, trigger_reason: CsrTriggerReason) {
         let sub_id = &compiled_sub.id;
 
         match self
             .sub_repo
-            .claim_notification_slot(&self.target, sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
+            .claim_notification_slot(
+                &self.target,
+                sub_id,
+                NotificationSlotGate::at(Utc::now(), compiled_sub.throttling_secs, compiled_sub.endpoint_cooldown),
+            )
             .await
         {
-            Ok(true) => {}
-            Ok(false) => return,
-            Err(e) => {
-                debug!("Failed to claim CSR notification slot for {}: {}", sub_id, e);
+            Ok(NotificationSlot::Claimed) => {}
+            Ok(NotificationSlot::Suppressed) => return,
+            Err(error) => {
+                debug!("Failed to claim CSR notification slot for {}: {}", sub_id, error);
                 return;
             }
         }

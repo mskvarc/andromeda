@@ -5,12 +5,14 @@ use serde::{Deserialize, Serialize};
 use std::{num::NonZeroU32, time::Duration};
 use thiserror::Error;
 
-/// A duration in milliseconds that clause 5.2.34 requires to be greater than zero.
+/// A duration in milliseconds the spec restricts to "Greater than 0".
 ///
-/// `RegistrationManagementInfo` carries two of these, `timeout` and `cooldown`,
-/// both typed as "Number, greater than 0". The wire value is read as a signed
-/// integer so that a negative number is rejected with the same restriction
-/// message as zero, rather than as an opaque unsigned-decoding failure.
+/// Two data types carry a pair of these under the same restriction: the
+/// `RegistrationManagementInfo` of Table 5.2.34-1 and the `Endpoint` of
+/// Table 5.2.15-1, each with a `cooldown` and a `timeout`. The wire value is
+/// read as a signed integer so that a negative number is rejected with the same
+/// restriction message as zero, rather than as an opaque unsigned-decoding
+/// failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Display, Serialize, Deserialize)]
 #[display("{_0}")]
 #[serde(try_from = "i64", into = "i64")]

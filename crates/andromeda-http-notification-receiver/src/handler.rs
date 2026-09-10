@@ -94,9 +94,12 @@ pub(crate) async fn receive(
         .resolve(received.subscription_id())
         .await
         .map_err(|error| classify_resolution(&error, &uri))?;
+    // Both handlers hold a whole notification document plus the reassembly
+    // state it is merged into, which is far too large to keep inline in this
+    // handler's own future; boxing keeps the request future small.
     match &received {
-        Received::Notification(notification) => service.handle_notification(notification, &context).await,
-        Received::ContextSourceNotification(notification) => service.handle_csource_notification(notification, &context).await,
+        Received::Notification(notification) => Box::pin(service.handle_notification(notification, &context)).await,
+        Received::ContextSourceNotification(notification) => Box::pin(service.handle_csource_notification(notification, &context)).await,
     }
     .map_err(|error| classify_forwarding(&error, &uri))?;
 

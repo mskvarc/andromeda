@@ -10,15 +10,13 @@
 use crate::error::TemporalError;
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
-    ngsi_ld_date::NgsiLdDate,
-    ngsi_ld_date_time::NgsiLdDateTime,
-    ngsi_ld_time::NgsiLdTime,
+    time_value::TimeValue,
     uri::{Uri, UriParseError},
 };
 use andromeda_ngsi_ld_model::{expanded::geo_property::expanded_geo_node_to_geometry, temporal::TemporalValue};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_render::uri_decoding::decode_percent_encoded_uri;
-use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
+use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use serde_json::{Map, Value};
 
 /// Retain expanded members that are metadata rather than dedicated value fields.
@@ -301,46 +299,44 @@ fn property_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
     }
 }
 
-/// Decode a Property value the client typed as one of the three clause 4.6.3
-/// temporal forms, or `None` when the declared type is not one of them.
+/// Decode a Property value that is one of the three clause 4.6.3 time values, or
+/// `None` when it is an ordinary JSON string.
 ///
-/// Each form is parsed rather than taken verbatim, and the two that are stored as
-/// text are stored in the canonical rendering their type defines. Clause 4.6.3
-/// admits many spellings of one `Time` — any offset, any fractional width — and
-/// clause 4.9 orders `Time` values chronologically; the string column those values
-/// land in orders them byte-wise, so only a fixed-width UTC rendering makes the
-/// two orders the same. `Date` is validated for the same reason: its canonical
-/// `YYYY-MM-DD` form already sorts chronologically, and a lenient spelling would
-/// not. `DateTime` is routed through [`NgsiLdDateTime`] rather than a bare
-/// `chrono` RFC 3339 parse for the same reason `observedAt` is: a non-`Z` offset
-/// or more than six fractional digits must be refused rather than silently
-/// reinterpreted into the `timestamptz` column, on every axis that carries a
-/// client-supplied instant.
+/// The classification is [`TimeValue::admitted`]'s and nothing here repeats it:
+/// a `@type` the client declared names the form, and with none declared the
+/// clause 4.6.3 lexical form of the literal does — "`DateTime` string for encoding
+/// a timestamp" is a data type whose whole representation is the string, and
+/// clause 4.8 NOTE 3 puts such a value on an ordinary Property. Sharing that one
+/// classifier with the `q` operand parser is what makes clause 4.9's rule that
+/// "if there is no equality between the target value data type and the Query
+/// Term value data type, then it shall be considered as not matching" a rule
+/// about the values rather than about which side of the broker read them.
+///
+/// Each form is parsed rather than taken verbatim, and the two that are stored
+/// as text are stored in the canonical rendering their type defines. Clause
+/// 4.6.3 admits many spellings of one `Time` — any fractional width, and a comma
+/// separator in requests — and clause 4.9 orders `Time` values chronologically;
+/// the string column those values land in orders them byte-wise, so only a
+/// fixed-width UTC rendering makes the two orders the same. `Date` is
+/// canonicalised for the same reason: its `YYYY-MM-DD` form already sorts
+/// chronologically, and a lenient spelling would not. A `DateTime` reaches its
+/// own `timestamptz` column, where the instant, not its spelling, is what is
+/// compared.
 fn temporal_property_value(type_hint: Option<&str>, raw: &str) -> Option<Result<TemporalValue, TemporalError>> {
-    let hint = type_hint?;
-    if hint == expanded_classes::DATE_TIME.as_str() {
-        return Some(
-            raw.parse::<NgsiLdDateTime>()
-                .map(NgsiLdDateTime::get)
-                .map(TemporalValue::DateTime)
-                .map_err(|error| TemporalError::validation(format!("invalid datetime property '{raw}': {error}"))),
-        );
+    TimeValue::admitted(type_hint, raw).map(|admitted| {
+        admitted
+            .map(recorded_time_value)
+            .map_err(|error| TemporalError::validation(format!("invalid time value property '{raw}': {error}")))
+    })
+}
+
+/// The neutral observation one clause 4.6.3 time value is recorded as.
+fn recorded_time_value(value: TimeValue) -> TemporalValue {
+    match value {
+        TimeValue::DateTime(instant) => TemporalValue::DateTime(instant.get()),
+        TimeValue::Date(date) => TemporalValue::String(date.to_string()),
+        TimeValue::Time(time) => TemporalValue::String(time.to_string()),
     }
-    if hint == expanded_classes::TIME.as_str() {
-        return Some(
-            raw.parse::<NgsiLdTime>()
-                .map(|time| TemporalValue::String(time.to_string()))
-                .map_err(|error| TemporalError::validation(format!("invalid Time property '{raw}': {error}"))),
-        );
-    }
-    if hint == expanded_classes::DATE.as_str() {
-        return Some(
-            raw.parse::<NgsiLdDate>()
-                .map(|date| TemporalValue::String(date.to_string()))
-                .map_err(|error| TemporalError::validation(format!("invalid Date property '{raw}': {error}"))),
-        );
-    }
-    None
 }
 
 /// Borrow the first value of one expanded array member.
@@ -351,9 +347,10 @@ fn first_member<'a>(instance: &'a Value, key: &str) -> Option<&'a Value> {
 #[cfg(test)]
 mod tests {
     use crate::attribute_instance_value::{extract_temporal_value, object_list_target_iri};
-    use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
     use andromeda_ngsi_ld_model::temporal::TemporalValue;
-    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+    use andromeda_ngsi_ld_query::filter::{quoting::Quoting, scalar::Scalar};
+    use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
     use serde_json::{Value, json};
 
     /// One expanded Relationship instance pointing at `targets`.
@@ -438,5 +435,176 @@ mod tests {
         });
         let error = extract_temporal_value(&instance, AttributeType::ListRelationship).expect_err("a member with no target");
         assert!(error.to_string().contains("target URI"), "{error}");
+    }
+
+    /// One expanded Property instance whose value node carries a bare literal,
+    /// which is what JSON-LD expansion of `"value": "…"` produces.
+    fn bare_property(literal: &str) -> Value {
+        json!({expanded_properties::VALUE.as_str(): [{"@value": literal}]})
+    }
+
+    /// The value one bare-literal Property is recorded as.
+    fn recorded(literal: &str) -> TemporalValue {
+        extract_temporal_value(&bare_property(literal), AttributeType::Property).expect("a Property value")
+    }
+
+    /// Clause 4.6.3 lists a "`DateTime` string for encoding a timestamp" among the
+    /// data types a Value may have, and clause 4.8 NOTE 3 puts such a value on an
+    /// ordinary Property. Its whole representation is the string, so the string
+    /// is what says it is one — and until it did, a client's timestamp reached
+    /// the string column and no `dateTime` operand could ever find it.
+    #[test]
+    fn a_bare_timestamp_literal_is_recorded_as_the_instant_it_names() {
+        let recorded = recorded("2024-01-01T00:00:00.250000Z");
+        let TemporalValue::DateTime(instant) = recorded else {
+            panic!("a conformant DateTime literal is an instant, got {recorded:?}");
+        };
+        pretty_assertions::assert_eq!(instant.to_rfc3339_opts(chrono::SecondsFormat::Micros, true), "2024-01-01T00:00:00.250000Z");
+    }
+
+    /// Clause 4.9 orders `Time` and `Date` values chronologically and the string
+    /// column they land in orders byte-wise, so each is recorded in the one
+    /// fixed-width canonical rendering its lexical type defines.
+    #[test]
+    fn a_bare_time_or_date_literal_is_recorded_in_its_canonical_rendering() {
+        pretty_assertions::assert_eq!(recorded("12:00:00Z"), TemporalValue::String("12:00:00.000000Z".to_owned()));
+        pretty_assertions::assert_eq!(recorded("12:00:00,5Z"), TemporalValue::String("12:00:00.500000Z".to_owned()));
+        pretty_assertions::assert_eq!(recorded("2024-01-01"), TemporalValue::String("2024-01-01".to_owned()));
+    }
+
+    /// Clause 4.6.3 admits "all the JSON native data types" beside the three
+    /// time value forms, so a string that only resembles one — a numeric offset
+    /// where the clause demands `Z`, a seventh fractional digit, free-form text
+    /// — is the string it is written as rather than a refused write.
+    #[test]
+    fn a_literal_that_only_resembles_a_time_value_stays_the_string_it_is() {
+        for literal in [
+            "2024-01-01T01:00:00+01:00",
+            "2024-01-01T00:00:00.1234567Z",
+            "13:00:00+01:00",
+            "12:00:00 in the morning",
+            "atrium",
+        ] {
+            pretty_assertions::assert_eq!(recorded(literal), TemporalValue::String(literal.to_owned()), "{literal}");
+        }
+    }
+
+    /// A `@type` the client declared still overrides the literal's own form and
+    /// still refuses a literal that does not satisfy it (annex C.6).
+    #[test]
+    fn a_declared_type_still_refuses_a_literal_that_does_not_satisfy_it() {
+        let instance = json!({
+            expanded_properties::VALUE.as_str(): [{"@value": "13:00:00+01:00", "@type": expanded_classes::TIME.as_str()}]
+        });
+        let error = extract_temporal_value(&instance, AttributeType::Property).expect_err("a numeric offset is forbidden on a Time");
+        assert!(error.to_string().contains("time value property"), "{error}");
+    }
+
+    /// Which clause 4.6.3 data type a literal has, read by whichever side of a
+    /// comparison read it.
+    #[derive(Debug, PartialEq, Eq)]
+    enum ReadAs {
+        /// The literal is a `DateTime`.
+        DateTime,
+        /// The literal is a `Date`.
+        Date,
+        /// The literal is a `Time`.
+        Time,
+        /// The literal is an ordinary JSON string.
+        PlainString,
+        /// The literal is a malformed operand and the request is refused.
+        ///
+        /// Only the query side can reach this: a stored value is a document the
+        /// broker keeps, while an operand is a Query Term the clause 4.9 grammar
+        /// either derives or does not.
+        Refused,
+    }
+
+    /// How the write path reads one bare literal.
+    ///
+    /// A `Date` and a `Time` share the string column with an ordinary string, so
+    /// the canonical rendering of the value is what tells them apart — which is
+    /// exactly what the `q` compiler binds against that column.
+    fn written_as(literal: &str) -> ReadAs {
+        match recorded(literal) {
+            TemporalValue::DateTime(_) => ReadAs::DateTime,
+            TemporalValue::String(text) => {
+                if text.parse::<NgsiLdDate>().is_ok_and(|date| date.to_string() == text) {
+                    ReadAs::Date
+                } else if text.parse::<NgsiLdTime>().is_ok_and(|time| time.to_string() == text) {
+                    ReadAs::Time
+                } else {
+                    ReadAs::PlainString
+                }
+            }
+            other @ (TemporalValue::Number(_)
+            | TemporalValue::Boolean(_)
+            | TemporalValue::Geometry(_)
+            | TemporalValue::Object(_)
+            | TemporalValue::Uri(_)
+            | TemporalValue::Tombstone { .. }) => panic!("a string literal is not {other:?}"),
+        }
+    }
+
+    /// How the clause 4.9 operand parser reads the same literal in one spelling.
+    fn queried_as(literal: &str, quoting: Quoting) -> ReadAs {
+        match Scalar::from_literal(literal, quoting) {
+            Ok(Scalar::DateTime(_)) => ReadAs::DateTime,
+            Ok(Scalar::Date(_)) => ReadAs::Date,
+            Ok(Scalar::Time(_)) => ReadAs::Time,
+            Ok(Scalar::Str(_)) => ReadAs::PlainString,
+            Ok(other @ (Scalar::Number(_) | Scalar::Bool(_))) => panic!("a string literal is not {other:?}"),
+            // A refusal is its own outcome. Folding it into `PlainString` let
+            // this table pass while the two sides disagreed about the literal.
+            Err(_) => ReadAs::Refused,
+        }
+    }
+
+    /// Clause 4.9's `equal`: "If there is no equality between the target value
+    /// data type and the Query Term value data type, then it shall be considered
+    /// as not matching." Two classifiers can only satisfy that sentence by
+    /// never matching, which is precisely what a stored timestamp read as a
+    /// String and an operand read as a `dateTime` did. One classifier reads
+    /// both sides, and this pins that they land in the same place.
+    ///
+    /// The quoted operand is the one that has to agree with the write path,
+    /// because clause 4.9's `quotedStr` production carries its quotes and so
+    /// derives any literal at all. A bare literal written in a clause 4.6.3 form
+    /// it does not satisfy is derivable from no production of that grammar, and
+    /// a request the grammar cannot derive is refused rather than compared.
+    #[test]
+    fn the_write_side_and_the_query_side_read_every_literal_the_same_way() {
+        for (literal, written, bare, quoted) in [
+            ("2024-01-01T00:00:00Z", ReadAs::DateTime, ReadAs::DateTime, ReadAs::DateTime),
+            ("2024-01-01T00:00:00.250000Z", ReadAs::DateTime, ReadAs::DateTime, ReadAs::DateTime),
+            ("2024-01-01T00:00:00,25Z", ReadAs::DateTime, ReadAs::DateTime, ReadAs::DateTime),
+            ("2024-01-01", ReadAs::Date, ReadAs::Date, ReadAs::Date),
+            ("12:00:00Z", ReadAs::Time, ReadAs::Time, ReadAs::Time),
+            ("12:00:00.5Z", ReadAs::Time, ReadAs::Time, ReadAs::Time),
+            ("12:00:00,5Z", ReadAs::Time, ReadAs::Time, ReadAs::Time),
+            ("2024-01-01T01:00:00+01:00", ReadAs::PlainString, ReadAs::Refused, ReadAs::PlainString),
+            ("13:00:00+01:00", ReadAs::PlainString, ReadAs::Refused, ReadAs::PlainString),
+            ("12:00:00 in the morning", ReadAs::PlainString, ReadAs::PlainString, ReadAs::PlainString),
+            ("urn:ngsi-ld:Vehicle:A4567", ReadAs::PlainString, ReadAs::PlainString, ReadAs::PlainString),
+            ("atrium", ReadAs::PlainString, ReadAs::PlainString, ReadAs::PlainString),
+        ] {
+            pretty_assertions::assert_eq!(written_as(literal), written, "the write path reads {literal}");
+            pretty_assertions::assert_eq!(queried_as(literal, Quoting::Quoted), quoted, "a quoted operand reads {literal}");
+            pretty_assertions::assert_eq!(queried_as(literal, Quoting::Bare), bare, "a bare operand reads {literal}");
+        }
+    }
+
+    /// The text a `Time` operand binds against the string column has to be the
+    /// text the write path put there, or the two agree on the data type and
+    /// still never match.
+    #[test]
+    fn a_time_operand_binds_the_text_the_write_path_stored() {
+        for literal in ["12:00:00Z", "12:00:00.5Z", "12:00:00,5Z", "12:00:00.500000Z"] {
+            let Ok(Scalar::Time(operand)) = Scalar::from_literal(literal, Quoting::Bare) else {
+                panic!("{literal} is a Time operand");
+            };
+            let bound = NgsiLdTime::normalise(operand).expect("a normalisable time of day").to_string();
+            pretty_assertions::assert_eq!(recorded(literal), TemporalValue::String(bound), "{literal}");
+        }
     }
 }

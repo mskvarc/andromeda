@@ -43,9 +43,12 @@ use andromeda_ngsi_ld_model::{
     expanded::mutation::selection::{DatasetSelection, OverwritePolicy},
 };
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expansion::expand_q_expr, projection::purge::PurgeMode};
-use andromeda_ngsi_ld_render::response::ResponsePayload;
-use andromeda_ngsi_ld_representation::attribute_type_validation::{validate_attribute_node, validate_fragment_attribute_types};
+use andromeda_ngsi_ld_query::{
+    dataset::DatasetSelector,
+    filter::{expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes},
+    projection::purge::PurgeMode,
+};
+use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, response::ResponsePayload};
 use andromeda_ngsi_ld_request::{
     attribute_deletion::DeleteAttrParams,
     entity::{AppendParams, GetEntityParams, MergeParams, PartialUpdateAttrParams, ReplaceAttrParams},
@@ -60,19 +63,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
-
-/// Reject an entity fragment whose attribute nodes declare a `type` outside
-/// clause 5.2.4 (clause 5.5.4: data not syntactically correct according to
-/// the API data type definitions is `BadRequestData`).
-fn reject_unknown_attribute_types(fragment: &Value, instance: &HttpUri) -> Result<(), ProblemResponse> {
-    validate_fragment_attribute_types(fragment).map_err(|error| public_error(NgsiLdErrorType::BadRequestData, error.to_string(), instance))
-}
-
-/// Reject a single attribute node (clauses 5.6.4 and 5.6.19) whose `type` is
-/// outside clause 5.2.4.
-fn reject_unknown_attribute_node_type(attribute: &AttributeName, node: &Value, instance: &HttpUri) -> Result<(), ProblemResponse> {
-    validate_attribute_node(attribute.as_str(), node).map_err(|error| public_error(NgsiLdErrorType::BadRequestData, error.to_string(), instance))
-}
 
 /// The response a read gives when the one exclusive or redirect source
 /// holding all of its data declined the representation with `status` (Table
@@ -110,10 +100,14 @@ pub mod missing_identifier;
 pub mod partial_update_attribute;
 /// Entity collection query handling.
 pub mod query;
+/// Which HTTP binding carried a Query Entities request.
+pub mod query_binding;
 /// The forwarding phases of an entity query.
 pub mod query_forwarding;
 /// Where the page of an entity query is cut.
 pub mod query_page;
+/// Assembling the response an entity query answers with.
+pub mod query_response;
 /// The filters `splitEntities` decides after the merge.
 pub mod query_split_filters;
 /// Entity replacement handling.

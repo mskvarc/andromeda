@@ -9,11 +9,13 @@ use crate::temporal::{
     ContextSpec,
     ContextualExpander,
     DeferredSplitFilters,
+    JsonKeyAttributes,
     ProblemResponse,
     ResultInstanceExt,
     TemporalQueryParameters,
     compile_geo_query,
     evaluate,
+    expand_attribute_names,
     expand_q_expr,
     matches_geo_query,
     matches_scope_query,
@@ -29,12 +31,17 @@ use serde_json::Value;
 /// Clause 5.7.4.4: under `splitEntities` an entity's attributes may be spread
 /// over several sources, so `q`, the geoquery and the scope query leave the
 /// local query and are evaluated once over the merged result instead.
+///
+/// `jsonKeys` leaves with the filter it governs: clause 4.9 makes it a
+/// statement about how `q`'s own terms expand, and with `q` deferred it has
+/// nothing left to say to the local query.
 pub(crate) fn defer_split_filters(params: &mut TemporalQueryParameters, filtering: SplitEntities) -> DeferredSplitFilters {
     match filtering {
         SplitEntities::Split => DeferredSplitFilters {
             q: params.q.take(),
             geo: params.geo.0.take(),
             scope_q: params.scope_q.take(),
+            json_keys: params.json_keys.take(),
         },
         SplitEntities::Complete => DeferredSplitFilters::default(),
     }
@@ -61,7 +68,14 @@ async fn retain_split_matches(
         Some(q_expr) => {
             let prepared_context = engine.prepare_term_context(context);
             let expander = ContextualExpander::new(engine, &prepared_context);
-            Some(expand_q_expr(q_expr, &expander).await.with_instance(instance)?)
+            // Clause 4.9 EXAMPLE 11: the deferred filter is expanded under the
+            // same `jsonKeys` declaration the local query used, so one request
+            // has one expansion of one filter.
+            let json_keys: JsonKeyAttributes = match deferred.json_keys {
+                Some(ref declared) => expand_attribute_names(declared, &expander).await.with_instance(instance)?.into_iter().collect(),
+                None => JsonKeyAttributes::default(),
+            };
+            Some(expand_q_expr(q_expr, &json_keys, &expander).await.with_instance(instance)?)
         }
         None => None,
     };
@@ -177,5 +191,64 @@ pub(crate) async fn cut_merged_page(
     match bounds {
         Some((limit, offset)) => Ok(merged_page(entities, params, limit, offset)),
         None => Ok((entities, local_total)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::temporal::query::merged_page::defer_split_filters;
+    use andromeda_federation::config::SplitEntities;
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+
+    /// A temporal query carrying the clause 4.9 EXAMPLE 11 filter and the
+    /// declaration that governs it.
+    fn declared_query() -> TemporalQueryParameters {
+        TemporalQueryParameters {
+            q: Some("parkingTickets[value]==\"Overstay 60 minutes\"".parse().expect("a clause 4.9 filter")),
+            json_keys: Some(vec!["parkingTickets".parse().expect("a valid attribute name")]),
+            ..TemporalQueryParameters::default()
+        }
+    }
+
+    /// Clause 4.9 EXAMPLE 11: with `jsonKeys=parkingTickets` "the target value
+    /// raw is JSON, and is not expanded to ngsi-ld:hasValue using the core
+    /// @context". The declaration decides how the deferred filter's own terms
+    /// expand, so one request has one expansion only if it travels with the
+    /// filter it governs.
+    #[test]
+    fn the_json_keys_declaration_travels_with_the_filter_it_governs() {
+        let mut params = declared_query();
+
+        let deferred = defer_split_filters(&mut params, SplitEntities::Split);
+
+        assert!(deferred.q.is_some(), "the filter itself is deferred");
+        pretty_assertions::assert_eq!(
+            deferred
+                .json_keys
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(AttributeName::as_str)
+                .collect::<Vec<_>>(),
+            vec!["parkingTickets"]
+        );
+        assert!(
+            params.json_keys.is_none(),
+            "with `q` deferred the declaration has nothing left to say to the local query"
+        );
+    }
+
+    /// Without `splitEntities` nothing is deferred at all, so the local query
+    /// keeps both the filter and the declaration that governs it.
+    #[test]
+    fn a_complete_query_defers_neither_the_filter_nor_its_declaration() {
+        let mut params = declared_query();
+
+        let deferred = defer_split_filters(&mut params, SplitEntities::Complete);
+
+        assert!(deferred.q.is_none());
+        assert!(deferred.json_keys.is_none());
+        assert!(params.q.is_some() && params.json_keys.is_some());
     }
 }

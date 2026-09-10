@@ -48,6 +48,10 @@ pub struct SubscriptionRow {
     pub scope_q: Option<ScopeQuery>,
     /// Context source filter.
     pub csf: Option<Expr>,
+    /// Expanded attribute names whose `q` operands were coerced (clause 5.2.12 `expandValues`).
+    pub expand_values: Option<Vec<AttributeName>>,
+    /// Expanded attribute names whose `q` object keys were expanded (clause 5.2.12 `jsonKeys`).
+    pub json_keys: Option<Vec<AttributeName>>,
     /// Dataset IDs (entity subscriptions only; `None` when absent).
     pub dataset_id: Option<Vec<Uri>>,
     /// Notification endpoint configuration JSON.
@@ -70,6 +74,8 @@ pub struct SubscriptionRow {
     pub split_entities: Option<bool>,
     /// Counter for notifications sent.
     pub times_sent: i32,
+    /// Counter for deliveries that drew an unsuccessful response or timed out.
+    pub times_failed: i32,
     /// Timestamp of the most recent notification attempt.
     pub last_notification: Option<DateTime<Utc>>,
     /// Timestamp of the most recent successful notification.

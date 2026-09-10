@@ -3,11 +3,11 @@
 //! [`TemporalValuesRenderer`] transforms a compacted temporal entity into the
 //! `temporalValues` simplified representation.
 
+use crate::object_list::bare_uri_object_list;
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::{AttributeType, TemporalValueEncoding},
     uri::Uri,
 };
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use indexmap::IndexMap;
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -153,7 +153,7 @@ fn simplified_value(value: Value, attr_type: AttributeType, extract_key: &str) -
     match attr_type.temporal_value_encoding() {
         TemporalValueEncoding::Wrapped => json!({extract_key: value}),
         TemporalValueEncoding::Bare => match attr_type {
-            AttributeType::ListRelationship => bare_object_list(value),
+            AttributeType::ListRelationship => bare_uri_object_list(value),
             AttributeType::Property
             | AttributeType::GeoProperty
             | AttributeType::Relationship
@@ -162,30 +162,6 @@ fn simplified_value(value: Value, attr_type: AttributeType, extract_key: &str) -
             | AttributeType::JsonProperty
             | AttributeType::VocabProperty => value,
         },
-    }
-}
-
-/// One `objectList` reduced to the bare target URIs a clause 4.5.9 pair holds.
-fn bare_object_list(value: Value) -> Value {
-    match value {
-        Value::Array(members) => Value::Array(members.into_iter().map(bare_object).collect()),
-        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => other,
-    }
-}
-
-/// The URI one normalized `objectList` member names.
-///
-/// A member that is already the bare URI of the concise form (clause 4.5.22.3)
-/// passes through, and so does anything that is neither — clause 4.5.9 has no
-/// place to report a malformed member, and dropping it would silently shorten
-/// the list.
-fn bare_object(member: Value) -> Value {
-    match member {
-        Value::Object(mut fields) => match fields.remove(compact_properties::OBJECT) {
-            Some(target) => target,
-            None => Value::Object(fields),
-        },
-        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => other,
     }
 }
 

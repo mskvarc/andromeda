@@ -1,28 +1,31 @@
 //! HTTP handling for the replace entity operation.
 
-use crate::entity::{
-    EntityPatch,
-    EntityResultExt,
-    EntityTenantState,
-    ForwardProvisionRequest,
-    ForwardingOperation,
-    IntoResponse,
-    JsonLd,
-    LocalOnlyParams,
-    LocalOutcome,
-    NgsiLdRequestEnvelope,
-    ProblemResponse,
-    ProvisionResource,
-    Response,
-    StatusCode,
-    TypedPath,
-    Uri,
-    ValidatedQuery,
-    classify_entity_error,
-    collect_proxied_attrs,
-    provision_response,
-    reject_unknown_attribute_types,
+use crate::{
+    entity::{
+        EntityPatch,
+        EntityResultExt,
+        EntityTenantState,
+        ForwardProvisionRequest,
+        ForwardingOperation,
+        IntoResponse,
+        JsonLd,
+        LocalOnlyParams,
+        LocalOutcome,
+        NgsiLdRequestEnvelope,
+        ProblemResponse,
+        ProvisionResource,
+        Response,
+        StatusCode,
+        TypedPath,
+        Uri,
+        ValidatedQuery,
+        classify_entity_error,
+        collect_proxied_attrs,
+        provision_response,
+    },
+    written_payload_admission::admit_written_entity,
 };
+use andromeda_entity::write_admission::EntityWrite;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
 use axum::http::Method;
@@ -50,7 +53,12 @@ pub(crate) async fn update(
     let context = context.merge(body_context);
     let is_local = params.local.unwrap_or(false);
     let patch_value = serde_json::to_value(&patch).with_entity_instance(&uri)?;
-    reject_unknown_attribute_types(&patch_value, &uri)?;
+    // Clause 5.6.18.4 runs the clause 5.5.4 validation before the forwarding
+    // phase, so a payload this broker refuses reaches no context source and a
+    // replacement left with nothing local is still validated.
+    admit_written_entity(service, EntityWrite::ReplaceEntity, &patch_value, &context)
+        .await
+        .with_entity_instance(&uri)?;
 
     if is_local {
         service.replace_entity(&target, &id, &patch, &context).await.with_entity_instance(&uri)?;

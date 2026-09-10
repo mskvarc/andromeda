@@ -55,7 +55,31 @@ pub(crate) enum LocalEntitySource<'a> {
     },
 }
 
-impl LocalEntitySource<'_> {
+impl<'a> LocalEntitySource<'a> {
+    /// The entities one query matched locally, as the map lists them.
+    ///
+    /// Clause 5.5.14 records every entity the request matched rather than the
+    /// page it answered with, so the listing runs over the query as it went to
+    /// the store, together with the Linked Entities the clause 4.5.23 join
+    /// reached under the same unitary request.
+    pub(crate) const fn queried(
+        service: &'a EntityQueryService,
+        target: &'a ContextTarget,
+        query: &'a EntityQueryParameters,
+        context: &'a ContextSpec,
+        join: Option<&'a ResolvedJoin<'a>>,
+        instance: &'a HttpUri,
+    ) -> LocalEntitySource<'a> {
+        LocalEntitySource::Queried {
+            service,
+            target,
+            query,
+            context,
+            join,
+            instance,
+        }
+    }
+
     /// Whether preparing this read's page applied the request's filters to the
     /// entities of the map it ran under (clause 4.3.6.7).
     ///

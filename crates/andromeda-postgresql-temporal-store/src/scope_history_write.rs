@@ -178,7 +178,7 @@ fn scope_history_binds(entries: &[ScopeHistoryEntry]) -> Result<ScopeHistoryBind
         binds.deleted_ats.push(entry.value.deleted_at());
         binds.generated_instance_uuids.push(generated_instance_uuid(&entry.instance));
         binds.verbatim_instance_ids.push(verbatim_instance_id(&entry.instance));
-        binds.scope_paths.push(entry.value.path().map(|path| scope_to_ltree(path)));
+        binds.scope_paths.push(entry.value.path().map(scope_to_ltree));
     }
     Ok(binds)
 }

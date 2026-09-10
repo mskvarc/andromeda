@@ -14,6 +14,7 @@ use crate::{
     concise::concise_value,
     error::RenderError,
     inline_join::apply_inline_join,
+    object_list::normalize_object_lists,
     simplify::simplify_value,
     structural_projection::prune_structural_members,
 };
@@ -113,7 +114,18 @@ impl<'a> SnapshotRenderer<'a> {
         }
 
         let mut transformed = match mode {
-            ResponseFormat::Normalized => payload,
+            // The payload was compacted from a stored expanded document, so a
+            // member with more than one written spelling arrives in whichever
+            // one its Context Producer used. Clause 4.5.22.2 fixes the
+            // normalized `objectList` as "an ordered array of Relationship
+            // Objects each consisting of a JSON object containing a single
+            // Attribute with a key called `object`", so that is imposed here
+            // rather than echoed.
+            ResponseFormat::Normalized => {
+                let mut normalized = payload;
+                normalize_object_lists(&mut normalized);
+                normalized
+            }
             ResponseFormat::Concise => concise_value(payload),
             // Clause 4.5.4 gives `keyValues` and `simplified` one rendering.
             ResponseFormat::KeyValues | ResponseFormat::Simplified => simplify_value(payload),
@@ -176,6 +188,19 @@ mod tests {
             result.get("scope").is_none(),
             "scope is a filterable member and is dropped when attrs does not name it"
         );
+    }
+
+    /// Clause 4.5.22.2, Mandatory: a normalized `objectList` is "an ordered
+    /// array of Relationship Objects each consisting of a JSON object
+    /// containing a single Attribute with a key called `object` and its value
+    /// holding the Relationship's object represented by a URI". The stored
+    /// payload keeps whichever spelling its Context Producer wrote, so the
+    /// normalized rendering imposes the representation rather than echoing it.
+    #[test]
+    fn the_normalized_mode_writes_the_object_keyed_members_of_a_list_relationship() {
+        let value = json!({"id": "urn:x", "type": "T", "refs": {"type": "ListRelationship", "objectList": ["urn:a", "urn:b"]}});
+        let result = render(value, None, ResponseFormat::Normalized);
+        pretty_assertions::assert_eq!(result["refs"]["objectList"], json!([{"object": "urn:a"}, {"object": "urn:b"}]));
     }
 
     #[test]

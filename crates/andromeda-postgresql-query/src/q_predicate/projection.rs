@@ -596,14 +596,15 @@ mod tests {
 
     #[test]
     fn a_time_operand_binds_the_canonical_form_the_write_path_stores() {
-        // Clause 4.6.3 admits any offset and any fractional width, and the write
-        // path stores one canonical rendering of them. The probe has to bind that
-        // same rendering or an offset-bearing operand matches nothing.
-        let (_, binds) = render("\"https://example.com/d\"==\"13:00:00+01:00\"");
+        // Clause 4.6.3 admits a fraction of one to six digits, written with a
+        // decimal point or a comma, and the write path stores one canonical
+        // rendering of all of them. The probe has to bind that same rendering or
+        // a short-fraction operand matches nothing.
+        let (_, binds) = render("\"https://example.com/d\"==\"12:00:00,5Z\"");
         assert!(
             binds
                 .iter()
-                .any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == "12:00:00.000000Z")),
+                .any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == "12:00:00.500000Z")),
             "{binds:?}"
         );
     }

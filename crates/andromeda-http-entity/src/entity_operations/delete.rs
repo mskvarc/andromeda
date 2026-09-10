@@ -25,7 +25,7 @@ use crate::entity_operations::{
     multi_status_response,
     public_error,
 };
-use andromeda_http_extraction::context_target;
+use andromeda_http_extraction::{content_length_precondition::DeclaredBodyLength, context_target};
 use andromeda_jsonld::context_spec::ContextSpec;
 
 pub(crate) async fn batch_delete(
@@ -42,6 +42,11 @@ pub(crate) async fn batch_delete(
         headers,
     }: NgsiLdRequestEnvelope,
     prefer: PreferHeader,
+    // Clause 6.3.2: "'Length required' (411) ... shall be raised when an HTTP
+    // request provided by a client does not define the 'Content-Length' HTTP
+    // header." This operation reads a raw body rather than going through the
+    // `JsonLd` extractor, so it states the precondition itself.
+    _body_length: DeclaredBodyLength,
     body: Bytes,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;

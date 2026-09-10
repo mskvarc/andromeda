@@ -2,11 +2,12 @@
 //! terms rather than backend columns.
 
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::grammar::ScopeBuf};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath};
 use andromeda_ngsi_ld_model::expanded::{
     attribute_expiry::min_attribute_expires_at,
-    entity_member::{extract_attribute_names, extract_expires_at, extract_scopes, extract_types},
+    entity_member::{extract_attribute_names, extract_expires_at, extract_types},
     geo_property::{extract_location_expiry, extract_location_geometry, extract_observation_space_geometry, extract_operation_space_geometry},
+    scope_member::extract_scopes,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -26,8 +27,9 @@ pub struct SearchProjection {
     pub types: Vec<EntityTypeName>,
     /// Names of the attributes the payload carries (clause 5.5.9 `attrs`).
     pub attribute_names: Vec<AttributeName>,
-    /// Entity scopes from clause 4.18.
-    pub scopes: Vec<ScopeBuf>,
+    /// The scope paths the entity belongs to (clause 4.18). A deleted scope
+    /// places the entity nowhere, so it contributes no path here.
+    pub scopes: Vec<ScopePath>,
     /// Hoisted `location` geometry, when present.
     pub location: Option<Geometry>,
     /// Hoisted `observationSpace` geometry, when present.

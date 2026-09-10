@@ -1,4 +1,4 @@
-use crate::entity::{port::persistence, repo::EntityRepository};
+use crate::entity::{port::classify, repo::EntityRepository};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{entity_snapshot::EntitySnapshot, error::EntityError, port::reader::EntityReader};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -10,30 +10,26 @@ use std::collections::HashMap;
 #[async_trait]
 impl EntityReader for EntityRepository {
     async fn get(&self, target: &ContextTarget, id: &Uri) -> Result<Option<Value>, EntityError> {
-        EntityRepository::get(self, target, id).await.map_err(|error| persistence(&error))
+        EntityRepository::get(self, target, id).await.map_err(|error| classify(&error))
     }
 
     async fn get_batch(&self, target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, Value>, EntityError> {
-        EntityRepository::get_batch(self, target, ids).await.map_err(|error| persistence(&error))
+        EntityRepository::get_batch(self, target, ids).await.map_err(|error| classify(&error))
     }
 
     async fn get_snapshot(&self, target: &ContextTarget, id: &Uri) -> Result<Option<EntitySnapshot>, EntityError> {
-        EntityRepository::get_snapshot(self, target, id).await.map_err(|error| persistence(&error))
+        EntityRepository::get_snapshot(self, target, id).await.map_err(|error| classify(&error))
     }
 
     async fn get_snapshot_batch(&self, target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, EntityError> {
-        EntityRepository::get_snapshot_batch(self, target, ids)
-            .await
-            .map_err(|error| persistence(&error))
+        EntityRepository::get_snapshot_batch(self, target, ids).await.map_err(|error| classify(&error))
     }
 
     async fn get_sys_attrs(&self, target: &ContextTarget, id: &Uri) -> Result<Option<SysAttrsSnapshot>, EntityError> {
-        EntityRepository::get_sys_attrs(self, target, id).await.map_err(|error| persistence(&error))
+        EntityRepository::get_sys_attrs(self, target, id).await.map_err(|error| classify(&error))
     }
 
     async fn get_sys_attrs_batch(&self, target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, EntityError> {
-        EntityRepository::get_sys_attrs_batch(self, target, ids)
-            .await
-            .map_err(|error| persistence(&error))
+        EntityRepository::get_sys_attrs_batch(self, target, ids).await.map_err(|error| classify(&error))
     }
 }

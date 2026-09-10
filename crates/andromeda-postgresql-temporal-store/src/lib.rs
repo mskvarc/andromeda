@@ -106,6 +106,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-postgresql-name-dictionary",
         "andromeda-postgresql-codes",
+        "andromeda-postgresql-collation",
         "andromeda-postgresql-encoding",
         "andromeda-postgresql-query",
         "andromeda-postgresql-schema",

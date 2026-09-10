@@ -41,6 +41,8 @@ pub fn compile_subscription(stored: &StoredSubscription) -> CompiledSubscription
         endpoint_accept: sub.notification.endpoint.accept.clone(), // clone: compiled state owns endpoint configuration.
         endpoint_receiver_info: sub.notification.endpoint.receiver_info.clone(), // clone: compiled state owns endpoint configuration.
         endpoint_notifier_info: sub.notification.endpoint.notifier_info.clone(), // clone: compiled state owns endpoint configuration.
+        endpoint_cooldown: sub.notification.endpoint.cooldown,
+        endpoint_timeout: sub.notification.endpoint.timeout,
         triggers,
         watched_attrs,
         selectors,
@@ -84,6 +86,8 @@ pub fn compile_csource_subscription(sub: &Subscription) -> CompiledCsrSubscripti
         endpoint_accept: sub.notification.endpoint.accept.clone(), // clone: compiled state owns endpoint configuration.
         endpoint_receiver_info: sub.notification.endpoint.receiver_info.clone(), // clone: compiled state owns endpoint configuration.
         endpoint_notifier_info: sub.notification.endpoint.notifier_info.clone(), // clone: compiled state owns endpoint configuration.
+        endpoint_cooldown: sub.notification.endpoint.cooldown,
+        endpoint_timeout: sub.notification.endpoint.timeout,
         selectors,
         matching_attrs: csource_matching_attributes(sub.selection.watched_attributes.as_deref(), sub.notification.attributes.as_deref()),
         temporal_q: sub.filters.temporal_q.as_ref().and_then(|value| compile_temporal_q(value, sub.id.as_ref())),

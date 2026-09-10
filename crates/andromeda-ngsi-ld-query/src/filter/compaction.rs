@@ -16,11 +16,12 @@ use crate::{
         expression::Expr,
         path::{AttrPath, QueryPath},
         predicate::Predicate,
+        scalar::{CompareValue, Scalar},
     },
     term_compactor::TermCompactor,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use std::{future::Future, pin::Pin};
+use std::{collections::HashSet, future::Future, hash::BuildHasher, pin::Pin};
 
 /// Recursively compact every attribute term of a `q` expression.
 ///
@@ -32,6 +33,98 @@ pub async fn compact_q_expr(expr: Expr, compactor: &impl TermCompactor) -> Expr 
         Expr::And(terms) => Expr::And(compact_all_terms(terms, compactor).await),
         Expr::Or(terms) => Expr::Or(compact_all_terms(terms, compactor).await),
         Expr::Pred(pred) => Expr::Pred(compact_pred_terms(pred, compactor).await),
+    }
+}
+
+/// Undo the `expandValues` coercion of clause 5.2.12 on a stored filter.
+///
+/// Table 5.2.12-1 defines `expandValues` as a query-execution instruction --
+/// the values of the named attributes "should be expanded against the supplied
+/// @context using JSON-LD type coercion **prior to executing the query**" -- so
+/// the coercion belongs to the filter a match runs, not to the filter the
+/// client wrote. A Subscription echoes the one the client wrote, and this is
+/// what puts the operands back the way they arrived: the exact inverse of
+/// [`crate::filter::expansion::apply_expand_values`], over exactly the
+/// attributes that opted in.
+///
+/// `expand_attrs` is the stored, expanded opt-in list, and the paths it is
+/// matched against are the stored, expanded ones, so this runs before
+/// [`compact_q_expr`] turns those paths back into terms.
+pub async fn revert_expand_values<S: BuildHasher + Sync>(expr: Expr, expand_attrs: &HashSet<AttributeName, S>, compactor: &impl TermCompactor) -> Expr {
+    match expr {
+        Expr::And(terms) => Expr::And(revert_all_terms(terms, expand_attrs, compactor).await),
+        Expr::Or(terms) => Expr::Or(revert_all_terms(terms, expand_attrs, compactor).await),
+        Expr::Pred(pred) => Expr::Pred(revert_compare_values(pred, expand_attrs, compactor).await),
+    }
+}
+
+/// Revert the operands of one boolean node in order.
+async fn revert_all_terms<S: BuildHasher + Sync>(terms: Vec<Expr>, expand_attrs: &HashSet<AttributeName, S>, compactor: &impl TermCompactor) -> Vec<Expr> {
+    let mut reverted = Vec::with_capacity(terms.len());
+    for term in terms {
+        reverted.push(revert_expand_values_boxed(term, expand_attrs, compactor).await);
+    }
+    reverted
+}
+
+/// Box-pinned wrapper: the walker recurses, and an `async fn` cannot name its
+/// own future type.
+fn revert_expand_values_boxed<'a, S: BuildHasher + Sync, C: TermCompactor>(
+    expr: Expr,
+    expand_attrs: &'a HashSet<AttributeName, S>,
+    compactor: &'a C,
+) -> Pin<Box<dyn Future<Output = Expr> + Send + 'a>> {
+    Box::pin(revert_expand_values(expr, expand_attrs, compactor))
+}
+
+/// Put the right-hand side of a comparison back in the client's terms when its
+/// attribute opted in via `expandValues`.
+async fn revert_compare_values<S: BuildHasher + Sync>(pred: Predicate, expand_attrs: &HashSet<AttributeName, S>, compactor: &impl TermCompactor) -> Predicate {
+    match pred {
+        Predicate::Equality { path, membership, rhs } if expand_attrs.contains(path.terminal().attr.as_str()) => Predicate::Equality {
+            rhs: revert_rhs_values(rhs, compactor).await,
+            path,
+            membership,
+        },
+        Predicate::Ordering { path, op, rhs } if expand_attrs.contains(path.terminal().attr.as_str()) => Predicate::Ordering {
+            rhs: revert_scalar(rhs, compactor).await,
+            path,
+            op,
+        },
+        Predicate::Exists(_) | Predicate::Equality { .. } | Predicate::Ordering { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. } => {
+            pred
+        }
+    }
+}
+
+/// Put one coerced scalar operand back in the client's terms.
+///
+/// Only a string can have been coerced; every other scalar kind was already a
+/// value. A string the coercion could not have produced -- one that is not a
+/// usable attribute name -- is the client's own literal and is left alone.
+async fn revert_scalar(scalar: Scalar, compactor: &impl TermCompactor) -> Scalar {
+    match scalar {
+        Scalar::Str(text) => match text.parse::<AttributeName>() {
+            Ok(coerced) => Scalar::Str(compactor.compact_term(&coerced).await.as_str().to_owned()),
+            Err(_not_a_name) => Scalar::Str(text),
+        },
+        other @ (Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) => other,
+    }
+}
+
+/// Put the string operands of an equality comparison back in the client's
+/// terms; a range is bounded by two ordered values, neither of which is a term.
+async fn revert_rhs_values(rhs: CompareValue, compactor: &impl TermCompactor) -> CompareValue {
+    match rhs {
+        CompareValue::Scalar(scalar) => CompareValue::Scalar(revert_scalar(scalar, compactor).await),
+        CompareValue::ValueList(values) => {
+            let mut reverted = Vec::with_capacity(values.len());
+            for value in values {
+                reverted.push(revert_scalar(value, compactor).await);
+            }
+            CompareValue::ValueList(reverted)
+        }
+        CompareValue::Range { .. } => rhs,
     }
 }
 
@@ -136,7 +229,7 @@ async fn compact_all(names: &[AttributeName], compactor: &impl TermCompactor) ->
 mod tests {
     use crate::{
         error::QueryError,
-        filter::{compaction::compact_q_expr, expansion::expand_q_expr, parser, serialize::serialize},
+        filter::{compaction::compact_q_expr, expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes, parser, serialize::serialize},
         term_compactor::TermCompactor,
         term_expander::TermExpander,
     };
@@ -214,7 +307,9 @@ mod tests {
     async fn compacting_an_expanded_filter_restores_what_the_client_wrote() {
         for shape in SHAPES {
             let parsed = parser::parse(shape).unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
-            let expanded = expand_q_expr(parsed.clone(), &PrefixExpander).await.expect("expands");
+            let expanded = expand_q_expr(parsed.clone(), &JsonKeyAttributes::default(), &PrefixExpander)
+                .await
+                .expect("expands");
             assert_ne!(serialize(&expanded), shape, "the expansion of {shape} must differ from it");
 
             let compacted = compact_q_expr(expanded, &PrefixCompactor).await;
@@ -231,10 +326,12 @@ mod tests {
     async fn expanding_a_compacted_filter_restores_the_stored_expansion() {
         for shape in SHAPES {
             let parsed = parser::parse(shape).unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
-            let expanded = expand_q_expr(parsed, &PrefixExpander).await.expect("expands");
+            let expanded = expand_q_expr(parsed, &JsonKeyAttributes::default(), &PrefixExpander).await.expect("expands");
 
             let compacted = compact_q_expr(expanded.clone(), &PrefixCompactor).await;
-            let re_expanded = expand_q_expr(compacted, &PrefixExpander).await.expect("expands again");
+            let re_expanded = expand_q_expr(compacted, &JsonKeyAttributes::default(), &PrefixExpander)
+                .await
+                .expect("expands again");
 
             pretty_assertions::assert_eq!(re_expanded, expanded, "expand after compact of {shape}");
         }

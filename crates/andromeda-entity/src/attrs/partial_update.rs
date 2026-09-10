@@ -2,12 +2,11 @@
 
 use crate::{
     EntityService,
-    attribute_envelope::validate_attribute_envelopes,
     attrs::attribute_write::{MutatedEntity, payload_write},
     error::EntityError,
     expanded_member::unwrap_expanded_ref,
-    geo_property_geometry::validate_geo_property_geometries,
     notification_plan::attribute_change_groups,
+    write_admission::{AttributeWrite, admit_expanded_attribute},
 };
 use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_context_space::context_target::ContextTarget;
@@ -34,8 +33,9 @@ impl EntityService {
     ///
     /// Reports [`EntityError::JsonLd`] when `attr_name` or `fragment` cannot be
     /// expanded against `context`, [`EntityError::Validation`] when `attr_name`
-    /// names `scope` (clause 5.6.4.4) or the fragment carries a malformed
-    /// attribute instance, [`EntityError::NotFound`] when no entity carries
+    /// names `scope` (clause 5.6.4.4), the fragment carries a malformed
+    /// attribute instance or it sets a `datasetId` to the NGSI-LD Null (clause
+    /// 5.5.8), [`EntityError::NotFound`] when no entity carries
     /// `id`, [`EntityError::MemberNotFound`] when the entity carries neither
     /// the attribute nor the selected instance, [`EntityError::Contention`]
     /// when concurrent writers superseded the computed write on every attempt,
@@ -67,8 +67,10 @@ impl EntityService {
         // implementation to ignore when a Context Producer supplies one.
         normalize_attribute_node(&mut fragment);
         let expanded = Arc::new(self.engine.expand(fragment, context).await?);
-        validate_attribute_envelopes(&expanded)?;
-        validate_geo_property_geometries(&expanded)?;
+        // Clause 5.5.8 makes this fragment's NGSI-LD Nulls deletions, with one
+        // exception it states outright: "A datasetId cannot be deleted by
+        // setting it to the value urn:ngsi-ld:null".
+        admit_expanded_attribute(&expanded, attr_name, AttributeWrite::PartialUpdate.null_sentinel_admission())?;
 
         let MutatedEntity { events } = self
             .commit_computed_write(target, &entity_uri, |previous| {

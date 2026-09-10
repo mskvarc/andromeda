@@ -1,35 +1,38 @@
 //! HTTP handling for temporal create or update (clause 5.6.11).
 
-use crate::temporal::{
-    ContextUrl,
-    CreateOrUpdateResult,
-    ForwardProvisionRequest,
-    ForwardingOperation,
-    HeaderMap,
-    IncomingVia,
-    IntoResponse,
-    JsonLd,
-    LocalOnlyParams,
-    LocalOutcome,
-    Method,
-    OriginalUri,
-    ProblemResponse,
-    ProvisionResource,
-    Response,
-    ResultInstanceExt,
-    StatusCode,
-    TemporalError,
-    TenantStateOrCreate,
-    TriggeringRequest,
-    Uri,
-    ValidatedQuery,
-    Value,
-    classify_temporal_error,
-    collect_proxied_attrs,
-    has_attributes,
-    payload_entity_type,
-    provision_response,
-    strip_attributes_from_value,
+use crate::{
+    temporal::{
+        ContextUrl,
+        CreateOrUpdateResult,
+        ForwardProvisionRequest,
+        ForwardingOperation,
+        HeaderMap,
+        IncomingVia,
+        IntoResponse,
+        JsonLd,
+        LocalOnlyParams,
+        LocalOutcome,
+        Method,
+        OriginalUri,
+        ProblemResponse,
+        ProvisionResource,
+        Response,
+        ResultInstanceExt,
+        StatusCode,
+        TemporalError,
+        TenantStateOrCreate,
+        TriggeringRequest,
+        Uri,
+        ValidatedQuery,
+        Value,
+        classify_temporal_error,
+        collect_proxied_attrs,
+        has_attributes,
+        payload_entity_type,
+        provision_response,
+        strip_attributes_from_value,
+    },
+    written_evolution_admission::admit_written_evolution,
 };
 use andromeda_http_extraction::context_target;
 use andromeda_http_response::{classified_report::ClassifiedReport, headers::with_location};
@@ -62,6 +65,9 @@ pub async fn create_or_update(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     let context = context.merge(body_context);
+    // Clause 5.6.11.4 opens with the clause 5.5.4 validation and forwards only
+    // afterwards.
+    admit_written_evolution(&payload, &uri)?;
 
     if params.local.unwrap_or(false) {
         let result = service.create_or_update(&target, payload, &context).await;

@@ -46,6 +46,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_subscription::{
     cache::SubscriptionCache,
     error::SubscriptionError,
+    notification_slot::{NotificationSlot, NotificationSlotGate},
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
 };
@@ -264,12 +265,7 @@ impl SubscriptionStore for SingleSubscriptionStore {
         Ok(vec![stored_building_subscription()?])
     }
 
-    async fn claim_notification_slot(
-        &self,
-        _target: &ContextTarget,
-        _id: &Uri,
-        _earliest_allowed_last_notification: Option<DateTime<Utc>>,
-    ) -> Result<bool, SubscriptionError> {
+    async fn claim_notification_slot(&self, _target: &ContextTarget, _id: &Uri, _gate: NotificationSlotGate) -> Result<NotificationSlot, SubscriptionError> {
         Err(unused_store_call("claim_notification_slot"))
     }
 

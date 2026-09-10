@@ -25,6 +25,7 @@ pub mod attribute_type;
 pub mod constant_string;
 pub mod context_source_pseudonym;
 pub mod entity_type_name;
+pub mod fractional_seconds;
 pub mod instance_family;
 pub mod instance_identity;
 pub mod name;
@@ -42,6 +43,7 @@ pub mod temporal_format;
 pub mod tenant;
 pub mod time_prop;
 pub mod time_rel;
+pub mod time_value;
 pub mod unit_code_admission;
 pub mod uri;
 

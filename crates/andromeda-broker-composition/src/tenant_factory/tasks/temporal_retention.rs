@@ -94,7 +94,10 @@ pub(super) fn register_temporal_retention(
 fn classify_retention_failure(error: &TemporalStoreError) -> TaskFailure {
     let summary = error.to_string();
     match error {
-        TemporalStoreError::Database(_) | TemporalStoreError::NameLookup(_) => TaskFailure::transient(summary),
+        // A collation object is created on demand by a read that orders under
+        // it (clause 4.23.1); the statement fails for the same reasons any
+        // other one does, so a retry is worth taking.
+        TemporalStoreError::Database(_) | TemporalStoreError::NameLookup(_) | TemporalStoreError::Collation(_) => TaskFailure::transient(summary),
         TemporalStoreError::Decode(_)
         | TemporalStoreError::Encoding(_)
         | TemporalStoreError::CopyField(_)

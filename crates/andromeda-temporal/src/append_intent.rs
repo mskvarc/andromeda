@@ -1,8 +1,14 @@
 //! Typed durable temporal append intents.
 
-use crate::{error::TemporalError, intent_preparation::prepare, scope_observation::ScopeObservation};
+use crate::{error::TemporalError, intent_preparation::prepare, scope_observation::ScopeObservation, write_purpose::TemporalWritePurpose};
 use andromeda_context_commit::{history_record::HistoryRecord, write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_identity::InstanceIdentity, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    entity_type_name::EntityTypeName,
+    instance_identity::InstanceIdentity,
+    uri::Uri,
+};
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use chrono::{DateTime, Utc};
 use derive_more::Display;
@@ -114,6 +120,17 @@ pub struct TemporalAppendIntent {
     pub base: WriteOrdinal,
     /// Entity whose temporal evolution receives the entries.
     pub entity_id: Uri,
+    /// Entity types the receiving Temporal Evolution is recorded under.
+    ///
+    /// Clause 4.5.6 makes the Temporal Evolution of an Entity "the Entity
+    /// [...] as mandated by clause 4.5.1", so the evolution the entries extend
+    /// carries the Entity's types and an intent that would bring one into being
+    /// has to state them. They are the types of the Entity the write produced,
+    /// not of the request fragment it was computed from: clauses 5.6.2.4,
+    /// 5.6.3.4 and 5.6.17.4 each make `type` an optional Entity Fragment
+    /// member, so a fragment names none while the Entity names several. Empty
+    /// only when the write states no Entity at all, which is every deletion.
+    pub entity_types: Vec<EntityTypeName>,
     /// Entries in semantic write order.
     pub entries: Vec<TemporalAppendEntry>,
     /// Expanded observation payload used for pending stage-one selection.
@@ -127,6 +144,12 @@ impl TemporalAppendIntent {
     /// entity a commit lands shares the commit's one write identity, and draws
     /// its entries' ordinals from the commit's single running counter.
     ///
+    /// `entity_types` is what the write says the Entity is, which the history
+    /// consequences alone cannot say: clauses 5.6.2.4, 5.6.3.4 and 5.6.17.4
+    /// each take an Entity Fragment whose `type` is optional, so the observed
+    /// payload of an ordinary attribute write names no type while the Entity it
+    /// landed in names several.
+    ///
     /// # Errors
     ///
     /// Returns [`TemporalError::Validation`] when a history record carries an
@@ -138,11 +161,41 @@ impl TemporalAppendIntent {
     /// interpreted geometry cannot be serialised back to JSON.
     pub fn from_history(
         entity_id: &Uri,
+        entity_types: &[EntityTypeName],
         history: &[HistoryRecord],
         record: WriteRecord,
         base: WriteOrdinal,
     ) -> Result<Option<TemporalAppendIntent>, TemporalError> {
-        prepare(entity_id, history, record, base)
+        prepare(entity_id, entity_types, history, record, base)
+    }
+
+    /// What this intent's entries are for.
+    ///
+    /// An intent whose every entry ends an instance records only endings: it is
+    /// the temporal half of a deletion, and clauses 4.5.7 and 4.5.8 give it
+    /// nothing to record when the Temporal Evolution it would have ended an
+    /// instance of is not there. One carrying any observation or scope entry
+    /// extends the evolution instead.
+    ///
+    /// An intent with no entries at all is an observation rather than a
+    /// deletion. A deletion with no instance to end produces no history
+    /// consequence and therefore no intent at all; what does reach here with no
+    /// entries is a write that observed an Entity holding no Attribute, and
+    /// clause 4.5.1 requires only `id` and `type` of an Entity while clause
+    /// 4.5.6 gives that Entity a Temporal Evolution all the same — one its own
+    /// write has to be able to establish.
+    #[must_use]
+    pub fn write_purpose(&self) -> TemporalWritePurpose {
+        let ends_only = !self.entries.is_empty()
+            && self.entries.iter().all(|entry| match entry {
+                TemporalAppendEntry::Tombstone { .. } => true,
+                TemporalAppendEntry::Observation { .. } | TemporalAppendEntry::Scope { .. } => false,
+            });
+        if ends_only {
+            TemporalWritePurpose::Deletion
+        } else {
+            TemporalWritePurpose::Observation
+        }
     }
 
     /// Iterate only attribute-history entries with their stable intent ordinals.
@@ -174,14 +227,37 @@ pub struct SequencedTemporalAppendIntent {
 
 #[cfg(test)]
 mod tests {
-    use crate::append_intent::{TemporalAppendEntry, TemporalAppendIntent, TemporalObservationIdentity};
-    use andromeda_context_commit::{history_record::HistoryRecord, write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
-    use andromeda_ngsi_ld_lexicon::{instance_identity::InstanceIdentity, uri::Uri};
+    use crate::{
+        append_intent::{TemporalAppendEntry, TemporalAppendIntent, TemporalObservationIdentity},
+        scope_observation::ScopeObservation,
+        write_purpose::TemporalWritePurpose,
+    };
+    use andromeda_context_commit::{
+        history_record::{HistoryRecord, tombstone},
+        write_id::WriteId,
+        write_ordinal::WriteOrdinal,
+        write_record::WriteRecord,
+    };
+    use andromeda_ngsi_ld_lexicon::{
+        attribute_name::AttributeName,
+        attribute_type::AttributeType,
+        entity_type_name::EntityTypeName,
+        instance_identity::InstanceIdentity,
+        scope::path::ScopePath,
+        uri::Uri,
+    };
     use andromeda_ngsi_ld_model::temporal::TemporalValue;
     use andromeda_ngsi_ld_number::JsonNumber;
     use chrono::{TimeZone, Utc};
     use serde_json::json;
     use std::sync::Arc;
+
+    const VEHICLE: &str = "https://uri.etsi.org/ngsi-ld/default-context/Vehicle";
+
+    /// The clause 4.5.1 types a write states about the Entity it landed.
+    fn vehicle_types() -> Vec<EntityTypeName> {
+        vec![VEHICLE.parse::<EntityTypeName>().expect("valid entity type")]
+    }
 
     fn speed_payload(entity_id: &Uri) -> Arc<serde_json::Value> {
         Arc::new(json!([{
@@ -199,9 +275,15 @@ mod tests {
         let payload = speed_payload(&entity_id);
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
         let record = WriteRecord::restored(WriteId::mint(), recorded_at);
-        let intent = TemporalAppendIntent::from_history(&entity_id, &[HistoryRecord::Observations(payload)], record, WriteOrdinal::at(0))
-            .expect("valid history")
-            .expect("non-empty intent");
+        let intent = TemporalAppendIntent::from_history(
+            &entity_id,
+            &vehicle_types(),
+            &[HistoryRecord::Observations(payload)],
+            record,
+            WriteOrdinal::at(0),
+        )
+        .expect("valid history")
+        .expect("non-empty intent");
         let TemporalAppendEntry::Observation { row } = &intent.entries[0] else {
             return;
         };
@@ -209,6 +291,126 @@ mod tests {
         pretty_assertions::assert_eq!(intent.record.recorded_at(), recorded_at);
         pretty_assertions::assert_eq!(row.recorded_at, recorded_at);
         assert!(matches!(row.instance, InstanceIdentity::Generated(_)));
+    }
+
+    /// Clause 4.5.6 makes the Temporal Evolution "the Entity [...] as mandated
+    /// by clause 4.5.1", so the intent records the types the write states about
+    /// the Entity. The observed payload here is an Entity Fragment carrying one
+    /// attribute and, as clauses 5.6.2.4, 5.6.3.4 and 5.6.17.4 all permit, no
+    /// `type` at all: reading the types off it would say the Entity has none.
+    #[test]
+    fn an_intent_carries_the_entity_types_the_write_stated_not_the_fragments() {
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity ID");
+        let payload = speed_payload(&entity_id);
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
+        let record = WriteRecord::restored(WriteId::mint(), recorded_at);
+        let intent = TemporalAppendIntent::from_history(
+            &entity_id,
+            &vehicle_types(),
+            &[HistoryRecord::Observations(payload)],
+            record,
+            WriteOrdinal::at(0),
+        )
+        .expect("valid history")
+        .expect("non-empty intent");
+        pretty_assertions::assert_eq!(intent.entity_types, vehicle_types());
+        pretty_assertions::assert_eq!(intent.write_purpose(), TemporalWritePurpose::Observation);
+    }
+
+    /// Clause 5.6.16 lets a client delete the Temporal Evolution of an Entity
+    /// while clause 5.6.6 deletes current state, each on its own, so the
+    /// deletion an Entity delete records can meet an Entity that no longer has
+    /// an evolution. An intent that only ends instances says so, and nothing
+    /// below it has any other way to tell.
+    #[test]
+    fn an_intent_of_only_tombstones_is_a_deletion() {
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity ID");
+        let speed = "https://example.com/speed".parse::<AttributeName>().expect("valid attribute name");
+        let colour = "https://example.com/colour".parse::<AttributeName>().expect("valid attribute name");
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
+        let history = [
+            tombstone(&colour, None, AttributeType::Property),
+            tombstone(&speed, None, AttributeType::Property),
+        ];
+        let intent = TemporalAppendIntent::from_history(
+            &entity_id,
+            &[],
+            &history,
+            WriteRecord::restored(WriteId::mint(), recorded_at),
+            WriteOrdinal::at(0),
+        )
+        .expect("valid history")
+        .expect("the tombstones produce an intent");
+        pretty_assertions::assert_eq!(intent.write_purpose(), TemporalWritePurpose::Deletion);
+    }
+
+    /// A write that observes anything extends the evolution, so it needs one:
+    /// clause 4.5.1 makes at least one Entity type part of what an Entity is,
+    /// and an observation stating none cannot bring an evolution into being.
+    #[test]
+    fn an_intent_carrying_an_observation_is_an_observation_even_beside_a_tombstone() {
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity ID");
+        let colour = "https://example.com/colour".parse::<AttributeName>().expect("valid attribute name");
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
+        let history = [
+            HistoryRecord::Observations(speed_payload(&entity_id)),
+            tombstone(&colour, None, AttributeType::Property),
+        ];
+        let intent = TemporalAppendIntent::from_history(
+            &entity_id,
+            &vehicle_types(),
+            &history,
+            WriteRecord::restored(WriteId::mint(), recorded_at),
+            WriteOrdinal::at(0),
+        )
+        .expect("valid history")
+        .expect("the payload produces an intent");
+        pretty_assertions::assert_eq!(intent.write_purpose(), TemporalWritePurpose::Observation);
+    }
+
+    /// Clause 4.5.1 requires only `id` and `type` of an Entity, so a create
+    /// that carries no Attribute observes one all the same and clause 4.5.6
+    /// still gives it a Temporal Evolution. A deletion with nothing to end
+    /// produces no history consequence and so no intent, which is what leaves
+    /// an entry-less intent unambiguously an observation.
+    #[test]
+    fn an_intent_with_no_entries_at_all_is_an_observation() {
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity ID");
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
+        let attributeless = Arc::new(json!([{"@id": entity_id, "@type": [VEHICLE]}]));
+        let intent = TemporalAppendIntent::from_history(
+            &entity_id,
+            &vehicle_types(),
+            &[HistoryRecord::Observations(attributeless)],
+            WriteRecord::restored(WriteId::mint(), recorded_at),
+            WriteOrdinal::at(0),
+        )
+        .expect("valid history")
+        .expect("an observation produces an intent even with nothing to record");
+        pretty_assertions::assert_eq!(intent.entries, Vec::new());
+        pretty_assertions::assert_eq!(intent.write_purpose(), TemporalWritePurpose::Observation);
+    }
+
+    /// Clause 4.5.6 represents the Scope of a Temporal Evolution as a temporal
+    /// Property of its own, so a scope entry extends the evolution exactly as an
+    /// attribute observation does, deleted scope included.
+    #[test]
+    fn an_intent_carrying_only_a_scope_entry_is_an_observation() {
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity ID");
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
+        let intent = TemporalAppendIntent {
+            record: WriteRecord::restored(WriteId::mint(), recorded_at),
+            base: WriteOrdinal::at(0),
+            entity_types: Vec::new(),
+            entity_id,
+            entries: vec![TemporalAppendEntry::Scope {
+                observation: ScopeObservation::Path("/Madrid".parse::<ScopePath>().expect("a valid scope path")),
+                observed_at: Some(recorded_at),
+                instance: InstanceIdentity::generate(),
+            }],
+            selection_value: None,
+        };
+        pretty_assertions::assert_eq!(intent.write_purpose(), TemporalWritePurpose::Observation);
     }
 
     /// The commit that produced this intent may have landed other entities
@@ -222,7 +424,7 @@ mod tests {
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
         let record = WriteRecord::restored(WriteId::mint(), recorded_at);
         let base = WriteOrdinal::at(5);
-        let intent = TemporalAppendIntent::from_history(&entity_id, &[HistoryRecord::Observations(payload)], record, base)
+        let intent = TemporalAppendIntent::from_history(&entity_id, &vehicle_types(), &[HistoryRecord::Observations(payload)], record, base)
             .expect("valid history")
             .expect("non-empty intent");
         let (identity, _entry) = intent.history_entries().next().expect("one history entry");

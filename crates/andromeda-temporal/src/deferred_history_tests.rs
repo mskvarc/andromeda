@@ -360,6 +360,7 @@ fn fixture() -> (SequencedTemporalAppendIntent, Uri) {
             record,
             base: WriteOrdinal::at(0),
             entity_id: entity_id.clone(), // clone: fixture returns the identifier separately from the intent.
+            entity_types: Vec::new(),
             entries: vec![TemporalAppendEntry::Observation { row }],
             selection_value: Some(serde_json::json!([{"@id": entity_id}])),
         },

@@ -204,7 +204,8 @@ fn write_scalar(buf: &mut String, scalar: &Scalar) {
         // a bare literal that starts with digits is read as a number unless a
         // `-` follows, so `12:00:00Z` would come back as `12` and a stray
         // identifier. A date and a date-time both start `dddd-` and read back
-        // whole.
+        // whole. Quoting costs the `Time` nothing, because a quoted literal
+        // that satisfies a clause 4.6.3 form is read back as that form.
         Scalar::Str(_) | Scalar::Time(_) => write_quoted(buf, &scalar.literal_text()),
         Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) => buf.push_str(&scalar.literal_text()),
     }

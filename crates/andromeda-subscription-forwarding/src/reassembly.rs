@@ -32,7 +32,12 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_render::entity::EntityRenderer;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::entity::GetEntityParams;
-use andromeda_subscription::{compilation::compile_subscription, compiled::CompiledSubscription, matching::matches_entity_filters};
+use andromeda_subscription::{
+    compilation::compile_subscription,
+    compiled::CompiledSubscription,
+    matching::matches_entity_filters,
+    notification_slot::{NotificationSlot, NotificationSlotGate},
+};
 use chrono::Utc;
 use iri_rs::IriBuf;
 use serde_json::Value;
@@ -154,6 +159,24 @@ impl SubscriptionForwardingService {
             return Ok(());
         };
         let compiled = compile_subscription(&stored);
+        // Clause 5.2.12 `throttling` and Table 5.2.15-1 `cooldown` gate every
+        // notification the local subscription sends, and a re-assembled copy is
+        // no less one of them: it goes to the subscriber's own endpoint, under
+        // the local subscription's own identifier, and it writes the same
+        // `last_failure` and `last_notification` that suppress the
+        // subscription's other notifications. Table 5.2.15-1 admits no
+        // exception for where the notification came from -- "if requests are
+        // received before the cooldown period has expired, no notification is
+        // sent" -- so the slot is claimed here, before the re-assembly work,
+        // exactly as the locally-triggered path claims it before building.
+        let gate = NotificationSlotGate::at(Utc::now(), compiled.throttling_secs, compiled.endpoint_cooldown);
+        match self.subscriptions.claim_notification_slot(&self.live_target, &local, gate).await? {
+            NotificationSlot::Claimed => {}
+            NotificationSlot::Suppressed => {
+                debug!(subscription = %local, "re-assembled notification suppressed by the subscription's throttling or its endpoint's cooldown");
+                return Ok(());
+            }
+        }
         let subscription = stored.subscription;
         let split = self.federation.split_entities(subscription.delivery.split_entities);
         // Clause 5.8.6: the copy is delivered under the local subscription's
@@ -214,6 +237,7 @@ impl SubscriptionForwardingService {
             jsonld_context: subscription.delivery.jsonld_context.as_ref(),
             tenant: self.tenant.tenant_name(),
             snapshot: None,
+            timeout: endpoint.timeout,
             subscription_id: &local,
         }
         .assemble();

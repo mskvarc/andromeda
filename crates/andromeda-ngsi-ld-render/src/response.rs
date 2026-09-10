@@ -19,11 +19,12 @@ use crate::{
     context::{ContextLocation, ResponseContext},
     error::RenderError,
     geojson::{GeoJsonRenderer, GeoJsonShape},
+    geometry_selection::GeometrySelection,
     uri_decoding::decode_percent_encoded_uris,
     version::{VersionAdaptation, VersionRenderer},
 };
 use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
+use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use iri_rs::IriRefBuf;
 use serde_json::Value;
 use std::sync::Arc;
@@ -94,8 +95,8 @@ pub struct ResponseRenderer<'a> {
     geo_json_body: GeoJsonBodyPreference,
     /// The `Prefer: ngsi-ld=` version to adapt the payload to, if any.
     requested_version: Option<SpecVersion>,
-    /// The attribute a `GeoJSON` geometry is taken from.
-    geometry_property: Option<&'a AttributeName>,
+    /// The clause 4.5.16.1 rule a `GeoJSON` geometry is selected by.
+    geometry_selection: GeometrySelection<'a>,
 }
 
 /// A fully-configured renderer with its payload attached, ready to run.
@@ -135,7 +136,7 @@ impl<'a> ResponseRenderer<'a> {
             context,
             geo_json_body: GeoJsonBodyPreference::LdJson,
             requested_version: None,
-            geometry_property: None,
+            geometry_selection: GeometrySelection::new(None, &[]),
         }
     }
 
@@ -154,10 +155,12 @@ impl<'a> ResponseRenderer<'a> {
         self
     }
 
-    /// Set the attribute a `GeoJSON` geometry is taken from (clause 4.5.16).
+    /// Set the clause 4.5.16.1 rule a `GeoJSON` geometry is selected by: the
+    /// `geometryProperty` the request named and the `datasetId` values it
+    /// narrowed the instances to.
     #[must_use]
-    pub const fn with_geometry_property(mut self, geometry_property: Option<&'a AttributeName>) -> Self {
-        self.geometry_property = geometry_property;
+    pub const fn with_geometry_selection(mut self, geometry_selection: GeometrySelection<'a>) -> Self {
+        self.geometry_selection = geometry_selection;
         self
     }
 
@@ -239,7 +242,7 @@ impl ReadyResponse<'_> {
         value = if let Some(shape) = geo_json_shape {
             GeoJsonRenderer::new(value)
                 .with_context(context_value)
-                .with_geometry_property(renderer.geometry_property)
+                .with_geometry_selection(renderer.geometry_selection)
                 .with_shape(shape)
                 .render()?
         } else {

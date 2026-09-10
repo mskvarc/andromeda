@@ -37,6 +37,12 @@ fn stored_triggers(fields: &SubscriptionFields<'_>) -> Option<Vec<i16>> {
         .map(|triggers| triggers.iter().map(|trigger| stored_trigger(*trigger).code()).collect())
 }
 
+/// The stored `TEXT[]` of one expanded attribute-name list, or `None` when the
+/// subscription carries none.
+fn expanded_names(names: Option<&[AttributeName]>) -> Option<Vec<&str>> {
+    names.map(|names| names.iter().map(AttributeName::as_str).collect())
+}
+
 /// Bind an entity-subscription create command in statement order.
 pub fn bind_entity_create<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
@@ -61,6 +67,8 @@ pub fn bind_entity_create<'q>(
         .bind(fields.geo_q.map(Json))
         .bind(fields.scope_q.map(ToString::to_string))
         .bind(fields.csf.map(ToString::to_string))
+        .bind(expanded_names(fields.expand_values))
+        .bind(expanded_names(fields.json_keys))
         .bind(fields.dataset_id.map(|ids| ids.iter().map(Uri::as_str).collect::<Vec<_>>()))
         .bind(fields.notification.map(Json))
         .bind(fields.expires_at)
@@ -98,6 +106,8 @@ pub fn bind_entity_update<'q>(
         .bind(fields.geo_q.map(Json))
         .bind(fields.scope_q.map(ToString::to_string))
         .bind(fields.csf.map(ToString::to_string))
+        .bind(expanded_names(fields.expand_values))
+        .bind(expanded_names(fields.json_keys))
         .bind(fields.dataset_id.map(|ids| ids.iter().map(Uri::as_str).collect::<Vec<_>>()))
         .bind(fields.notification.map(Json))
         .bind(fields.expires_at)
@@ -134,6 +144,8 @@ pub fn bind_csource_create<'q>(
         .bind(fields.geo_q.map(Json))
         .bind(fields.scope_q.map(ToString::to_string))
         .bind(fields.csf.map(ToString::to_string))
+        .bind(expanded_names(fields.expand_values))
+        .bind(expanded_names(fields.json_keys))
         .bind(fields.notification.map(Json))
         .bind(fields.expires_at)
         .bind(fields.throttling)
@@ -168,6 +180,8 @@ pub fn bind_csource_update<'q>(
         .bind(fields.geo_q.map(Json))
         .bind(fields.scope_q.map(ToString::to_string))
         .bind(fields.csf.map(ToString::to_string))
+        .bind(expanded_names(fields.expand_values))
+        .bind(expanded_names(fields.json_keys))
         .bind(fields.notification.map(Json))
         .bind(fields.expires_at)
         .bind(fields.throttling)
@@ -194,6 +208,8 @@ pub fn entity_create_sql() -> Result<String, SubscriptionError> {
         Subscriptions::GeoQ,
         Subscriptions::ScopeQ,
         Subscriptions::Csf,
+        Subscriptions::ExpandValues,
+        Subscriptions::JsonKeys,
         Subscriptions::DatasetId,
         Subscriptions::Notification,
         Subscriptions::ExpiresAt,
@@ -226,13 +242,15 @@ pub fn entity_create_sql() -> Result<String, SubscriptionError> {
             external_placeholder(13),
             external_placeholder(14),
             external_placeholder(15),
-            cast(external_placeholder(16), PostgresType::SubscriptionStatus),
+            external_placeholder(16),
             external_placeholder(17),
-            external_placeholder(18),
+            cast(external_placeholder(18), PostgresType::SubscriptionStatus),
             external_placeholder(19),
             external_placeholder(20),
             external_placeholder(21),
             external_placeholder(22),
+            external_placeholder(23),
+            external_placeholder(24),
             now(),
             now(),
         ])
@@ -257,19 +275,21 @@ pub fn entity_update_sql() -> String {
             (Subscriptions::GeoQ, external_placeholder(9)),
             (Subscriptions::ScopeQ, external_placeholder(10)),
             (Subscriptions::Csf, external_placeholder(11)),
-            (Subscriptions::DatasetId, external_placeholder(12)),
-            (Subscriptions::Notification, external_placeholder(13)),
-            (Subscriptions::ExpiresAt, external_placeholder(14)),
-            (Subscriptions::Throttling, external_placeholder(15)),
-            (Subscriptions::Status, cast(external_placeholder(16), PostgresType::SubscriptionStatus)),
-            (Subscriptions::Lang, external_placeholder(17)),
-            (Subscriptions::JsonldContext, external_placeholder(18)),
-            (Subscriptions::LocalOnly, external_placeholder(19)),
-            (Subscriptions::SplitEntities, external_placeholder(20)),
+            (Subscriptions::ExpandValues, external_placeholder(12)),
+            (Subscriptions::JsonKeys, external_placeholder(13)),
+            (Subscriptions::DatasetId, external_placeholder(14)),
+            (Subscriptions::Notification, external_placeholder(15)),
+            (Subscriptions::ExpiresAt, external_placeholder(16)),
+            (Subscriptions::Throttling, external_placeholder(17)),
+            (Subscriptions::Status, cast(external_placeholder(18), PostgresType::SubscriptionStatus)),
+            (Subscriptions::Lang, external_placeholder(19)),
+            (Subscriptions::JsonldContext, external_placeholder(20)),
+            (Subscriptions::LocalOnly, external_placeholder(21)),
+            (Subscriptions::SplitEntities, external_placeholder(22)),
             (Subscriptions::ModifiedAt, now()),
         ])
         .and_where(Expr::col(Subscriptions::Id).eq(external_placeholder(1)))
-        .and_where(Expr::col(Subscriptions::ContextSpaceKey).eq(external_placeholder(21)))
+        .and_where(Expr::col(Subscriptions::ContextSpaceKey).eq(external_placeholder(23)))
         .and_where(of_kind(StoredKind::Entity));
     update.to_string(PostgresQueryBuilder)
 }
@@ -290,6 +310,8 @@ pub fn csource_create_sql() -> Result<String, SubscriptionError> {
         Subscriptions::GeoQ,
         Subscriptions::ScopeQ,
         Subscriptions::Csf,
+        Subscriptions::ExpandValues,
+        Subscriptions::JsonKeys,
         Subscriptions::Notification,
         Subscriptions::ExpiresAt,
         Subscriptions::Throttling,
@@ -318,11 +340,13 @@ pub fn csource_create_sql() -> Result<String, SubscriptionError> {
             external_placeholder(12),
             external_placeholder(13),
             external_placeholder(14),
-            cast(external_placeholder(15), PostgresType::SubscriptionStatus),
+            external_placeholder(15),
             external_placeholder(16),
-            external_placeholder(17),
+            cast(external_placeholder(17), PostgresType::SubscriptionStatus),
             external_placeholder(18),
             external_placeholder(19),
+            external_placeholder(20),
+            external_placeholder(21),
             now(),
             now(),
         ])
@@ -347,16 +371,18 @@ pub fn csource_update_sql() -> String {
             (Subscriptions::GeoQ, external_placeholder(9)),
             (Subscriptions::ScopeQ, external_placeholder(10)),
             (Subscriptions::Csf, external_placeholder(11)),
-            (Subscriptions::Notification, external_placeholder(12)),
-            (Subscriptions::ExpiresAt, external_placeholder(13)),
-            (Subscriptions::Throttling, external_placeholder(14)),
-            (Subscriptions::Status, cast(external_placeholder(15), PostgresType::SubscriptionStatus)),
-            (Subscriptions::Lang, external_placeholder(16)),
-            (Subscriptions::JsonldContext, external_placeholder(17)),
+            (Subscriptions::ExpandValues, external_placeholder(12)),
+            (Subscriptions::JsonKeys, external_placeholder(13)),
+            (Subscriptions::Notification, external_placeholder(14)),
+            (Subscriptions::ExpiresAt, external_placeholder(15)),
+            (Subscriptions::Throttling, external_placeholder(16)),
+            (Subscriptions::Status, cast(external_placeholder(17), PostgresType::SubscriptionStatus)),
+            (Subscriptions::Lang, external_placeholder(18)),
+            (Subscriptions::JsonldContext, external_placeholder(19)),
             (Subscriptions::ModifiedAt, now()),
         ])
         .and_where(Expr::col(Subscriptions::Id).eq(external_placeholder(1)))
-        .and_where(Expr::col(Subscriptions::ContextSpaceKey).eq(external_placeholder(18)))
+        .and_where(Expr::col(Subscriptions::ContextSpaceKey).eq(external_placeholder(20)))
         .and_where(of_kind(StoredKind::Csource));
     update.to_string(PostgresQueryBuilder)
 }
@@ -370,12 +396,12 @@ mod tests {
         let sql = entity_create_sql().expect("the fixed entity insert builds");
         assert!(sql.contains("'entity'"), "{sql}");
         assert!(!sql.contains("'Subscription'"), "the constant type token is no longer a column: {sql}");
-        assert!(sql.contains("$16::subscription_status"), "{sql}");
+        assert!(sql.contains("$18::subscription_status"), "{sql}");
         assert!(sql.contains("NOW()"), "created_at and modified_at stamp the transaction clock: {sql}");
-        for marker in 1..=22 {
+        for marker in 1..=24 {
             assert!(sql.contains(&format!("${marker}")), "missing ${marker}: {sql}");
         }
-        assert!(!sql.contains("$23"), "the create binds exactly twenty-two values: {sql}");
+        assert!(!sql.contains("$25"), "the create binds exactly twenty-four values: {sql}");
         assert!(!sql.contains("is_active"), "the redundant is_active column is gone: {sql}");
     }
 
@@ -387,11 +413,23 @@ mod tests {
     }
 
     #[test]
+    fn every_statement_carries_the_clause_5_2_12_opt_in_lists() {
+        for sql in [
+            entity_create_sql().expect("builds"),
+            csource_create_sql().expect("builds"),
+            entity_update_sql(),
+            csource_update_sql(),
+        ] {
+            assert!(sql.contains("expand_values") && sql.contains("json_keys"), "{sql}");
+        }
+    }
+
+    #[test]
     fn the_csource_create_omits_the_dataset_and_local_only_columns() {
         let sql = csource_create_sql().expect("the fixed context-source insert builds");
         assert!(sql.contains("'csource'"), "{sql}");
-        assert!(sql.contains("$15::subscription_status"), "{sql}");
-        assert!(!sql.contains("$20"), "the context-source create binds nineteen values: {sql}");
+        assert!(sql.contains("$17::subscription_status"), "{sql}");
+        assert!(!sql.contains("$22"), "the context-source create binds twenty-one values: {sql}");
         assert!(!sql.contains("dataset_id"), "a context-source subscription stores no datasetId: {sql}");
     }
 
@@ -400,14 +438,14 @@ mod tests {
         let sql = entity_update_sql();
         assert!(sql.contains(r#""id" = ($1)"#), "{sql}");
         assert!(sql.contains("'entity'"), "{sql}");
-        assert!(sql.contains("$16::subscription_status"), "{sql}");
+        assert!(sql.contains("$18::subscription_status"), "{sql}");
         assert!(sql.contains(r#""modified_at" = NOW()"#), "{sql}");
     }
 
     #[test]
     fn no_replacement_touches_a_delivery_counter_or_the_dropped_columns() {
         for sql in [entity_update_sql(), csource_update_sql()] {
-            for counter in ["times_sent", "last_notification", "last_success", "last_failure"] {
+            for counter in ["times_sent", "times_failed", "last_notification", "last_success", "last_failure"] {
                 assert!(!sql.contains(counter), "a client update must not move {counter}: {sql}");
             }
             assert!(!sql.contains("is_active"), "the redundant is_active column is gone: {sql}");

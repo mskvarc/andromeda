@@ -5,15 +5,13 @@
 
 use crate::{
     EntityService,
-    attribute_envelope::validate_attribute_envelopes,
     error::EntityError,
-    geo_property_geometry::validate_geo_property_geometries,
     merge_fragment::{adapt_member, existing_attribute_types},
     merge_options::MergeOptions,
     notification_fanout::{ChangedEntity, MutationSnapshots},
     notification_plan::{NotificationGroup, attribute_change_groups},
-    null_content::reject_null_content,
     sys_attrs::snapshot_with_sys_attrs,
+    write_admission::{EntityWrite, admit_expanded_entity},
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
@@ -84,9 +82,10 @@ impl EntityService {
         let mut entity_json = serde_json::to_value(entity).map_err(|err| EntityError::validation(format!("Invalid entity payload: {err}")))?;
         normalize_entity_attributes(&mut entity_json);
         let expanded = self.engine.expand(entity_json, context).await?;
-        validate_attribute_envelopes(&expanded)?;
-        reject_null_content(&expanded)?;
-        validate_geo_property_geometries(&expanded)?;
+        // Clause 5.6.1.4 opens with the clause 5.5.4 validation. The transport
+        // layer runs the same screening before it forwards anything, and runs
+        // it again here on whatever the forwarding phase left behind.
+        admit_expanded_entity(&expanded, EntityWrite::Create.null_sentinel_admission())?;
 
         let payload = Arc::new(expanded);
         let types = extract_types(&payload);
@@ -124,8 +123,9 @@ impl EntityService {
     ///
     /// # Errors
     ///
-    /// Reports [`EntityError::Validation`] when the patch cannot be serialised
-    /// or cannot be adapted to the attribute families the target holds,
+    /// Reports [`EntityError::Validation`] when the patch cannot be serialised,
+    /// cannot be adapted to the attribute families the target holds, or sets a
+    /// `datasetId` to the NGSI-LD Null (clause 5.5.12),
     /// [`EntityError::JsonLd`] when the patch or the type expression cannot be
     /// expanded against `context`, [`EntityError::NotFound`] when no entity
     /// carries `id` or the type selector excludes it,
@@ -151,8 +151,12 @@ impl EntityService {
         self.adapt_merge_fragment(target, id, &mut patch_json, &prepared_context, options).await?;
         normalize_merge_fragment(&mut patch_json);
         let patch_expanded = Arc::new(self.engine.expand(patch_json, context).await?);
-        validate_attribute_envelopes(&patch_expanded)?;
-        validate_geo_property_geometries(&patch_expanded)?;
+        // Clause 5.5.12 lets a merge fragment carry the NGSI-LD Null at any
+        // depth, but "a datasetId cannot be deleted by setting it to the value
+        // urn:ngsi-ld:null". Clause 4.18 admits the sentinel as the whole value
+        // of `scope`, which clause 5.5.12 then reads as the deletion of that
+        // member.
+        admit_expanded_entity(&patch_expanded, EntityWrite::MergeEntity.null_sentinel_admission())?;
 
         let MergedEntity { events } = self
             .commit_computed_write(target, &entity_uri, |previous| {
@@ -252,10 +256,8 @@ impl EntityService {
         let mut patch_json = serde_json::to_value(patch).map_err(|err| EntityError::validation(format!("Invalid patch payload: {err}")))?;
         normalize_entity_attributes(&mut patch_json);
         let expanded = self.engine.expand(patch_json, context).await?;
-        validate_attribute_envelopes(&expanded)?;
         // Clause 5.6.18.4: Replace Entity does not support null values.
-        reject_null_content(&expanded)?;
-        validate_geo_property_geometries(&expanded)?;
+        admit_expanded_entity(&expanded, EntityWrite::ReplaceEntity.null_sentinel_admission())?;
 
         let payload = Arc::new(expanded);
         let entity_id = Arc::new(entity_uri.clone()); // clone: repeated computed-write attempts share the validated identifier.

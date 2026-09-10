@@ -14,6 +14,7 @@ use crate::temporal::{
     StatusCode,
     TemporalSimplifyPayload,
     TemporalSimplifyRenderer,
+    query::page::QueriedPage,
     start_rendering,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
@@ -49,6 +50,11 @@ pub(crate) struct TemporalCollectionMetadata {
     pub(crate) range: Option<TemporalRange>,
     /// The Entity Map the query ran under (clause 5.5.14).
     pub(crate) entity_map_uri: Option<NgsiLdUri>,
+    /// The clause 6.3.10 element page the `Link` relations point around.
+    pub(crate) page: QueriedPage,
+    /// How many matching entities that page carried, counted before a flat
+    /// clause 4.5.23 join appended the entities they link to.
+    pub(crate) returned: usize,
 }
 
 /// Render the queried collection and assemble the response around it.
@@ -70,6 +76,8 @@ pub(crate) fn query_response(
         total_count,
         range,
         entity_map_uri,
+        page,
+        returned,
     } = metadata;
     let rendered = start_rendering(accept.media_type(), context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Collection(entities))
@@ -87,5 +95,11 @@ pub(crate) fn query_response(
     if let Some(map_uri) = entity_map_uri {
         response = response.with_entity_map_uri(map_uri);
     }
-    Ok(response.into_response())
+    // Clause 6.3.10 gives the temporal binding two pagination dimensions: the
+    // `Content-Range` above bounds the history each entity carries, while these
+    // links bound how many entities the page carries. Neither suppresses the
+    // other, so a truncated page still says whether more matches follow.
+    let mut response = response.into_response();
+    page.append_links(&mut response, instance, accept.media_type(), total_count, returned);
+    Ok(response)
 }

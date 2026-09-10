@@ -12,10 +12,10 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::{ConsideredEntities, EntitySelection},
-    error::QueryError,
     filter::{
-        expansion::{apply_expand_values, apply_json_keys, expand_q_expr},
+        expansion::{apply_expand_values, expand_attribute_names, expand_q_expr},
         expression::Expr,
+        json_key_attributes::JsonKeyAttributes,
         path::expanded_attribute_name,
     },
     geo::{compile as geo_compile, query::GeoQuery},
@@ -31,7 +31,6 @@ use andromeda_ngsi_ld_query::{
     },
 };
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, entity::parameters::EntityQueryParameters};
-use iri_rs::IriBuf;
 use std::{collections::HashSet, sync::Arc};
 
 impl EntityQueryService {
@@ -141,40 +140,31 @@ impl EntityQueryService {
         Ok(compiled)
     }
 
-    /// Expand the `q` filter, then apply the clause 6.4.3.2 `expandValues` and
-    /// `jsonKeys` opt-ins to it.
+    /// Expand the `q` filter under the clause 4.9 `jsonKeys` declaration, then
+    /// apply the `expandValues` coercion to the result.
     async fn compile_q_expression(&self, params: &EntityQueryParameters, prepared_context: &PreparedTermContext) -> Result<Option<Expr>, EntityError> {
         let expander = ContextualExpander::new(self.engine(), prepared_context);
         // Expansion consumes its AST; the cache-owned request remains immutable across lookups.
         let Some(q_expr) = params.q.clone() else {
             return Ok(None);
         };
-        let q_expr = expand_q_expr(q_expr, &expander).await?;
+        // `jsonKeys` decides how the filter's own terms expand, so it is
+        // resolved before the expansion rather than applied to its result.
+        let json_keys: JsonKeyAttributes = match params.json_keys {
+            Some(ref raw) => expand_attribute_names(raw, &expander).await?.into_iter().collect(),
+            None => JsonKeyAttributes::default(),
+        };
+        let q_expr = expand_q_expr(q_expr, &json_keys, &expander).await?;
 
         let q_expr = match params.expand_values {
             Some(ref raw) => {
-                let opted_in = self.opted_in_attributes(raw, prepared_context).await?;
+                let opted_in: HashSet<AttributeName> = expand_attribute_names(raw, &expander).await?.into_iter().collect();
                 apply_expand_values(q_expr, &opted_in, &expander).await?
             }
             None => q_expr,
         };
 
-        let q_expr = match params.json_keys {
-            Some(ref raw) => {
-                let opted_in = self.opted_in_attributes(raw, prepared_context).await?;
-                apply_json_keys(q_expr, &opted_in, &expander).await?
-            }
-            None => q_expr,
-        };
-
         Ok(Some(q_expr))
-    }
-
-    /// Expand a comma-separated opt-in list into the attribute names a `q`
-    /// filter is keyed by (clause 6.4.3.2).
-    async fn opted_in_attributes(&self, names: &[AttributeName], context: &PreparedTermContext) -> Result<HashSet<AttributeName>, EntityError> {
-        let iris = expand_attrs(names, &ContextualExpander::new(self.engine(), context)).await?;
-        Ok(opted_in_attribute_names(&iris)?)
     }
 
     /// Compile the `orderBy` terms against the active context (clause 4.23).
@@ -213,10 +203,4 @@ impl EntityQueryService {
 fn compile_ordering_geometry(params: &EntityQueryParameters) -> Option<OrderingGeometry> {
     // The compiled query owns the geometry independently of the reusable request parameters.
     params.ordering.geometry.clone()
-}
-
-/// Read an expanded `expandValues` / `jsonKeys` selection as the attribute
-/// names a `q` filter is keyed by (clause 6.4.3.2).
-fn opted_in_attribute_names(iris: &[IriBuf]) -> Result<HashSet<AttributeName>, QueryError> {
-    iris.iter().map(expanded_attribute_name).collect()
 }

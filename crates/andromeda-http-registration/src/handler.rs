@@ -25,7 +25,7 @@ use andromeda_http_response::{
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_render::{registration::RegistrationRenderer, response::ResponsePayload};
+use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, registration::RegistrationRenderer, response::ResponsePayload};
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, csr::CsrQueryParameters};
 use axum::{
     extract::OriginalUri,
@@ -71,7 +71,7 @@ pub(crate) async fn get(
         .with_language_filter(params.lang.as_ref())
         .render();
     let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
-        .with_geometry_property(params.geometry_property.as_ref())
+        .with_geometry_selection(GeometrySelection::new(params.geometry_property.as_ref(), &[]))
         .with_payload(ResponsePayload::Single(payload))
         .render()
         .with_registration_instance(&uri)?;
@@ -114,7 +114,7 @@ pub(crate) async fn query(
         })
         .collect::<Vec<_>>();
     let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
-        .with_geometry_property(params.geometry_property.as_ref())
+        .with_geometry_selection(GeometrySelection::new(params.geometry_property.as_ref(), &[]))
         .with_payload(ResponsePayload::Collection(registrations))
         .render()
         .with_registration_instance(&uri)?;

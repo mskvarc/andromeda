@@ -25,6 +25,14 @@ async fn list_types_rejects_geo_json_accept_with_406() {
         .await
         .expect("list types request failed");
     pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
+    // Clause 6.3.4: the refusal's "body of the message shall contain the list
+    // of the available representations of the resources", and `/types` has no
+    // GeoJSON form to offer among them.
+    let body: serde_json::Value = response.json().await.expect("clause 6.3.4 requires a body on a 406");
+    pretty_assertions::assert_eq!(
+        body,
+        serde_json::json!({"availableRepresentations": ["application/json", "application/ld+json"]})
+    );
 }
 
 #[tokio::test]

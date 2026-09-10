@@ -9,6 +9,7 @@ use crate::{
         CsrModeFilter,
         ForwardTemporalQueryRequest,
         ForwardingOperation,
+        JsonKeyAttributes,
         ProblemResponse,
         ResultInstanceExt,
         TemporalQueryParameters,
@@ -27,6 +28,41 @@ use andromeda_jsonld::engine::processor::JsonLdEngine;
 use axum::http::Uri;
 use tracing::warn;
 
+/// How far a temporal query reaches (clause 5.5.13 `local`).
+///
+/// Clause 5.5.13 lets a request be "limited to the local scope", and a Snapshot
+/// branch has no distributed reading at all, so both answers are decided here
+/// once and the forwarding reads that answer rather than a flag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QueryScope {
+    /// The query stays inside this broker; no context source is contacted.
+    Local,
+    /// The query is spread over every matching registration.
+    Distributed,
+}
+
+impl QueryScope {
+    /// How far `params` reaches against `target`.
+    pub(crate) fn of(target: &ContextTarget, params: &TemporalQueryParameters) -> QueryScope {
+        if target.permits_federation() && !params.is_local() {
+            QueryScope::Distributed
+        } else {
+            QueryScope::Local
+        }
+    }
+
+    /// Whether an entity's attributes may be met spread over several sources.
+    ///
+    /// Clause 5.7.4.4: only a distributed read can meet a split entity, so a
+    /// local one always sees complete entities and defers no filter.
+    pub(crate) const fn splitting(self, requested: SplitEntities) -> SplitEntities {
+        match self {
+            QueryScope::Local => SplitEntities::Complete,
+            QueryScope::Distributed => requested,
+        }
+    }
+}
+
 /// How a temporal query reaches the context sources that hold the rest of the
 /// history: the federation service that contacts them, the triggering request
 /// every forwarded copy replays (clause 6.3.18), the `splitEntities` mode they
@@ -44,12 +80,15 @@ pub(crate) struct TemporalForwarding<'a> {
     pub(crate) map_use: &'a EntityMapUse,
 }
 
-/// Ask every matching context source for its part of the history.
+/// Ask every matching context source for its part of the history, unless the
+/// query stays inside this broker.
 ///
 /// The context source filter selects registrations in its expanded form; the
 /// raw expression travels on as the client wrote it, since clause 5.7.4.4
 /// propagates it into discovery. A source that cannot be reached contributes a
-/// clause 6.3.17 warning rather than failing the operation.
+/// clause 6.3.17 warning rather than failing the operation. A clause 5.5.13
+/// local query contacts nothing and answers with no contribution at all, which
+/// is what the absent result means.
 ///
 /// # Errors
 ///
@@ -58,23 +97,34 @@ pub(crate) struct TemporalForwarding<'a> {
 /// data declined the requested representation.
 pub(crate) async fn forward_temporal_history(
     sources: TemporalForwarding<'_>,
+    scope: QueryScope,
     engine: &JsonLdEngine,
     target: &ContextTarget,
     params: &TemporalQueryParameters,
     context: &ContextSpec,
     instance: &Uri,
-) -> Result<Vec<ForwardedTemporalEntities>, ProblemResponse> {
+) -> Result<Option<Vec<ForwardedTemporalEntities>>, ProblemResponse> {
     let TemporalForwarding {
         forwarding,
         triggering,
         split,
         map_use,
     } = sources;
+    if scope == QueryScope::Local {
+        return Ok(None);
+    }
+    // No `jsonKeys` declaration applies to `csf`: Table 5.2.12-1 scopes that
+    // member to Entity attribute names, while `csf` addresses the Context
+    // Source Properties of a registration (clause 4.10).
     let csf_expr = match &params.csf {
         Some(expr) => {
             let prepared_context = engine.prepare_term_context(context);
             let expander = ContextualExpander::new(engine, &prepared_context);
-            Some(expand_q_expr(expr.clone(), &expander).await.with_instance(instance)?) // clone: the raw filter stays in the query for forwarding
+            Some(
+                expand_q_expr(expr.clone(), &JsonKeyAttributes::default(), &expander)
+                    .await
+                    .with_instance(instance)?,
+            ) // clone: the raw filter stays in the query for forwarding
         }
         None => None,
     };
@@ -100,6 +150,56 @@ pub(crate) async fn forward_temporal_history(
         });
     match outcome.sources.single_source_status {
         Some(status) => Err(single_source_declined(status, instance)),
-        None => Ok(outcome.results),
+        None => Ok(Some(outcome.results)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::temporal::query::forwarding::QueryScope;
+    use andromeda_context_space::{
+        context_space::{ContextSpace, ContextSpaceKind},
+        context_space_key::ContextSpaceKey,
+        context_target::ContextTarget,
+    };
+    use andromeda_federation::config::SplitEntities;
+    use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+
+    /// The tenant's ordinary live branch, which a distributed read may leave.
+    fn live_target() -> ContextTarget {
+        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+    }
+
+    /// A temporal query confined to this broker (clause 5.5.13 `local=true`).
+    fn local_query() -> TemporalQueryParameters {
+        TemporalQueryParameters {
+            local: Some(true),
+            ..TemporalQueryParameters::default()
+        }
+    }
+
+    /// Clause 5.5.13: a request limited to the local scope contacts no context
+    /// source, whatever registrations would otherwise match.
+    #[test]
+    fn a_local_query_never_leaves_this_broker() {
+        pretty_assertions::assert_eq!(QueryScope::of(&live_target(), &local_query()), QueryScope::Local);
+    }
+
+    /// A query that did not ask for the local scope reaches every matching
+    /// registration (clause 5.7.4.4).
+    #[test]
+    fn a_query_that_did_not_ask_for_the_local_scope_is_distributed() {
+        pretty_assertions::assert_eq!(QueryScope::of(&live_target(), &TemporalQueryParameters::default()), QueryScope::Distributed);
+    }
+
+    /// Clause 5.7.4.4: only a distributed read can meet an entity whose
+    /// attributes are spread over several sources, so a local one always sees
+    /// complete entities however the request asked.
+    #[test]
+    fn a_local_query_always_sees_complete_entities() {
+        pretty_assertions::assert_eq!(QueryScope::Local.splitting(SplitEntities::Split), SplitEntities::Complete);
+        pretty_assertions::assert_eq!(QueryScope::Distributed.splitting(SplitEntities::Split), SplitEntities::Split);
+        pretty_assertions::assert_eq!(QueryScope::Distributed.splitting(SplitEntities::Complete), SplitEntities::Complete);
     }
 }

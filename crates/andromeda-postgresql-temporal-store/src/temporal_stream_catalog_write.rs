@@ -179,9 +179,11 @@ fn stream_binds<'a>(
     };
     let mut seen: HashSet<(i64, AttributeNameId, Option<&'a str>)> = HashSet::new();
     for upsert in upserts {
-        // Every entity's key is resolved before this runs: a typeless intent for
-        // a nonexistent evolution has already failed with `NotFound`, and a
-        // typed one always comes back from the entity upsert's `RETURNING`.
+        // An upsert that may create always comes back from the entity upsert's
+        // `RETURNING`, and a typeless observation for a nonexistent evolution
+        // has already failed with `NotFound`. What is left is a deletion whose
+        // evolution clause 5.6.16 already removed: it owns no temporal entity,
+        // so it requests no streams either.
         let Some(entity_key) = entity_keys.get(&upsert.entity_id) else {
             continue;
         };
@@ -336,6 +338,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
     use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
     use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+    use andromeda_temporal::write_purpose::TemporalWritePurpose;
     use std::collections::HashMap;
 
     const SPEED: &str = "https://uri.etsi.org/ngsi-ld/default-context/speed";
@@ -352,6 +355,7 @@ mod tests {
         TemporalCatalogUpsert {
             entity_id: entity_id.parse::<Uri>().expect("valid entity URI"),
             types: Vec::new(),
+            purpose: TemporalWritePurpose::Observation,
             streams,
         }
     }

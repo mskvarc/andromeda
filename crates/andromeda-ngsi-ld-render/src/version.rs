@@ -4,7 +4,9 @@
 //! a 203 Non-Authoritative Information and adapts the payload to remove or
 //! reformat fields that did not exist in the requested version.
 
+use crate::object_list::object_list_member_target;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, spec_version::SpecVersion};
+use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use serde_json::Value;
 use std::str::FromStr;
 
@@ -239,10 +241,16 @@ fn adapt_attribute_instance(instance: &mut Value, target: SpecVersion) {
         }
         Some(AttributeType::ListRelationship) => {
             if target < SpecVersion::V1_8 {
-                // Reformat ListRelationship as Relationship: objectList -> object (first element)
-                if let Some(Value::Array(list)) = obj.remove("objectList") {
-                    let first = list.into_iter().next().unwrap_or(Value::Null);
-                    obj.insert("object".to_string(), first);
+                // Reformat ListRelationship as Relationship: objectList -> object
+                // (the first target). Both representations clause 4.5.22 gives
+                // the member are read, since the downgrade runs over whichever
+                // one the response was already rendered in.
+                if let Some(Value::Array(list)) = obj.remove(compact_properties::OBJECT_LIST) {
+                    let first = list
+                        .first()
+                        .and_then(object_list_member_target)
+                        .map_or(Value::Null, |target| Value::String(target.to_owned()));
+                    obj.insert(compact_properties::OBJECT.to_string(), first);
                 }
                 obj.insert("type".to_string(), Value::String("Relationship".to_string()));
             }
@@ -458,6 +466,27 @@ mod tests {
         pretty_assertions::assert_eq!(cat.get("type").and_then(|t| t.as_str()), Some("Property"));
         assert!(cat.get("vocab").is_none());
         pretty_assertions::assert_eq!(cat.get("value").and_then(|v| v.as_str()), Some("commercial"));
+    }
+
+    /// Table 5.2.37-1 gives the member two representations, and the downgrade
+    /// runs over whichever one the response was rendered in, so the normalized
+    /// `object`-keyed member yields the same v1.4 Relationship target as the
+    /// concise bare string does.
+    #[test]
+    fn v1_4_reformats_a_normalized_list_relationship_as_relationship() {
+        let value = json!({
+            "id": "urn:ngsi-ld:Entity:2",
+            "type": "TestEntity",
+            "refRooms": {
+                "type": "ListRelationship",
+                "objectList": [{"object": "urn:ngsi-ld:Room:1"}, {"object": "urn:ngsi-ld:Room:2"}]
+            }
+        });
+        let adapted = adapt(SpecVersion::V1_4, value);
+        let rel = adapted.get("refRooms").expect("the downgraded attribute");
+        pretty_assertions::assert_eq!(rel.get("type").and_then(|t| t.as_str()), Some("Relationship"));
+        assert!(rel.get("objectList").is_none());
+        pretty_assertions::assert_eq!(rel.get("object").and_then(|v| v.as_str()), Some("urn:ngsi-ld:Room:1"));
     }
 
     #[test]

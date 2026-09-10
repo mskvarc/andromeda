@@ -59,11 +59,18 @@ mod tests {
     use jsonld::Expandable;
     use serde_json::Value;
 
+    /// Clause 4.6.3 admits several spellings of one `DateTime`, so the document
+    /// representation carries the one the client wrote rather than re-rendering
+    /// it. What the value *is* under the clause is decided by
+    /// `andromeda_ngsi_ld_lexicon::time_value::TimeValue`, where the write
+    /// projection and the clause 4.9 `q` operand parser both read it; this type
+    /// carries the text so that a `2018-12-04T12:00:00.250000Z` a client wrote
+    /// is not served back as `2018-12-04T12:00:00.250Z`.
     #[test]
-    fn property_round_trip_supports_value_type_and_previous_value() {
+    fn property_round_trip_carries_the_written_value_alongside_value_type_and_previous_value() {
         let json = serde_json::json!({
             "type": "Property",
-            "value": "2018-12-04T12:00:00Z",
+            "value": "2018-12-04T12:00:00.250000Z",
             "valueType": "DateTime",
             "previousValue": "2018-12-03T12:00:00Z",
             "instanceId": "urn:ngsi-ld:attribute:instance:1"
@@ -72,7 +79,7 @@ mod tests {
         let Attribute::Property(property) = attr else {
             panic!("expected Property");
         };
-        assert!(matches!(property.value, NgsiLdValue::DateTime(_)));
+        pretty_assertions::assert_eq!(property.value, NgsiLdValue::Json(Value::String("2018-12-04T12:00:00.250000Z".to_owned())));
         pretty_assertions::assert_eq!(property.value_type.as_ref().map(NgsiLdReference::as_str), Some("DateTime"));
         assert!(property.previous_value.is_some());
         assert!(property.common.instance_id.is_some());

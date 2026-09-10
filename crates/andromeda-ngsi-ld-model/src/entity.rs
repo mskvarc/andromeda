@@ -15,11 +15,12 @@ use serde_with::skip_serializing_none;
 use std::{
     iter::once,
     slice::{Iter, from_ref},
+    vec::IntoIter,
 };
 use typed_builder::TypedBuilder;
 
 /// Single or multiple scope values on an entity (ETSI GS CIM 009 clause 5.2.4).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ScopeValue {
     /// Exactly one scope.
@@ -34,6 +35,43 @@ impl ScopeValue {
         match self {
             ScopeValue::Single(s) => from_ref(s).iter(),
             ScopeValue::Multiple(v) => v.iter(),
+        }
+    }
+
+    /// Fold another representation's scopes into these, dropping duplicates.
+    ///
+    /// Clause 4.18: "In case multiple representations of the same Entity have
+    /// to be merged, e.g. when combining the results of distributed queries,
+    /// the values of scope are merged." The same clause allows "at most be one
+    /// instance of the scope property per Entity", so the fold is a set union
+    /// and never a pair of competing instances.
+    #[must_use]
+    pub fn merged_with(self, other: ScopeValue) -> ScopeValue {
+        let mut scopes: Vec<ScopeBuf> = self.into_iter().collect();
+        for scope in other {
+            if !scopes.contains(&scope) {
+                scopes.push(scope);
+            }
+        }
+        // Clause 4.18: "The value of scope is represented as a JSON array in
+        // case there is more than one Scope", so a single survivor stays bare.
+        match <[ScopeBuf; 1]>::try_from(scopes) {
+            Ok([single]) => ScopeValue::Single(single),
+            Err(several) => ScopeValue::Multiple(several),
+        }
+    }
+}
+
+// Owned iteration is what the clause 4.18 merge folds over; the borrowed form
+// below serves read-only callers.
+impl IntoIterator for ScopeValue {
+    type Item = ScopeBuf;
+    type IntoIter = IntoIter<ScopeBuf>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        match self {
+            ScopeValue::Single(scope) => vec![scope].into_iter(),
+            ScopeValue::Multiple(scopes) => scopes.into_iter(),
         }
     }
 }

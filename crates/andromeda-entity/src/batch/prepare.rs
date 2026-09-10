@@ -8,11 +8,11 @@
 
 use crate::{
     EntityService,
-    attribute_envelope::validate_attribute_envelopes,
     batch::execution::{BatchExecution, decide_batch_execution},
     error::EntityError,
-    geo_property_geometry::validate_geo_property_geometries,
+    null_sentinel_admission::NullSentinelAdmission,
     port::blocking_executor::BlockingTask,
+    write_admission::{BatchWrite, admit_expanded_entity},
 };
 use andromeda_context_commit::entity_record::SearchProjection;
 use andromeda_jsonld::{
@@ -93,6 +93,7 @@ struct FastPreparationTask {
     entries: Vec<ClassifiedEntry>,
     engine: JsonLdEngine,
     handle: BatchContextHandle,
+    admission: NullSentinelAdmission,
     outputs: Arc<Mutex<Vec<FastPoolOutput>>>,
 }
 
@@ -101,7 +102,7 @@ impl BlockingTask for FastPreparationTask {
         let prepared = self
             .entries
             .into_iter()
-            .map(|entry| process_fast_entry(entry, &self.engine, &self.handle))
+            .map(|entry| process_fast_entry(entry, &self.engine, &self.handle, self.admission))
             .collect::<Vec<_>>();
         self.outputs
             .lock()
@@ -126,11 +127,11 @@ pub(super) fn classify_batch(entries: Vec<ClassifiedEntry>, handle: &BatchContex
     ClassifiedBatch { fast, slow }
 }
 
-fn process_fast_entry(entry: ClassifiedEntry, engine: &JsonLdEngine, handle: &BatchContextHandle) -> FastPoolOutput {
+fn process_fast_entry(entry: ClassifiedEntry, engine: &JsonLdEngine, handle: &BatchContextHandle, admission: NullSentinelAdmission) -> FastPoolOutput {
     match engine.try_fast_expand(&entry.value, handle) {
         Some(expanded) => FastPoolOutput::Done {
             idx: entry.idx,
-            result: Box::new(EntityService::build_prepared_entity(entry.id, expanded)),
+            result: Box::new(EntityService::build_prepared_entity(entry.id, expanded, admission)),
         },
         None => FastPoolOutput::Demoted(entry),
     }
@@ -157,11 +158,13 @@ impl EntityService {
         )
     }
 
-    fn build_prepared_entity(id: Uri, expanded: Value) -> PreparedSlot {
-        // Both checks attribute their failure to this one entity, so clause
-        // 5.6.7's multi-status answer reports it without failing its siblings.
-        validate_attribute_envelopes(&expanded).map_err(|error| Box::new((id.clone(), error)))?; // clone: the success path retains the identifier
-        validate_geo_property_geometries(&expanded).map_err(|error| Box::new((id.clone(), error)))?; // clone: the success path retains the identifier
+    fn build_prepared_entity(id: Uri, expanded: Value, admission: NullSentinelAdmission) -> PreparedSlot {
+        // Clauses 5.6.7.4, 5.6.8.4, 5.6.9.4 and 5.6.20.4 each open with
+        // "execute the behaviour defined in clause 5.5.4 on JSON-LD
+        // validation". The failure attributes itself to this one entity, so
+        // clause 5.6.7's multi-status answer reports it without failing its
+        // siblings.
+        admit_expanded_entity(&expanded, admission).map_err(|error| Box::new((id.clone(), error)))?; // clone: the success path retains the identifier
         let projection = SearchProjection::from_expanded(&expanded);
         // The names the request changed are the names the payload carries: a
         // batch create or replace writes the whole payload.
@@ -179,12 +182,21 @@ impl EntityService {
         })
     }
 
-    async fn run_fast_pool(&self, fast: Vec<ClassifiedEntry>, handle: &BatchContextHandle, execution: BatchExecution) -> Vec<FastPoolOutput> {
+    async fn run_fast_pool(
+        &self,
+        fast: Vec<ClassifiedEntry>,
+        handle: &BatchContextHandle,
+        execution: BatchExecution,
+        admission: NullSentinelAdmission,
+    ) -> Vec<FastPoolOutput> {
         if fast.is_empty() {
             return Vec::new();
         }
         match execution {
-            BatchExecution::Inline => fast.into_iter().map(|entry| process_fast_entry(entry, &self.engine, handle)).collect(),
+            BatchExecution::Inline => fast
+                .into_iter()
+                .map(|entry| process_fast_entry(entry, &self.engine, handle, admission))
+                .collect(),
             BatchExecution::Offload { fast_chunks, .. } => {
                 let chunk_size = self.batch_execution.chunk_size.max(1);
                 let outputs = Arc::new(Mutex::new(Vec::new()));
@@ -194,8 +206,9 @@ impl EntityService {
                 let prepare_task = |entries: Vec<ClassifiedEntry>| -> Box<dyn BlockingTask> {
                     Box::new(FastPreparationTask {
                         entries,
-                        engine: self.engine.clone(),   // clone: task execution shares the engine's internal Arcs.
-                        handle: handle.clone(),        // clone: task execution shares the resolved context handle.
+                        engine: self.engine.clone(), // clone: task execution shares the engine's internal Arcs.
+                        handle: handle.clone(),      // clone: task execution shares the resolved context handle.
+                        admission,
                         outputs: Arc::clone(&outputs), // clone: every task writes to the same result collection.
                     })
                 };
@@ -222,7 +235,13 @@ impl EntityService {
         }
     }
 
-    async fn run_slow_pool(&self, slow: Vec<ClassifiedEntry>, handle: &BatchContextHandle, execution: BatchExecution) -> Vec<IndexedPrepared> {
+    async fn run_slow_pool(
+        &self,
+        slow: Vec<ClassifiedEntry>,
+        handle: &BatchContextHandle,
+        execution: BatchExecution,
+        admission: NullSentinelAdmission,
+    ) -> Vec<IndexedPrepared> {
         if slow.is_empty() {
             return Vec::new();
         }
@@ -255,7 +274,7 @@ impl EntityService {
             let bulk = self.engine.expand_prepared_array(docs, handle.spec().core_policy()).await;
             for ((idx, id, _), expanded) in hit_pending.into_iter().zip(bulk) {
                 let result = match expanded {
-                    Ok(v) => Self::build_prepared_entity(id, v),
+                    Ok(v) => Self::build_prepared_entity(id, v, admission),
                     Err(error) => Err(Box::new((id, error.into()))),
                 };
                 results.push((idx, result));
@@ -274,7 +293,7 @@ impl EntityService {
                         Ok(v) => v,
                         Err(error) => return (idx, Err(Box::new((id, error.into())))),
                     };
-                    (idx, Self::build_prepared_entity(id, expanded))
+                    (idx, Self::build_prepared_entity(id, expanded, admission))
                 })
                 .buffered(concurrency)
                 .collect()
@@ -285,7 +304,33 @@ impl EntityService {
         results
     }
 
-    pub(super) async fn prepare_entity_refs(&self, entities: &[&Entity], context: &ContextSpec) -> (Vec<PreparedEntity>, Vec<(Uri, EntityError)>) {
+    /// Run the clause 5.5.4 screening of `write` over a batch's entities,
+    /// before the operation forwards any of them.
+    ///
+    /// Clauses 5.6.7.4 to 5.6.9.4 and 5.6.20.4 each open with "execute the
+    /// behaviour defined in clause 5.5.4 on JSON-LD validation" and only then
+    /// forward to matching registrations, so an entity this broker refuses is
+    /// never handed to a Context Source, and one whose attributes a proxied
+    /// registration claims in full -- an entity the local phase never sees --
+    /// has still been validated.
+    ///
+    /// Returns one error per entity that fails, against that entity's own
+    /// identifier: clause 5.6.7.4 adds "a new `BatchEntityError` [...] containing
+    /// the failed Entity ID and the related `ProblemDetails`" rather than failing
+    /// the request. The expanded payloads are dropped, because the local phase
+    /// runs over what the forwarding phase leaves and prepares that instead.
+    pub async fn admit_batch_write(&self, write: BatchWrite, entities: &[Entity], context: &ContextSpec) -> Vec<(Uri, EntityError)> {
+        let refs: Vec<&Entity> = entities.iter().collect();
+        let (_prepared, errors) = self.prepare_entity_refs(&refs, context, write.null_sentinel_admission()).await;
+        errors
+    }
+
+    pub(super) async fn prepare_entity_refs(
+        &self,
+        entities: &[&Entity],
+        context: &ContextSpec,
+        admission: NullSentinelAdmission,
+    ) -> (Vec<PreparedEntity>, Vec<(Uri, EntityError)>) {
         let len = entities.len();
         let handle = self.engine.batch_context_handle(context).await;
 
@@ -305,7 +350,7 @@ impl EntityService {
         let execution = self.batch_execution(len, classified.fast.len(), classified.slow.len());
 
         // Process the fast bucket; collect demotions for the slow pool.
-        let fast_outputs = self.run_fast_pool(classified.fast, &handle, execution).await;
+        let fast_outputs = self.run_fast_pool(classified.fast, &handle, execution, admission).await;
         let mut indexed_results: Vec<Option<PreparedSlot>> = (0..len).map(|_| None).collect();
         let mut demoted: Vec<ClassifiedEntry> = Vec::new();
         for output in fast_outputs {
@@ -326,7 +371,7 @@ impl EntityService {
         }
 
         let slow_inputs: Vec<ClassifiedEntry> = classified.slow.into_iter().chain(demoted).collect();
-        let slow_outputs = self.run_slow_pool(slow_inputs, &handle, execution).await;
+        let slow_outputs = self.run_slow_pool(slow_inputs, &handle, execution, admission).await;
         for (idx, result) in slow_outputs {
             indexed_results[idx] = Some(result);
         }

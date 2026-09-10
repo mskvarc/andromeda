@@ -46,6 +46,7 @@ use andromeda_ngsi_ld_query::{
     scope::query::ScopeQuery,
     temporal::{
         aggregation_period::{AggregationPeriod, optional},
+        ordering::TemporalEntityOrdering,
         window::{BoundPresence, TimeInterval},
     },
     type_selection::grammar::TypeExprRaw,
@@ -60,6 +61,8 @@ use std::num::NonZeroU32;
 pub mod body_conversion;
 /// Boundary deserialisers for the temporal-only parameters.
 pub mod deserialization;
+/// The URL parameters the POST binding carries beside its clause 5.2.23 body.
+pub mod post_parameters;
 
 /// Raw HTTP query parameters for temporal entity queries.
 ///
@@ -279,8 +282,9 @@ impl TemporalQueryParameters {
     /// not reach, [`ParameterError::InlineJoinWithoutInstances`] when
     /// `join=inline` meets a representation with no instance to nest under,
     /// [`ParameterError::OrderingRequiresLocalScope`] and
-    /// [`ParameterError::TemporalOrderingNotById`] for an ordering clause
-    /// 5.7.4.4 does not admit, [`ParameterError::TimerelTimeatRequired`] and
+    /// [`ParameterError::Query`] carrying a temporal-ordering failure for an
+    /// ordering clause 5.7.4.3 does not admit,
+    /// [`ParameterError::TimerelTimeatRequired`] and
     /// [`ParameterError::SelectorRequired`] when a query endpoint omits the
     /// temporal window or every entity selector,
     /// [`ParameterError::Query`] when the `timerel`, `timeAt` and `endTimeAt`
@@ -322,14 +326,17 @@ impl TemporalQueryParameters {
                 TemporalFormat::Normalized => {}
             }
         }
-        // Clause 5.7.4.4: ordering is defined over the local result only, and
-        // only the entity member `id` can order a temporal query.
+        // Clause 5.7.4.4: "If the ordering parameter is present and the
+        // execution of the operation is not limited to the local scope (see
+        // clause 5.5.13) then an error of type BadRequestData shall be
+        // raised."
         if !self.ordering.order_by.is_empty() && !self.is_local() {
             return Err(ParameterError::OrderingRequiresLocalScope);
         }
-        if let Some(term) = self.ordering.order_by.iter().find(|term| AsRef::<str>::as_ref(&term.attr) != "id") {
-            return Err(ParameterError::TemporalOrderingNotById(term.attr.to_string()));
-        }
+        // Which orderings clause 5.7.4.3 admits is a property of the ordering
+        // itself; the request seam asks the compiled form rather than
+        // restating the rule, and compilation later reads the same answer.
+        TemporalEntityOrdering::of_parameters(&self.ordering).map_err(ParameterError::Query)?;
         if require_temporal {
             if self.timerel.is_none() || self.time_at.is_none() {
                 return Err(ParameterError::TimerelTimeatRequired);
@@ -370,6 +377,7 @@ mod tests {
         query::{SharedQueryParams, temporal::TemporalQueryParameters},
     };
     use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
+    use andromeda_ngsi_ld_query::error::QueryError;
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use std::num::NonZeroU32;
 
@@ -632,9 +640,42 @@ mod tests {
         ));
         assert!(matches!(
             params_from_query(&format!("{window}&local=true&orderBy=speed")).validate(true),
-            Err(ParameterError::TemporalOrderingNotById(member)) if member == "speed"
+            Err(ParameterError::Query(QueryError::TemporalOrderingMember(member))) if member == "speed"
         ));
         assert!(params_from_query(&format!("{window}&local=true&orderBy=id")).validate(true).is_ok());
+    }
+
+    /// Table 6.18.3.2-1 gives `orderBy` as "The Entity member ("id") appended
+    /// with an optional sorting style ("asc", "desc")", so a distance style is
+    /// refused rather than accepted and left without effect.
+    #[test]
+    fn a_distance_sorting_style_does_not_order_a_temporal_query() {
+        let window = "type=Vehicle&timerel=before&timeAt=2030-01-01T00:00:00Z";
+        assert!(matches!(
+            params_from_query(&format!("{window}&local=true&orderBy=id;dist-asc")).validate(true),
+            Err(ParameterError::Query(QueryError::TemporalOrderingDirection(_)))
+        ));
+    }
+
+    /// Table 6.18.3.2-1 makes `collation` "part of Entity ordering", so a
+    /// collation with no `orderBy` orders nothing and needs no local scope.
+    #[test]
+    fn a_collation_without_an_order_by_is_admissible_without_the_local_scope() {
+        let window = "type=Vehicle&timerel=before&timeAt=2030-01-01T00:00:00Z";
+        assert!(params_from_query(&format!("{window}&collation=de-u-co-phonebk")).validate(true).is_ok());
+    }
+
+    /// Clause 5.7.4.4: "If a preferred collation setting is present and it does
+    /// not conform to a valid ICU collation (see IETF RFC 6067) then an error
+    /// of type `BadRequestData` shall be raised." The value never becomes a
+    /// parameter at all, so the rejection happens while the query string is
+    /// read.
+    #[test]
+    fn an_invalid_collation_is_refused_while_the_temporal_query_string_is_read() {
+        for invalid in ["collation=de-u-nu-latn", "collation=not%20a%20collation", "collation=und-u-zz-nonsense"] {
+            assert!(serde_urlencoded::from_str::<TemporalQueryParameters>(invalid).is_err(), "{invalid}");
+        }
+        assert!(serde_urlencoded::from_str::<TemporalQueryParameters>("collation=de-u-co-phonebk").is_ok());
     }
 
     #[test]

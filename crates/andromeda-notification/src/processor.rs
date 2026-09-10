@@ -343,6 +343,8 @@ mod tests {
             endpoint_accept: None,
             endpoint_receiver_info: None,
             endpoint_notifier_info: None,
+            endpoint_cooldown: None,
+            endpoint_timeout: None,
             triggers: triggers.into_iter().map(|t| t.parse().expect("valid trigger")).collect(),
             watched_attrs: watched.map(|attributes| {
                 attributes

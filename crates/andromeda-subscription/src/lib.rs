@@ -16,6 +16,8 @@ pub mod change;
 pub mod compilation;
 /// Compiled subscription state used by matching paths.
 pub mod compiled;
+/// Cooldown-window arithmetic.
+pub mod cooldown;
 /// Context-source subscription lifecycle policy.
 pub mod csource;
 /// Compiled context-source-subscription cache.
@@ -37,6 +39,8 @@ pub mod matching;
 /// The reverse map from a subscription to its index buckets.
 pub mod membership;
 mod normalization;
+/// What a subscription's stored delivery instants must satisfy to notify again.
+pub mod notification_slot;
 /// How selectors are placed into the candidate index.
 pub mod selector_routing;
 /// Spatial-index narrowing of matched subscriptions.
@@ -47,6 +51,10 @@ pub mod status;
 pub mod store;
 /// A stored Subscription paired with its surrogate key.
 pub mod stored_subscription;
+/// Counting a suppression window back from an instant.
+mod suppression_window;
+/// Expansion of a subscription payload against the request `@context`.
+mod term_expansion;
 /// Throttling-window arithmetic.
 pub mod throttle;
 mod validation;

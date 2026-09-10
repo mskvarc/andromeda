@@ -10,9 +10,10 @@
 use crate::query_residual::ResidualFilter;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
-    entity_member::{extract_id, extract_scopes, extract_types},
+    entity_member::{extract_id, extract_types},
     node::expanded_object_ref,
     query_match::matches_geo_query,
+    scope_member::extract_scopes,
 };
 use andromeda_ngsi_ld_query::{
     entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},

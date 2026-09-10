@@ -1,31 +1,34 @@
 //! HTTP handling for temporal add attributes (clause 5.6.12).
 
-use crate::temporal::{
-    ForwardProvisionRequest,
-    ForwardingOperation,
-    IntoResponse,
-    JsonLd,
-    LocalOnlyParams,
-    LocalOutcome,
-    Method,
-    NgsiLdRequestEnvelope,
-    ProblemResponse,
-    ProvisionResource,
-    Response,
-    ResultInstanceExt,
-    StatusCode,
-    TenantState,
-    TriggeringRequest,
-    TypedPath,
-    Uri,
-    ValidatedQuery,
-    Value,
-    collect_proxied_attrs,
-    has_attributes,
-    local_temporal_outcome,
-    payload_entity_type,
-    provision_response,
-    strip_attributes_from_value,
+use crate::{
+    temporal::{
+        ForwardProvisionRequest,
+        ForwardingOperation,
+        IntoResponse,
+        JsonLd,
+        LocalOnlyParams,
+        LocalOutcome,
+        Method,
+        NgsiLdRequestEnvelope,
+        ProblemResponse,
+        ProvisionResource,
+        Response,
+        ResultInstanceExt,
+        StatusCode,
+        TenantState,
+        TriggeringRequest,
+        TypedPath,
+        Uri,
+        ValidatedQuery,
+        Value,
+        collect_proxied_attrs,
+        has_attributes,
+        local_temporal_outcome,
+        payload_entity_type,
+        provision_response,
+        strip_attributes_from_value,
+    },
+    written_evolution_admission::admit_written_evolution,
 };
 use andromeda_http_extraction::context_target;
 use andromeda_http_response::classified_report::ClassifiedReport;
@@ -51,6 +54,9 @@ pub async fn add_attrs(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     let context = context.merge(body_context);
+    // Clause 5.6.12.4 runs the clause 5.5.4 validation before the forwarding
+    // phase.
+    admit_written_evolution(&payload, &uri)?;
 
     if params.local.unwrap_or(false) {
         service.add_attrs(&target, &id, payload, &context).await.with_instance(&uri)?;

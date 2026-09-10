@@ -8,7 +8,7 @@
 //! selection remains in delivery bindings and is not compiled here.
 
 use andromeda_context_commit::subscription_key::SubscriptionKey;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, positive_milliseconds::PositiveMilliseconds, uri::Uri};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     notification::NotificationTrigger,
@@ -42,6 +42,12 @@ pub struct CompiledCsrSubscription {
     pub endpoint_receiver_info: Option<Vec<KeyValuePair>>,
     /// Transport-selection metadata interpreted by delivery bindings.
     pub endpoint_notifier_info: Option<Vec<KeyValuePair>>,
+    /// Minimum period that must elapse after a failed delivery before this
+    /// endpoint is addressed again (Table 5.2.15-1 `cooldown`).
+    pub endpoint_cooldown: Option<PositiveMilliseconds>,
+    /// Maximum period one delivery to this endpoint may take before it counts
+    /// as failed (Table 5.2.15-1 `timeout`).
+    pub endpoint_timeout: Option<PositiveMilliseconds>,
     /// Entity selectors applied to context-source information.
     pub selectors: Vec<EntitySelector>,
     /// The expanded attribute names matched against registrations, or every
@@ -91,6 +97,12 @@ pub struct CompiledSubscription {
     pub endpoint_receiver_info: Option<Vec<KeyValuePair>>,
     /// Transport-selection metadata interpreted by delivery bindings.
     pub endpoint_notifier_info: Option<Vec<KeyValuePair>>,
+    /// Minimum period that must elapse after a failed delivery before this
+    /// endpoint is addressed again (Table 5.2.15-1 `cooldown`).
+    pub endpoint_cooldown: Option<PositiveMilliseconds>,
+    /// Maximum period one delivery to this endpoint may take before it counts
+    /// as failed (Table 5.2.15-1 `timeout`).
+    pub endpoint_timeout: Option<PositiveMilliseconds>,
     /// Events that trigger this subscription.
     pub triggers: Vec<NotificationTrigger>,
     /// Expanded watched attribute names, or every attribute when absent.

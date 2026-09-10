@@ -88,7 +88,7 @@ mod tests {
         precondition::Precondition,
     };
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::grammar::ScopeBuf, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath, uri::Uri};
     use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, entity_type_id::EntityTypeId};
     use chrono::Utc;
     use serde_json::{Value, json};
@@ -116,7 +116,7 @@ mod tests {
         let projection = SearchProjection {
             types: vec![vehicle()],
             attribute_names: vec![speed()],
-            scopes: scopes.into_iter().map(|raw| ScopeBuf::new(raw.to_string()).expect("valid scope")).collect(),
+            scopes: scopes.into_iter().map(|raw| raw.parse::<ScopePath>().expect("valid scope path")).collect(),
             location,
             observation_space: None,
             operation_space: None,

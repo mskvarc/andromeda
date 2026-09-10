@@ -43,6 +43,10 @@ pub enum Subscriptions {
     ScopeQ,
     /// The `csf` context-source filter
     Csf,
+    /// The `expandValues` attribute names whose `q` operands were coerced (clause 5.2.12)
+    ExpandValues,
+    /// The `jsonKeys` attribute names whose `q` object keys were expanded (clause 5.2.12)
+    JsonKeys,
     /// The `datasetId` selectors an entity subscription narrows to
     DatasetId,
     /// The `notification` parameters, as JSONB
@@ -70,8 +74,8 @@ pub enum Subscriptions {
 }
 
 /// The `subscription_delivery_state` table - the per-subscription delivery
-/// counters of clause 5.2.15, one row per subscription, moved by every
-/// notification sent.
+/// counters of clauses 5.2.14.2 and 5.2.15, one row per subscription, moved by
+/// every notification sent.
 ///
 /// The row is narrow and carries no index but its primary key, so the claim
 /// and the success/failure marks are heap-only-tuple updates that never touch
@@ -86,6 +90,8 @@ pub enum SubscriptionDeliveryState {
     SubscriptionKey,
     /// How many notifications have been sent (`notification.timesSent`)
     TimesSent,
+    /// How many deliveries drew an unsuccessful response or timed out (`notification.timesFailed`)
+    TimesFailed,
     /// The instant of the last notification attempt (`notification.lastNotification`)
     LastNotification,
     /// The instant of the last successful notification (`notification.lastSuccess`)
@@ -107,6 +113,8 @@ mod tests {
         assert_eq!(Subscriptions::ContextSpaceKey.to_string(), "context_space_key");
         assert_eq!(Subscriptions::Kind.to_string(), "kind");
         assert_eq!(Subscriptions::WatchedAttributes.to_string(), "watched_attributes");
+        assert_eq!(Subscriptions::ExpandValues.to_string(), "expand_values");
+        assert_eq!(Subscriptions::JsonKeys.to_string(), "json_keys");
         assert_eq!(Subscriptions::NotificationTrigger.to_string(), "notification_trigger");
         assert_eq!(Subscriptions::TimeInterval.to_string(), "time_interval");
         assert_eq!(Subscriptions::JsonldContext.to_string(), "jsonld_context");
@@ -121,6 +129,7 @@ mod tests {
         assert_eq!(SubscriptionDeliveryState::ContextSpaceKey.to_string(), "context_space_key");
         assert_eq!(SubscriptionDeliveryState::SubscriptionKey.to_string(), "subscription_key");
         assert_eq!(SubscriptionDeliveryState::TimesSent.to_string(), "times_sent");
+        assert_eq!(SubscriptionDeliveryState::TimesFailed.to_string(), "times_failed");
         assert_eq!(SubscriptionDeliveryState::LastNotification.to_string(), "last_notification");
         assert_eq!(SubscriptionDeliveryState::LastSuccess.to_string(), "last_success");
         assert_eq!(SubscriptionDeliveryState::LastFailure.to_string(), "last_failure");

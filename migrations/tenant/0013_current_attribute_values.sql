@@ -22,6 +22,28 @@
 --     sentinel. `chk_current_attribute_values_value_kind_column` makes both
 --     halves of that unrepresentable: it pins the kind to the populated
 --     column and admits no arm for 0.
+--
+--     Which value kind a Property value has changed with this file. Clause
+--     4.6.3 names three data types -- DateTime, Date and Time -- whose whole
+--     representation IS the string, so a Property carrying one declares no
+--     JSON-LD `@type` and the broker has to read the data type off the
+--     literal. It now does: a value written in one of those three lexical
+--     forms and satisfying it is projected as that data type, so a bare
+--     timestamp lands in `value_datetime` under value kind 6 where it used to
+--     land in `value_string` under value kind 2, and a Time value's stored
+--     text is now the canonical fixed-width `HH:MM:SS.ffffffZ` rendering
+--     rather than the client's spelling. The clause 4.9 `q` compiler probes
+--     exactly those columns, so a row written before this change is a row a
+--     conformant filter silently fails to select -- a wrong answer rather
+--     than an error.
+--
+--     There is no backfill and there is deliberately none. Under the
+--     pre-release rule in `docs/schema-migration-policy.md` a migration is
+--     edited in place and every existing tenant database is recreated; the
+--     digest of the embedded migration set that this edit changes
+--     (`schema_metadata.migrations_sha256`, migration 0021) is what makes a
+--     database written under the old projection refuse to serve instead of
+--     answering from stale rows.
 --   * `value_number` is `NUMERIC`, not `DOUBLE PRECISION`. JSONB stores
 --     numbers as exact numerics, and a comparison beyond 2^53 stays correct
 --     without falling back to an unindexed payload scan.

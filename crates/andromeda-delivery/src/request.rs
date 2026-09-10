@@ -2,7 +2,7 @@
 
 use crate::notification_context_placement::{NotificationContextPlacement, notification_context_placement};
 use andromeda_http_headers::{link::header::Link, media_type::ResponseMediaType, ngsild_snapshot::NgsiLdSnapshot, ngsild_tenant::NgsiLdTenant};
-use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{positive_milliseconds::PositiveMilliseconds, tenant::TenantName, uri::Uri};
 use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::IriRefBuf;
@@ -41,6 +41,13 @@ pub struct DeliveryRequest {
     pub snapshot: Option<NgsiLdSnapshot>,
     /// Additional key-value pairs from the subscription's `receiverInfo`.
     pub receiver_info: Vec<KeyValuePair>,
+    /// The endpoint's own delivery deadline (Table 5.2.15-1 `timeout`), when it
+    /// named one.
+    ///
+    /// Only a binding whose protocol "always returns a response" honours it,
+    /// which is the HTTP binding; every other transport ignores it and keeps
+    /// its own bound.
+    pub timeout: Option<PositiveMilliseconds>,
     /// Subscription identifier, for logging and stream routing.
     pub subscription_id: Uri,
 }
@@ -86,6 +93,8 @@ pub struct NotificationDelivery<'a> {
     pub receiver_info: Option<&'a [KeyValuePair]>,
     /// The subscription's `jsonldContext`, if it set one.
     pub jsonld_context: Option<&'a Url>,
+    /// The subscription's `notification.endpoint.timeout`, if it set one.
+    pub timeout: Option<PositiveMilliseconds>,
     /// The tenant the subscription belongs to.
     pub tenant: Option<&'a TenantName>,
     /// The Snapshot branch the subscription belongs to, when scoped.
@@ -128,6 +137,7 @@ impl NotificationDelivery<'_> {
             // clone: `NgsiLdSnapshot` owns its URI and the request outlives this borrow
             snapshot: self.snapshot.map(|id| NgsiLdSnapshot::new(id.clone())),
             receiver_info: self.receiver_info.unwrap_or_default().to_vec(),
+            timeout: self.timeout,
             subscription_id: self.subscription_id.clone(), // clone: the request outlives this borrow of the subscription
         }
     }
@@ -156,7 +166,7 @@ pub fn notification_media_type(accept: Option<&MediaTypeBuf>) -> ResponseMediaTy
 mod tests {
     use crate::request::{DeliveryRequest, NotificationDelivery, notification_media_type};
     use andromeda_http_headers::{media_type::ResponseMediaType, ngsild_snapshot::NgsiLdSnapshot, ngsild_tenant::NgsiLdTenant};
-    use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{positive_milliseconds::PositiveMilliseconds, tenant::TenantName, uri::Uri};
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use mediatype::MediaTypeBuf;
@@ -188,6 +198,7 @@ mod tests {
             jsonld_context: context.as_ref(),
             tenant: None,
             snapshot: None,
+            timeout: None,
             subscription_id: &subscription,
         }
         .assemble()
@@ -293,6 +304,7 @@ mod tests {
             jsonld_context: None,
             tenant: None,
             snapshot: None,
+            timeout: None,
             subscription_id: &subscription,
         }
         .assemble();
@@ -330,10 +342,35 @@ mod tests {
             jsonld_context: None,
             tenant: None,
             snapshot: None,
+            timeout: None,
             subscription_id: &subscription,
         }
         .assemble();
         pretty_assertions::assert_eq!(request.receiver_info, pairs);
+    }
+
+    /// Table 5.2.15-1: the endpoint's `timeout` reaches the transport that can
+    /// honour it, and an endpoint that named none carries no deadline of its
+    /// own.
+    #[test]
+    fn an_endpoint_timeout_reaches_the_assembled_request() {
+        let endpoint_url = endpoint();
+        let subscription = subscription();
+        let timeout = PositiveMilliseconds::try_from(750).expect("a positive millisecond count");
+        let request = NotificationDelivery {
+            payload: &json!({}),
+            endpoint_uri: &endpoint_url,
+            accept: None,
+            receiver_info: None,
+            jsonld_context: None,
+            tenant: None,
+            snapshot: None,
+            timeout: Some(timeout),
+            subscription_id: &subscription,
+        }
+        .assemble();
+        pretty_assertions::assert_eq!(request.timeout, Some(timeout));
+        assert!(assemble(None, None).timeout.is_none());
     }
 
     #[test]
@@ -349,6 +386,7 @@ mod tests {
             jsonld_context: None,
             tenant: Some(&name),
             snapshot: None,
+            timeout: None,
             subscription_id: &subscription,
         }
         .assemble();
@@ -368,6 +406,7 @@ mod tests {
             jsonld_context: None,
             tenant: None,
             snapshot: Some(&snapshot),
+            timeout: None,
             subscription_id: &subscription,
         }
         .assemble();

@@ -154,6 +154,8 @@ fn build_subscription(ordinal: usize, desc: &SubscriptionDesc) -> Result<Compile
         endpoint_accept: None,
         endpoint_receiver_info: None,
         endpoint_notifier_info: None,
+        endpoint_cooldown: None,
+        endpoint_timeout: None,
         triggers: desc.triggers.clone(),
         watched_attrs,
         selectors,

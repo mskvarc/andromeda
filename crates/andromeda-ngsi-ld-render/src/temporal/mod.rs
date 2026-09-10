@@ -7,6 +7,5 @@ pub mod geojson_ld;
 pub mod history_row;
 pub mod inline_join;
 pub mod linked_projection;
-pub mod relationship_targets;
 pub mod simplify;
 pub mod values;

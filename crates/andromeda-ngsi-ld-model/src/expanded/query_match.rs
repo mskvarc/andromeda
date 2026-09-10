@@ -1,6 +1,6 @@
 //! Pure evaluation of compiled geo and scope queries against expanded entities.
 
-use crate::expanded::{entity_member::extract_scopes, geo_property::geo_property_instance_geometries};
+use crate::expanded::{geo_property::geo_property_instance_geometries, scope_member::extract_scopes};
 use andromeda_ngsi_ld_geometry::relation::matches;
 use andromeda_ngsi_ld_query::{geo::query::GeoQuery, scope::query::ScopeQuery};
 use serde_json::Value;

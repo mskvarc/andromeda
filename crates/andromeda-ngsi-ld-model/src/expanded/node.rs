@@ -1,6 +1,7 @@
 //! Access to the JSON-LD node object hidden inside an expanded payload.
 
 use serde_json::{Map, Value};
+use std::slice::from_ref;
 
 /// Get a mutable reference to the first object in an expanded JSON-LD value.
 ///
@@ -11,6 +12,20 @@ pub fn expanded_object_mut(entity: &mut Value) -> Option<&mut Map<String, Value>
         Value::Array(arr) => arr.first_mut().and_then(Value::as_object_mut),
         Value::Object(obj) => Some(obj),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
+    }
+}
+
+/// Every top-level node of an expanded JSON-LD value.
+///
+/// Expansion yields an array of node objects, and the write paths hand around
+/// both that array and the bare node one entity expands to. Everything that
+/// reads a member off an expanded payload reads it through this, so no two
+/// validators disagree about how many nodes a payload has.
+#[must_use]
+pub const fn expanded_nodes(value: &Value) -> &[Value] {
+    match value {
+        Value::Array(nodes) => nodes.as_slice(),
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => from_ref(other),
     }
 }
 
@@ -25,14 +40,29 @@ pub fn expanded_object_ref(value: &Value) -> Option<&Map<String, Value>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::expanded::node::{expanded_object_mut, expanded_object_ref};
+    use crate::expanded::node::{expanded_nodes, expanded_object_mut, expanded_object_ref};
     use serde_json::json;
+    use std::slice::from_ref;
 
     #[test]
     fn an_expanded_array_payload_resolves_to_its_first_object() {
         let payload = json!([{"@id": "urn:ngsi-ld:Vehicle:1"}, {"@id": "urn:ngsi-ld:Vehicle:2"}]);
         let node = expanded_object_ref(&payload).expect("first node");
         pretty_assertions::assert_eq!(node["@id"], json!("urn:ngsi-ld:Vehicle:1"));
+    }
+
+    /// The node sequence and the first-node view agree on what a payload holds:
+    /// the sequence is what a validator walks, and its first element is what a
+    /// mutation reads.
+    #[test]
+    fn the_node_sequence_holds_every_node_of_an_expanded_payload() {
+        let payload = json!([{"@id": "urn:ngsi-ld:Vehicle:1"}, {"@id": "urn:ngsi-ld:Vehicle:2"}]);
+        pretty_assertions::assert_eq!(expanded_nodes(&payload).len(), 2);
+        pretty_assertions::assert_eq!(expanded_nodes(&payload).first(), payload.as_array().and_then(|nodes| nodes.first()));
+
+        let bare = json!({"@id": "urn:ngsi-ld:Vehicle:1"});
+        pretty_assertions::assert_eq!(expanded_nodes(&bare), from_ref(&bare));
+        pretty_assertions::assert_eq!(expanded_nodes(&json!([])).len(), 0);
     }
 
     #[test]

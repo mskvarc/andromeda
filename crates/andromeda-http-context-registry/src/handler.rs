@@ -5,7 +5,13 @@ use crate::{
     state::ContextRegistryTenantState,
 };
 use andromeda_context_registry::{detail_level::ContextDetailLevel, removal::ContextRemoval};
-use andromeda_http_extraction::{origin::request_origin, query::ValidatedQuery, tenant_state::ExistingTenantState, typed_path::TypedPath};
+use andromeda_http_extraction::{
+    content_length_precondition::DeclaredBodyLength,
+    origin::request_origin,
+    query::ValidatedQuery,
+    tenant_state::ExistingTenantState,
+    typed_path::TypedPath,
+};
 use andromeda_http_response::{classified_report::ClassifiedReport, headers::with_location, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
@@ -19,7 +25,16 @@ use axum::{
 };
 use serde_json::Value;
 
+/// Create a hosted or cached JSON-LD `@context` (clause 5.13.2).
+///
+/// Clause 6.3.4 applies its POST preconditions here as to every other
+/// body-taking operation: the [`DeclaredBodyLength`] extractor refuses a
+/// request that declares no `Content-Length` with the bare 411 the clause
+/// requires. It is listed first because the precondition is a property of the
+/// incoming HTTP request alone, so it holds whether or not the addressed
+/// tenant resolves.
 pub(crate) async fn create(
+    _body_length: DeclaredBodyLength,
     ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,

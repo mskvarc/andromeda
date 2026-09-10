@@ -68,8 +68,7 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::EntityQueryTemporalMembers
         | ParameterError::TemporalQueryMissing
         | ParameterError::TemporalAggregationConflict
-        | ParameterError::OrderingRequiresLocalScope
-        | ParameterError::TemporalOrderingNotById(_) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
+        | ParameterError::OrderingRequiresLocalScope => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
     }
 }
 
@@ -105,6 +104,8 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::DistanceOrderWithoutReference
         | QueryError::ScopePatternInvalid(_)
         | QueryError::IcuCollation(_)
+        | QueryError::TemporalOrderingMember(_)
+        | QueryError::TemporalOrderingDirection(_)
         | QueryError::ParamIdInvalid(_)
         | QueryError::ParamIdListEmpty
         | QueryError::ParamTimerelTimeatPair

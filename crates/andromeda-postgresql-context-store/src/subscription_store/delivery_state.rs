@@ -1,5 +1,6 @@
-//! The `subscription_delivery_state` row: the clause 5.2.15 delivery counters
-//! of one subscription, and every statement that reads or moves them.
+//! The `subscription_delivery_state` row: the clause 5.2.14.2 and 5.2.15
+//! delivery counters of one subscription, and every statement that reads or
+//! moves them.
 //!
 //! The counters are kept off the subscription row so a delivery never rewrites
 //! it. A read of a subscription joins the state row back in; a claim or a mark
@@ -14,8 +15,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
 use andromeda_postgresql_seaquery::{clock::now, interval::make_interval_secs, literal::text_literal, placeholder::external_placeholder};
-use andromeda_subscription::error::SubscriptionError;
-use chrono::{DateTime, Utc};
+use andromeda_subscription::{error::SubscriptionError, notification_slot::NotificationSlotGate};
 use sea_query::{Cond, Expr, ExprTrait, Func, JoinType, PostgresQueryBuilder, Query, QueryStatementBuilder, SelectStatement, SimpleExpr, UpdateStatement};
 
 /// Which delivery outcome a mark records.
@@ -78,10 +78,11 @@ fn owner_key(target: &ContextTarget, id: &Uri, kind: StoredKind, status: OwnerSt
 }
 
 /// The claim of one notification slot: `times_sent + 1`, `last_notification =
-/// NOW()` on the state row of an active subscription, gated when a throttling
-/// ceiling is given on `last_notification IS NULL OR last_notification <=
-/// ceiling`. Zero rows affected means the slot was refused.
-pub fn claim_statement(target: &ContextTarget, id: &Uri, kind: StoredKind, earliest_allowed_last_notification: Option<DateTime<Utc>>) -> UpdateStatement {
+/// NOW()` on the state row of an active subscription, gated by each ceiling the
+/// [`NotificationSlotGate`] carries. Zero rows affected means the slot was
+/// refused, which is how clause 5.2.12 `throttling` and Table 5.2.15-1
+/// `cooldown` both stop a notification from being sent at all.
+pub fn claim_statement(target: &ContextTarget, id: &Uri, kind: StoredKind, gate: NotificationSlotGate) -> UpdateStatement {
     let mut statement = Query::update();
     statement
         .table(SubscriptionDeliveryState::Table)
@@ -89,33 +90,46 @@ pub fn claim_statement(target: &ContextTarget, id: &Uri, kind: StoredKind, earli
         .value(SubscriptionDeliveryState::LastNotification, now())
         .and_where(Expr::col(SubscriptionDeliveryState::ContextSpaceKey).eq(target.key().as_i64()))
         .and_where(Expr::col(SubscriptionDeliveryState::SubscriptionKey).eq(owner_key(target, id, kind, OwnerStatus::ActiveOnly)));
-    if let Some(ceiling) = earliest_allowed_last_notification {
-        statement.cond_where(
-            Cond::any()
-                .add(Expr::col(SubscriptionDeliveryState::LastNotification).is_null())
-                .add(Expr::col(SubscriptionDeliveryState::LastNotification).lte(ceiling)),
-        );
+    for (column, ceiling) in [
+        (SubscriptionDeliveryState::LastNotification, gate.last_notification),
+        (SubscriptionDeliveryState::LastFailure, gate.last_failure),
+    ] {
+        if let Some(ceiling) = ceiling {
+            statement.cond_where(Cond::any().add(Expr::col(column).is_null()).add(Expr::col(column).lte(ceiling)));
+        }
     }
     statement
 }
 
 /// The `last_success` / `last_failure` stamp of one delivery outcome on the
 /// state row, whatever the subscription's status is by then.
+///
+/// A failure also advances `times_failed`, which Table 5.2.14.2-1 defines as
+/// the "number of times an unsuccessful response (or timeout) has been received
+/// when delivering the notification"; a success moves no counter, because
+/// `times_sent` already counted the attempt when the slot was claimed.
 pub fn mark_statement(outcome: DeliveryOutcome, target: &ContextTarget, id: &Uri, kind: StoredKind) -> UpdateStatement {
-    Query::update()
+    let mut statement = Query::update();
+    statement
         .table(SubscriptionDeliveryState::Table)
         .value(outcome.column(), now())
         .and_where(Expr::col(SubscriptionDeliveryState::ContextSpaceKey).eq(target.key().as_i64()))
-        .and_where(Expr::col(SubscriptionDeliveryState::SubscriptionKey).eq(owner_key(target, id, kind, OwnerStatus::Any)))
-        .to_owned()
+        .and_where(Expr::col(SubscriptionDeliveryState::SubscriptionKey).eq(owner_key(target, id, kind, OwnerStatus::Any)));
+    match outcome {
+        DeliveryOutcome::Success => {}
+        DeliveryOutcome::Failure => {
+            statement.value(SubscriptionDeliveryState::TimesFailed, Expr::col(SubscriptionDeliveryState::TimesFailed).add(1));
+        }
+    }
+    statement
 }
 
 /// Join the state row into a `subscriptions` select and project its counters
 /// under the names the mapper reads.
 ///
 /// The join is outer so a subscription whose state row is missing still reads;
-/// `times_sent` then coalesces to zero, the instants to NULL, which is exactly
-/// what a never-notified subscription reports.
+/// `times_sent` and `times_failed` then coalesce to zero, the instants to NULL,
+/// which is exactly what a never-notified subscription reports.
 pub fn join_delivery_state(select: &mut SelectStatement) {
     select
         .join(
@@ -134,6 +148,13 @@ pub fn join_delivery_state(select: &mut SelectStatement) {
                 Expr::val(0),
             ]),
             SubscriptionDeliveryState::TimesSent,
+        )
+        .expr_as(
+            Func::coalesce([
+                Expr::col((SubscriptionDeliveryState::Table, SubscriptionDeliveryState::TimesFailed)),
+                Expr::val(0),
+            ]),
+            SubscriptionDeliveryState::TimesFailed,
         )
         .column((SubscriptionDeliveryState::Table, SubscriptionDeliveryState::LastNotification))
         .column((SubscriptionDeliveryState::Table, SubscriptionDeliveryState::LastSuccess))
@@ -175,8 +196,9 @@ mod tests {
         context_space_key::ContextSpaceKey,
         context_target::ContextTarget,
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::{positive_milliseconds::PositiveMilliseconds, uri::Uri};
     use andromeda_postgresql_schema::subscriptions::Subscriptions;
+    use andromeda_subscription::notification_slot::NotificationSlotGate;
     use chrono::{TimeZone, Utc};
     use sea_query::{PostgresQueryBuilder, Query};
 
@@ -199,7 +221,7 @@ mod tests {
 
     #[test]
     fn the_claim_moves_only_the_state_row_of_an_active_subscription() {
-        let sql = claim_statement(&target(), &subscription(), StoredKind::Entity, None).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(&target(), &subscription(), StoredKind::Entity, NotificationSlotGate::default()).to_string(PostgresQueryBuilder);
         assert!(
             sql.starts_with(r#"UPDATE "subscription_delivery_state" SET "times_sent" = "times_sent" + 1, "last_notification" = NOW()"#),
             "{sql}"
@@ -219,13 +241,44 @@ mod tests {
 
     #[test]
     fn a_throttled_claim_is_gated_on_the_last_notification_instant() {
-        let ceiling = Utc.with_ymd_and_hms(2026, 8, 17, 12, 0, 0).single().expect("valid instant");
-        let sql = claim_statement(&target(), &subscription(), StoredKind::Csource, Some(ceiling)).to_string(PostgresQueryBuilder);
+        let now = Utc.with_ymd_and_hms(2026, 8, 17, 12, 0, 30).single().expect("valid instant");
+        let gate = NotificationSlotGate::at(now, Some(30.0), None);
+        let sql = claim_statement(&target(), &subscription(), StoredKind::Csource, gate).to_string(PostgresQueryBuilder);
         assert!(
             sql.contains(r#"("last_notification" IS NULL OR "last_notification" <= '2026-08-17 12:00:00.000000 +00:00')"#),
             "{sql}"
         );
+        assert!(!sql.contains("last_failure"), "an endpoint without a cooldown adds no second gate: {sql}");
         assert!(sql.contains("'csource'"), "{sql}");
+    }
+
+    /// Table 5.2.15-1: "If requests are received before the cooldown period has
+    /// expired, no notification is sent", so the claim itself is narrowed by
+    /// the endpoint's cooldown window and a refused claim sends nothing.
+    #[test]
+    fn a_cooldown_gates_the_claim_on_the_last_failure_instant() {
+        let now = Utc.with_ymd_and_hms(2026, 8, 17, 12, 0, 5).single().expect("valid instant");
+        let cooldown = PositiveMilliseconds::try_from(5_000).expect("a positive millisecond count");
+        let gate = NotificationSlotGate::at(now, None, Some(cooldown));
+        let sql = claim_statement(&target(), &subscription(), StoredKind::Entity, gate).to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains(r#"("last_failure" IS NULL OR "last_failure" <= '2026-08-17 12:00:00.000000 +00:00')"#),
+            "{sql}"
+        );
+        assert!(
+            !sql.contains("last_notification\" IS NULL"),
+            "an unthrottled subscription adds no first gate: {sql}"
+        );
+    }
+
+    #[test]
+    fn throttling_and_cooldown_gate_the_same_claim_independently() {
+        let now = Utc.with_ymd_and_hms(2026, 8, 17, 12, 0, 30).single().expect("valid instant");
+        let cooldown = PositiveMilliseconds::try_from(10_000).expect("a positive millisecond count");
+        let gate = NotificationSlotGate::at(now, Some(30.0), Some(cooldown));
+        let sql = claim_statement(&target(), &subscription(), StoredKind::Entity, gate).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#""last_notification" <= '2026-08-17 12:00:00.000000 +00:00'"#), "{sql}");
+        assert!(sql.contains(r#""last_failure" <= '2026-08-17 12:00:20.000000 +00:00'"#), "{sql}");
     }
 
     #[test]
@@ -236,8 +289,19 @@ mod tests {
             "{success}"
         );
         assert!(!success.contains("status"), "{success}");
+        assert!(!success.contains("times_failed"), "an accepted delivery moves no failure counter: {success}");
         let failure = mark_statement(DeliveryOutcome::Failure, &target(), &subscription(), StoredKind::Entity).to_string(PostgresQueryBuilder);
         assert!(failure.contains(r#""last_failure" = NOW()"#) && !failure.contains("last_success"), "{failure}");
+    }
+
+    /// Table 5.2.14.2-1: `timesFailed` is the "number of times an unsuccessful
+    /// response (or timeout) has been received when delivering the
+    /// notification", so only a failed delivery advances it.
+    #[test]
+    fn a_failed_delivery_advances_the_times_failed_counter() {
+        let failure = mark_statement(DeliveryOutcome::Failure, &target(), &subscription(), StoredKind::Entity).to_string(PostgresQueryBuilder);
+        assert!(failure.contains(r#""times_failed" = "times_failed" + 1"#), "{failure}");
+        assert!(!failure.contains("times_sent"), "the attempt was already counted at claim time: {failure}");
     }
 
     #[test]
@@ -252,6 +316,10 @@ mod tests {
         );
         assert!(
             sql.contains(r#"COALESCE("subscription_delivery_state"."times_sent", 0) AS "times_sent""#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#"COALESCE("subscription_delivery_state"."times_failed", 0) AS "times_failed""#),
             "{sql}"
         );
         for column in ["last_notification", "last_success", "last_failure"] {

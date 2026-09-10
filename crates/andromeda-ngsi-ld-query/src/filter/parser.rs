@@ -19,6 +19,7 @@ use crate::{
         lexer::{Token, tokenize},
         path::{AttrPath, QueryPath},
         predicate::{OrderingOp, Predicate, SetMembership},
+        quoting::Quoting,
         scalar::{CompareValue, Scalar},
     },
     pattern::Pattern,
@@ -64,17 +65,6 @@ pub fn parse(input: &str) -> Result<Expr, QueryError> {
         });
     }
     Ok(expr)
-}
-
-/// How a name was written in the query text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Quoting {
-    /// Written bare, so the tokeniser may have glued following `:` characters
-    /// to it — `:` continues an identifier.
-    Bare,
-    /// Written inside double quotes, so it ends exactly where the client ended
-    /// it and any colon it contains belongs to the name.
-    Quoted,
 }
 
 /// What the head of a linked-entity hop contributed before its inner path.
@@ -528,6 +518,10 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a single scalar operand, classifying temporal literals by shape.
+    ///
+    /// The two literal tokens are kept apart rather than collapsed: clause 4.9's
+    /// `quotedStr` production carries the quotes, so which productions can
+    /// derive an operand depends on whether the client wrote them.
     fn parse_scalar(&mut self) -> Result<Scalar, QueryError> {
         match self.advance() {
             Some(Token::NumberLit(s)) => {
@@ -537,7 +531,8 @@ impl<'a> Parser<'a> {
                     .map_err(|source| QueryError::QInvalidNumber { value: s.clone(), source })?;
                 Ok(Scalar::Number(num))
             }
-            Some(Token::QuotedStr(s) | Token::Ident(s)) => Scalar::from_literal(s),
+            Some(Token::QuotedStr(s)) => Scalar::from_literal(s, Quoting::Quoted),
+            Some(Token::Ident(s)) => Scalar::from_literal(s, Quoting::Bare),
             Some(Token::True) => Ok(Scalar::Bool(true)),
             Some(Token::False) => Ok(Scalar::Bool(false)),
             other => Err(QueryError::QExpected {
@@ -738,9 +733,10 @@ mod tests {
 
     #[test]
     fn a_date_time_scalar_is_parsed_once_at_filter_parse_time() {
-        // Clause 4.6.3: a temporal operand is an RFC 3339 value, so a literal
-        // that has the shape of one but is not a real instant is a malformed
-        // request rather than a string that quietly compares as text.
+        // Clause 4.6.3: a temporal operand is an RFC 3339 value, so a bare
+        // literal that has the shape of one but is not a real instant is
+        // derivable from no production of the clause 4.9 grammar -- `quotedStr`
+        // carries the quotes it lacks -- and the request is malformed.
         match parse("observed>=2017-12-24T12:00:00Z").expect("parses") {
             Expr::Pred(Predicate::Ordering { rhs: Scalar::DateTime(_), .. }) => {}
             other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => panic!("expected a date-time operand, got {other:?}"),
@@ -749,8 +745,35 @@ mod tests {
         let error = parse("observed>=2017-13-45").expect_err("must reject");
         assert!(matches!(error, QueryError::QInvalidDate { .. }), "got {error:?}");
 
-        let error = parse("observed>=\"2017-12-24T99:00:00Z\"").expect_err("must reject");
+        let error = parse("observed>=2017-12-24T99:00:00Z").expect_err("must reject");
         assert!(matches!(error, QueryError::QInvalidDateTime { .. }), "got {error:?}");
+    }
+
+    /// Clause 4.9's `quotedStr` is the IETF RFC 8259 `String` production
+    /// *including its quotes*, so the quoted spelling of the same literal is a
+    /// well-formed Query Term whatever it contains, and the value compares as
+    /// the text the write path stored for it. Refusing it made a stored value
+    /// impossible to find in either spelling.
+    #[test]
+    fn a_quoted_operand_that_satisfies_no_temporal_form_compares_as_text() {
+        match parse("observed>=\"2017-12-24T99:00:00Z\"").expect("a quotedStr is always derivable") {
+            Expr::Pred(Predicate::Ordering { rhs: Scalar::Str(text), .. }) => {
+                pretty_assertions::assert_eq!(text, "2017-12-24T99:00:00Z");
+            }
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => panic!("expected a string operand, got {other:?}"),
+        }
+    }
+
+    /// The same quotes do not hold a conformant literal apart from the value it
+    /// names: clause 4.9's EXAMPLE 3 quotes a URI and requires it to match a
+    /// Relationship object, so quoting is the escaping device and the literal's
+    /// own lexical form is its data type.
+    #[test]
+    fn a_quoted_operand_that_satisfies_a_temporal_form_is_that_value() {
+        match parse("observed>=\"2017-12-24T12:00:00Z\"").expect("parses") {
+            Expr::Pred(Predicate::Ordering { rhs: Scalar::DateTime(_), .. }) => {}
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => panic!("expected a date-time operand, got {other:?}"),
+        }
     }
 
     #[test]

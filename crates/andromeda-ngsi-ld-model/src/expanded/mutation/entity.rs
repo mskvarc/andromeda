@@ -121,6 +121,82 @@ fn apply_instance_patch(entity_obj: &mut Map<String, Value>, key: &str, patch_in
     }
 }
 
+/// Whether an expanded `scope` member is the NGSI-LD Null of a deleted scope.
+///
+/// Clause 4.18 admits the sentinel only "in case of deleted scopes", so it is
+/// the whole value of the member and never one entry beside a path; a member
+/// that mixes the two is refused before a write reaches this point.
+fn member_is_scope_deletion(member: &Value) -> bool {
+    member.as_array().is_some_and(|values| values.len() == 1 && member_is_null_sentinel(&values[0]))
+}
+
+/// Whether an expanded member carries nothing but deletions.
+///
+/// Clause 4.5.0 spells a deleted member either as the bare NGSI-LD Null the
+/// first level takes or as an instance whose value member is the sentinel, and
+/// an attribute member is an array of instances. A member every instance of
+/// which is a deletion asks for the whole member to go.
+fn member_is_deletion(member: &Value) -> bool {
+    match member {
+        Value::Array(instances) => {
+            !instances.is_empty()
+                && instances
+                    .iter()
+                    .all(|instance| member_is_null_sentinel(instance) || instance_is_null_sentinel(instance))
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => {
+            member_is_null_sentinel(member) || instance_is_null_sentinel(member)
+        }
+    }
+}
+
+/// What [`drop_deletion_sentinels`] found in the payload it was given.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DroppedSentinels {
+    /// At least one member asked for a deletion and was dropped.
+    Dropped,
+    /// The payload asked for no deletion and is unchanged.
+    Unchanged,
+}
+
+/// Drop every member of an expanded entity payload that asks for a deletion.
+///
+/// This is clause 5.5.8 applied to a target that contains nothing: "for each
+/// member of the Fragment, whose value is an NGSI-LD Null, contained by the
+/// target, the target member is deleted" leaves a deletion the target does not
+/// contain with nothing to do. Clause 5.6.8.4 is where that arises -- its
+/// update mode runs clause 5.6.2, which supports NGSI-LD Nulls, over a payload
+/// that creates the Entity when it does not exist yet -- and the sentinels are
+/// dropped rather than stored, because clause 4.5.0 reserves the value for a
+/// deletion and a stored one would be served back as data.
+///
+/// The entity `scope` member of clause 4.18 is dropped on the same terms: the
+/// clause admits the sentinel there "only in case of deleted scopes".
+pub fn drop_deletion_sentinels(entity: &mut Value) -> DroppedSentinels {
+    let Some(entity_obj) = expanded_object_mut(entity) else {
+        return DroppedSentinels::Unchanged;
+    };
+    let deletions: Vec<String> = entity_obj
+        .iter()
+        .filter(|(key, _)| !key.starts_with('@'))
+        .filter(|(key, member)| {
+            if key.as_str() == properties::SCOPE.as_str() {
+                member_is_scope_deletion(member)
+            } else {
+                member_is_deletion(member)
+            }
+        })
+        .map(|(key, _)| key.clone()) // clone: the removal outlives the borrow the scan holds
+        .collect();
+    if deletions.is_empty() {
+        return DroppedSentinels::Unchanged;
+    }
+    for key in deletions {
+        entity_obj.remove(&key);
+    }
+    DroppedSentinels::Dropped
+}
+
 /// Append attributes (clause 5.6.3): add attributes from `attrs` to `entity`.
 ///
 /// Under [`OverwritePolicy::Preserve`], existing instances (matched by
@@ -149,8 +225,16 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: Overwri
             continue;
         }
 
-        // Scope: merge arrays with deduplication
+        // Clause 5.6.3.4: "If scope is included in the Fragment and overwrite is
+        // allowed, the scope of the target Entity will become the one included
+        // in the Fragment. Otherwise, the Scopes in the Fragment that are not
+        // part of the value of scope of the target Entity will be appended".
         if key == properties::SCOPE.as_str() {
+            // No NGSI-LD Null reaches here: clause 5.5.4 excepts only the
+            // fragments of a partial update or a merge from its first-level
+            // prohibition, and neither Append Attributes (clause 5.6.3) nor the
+            // batch update of clause 5.6.9 that composes this function is one
+            // of them, so both screen the sentinel out before the write runs.
             if let (Some(Value::Array(existing_scopes)), Some(new_scopes)) = (entity_obj.get_mut(key), value.as_array()) {
                 if no_overwrite {
                     for s in new_scopes {
@@ -222,7 +306,8 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: Overwri
 ///
 /// For regular attributes: if the attribute exists, update by datasetId
 /// matching; if not, add it. For scope: if scope doesn't exist on the
-/// entity, report as not updated.
+/// entity, report as not updated; if it does, the fragment's scope replaces it,
+/// or deletes it when the fragment's value is the NGSI-LD Null of clause 4.18.
 ///
 /// Returns a list of attribute IRIs that were NOT updated (e.g. scope not
 /// present). The caller uses this to decide between 204 and 207.
@@ -255,20 +340,36 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Attr
             continue;
         }
 
-        // Scope: only update if already present, otherwise report as not updated
+        // Clause 5.6.2.4: "If scope is included in the Fragment and the target
+        // entity includes scope, replace the scope by the one included in the
+        // Fragment, otherwise ignore it." Clause 5.5.8 gives the NGSI-LD Null
+        // its own reading of the same member: "For each member of the Fragment,
+        // whose value is an NGSI-LD Null, contained by the target, the target
+        // member is deleted", which for `scope` is the deleted scope clause
+        // 4.18 reserves the sentinel for.
         if key == properties::SCOPE.as_str() {
-            if entity_obj.contains_key(key) {
+            if !entity_obj.contains_key(key) {
+                not_updated.push(key.parse::<AttributeName>().map_err(|_| ExpandedEntityError::InvalidAttributeName)?);
+                continue;
+            }
+            if member_is_scope_deletion(value) {
+                entity_obj.remove(key);
+            } else {
                 // clone: both the key and the value are borrowed from the fragment and stored owned.
                 entity_obj.insert(key.clone(), value.clone());
-            } else {
-                not_updated.push(key.parse::<AttributeName>().map_err(|_| ExpandedEntityError::InvalidAttributeName)?);
             }
             continue;
         }
 
         if !entity_obj.contains_key(key) {
-            // clone: both the key and the value are borrowed from the fragment and stored owned.
-            entity_obj.insert(key.clone(), value.clone());
+            // Clause 5.5.8 deletes "each member of the Fragment, whose value is
+            // an NGSI-LD Null, contained by the target": a deletion the target
+            // does not contain has nothing to delete, and appending it would
+            // store the reserved value as data.
+            if !member_is_deletion(value) {
+                // clone: both the key and the value are borrowed from the fragment and stored owned.
+                entity_obj.insert(key.clone(), value.clone());
+            }
             continue;
         }
 
@@ -287,13 +388,19 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Attr
 #[cfg(test)]
 mod tests {
     use crate::expanded::mutation::{
-        entity::{append_entity_attrs, merge_entity, update_entity_attrs},
+        entity::{DroppedSentinels, append_entity_attrs, drop_deletion_sentinels, merge_entity, update_entity_attrs},
         error::ExpandedEntityError,
         selection::OverwritePolicy,
         speed_entity,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_vocabulary::expanded::properties;
     use serde_json::{Value, json};
+
+    /// The expanded IRI of the entity `scope` member (clause 4.18).
+    fn scope_iri() -> &'static str {
+        properties::SCOPE.as_str()
+    }
 
     /// One expanded Property instance carrying `value`, optionally tagged with a
     /// `datasetId`. A `value` of `urn:ngsi-ld:null` is a deletion sentinel.
@@ -543,6 +650,149 @@ mod tests {
         let not_appended = append_entity_attrs(&mut entity, &attrs, OverwritePolicy::Overwrite).expect("append succeeds");
         pretty_assertions::assert_eq!(speed_entity::values(&entity), vec![20]);
         assert!(not_appended.is_empty(), "{not_appended:?}");
+    }
+
+    /// Clause 5.5.8: "For each member of the Fragment, whose value is an
+    /// NGSI-LD Null, contained by the target, the target member is deleted."
+    /// Clause 4.18 spells a deleted scope with that same sentinel, so an Update
+    /// Attributes fragment naming it removes the member rather than storing a
+    /// scope named after the reserved string.
+    #[test]
+    fn update_attributes_deletes_the_scope_the_null_sentinel_names() {
+        let mut entity = json!([{"@id": "urn:ngsi-ld:Device:1", scope_iri(): [{"@value": "/Madrid"}]}]);
+        let patch = json!({scope_iri(): [{"@value": "urn:ngsi-ld:null"}]});
+
+        let not_updated = update_entity_attrs(&mut entity, &patch).expect("update succeeds");
+
+        pretty_assertions::assert_eq!(not_updated, Vec::<AttributeName>::new());
+        assert!(entity[0].get(scope_iri()).is_none(), "the scope member is gone: {entity}");
+    }
+
+    /// Clause 5.5.8 deletes "each member of the Fragment, whose value is an
+    /// NGSI-LD Null, contained by the target": a deletion the target does not
+    /// contain has nothing to delete, and must not be appended as data. Clause
+    /// 4.5.0 reserves the value, so a stored one would be served back as if a
+    /// Context Producer had written it.
+    #[test]
+    fn update_attributes_ignores_a_deletion_of_an_attribute_the_target_lacks() {
+        let mut entity = json!([{"@id": "urn:ngsi-ld:Device:1"}]);
+        let patch = json!({"https://example.com/speed": [property_instance(&json!("urn:ngsi-ld:null"), None)]});
+
+        let not_updated = update_entity_attrs(&mut entity, &patch).expect("update succeeds");
+
+        pretty_assertions::assert_eq!(not_updated, Vec::<AttributeName>::new());
+        assert!(entity[0].get("https://example.com/speed").is_none(), "no member was appended: {entity}");
+    }
+
+    /// The same holds for the bare first-level sentinel a fragment deletes a
+    /// whole member with.
+    #[test]
+    fn update_attributes_ignores_a_bare_deletion_of_an_attribute_the_target_lacks() {
+        let mut entity = json!([{"@id": "urn:ngsi-ld:Device:1"}]);
+        let patch = json!({"https://example.com/speed": [{"@value": "urn:ngsi-ld:null"}]});
+
+        update_entity_attrs(&mut entity, &patch).expect("update succeeds");
+
+        assert!(entity[0].get("https://example.com/speed").is_none(), "no member was appended: {entity}");
+    }
+
+    /// Clause 5.6.8.4 update mode runs clause 5.6.2 over a payload that also
+    /// creates the Entity when it does not exist: on that branch the deletions
+    /// have nothing to delete and are dropped, while everything else is stored.
+    #[test]
+    fn dropping_deletion_sentinels_keeps_the_data_and_removes_every_deletion() {
+        let mut payload = json!([{
+            "@id": "urn:ngsi-ld:Device:1",
+            "@type": ["https://example.com/Device"],
+            scope_iri(): [{"@value": "urn:ngsi-ld:null"}],
+            "https://example.com/speed": [property_instance(&json!(10), None)],
+            "https://example.com/gone": [property_instance(&json!("urn:ngsi-ld:null"), None)],
+            "https://example.com/bare": [{"@value": "urn:ngsi-ld:null"}]
+        }]);
+
+        pretty_assertions::assert_eq!(drop_deletion_sentinels(&mut payload), DroppedSentinels::Dropped);
+
+        pretty_assertions::assert_eq!(payload[0]["@id"], json!("urn:ngsi-ld:Device:1"));
+        pretty_assertions::assert_eq!(
+            payload[0]["https://example.com/speed"][0]["https://uri.etsi.org/ngsi-ld/hasValue"][0]["@value"],
+            json!(10)
+        );
+        for dropped in [scope_iri(), "https://example.com/gone", "https://example.com/bare"] {
+            assert!(payload[0].get(dropped).is_none(), "{dropped} is dropped: {payload}");
+        }
+    }
+
+    /// A payload that asks for no deletion is left exactly as it was, so the
+    /// create branch keeps using the preparation pass's own projection.
+    #[test]
+    fn dropping_deletion_sentinels_leaves_a_payload_without_one_unchanged() {
+        let original = json!([{
+            "@id": "urn:ngsi-ld:Device:1",
+            scope_iri(): [{"@value": "/Madrid"}],
+            "https://example.com/speed": [property_instance(&json!(10), None)]
+        }]);
+        let mut payload = original.clone();
+
+        pretty_assertions::assert_eq!(drop_deletion_sentinels(&mut payload), DroppedSentinels::Unchanged);
+
+        pretty_assertions::assert_eq!(payload, original);
+    }
+
+    /// An attribute whose instances mix a deletion with live data is not a
+    /// deletion of the member: the surviving instances are what the create
+    /// branch stores, so the member stays and the patch decides per instance.
+    #[test]
+    fn an_attribute_mixing_a_deletion_with_data_is_not_dropped_as_a_deletion() {
+        let mut payload = json!([{
+            "@id": "urn:ngsi-ld:Device:1",
+            "https://example.com/speed": [
+                property_instance(&json!("urn:ngsi-ld:null"), Some("urn:ngsi-ld:Dataset:A")),
+                property_instance(&json!(20), Some("urn:ngsi-ld:Dataset:B"))
+            ]
+        }]);
+
+        pretty_assertions::assert_eq!(drop_deletion_sentinels(&mut payload), DroppedSentinels::Unchanged);
+
+        assert!(payload[0].get("https://example.com/speed").is_some(), "{payload}");
+    }
+
+    /// Clause 5.6.2.4: "If scope is included in the Fragment and the target
+    /// entity includes scope, replace the scope by the one included in the
+    /// Fragment", which a hierarchical path still does.
+    #[test]
+    fn update_attributes_replaces_a_scope_the_target_already_carries() {
+        let mut entity = json!([{"@id": "urn:ngsi-ld:Device:1", scope_iri(): [{"@value": "/Madrid"}]}]);
+        let patch = json!({scope_iri(): [{"@value": "/Barcelona"}]});
+
+        update_entity_attrs(&mut entity, &patch).expect("update succeeds");
+
+        pretty_assertions::assert_eq!(entity[0][scope_iri()], json!([{"@value": "/Barcelona"}]));
+    }
+
+    /// Clause 5.6.2.4 closes with "otherwise ignore it", so a fragment deleting
+    /// a scope the target never had leaves the entity untouched and reports the
+    /// member as one this request did not update.
+    #[test]
+    fn update_attributes_reports_a_scope_deletion_the_target_cannot_take() {
+        let mut entity = json!([{"@id": "urn:ngsi-ld:Device:1"}]);
+        let patch = json!({scope_iri(): [{"@value": "urn:ngsi-ld:null"}]});
+
+        let not_updated = update_entity_attrs(&mut entity, &patch).expect("update succeeds");
+
+        pretty_assertions::assert_eq!(not_updated.iter().map(AttributeName::as_str).collect::<Vec<&str>>(), vec![scope_iri()]);
+        assert!(entity[0].get(scope_iri()).is_none(), "no scope was invented: {entity}");
+    }
+
+    /// Clause 5.5.12 removes a target member the fragment sets to an NGSI-LD
+    /// Null, and clause 4.18 makes that sentinel the deleted scope.
+    #[test]
+    fn merge_deletes_the_scope_the_null_sentinel_names() {
+        let mut entity = json!([{"@id": "urn:ngsi-ld:Device:1", scope_iri(): [{"@value": "/Madrid"}]}]);
+        let patch = json!([{scope_iri(): [{"@value": "urn:ngsi-ld:null"}]}]);
+
+        merge_entity(&mut entity, &patch, None).expect("merge succeeds");
+
+        assert!(entity[0].get(scope_iri()).is_none(), "the scope member is gone: {entity}");
     }
 
     #[test]

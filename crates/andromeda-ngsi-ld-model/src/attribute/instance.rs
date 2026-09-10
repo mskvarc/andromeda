@@ -471,11 +471,18 @@ mod tests {
                 "expiresAt": "2030-12-31T23:59:59Z",
                 "source": {"type": "Property", "value": "catalogue"}
             }),
+            // Clause 4.5.22.2 makes a normalized `objectList` "an ordered array
+            // of Relationship Objects each consisting of a JSON object
+            // containing a single Attribute with a key called `object`", and
+            // gives `previousObjectList` "the same as that of `objectList`";
+            // Table 5.2.37-1 confines the bare-string array to the concise
+            // form. The typed model is the normalized representation, so that
+            // is the spelling a round trip through it lands on.
             serde_json::json!({
                 "type": "ListRelationship",
-                "objectList": ["urn:ngsi-ld:Entity:1", "urn:ngsi-ld:Entity:2"],
+                "objectList": [{"object": "urn:ngsi-ld:Entity:1"}, {"object": "urn:ngsi-ld:Entity:2"}],
                 "objectType": "Building",
-                "previousObjectList": ["urn:ngsi-ld:Entity:0"],
+                "previousObjectList": [{"object": "urn:ngsi-ld:Entity:0"}],
                 "modifiedAt": "2024-01-02T00:00:00Z",
                 "providedBy": {"type": "Relationship", "object": "urn:ngsi-ld:Entity:9"}
             }),

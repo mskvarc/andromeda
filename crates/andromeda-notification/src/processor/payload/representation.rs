@@ -16,7 +16,7 @@ use andromeda_jsonld::{
 };
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
-use andromeda_ngsi_ld_render::{concise::concise_value, simplify::simplify_entity, snapshot::SnapshotRenderer};
+use andromeda_ngsi_ld_render::{concise::concise_value, object_list::normalize_object_lists, simplify::simplify_entity, snapshot::SnapshotRenderer};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
 use serde_json::Value;
 use tracing::debug;
@@ -50,7 +50,18 @@ pub(crate) async fn compact_for_notification(
 
 /// Render a compacted entity in the subscription's `notification.format`
 /// (clause 5.8.6): concise as clause 4.5.1 defines it, simplified (or its
-/// synonym `keyValues`) as clause 4.5.4 does, and normalized as it is.
+/// synonym `keyValues`) as clause 4.5.4 does, and normalized as clause 4.5.1
+/// and the per-family `.2` subclauses define it.
+///
+/// The normalized rendering is not the identity. A notification is compacted
+/// from the stored expanded document, so a member with more than one written
+/// spelling arrives in whichever one its Context Producer used: clause 4.5.22.2
+/// makes a normalized `objectList` "an ordered array of Relationship Objects
+/// each consisting of a JSON object containing a single Attribute with a key
+/// called `object`", while clause 4.5.22.3 admits the bare URI string, and the
+/// core `@context` gives `objectList` no `@type: "@id"` coercion that would
+/// collapse the difference. `previousObjectList` takes the same shape, since
+/// clause 4.5.22.2 makes its representation "the same as that of `objectList`".
 ///
 /// A `join=inline` payload nests linked entities inside relationships, which
 /// the typed [`Entity`] cannot carry, so that case is simplified on the JSON
@@ -58,7 +69,11 @@ pub(crate) async fn compact_for_notification(
 /// response does. A value that cannot be rendered is delivered as it is.
 pub(crate) fn render_format(value: Value, format: ResponseFormat, join: Option<JoinMode>) -> Value {
     match format {
-        ResponseFormat::Normalized => value,
+        ResponseFormat::Normalized => {
+            let mut normalized = value;
+            normalize_object_lists(&mut normalized);
+            normalized
+        }
         ResponseFormat::Concise => concise_value(value),
         ResponseFormat::KeyValues | ResponseFormat::Simplified => {
             if join == Some(JoinMode::Inline) {
@@ -99,8 +114,87 @@ mod tests {
     }
 
     #[test]
-    fn the_normalized_format_is_the_identity() {
+    fn the_normalized_format_leaves_every_other_member_untouched() {
         pretty_assertions::assert_eq!(render_format(compacted_entity(), ResponseFormat::Normalized, None), compacted_entity());
+    }
+
+    /// Clause 4.5.22.2, Mandatory: a normalized `objectList` is "an ordered
+    /// array of Relationship Objects each consisting of a JSON object
+    /// containing a single Attribute with a key called `object` and its value
+    /// holding the Relationship's object represented by a URI", and the same
+    /// clause gives `previousObjectList` "the same as that of `objectList`".
+    /// A producer that wrote the concise spelling of clause 4.5.22.3 does not
+    /// decide the representation a normalized notification is delivered in.
+    #[test]
+    fn the_normalized_format_writes_the_object_keyed_members_of_a_list_relationship() {
+        let entity = json!({
+            "id": "urn:ngsi-ld:Building:1",
+            "type": "Building",
+            "hasRooms": {
+                "type": "ListRelationship",
+                "objectList": ["urn:ngsi-ld:Room:3"],
+                "previousObjectList": ["urn:ngsi-ld:Room:1", "urn:ngsi-ld:Room:2"]
+            }
+        });
+        let rendered = render_format(entity, ResponseFormat::Normalized, None);
+        pretty_assertions::assert_eq!(rendered["hasRooms"]["objectList"], json!([{"object": "urn:ngsi-ld:Room:3"}]));
+        pretty_assertions::assert_eq!(
+            rendered["hasRooms"]["previousObjectList"],
+            json!([{"object": "urn:ngsi-ld:Room:1"}, {"object": "urn:ngsi-ld:Room:2"}])
+        );
+        assert!(rendered["hasRooms"].get("object").is_none(), "clause 4.5.22.2 prohibits object: {rendered}");
+        assert!(
+            rendered["hasRooms"].get("previousObject").is_none(),
+            "clause 4.5.22.2 prohibits previousObject: {rendered}"
+        );
+    }
+
+    /// Table 5.2.37-1, concise form: "each string in the array holds a valid
+    /// URI". Clause 4.5.22.2 gives `previousObjectList` the same representation
+    /// as `objectList`, so a `showChanges` notification collapses both.
+    #[test]
+    fn the_concise_format_writes_the_bare_uris_of_a_list_relationship() {
+        let entity = json!({
+            "id": "urn:ngsi-ld:Building:2",
+            "type": "Building",
+            "hasRooms": {
+                "type": "ListRelationship",
+                "objectList": [{"object": "urn:ngsi-ld:Room:3"}],
+                "previousObjectList": [{"object": "urn:ngsi-ld:Room:1"}, {"object": "urn:ngsi-ld:Room:2"}]
+            }
+        });
+        let rendered = render_format(entity, ResponseFormat::Concise, None);
+        pretty_assertions::assert_eq!(rendered["hasRooms"]["objectList"], json!(["urn:ngsi-ld:Room:3"]));
+        pretty_assertions::assert_eq!(rendered["hasRooms"]["previousObjectList"], json!(["urn:ngsi-ld:Room:1", "urn:ngsi-ld:Room:2"]));
+    }
+
+    /// Clause 4.5.4, `ListRelationship` bullet: the simplified rendering is "an
+    /// ordered array holding the `ListRelationship`'s Objects (represented as
+    /// URIs)", whichever representation the normalized member was written in.
+    #[test]
+    fn the_simplified_format_writes_the_bare_uris_of_a_list_relationship() {
+        let entity = json!({
+            "id": "urn:ngsi-ld:Building:3",
+            "type": "Building",
+            "hasRooms": {"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:Room:1"}, {"object": "urn:ngsi-ld:Room:2"}]}
+        });
+        let rendered = render_format(entity, ResponseFormat::KeyValues, None);
+        pretty_assertions::assert_eq!(rendered["hasRooms"], json!(["urn:ngsi-ld:Room:1", "urn:ngsi-ld:Room:2"]));
+    }
+
+    /// Clause 4.5.22.2: "An array consisting of a single NGSI-LD Null … can be
+    /// used as the right-hand side of the `objectList` … in notifications …
+    /// (for encoding a deleted `ListRelationship`)." The Null is not a
+    /// Relationship Object, so the deletion keeps its single-element array.
+    #[test]
+    fn the_normalized_format_keeps_the_deletion_encoding_of_a_list_relationship() {
+        let entity = json!({
+            "id": "urn:ngsi-ld:Building:4",
+            "type": "Building",
+            "hasRooms": {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:null"]}
+        });
+        let rendered = render_format(entity, ResponseFormat::Normalized, None);
+        pretty_assertions::assert_eq!(rendered["hasRooms"]["objectList"], json!(["urn:ngsi-ld:null"]));
     }
 
     /// Clause 4.5.1: concise drops the explicit Property wrapper of a bare

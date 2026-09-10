@@ -1,30 +1,33 @@
 //! HTTP handling for the update attributes entity operation.
 
-use crate::entity::{
-    ContextUrl,
-    EntityResultExt,
-    EntityTenantState,
-    ForwardProvisionRequest,
-    ForwardingOperation,
-    IncomingVia,
-    IntoResponse,
-    JsonLd,
-    LocalOutcome,
-    OriginalUri,
-    ProblemResponse,
-    ProvisionResource,
-    Response,
-    StatusCode,
-    TypedPath,
-    Uri,
-    Value,
-    classify_entity_error,
-    collect_proxied_attrs,
-    provision_response,
-    reject_unknown_attribute_types,
-    strip_attributes_from_value,
-    update_result::{NotUpdatedReason, update_result_response},
+use crate::{
+    entity::{
+        ContextUrl,
+        EntityResultExt,
+        EntityTenantState,
+        ForwardProvisionRequest,
+        ForwardingOperation,
+        IncomingVia,
+        IntoResponse,
+        JsonLd,
+        LocalOutcome,
+        OriginalUri,
+        ProblemResponse,
+        ProvisionResource,
+        Response,
+        StatusCode,
+        TypedPath,
+        Uri,
+        Value,
+        classify_entity_error,
+        collect_proxied_attrs,
+        provision_response,
+        strip_attributes_from_value,
+        update_result::{NotUpdatedReason, update_result_response},
+    },
+    written_payload_admission::admit_written_entity,
 };
+use andromeda_entity::write_admission::EntityWrite;
 use andromeda_federation::{outcome::ForwardedWriteResult, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use axum::http::{HeaderMap, Method};
@@ -47,7 +50,12 @@ pub(crate) async fn update_attrs(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
     let context = context.merge(body_context);
-    reject_unknown_attribute_types(&fragment, &uri)?;
+    // Clause 5.6.2.4 runs the clause 5.5.4 validation before the forwarding
+    // phase, so a fragment this broker refuses reaches no context source and an
+    // update left with nothing local is still validated.
+    admit_written_entity(service, EntityWrite::UpdateAttributes, &fragment, &context)
+        .await
+        .with_entity_instance(&uri)?;
 
     // Forward to matching context sources
     let fragment_body = serde_json::to_vec(&fragment).with_entity_instance(&uri)?;

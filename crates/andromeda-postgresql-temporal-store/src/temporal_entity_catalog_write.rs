@@ -4,11 +4,12 @@
 //! `temporal_entities` names the entity whose Temporal Evolution is being
 //! recorded and carries the narrow key everything else references. This module
 //! resolves that narrow key for every entity in a chunk in one round trip per
-//! shape: the entities that declare types are upserted in one `UNNEST` insert
-//! that harvests every key with `RETURNING`, and the entities that declare none
-//! are looked up in one `id = ANY(...)` read. The table references `entities`
-//! nowhere: clause 5.6.6 leaves temporal evolution standing when current state
-//! is deleted, so the temporal catalogue has to be able to exist without it.
+//! shape: the entities whose write may bring an evolution into being are
+//! upserted in one `UNNEST` insert that harvests every key with `RETURNING`,
+//! and the rest are looked up in one `id = ANY(...)` read. The table references
+//! `entities` nowhere: clause 5.6.6 leaves temporal evolution standing when
+//! current state is deleted, so the temporal catalogue has to be able to exist
+//! without it.
 
 use crate::{error::TemporalStoreError, repo::TemporalRepository, temporal_stream::TemporalCatalogUpsert};
 use andromeda_context_space::context_target::ContextTarget;
@@ -24,6 +25,7 @@ use andromeda_postgresql_seaquery::{
     placeholder::external_placeholder,
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
+use andromeda_temporal::write_purpose::TemporalWritePurpose;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, Iden, OnConflict, PostgresQueryBuilder, Query};
 use serde_json::Value;
@@ -49,16 +51,22 @@ enum EntityStaged {
 
 impl TemporalRepository {
     /// Resolve the narrow key of every entity in a chunk, creating the temporal
-    /// entity for any that declare types and do not yet exist.
+    /// entity for any whose write may bring one into being.
     ///
-    /// An entity that carries types states what it is and may create its
-    /// temporal-entity row; one that carries none — an attribute deletion, or a
-    /// scope-only observation — can only extend a temporal entity that already
-    /// exists, because clause 4.5.1 makes at least one type part of an entity's
-    /// identity and nothing here may invent one. The typed entities are upserted
-    /// in one statement that harvests their keys with `RETURNING`; the typeless
-    /// ones are looked up in one `id = ANY(...)` read, and a requested identifier
-    /// the read does not return has no evolution to extend.
+    /// The chunk splits in two by [`evolution_resolution`]. The upserts that may
+    /// create go into one statement that harvests their keys with `RETURNING`;
+    /// the rest are looked up in one `id = ANY(...)` read, and a requested
+    /// identifier the read does not return has no evolution.
+    ///
+    /// What that absence means is the upsert's
+    /// [`purpose`](TemporalCatalogUpsert::purpose) to say, not this method's.
+    /// Clause 5.6.16 deletes a Temporal Evolution on its own and clause 5.6.6
+    /// deletes current state on its own, so a client can reach "the entity
+    /// exists, its evolution does not" in either order: a
+    /// [`Deletion`](TemporalWritePurpose::Deletion) that meets it has no
+    /// instance left to end and resolves to no key, while an
+    /// [`Observation`](TemporalWritePurpose::Observation) that meets it and
+    /// states no type has nowhere to record and fails the chunk.
     ///
     /// The chunk cannot contain two upserts for one entity: the upstream entity
     /// batch inserts current state with `ON CONFLICT` over the same chunk, so a
@@ -67,10 +75,10 @@ impl TemporalRepository {
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::NameLookup`] when the type dictionary cannot
-    /// resolve a name, [`TemporalStoreError::NotFound`] when a typeless entity
-    /// has no temporal evolution to extend, [`TemporalStoreError::Decode`] when a
-    /// harvested key is unreadable, and [`TemporalStoreError::Database`] when a
-    /// statement fails.
+    /// resolve a name, [`TemporalStoreError::NotFound`] when a typeless
+    /// observation has no temporal evolution to extend,
+    /// [`TemporalStoreError::Decode`] when a harvested key is unreadable, and
+    /// [`TemporalStoreError::Database`] when a statement fails.
     pub(crate) async fn upsert_temporal_entities_batch(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -79,14 +87,18 @@ impl TemporalRepository {
         recorded_at: DateTime<Utc>,
     ) -> Result<HashMap<Uri, TemporalEntityKey>, TemporalStoreError> {
         let mut entity_keys = HashMap::with_capacity(upserts.len());
-        let typed: Vec<&TemporalCatalogUpsert> = upserts.iter().filter(|upsert| !upsert.types.is_empty()).collect();
-        if !typed.is_empty() {
+        let (creating, resolving): (Vec<&TemporalCatalogUpsert>, Vec<&TemporalCatalogUpsert>) =
+            upserts.iter().partition(|upsert| match evolution_resolution(upsert) {
+                EvolutionResolution::Create => true,
+                EvolutionResolution::Lookup => false,
+            });
+        if !creating.is_empty() {
             let type_keys = self
                 .entity_type_names
-                .resolve_or_create(tx, &distinct_types(&typed))
+                .resolve_or_create(tx, &distinct_types(&creating))
                 .await
                 .map_err(|error| TemporalStoreError::NameLookup(error.to_string()))?;
-            let binds = entity_upsert_binds(&typed, recorded_at, &type_keys)?;
+            let binds = entity_upsert_binds(&creating, recorded_at, &type_keys)?;
             let sql = temporal_entity_upsert_batch_sql()?;
             let rows: Vec<(i64, String)> = sqlx::query_as(AssertSqlSafe(sql))
                 .bind(&binds.ids)
@@ -97,26 +109,56 @@ impl TemporalRepository {
                 .await?;
             harvest_keys(&mut entity_keys, rows)?;
         }
-        let typeless_ids: Vec<&str> = upserts
-            .iter()
-            .filter(|upsert| upsert.types.is_empty())
-            .map(|upsert| upsert.entity_id.as_str())
-            .collect();
-        if !typeless_ids.is_empty() {
+        if !resolving.is_empty() {
+            let ids: Vec<&str> = resolving.iter().map(|upsert| upsert.entity_id.as_str()).collect();
             let sql = temporal_entity_keys_lookup_sql();
             let rows: Vec<(i64, String)> = sqlx::query_as(AssertSqlSafe(sql))
-                .bind(&typeless_ids)
+                .bind(&ids)
                 .bind(target.key().as_i64())
                 .fetch_all(&mut **tx)
                 .await?;
             harvest_keys(&mut entity_keys, rows)?;
-            if let Some(missing) = first_missing_typeless(upserts, &entity_keys) {
+            if let Some(missing) = first_missing_typeless_observation(&resolving, &entity_keys) {
                 return Err(TemporalStoreError::NotFound(format!(
                     "Temporal evolution of {missing} does not exist and the write declares no entity type to create it with"
                 )));
             }
         }
         Ok(entity_keys)
+    }
+}
+
+/// Whether resolving one upsert's narrow key may create the temporal entity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EvolutionResolution {
+    /// The write states what the entity is, so a missing evolution is created.
+    Create,
+    /// The write may only find an evolution that is already there.
+    Lookup,
+}
+
+/// What resolving one upsert's narrow key is allowed to do to the catalogue.
+///
+/// An observation extends the Temporal Evolution and therefore creates it when
+/// it is not there, provided the write says what the entity is: clause 4.5.6
+/// makes the evolution "the Entity [...] as mandated by clause 4.5.1", and
+/// clause 4.5.1 makes at least one type part of that, so an observation
+/// declaring none can only extend one that already exists and nothing here may
+/// invent a type it never wrote.
+///
+/// A deletion never creates one, whatever it declares. Clauses 4.5.7 and 4.5.8
+/// record a deletion as one more instance of a sequence — "In case the Property
+/// is deleted, an instance of the Property is recorded with its value set to the
+/// URI `urn:ngsi-ld:null` and the deletedAt Temporal Property set" — so an
+/// evolution clause 5.6.16 already removed holds no sequence for the ending to
+/// belong to. Bringing one into being out of an ending would assert that
+/// instances had existed and stopped, which is precisely the history the client
+/// deleted.
+const fn evolution_resolution(upsert: &TemporalCatalogUpsert) -> EvolutionResolution {
+    match upsert.purpose {
+        TemporalWritePurpose::Observation if upsert.types.is_empty() => EvolutionResolution::Lookup,
+        TemporalWritePurpose::Observation => EvolutionResolution::Create,
+        TemporalWritePurpose::Deletion => EvolutionResolution::Lookup,
     }
 }
 
@@ -132,21 +174,30 @@ fn harvest_keys(entity_keys: &mut HashMap<Uri, TemporalEntityKey>, rows: Vec<(i6
     Ok(())
 }
 
-/// The first typeless entity whose evolution the lookup did not resolve, if any.
+/// The first typeless observation whose evolution the lookup did not resolve.
 ///
-/// A typeless upsert extends an evolution that must already exist, so a
-/// requested identifier absent from the harvested keys is a `NotFound`.
-fn first_missing_typeless<'a>(upserts: &'a [TemporalCatalogUpsert], entity_keys: &HashMap<Uri, TemporalEntityKey>) -> Option<&'a Uri> {
-    upserts
+/// `resolving` is the half of the chunk that was looked up rather than upserted,
+/// so it holds exactly the typeless observations and every deletion. A typeless
+/// observation extends an evolution that must already exist, so a requested
+/// identifier absent from the harvested keys is a `NotFound`. A deletion is not:
+/// clause 5.6.16 removes a Temporal Evolution while clause 5.6.6 removes current
+/// state, each on its own, so an entity whose evolution a client already deleted
+/// holds no instance for the deletion to end and is passed over rather than
+/// refused.
+fn first_missing_typeless_observation<'a>(resolving: &[&'a TemporalCatalogUpsert], entity_keys: &HashMap<Uri, TemporalEntityKey>) -> Option<&'a Uri> {
+    resolving
         .iter()
-        .filter(|upsert| upsert.types.is_empty())
+        .filter(|upsert| match upsert.purpose {
+            TemporalWritePurpose::Observation => true,
+            TemporalWritePurpose::Deletion => false,
+        })
         .map(|upsert| &upsert.entity_id)
         .find(|id| !entity_keys.contains_key(*id))
 }
 
-/// The distinct entity types one chunk's typed upserts have to resolve.
-fn distinct_types(typed: &[&TemporalCatalogUpsert]) -> Vec<EntityTypeName> {
-    let mut names: Vec<EntityTypeName> = typed
+/// The distinct entity types one chunk's creating upserts have to resolve.
+fn distinct_types(creating: &[&TemporalCatalogUpsert]) -> Vec<EntityTypeName> {
+    let mut names: Vec<EntityTypeName> = creating
         .iter()
         .flat_map(|upsert| upsert.types.iter().cloned()) // clone: dictionary resolution owns each distinct name.
         .collect();
@@ -157,26 +208,26 @@ fn distinct_types(typed: &[&TemporalCatalogUpsert]) -> Vec<EntityTypeName> {
 
 /// Column-major binds for one chunk's temporal-entity upsert.
 struct EntityUpsertBinds<'a> {
-    /// Identifier of each typed entity.
+    /// Identifier of each creating entity.
     ids: Vec<&'a str>,
-    /// Write clock of each typed entity, one per entity so the array stays square.
+    /// Write clock of each creating entity, one per entity so the array stays square.
     recorded_ats: Vec<DateTime<Utc>>,
-    /// Type dictionary keys of each typed entity, as a JSON array of integers.
+    /// Type dictionary keys of each creating entity, as a JSON array of integers.
     type_ids_json: Vec<Value>,
 }
 
-/// Spread every typed entity into column-major binds, one row per entity.
+/// Spread every creating entity into column-major binds, one row per entity.
 fn entity_upsert_binds<'a>(
-    typed: &[&'a TemporalCatalogUpsert],
+    creating: &[&'a TemporalCatalogUpsert],
     recorded_at: DateTime<Utc>,
     type_keys: &HashMap<EntityTypeName, EntityTypeId>,
 ) -> Result<EntityUpsertBinds<'a>, TemporalStoreError> {
     let mut binds = EntityUpsertBinds {
-        ids: Vec::with_capacity(typed.len()),
-        recorded_ats: Vec::with_capacity(typed.len()),
-        type_ids_json: Vec::with_capacity(typed.len()),
+        ids: Vec::with_capacity(creating.len()),
+        recorded_ats: Vec::with_capacity(creating.len()),
+        type_ids_json: Vec::with_capacity(creating.len()),
     };
-    for upsert in typed {
+    for upsert in creating {
         let type_ids = upsert
             .types
             .iter()
@@ -277,31 +328,52 @@ fn temporal_entity_keys_lookup_sql() -> String {
 #[cfg(test)]
 mod tests {
     use crate::{
-        temporal_entity_catalog_write::{entity_upsert_binds, first_missing_typeless, temporal_entity_keys_lookup_sql, temporal_entity_upsert_batch_sql},
+        temporal_entity_catalog_write::{
+            EvolutionResolution,
+            entity_upsert_binds,
+            evolution_resolution,
+            first_missing_typeless_observation,
+            temporal_entity_keys_lookup_sql,
+            temporal_entity_upsert_batch_sql,
+        },
         temporal_stream::TemporalCatalogUpsert,
     };
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
     use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
     use andromeda_postgresql_query::entity_type_id::EntityTypeId;
+    use andromeda_temporal::write_purpose::TemporalWritePurpose;
     use chrono::{TimeZone, Utc};
     use std::collections::HashMap;
 
     const VEHICLE: &str = "https://uri.etsi.org/ngsi-ld/default-context/Vehicle";
 
     fn typed(entity_id: &str, types: &[&str]) -> TemporalCatalogUpsert {
+        upsert(entity_id, types, TemporalWritePurpose::Observation)
+    }
+
+    fn typeless(entity_id: &str, purpose: TemporalWritePurpose) -> TemporalCatalogUpsert {
+        upsert(entity_id, &[], purpose)
+    }
+
+    fn upsert(entity_id: &str, types: &[&str], purpose: TemporalWritePurpose) -> TemporalCatalogUpsert {
         TemporalCatalogUpsert {
             entity_id: entity_id.parse::<Uri>().expect("valid entity URI"),
             types: types.iter().map(|raw| raw.parse::<EntityTypeName>().expect("valid entity type")).collect(),
+            purpose,
             streams: Vec::new(),
         }
     }
 
-    fn typeless(entity_id: &str) -> TemporalCatalogUpsert {
-        TemporalCatalogUpsert {
-            entity_id: entity_id.parse::<Uri>().expect("valid entity URI"),
-            types: Vec::new(),
-            streams: Vec::new(),
-        }
+    fn resolved(entries: &[(&str, i64)]) -> HashMap<Uri, TemporalEntityKey> {
+        entries
+            .iter()
+            .map(|(id, key)| {
+                (
+                    id.parse::<Uri>().expect("valid entity URI"),
+                    TemporalEntityKey::try_from(*key).expect("a positive narrow key"),
+                )
+            })
+            .collect()
     }
 
     #[test]
@@ -346,6 +418,38 @@ mod tests {
         );
     }
 
+    /// Clause 4.5.6 makes the Temporal Evolution "the Entity [...] as mandated
+    /// by clause 4.5.1", so an observation that says what the entity is may
+    /// bring the evolution into being; clause 5.6.16 having removed it does not
+    /// reserve the identifier against a later write.
+    #[test]
+    fn an_observation_that_states_its_entity_types_creates_the_evolution() {
+        pretty_assertions::assert_eq!(evolution_resolution(&typed("urn:ngsi-ld:Vehicle:1", &[VEHICLE])), EvolutionResolution::Create);
+    }
+
+    /// Clause 4.5.1 makes at least one type part of what an Entity is, so an
+    /// observation declaring none can only find an evolution already there.
+    #[test]
+    fn an_observation_that_states_no_entity_type_only_looks_the_evolution_up() {
+        pretty_assertions::assert_eq!(
+            evolution_resolution(&typeless("urn:ngsi-ld:Vehicle:2", TemporalWritePurpose::Observation)),
+            EvolutionResolution::Lookup
+        );
+    }
+
+    /// Clauses 4.5.7 and 4.5.8 record a deletion as one more instance of a
+    /// sequence, so a deletion that meets no sequence has nothing to end — and
+    /// creating an evolution out of an ending would assert instances that the
+    /// client's clause 5.6.16 deletion removed. A deletion never creates, even
+    /// when the entity it ended attributes of states its types.
+    #[test]
+    fn a_deletion_never_creates_the_evolution_even_when_it_states_entity_types() {
+        pretty_assertions::assert_eq!(
+            evolution_resolution(&upsert("urn:ngsi-ld:Vehicle:3", &[VEHICLE], TemporalWritePurpose::Deletion)),
+            EvolutionResolution::Lookup
+        );
+    }
+
     #[test]
     fn the_upsert_binds_only_the_typed_entities_and_squares_the_arrays() {
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant");
@@ -359,25 +463,57 @@ mod tests {
         pretty_assertions::assert_eq!(binds.type_ids_json[0], serde_json::json!([4]));
     }
 
+    /// Clause 4.5.1 makes at least one type part of what an Entity is, so an
+    /// observation that declares none can only extend an evolution that is
+    /// already there; one that is not is reported missing rather than invented.
     #[test]
-    fn a_typeless_intent_for_a_missing_evolution_is_reported_missing() {
-        let upserts = [typed("urn:ngsi-ld:Vehicle:1", &[VEHICLE]), typeless("urn:ngsi-ld:Vehicle:2")];
-        let resolved = HashMap::from([(
-            "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity URI"),
-            TemporalEntityKey::try_from(1_i64).expect("a positive narrow key"),
-        )]);
-        let missing = first_missing_typeless(&upserts, &resolved).expect("the typeless evolution is missing");
+    fn a_typeless_observation_for_a_missing_evolution_is_reported_missing() {
+        let upserts = [typeless("urn:ngsi-ld:Vehicle:2", TemporalWritePurpose::Observation)];
+        let resolving: Vec<&TemporalCatalogUpsert> = upserts.iter().collect();
+        let missing = first_missing_typeless_observation(&resolving, &resolved(&[("urn:ngsi-ld:Vehicle:1", 1)])).expect("the typeless evolution is missing");
         pretty_assertions::assert_eq!(missing.as_str(), "urn:ngsi-ld:Vehicle:2");
     }
 
     #[test]
-    fn a_typeless_intent_whose_evolution_exists_is_not_reported_missing() {
-        let upserts = [typeless("urn:ngsi-ld:Vehicle:2")];
-        let resolved = HashMap::from([(
-            "urn:ngsi-ld:Vehicle:2".parse::<Uri>().expect("valid entity URI"),
-            TemporalEntityKey::try_from(9_i64).expect("a positive narrow key"),
-        )]);
-        assert!(first_missing_typeless(&upserts, &resolved).is_none());
+    fn a_typeless_observation_whose_evolution_exists_is_not_reported_missing() {
+        let upserts = [typeless("urn:ngsi-ld:Vehicle:2", TemporalWritePurpose::Observation)];
+        let resolving: Vec<&TemporalCatalogUpsert> = upserts.iter().collect();
+        assert!(first_missing_typeless_observation(&resolving, &resolved(&[("urn:ngsi-ld:Vehicle:2", 9)])).is_none());
+    }
+
+    /// Clause 5.6.16 removes a Temporal Evolution on its own and clause 5.6.6
+    /// removes current state on its own, so an Entity can outlive its history.
+    /// Clauses 4.5.7 and 4.5.8 record a deletion as one more instance of a
+    /// sequence, and a deletion that meets no sequence has no instance to end:
+    /// it is passed over rather than reported missing.
+    #[test]
+    fn a_typeless_deletion_for_a_missing_evolution_is_not_reported_missing() {
+        let upserts = [typeless("urn:ngsi-ld:Vehicle:2", TemporalWritePurpose::Deletion)];
+        let resolving: Vec<&TemporalCatalogUpsert> = upserts.iter().collect();
+        assert!(first_missing_typeless_observation(&resolving, &HashMap::new()).is_none());
+    }
+
+    /// A deletion resolves by lookup whatever it declares, so a typed one whose
+    /// evolution clause 5.6.16 already removed reaches the same pass-over.
+    #[test]
+    fn a_typed_deletion_for_a_missing_evolution_is_not_reported_missing() {
+        let upserts = [upsert("urn:ngsi-ld:Vehicle:2", &[VEHICLE], TemporalWritePurpose::Deletion)];
+        let resolving: Vec<&TemporalCatalogUpsert> = upserts.iter().collect();
+        assert!(first_missing_typeless_observation(&resolving, &HashMap::new()).is_none());
+    }
+
+    /// A chunk mixing both purposes reports only the observation: the deletion
+    /// beside it is not a reason to fail, and is not a reason to let a missing
+    /// observation through either.
+    #[test]
+    fn a_chunk_reports_its_missing_observation_and_passes_over_its_missing_deletion() {
+        let upserts = [
+            typeless("urn:ngsi-ld:Vehicle:1", TemporalWritePurpose::Deletion),
+            typeless("urn:ngsi-ld:Vehicle:2", TemporalWritePurpose::Observation),
+        ];
+        let resolving: Vec<&TemporalCatalogUpsert> = upserts.iter().collect();
+        let missing = first_missing_typeless_observation(&resolving, &HashMap::new()).expect("the observation is missing");
+        pretty_assertions::assert_eq!(missing.as_str(), "urn:ngsi-ld:Vehicle:2");
     }
 
     #[test]

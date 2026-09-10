@@ -18,7 +18,10 @@ use andromeda_entity::sys_attrs::inject_sys_attrs;
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::notification::{Notification, NotificationType, SysAttrsSnapshot};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_subscription::{compiled::CompiledSubscription, throttle::ceiling_for_throttle};
+use andromeda_subscription::{
+    compiled::CompiledSubscription,
+    notification_slot::{NotificationSlot, NotificationSlotGate},
+};
 use chrono::Utc;
 use serde_json::Value;
 use tracing::{debug, error};
@@ -72,8 +75,10 @@ impl NotificationProcessor {
     ///
     /// `entity_data` is this notification's own copy of the entity document,
     /// because a subscription asking for system attributes has them injected
-    /// into it. `None` is answered when the subscription's throttling window
-    /// swallowed the notification, so no endpoint was addressed at all.
+    /// into it. `None` is answered when the slot was refused, so no endpoint
+    /// was addressed at all: either the subscription's clause 5.2.12
+    /// `throttling` window or its endpoint's Table 5.2.15-1 `cooldown` window
+    /// swallowed the notification.
     pub(super) async fn notify_subscription(
         &self,
         compiled_sub: &CompiledSubscription,
@@ -83,11 +88,15 @@ impl NotificationProcessor {
         let subscription_id = &compiled_sub.id;
         match self
             .sub_repo
-            .claim_notification_slot(change.target, subscription_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
+            .claim_notification_slot(
+                change.target,
+                subscription_id,
+                NotificationSlotGate::at(Utc::now(), compiled_sub.throttling_secs, compiled_sub.endpoint_cooldown),
+            )
             .await
         {
-            Ok(true) => {}
-            Ok(false) => return None,
+            Ok(NotificationSlot::Claimed) => {}
+            Ok(NotificationSlot::Suppressed) => return None,
             Err(error) => {
                 debug!("Failed to claim notification slot for {}: {}", subscription_id, error);
                 return Some(DeliveryResult::RetryableFailure);
@@ -141,6 +150,7 @@ impl NotificationProcessor {
             jsonld_context: compiled_sub.jsonld_context.as_ref(),
             tenant: self.tenant.tenant_name(),
             snapshot: change.target.snapshot().map(SnapshotTarget::snapshot_id),
+            timeout: compiled_sub.endpoint_timeout,
             subscription_id,
         })
         .assemble();

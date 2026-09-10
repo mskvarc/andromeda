@@ -2,30 +2,28 @@
 
 use crate::attribute::expansion::serde_json_value_to_json_value;
 use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry};
-use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime, rfc3339::whole_seconds, uri::Uri};
-use chrono::{DateTime, Utc};
 use jsonld_expandable_core::{JsonValue, ToJsonValue};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError};
 use serde_json::Value;
-use std::str::FromStr;
 
 /// NGSI-LD value family from clause 4.6.3.
 ///
-/// The `Json` variant preserves plain JSON-native values. Typed string forms
-/// such as URI, `DateTime`, Date, and Time can be represented explicitly when
-/// they are known semantically, for example after inspecting `valueType`.
+/// Clause 4.6.4 requires that "implementations shall preserve the
+/// representation of the content of the values provided by the context
+/// information providers and return the original content when replying to
+/// context consumption requests", so this type is the client's own document and
+/// carries the value in the spelling the client wrote it in. The one value that
+/// is not carried as raw JSON is a `GeoJSON` geometry, and that is not a
+/// re-spelling: clause 4.7 adopts IETF RFC 7946 whole and a geometry that is not
+/// one is a clause 5.5.4 `BadRequestData` the decode has to be able to raise.
+///
+/// What a value *is* under clause 4.6.3 is a separate question from how it is
+/// written, and it is decided once, in the lexicon, where the write projection
+/// and the clause 4.9 operand parser both read it.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NgsiLdValue {
-    /// A plain JSON-native value.
+    /// A plain JSON-native value, in the spelling the client wrote.
     Json(Value),
-    /// A URI value.
-    Uri(Uri),
-    /// A `DateTime` value.
-    DateTime(DateTime<Utc>),
-    /// A Date value.
-    Date(NgsiLdDate),
-    /// A Time value.
-    Time(NgsiLdTime),
     /// A `GeoJSON` geometry value (clause 4.7).
     Geometry(Geometry),
 }
@@ -39,18 +37,14 @@ impl Default for NgsiLdValue {
 }
 
 // Hand-written on both halves: the wire form is an untagged JSON value whose
-// variant is decided by inspecting the payload (a string that parses as a URI,
-// a DateTime, a Date or a Time; an object that looks like GeoJSON). Serde has
-// no derive for "sniff the shape and pick a variant", and `#[serde(untagged)]`
-// would try each variant's own Deserialize in declaration order instead.
+// variant is decided by inspecting the payload for a GeoJSON geometry object.
+// Serde has no derive for "sniff the shape and pick a variant", and
+// `#[serde(untagged)]` would try each variant's own Deserialize in declaration
+// order instead.
 impl Serialize for NgsiLdValue {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             NgsiLdValue::Json(value) => value.serialize(serializer),
-            NgsiLdValue::Uri(value) => value.serialize(serializer),
-            NgsiLdValue::DateTime(value) => value.serialize(serializer),
-            NgsiLdValue::Date(value) => value.serialize(serializer),
-            NgsiLdValue::Time(value) => value.serialize(serializer),
             NgsiLdValue::Geometry(value) => value.serialize(serializer),
         }
     }
@@ -62,24 +56,27 @@ impl<'de> Deserialize<'de> for NgsiLdValue {
         if let Some(geometry) = try_geometry(&value).map_err(DeserializeError::custom)? {
             return Ok(NgsiLdValue::Geometry(geometry));
         }
-        if let Some(string) = value.as_str() {
-            if let Ok(uri) = Uri::from_str(string) {
-                return Ok(NgsiLdValue::Uri(uri));
-            }
-            if let Ok(datetime) = DateTime::parse_from_rfc3339(string) {
-                return Ok(NgsiLdValue::DateTime(datetime.with_timezone(&Utc)));
-            }
-            // `Date` and `Time` are deliberately not sniffed here, unlike
-            // `DateTime` above. `NgsiLdTime` canonicalises through `Display`
-            // (clause 4.6.3 admits any offset and fractional width, and it
-            // re-renders to one fixed form), so sniffing it would rewrite an
-            // untyped string Property value the client wrote no differently
-            // from `"12:00:00Z"` into `"12:00:00.000000Z"` — a value change
-            // with no `@type: Time` anywhere to justify it. The two write
-            // paths that mean `Date`/`Time` say so explicitly through
-            // `valueType`/`@type`, which reaches these variants without going
-            // through this sniffing ladder at all.
-        }
+        // No string value is sniffed into a typed variant here, and the reason
+        // is the same for all of them: every such type canonicalises through
+        // `Display`, so recognising one rewrites the spelling the client wrote.
+        // Clause 4.6.4 forbids exactly that — "implementations shall preserve
+        // the representation of the content of the values provided by the
+        // context information providers and return the original content when
+        // replying to context consumption requests" — and nothing anywhere in
+        // clause 4.6 licenses a broker to substitute one conformant spelling for
+        // another. Sniffing a URI rewrote `URN:NGSI-LD:Building:001` into
+        // `urn:ngsi-ld:Building:001` and lowercased the scheme, host and default
+        // port of a URL value; sniffing a `DateTime` through a looser RFC 3339
+        // parse than clause 4.6.3 admits rewrote `2024-01-01T01:00:00+01:00`,
+        // which the clause makes a plain string, into `2024-01-01T00:00:00Z`.
+        //
+        // What the value *is* under clause 4.6.3 is decided once, by
+        // `andromeda_ngsi_ld_lexicon::time_value::TimeValue`, where the write
+        // projection and the clause 4.9 `q` operand parser both read it, and
+        // that is what makes a stored timestamp findable by the timestamp that
+        // wrote it. Normalisation of an identifier belongs where the
+        // specification declares one — an Entity `id`, a Relationship `object`,
+        // a `datasetId` — not on a Property value that merely resembles one.
         Ok(NgsiLdValue::Json(value))
     }
 }
@@ -88,12 +85,6 @@ impl<V: JsonValue> ToJsonValue<V> for NgsiLdValue {
     fn to_json_value(&self) -> V {
         match self {
             NgsiLdValue::Json(value) => serde_json_value_to_json_value::<V>(value),
-            NgsiLdValue::Uri(uri) => V::string(uri.as_ref()),
-            NgsiLdValue::DateTime(dt) => V::from_string(whole_seconds(*dt)),
-            // Both render in the canonical clause 4.6.3 form their types define,
-            // which is the same text they are stored and compared as.
-            NgsiLdValue::Date(d) => V::from_string(d.to_string()),
-            NgsiLdValue::Time(t) => V::from_string(t.to_string()),
             NgsiLdValue::Geometry(g) => g.to_json_value(),
         }
     }
@@ -128,14 +119,57 @@ fn try_geometry(value: &Value) -> Result<Option<Geometry>, GeometryError> {
 mod tests {
     use crate::attribute::value::{NgsiLdValue, try_geometry};
     use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geojson::GeometryError, position::PositionError};
-    use chrono::{TimeZone, Utc};
     use serde_json::json;
 
+    /// Clause 4.6.4: "implementations shall preserve the representation of the
+    /// content of the values provided by the context information providers and
+    /// return the original content when replying to context consumption
+    /// requests." A Property value that happens to parse as a URI is still a
+    /// value and not an identifier — clause 4.6.3 declares no datatype for it,
+    /// clause 4.6.2 declares one only for the members the specification names as
+    /// identifiers — so the URI equivalence rules that lowercase a URN's scheme
+    /// and NID, or a URL's scheme, host and default port, have nothing to
+    /// operate on here. Recognising one rewrote the client's text.
     #[test]
-    fn ngsi_ld_value_serializes_typed_variants() {
-        let value = NgsiLdValue::DateTime(Utc.with_ymd_and_hms(2026, 4, 12, 12, 0, 0).single().expect("a valid instant"));
-        let json = serde_json::to_value(&value).expect("serialize");
-        pretty_assertions::assert_eq!(json, json!("2026-04-12T12:00:00Z"));
+    fn a_value_that_parses_as_a_uri_is_served_back_in_the_spelling_the_client_wrote() {
+        for literal in [
+            "URN:NGSI-LD:Building:001",
+            "urn:ngsi-ld:Building:001",
+            "HTTPS://Example.COM:443/Path",
+            "https://example.com",
+            "mailto:someone@example.org",
+        ] {
+            let value: NgsiLdValue = serde_json::from_value(json!(literal)).expect("a string value");
+            pretty_assertions::assert_eq!(value, NgsiLdValue::Json(json!(literal)), "{literal}");
+            pretty_assertions::assert_eq!(serde_json::to_value(&value).expect("serialize"), json!(literal), "{literal}");
+        }
+    }
+
+    /// Clause 4.6.3 admits several spellings of one time value — a fraction of
+    /// "one or more fractional digits, up to a maximum of six", and "in
+    /// requests, also a comma instead of a decimal point" — and licenses no
+    /// broker to re-render the conformant one a client chose. The document
+    /// representation therefore carries the text; what the value *is* is
+    /// decided once, in the lexicon, where the write projection and the clause
+    /// 4.9 operand parser read it.
+    #[test]
+    fn a_time_value_is_carried_in_the_spelling_the_client_wrote() {
+        for literal in ["2024-01-01T00:00:00.250000Z", "2024-01-01T00:00:00Z", "12:00:00Z", "2024-01-01"] {
+            let value: NgsiLdValue = serde_json::from_value(json!(literal)).expect("a string value");
+            pretty_assertions::assert_eq!(value, NgsiLdValue::Json(json!(literal)), "{literal}");
+            pretty_assertions::assert_eq!(serde_json::to_value(&value).expect("serialize"), json!(literal), "{literal}");
+        }
+    }
+
+    /// A numeric zone offset is not a clause 4.6.3 `DateTime` at all — "the
+    /// trailing timestamp component [...] shall always be equal to the
+    /// character 'Z'" — so it is an ordinary string. Sniffing it through a
+    /// looser RFC 3339 parse rewrote it to UTC and served a value the client
+    /// never wrote.
+    #[test]
+    fn an_offset_bearing_timestamp_is_not_rewritten_to_utc() {
+        let value: NgsiLdValue = serde_json::from_value(json!("2024-01-01T01:00:00+01:00")).expect("a string value");
+        pretty_assertions::assert_eq!(serde_json::to_value(&value).expect("serialize"), json!("2024-01-01T01:00:00+01:00"));
     }
 
     #[test]

@@ -44,20 +44,23 @@ impl TemporalRepository {
     /// Establish the catalogue rows a whole chunk's history rows are stored
     /// against, in a fixed number of statements regardless of the chunk's size.
     ///
-    /// Every entity's narrow key is resolved first: the typed entities are
-    /// upserted and their keys harvested, the typeless ones looked up, and a
-    /// typeless entity with no evolution to extend fails the whole chunk. The
-    /// streams of every entity are then created and read back against those
-    /// keys. Returns both maps so the caller can resolve each of its rows'
-    /// grains to the stream it belongs to.
+    /// Every entity's narrow key is resolved first: the entities whose write may
+    /// bring an evolution into being are upserted and their keys harvested, the
+    /// rest looked up, and a typeless observation with no evolution to extend
+    /// fails the whole chunk while a deletion with none simply resolves to no
+    /// key. The streams of every entity are then created and read back against
+    /// those keys, so an entity the entity half passed over contributes none.
+    /// Returns both maps so the caller can resolve each of its rows' grains to
+    /// the stream it belongs to.
     ///
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::NameLookup`] when a name dictionary cannot
-    /// resolve a name, [`TemporalStoreError::NotFound`] when a typeless entity
-    /// has no temporal evolution to extend, [`TemporalStoreError::Query`] when
-    /// the catalogue does not return a requested grain, and
-    /// [`TemporalStoreError::Database`] when a statement fails.
+    /// resolve a name, [`TemporalStoreError::NotFound`] when a typeless
+    /// observation has no temporal evolution to extend,
+    /// [`TemporalStoreError::Query`] when the catalogue does not return a
+    /// requested grain, and [`TemporalStoreError::Database`] when a statement
+    /// fails.
     pub(crate) async fn upsert_temporal_catalog_batch_in_tx(
         &self,
         tx: &mut Transaction<'_, Postgres>,

@@ -1,29 +1,35 @@
 //! `CREATE COLLATION` for the ICU collations clause 4.23.1 admits.
-//!
-//! `CREATE COLLATION` is a whole administrative command with no bound
-//! parameters, so `SeaQuery` does not model it; it is spelled here, in the one
-//! module sanctioned to write dialect SQL by hand.
-//!
-//! PostgreSQL pre-imports one collation object per ICU locale, each named
-//! `<locale>-x-icu`, which covers the clause 4.23.1 default `und-x-icu`. It does
-//! not pre-import the keyword forms RFC 6067 defines, so the collations the
-//! clause's own examples use -- `und-u-ks-identic` (EXAMPLE 6) and
-//! `de-u-co-phonebk` (EXAMPLE 7) -- have no object until one is created, and
-//! `ORDER BY … COLLATE "de-u-co-phonebk"` fails with `collation … does not
-//! exist`. Creating it on first use is what lets a conformant request succeed
-//! rather than answering 500 to a value the specification names.
 
 use andromeda_ngsi_ld_query::ordering::collation::IcuCollation;
+
+/// `SET LOCAL icu_validation_level = 'error'`, the level the `CREATE COLLATION`
+/// below is issued under.
+///
+/// The parameter defaults to `warning`, at which PostgreSQL creates a usable
+/// collation object for a locale ICU does not know and every ordering under it
+/// silently falls back to the root collation — a successful response in an
+/// order the client never asked for. At `error` the locale is refused instead,
+/// which clauses 5.7.2.4 and 5.7.4.4 make the client's fault: "if a preferred
+/// collation setting is present and it does not conform to a valid ICU
+/// collation (see IETF RFC 6067) then an error of type `BadRequestData` shall be
+/// raised".
+///
+/// `SET LOCAL` rather than `SET`: the level applies to the transaction that
+/// creates the collation and is gone when it ends, so the connection returns to
+/// the pool exactly as it was drawn from it.
+pub const STRICT_ICU_LOCALE_VALIDATION: &str = "SET LOCAL icu_validation_level = 'error'";
 
 /// The `CREATE COLLATION IF NOT EXISTS "<name>" (provider = icu, locale = '<tag>')` statement.
 ///
 /// The name and the locale are both the collation identifier, which reached
 /// here only after [`IcuCollation::parse`] accepted it as a well-formed BCP47
-/// tag whose Unicode keywords are collation keywords -- so it is drawn from
-/// `[A-Za-z0-9-]` and carries neither a quote nor a backslash. Validity is
-/// decided there rather than by PostgreSQL, because `icu_validation_level`
-/// defaults to `warning`: an unknown locale would otherwise create a usable
-/// object that silently sorts by the root collation instead of being refused.
+/// tag whose Unicode keywords are the collation keys and types IETF RFC 6067
+/// registers -- so it is drawn from `[A-Za-z0-9-]` and carries neither a quote
+/// nor a backslash.
+///
+/// That parse decides what RFC 6067 governs and nothing else: whether the
+/// locale names a collation ICU actually holds is ICU's own question, and it is
+/// answered here, under [`STRICT_ICU_LOCALE_VALIDATION`].
 #[must_use]
 pub fn create_icu_collation(collation: &IcuCollation) -> String {
     let tag = collation.as_str();
@@ -32,14 +38,14 @@ pub fn create_icu_collation(collation: &IcuCollation) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::schema_ddl::collation::create_icu_collation;
+    use crate::schema_ddl::icu_collation::create_icu_collation;
     use andromeda_ngsi_ld_query::ordering::collation::IcuCollation;
 
     fn collation(raw: &str) -> IcuCollation {
         IcuCollation::parse(raw).expect("the fixture is a valid ICU collation")
     }
 
-    /// Clause 4.23.1 EXAMPLE 7 names `de-u-co-phonebk`, which PostgreSQL does
+    /// Clause 4.23.3 EXAMPLE 7 names `de-u-co-phonebk`, which PostgreSQL does
     /// not pre-import; the statement provisions it under its own name.
     #[test]
     fn a_keyword_collation_is_created_under_its_own_name() {
@@ -63,7 +69,7 @@ mod tests {
     /// either the quoted identifier or the string literal.
     #[test]
     fn a_validated_identifier_carries_no_quote_or_backslash() {
-        for raw in ["und-x-icu", "de-u-co-phonebk", "und-u-ks-identic", "de-DE"] {
+        for raw in ["und-x-icu", "de-u-co-phonebk", "und-u-ks-identic", "de-DE", "und-u-kn-true"] {
             let rendered = create_icu_collation(&collation(raw));
             assert_eq!(rendered.matches('"').count(), 2, "{rendered}");
             assert_eq!(rendered.matches('\'').count(), 2, "{rendered}");

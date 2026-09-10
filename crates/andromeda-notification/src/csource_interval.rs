@@ -14,6 +14,7 @@ use andromeda_registration::store::RegistrationStore;
 use andromeda_subscription::{
     compilation::compile_csource_subscription,
     csource_matching::csource_subscription_selects_registration,
+    notification_slot::{NotificationSlot, NotificationSlotGate},
     store::SubscriptionStore,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -79,16 +80,16 @@ impl CsourceIntervalNotificationOperation {
             }
 
             // Claim slot only when we are about to emit a notification.
-            let claimed = match self.sub_repo.claim_notification_slot(&self.target, &sub.id, None).await {
-                Ok(c) => c,
-                Err(e) => {
-                    debug!("CsrIntervalWorker failed to claim slot for {}: {}", sub.id, e);
+            // Table 5.2.15-1: the endpoint's `cooldown` suppresses a periodic
+            // notification that would follow too soon after a failure.
+            let gate = NotificationSlotGate::at(Utc::now(), None, sub.notification.endpoint.cooldown);
+            match self.sub_repo.claim_notification_slot(&self.target, &sub.id, gate).await {
+                Ok(NotificationSlot::Claimed) => {}
+                Ok(NotificationSlot::Suppressed) => continue,
+                Err(error) => {
+                    debug!("CsrIntervalWorker failed to claim slot for {}: {}", sub.id, error);
                     continue;
                 }
-            };
-
-            if !claimed {
-                continue;
             }
 
             let Ok(notification_id) = format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() else {
@@ -130,6 +131,7 @@ impl CsourceIntervalNotificationOperation {
                 jsonld_context: sub.delivery.jsonld_context.as_ref(),
                 tenant: self.tenant.tenant_name(),
                 snapshot: None,
+                timeout: sub.notification.endpoint.timeout,
                 subscription_id: &sub.id,
             })
             .assemble();

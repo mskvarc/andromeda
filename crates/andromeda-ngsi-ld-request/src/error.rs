@@ -144,9 +144,6 @@ pub enum ParameterError {
     /// local scope (clauses 5.7.2.4 and 5.7.4.4).
     #[error("orderBy requires the execution of the query to be limited to the local scope (local=true)")]
     OrderingRequiresLocalScope,
-    /// A temporal query ordered by a member other than `id` (clause 5.7.4.4).
-    #[error("a temporal query can only be ordered by id, not by {0}")]
-    TemporalOrderingNotById(String),
     /// An aggregated temporal representation named an attribute whose recorded
     /// values cannot be aggregated by one of the requested methods (clause
     /// 5.7.4.4, Table 4.5.19.1-1).

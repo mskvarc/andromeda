@@ -40,9 +40,7 @@ pub fn decode_percent_encoded_uris(value: &mut Value) {
             }
             if is_list_relationship && let Some(Value::Array(objects)) = obj.get_mut(compact_properties::OBJECT_LIST) {
                 for object in objects {
-                    if let Value::String(uri) = object {
-                        decode_uri_in_place(uri);
-                    }
+                    decode_object_list_member(object);
                 }
             }
             for v in obj.values_mut() {
@@ -56,6 +54,25 @@ pub fn decode_percent_encoded_uris(value: &mut Value) {
         }
         // Scalars have no URIs to decode
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+/// Decode the entity identifier one `objectList` member names, in either of the
+/// representations clause 4.5.22 gives it.
+///
+/// Table 5.2.37-1: the normalized member "holds a JSON object containing a
+/// single Attribute with a key called `object`", the concise one "holds a valid
+/// URI". Both name a target whose percent-encoding the presentation boundary
+/// decodes; a member that is neither carries no identifier to decode.
+fn decode_object_list_member(member: &mut Value) {
+    match member {
+        Value::String(uri) => decode_uri_in_place(uri),
+        Value::Object(fields) => {
+            if let Some(Value::String(uri)) = fields.get_mut(compact_properties::OBJECT) {
+                decode_uri_in_place(uri);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => {}
     }
 }
 
@@ -130,6 +147,21 @@ mod tests {
         pretty_assertions::assert_eq!(value["ref"]["object"], "urn:y", "the relationship target must be decoded");
         pretty_assertions::assert_eq!(value["ratio"]["value"], "50%", "a property percent must not be decoded");
         pretty_assertions::assert_eq!(value["encoded"]["value"], "a%20b", "a property escape must not be decoded");
+    }
+
+    /// Table 5.2.37-1: a normalized `objectList` member "holds a JSON object
+    /// containing a single Attribute with a key called `object`", so the target
+    /// it names is decoded exactly as the concise form's bare string is.
+    #[test]
+    fn both_object_list_representations_have_their_targets_decoded() {
+        let mut value = json!({
+            "id": "urn:x", "type": "T",
+            "normalized": {"type": "ListRelationship", "objectList": [{"object": "urn%3Aa"}, {"object": "urn%3Ab"}]},
+            "concise": {"type": "ListRelationship", "objectList": ["urn%3Ac"]}
+        });
+        decode_percent_encoded_uris(&mut value);
+        pretty_assertions::assert_eq!(value["normalized"]["objectList"], json!([{"object": "urn:a"}, {"object": "urn:b"}]));
+        pretty_assertions::assert_eq!(value["concise"]["objectList"], json!(["urn:c"]));
     }
 
     #[test]

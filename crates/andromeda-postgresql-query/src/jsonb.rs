@@ -236,10 +236,13 @@ mod tests {
 
     #[test]
     fn a_time_is_normalised_on_both_sides_into_the_canonical_form() {
-        let time = parse_time("13:00:00+01:00").expect("valid full-time");
+        // Clause 4.6.3 forbids a zone offset on a Time, so the spellings that
+        // still need normalising are the fractional ones: a comma separator and
+        // a short fraction both have to reach the fixed-width stored form.
+        let time = parse_time("12:00:00,5Z").expect("the comma compatibility form");
         let lifted = lift_comparison(&Scalar::Time(time), stored());
         assert!(render(lifted.stored).contains("AT TIME ZONE"), "the stored side normalises to UTC");
-        assert_eq!(bound_value(lifted.operand), "12:00:00.000000Z");
+        assert_eq!(bound_value(lifted.operand), "12:00:00.500000Z");
     }
 
     #[test]

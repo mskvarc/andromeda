@@ -130,7 +130,11 @@ async fn regression_show_changes_on_a_list_property_carries_the_previous_value_l
 /// `ListRelationship` `objectList`, before the triggering change. The
 /// representation is the same as that of `objectList`", and `object` /
 /// `previousObject` "shall never be present as object is a generalization of
-/// `objectList`".
+/// `objectList`". The subscription names no `notification.format`, so the
+/// delivery is normalized, and the same clause makes a normalized `objectList`
+/// "an ordered array of Relationship Objects each consisting of a JSON object
+/// containing a single Attribute with a key called `object`" — Table 5.2.37-1
+/// confines the bare-string array to the concise form.
 #[tokio::test]
 async fn regression_show_changes_on_a_list_relationship_carries_the_previous_object_list_array() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -157,7 +161,7 @@ async fn regression_show_changes_on_a_list_relationship_carries_the_previous_obj
     let rooms = &body["data"][0]["hasRooms"];
     assert_eq!(
         rooms["previousObjectList"],
-        json!(["urn:ngsi-ld:Room:1", "urn:ngsi-ld:Room:2"]),
+        json!([{"object": "urn:ngsi-ld:Room:1"}, {"object": "urn:ngsi-ld:Room:2"}]),
         "clause 4.5.22.2: previousObjectList is the previous objectList array: {rooms}"
     );
     assert!(rooms.get("previousObject").is_none(), "clause 4.5.22.2 prohibits previousObject: {rooms}");

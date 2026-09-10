@@ -15,6 +15,7 @@ mod read_rendering;
 mod request_projection;
 pub mod routes;
 pub mod state;
+mod written_payload_admission;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

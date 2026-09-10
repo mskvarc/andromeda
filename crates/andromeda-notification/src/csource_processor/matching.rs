@@ -39,6 +39,8 @@ mod tests {
             endpoint_accept: None,
             endpoint_receiver_info: None,
             endpoint_notifier_info: None,
+            endpoint_cooldown: None,
+            endpoint_timeout: None,
             selectors: vec![serde_json::from_value(json!({"type": raw_type})).expect("selector parses")],
             matching_attrs: Vec::new(),
             temporal_q: None,

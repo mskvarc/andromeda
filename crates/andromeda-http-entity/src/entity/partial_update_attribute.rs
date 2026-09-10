@@ -1,30 +1,33 @@
 //! HTTP handling for the partial update attribute entity operation.
 
-use crate::entity::{
-    AttributeName,
-    EntityResultExt,
-    EntityTenantState,
-    ForwardProvisionRequest,
-    ForwardingOperation,
-    IntoResponse,
-    JsonLd,
-    LocalOutcome,
-    NgsiLdRequestEnvelope,
-    PartialUpdateAttrParams,
-    ProblemResponse,
-    ProvisionResource,
-    Response,
-    StatusCode,
-    TypedPath,
-    Uri,
-    ValidatedQuery,
-    Value,
-    classify_entity_error,
-    collect_proxied_attrs,
-    provision_response,
-    reject_unknown_attribute_node_type,
-    selected_dataset_uri,
+use crate::{
+    entity::{
+        AttributeName,
+        EntityResultExt,
+        EntityTenantState,
+        ForwardProvisionRequest,
+        ForwardingOperation,
+        IntoResponse,
+        JsonLd,
+        LocalOutcome,
+        NgsiLdRequestEnvelope,
+        PartialUpdateAttrParams,
+        ProblemResponse,
+        ProvisionResource,
+        Response,
+        StatusCode,
+        TypedPath,
+        Uri,
+        ValidatedQuery,
+        Value,
+        classify_entity_error,
+        collect_proxied_attrs,
+        provision_response,
+        selected_dataset_uri,
+    },
+    written_payload_admission::admit_written_attribute,
 };
+use andromeda_entity::write_admission::AttributeWrite;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
 use axum::http::Method;
@@ -51,7 +54,12 @@ pub(crate) async fn partial_update_attr(
     let service = &state.entities;
     let dataset_id = selected_dataset_uri(params.dataset_id.as_ref());
     let context = context.merge(body_context);
-    reject_unknown_attribute_node_type(&attr_id, &fragment, &uri)?;
+    // Clause 5.6.4.4 runs the clause 5.5.4 validation before the forwarding
+    // phase, so a fragment this broker refuses reaches no context source and an
+    // attribute a proxied registration claims is still validated.
+    admit_written_attribute(service, AttributeWrite::PartialUpdate, &attr_id, &fragment, &context)
+        .await
+        .with_entity_instance(&uri)?;
 
     // Forward to matching context sources
     let fragment_body = serde_json::to_vec(&fragment).with_entity_instance(&uri)?;

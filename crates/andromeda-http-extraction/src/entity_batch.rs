@@ -1,10 +1,16 @@
 //! Batch entity request parsing for NGSI-LD batch operations.
 //!
-//! Provides [`BatchBody`] (a [`FromRequest`] extractor that validates Content-Type)
-//! and [`parse_batch_entities`] which handles per-entity JSON-LD context merging,
-//! content-type classification, and validation.
+//! Provides [`BatchBody`] -- a [`FromRequest`] extractor that applies the clause
+//! 6.3.4 request preconditions and classifies the representation the request
+//! announced -- and [`parse_batch_entities`], which decodes the array a
+//! [`BatchBody`] carries. Every Content-Type decision is taken once, in the
+//! extractor: a `BatchBody` exists only for a request whose media type clause
+//! 6.3.4 admits, so nothing below it has to re-derive that or answer for it.
 
-use crate::context::ContextUrl;
+use crate::{
+    content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
+    context::ContextUrl,
+};
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri as EntityId;
@@ -13,7 +19,7 @@ use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exa
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
 use axum::{
     body::Bytes,
-    extract::{FromRequest, Request},
+    extract::{FromRequest, FromRequestParts, OriginalUri, Request},
     http::{HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
 };
@@ -32,9 +38,12 @@ fn parse_batch_body_json(body: &Bytes) -> Result<Value, serde_json::Error> {
     serde_json::from_slice::<Value>(body)
 }
 
-/// Content-Type classification for batch entity parsing.
-#[derive(Clone, Copy)]
-enum ContentKind {
+/// The representation a batch request announced in its `Content-Type`.
+///
+/// Clause 6.3.4 admits exactly these two for a body-taking operation, so the
+/// classification is total once the extractor has admitted the request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContentKind {
     /// Plain `application/json` batch representation.
     Json,
     /// JSON-LD `application/ld+json` batch representation.
@@ -56,24 +65,35 @@ fn classify_batch_content_type(raw: &str) -> Option<ContentKind> {
     None
 }
 
-/// Return whether the request headers select a supported batch content type.
-fn has_supported_json_content_type(headers: &HeaderMap) -> bool {
-    headers
-        .typed_get::<headers::ContentType>()
-        .is_some_and(|value| classify_batch_content_type(&value.to_string()).is_some())
+/// The representation the request's `Content-Type` announces, if clause 6.3.4
+/// admits it for a body-taking operation.
+fn batch_content_type(headers: &HeaderMap) -> Option<ContentKind> {
+    classify_batch_content_type(&headers.typed_get::<headers::ContentType>()?.to_string())
 }
 
-/// Validated batch request body with associated headers.
+/// A batch request body that has passed the clause 6.3.4 preconditions.
 ///
-/// Bundles the request headers and body bytes for batch entity operations,
-/// rejecting the request with 415 Unsupported Media Type if the Content-Type
-/// is not a supported JSON variant (`application/json` or `application/ld+json`).
+/// The type is the evidence: it exists only for a request that declared a
+/// payload length, announced a media type clause 6.3.4 admits, and did not
+/// combine `application/ld+json` with a context `Link` header. Its fields are
+/// private for that reason -- one cannot be assembled around a request that
+/// failed any of those, so [`parse_batch_entities`] never has to ask again.
 pub struct BatchBody {
-    /// Request headers, needed by [`parse_batch_entities`] for Content-Type
-    /// classification and Link header conflict detection.
-    pub headers: HeaderMap,
+    /// Request headers, replayed onto forwarded copies of the operation.
+    headers: HeaderMap,
+    /// The representation the request announced, classified once here.
+    content_kind: ContentKind,
     /// Raw request body bytes.
-    pub body: Bytes,
+    body: Bytes,
+}
+
+impl BatchBody {
+    /// The request's own headers, which a forwarded copy of the operation
+    /// replays (clause 6.3.19).
+    #[must_use]
+    pub const fn headers(&self) -> &HeaderMap {
+        &self.headers
+    }
 }
 
 impl<S> FromRequest<S> for BatchBody
@@ -84,15 +104,46 @@ where
 
     async fn from_request(req: Request, state: &S) -> Result<BatchBody, Self::Rejection> {
         let (mut parts, body) = req.into_parts();
-        if !has_supported_json_content_type(&parts.headers) {
+        // OriginalUri is infallible, so unwrap via match. It names the request
+        // as the client addressed it, before nesting rewrote the path.
+        let OriginalUri(uri) = match OriginalUri::from_request_parts(&mut parts, state).await {
+            Ok(original) => original,
+            Err(never) => match never {},
+        };
+        // Clause 6.3.4 checks both preconditions on a POST, and answers an
+        // absent Content-Length with a bare 411 before the Content-Type is
+        // looked at: a request that declares no payload length has declared no
+        // payload for the media type to describe.
+        declared_body_length(&parts.headers).map_err(|error| error.into_rejection(uri.clone()).into_response())?; // clone: the media-type refusal below names the same request
+        // Clause 6.3.4: "Unsupported Media Type, i.e. 'Content-Type' header is
+        // not 'application/json' nor 'application/ld+json', shall result in
+        // just a 415 HTTP status code (without any payload body)". This is the
+        // only place a batch request's media type is classified.
+        let Some(content_kind) = batch_content_type(&parts.headers) else {
             return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
+        };
+        // Clause 6.3.5: an `application/ld+json` body names its context in the
+        // body, so it must not be combined with a context `Link` header.
+        if content_kind == ContentKind::LdJson && carries_context_link(&parts.headers) {
+            return Err(public_error(
+                NgsiLdErrorType::InvalidRequest,
+                "application/ld+json must not be combined with a Link context header",
+                &uri,
+            )
+            .into_response());
         }
         // Move headers out before reassembling the request for body extraction.
         // Bytes::from_request does not inspect headers, so empty headers are safe.
         let headers = take(&mut parts.headers);
         let req = Request::from_parts(parts, body);
         let body = Bytes::from_request(req, state).await.map_err(IntoResponse::into_response)?;
-        Ok(BatchBody { headers, body })
+        // A declared length the payload did not carry leaves clause 5.5.4 with
+        // no JSON document to read, which is the same refusal a declared length
+        // of zero draws.
+        if body.is_empty() {
+            return Err(ContentLengthPreconditionError::Empty.into_rejection(uri).into_response());
+        }
+        Ok(BatchBody { headers, content_kind, body })
     }
 }
 
@@ -104,33 +155,12 @@ fn carries_context_link(headers: &HeaderMap) -> bool {
         .any(|v| v.to_str().is_ok_and(|s| s.contains("http://www.w3.org/ns/json-ld#context")))
 }
 
-/// Classify the batch representation the request announces.
-///
-/// Clause 6.3.5: an `application/ld+json` body names its context in the body,
-/// so it must not be combined with a context `Link` header.
-fn batch_content_kind(headers: &HeaderMap, uri: &Uri) -> Result<ContentKind, ProblemResponse> {
-    let content_type_raw = headers.typed_get::<headers::ContentType>().map(|value| value.to_string()).unwrap_or_default();
-
-    let content_kind = classify_batch_content_type(&content_type_raw)
-        .ok_or_else(|| public_error(NgsiLdErrorType::InvalidRequest, format!("Unsupported Media Type: {content_type_raw}"), uri))?;
-
-    match content_kind {
-        ContentKind::LdJson if carries_context_link(headers) => Err(public_error(
-            NgsiLdErrorType::InvalidRequest,
-            "application/ld+json must not be combined with a Link context header",
-            uri,
-        )),
-        ContentKind::Json | ContentKind::LdJson => Ok(content_kind),
-    }
-}
-
 /// Decode the request body into the non-empty JSON array of entity
 /// representations that clauses 5.6.7 to 5.6.10 require of a batch operation.
+///
+/// The body is known to be non-empty: [`BatchBody`] exists only for a request
+/// that declared a payload length and carried one.
 fn batch_items(body: &Bytes, uri: &Uri) -> Result<Vec<Value>, ProblemResponse> {
-    if body.is_empty() {
-        return Err(public_error(NgsiLdErrorType::InvalidRequest, "Request body shall not be empty", uri));
-    }
-
     let value: Value = parse_batch_body_json(body).map_err(|error| public_error(NgsiLdErrorType::InvalidRequest, format!("Invalid JSON: {error}"), uri))?;
 
     match value {
@@ -266,19 +296,14 @@ fn decode_batch_item(mut item: Value, entity_id: EntityId, content_kind: Content
 /// # Errors
 ///
 /// Returns a [`ProblemResponse`] when the request fails as a whole: an
-/// unsupported `Content-Type`, an `application/ld+json` body combined with a
-/// context `Link` header (clause 6.3.5), an empty or unparsable body, a body
-/// that is not a non-empty JSON array, a null array item, or an item without a
-/// valid URI `id`. Every other failure is reported per entity in the returned
-/// [`BatchEntityError`] list, leaving the rest of the batch intact.
-pub fn parse_batch_entities(
-    body: &Bytes,
-    headers: &HeaderMap,
-    context: &ContextUrl,
-    uri: &Uri,
-) -> Result<(Vec<Entity>, ContextSpec, Vec<BatchEntityError>), ProblemResponse> {
-    let content_kind = batch_content_kind(headers, uri)?;
-    let items = batch_items(body, uri)?;
+/// unparsable body, a body that is not a non-empty JSON array, a null array
+/// item, or an item without a valid URI `id`. Every other failure is reported
+/// per entity in the returned [`BatchEntityError`] list, leaving the rest of
+/// the batch intact. The clause 6.3.4 media-type and payload-length refusals
+/// are not among them: [`BatchBody`] raised those before this was reached.
+pub fn parse_batch_entities(batch: &BatchBody, context: &ContextUrl, uri: &Uri) -> Result<(Vec<Entity>, ContextSpec, Vec<BatchEntityError>), ProblemResponse> {
+    let content_kind = batch.content_kind;
+    let items = batch_items(&batch.body, uri)?;
 
     let request_context = context.0.clone(); // clone: need owned ContextSpec to merge body contexts into
     let merged_context = match content_kind {
@@ -302,35 +327,54 @@ pub fn parse_batch_entities(
 
 #[cfg(test)]
 mod tests {
-    use crate::{context::ContextUrl, entity_batch::parse_batch_entities};
+    use crate::{
+        context::ContextUrl,
+        entity_batch::{BatchBody, parse_batch_entities},
+    };
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use axum::{
-        body::Bytes,
-        http::{HeaderMap, HeaderValue, Uri, header::CONTENT_TYPE},
+        body::{Body, to_bytes},
+        extract::FromRequest,
+        http::{
+            Request,
+            StatusCode,
+            Uri,
+            header::{CONTENT_LENGTH, CONTENT_TYPE},
+        },
     };
 
-    fn json_headers() -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers
+    /// The URI every fixture request addresses.
+    fn batch_uri() -> Uri {
+        Uri::from_static("/ngsi-ld/v1/entityOperations/create")
     }
 
-    #[test]
-    fn a_malformed_attribute_key_rejects_only_its_own_entity() {
+    /// The batch body an `application/json` request carries, as the extractor
+    /// admits it: the clause 6.3.4 preconditions are the extractor's, so a
+    /// fixture reaches [`parse_batch_entities`] only by passing them.
+    async fn json_batch(body: &'static str) -> BatchBody {
+        let request = Request::builder()
+            .uri(batch_uri())
+            .header(CONTENT_TYPE, "application/json")
+            .header(CONTENT_LENGTH, body.len())
+            .body(Body::from(body))
+            .expect("request builds");
+        match BatchBody::from_request(request, &()).await {
+            Ok(batch) => batch,
+            Err(refusal) => panic!("the fixture meets the clause 6.3.4 preconditions, got {}", refusal.status()),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_malformed_attribute_key_rejects_only_its_own_entity() {
         // NGSI-LD clause 5.6.7: batch creation reports failures per entity, so
         // one entity whose attribute key is not a valid NGSI-LD name must not
         // take the rest of the batch with it.
-        let body = Bytes::from(
-            serde_json::to_vec(&serde_json::json!([
-                {"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 10}},
-                {"id": "urn:ngsi-ld:Vehicle:2", "type": "Vehicle", "bad name": {"type": "Property", "value": 20}},
-                {"id": "urn:ngsi-ld:Vehicle:3", "type": "Vehicle", "speed": {"type": "Property", "value": 30}}
-            ]))
-            .expect("serialises"),
-        );
-        let uri = Uri::from_static("/ngsi-ld/v1/entityOperations/create");
-        let (entities, _context, errors) = parse_batch_entities(&body, &json_headers(), &ContextUrl(ContextSpec::none()), &uri).expect("batch parses");
+        let batch = json_batch(
+            r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":10}},{"id":"urn:ngsi-ld:Vehicle:2","type":"Vehicle","bad name":{"type":"Property","value":20}},{"id":"urn:ngsi-ld:Vehicle:3","type":"Vehicle","speed":{"type":"Property","value":30}}]"#,
+        )
+        .await;
+        let (entities, _context, errors) = parse_batch_entities(&batch, &ContextUrl(ContextSpec::none()), &batch_uri()).expect("batch parses");
 
         assert_eq!(entities.len(), 2, "{errors:?}");
         pretty_assertions::assert_eq!(
@@ -341,24 +385,23 @@ mod tests {
         pretty_assertions::assert_eq!(errors[0].entity_id.as_str(), "urn:ngsi-ld:Vehicle:2");
     }
 
-    #[test]
-    fn a_null_batch_array_item_is_bad_request_data() {
+    #[tokio::test]
+    async fn a_null_batch_array_item_is_bad_request_data() {
         // ETSI GS CIM 009 v1.9.1 clauses 5.6.7 to 5.6.10: a null array item is
         // malformed batch content and fails the whole request as BadRequestData,
         // not the InvalidRequest a missing id raises.
-        let body = Bytes::from(serde_json::to_vec(&serde_json::json!([{"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"}, null])).expect("serialises"));
-        let uri = Uri::from_static("/ngsi-ld/v1/entityOperations/create");
-        let error = parse_batch_entities(&body, &json_headers(), &ContextUrl(ContextSpec::none()), &uri).expect_err("a null item fails the request");
+        let batch = json_batch(r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle"},null]"#).await;
+        let error = parse_batch_entities(&batch, &ContextUrl(ContextSpec::none()), &batch_uri()).expect_err("a null item fails the request");
         pretty_assertions::assert_eq!(error.problem().error_type(), NgsiLdErrorType::BadRequestData);
     }
 
-    #[test]
-    fn exact_numbers_survive_and_range_failures_remain_per_entity() {
-        let body = Bytes::from(
+    #[tokio::test]
+    async fn exact_numbers_survive_and_range_failures_remain_per_entity() {
+        let batch = json_batch(
             r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":0.100000000000000005}},{"id":"urn:ngsi-ld:Vehicle:2","type":"Vehicle","json":{"type":"JsonProperty","json":{"nested":1e-16384}}},{"id":"urn:ngsi-ld:Vehicle:3","type":"Vehicle","speed":{"type":"Property","value":18446744073709551616}}]"#,
-        );
-        let uri = Uri::from_static("/ngsi-ld/v1/entityOperations/create");
-        let (entities, _context, errors) = parse_batch_entities(&body, &json_headers(), &ContextUrl(ContextSpec::none()), &uri).expect("batch parses");
+        )
+        .await;
+        let (entities, _context, errors) = parse_batch_entities(&batch, &ContextUrl(ContextSpec::none()), &batch_uri()).expect("batch parses");
 
         assert_eq!(entities.len(), 2, "{errors:?}");
         let encoded = serde_json::to_string(&entities).expect("exact entities");
@@ -367,5 +410,115 @@ mod tests {
         pretty_assertions::assert_eq!(errors.len(), 1);
         pretty_assertions::assert_eq!(errors[0].entity_id.as_str(), "urn:ngsi-ld:Vehicle:2");
         assert!(errors[0].error.detail.contains("/json/json/nested"), "{}", errors[0].error.detail);
+    }
+
+    /// Clause 6.3.4: "Unsupported Media Type, i.e. 'Content-Type' header is not
+    /// 'application/json' nor 'application/ld+json', shall result in just a 415
+    /// HTTP status code (without any payload body)". The media type is decided
+    /// once, here, so nothing below can answer it with a problem detail.
+    #[tokio::test]
+    async fn an_unsupported_media_type_is_the_bare_415_of_clause_6_3_4() {
+        let request = Request::builder()
+            .uri(batch_uri())
+            .header(CONTENT_TYPE, "application/xml")
+            .header(CONTENT_LENGTH, 8)
+            .body(Body::from("<batch/>"))
+            .expect("request builds");
+
+        let (status, body) = batch_refusal(request).await;
+
+        pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert!(body.is_empty(), "clause 6.3.4 forbids a payload body on a 415: {body:?}");
+    }
+
+    /// The status and body a batch request is refused with before its payload
+    /// is read.
+    async fn batch_refusal(request: Request<Body>) -> (StatusCode, Vec<u8>) {
+        let response = BatchBody::from_request(request, &()).await.err().expect("the request is refused");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap_or_default();
+        (status, body.to_vec())
+    }
+
+    /// Clause 6.3.4: "'Content-Length' HTTP header absence, shall result in
+    /// just a 411 HTTP status code (without any payload body)". A batch
+    /// operation is an HTTP POST, so the precondition applies to it exactly as
+    /// it does to a single-entity POST.
+    #[tokio::test]
+    async fn a_batch_request_declaring_no_length_is_the_bare_411_of_clause_6_3_4() {
+        let request = Request::builder()
+            .uri("/ngsi-ld/v1/entityOperations/create")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from("[]"))
+            .expect("request builds");
+
+        let (status, body) = batch_refusal(request).await;
+
+        pretty_assertions::assert_eq!(status, StatusCode::LENGTH_REQUIRED);
+        assert!(body.is_empty(), "clause 6.3.4 forbids a payload body on a 411: {body:?}");
+    }
+
+    /// Clause 6.3.4 raises the 411 before the `Content-Type` precondition, so a
+    /// request that meets neither is answered by the length it did not declare.
+    #[tokio::test]
+    async fn an_unsupported_media_type_without_a_length_is_still_the_411() {
+        let request = Request::builder()
+            .uri("/ngsi-ld/v1/entityOperations/create")
+            .header(CONTENT_TYPE, "application/xml")
+            .body(Body::from("<batch/>"))
+            .expect("request builds");
+
+        pretty_assertions::assert_eq!(batch_refusal(request).await.0, StatusCode::LENGTH_REQUIRED);
+    }
+
+    /// Clause 6.3.4: an unsupported `Content-Type` "shall result in just a 415
+    /// HTTP status code (without any payload body)" once the length is declared.
+    #[tokio::test]
+    async fn a_declared_length_leaves_the_unsupported_media_type_a_bare_415() {
+        let request = Request::builder()
+            .uri("/ngsi-ld/v1/entityOperations/create")
+            .header(CONTENT_TYPE, "application/xml")
+            .header(CONTENT_LENGTH, "8")
+            .body(Body::from("<batch/>"))
+            .expect("request builds");
+
+        let (status, body) = batch_refusal(request).await;
+
+        pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert!(body.is_empty(), "clause 6.3.4 forbids a payload body on a 415: {body:?}");
+    }
+
+    /// Clause 5.5.4: a declared zero-length payload body is not a valid JSON
+    /// document, so it is `InvalidRequest` rather than the 411 of an absent
+    /// header.
+    #[tokio::test]
+    async fn a_batch_request_declaring_a_zero_length_is_an_invalid_request() {
+        let request = Request::builder()
+            .uri("/ngsi-ld/v1/entityOperations/create")
+            .header(CONTENT_TYPE, "application/json")
+            .header(CONTENT_LENGTH, "0")
+            .body(Body::empty())
+            .expect("request builds");
+
+        let (status, body) = batch_refusal(request).await;
+
+        pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+        let problem: serde_json::Value = serde_json::from_slice(&body).expect("a problem details body");
+        pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest");
+    }
+
+    /// A batch request that meets both preconditions reaches its payload.
+    #[tokio::test]
+    async fn a_batch_request_meeting_the_preconditions_is_extracted() {
+        let request = Request::builder()
+            .uri("/ngsi-ld/v1/entityOperations/create")
+            .header(CONTENT_TYPE, "application/json")
+            .header(CONTENT_LENGTH, "2")
+            .body(Body::from("[]"))
+            .expect("request builds");
+
+        let extracted = BatchBody::from_request(request, &()).await.expect("both preconditions are met");
+
+        pretty_assertions::assert_eq!(extracted.body.as_ref(), b"[]".as_slice());
     }
 }

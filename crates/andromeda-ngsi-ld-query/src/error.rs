@@ -21,9 +21,14 @@
 //! `QueryValidation`, and the few faults no client could have caused become
 //! internal errors.
 
-use crate::ordering::collation::IcuCollationError;
+use crate::ordering::{collation::IcuCollationError, term::OrderDirection};
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRelParseError, geojson::GeometryError};
-use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
+use andromeda_ngsi_ld_lexicon::{
+    ngsi_ld_date::NgsiLdDateError,
+    ngsi_ld_date_time::NgsiLdDateTimeError,
+    ngsi_ld_time::NgsiLdTimeError,
+    reference::NgsiLdReferenceError,
+};
 use andromeda_ngsi_ld_number::JsonNumberError;
 
 /// Errors raised while validating, parsing, compiling or planning a query.
@@ -82,32 +87,32 @@ pub enum QueryError {
         /// The maximum the parser accepts.
         limit: usize,
     },
-    /// A literal shaped like an RFC 3339 date-time was not one.
+    /// A bare literal written in the clause 4.6.3 `DateTime` form was not one.
     #[error("Q expression: invalid date-time literal '{value}'")]
     QInvalidDateTime {
         /// The rejected literal.
         value: String,
-        /// The underlying chrono parse error.
+        /// The clause 4.6.3 rule the literal broke.
         #[source]
-        source: chrono::ParseError,
+        source: NgsiLdDateTimeError,
     },
-    /// A literal shaped like an RFC 3339 full-date was not one.
+    /// A bare literal written in the clause 4.6.3 `Date` form was not one.
     #[error("Q expression: invalid date literal '{value}'")]
     QInvalidDate {
         /// The rejected literal.
         value: String,
-        /// The underlying chrono parse error.
+        /// The clause 4.6.3 rule the literal broke.
         #[source]
-        source: chrono::ParseError,
+        source: NgsiLdDateError,
     },
-    /// A literal shaped like an RFC 3339 full-time was not one.
+    /// A bare literal written in the clause 4.6.3 `Time` form was not one.
     #[error("Q expression: invalid time literal '{value}'")]
     QInvalidTime {
         /// The rejected literal.
         value: String,
-        /// The underlying chrono parse error.
+        /// The clause 4.6.3 rule the literal broke.
         #[source]
-        source: chrono::ParseError,
+        source: NgsiLdTimeError,
     },
 
     // -----------------------------------------------------------------------
@@ -254,6 +259,24 @@ pub enum QueryError {
     /// The `orderBy` collation identifier was invalid.
     #[error(transparent)]
     IcuCollation(#[from] IcuCollationError),
+
+    // -----------------------------------------------------------------------
+    // Temporal entity ordering (NGSI-LD 5.7.4.3, Table 6.18.3.2-1)
+    // -----------------------------------------------------------------------
+    /// A temporal query's `orderBy` named an Entity member other than `id`.
+    ///
+    /// Clause 5.7.4.4: "If the ordering parameter is present and refers an
+    /// entity name other than "id", then an error of type `BadRequestData`
+    /// shall be raised."
+    #[error("a temporal query can only be ordered by the Entity member id, not by '{0}'")]
+    TemporalOrderingMember(String),
+    /// A temporal query's `orderBy` asked for a distance ordering.
+    ///
+    /// Table 6.18.3.2-1 admits only the sorting styles `asc` and `desc`, and
+    /// clause 4.23.1 limits sorting by distance to `GeoProperties`, which the
+    /// `id` member clause 5.7.4.3 confines the ordering to is not.
+    #[error("a temporal query can only be ordered 'asc' or 'desc', not '{0}'")]
+    TemporalOrderingDirection(OrderDirection),
 
     // -----------------------------------------------------------------------
     // Parameter values the query and projection languages above parse themselves (clauses 4.9 and 4.21)

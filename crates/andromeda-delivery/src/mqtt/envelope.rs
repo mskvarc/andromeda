@@ -66,6 +66,7 @@ mod tests {
             jsonld_context: None,
             tenant,
             snapshot: None,
+            timeout: None,
             subscription_id: &subscription,
         }
         .assemble()

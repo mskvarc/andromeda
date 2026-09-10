@@ -7,7 +7,7 @@
 //! apart from the traversal in [`crate::linked`] that consumes it.
 
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_render::temporal::relationship_targets::rendered_relationship_targets;
+use andromeda_ngsi_ld_render::relationship_targets::rendered_relationship_targets;
 use indexmap::IndexSet;
 use serde_json::Value;
 use std::slice;

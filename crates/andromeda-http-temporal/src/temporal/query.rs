@@ -1,8 +1,16 @@
 //! HTTP handling for temporal query (clause 5.7.4).
+//!
+//! The operation has two HTTP bindings. Clause 6.18.3.2 carries the query in a
+//! query string, clause 6.24.3.1 carries it in a clause 5.2.23 body, and clause
+//! 6.24.1 says of the latter that "the behaviour of this clause mirrors the one
+//! in clause 6.18.3.2". They therefore differ only in how the query reaches the
+//! broker: once it has been decoded, [`run`] is the operation, and both
+//! bindings hand it the same [`TemporalQueryRequest`].
 
 use crate::{
     history_read::TemporalHistoryRead,
     join::apply_temporal_join,
+    state::TemporalRouteServices,
     temporal::{
         AcceptFormatNoGeo,
         ContextSpec,
@@ -16,22 +24,26 @@ use crate::{
         TenantState,
         ValidatedQuery,
         query::{
-            forwarding::{TemporalForwarding, forward_temporal_history},
+            forwarding::{QueryScope, TemporalForwarding, forward_temporal_history},
             merged_history::merge_forwarded_history,
             merged_page::{MergedPageCut, cut_merged_page, defer_split_filters, hold_page_until_merge},
+            page::QueriedPage,
             request_entity_map::{record_query_map, resolve_query_map},
             response::{TemporalCollectionMetadata, query_response, simplified_collection},
         },
     },
 };
-use andromeda_federation::{config::SplitEntities, request::TriggeringRequest};
+use andromeda_context_space::context_target::ContextTarget;
+use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_http_response::pagination::PagePointers;
 use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
 use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
 use andromeda_temporal::{error::TemporalError, linked::candidates::TemporalLinkedCandidate, service::TemporalQueryWarning};
-use axum::http::Uri;
+use axum::http::{HeaderMap, Uri};
 use serde_json::Value;
+use std::sync::Arc;
 
 /// Asking the registered context sources for their part of the history.
 mod forwarding;
@@ -39,31 +51,102 @@ mod forwarding;
 mod merged_history;
 /// The page the query answers with, cut from the merged history.
 mod merged_page;
+/// The clause 6.3.10 element page the response points around.
+mod page;
 /// The `EntityMap` the query runs under.
 mod request_entity_map;
 /// Rendering the collection the query answers with.
 mod response;
 
+/// One "Query Temporal Evolution of Entities" as its binding decoded it.
+///
+/// Everything here is what the operation needs and nothing is specific to the
+/// binding that supplied it: the query string binding of clause 6.18.3.2 fills
+/// [`TemporalQueryRequest::params`] from the URL, the POST binding of clause
+/// 6.24.3.1 fills it from the clause 5.2.23 body, and from there on the two are
+/// the same request.
+pub(crate) struct TemporalQueryRequest {
+    /// The tenant-scoped capabilities the query runs against.
+    pub(crate) services: Arc<TemporalRouteServices>,
+    /// The context branch the query reads.
+    pub(crate) target: ContextTarget,
+    /// The representation the response was negotiated to (clause 6.3.4).
+    pub(crate) accept: AcceptFormatNoGeo,
+    /// The clause 6.3.x protocol headers: the `NGSILD-EntityMap` the request
+    /// runs under, the `Via` chain it arrived with, and the extension headers
+    /// that add to the query.
+    pub(crate) protocol: NgsiLdProtocolHeaders,
+    /// The URI the client addressed, which names the `instance` of every
+    /// problem the operation reports and anchors its pagination links.
+    pub(crate) uri: Uri,
+    /// The request's headers, replayed onto every forwarded copy so a
+    /// registration's `contextSourceInfo` can pass one of them through
+    /// (clause 6.3.19).
+    pub(crate) headers: HeaderMap,
+    /// The JSON-LD context the query's terms expand under (clause 6.3.5).
+    pub(crate) context: ContextSpec,
+    /// The query itself, in the raw form the binding decoded it to.
+    pub(crate) params: TemporalQueryParameters,
+    /// Whether the binding's own request URI can carry the clause 6.3.10
+    /// pointers to the neighbouring pages, which the query-string binding's
+    /// can and the POST binding's cannot.
+    pub(crate) pointers: PagePointers,
+}
+
 pub async fn query(
-    context_target::ExistingTargetedTenantState {
-        services: state,
-        target,
-        snapshot: _,
-    }: TenantState,
+    context_target::ExistingTargetedTenantState { services, target, snapshot: _ }: TenantState,
     accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope {
         uri,
         context,
-        incoming_via,
+        incoming_via: _,
         headers,
     }: NgsiLdRequestEnvelope,
     protocol: NgsiLdProtocolHeaders,
-    ValidatedQuery(mut params): ValidatedQuery<TemporalQueryParameters>,
+    ValidatedQuery(params): ValidatedQuery<TemporalQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
+    run(TemporalQueryRequest {
+        services,
+        target,
+        accept,
+        protocol,
+        uri,
+        headers,
+        context: context.into_inner(),
+        params,
+        // Clause 6.18.3.2 carries the whole query in the request URI, so a
+        // pointer built from it retrieves the next page on its own.
+        pointers: PagePointers::OverRequestUri,
+    })
+    .await
+}
+
+/// Run "Query Temporal Evolution of Entities" (clause 5.7.4) over a decoded
+/// request, whichever binding decoded it.
+///
+/// # Errors
+///
+/// The classified failure of resolving the Entity Map the query runs under, of
+/// reading the local history, of merging what the context sources contributed,
+/// of walking the clause 4.5.23 join, or of rendering the negotiated
+/// representation; and the Table 6.4.3.2-3 `NotImplemented` answer when the one
+/// source holding all of the data declined that representation.
+pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, ProblemResponse> {
+    let TemporalQueryRequest {
+        services: state,
+        target,
+        accept,
+        protocol,
+        uri,
+        headers,
+        context,
+        mut params,
+        pointers,
+    } = request;
     let service = &state.temporal;
-    let context: ContextSpec = context.into_inner();
     protocol.extensions().apply_to_temporal_query(&mut params).with_instance(&uri)?;
     let entity_map_header = protocol.entity_map;
+    let incoming_via = protocol.incoming_via;
     let key_values = params.is_simplified();
 
     let map_use = resolve_query_map(&state.entity_maps, &target, &mut params, entity_map_header.as_ref(), &uri).await?;
@@ -73,41 +156,35 @@ pub async fn query(
     }
     params.validate(true).with_instance(&uri)?;
 
-    let is_local = !target.permits_federation() || params.is_local();
-    let split = state.forwarding.split_entities(params.split_entities);
-    // Clause 5.7.4.4: only a distributed read can meet an entity whose
-    // attributes are spread over several sources, so a local one always sees
-    // complete entities and defers nothing.
-    let filtering = if is_local { SplitEntities::Complete } else { split };
+    // Clause 6.3.10: the page the client asked for, read before the merge
+    // widens the local query below, so the links point at the client's own
+    // window rather than at the widened one.
+    let page = QueriedPage::of(&params, pointers);
 
-    // Distributed forwarding: query matching context sources unless
-    // local=true. Forwarding reads the query as the client wrote it, so it
-    // runs before the split-entities filters are held back from the local
-    // query below.
-    let triggering = TriggeringRequest {
-        via: incoming_via.as_ref(),
-        headers: Some(&headers),
-    };
-    let forwarded = if is_local {
-        None
-    } else {
-        Some(
-            forward_temporal_history(
-                TemporalForwarding {
-                    forwarding: &state.forwarding,
-                    triggering,
-                    split,
-                    map_use: &map_use,
-                },
-                service.engine(),
-                &target,
-                &params,
-                &context,
-                &uri,
-            )
-            .await?,
-        )
-    };
+    let scope = QueryScope::of(&target, &params);
+    let split = state.forwarding.split_entities(params.split_entities);
+    let filtering = scope.splitting(split);
+
+    // Forwarding reads the query as the client wrote it, so it runs before the
+    // split-entities filters are held back from the local query below.
+    let forwarded = forward_temporal_history(
+        TemporalForwarding {
+            forwarding: &state.forwarding,
+            triggering: TriggeringRequest {
+                via: incoming_via.as_ref(),
+                headers: Some(&headers),
+            },
+            split,
+            map_use: &map_use,
+        },
+        scope,
+        service.engine(),
+        &target,
+        &params,
+        &context,
+        &uri,
+    )
+    .await?;
 
     let deferred = defer_split_filters(&mut params, filtering);
     let merged_page_bounds = hold_page_until_merge(&mut params, forwarded.as_deref());
@@ -131,6 +208,9 @@ pub async fn query(
         &uri,
     )
     .await?;
+    // Clause 6.3.10 pages the matching entities; a flat join appends the
+    // entities they link to, which accompany the page rather than filling it.
+    let returned = entities.len();
 
     // Join mode (clause 4.5.23) is parsed at the query boundary. `@none` and an
     // absent `join` retrieve no linked entity at all, so neither reaches the
@@ -156,8 +236,9 @@ pub async fn query(
 
     let values = if key_values { simplified_collection(entities, &uri)? } else { entities };
 
-    // Table 6.18.3.2-2: 201 when an EntityMap has been (re)created, 206 when
-    // the local history was cut short by the broker's own lastN cap.
+    // Table 6.18.3.2-2 and Table 6.24.3.1-1: 201 when an EntityMap has been
+    // (re)created, 206 when the local history was cut short by the broker's own
+    // lastN cap.
     let status = if local_result.any_truncated && local_result.range.is_some() {
         StatusCode::PARTIAL_CONTENT
     } else if map_created {
@@ -175,6 +256,8 @@ pub async fn query(
             total_count,
             range: local_result.range,
             entity_map_uri,
+            page,
+            returned,
         },
         &uri,
     )

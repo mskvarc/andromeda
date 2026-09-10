@@ -1,7 +1,7 @@
 //! NGSI-LD subscription types (ETSI GS CIM 009 clause 5.2.12).
 
-use crate::{key_value_pair::KeyValuePair, notification::NotificationTrigger};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, rfc3339, uri::Uri};
+use crate::{attribute_name_csv, key_value_pair::KeyValuePair, notification::NotificationTrigger};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, positive_milliseconds::PositiveMilliseconds, rfc3339, uri::Uri};
 use andromeda_ngsi_ld_query::{filter::expression::Expr, pattern::Pattern, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
 use chrono::{DateTime, Utc};
@@ -83,6 +83,24 @@ pub struct Endpoint {
     /// `MQTT-QoS`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notifier_info: Option<Vec<KeyValuePair>>,
+    /// Minimum period that shall elapse after a failed delivery before this
+    /// endpoint is addressed again (Table 5.2.15-1 `cooldown`).
+    ///
+    /// This suppresses notifications rather than delaying them: "If requests
+    /// are received before the cooldown period has expired, no notification is
+    /// sent." It is therefore a different rule from the delivery queue's retry
+    /// backoff, which re-attempts one notification that already failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cooldown: Option<PositiveMilliseconds>,
+    /// Maximum period that may elapse before one delivery to this endpoint is
+    /// assumed to have failed (Table 5.2.15-1 `timeout`).
+    ///
+    /// The same row adds that it "only applies if the binding protocol always
+    /// returns a response", which is what confines it to the HTTP binding: an
+    /// MQTT publish returns nothing at `QoS` 0, and its acknowledgement window
+    /// at `QoS` 1 and 2 is the binding's own (clause 7.2), not this member.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<PositiveMilliseconds>,
 }
 
 /// Notification delivery parameters for a subscription (ETSI GS CIM 009 clause 5.2.14).
@@ -129,9 +147,31 @@ pub struct NotificationParams {
     /// Timestamp of the last failed notification delivery.
     #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
     pub last_failure: Option<DateTime<Utc>>,
-    /// Total number of notification delivery attempts.
+    /// How many times the notification has been sent (Table 5.2.14.2-1
+    /// `timesSent`).
+    ///
+    /// Output only: "Provided by the system when querying the details of a
+    /// subscription", so a value a client supplies at create or update time is
+    /// overwritten by the stored counter on every read.
+    ///
+    /// Typed as a positive integer because the table restricts the member to
+    /// "Greater than 0" at cardinality `0..1`: a counter that has not moved is
+    /// an absent member, never a `0`. The stored column still floors at zero —
+    /// a counter has to be somewhere before it is first advanced — and the two
+    /// are different statements about different things.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub times_sent: Option<i32>,
+    pub times_sent: Option<NonZeroU32>,
+    /// How many delivery attempts drew an unsuccessful response or timed out
+    /// (Table 5.2.14.2-1 `timesFailed`).
+    ///
+    /// Output only: "Provided by the system when querying the details of a
+    /// subscription", so a value a client supplies at create or update time is
+    /// overwritten by the stored counter on every read.
+    ///
+    /// Positive for the same reason as `timesSent`: the table restricts it to
+    /// "Greater than 0" at cardinality `0..1`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub times_failed: Option<NonZeroU32>,
     /// Status of the last notification delivery attempt.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<NotificationStatus>,
@@ -184,6 +224,26 @@ pub struct SubscriptionFilters {
     /// Temporal query expression (clause 5.2.21).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temporal_q: Option<Value>,
+    /// Attributes whose `q` values are expanded through the subscription's
+    /// `@context` by JSON-LD type coercion before the filter is evaluated
+    /// (Table 5.2.12-1 `expandValues`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "attribute_name_csv::deserialize",
+        serialize_with = "attribute_name_csv::serialize"
+    )]
+    pub expand_values: Option<Vec<AttributeName>>,
+    /// Attributes whose values are uninterpretable as JSON-LD, so only the
+    /// object keys addressed by the `q` filter are expanded through the
+    /// `@context` (Table 5.2.12-1 `jsonKeys`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "attribute_name_csv::deserialize",
+        serialize_with = "attribute_name_csv::serialize"
+    )]
+    pub json_keys: Option<Vec<AttributeName>>,
 }
 
 /// How and how often a matching change is turned into a notification
@@ -369,12 +429,15 @@ mod tests {
             "scopeQ": "/Madrid",
             "csf": "type==\"ContextSourceRegistration\"",
             "datasetId": ["urn:ngsi-ld:Dataset:1"],
+            "expandValues": "speed",
+            "jsonKeys": "payload",
             "isActive": true,
             "notification": {
                 "attributes": ["speed"],
                 "format": "normalized",
-                "endpoint": {"uri": "https://receiver.example.com/notify", "accept": "application/ld+json"},
+                "endpoint": {"uri": "https://receiver.example.com/notify", "accept": "application/ld+json", "cooldown": 500, "timeout": 3000},
                 "timesSent": 4,
+                "timesFailed": 1,
                 "status": "ok"
             },
             "expiresAt": "2030-12-31T23:59:59Z",
@@ -477,5 +540,111 @@ mod tests {
             let parsed = NotificationStatus::from_str(&s).unwrap();
             pretty_assertions::assert_eq!(parsed, status, "round-trip failed for {status}");
         }
+    }
+
+    /// Table 5.2.15-1: `cooldown` and `timeout` are numbers of milliseconds
+    /// restricted to "Greater than 0", so the endpoint keeps them typed and a
+    /// non-positive or non-integer value is a parse failure rather than a
+    /// silently ignored member.
+    #[test]
+    fn a_subscription_endpoint_carries_its_cooldown_and_timeout_in_milliseconds() {
+        let endpoint: Endpoint = serde_json::from_value(serde_json::json!({
+            "uri": "https://receiver.example.com/notify",
+            "cooldown": 250,
+            "timeout": 1500
+        }))
+        .expect("parses");
+        pretty_assertions::assert_eq!(endpoint.cooldown.map(PositiveMilliseconds::get), Some(250));
+        pretty_assertions::assert_eq!(endpoint.timeout.map(PositiveMilliseconds::get), Some(1500));
+        pretty_assertions::assert_eq!(
+            serde_json::to_value(&endpoint).expect("serialises"),
+            serde_json::json!({"uri": "https://receiver.example.com/notify", "cooldown": 250, "timeout": 1500})
+        );
+    }
+
+    /// Table 5.2.15-1 restricts both members to "Greater than 0".
+    #[test]
+    fn a_subscription_endpoint_rejects_a_non_positive_cooldown_or_timeout() {
+        for wire in [
+            serde_json::json!({"uri": "https://receiver.example.com/notify", "cooldown": 0}),
+            serde_json::json!({"uri": "https://receiver.example.com/notify", "cooldown": -1}),
+            serde_json::json!({"uri": "https://receiver.example.com/notify", "cooldown": "abc"}),
+            serde_json::json!({"uri": "https://receiver.example.com/notify", "timeout": 0}),
+            serde_json::json!({"uri": "https://receiver.example.com/notify", "timeout": -1}),
+            serde_json::json!({"uri": "https://receiver.example.com/notify", "timeout": 1.5}),
+        ] {
+            // clone: the rejected value is reported when the assertion fails
+            assert!(serde_json::from_value::<Endpoint>(wire.clone()).is_err(), "{wire} must be rejected");
+        }
+    }
+
+    /// Table 5.2.14.2-1: `timesFailed` is one of the output-only members a
+    /// query or retrieve of a subscription reports.
+    #[test]
+    fn notification_parameters_carry_the_times_failed_counter() {
+        let notification: NotificationParams = serde_json::from_value(serde_json::json!({
+            "endpoint": {"uri": "https://receiver.example.com/notify"},
+            "timesSent": 7,
+            "timesFailed": 3
+        }))
+        .expect("parses");
+        pretty_assertions::assert_eq!(notification.times_failed.map(NonZeroU32::get), Some(3));
+        pretty_assertions::assert_eq!(notification.times_sent.map(NonZeroU32::get), Some(7));
+    }
+
+    /// Table 5.2.14.2-1 restricts both delivery counters to "Greater than 0",
+    /// so a `0` is outside the data type rather than a counter at rest, and the
+    /// broker never renders one.
+    #[test]
+    fn a_delivery_counter_of_zero_is_outside_the_notification_parameters() {
+        for wire in [
+            serde_json::json!({"endpoint": {"uri": "https://receiver.example.com/notify"}, "timesSent": 0}),
+            serde_json::json!({"endpoint": {"uri": "https://receiver.example.com/notify"}, "timesFailed": 0}),
+        ] {
+            // clone: the rejected value is reported when the assertion fails
+            assert!(serde_json::from_value::<NotificationParams>(wire.clone()).is_err(), "{wire} must be rejected");
+        }
+    }
+
+    /// A counter the system has not moved is an absent member, which is what
+    /// cardinality `0..1` means for a restriction of "Greater than 0".
+    #[test]
+    fn an_unmoved_delivery_counter_renders_as_an_absent_member() {
+        let notification: NotificationParams =
+            serde_json::from_value(serde_json::json!({"endpoint": {"uri": "https://receiver.example.com/notify"}})).expect("parses");
+        let rendered = serde_json::to_value(&notification).expect("renders");
+        assert!(rendered.get("timesSent").is_none(), "{rendered}");
+        assert!(rendered.get("timesFailed").is_none(), "{rendered}");
+    }
+
+    /// Table 5.2.12-1: `expandValues` and `jsonKeys` are each a single String
+    /// holding a comma separated list of attribute names, not an array.
+    #[test]
+    fn subscription_filters_read_expand_values_and_json_keys_as_comma_separated_names() {
+        let filters: SubscriptionFilters = serde_json::from_value(serde_json::json!({"expandValues": "speed,colour", "jsonKeys": "payload"})).expect("parses");
+        pretty_assertions::assert_eq!(
+            filters
+                .expand_values
+                .as_deref()
+                .map(|names| names.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
+            Some(vec!["speed", "colour"])
+        );
+        pretty_assertions::assert_eq!(
+            filters
+                .json_keys
+                .as_deref()
+                .map(|names| names.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
+            Some(vec!["payload"])
+        );
+        pretty_assertions::assert_eq!(
+            serde_json::to_value(&filters).expect("serialises"),
+            serde_json::json!({"expandValues": "speed,colour", "jsonKeys": "payload"})
+        );
+    }
+
+    #[test]
+    fn subscription_filters_reject_an_expand_values_array_or_an_empty_member() {
+        assert!(serde_json::from_value::<SubscriptionFilters>(serde_json::json!({"expandValues": ["speed"]})).is_err());
+        assert!(serde_json::from_value::<SubscriptionFilters>(serde_json::json!({"jsonKeys": "payload,"})).is_err());
     }
 }

@@ -102,4 +102,26 @@ mod tests {
         let uri: Uri = url.into();
         assert!(matches!(uri, Uri::Url(_)));
     }
+
+    /// Annex A.3: "it is assumed that context-broker implementations shall
+    /// always use lowercase letters in namespaces where they have a choice in
+    /// case [...] Restricting the namespace prefix to lower case urn:ngsi-ld:
+    /// can improve caching and retrieval."
+    ///
+    /// URN equivalence is case-insensitive in the scheme and NID, so two
+    /// spellings of one identifier have to converge on the lowercase prefix
+    /// before anything compares or caches them. The namespace-specific string
+    /// is case-sensitive and must survive untouched, or `Building:1` and
+    /// `building:1` would collapse into one entity.
+    #[test]
+    fn a_urn_prefix_is_normalised_to_lowercase_while_the_identifier_keeps_its_case() {
+        let parsed: Uri = "URN:NGSI-LD:Building:001".parse().expect("a URN in any case");
+        pretty_assertions::assert_eq!(parsed.to_string(), "urn:ngsi-ld:Building:001");
+
+        let mixed: Uri = "uRn:NgSi-Ld:Building:001".parse().expect("a URN in any case");
+        pretty_assertions::assert_eq!(mixed, parsed, "the prefix case does not distinguish two identifiers");
+
+        let other_case: Uri = "urn:ngsi-ld:building:001".parse().expect("a lowercase identifier");
+        assert_ne!(other_case, parsed, "the namespace specific string stays case-sensitive");
+    }
 }

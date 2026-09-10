@@ -156,6 +156,8 @@ mod tests {
             endpoint_accept: None,
             endpoint_receiver_info: None,
             endpoint_notifier_info: None,
+            endpoint_cooldown: None,
+            endpoint_timeout: None,
             selectors: Vec::new(),
             matching_attrs: Vec::new(),
             temporal_q: None,

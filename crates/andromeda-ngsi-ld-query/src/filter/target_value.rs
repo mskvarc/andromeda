@@ -197,10 +197,30 @@ impl ValueMember {
     }
 
     /// The value one node carries under this family's terminal keyword.
+    ///
+    /// Clause 4.5.22.2 makes a normalized `objectList` "an ordered array of
+    /// Relationship Objects each consisting of a JSON object containing a
+    /// single Attribute with a key called `object`", so a member of that list
+    /// expands to a node carrying `hasObject` rather than to a bare terminal.
+    /// Clause 4.5.22.3 admits the concise spelling, a plain URI, which expands
+    /// to the terminal directly. Both name the same target object, so the
+    /// wrapper is unwrapped rather than treated as a value of its own -- a
+    /// reader that stopped at the outer node resolved no target at all, and an
+    /// unresolved target satisfies no operator.
     fn terminal_of<'a>(&self, node: &'a Value) -> Option<&'a Value> {
+        let node = self.unwrap_relationship_object(node);
         match self.terminal {
             TerminalKeyword::Literal => node.get(VALUE_KEYWORD),
             TerminalKeyword::Identifier => node.get(ID_KEYWORD).or_else(|| node.get(VALUE_KEYWORD)),
+        }
+    }
+
+    /// The value node inside a normalized Relationship Object wrapper, or the
+    /// node itself when it carries no wrapper.
+    fn unwrap_relationship_object<'a>(&self, node: &'a Value) -> &'a Value {
+        match self.terminal {
+            TerminalKeyword::Literal => node,
+            TerminalKeyword::Identifier => node.get(OBJECT.as_str()).and_then(|wrapped| wrapped.as_array()?.first()).unwrap_or(node),
         }
     }
 }
@@ -344,7 +364,16 @@ mod tests {
     /// gives `@id` nodes. Both spell the same target object.
     #[test]
     fn a_list_relationship_resolves_to_the_whole_object_list_in_either_expansion() {
-        for member in [json!({"@value": "urn:ngsi-ld:Part:1"}), json!({"@id": "urn:ngsi-ld:Part:1"})] {
+        // The third member shape is the normalized representation of clause
+        // 4.5.22.2: a Relationship Object wrapper carrying `hasObject`. The
+        // reader used to stop at that wrapper and resolve nothing, so a `q`
+        // over a `ListRelationship` silently matched no entity.
+        for member in [
+            json!({"@value": "urn:ngsi-ld:Part:1"}),
+            json!({"@id": "urn:ngsi-ld:Part:1"}),
+            json!({"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:Part:1"}]}),
+            json!({"https://uri.etsi.org/ngsi-ld/hasObject": [{"@value": "urn:ngsi-ld:Part:1"}]}),
+        ] {
             let (value, origin) = target_of(&json!({
                 "https://uri.etsi.org/ngsi-ld/hasObjectList": [{"@list": [member, {"@value": "urn:ngsi-ld:Part:2"}]}]
             }));

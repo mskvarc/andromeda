@@ -8,27 +8,35 @@ use andromeda_http_headers::{
     accept::Accept,
     media_type::{GeoJsonSupport, ResponseMediaType},
 };
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, not_acceptable::AvailableRepresentations};
 use axum::{
     extract::FromRequestParts,
-    http::{StatusCode, header::ACCEPT, request::Parts},
+    http::{header::ACCEPT, request::Parts},
 };
 use headers::HeaderMapExt;
 use std::future::{Future, ready};
 
 /// Parse the Accept header and select the best media type.
+///
+/// Clause 6.3.4: a refusal is "a 406 HTTP status code and the body of the
+/// message shall contain the list of the available representations of the
+/// resources", so the rejection carries the endpoint's own list rather than a
+/// bare status.
 fn resolve_accept(parts: &Parts, geo_json: GeoJsonSupport) -> Result<ResponseMediaType, ExtractorRejection> {
-    // No Accept header at all -> default to JSON per NGSI-LD convention
+    // Clause 6.3.4: "If the Accept header is not present, application/json
+    // shall be assumed."
     if !parts.headers.contains_key(ACCEPT) {
         return Ok(ResponseMediaType::Json);
     }
 
+    let not_acceptable = || ExtractorRejection::NotAcceptable(AvailableRepresentations::of(geo_json));
+
     // Header present but could not be decoded (no recognized NGSI-LD media types) -> 406
     let Some(accept) = parts.headers.typed_get::<Accept>() else {
-        return Err(ExtractorRejection::Empty(StatusCode::NOT_ACCEPTABLE));
+        return Err(not_acceptable());
     };
 
-    accept.best_format(geo_json).ok_or(ExtractorRejection::Empty(StatusCode::NOT_ACCEPTABLE))
+    accept.best_format(geo_json).ok_or_else(not_acceptable)
 }
 
 /// Generate an Accept-header extractor struct with a `media_type()` accessor
@@ -152,6 +160,22 @@ mod tests {
 
     // --- Extractor integration tests ---
 
+    /// The representations a rejection published, or a description of what it
+    /// was instead.
+    fn rejected_representations(rejection: ExtractorRejection) -> Vec<&'static str> {
+        match rejection {
+            ExtractorRejection::NotAcceptable(representations) => representations.media_types().iter().map(ResponseMediaType::as_str).collect(),
+            ExtractorRejection::Empty(status) => panic!("clause 6.3.4 requires a representation list, not a bare {status}"),
+            ExtractorRejection::InvalidRequest { detail, .. } | ExtractorRejection::BadRequestData { detail, .. } => {
+                panic!("clause 6.3.4 requires a 406, not a problem detail: {detail}")
+            }
+            ExtractorRejection::Classified(_) => panic!("clause 6.3.4 requires a 406 with a representation list"),
+        }
+    }
+
+    /// Clause 6.3.4: an `Accept` that "does not imply application/json nor
+    /// application/ld+json" is refused with the list of representations the
+    /// endpoint does offer, `GeoJSON` included where the endpoint answers it.
     #[tokio::test]
     async fn rejects_unsupported_accept_header() {
         let req = Request::builder()
@@ -160,15 +184,17 @@ mod tests {
             .body(Body::empty())
             .expect("valid request");
         let (mut parts, _) = req.into_parts();
-        let result = AcceptFormat::from_request_parts(&mut parts, &()).await;
-        match result {
-            Err(ExtractorRejection::Empty(status)) => {
-                pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
-            }
-            _ => panic!("expected 406 empty rejection"),
-        }
+        let rejection = AcceptFormat::from_request_parts(&mut parts, &()).await.expect_err("application/xml is refused");
+        pretty_assertions::assert_eq!(
+            rejected_representations(rejection),
+            vec!["application/json", "application/ld+json", "application/geo+json"]
+        );
     }
 
+    /// Clause 6.3.4: for an operation outside Retrieve Entity and Query Entity,
+    /// `application/geo+json` "will result in a Not Acceptable Media Type
+    /// error", and the list it publishes must not offer the media type it just
+    /// refused.
     #[tokio::test]
     async fn no_geo_rejects_geojson_accept_header() {
         let req = Request::builder()
@@ -177,13 +203,10 @@ mod tests {
             .body(Body::empty())
             .expect("valid request");
         let (mut parts, _) = req.into_parts();
-        let result = AcceptFormatNoGeo::from_request_parts(&mut parts, &()).await;
-        match result {
-            Err(ExtractorRejection::Empty(status)) => {
-                pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
-            }
-            _ => panic!("expected 406 empty rejection for geo+json"),
-        }
+        let rejection = AcceptFormatNoGeo::from_request_parts(&mut parts, &())
+            .await
+            .expect_err("application/geo+json is refused here");
+        pretty_assertions::assert_eq!(rejected_representations(rejection), vec!["application/json", "application/ld+json"]);
     }
 
     #[tokio::test]
