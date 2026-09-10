@@ -5,13 +5,16 @@ use crate::{
     attribute_name_id::AttributeNameId,
     dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
-    operator::{compare, pattern as pattern_predicate},
+    operator::{does_not_hold, pattern as pattern_predicate},
     q_predicate::{
         fallback::{fallback_equality, fallback_exists, fallback_ordering, fallback_pattern},
+        local_target::{LocalTarget, local_target},
+        projection_probe::{attribute_row_exists, exists_on_projection, probe_column},
+        structured_target::{StructuredTarget, carries_operand, carries_target_language, omits_operand},
         traversal::LinkedHop,
+        typed_column::typed_column_condition,
     },
 };
-use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
 use andromeda_ngsi_ld_query::{
     filter::{
         expression::Expr,
@@ -22,18 +25,8 @@ use andromeda_ngsi_ld_query::{
     pattern::Pattern,
 };
 use andromeda_postgresql_schema::current::CurrentAttributeValues;
-use andromeda_postgresql_seaquery::literal::{false_literal, int_literal};
-use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Iden, Query, SimpleExpr};
-
-/// The alias every value probe reads the `current_attribute_values` scan under.
-#[derive(Iden, Clone, Copy)]
-#[iden = "cav"]
-struct Cav;
-
-/// A `"cav"."column"` reference into the probe's projection scan.
-fn probe_column(column: CurrentAttributeValues) -> SimpleExpr {
-    SeaExpr::col((Cav, column))
-}
+use andromeda_postgresql_seaquery::literal::false_literal;
+use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
 
 /// Compile a parsed `q` expression into a sea-query [`Condition`].
 ///
@@ -85,36 +78,48 @@ fn compile_along_path(pred: &Predicate, path: &QueryPath, rows: &EntityRowRefs, 
 fn compile_local_predicate(pred: &Predicate, path: &AttrPath, rows: &EntityRowRefs, names: &QueryNames) -> Condition {
     match pred {
         Predicate::Exists(_) => compile_exists(path, rows, names),
-        Predicate::Equality { membership, rhs, .. } => {
-            if is_projection_eligible(path) {
-                match names.attributes.get(&path.attr) {
-                    Some(id) => compile_equality_on_projection(id, *membership, rhs, rows),
-                    None => unsatisfiable(),
-                }
-            } else {
-                fallback_equality(path, *membership, rhs, rows)
-            }
-        }
-        Predicate::Ordering { op, rhs, .. } => {
-            if is_projection_eligible(path) {
-                match names.attributes.get(&path.attr) {
-                    Some(id) => compile_ordering_on_projection(id, *op, rhs, rows),
-                    None => unsatisfiable(),
-                }
-            } else {
-                fallback_ordering(path, *op, rhs, rows)
-            }
-        }
+        Predicate::Equality { membership, rhs, .. } => compile_equality(path, *membership, rhs, rows, names),
+        Predicate::Ordering { op, rhs, .. } => match local_target(path) {
+            LocalTarget::OwnValue => match names.attributes.get(&path.attr) {
+                Some(id) => compile_ordering_on_projection(id, *op, rhs, rows),
+                None => unsatisfiable(),
+            },
+            // An ordering comparison against one member of a structure is not a
+            // containment test, so nothing in the projection answers it and the
+            // payload is the only reader left.
+            LocalTarget::TrailingMember(_) | LocalTarget::PayloadMember => fallback_ordering(path, *op, rhs, rows),
+        },
         Predicate::MatchPattern { pattern, .. } => compile_pattern(path, pattern, PatternPolarity::Match, rows, names),
         Predicate::NotMatchPattern { pattern, .. } => compile_pattern(path, pattern, PatternPolarity::NotMatch, rows, names),
     }
 }
 
-/// Whether a path addresses an attribute's own value, which is the only thing
-/// `current_attribute_values` stores. Sub-attributes (`temperature.observedAt`)
-/// and compound value paths (`address[city]`) live inside the JSONB payload.
-const fn is_projection_eligible(path: &AttrPath) -> bool {
-    path.sub_attrs.is_empty() && path.value_path.is_empty()
+/// Compile an equality Query Term (`==`/`!=`), routing it by what its path
+/// addresses.
+///
+/// A trailing member is compiled twice and disjoined, because clause 4.9 admits
+/// two readings of `attr[member]` and only the stored row says which one is
+/// meant: the projection probe answers the `LanguageProperty` reading, where the
+/// member is the target language, and the payload fallback answers the compound
+/// value reading. Neither can match the other's rows — a `languageMap` carries
+/// no `hasValue` for the fallback's jsonpath to reach, and a compound value's
+/// member nodes carry no `@language` for the containment to match — so the
+/// disjunction is exact rather than merely permissive.
+fn compile_equality(path: &AttrPath, membership: SetMembership, rhs: &CompareValue, rows: &EntityRowRefs, names: &QueryNames) -> Condition {
+    match local_target(path) {
+        LocalTarget::OwnValue => match names.attributes.get(&path.attr) {
+            Some(id) => compile_equality_on_projection(id, StructuredTarget::AnyValue, membership, rhs, rows),
+            None => unsatisfiable(),
+        },
+        LocalTarget::TrailingMember(member) => {
+            let tagged = match names.attributes.get(&path.attr) {
+                Some(id) => compile_equality_on_projection(id, StructuredTarget::TargetLanguage(member), membership, rhs, rows),
+                None => unsatisfiable(),
+            };
+            Condition::any().add(tagged).add(fallback_equality(path, membership, rhs, rows))
+        }
+        LocalTarget::PayloadMember => fallback_equality(path, membership, rhs, rows),
+    }
 }
 
 /// A predicate that no row can satisfy.
@@ -132,179 +137,146 @@ fn unsatisfiable() -> Condition {
 /// to history and never appears in current state, so an attribute deleted by
 /// clause 5.6.16 leaves no row behind and presence needs no further guard.
 ///
-/// The probe reads the leading `(entity_key, attribute_name_id)` columns of the
-/// clause 4.5.5 grain constraint, so it is an index-only lookup on the same
-/// index the write path conflicts against.
-///
 /// The obvious alternative, `payload->0 ? '<iri>'`, cannot use the GIN index on
 /// `payload`: GIN's `jsonb_ops` only serves `?` when the left operand is the
 /// bare indexed column, and `payload->0` is an expression. It is a sequential
 /// scan.
 fn compile_exists(path: &AttrPath, rows: &EntityRowRefs, names: &QueryNames) -> Condition {
-    if !is_projection_eligible(path) {
-        return fallback_exists(path, rows);
+    match local_target(path) {
+        LocalTarget::OwnValue => match names.attributes.get(&path.attr) {
+            Some(id) => attribute_row_exists(id, rows),
+            None => unsatisfiable(),
+        },
+        // Clause 4.9's target element for a language-selected path is the
+        // matching key-value pair, so its presence is what existence asks —
+        // and, on any other family, the presence of the compound member the
+        // same spelling addresses.
+        LocalTarget::TrailingMember(member) => {
+            let tagged = match names.attributes.get(&path.attr) {
+                Some(id) => exists_on_projection(id, carries_target_language(&probe_column(CurrentAttributeValues::ValueObject), member), rows),
+                None => unsatisfiable(),
+            };
+            Condition::any().add(tagged).add(fallback_exists(path, rows))
+        }
+        LocalTarget::PayloadMember => fallback_exists(path, rows),
     }
-
-    let Some(id) = names.attributes.get(&path.attr) else {
-        return unsatisfiable();
-    };
-
-    let mut probe = Query::select();
-    probe
-        .expr(int_literal(1))
-        .from_as(CurrentAttributeValues::Table, Cav)
-        .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::AttributeNameId)).eq(id.get()))
-        .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::EntityKey)).eq(rows.entity_key_column()));
-    Condition::all().add(SeaExpr::exists(probe))
 }
 
 // ---------------------------------------------------------------------------
 // Comparisons against the projection
 // ---------------------------------------------------------------------------
 
-/// Wrap a value condition in the correlated `current_attribute_values` probe.
-///
-/// The probe is an `EXISTS` over the projection, narrowed to the attribute's
-/// dictionary key and the value condition, and correlated on the enclosing
-/// statement's entity key. The attribute-name test is added before the value so
-/// its dictionary key binds ahead of the value's operands, and the correlation
-/// is added last so it binds nothing after them.
-fn exists_on_projection(id: AttributeNameId, value: Condition, rows: &EntityRowRefs) -> Condition {
-    let mut probe = Query::select();
-    probe
-        .expr(int_literal(1))
-        .from_as(CurrentAttributeValues::Table, Cav)
-        .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::AttributeNameId)).eq(id.get()))
-        .cond_where(value)
-        .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::EntityKey)).eq(rows.entity_key_column()));
-    Condition::all().add(SeaExpr::exists(probe))
-}
-
-/// Compile an equality comparison (`==`/`!=`) against the typed columns of
-/// `current_attribute_values`.
-fn compile_equality_on_projection(id: AttributeNameId, membership: SetMembership, rhs: &CompareValue, rows: &EntityRowRefs) -> Condition {
+/// Compile an equality comparison (`==`/`!=`) against the columns of
+/// `current_attribute_values` that can hold the clause 4.9 target value.
+fn compile_equality_on_projection(
+    id: AttributeNameId,
+    target: StructuredTarget<'_>,
+    membership: SetMembership,
+    rhs: &CompareValue,
+    rows: &EntityRowRefs,
+) -> Condition {
     let value = match rhs {
-        CompareValue::Scalar(scalar) => Condition::all().add(scalar_condition(scalar, membership.as_cmp_op())),
-        CompareValue::Range { min, max } => match membership {
-            SetMembership::Within => Condition::all()
-                .add(scalar_condition(min, CmpOp::GreaterEq))
-                .add(scalar_condition(max, CmpOp::LessEq)),
-            SetMembership::Outside => Condition::any()
-                .add(scalar_condition(min, CmpOp::Less))
-                .add(scalar_condition(max, CmpOp::Greater)),
+        CompareValue::Scalar(scalar) => equality_condition(target, scalar, membership),
+        CompareValue::Range { min, max } => range_condition(target, min, max, membership),
+        // Clause 4.9: every member of a value list is compared with the equality
+        // operator, so `==` holds when any of them matches and `!=` when none
+        // does. The negated form is a conjunction of per-member inequalities
+        // rather than `NOT (any member matches)`: only one value column of a row
+        // is ever populated, so the other columns' comparisons are NULL, and
+        // negating the whole disjunction turns that NULL into a non-match for
+        // every entity — which made `attr!="a","b"` select nothing at all.
+        CompareValue::ValueList(values) => match membership {
+            SetMembership::Within => values.iter().fold(Condition::any(), |cond, value| {
+                cond.add(equality_condition(target, value, SetMembership::Within))
+            }),
+            SetMembership::Outside => values.iter().fold(Condition::all(), |cond, value| {
+                cond.add(equality_condition(target, value, SetMembership::Outside))
+            }),
         },
-        CompareValue::ValueList(values) => {
-            let arms = values
-                .iter()
-                .fold(Condition::any(), |cond, value| cond.add(scalar_condition(value, CmpOp::Equal)));
-            match membership {
-                SetMembership::Within => arms,
-                SetMembership::Outside => arms.not(),
-            }
-        }
     };
     exists_on_projection(id, value, rows)
+}
+
+/// One equality comparison against every column the target value can occupy.
+///
+/// A scalar target lives in one typed column; a `LanguageProperty`'s
+/// `languageMap`, a `ListProperty`'s `valueList`, a `ListRelationship`'s
+/// `objectList`, a multi-term `VocabProperty`'s `vocab` and an array-valued
+/// Property all live in `value_object`. Clause 4.9 names each of them a target
+/// value, so both readings are tested and disjoined; the projection's own check
+/// constraint leaves exactly one value column populated per row, so at most one
+/// disjunct is anything but NULL.
+///
+/// `unequal` is compiled as the total negation of that same disjunction rather
+/// than as a disjunction of negated comparisons, which is what clause 4.9
+/// requires of it: "If the data type of the target value and the data type of
+/// the Query Term value are different, then they shall be considered unequal."
+/// A row whose value sits in another typed column makes every comparison
+/// unknown, and only a total negation reads that as the datatype difference it
+/// is — `temp!="20"` over a numeric Property matched nothing while the clause
+/// requires it to match. Its inner disjunction is the whole `equal` condition,
+/// so the two operators cannot drift apart.
+///
+/// With a target language the typed columns are left out entirely. A
+/// language-selected path addresses a `languageMap` key, and a scalar-valued
+/// attribute of the same name carries no such key: comparing its typed column
+/// would let `attr[en]!=5` match a plain numeric Property, whose target element
+/// for that path does not exist at all. That polarity keeps its own compilation
+/// for the same reason — it has to require the key to be present.
+fn equality_condition(target: StructuredTarget<'_>, scalar: &Scalar, membership: SetMembership) -> Condition {
+    let column = probe_column(CurrentAttributeValues::ValueObject);
+    match target {
+        StructuredTarget::AnyValue => match membership {
+            SetMembership::Within => carries_any_target_value(&column, scalar),
+            SetMembership::Outside => Condition::all().add(does_not_hold(carries_any_target_value(&column, scalar))),
+        },
+        StructuredTarget::TargetLanguage(language) => match membership {
+            SetMembership::Within => carries_operand(&column, target, scalar),
+            SetMembership::Outside => omits_operand(&column, language, scalar),
+        },
+    }
+}
+
+/// Whether any column that can hold an unqualified clause 4.9 target value
+/// holds this operand.
+fn carries_any_target_value(column: &SimpleExpr, scalar: &Scalar) -> Condition {
+    Condition::any()
+        .add(typed_column_condition(scalar, CmpOp::Equal))
+        .add(carries_operand(column, StructuredTarget::AnyValue, scalar))
+}
+
+/// Compile a range operand (`==10..20` / `!=10..20`) against the typed columns.
+///
+/// A range is two ordering comparisons, which JSONB containment cannot express,
+/// so a language-selected range has nothing to compile here and is left to the
+/// payload fallback that is disjoined with this probe.
+///
+/// The negated form is the total negation of the interval test, for the reason
+/// [`equality_condition`] gives: clause 4.9 makes a target whose datatype is not
+/// the range's unequal to it, and a comparison the column cannot even evaluate
+/// is unknown rather than false.
+fn range_condition(target: StructuredTarget<'_>, min: &Scalar, max: &Scalar, membership: SetMembership) -> Condition {
+    match target {
+        StructuredTarget::AnyValue => match membership {
+            SetMembership::Within => within_range(min, max),
+            SetMembership::Outside => Condition::all().add(does_not_hold(within_range(min, max))),
+        },
+        StructuredTarget::TargetLanguage(_) => unsatisfiable(),
+    }
+}
+
+/// Whether the typed column holding this range's operand kind sits inside the
+/// interval, both bounds included (clause 4.9 `Range`).
+fn within_range(min: &Scalar, max: &Scalar) -> Condition {
+    Condition::all()
+        .add(typed_column_condition(min, CmpOp::GreaterEq))
+        .add(typed_column_condition(max, CmpOp::LessEq))
 }
 
 /// Compile an ordering comparison (`>`/`>=`/`<`/`<=`) against the typed columns
 /// of `current_attribute_values`.
 fn compile_ordering_on_projection(id: AttributeNameId, op: OrderingOp, rhs: &Scalar, rows: &EntityRowRefs) -> Condition {
-    exists_on_projection(id, Condition::all().add(scalar_condition(rhs, op.as_cmp_op())), rows)
-}
-
-/// Compare one scalar against the typed column that holds values of its kind.
-///
-/// Every arm names exactly one typed column and compares it to a bound value, so
-/// each comparison is the shape the partial index over that column is predicated
-/// on: `value_number > $1` implies `value_number IS NOT NULL`, which is what
-/// makes `(attribute_name_id, value_number) WHERE value_number IS NOT NULL`
-/// applicable. Nothing tests `value_kind`, deliberately — the projection's
-/// check constraint already ties the kind to the populated column, and an added
-/// `value_kind = k` term would turn the NULL a wrong-kind row yields into
-/// `FALSE`, which under the negated forms (`!=` over a value list) flips a
-/// non-match into a match.
-///
-/// The mapping mirrors what the write path projects:
-///
-/// * numbers land in `value_number` (`numeric`) and bind directly as an exact
-///   decimal, so every supported operand uses the typed numeric index,
-/// * booleans in `value_bool`,
-/// * date-times in `value_datetime`,
-/// * strings in `value_string` for Properties and single-valued
-///   `VocabProperties`, and — under the equality operators only — in `value_uri`
-///   for Relationship objects, which is what [`relationship_object_is_comparable`]
-///   decides,
-/// * plain dates and times in `value_string`, because only full
-///   `DateTime`-typed values are projected to `value_datetime`. Both are stored
-///   in the one canonical, fixed-width form their clause 4.6.3 types define, so
-///   byte-wise order over the column is chronological order and an ordering
-///   comparison against the bound canonical text is a temporal comparison.
-fn scalar_condition(scalar: &Scalar, op: CmpOp) -> SimpleExpr {
-    match scalar {
-        // SeaQuery owns every value in its AST, so this is the one necessary
-        // clone between the borrowed query domain value and the NUMERIC bind.
-        Scalar::Number(number) => compare(probe_column(CurrentAttributeValues::ValueNumber), op, SeaExpr::val(number.decimal().clone())),
-        Scalar::Bool(value) => compare(probe_column(CurrentAttributeValues::ValueBool), op, SeaExpr::val(*value)),
-        Scalar::Str(value) => {
-            let string_test = compare(probe_column(CurrentAttributeValues::ValueString), op, SeaExpr::val(value.as_str()));
-            match relationship_object_is_comparable(op) {
-                RelationshipObjects::Comparable => {
-                    let uri_test = compare(probe_column(CurrentAttributeValues::ValueUri), op, SeaExpr::val(value.as_str()));
-                    string_test.or(uri_test)
-                }
-                RelationshipObjects::NonMatching => string_test,
-            }
-        }
-        Scalar::DateTime(value) => compare(probe_column(CurrentAttributeValues::ValueDatetime), op, SeaExpr::val(*value)),
-        Scalar::Date(value) => compare(
-            probe_column(CurrentAttributeValues::ValueString),
-            op,
-            SeaExpr::val(NgsiLdDate::from(*value).to_string()),
-        ),
-        // The operand is rendered in the same canonical form the write path
-        // stores, rather than in the clause 4.9 serialisation the client wrote:
-        // `12:00:00+01:00` and `11:00:00Z` are one time of day, and only the
-        // canonical text of both compares against the stored column.
-        Scalar::Time(value) => match NgsiLdTime::normalise(*value) {
-            Ok(canonical) => compare(probe_column(CurrentAttributeValues::ValueString), op, SeaExpr::val(canonical.to_string())),
-            // A time of day with no canonical form is one no write path could
-            // have stored, so nothing can compare equal to it.
-            Err(_) => false_literal(),
-        },
-    }
-}
-
-/// Whether a Relationship's object is a comparison target under one operator.
-///
-/// `current_attribute_values.value_uri` holds Relationship objects and nothing
-/// else, so probing it is exactly the decision of whether the predicate may
-/// match a Relationship.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RelationshipObjects {
-    /// The operator admits a Relationship's object as a comparison target.
-    Comparable,
-    /// Clause 4.9 requires a Relationship operand to non-match this operator.
-    NonMatching,
-}
-
-/// Clause 4.9: a Relationship (and a `ListRelationship`) operand shall non-match
-/// every operator other than equality and inequality.
-///
-/// A URI names a resource; it carries no order a `<` or `>` could mean, and the
-/// pattern operators are defined over String targets. Probing `value_uri` under
-/// an ordering operator therefore made `owner>"a"` select entities the standard
-/// requires it to reject.
-///
-/// Known gap, left deliberately: a `ListRelationship`'s objects are projected into
-/// `value_object` as a JSON array, not into `value_uri`, so equality against one
-/// of its members is not answered by this probe at all. Clause 4.9 admits it, and
-/// closing it needs a containment predicate over `value_object` that the
-/// projection carries no index for; it is a separate change from this gating.
-const fn relationship_object_is_comparable(op: CmpOp) -> RelationshipObjects {
-    match op {
-        CmpOp::Equal | CmpOp::Unequal => RelationshipObjects::Comparable,
-        CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => RelationshipObjects::NonMatching,
-    }
+    exists_on_projection(id, Condition::all().add(typed_column_condition(rhs, op.as_cmp_op())), rows)
 }
 
 // ---------------------------------------------------------------------------
@@ -336,8 +308,11 @@ const fn relationship_object_is_comparable(op: CmpOp) -> RelationshipObjects {
 /// `attribute_name_id` prefix of `idx_cav_attr_string` before any regex is
 /// evaluated.
 fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, rows: &EntityRowRefs, names: &QueryNames) -> Condition {
-    if !is_projection_eligible(path) {
-        return fallback_pattern(path, pattern, polarity, rows);
+    match local_target(path) {
+        LocalTarget::OwnValue => (),
+        // A regex is not a containment test, so the projection cannot answer a
+        // pattern against one member of a structure; the payload can reach it.
+        LocalTarget::TrailingMember(_) | LocalTarget::PayloadMember => return fallback_pattern(path, pattern, polarity, rows),
     }
     let Some(id) = names.attributes.get(&path.attr) else {
         return unsatisfiable();
@@ -517,6 +492,68 @@ mod tests {
         }
     }
 
+    /// Clause 4.9, `unequal`: "If the data type of the target value and the data
+    /// type of the Query Term value are different, then they shall be considered
+    /// unequal."
+    ///
+    /// A row whose value sits in another typed column makes every comparison
+    /// unknown, so the negation has to be total: `NOT (…)` would propagate that
+    /// unknown and drop the very rows the clause makes matches.
+    #[test]
+    fn an_inequality_negates_the_whole_equality_condition_totally() {
+        let (sql, _) = render("\"https://example.com/brandName\"!=\"Mercedes\"");
+        assert!(sql.contains("NOT COALESCE("), "the negation reads an unknown as a non-match: {sql}");
+        assert!(sql.contains("\"cav\".\"value_string\" = "), "the inner condition is the equality one: {sql}");
+        assert!(sql.contains("\"cav\".\"value_uri\" = "), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_object\" @> "), "{sql}");
+        assert!(!sql.contains(" != "), "no per-column inequality survives: {sql}");
+    }
+
+    /// The equality operator keeps the plain comparison: clause 4.9 states the
+    /// datatype rule the other way for it — "If there is no equality between the
+    /// target value data type and the Query Term value data type, then it shall
+    /// be considered as not matching" — which is what an unknown already means.
+    #[test]
+    fn an_equality_is_not_negated_at_all() {
+        let (sql, _) = render("\"https://example.com/brandName\"==\"Mercedes\"");
+        assert!(!sql.contains("NOT COALESCE("), "{sql}");
+    }
+
+    /// Clause 4.9's `unequal` over a value list: "The target value is neither
+    /// identical nor equivalent to any of the list values", so every member's
+    /// comparison is negated and the negations are conjoined.
+    #[test]
+    fn a_negated_value_list_negates_every_member_totally() {
+        let (sql, _) = render("\"https://example.com/color\"!=\"red\",\"blue\"");
+        assert_eq!(sql.matches("NOT COALESCE(").count(), 2, "one total negation per member: {sql}");
+        assert!(sql.contains(") AND ("), "the members are conjoined: {sql}");
+    }
+
+    /// Clause 4.9 states the same datatype rule for a range operand's negated
+    /// form, so a target the interval cannot even be evaluated against is
+    /// unequal to it rather than dropped.
+    #[test]
+    fn a_negated_range_negates_the_interval_test_totally() {
+        let (sql, _) = render(&format!("{}!=10..20", quoted(SPEED)));
+        assert!(sql.contains("NOT COALESCE("), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_number\" >= "), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_number\" <= "), "{sql}");
+    }
+
+    /// A language-selected inequality keeps its own compilation: clause 4.9
+    /// requires the entity to contain the target element, which for that path is
+    /// the key-value pair itself, so a `languageMap` without the key is not a
+    /// match and neither is a scalar-valued attribute of the same name.
+    #[test]
+    fn a_language_selected_inequality_still_requires_the_key_rather_than_negating_totally() {
+        let (sql, _) = render("\"https://example.com/color\"[en]!=\"red\"");
+        assert!(sql.contains("jsonb_build_object('@language', $2::text)"), "the key guard: {sql}");
+        assert!(
+            !sql.contains("\"cav\".\"value_string\" = "),
+            "no typed column answers a language-selected path: {sql}"
+        );
+    }
+
     #[test]
     fn no_probe_guards_against_a_stored_deletion_marker() {
         // A deleted attribute is an absent row in the projection, so there is
@@ -612,11 +649,15 @@ mod tests {
     }
 
     #[test]
-    fn negated_value_list_negates_the_disjunction_not_the_existence() {
+    fn a_negated_value_list_is_a_conjunction_of_negations_not_a_negated_existence() {
+        // Clause 4.9: the entity must still contain the target element, and the
+        // target value must differ from every member of the list. Negating the
+        // `EXISTS` instead would match an entity that simply lacks the
+        // attribute; each member is negated inside the one probe.
         let (sql, _) = render("\"https://example.com/color\"!=\"red\",\"blue\"");
-        assert!(sql.contains("NOT ("), "{sql}");
         assert!(sql.contains("EXISTS"), "the attribute must still exist: {sql}");
         assert!(!sql.contains("NOT (EXISTS"), "{sql}");
+        assert_eq!(sql.matches("NOT COALESCE(").count(), 2, "one negation per member: {sql}");
     }
 
     #[test]
@@ -652,6 +693,129 @@ mod tests {
             !sql.contains("NOT (EXISTS") && !sql.contains("NOT EXISTS"),
             "clause 4.9 requires the target element to be present: {sql}"
         );
+    }
+
+    // -- structured target values (clause 4.9) -------------------------------
+
+    /// Clause 4.9: with no target language specified, a `LanguageProperty`'s
+    /// target value is "a value from any of the key-value pairs held within the
+    /// languageMap", and a `ListProperty`'s is "the valueList array" — both of
+    /// which the write path projects into `value_object`, so an equality Query
+    /// Term has to reach that column and not only the typed ones.
+    #[test]
+    fn an_unqualified_equality_reaches_the_structured_value_column() {
+        let (sql, _) = render("\"https://example.com/color\"==\"red\"");
+        assert!(sql.contains("\"cav\".\"value_string\" = "), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_object\" @> jsonb_build_array($"), "{sql}");
+        assert!(
+            sql.contains("\"cav\".\"value_object\" @> jsonb_build_array(jsonb_build_object('@value', $"),
+            "the value-node element shape a languageMap and a valueList carry: {sql}"
+        );
+    }
+
+    /// Clause 4.9: "the target object of a `ListRelationship` target element is
+    /// the array of objects (URIs) associated with it", and a URI Query Term
+    /// matches when it "is included in the target value". The objects are
+    /// projected as bare array elements, which is what the unwrapped
+    /// containment shape reaches.
+    #[test]
+    fn a_uri_query_term_reaches_an_object_list_through_the_bare_element_shape() {
+        let (sql, binds) = render("\"https://example.com/color\"==\"urn:ngsi-ld:Part:1\"");
+        assert!(sql.contains("\"cav\".\"value_object\" @> jsonb_build_array($"), "{sql}");
+        assert!(
+            binds
+                .iter()
+                .any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == "urn:ngsi-ld:Part:1")),
+            "{binds:?}"
+        );
+    }
+
+    /// Clause 4.9: "the target value is defined as the Value associated to the
+    /// matching key-value pair held within the languageMap ... where the key
+    /// matches the target language". The row decides whether `attr[en]` means
+    /// that or a compound value member, so both are compiled.
+    #[test]
+    fn a_target_language_compiles_a_language_map_probe_beside_the_payload_reading() {
+        let (sql, _) = render("\"https://example.com/color\"[en]==\"red\"");
+        assert!(
+            sql.contains("jsonb_build_object('@language', $2::text, '@value', $3::text)"),
+            "the languageMap reading: {sql}"
+        );
+        assert!(sql.contains("jsonb_path_query_first"), "the compound-value reading: {sql}");
+        assert!(sql.contains(" OR "), "{sql}");
+    }
+
+    /// A language-selected path addresses a `languageMap` key. A scalar-valued
+    /// attribute of the same name has no such key, so clause 4.9's target
+    /// element does not exist for it and neither polarity may consult its typed
+    /// column — `color[en]!=5` must not select a plain numeric Property.
+    #[test]
+    fn a_target_language_never_consults_the_typed_scalar_columns() {
+        for expression in ["\"https://example.com/color\"[en]==5", "\"https://example.com/color\"[en]!=5"] {
+            let (sql, _) = render(expression);
+            assert!(!sql.contains("\"cav\".\"value_number\""), "{expression}: {sql}");
+        }
+    }
+
+    /// Clause 4.9's `unequal` over a structured target: "Is not included in the
+    /// target value, if the latter is an array", and over a scalar one: "If the
+    /// data type of the target value and the data type of the Query Term value
+    /// are different, then they shall be considered unequal". One total negation
+    /// of the whole `equal` condition states both, and the enclosing `EXISTS` is
+    /// what still requires the target element.
+    #[test]
+    fn an_unqualified_inequality_negates_every_reading_of_the_target_value_at_once() {
+        let (sql, _) = render("\"https://example.com/color\"!=\"red\"");
+        assert_eq!(sql.matches("NOT COALESCE(").count(), 1, "{sql}");
+        assert!(sql.contains("\"cav\".\"value_object\" @> "), "the structured readings are inside it: {sql}");
+        assert!(sql.contains("\"cav\".\"value_string\" = "), "so are the typed columns: {sql}");
+        assert!(sql.contains("EXISTS"), "{sql}");
+        assert!(!sql.contains("NOT (EXISTS"), "{sql}");
+    }
+
+    /// Clause 4.9 admits a value list against every target: "The target value
+    /// includes any of the Query Term values, if the target value is an array".
+    #[test]
+    fn a_value_list_reaches_the_structured_value_column_once_per_member() {
+        let (sql, _) = render("\"https://example.com/color\"==\"red\",\"blue\"");
+        assert_eq!(sql.matches("\"cav\".\"value_object\" @> ").count(), 4, "two shapes per member: {sql}");
+        assert_eq!(sql.matches("EXISTS").count(), 1, "one probe, not one per member: {sql}");
+    }
+
+    /// The `unequal` complement of the value list: none of the members may be
+    /// included in the structured target value.
+    #[test]
+    fn a_negated_value_list_denies_the_structured_value_column_for_every_member() {
+        let (sql, _) = render("\"https://example.com/color\"!=\"red\",\"blue\"");
+        assert_eq!(sql.matches("\"cav\".\"value_object\" @> ").count(), 4, "two element shapes per member: {sql}");
+        assert_eq!(sql.matches("NOT COALESCE(").count(), 2, "one negation per member: {sql}");
+    }
+
+    /// Clause 4.9 requires a matching Entity to contain the target element,
+    /// which for a language-selected path is the key-value pair itself.
+    #[test]
+    fn a_bare_existence_of_a_target_language_probes_the_language_key() {
+        let (sql, _) = render("\"https://example.com/color\"[en]");
+        assert!(sql.contains("jsonb_build_object('@language', $2::text)"), "{sql}");
+        assert!(!sql.contains("'@value'"), "existence says nothing about the value: {sql}");
+        assert!(sql.contains("jsonb_path_exists"), "the compound-member reading is compiled beside it: {sql}");
+    }
+
+    /// Clause 4.9's ordering and pattern operators are not containment tests,
+    /// so nothing probes the structured column under them; a range is two
+    /// ordering comparisons and inherits that.
+    #[test]
+    fn ordering_pattern_and_range_operators_do_not_probe_the_structured_value_column() {
+        for expression in [
+            "\"https://example.com/color\">\"red\"",
+            "\"https://example.com/color\"~=\"re.*\"",
+            "\"https://example.com/color\"!~=\"re.*\"",
+            "\"https://example.com/temperature\"==10..20",
+            "\"https://example.com/temperature\"!=10..20",
+        ] {
+            let (sql, _) = render(expression);
+            assert!(!sql.contains("value_object"), "{expression}: {sql}");
+        }
     }
 
     // -- unknown attributes --------------------------------------------------
@@ -773,7 +937,9 @@ mod tests {
                 r#"AND "cav_ln1"."attribute_name_id" = $1 "#,
                 r#"AND (("ls1"."type_ids" @> (ARRAY[31])) OR ("ls1"."type_ids" @> (ARRAY[32]))) "#,
                 r#"AND EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav" "#,
-                r#"WHERE "cav"."attribute_name_id" = $2 AND ("cav"."value_string" = $3 OR "cav"."value_uri" = $4) "#,
+                r#"WHERE "cav"."attribute_name_id" = $2 AND ("cav"."value_string" = $3 OR "cav"."value_uri" = $4 "#,
+                r#"OR (("cav"."value_object" @> jsonb_build_array($5::text)) "#,
+                r#"OR ("cav"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $6::text))))) "#,
                 r#"AND "cav"."entity_key" = "le1"."entity_key"))"#,
             )
         );

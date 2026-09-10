@@ -1,16 +1,21 @@
 //! In-memory evaluation of parsed `q` filter expressions against expanded JSON-LD entities and canonical-keyed Context Source properties.
+//!
+//! What a Query Term compares against is resolved elsewhere:
+//! [`attribute_axis`](crate::filter::attribute_axis) walks the axis a Query Term
+//! names, and [`target_value`](crate::filter::target_value) owns the clause 4.9
+//! definition of the target value each attribute family carries. This module
+//! owns the operators clause 4.9 applies to that target.
 
 use crate::filter::{
+    attribute_axis::resolve_targets,
     expression::Expr,
-    path::{AttrPath, QueryPath},
     predicate::{CmpOp, Predicate, SetMembership},
     scalar::{CompareValue, Scalar, parse_date, parse_date_time, parse_time},
+    target_value::{MultiValueReading, ResolvedTarget, TargetOrigin},
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_vocabulary::expanded::properties::{ENTITY, JSON, LANGUAGE_MAP, OBJECT, OBJECT_LIST, VALUE, VALUE_LIST, VOCAB};
 use serde_json::{Map, Value};
-use std::{cmp::Ordering, slice::from_ref};
+use std::cmp::Ordering;
 
 /// Evaluate a parsed `q` expression against an expanded JSON-LD entity.
 ///
@@ -34,19 +39,6 @@ fn eval_expr(expr: &Expr, obj: &Map<String, Value>) -> bool {
     }
 }
 
-/// One resolved comparison target: the value the predicate compares, and
-/// whether it is a Relationship's object.
-///
-/// Clause 4.9 forbids the ordering operators against a Relationship, so the
-/// evaluator has to know a value's origin, not only its JSON shape — a
-/// Relationship object and a string Property value are both JSON strings.
-struct ResolvedTarget {
-    /// The value to compare against the operand.
-    value: Value,
-    /// Whether it came from `hasObject`/`hasObjectList` (a Relationship object).
-    is_relationship: bool,
-}
-
 /// Evaluate one leaf predicate.
 fn eval_predicate(pred: &Predicate, obj: &Map<String, Value>) -> bool {
     match pred {
@@ -57,10 +49,11 @@ fn eval_predicate(pred: &Predicate, obj: &Map<String, Value>) -> bool {
         Predicate::Ordering { path, op, rhs } => resolve_targets(obj, path).iter().any(|target| {
             // Clause 4.9: an ordering comparison against a Relationship shall
             // not match — a URI has no `<`/`>` order the query can mean.
-            if target.is_relationship {
+            if is_relationship(target) {
                 return false;
             }
-            eval_cmp_scalar(&target.value, op.as_cmp_op(), rhs)
+            any_one_value(target).is_some_and(|values| values.iter().any(|value| eval_cmp_scalar(value, op.as_cmp_op(), rhs)))
+                || eval_cmp_scalar(&target.value, op.as_cmp_op(), rhs)
         }),
         // Clause 4.9: a pattern operator applies only to a String target; a
         // non-String value is considered as not matching, so a number or
@@ -71,280 +64,49 @@ fn eval_predicate(pred: &Predicate, obj: &Map<String, Value>) -> bool {
         // only its origin can rule it out.
         Predicate::MatchPattern { path, pattern } => resolve_targets(obj, path)
             .iter()
-            .filter_map(pattern_target)
-            .any(|value| pattern.is_match(value)),
+            .any(|target| pattern_targets(target).iter().any(|value| pattern.is_match(value))),
         // `notPatternOp` also requires the entity to *contain* the target
         // element (clause 4.9); an entity that lacks the attribute, or carries
-        // only non-String values, does not match.
-        Predicate::NotMatchPattern { path, pattern } => resolve_targets(obj, path)
-            .iter()
-            .filter_map(pattern_target)
-            .any(|value| !pattern.is_match(value)),
+        // only non-String values, does not match. Where the target is "a value
+        // from any of the key-value pairs" of a languageMap the clause reads the
+        // negated operator as its complement — no value may match — rather than
+        // as one value that happens not to.
+        Predicate::NotMatchPattern { path, pattern } => resolve_targets(obj, path).iter().any(|target| {
+            let texts = pattern_targets(target);
+            !texts.is_empty() && !texts.iter().any(|value| pattern.is_match(value))
+        }),
     }
 }
 
-/// The text a pattern operator may be applied to, or `None` when the target is
-/// not one (clause 4.9).
-fn pattern_target(target: &ResolvedTarget) -> Option<&str> {
-    if target.is_relationship {
-        return None;
-    }
-    target.value.as_str()
+/// Whether a resolved target is a Relationship's object, which clause 4.9 bars
+/// from every operator other than equality and inequality.
+const fn is_relationship(target: &ResolvedTarget) -> bool {
+    matches!(target.origin, TargetOrigin::RelationshipObject)
 }
 
-/// The expanded value members a `q` target can terminate at: the member IRI,
-/// the leaf key that carries the value inside it, and whether the member
-/// denotes a Relationship object.
+/// The texts a pattern operator may be applied to, empty when the target offers
+/// none (clause 4.9).
 ///
-/// Covers all eight attribute families of clause 5.2.4, not only Property and
-/// Relationship, so a `q` over a `LanguageProperty`, `VocabProperty`, `JsonProperty`
-/// or a list attribute resolves rather than silently missing.
-fn value_members() -> [(&'static str, &'static str, bool); 7] {
-    [
-        (VALUE.as_str(), "@value", false),
-        (OBJECT.as_str(), "@id", true),
-        (VOCAB.as_str(), "@id", false),
-        (LANGUAGE_MAP.as_str(), "@value", false),
-        (JSON.as_str(), "@value", false),
-        (VALUE_LIST.as_str(), "@value", false),
-        (OBJECT_LIST.as_str(), "@id", true),
-    ]
-}
-
-/// Resolve every value an attribute axis addresses, descending each
-/// linked-entity hop into the entity it names.
-///
-/// A hop can only be followed when the document already carries the linked
-/// entity: clause 4.5.23.2 `join=inline` nests it under the Relationship
-/// instance's `entity` member, and that embedded copy is the only linked data
-/// an in-memory evaluation has. Without it the hop resolves no target and the
-/// predicate does not hold. That is not a weaker reading of clause 4.9 — for a
-/// stored entity the SQL compilation is what answers a traversal filter, and it
-/// reads the linked entity from the store. This evaluator only ever sees the one
-/// document it is handed, whether that is a notification payload being matched
-/// against a subscription or a residual filter finishing what a store declined.
-fn resolve_targets(obj: &Map<String, Value>, path: &QueryPath) -> Vec<ResolvedTarget> {
-    match path {
-        QueryPath::Local(local) => resolve_values(obj, local),
-        QueryPath::Linked {
-            relationship,
-            guard_types,
-            inner,
-        } => resolve_across_hop(obj, relationship, guard_types, inner),
-    }
-}
-
-/// Resolve the inner axis against every entity embedded under a Relationship's
-/// instances, keeping only those the hop's type guard admits.
-fn resolve_across_hop(obj: &Map<String, Value>, relationship: &AttributeName, guard_types: &[AttributeName], inner: &QueryPath) -> Vec<ResolvedTarget> {
-    let Some(attribute) = obj.get(relationship.as_str()) else {
+/// One text for an ordinary target, and one per value where clause 4.9 makes any
+/// one of them the target value. An array that *is* the target value offers
+/// none: "If the target value data type is different than String then it shall
+/// be considered as not matching."
+fn pattern_targets(target: &ResolvedTarget) -> Vec<&str> {
+    if is_relationship(target) {
         return Vec::new();
-    };
-    instances_of(attribute)
-        .iter()
-        .flat_map(|instance| instance.get(ENTITY.as_str()).into_iter().flat_map(|embedded| instances_of(embedded).iter()))
-        .filter_map(Value::as_object)
-        .filter(|linked| admitted_by_guard(linked, guard_types))
-        .flat_map(|linked| resolve_targets(linked, inner))
-        .collect()
-}
-
-/// The instances a member holds: an expanded JSON-LD member is an array, while a
-/// canonical-keyed Context Source property is the bare node.
-fn instances_of(member: &Value) -> &[Value] {
-    match member.as_array() {
-        Some(instances) => instances.as_slice(),
-        None => from_ref(member),
+    }
+    match any_one_value(target) {
+        Some(values) => values.iter().filter_map(Value::as_str).collect(),
+        None => target.value.as_str().into_iter().collect(),
     }
 }
 
-/// Whether a linked entity satisfies a hop's entity-type guard.
-///
-/// An empty guard admits every linked entity; otherwise clause 4.9's
-/// `1*(EntityType)` list is a disjunction, so one shared type is enough.
-fn admitted_by_guard(linked: &Map<String, Value>, guard_types: &[AttributeName]) -> bool {
-    if guard_types.is_empty() {
-        return true;
-    }
-    let Some(declared) = linked.get("@type") else {
-        return false;
-    };
-    instances_of(declared)
-        .iter()
-        .filter_map(Value::as_str)
-        .any(|declared| guard_types.iter().any(|guard| guard.as_str() == declared))
-}
-
-/// Resolve every value an attribute path addresses in an expanded JSON-LD
-/// entity object or a canonical-keyed Context Source property map.
-///
-/// Navigates `obj[attr]` -> each instance -> sub-attrs -> the family's value
-/// member, then the optional value path for compound values.
-///
-/// All instances are returned, not just the first. Clause 4.9 (p. 86) defines
-/// the comparison target for a multi-instance attribute as "any Value of such
-/// instances", so a predicate holds when it holds for at least one of them.
-/// Restricting this to the first instance made a `datasetId`-partitioned
-/// attribute match on whichever instance happened to serialise first.
-fn resolve_values(obj: &Map<String, Value>, path: &AttrPath) -> Vec<ResolvedTarget> {
-    let Some(attribute) = obj.get(path.attr.as_str()) else {
-        return Vec::new();
-    };
-    if let Some(instances) = attribute.as_array() {
-        if path.match_all_languages {
-            return instances.iter().flat_map(|instance| resolve_all_languages(instance, path)).collect();
-        }
-        return instances.iter().filter_map(|instance| resolve_instance_value(instance, path)).collect();
-    }
-    if path.match_all_languages {
-        resolve_all_languages(attribute, path)
-    } else {
-        resolve_instance_value(attribute, path).into_iter().collect()
-    }
-}
-
-/// Resolve the `[*]` language-suppression form: every language's value of a
-/// `LanguageProperty` instance (clause 4.9), so a predicate holds when it holds
-/// for any language rather than only the one negotiation would select.
-///
-/// Falls back to the ordinary single-value resolution when the instance is not
-/// a `LanguageProperty`, so `attr[*]` on another family still addresses its value.
-fn resolve_all_languages(instance: &Value, path: &AttrPath) -> Vec<ResolvedTarget> {
-    let mut current = instance;
-    for sub in &path.sub_attrs {
-        let Some(next) = current.get(sub.as_str()).and_then(Value::as_array).and_then(|values| values.first()) else {
-            return Vec::new();
-        };
-        current = next;
-    }
-    if let Some(entries) = current.get(LANGUAGE_MAP.as_str()).and_then(Value::as_array) {
-        return entries
-            .iter()
-            .filter_map(|entry| entry.get("@value"))
-            // clone: the caller owns each resolved value beyond the instance borrow
-            .map(|value| ResolvedTarget {
-                value: value.clone(),
-                is_relationship: false,
-            })
-            .collect();
-    }
-    resolve_instance_value(instance, path).into_iter().collect()
-}
-
-/// Resolve one attribute instance down to the value the predicate compares.
-fn resolve_instance_value(instance: &Value, path: &AttrPath) -> Option<ResolvedTarget> {
-    // Navigate sub-attributes (e.g. temperature.observedAt).
-    let mut current = instance;
-    for sub in &path.sub_attrs {
-        current = current.get(sub.as_str())?.as_array()?.first()?;
-    }
-
-    if path.value_path.is_empty() {
-        let (raw, is_relationship) = terminal_value(current)?;
-        // clone: the caller owns the resolved value, which outlives the borrow of `instance`
-        return Some(ResolvedTarget {
-            value: raw.clone(),
-            is_relationship,
-        });
-    }
-    resolve_compound_member(current, path)
-}
-
-/// Resolve a compound value path (`address[city]`) inside one attribute instance.
-///
-/// A compound value reaches this evaluator in either of two genuinely different
-/// JSON-LD shapes, and both are addressed by the same `q` path:
-///
-/// * A structured Property value is expanded by JSON-LD into IRI-keyed member
-///   nodes hanging off `hasValue`, so `city` is a member *hop* — `hasValue[0]`
-///   then the member's own array, then that node's `@value`. This is the shape a
-///   notification payload and a stored entity carry, and the one an earlier
-///   evaluator missed entirely: it read the terminal `@value` first and then
-///   indexed into it, which for this shape resolves nothing.
-/// * A `JsonProperty`'s value, and a Property value that survived expansion as an
-///   opaque JSON object, sit *under* a single `@value` as raw JSON, where `city`
-///   is an ordinary object key. The NGSI-LD data model puts no constraint on
-///   those keys, so they are read verbatim.
-///
-/// The member hop is tried first, addressed by the term-expanded spelling
-/// (`path.value_path`): it is the shape term expansion produced the path for,
-/// and a raw JSON object cannot carry a member whose key is the expanded IRI
-/// without the client having written that IRI. The raw-JSON fallback then
-/// retries with the pre-expansion spelling (`path.value_path_compact`),
-/// because a `JsonProperty`'s value — and a Property value that survived
-/// expansion as an opaque object — is never touched by JSON-LD expansion: its
-/// keys are exactly what the client wrote, not what the request `@context`
-/// expands them to.
-fn resolve_compound_member(instance: &Value, path: &AttrPath) -> Option<ResolvedTarget> {
-    if let Some(target) = resolve_member_hops(instance, &path.value_path) {
-        return Some(target);
-    }
-    let (raw, is_relationship) = terminal_value(instance)?;
-    let mut value = raw;
-    for key in &path.value_path_compact {
-        value = value.get(key.as_str())?;
-    }
-    // clone: the caller owns the resolved value, which outlives the borrow of `instance`
-    Some(ResolvedTarget {
-        value: value.clone(),
-        is_relationship,
-    })
-}
-
-/// Walk expanded member nodes from an attribute instance down to a leaf `@value`.
-///
-/// Each hop is `node[<member IRI>][0]`, mirroring the jsonpath the SQL fallback
-/// emits, and the leaf is read by [`terminal_value`] so a member that is itself
-/// an NGSI-LD node resolves the same way the attribute's own value does.
-fn resolve_member_hops(instance: &Value, value_path: &[AttributeName]) -> Option<ResolvedTarget> {
-    let mut current = first_family_value(instance)?;
-    for member in value_path {
-        current = current.get(member.as_str())?.as_array()?.first()?;
-    }
-    let raw = current.get("@value")?;
-    // clone: the caller owns the resolved value, which outlives the borrow of `instance`
-    Some(ResolvedTarget {
-        value: raw.clone(),
-        is_relationship: false,
-    })
-}
-
-/// The first value node of whichever family member an attribute instance carries.
-///
-/// This is the node a compound value's members hang off, one level above the
-/// `@value` [`terminal_value`] reads.
-fn first_family_value(instance: &Value) -> Option<&Value> {
-    value_members()
-        .into_iter()
-        .find_map(|(member, _, _)| instance.get(member).and_then(Value::as_array).and_then(|values| values.first()))
-}
-
-/// Read an instance node down to the value its attribute family carries, and
-/// whether that value is a Relationship object.
-///
-/// Tries each family's value member in turn, then a direct `@value`/`@id`
-/// terminal — the shape a system sub-attribute such as `observedAt` or
-/// `datasetId` takes, which carries neither `hasValue` nor `hasObject`.
-fn terminal_value(node: &Value) -> Option<(&Value, bool)> {
-    for (member, terminal_key, is_relationship) in value_members() {
-        if let Some(first) = node.get(member).and_then(Value::as_array).and_then(|values| values.first())
-            && let Some(raw) = first.get(terminal_key)
-        {
-            return Some((raw, is_relationship));
-        }
-    }
-    if let Some(raw) = node.get("@value") {
-        return Some((raw, false));
-    }
-    if let Some(raw) = node.get("@id") {
-        return Some((raw, false));
-    }
-    if let Some(raw) = node.get("value") {
-        return Some((raw, false));
-    }
-    match node {
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Some((node, false)),
-        Value::Array(_) | Value::Object(_) => None,
+/// The values a target holds when clause 4.9 makes any one of them the target
+/// value, rather than the array of them.
+fn any_one_value(target: &ResolvedTarget) -> Option<&Vec<Value>> {
+    match target.reading {
+        MultiValueReading::AnyOneValue => target.value.as_array(),
+        MultiValueReading::WholeArray => None,
     }
 }
 
@@ -363,7 +125,7 @@ fn eval_equality(target: &ResolvedTarget, membership: SetMembership, rhs: &Compa
     match rhs {
         CompareValue::Scalar(scalar) => eval_cmp_scalar(&target.value, membership.as_cmp_op(), scalar),
         CompareValue::Range { min, max } => {
-            if target.is_relationship {
+            if is_relationship(target) {
                 return false;
             }
             let within = eval_cmp_scalar(&target.value, CmpOp::GreaterEq, min) && eval_cmp_scalar(&target.value, CmpOp::LessEq, max);
@@ -893,7 +655,16 @@ mod tests {
                 ]
             }],
             "https://example.com/tags": [{
-                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": [1, 2, 3]}]
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}, {"@value": 2}, {"@value": 3}]
+            }],
+            "https://example.com/colors": [{
+                "https://uri.etsi.org/ngsi-ld/hasValueList": [{"@list": [{"@value": "red"}, {"@value": "blue"}]}]
+            }],
+            "https://example.com/parts": [{
+                "https://uri.etsi.org/ngsi-ld/hasObjectList": [{"@list": [{"@value": "urn:ngsi-ld:Part:1"}, {"@value": "urn:ngsi-ld:Part:2"}]}]
+            }],
+            "https://example.com/gender": [{
+                "https://uri.etsi.org/ngsi-ld/hasVocab": [{"@id": "https://example.com/Male"}, {"@id": "https://example.com/Other"}]
             }],
             "https://example.com/owner": [{
                 "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:Person:42"}]
@@ -927,11 +698,99 @@ mod tests {
     }
 
     #[test]
-    fn an_array_target_is_matched_by_membership() {
-        // Clause 4.9: `==` holds when the operand is included in an array value.
-        assert!(evaluate(&parse("\"https://example.com/tags\"==2").unwrap(), &rich_entity()));
+    fn an_array_valued_property_is_matched_by_membership() {
+        // Clause 4.9, `equal`: the Query Term value "is included in the target
+        // value, if the latter is an array"; `unequal`: it "is not included in
+        // the target value, if the latter is an array". The array a client wrote
+        // as a Property value expands to one `hasValue` node per element, so
+        // every element is part of the target value — a reading that stopped at
+        // the first node answered `==` for element 1 alone and answered `!=`
+        // with the opposite of the clause for every other element.
+        assert!(evaluate(&parse("\"https://example.com/tags\"==1").unwrap(), &rich_entity()));
+        assert!(evaluate(&parse("\"https://example.com/tags\"==3").unwrap(), &rich_entity()));
         assert!(!evaluate(&parse("\"https://example.com/tags\"==9").unwrap(), &rich_entity()));
         assert!(evaluate(&parse("\"https://example.com/tags\"!=9").unwrap(), &rich_entity()));
+        assert!(!evaluate(&parse("\"https://example.com/tags\"!=3").unwrap(), &rich_entity()));
+    }
+
+    /// Clause 4.9: "If the target element is a `ListProperty`, the target value
+    /// is defined as the valueList array associated to such a `ListProperty`",
+    /// and `equal` holds when the operand "is included in the target value, if
+    /// the latter is an array".
+    #[test]
+    fn a_list_property_is_matched_by_membership_of_its_value_list() {
+        assert!(evaluate(&parse("\"https://example.com/colors\"==\"red\"").unwrap(), &rich_entity()));
+        assert!(evaluate(&parse("\"https://example.com/colors\"==\"blue\"").unwrap(), &rich_entity()));
+        assert!(!evaluate(&parse("\"https://example.com/colors\"==\"green\"").unwrap(), &rich_entity()));
+        assert!(evaluate(&parse("\"https://example.com/colors\"!=\"green\"").unwrap(), &rich_entity()));
+        assert!(!evaluate(&parse("\"https://example.com/colors\"!=\"blue\"").unwrap(), &rich_entity()));
+    }
+
+    /// Clause 4.9: "If the target element is a `ListRelationship`, the target
+    /// object is defined as the array of objects associated (represented as
+    /// URIs) to such `ListRelationship`", and a URI Query Term matches when it
+    /// "is included in the target value, if the latter is an array".
+    #[test]
+    fn a_list_relationship_is_matched_by_membership_of_its_object_list() {
+        assert!(evaluate(
+            &parse("\"https://example.com/parts\"==\"urn:ngsi-ld:Part:2\"").unwrap(),
+            &rich_entity()
+        ));
+        assert!(!evaluate(
+            &parse("\"https://example.com/parts\"==\"urn:ngsi-ld:Part:9\"").unwrap(),
+            &rich_entity()
+        ));
+        assert!(evaluate(
+            &parse("\"https://example.com/parts\"!=\"urn:ngsi-ld:Part:9\"").unwrap(),
+            &rich_entity()
+        ));
+        assert!(!evaluate(
+            &parse("\"https://example.com/parts\"!=\"urn:ngsi-ld:Part:1\"").unwrap(),
+            &rich_entity()
+        ));
+    }
+
+    /// Clause 4.9 bars a `ListRelationship` from every operator other than
+    /// equality and inequality, exactly as it bars a Relationship: "the
+    /// combination of such target element with any operator different than equal
+    /// or unequal shall result in not matching".
+    #[test]
+    fn a_list_relationship_matches_no_ordering_or_pattern_operator() {
+        assert!(!evaluate(
+            &parse("\"https://example.com/parts\">\"urn:ngsi-ld:Part:0\"").unwrap(),
+            &rich_entity()
+        ));
+        assert!(!evaluate(&parse("\"https://example.com/parts\"~=\"urn:.*\"").unwrap(), &rich_entity()));
+        assert!(!evaluate(&parse("\"https://example.com/parts\"!~=\"nothing.*\"").unwrap(), &rich_entity()));
+    }
+
+    /// Clause 4.9: "If the target element is a `VocabProperty`, the target value
+    /// shall be expanded according to the @context", and it is listed beside a
+    /// Relationship as a target a URI Query Term matches when included in it —
+    /// so a `VocabProperty` carrying several terms is matched on any of them,
+    /// not only the first.
+    #[test]
+    fn a_multi_term_vocab_property_is_matched_by_membership() {
+        assert!(evaluate(
+            &parse("\"https://example.com/gender\"==\"https://example.com/Other\"").unwrap(),
+            &rich_entity()
+        ));
+        assert!(evaluate(
+            &parse("\"https://example.com/gender\"==\"https://example.com/Male\"").unwrap(),
+            &rich_entity()
+        ));
+        assert!(!evaluate(
+            &parse("\"https://example.com/gender\"==\"https://example.com/Female\"").unwrap(),
+            &rich_entity()
+        ));
+        assert!(evaluate(
+            &parse("\"https://example.com/gender\"!=\"https://example.com/Female\"").unwrap(),
+            &rich_entity()
+        ));
+        assert!(!evaluate(
+            &parse("\"https://example.com/gender\"!=\"https://example.com/Male\"").unwrap(),
+            &rich_entity()
+        ));
     }
 
     #[test]
@@ -1014,14 +873,6 @@ mod tests {
     }
 
     #[test]
-    fn the_embedded_entity_member_is_the_one_the_inline_join_renderer_writes() {
-        // The renderer inserts the linked entity under the compacted `entity`
-        // key; the core context expands that term to this IRI, which is what an
-        // expanded document the evaluator sees carries.
-        pretty_assertions::assert_eq!(ENTITY.as_str(), "https://uri.etsi.org/ngsi-ld/entity");
-    }
-
-    #[test]
     fn a_hop_matches_on_the_value_of_the_embedded_linked_entity() {
         let entity = vehicle_with_inline_parking("commercial", "https://example.com/Building");
         assert!(evaluate(&linked_predicate("commercial"), &entity));
@@ -1099,12 +950,48 @@ mod tests {
         assert!(!evaluate(&two_hops("south"), &entity));
     }
 
+    /// Clause 4.9's `patternOp` and `notPatternOp` are defined over a String
+    /// target, and with no target language a `LanguageProperty`'s target value
+    /// is "a value from any of the key-value pairs held within the languageMap"
+    /// — a String — so every language's value is a candidate, not only the one
+    /// that happens to serialise first. `notPatternOp` is the complement: no
+    /// value may match.
     #[test]
-    fn the_language_suppression_form_matches_any_language_value() {
-        // Clause 4.9: `[*]` matches a LanguageProperty against every language's
-        // value, so a match on a non-default language still holds — the default
-        // single-value reading would only ever see the first language.
+    fn a_pattern_operator_reaches_every_language_of_a_language_property() {
+        assert!(evaluate(&parse("\"https://example.com/description\"~=\"Tue.*\"").unwrap(), &rich_entity()));
+        assert!(evaluate(&parse("\"https://example.com/description\"~=\"Do.*\"").unwrap(), &rich_entity()));
+        assert!(!evaluate(&parse("\"https://example.com/description\"~=\"rot.*\"").unwrap(), &rich_entity()));
+        assert!(evaluate(&parse("\"https://example.com/description\"!~=\"rot.*\"").unwrap(), &rich_entity()));
+        assert!(!evaluate(&parse("\"https://example.com/description\"!~=\"Tue.*\"").unwrap(), &rich_entity()));
+    }
+
+    /// Clause 4.9 defines a `ListProperty`'s target value as the `valueList`
+    /// array itself, and a pattern operator over a target whose "data type is
+    /// different than String … shall be considered as not matching" — so a
+    /// pattern never reaches the elements of a list.
+    #[test]
+    fn a_pattern_operator_does_not_reach_the_elements_of_a_value_list() {
+        assert!(!evaluate(&parse("\"https://example.com/colors\"~=\"re.*\"").unwrap(), &rich_entity()));
+        assert!(!evaluate(&parse("\"https://example.com/colors\"!~=\"nothing.*\"").unwrap(), &rich_entity()));
+    }
+
+    #[test]
+    fn a_language_property_with_no_target_language_matches_any_language_value() {
+        // Clause 4.9: "If the target element is a LanguageProperty, and no
+        // target language is specified, the target value is defined as a value
+        // from any of the key-value pairs held within the languageMap" — which
+        // is what both spellings of "no target language" address, the bare path
+        // and the `[*]` suppression marker. A reading that saw only the first
+        // language answered `==` for it alone.
         assert!(evaluate(&parse("\"https://example.com/description\"[*]==\"Tuer\"").unwrap(), &rich_entity()));
-        assert!(!evaluate(&parse("\"https://example.com/description\"==\"Tuer\"").unwrap(), &rich_entity()));
+        assert!(evaluate(&parse("\"https://example.com/description\"==\"Tuer\"").unwrap(), &rich_entity()));
+        assert!(evaluate(&parse("\"https://example.com/description\"==\"Door\"").unwrap(), &rich_entity()));
+        assert!(!evaluate(&parse("\"https://example.com/description\"==\"rot\"").unwrap(), &rich_entity()));
+        // Clause 4.9, `unequal`: "No matching value is found in any of the
+        // values of the key-value pairs of a languageMap", so a map that does
+        // hold the value is not a match in either spelling.
+        assert!(!evaluate(&parse("\"https://example.com/description\"!=\"Tuer\"").unwrap(), &rich_entity()));
+        assert!(!evaluate(&parse("\"https://example.com/description\"[*]!=\"Tuer\"").unwrap(), &rich_entity()));
+        assert!(evaluate(&parse("\"https://example.com/description\"!=\"rot\"").unwrap(), &rich_entity()));
     }
 }

@@ -6,10 +6,10 @@ use crate::{
     state::{EntityTenantState, EntityTenantStateOrCreate},
 };
 use andromeda_entity::{merge_options::MergeOptions, query::retrieval::RetrievalNarrowing};
+use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_federation::{
     entity_result::{collect_proxied_attrs, collect_warnings, contributions_of, strip_attributes_from_value},
     operation::{ForwardingOperation, ProvisionResource},
-    outcome::SourceContribution,
     provision::single_source_failure,
     provision_purge::{ForwardPurgeRequest, ForwardedPurgeResult},
     request::{CsrModeFilter, ForwardProvisionRequest, ForwardQueryRequest},
@@ -55,7 +55,6 @@ use andromeda_ngsi_ld_request::{
     options::OverwritePolicy as RequestOverwritePolicy,
 };
 use axum::{
-    Json,
     extract::OriginalUri,
     http::{StatusCode, Uri as HttpUri},
     response::{IntoResponse, Response},
@@ -129,3 +128,5 @@ pub mod retrieve;
 pub mod retrieve_forwarding;
 /// Attribute collection update handling.
 pub mod update_attributes;
+/// The clause 5.2.18 `UpdateResult` an attribute write answers with.
+pub mod update_result;

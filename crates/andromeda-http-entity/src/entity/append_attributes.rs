@@ -8,7 +8,6 @@ use crate::entity::{
     ForwardProvisionRequest,
     ForwardingOperation,
     IntoResponse,
-    Json,
     JsonLd,
     LocalOutcome,
     NgsiLdRequestEnvelope,
@@ -27,6 +26,7 @@ use crate::entity::{
     provision_response,
     reject_unknown_attribute_types,
     strip_attributes_from_value,
+    update_result::{NotUpdatedReason, update_result_response},
 };
 use andromeda_federation::{
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
@@ -149,7 +149,7 @@ pub(crate) async fn append_attrs(
 /// successfully", 207 "Only the Attributes included in the response payload
 /// body were successfully appended".
 fn append_outcome_response(
-    all_attrs: &[AttributeName],
+    requested: &[AttributeName],
     not_appended: &[AttributeName],
     remote_not_appended: Vec<Value>,
     forwarded: ForwardedCompleteness,
@@ -157,14 +157,7 @@ fn append_outcome_response(
     if not_appended.is_empty() && forwarded == ForwardedCompleteness::Complete {
         return StatusCode::NO_CONTENT.into_response();
     }
-    let updated: Vec<&AttributeName> = all_attrs.iter().filter(|attribute| !not_appended.contains(attribute)).collect();
-    let mut not_updated_details: Vec<Value> = not_appended
-        .iter()
-        .map(|attribute| serde_json::json!({ "attributeName": attribute, "reason": "Already exists" }))
-        .collect();
-    not_updated_details.extend(remote_not_appended);
-    let body = serde_json::json!({ "updated": updated, "notUpdated": not_updated_details });
-    (StatusCode::MULTI_STATUS, Json(body)).into_response()
+    update_result_response(requested, not_appended, NotUpdatedReason::AlreadyExists, remote_not_appended)
 }
 
 /// Whether the forwarded parts of an append each landed in full.

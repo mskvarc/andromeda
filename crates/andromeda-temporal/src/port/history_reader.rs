@@ -2,7 +2,13 @@
 
 use crate::{append_intent::TemporalObservationIdentity, error::TemporalError, outcome::TemporalEntityIdOutcome};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    aggr_method::AggrMethod,
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    entity_type_name::EntityTypeName,
+    uri::Uri,
+};
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use async_trait::async_trait;
@@ -36,27 +42,59 @@ pub struct TemporalHistoryObservation {
 }
 
 /// The shape of a value an attribute has been recorded with, as far as the
-/// aggregation eligibility of Tables 4.5.19.1-1 and 4.5.19.1-2 is concerned.
+/// aggregation eligibility of Tables 4.5.19.1-1, 4.5.19.1-2 and 4.5.19.1-3 is
+/// concerned.
 ///
 /// Backend-neutral: a store maps whatever it keeps in its value columns onto
-/// these. A JSON array is recorded as [`RecordedValueKind::Object`] by the
-/// stores that keep objects and arrays in one column.
+/// these. One member per column of those tables and no fewer — a store that
+/// folds two columns of a table into one storage representation still has to
+/// tell them apart here, because the tables give them different aggregation
+/// methods. A JSON array is not a JSON object (Table 4.5.19.1-1 defines
+/// `avg`/`min`/`max`/`sum` over array sizes and nothing at all over objects),
+/// and a `Time` is neither a `Date` nor a `DateTime` (Table 4.5.19.1-2 defines
+/// `avg` over `Time` alone).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RecordedValueKind {
     /// A JSON number.
     Number,
-    /// A JSON string.
+    /// A JSON string that is none of the clause 4.6.3 temporal forms.
     String,
     /// A JSON boolean.
     Boolean,
     /// A `GeoJSON` geometry.
     Geometry,
-    /// A JSON object or array.
+    /// A JSON object.
     Object,
-    /// A point in time.
+    /// A JSON array, whose aggregates are taken over its size.
+    Array,
+    /// A clause 4.6.3 `DateTime`: a point in time.
     DateTime,
+    /// A clause 4.6.3 `Date`: a calendar day carrying no time of day.
+    Date,
+    /// A clause 4.6.3 `Time`: a time of day carrying no calendar day.
+    Time,
     /// A URI, which is how a Relationship object is held.
     Uri,
+}
+
+/// One way an attribute has been recorded: the family the instance was written
+/// as, and the shape its value took.
+///
+/// Aggregation eligibility needs both, because the three tables of clause
+/// 4.5.19.1 are not indexed the same way. Tables 4.5.19.1-1 and 4.5.19.1-2 give
+/// one column per value datatype and govern the Property families; Table
+/// 4.5.19.1-3 has one column and no datatype at all, and governs Relationships
+/// — and, through clause 4.5.22.1's "specialized type of Relationship",
+/// `ListRelationship` with them. A shape read without its family answers out of
+/// the wrong table: a `ListRelationship` holds its `objectList` as an array,
+/// whose column in Table 4.5.19.1-1 defines `avg`, `min`, `max` and `sum` over
+/// array sizes, while Table 4.5.19.1-3 marks every one of them N/A.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RecordedAttributeShape {
+    /// The attribute family the instance was written as (clause 5.2.4).
+    pub family: AttributeType,
+    /// The shape the instance's value was recorded in.
+    pub value_kind: RecordedValueKind,
 }
 
 /// Whether aggregation is materialized, computed from raw history, or unavailable.
@@ -142,17 +180,18 @@ pub trait TemporalHistoryReader: Send + Sync {
         compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError>;
 
-    /// The value shapes each named attribute has ever been recorded with
-    /// across the whole history view, keyed by expanded attribute name; an
-    /// attribute never recorded is absent from the result.
+    /// The family-and-value-shape combinations each named attribute has ever
+    /// been recorded with across the whole history view, keyed by expanded
+    /// attribute name; an attribute never recorded is absent from the result.
     ///
     /// Clause 5.7.4.4 rejects an aggregated representation over an attribute
     /// ineligible for a requested method before any history is read, and the
-    /// eligibility of an attribute is a property of the values it carries.
-    #[must_use = "recorded value kind reads must be awaited"]
-    async fn recorded_value_kinds(
+    /// eligibility of an attribute is a property of both the family it was
+    /// written as and the values it carries.
+    #[must_use = "recorded attribute shape reads must be awaited"]
+    async fn recorded_attribute_shapes(
         &self,
         target: &ContextTarget,
         attributes: &[AttributeName],
-    ) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError>;
+    ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError>;
 }

@@ -8,7 +8,7 @@ use crate::{
         history_reader::{
             AggregationPushdown,
             HistoryVisibility,
-            RecordedValueKind,
+            RecordedAttributeShape,
             TemporalHistoryObservation,
             TemporalHistoryOutcome,
             TemporalHistoryReader,
@@ -118,16 +118,16 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
         self.stored.entity_exists(target, entity_id).await
     }
 
-    async fn recorded_value_kinds(
+    async fn recorded_attribute_shapes(
         &self,
         target: &ContextTarget,
         attributes: &[AttributeName],
-    ) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
+    ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError> {
         // The pending queue is indexed by entity, not by attribute, so the
         // shapes an attribute has been recorded with are read from the durable
         // history alone; an intent that has not been drained yet contributes
         // once it lands.
-        self.stored.recorded_value_kinds(target, attributes).await
+        self.stored.recorded_attribute_shapes(target, attributes).await
     }
 
     async fn entity_types(&self, target: &ContextTarget, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {

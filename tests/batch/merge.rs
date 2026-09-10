@@ -1,10 +1,9 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
-use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
-use reqwest::{Method, StatusCode};
-use serial_test::serial;
-
 use crate::helpers::*;
+use andromeda_test_fixtures::context::{COMPOUND_CONTEXT, CORE_CONTEXT};
+use reqwest::{Method, StatusCode};
 use serde_json::json;
+use serial_test::serial;
 
 #[tokio::test]
 #[serial]
@@ -169,4 +168,47 @@ async fn batch_merge_invalid_json_ld_returns_207() {
 
     let (status, _) = batch_merge(&c, &fragments).await;
     pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS, "invalid JSON-LD should return 207");
+}
+
+/// NGSI-LD 5.5.11.5: when an array repeats an Entity ID, "these merge
+/// operations shall be done in chronological order" and "only the entity
+/// resulting from merging all of the entity instances, in the correct order, is
+/// maintained in the current state". Both fragments therefore end up in the
+/// stored entity, the later one composed onto the earlier one's result.
+#[tokio::test]
+#[serial]
+async fn batch_merge_repeated_id_composes_the_instances_in_order_returns_204() {
+    let _serialized_environment = clean_database().await;
+    let c = client();
+
+    let id = unique_id("urn:ngsi-ld:Building:057_06_01");
+    let entity = building_simple_attributes(&id);
+    let (status, _, _) = create_entity(&c, &entity).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    let first = json!({
+        "id": &id,
+        "type": "Building",
+        "name": {"type": "Property", "value": "Tour Eiffel"},
+        "@context": [CORE_CONTEXT]
+    });
+    let second = json!({
+        "id": &id,
+        "type": "Building",
+        "subCategory": {"type": "Property", "value": "landmark"},
+        "@context": [CORE_CONTEXT]
+    });
+    let fragments = json!([first, second]);
+
+    let (status, _) = batch_merge(&c, &fragments).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, _, body) = get_entity(&c, &id, "", true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["name"]["value"], "Tour Eiffel", "the first fragment's merge must survive the second");
+    pretty_assertions::assert_eq!(
+        body["subCategory"]["value"],
+        "landmark",
+        "the second fragment must merge onto the first fragment's result"
+    );
 }

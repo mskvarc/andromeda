@@ -4,14 +4,14 @@ use crate::{
     error::TemporalError,
     linked::{
         TemporalJoinRequest,
-        candidates::{RemoteEligibility, TemporalLinkedCandidate, collect_candidates, identifiers_in},
+        candidates::{RemoteEligibility, TemporalLinkedCandidate, collect_candidates},
     },
     outcome::{TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
     port::{
         history_reader::{
             AggregationPushdown,
             HistoryVisibility,
-            RecordedValueKind,
+            RecordedAttributeShape,
             TemporalHistoryObservation,
             TemporalHistoryOutcome,
             TemporalHistoryReader,
@@ -254,10 +254,37 @@ fn a_visited_identifier_is_never_collected_again() {
 /// retrieval: it names no Linked Entity and the rest of the walk continues.
 #[test]
 fn an_unusable_object_value_names_no_linked_entity() {
-    pretty_assertions::assert_eq!(identifiers_in(&json!("not a uri")), Vec::<Uri>::new());
-    pretty_assertions::assert_eq!(identifiers_in(&json!(42)), Vec::<Uri>::new());
-    pretty_assertions::assert_eq!(identifiers_in(&json!({"nested": "object"})), Vec::<Uri>::new());
-    pretty_assertions::assert_eq!(identifiers_in(&json!(["urn:ngsi-ld:T:B", 7])), vec![uri("urn:ngsi-ld:T:B")]);
+    let entity = json!({
+        "id": "urn:ngsi-ld:T:A",
+        "type": "T",
+        "broken": [{"type": "Relationship", "object": "not a uri"}],
+        "partly": [{"type": "Relationship", "object": ["urn:ngsi-ld:T:B", 7]}]
+    });
+    pretty_assertions::assert_eq!(ids(&collect(&entity)), vec!["urn:ngsi-ld:T:B"]);
+}
+
+/// Clause 4.5.22.2 renders a normalized `objectList` as `{"object": "urn:…"}`
+/// members and clause 4.5.3.2 renders a multi-target `object` as an array of
+/// URIs, so the traversal finds its Linked Entities in both, in the order the
+/// members declare them.
+#[test]
+fn a_normalized_object_list_and_a_multi_target_object_both_name_linked_entities() {
+    let list_relationship = json!({
+        "id": "urn:ngsi-ld:T:A",
+        "type": "T",
+        "route": [{
+            "type": "ListRelationship",
+            "objectList": [{"object": "urn:ngsi-ld:T:B"}, {"object": "urn:ngsi-ld:T:C"}]
+        }]
+    });
+    pretty_assertions::assert_eq!(ids(&collect(&list_relationship)), vec!["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C"]);
+
+    let multi_target = json!({
+        "id": "urn:ngsi-ld:T:A",
+        "type": "T",
+        "passengers": [{"type": "Relationship", "object": ["urn:ngsi-ld:T:D", "urn:ngsi-ld:T:E"]}]
+    });
+    pretty_assertions::assert_eq!(ids(&collect(&multi_target)), vec!["urn:ngsi-ld:T:D", "urn:ngsi-ld:T:E"]);
 }
 
 /// A broker whose history holds, for each entity, one Relationship observation
@@ -375,11 +402,11 @@ impl TemporalHistoryReader for StubBroker {
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         Err(unsupported("query_entity_aggregation"))
     }
-    async fn recorded_value_kinds(
+    async fn recorded_attribute_shapes(
         &self,
         _target: &ContextTarget,
         _attributes: &[AttributeName],
-    ) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
+    ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError> {
         Ok(HashMap::new())
     }
 }

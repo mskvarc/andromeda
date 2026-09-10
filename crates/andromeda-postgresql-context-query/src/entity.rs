@@ -1,30 +1,19 @@
 //! SQL generation for entity queries using sea-query.
 
-use crate::{entity_relations::EntityRelations, order_geography::geo_order_distance};
+use crate::{entity_relations::EntityRelations, result_ordering};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
-    entity_selection::EntitySelector,
-    error::QueryError,
-    geo::query::GeoQuery,
-    ordering::{
-        collation::IcuCollation,
-        geometry::OrderingGeometry,
-        term::{CompiledOrderTerm, OrderDirection, OrderTarget},
-    },
+    entity_selection::{ConsideredEntities, EntitySelector},
     pagination::CountPolicy,
 };
-use andromeda_ngsi_ld_vocabulary::expanded::properties::VALUE;
-use andromeda_postgresql_encoding::ewkb::encode;
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     entity_row_refs::EntityRowRefs,
-    entity_type_names::type_names_of,
     error::RenderError,
     geo_predicate as geo_sql,
     geo_predicate::GeometrySource,
-    jsonb::attribute_value_jsonpath,
     q_predicate::projection as q_filter,
     scope_predicate::{ScopeTarget, condition as scope_condition},
     type_predicate::condition as type_condition,
@@ -32,13 +21,11 @@ use andromeda_postgresql_query::{
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
 use andromeda_postgresql_seaquery::{
     aggregate::count_over_all,
-    collation::collate,
-    jsonb::jsonb_path_query_first,
     literal::false_literal,
     operator::{array_contains_key, regex_match},
     pg_array::{any, text_array},
 };
-use sea_query::{Alias, Asterisk, Condition, Expr as SeaExpr, ExprTrait, Func, Order, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Asterisk, Condition, Expr as SeaExpr, ExprTrait, Func, Query, SelectStatement};
 
 /// A compiled entity query: the paginated result statement and its optional
 /// fallback count, each a statement tree the store binds and executes on its own.
@@ -98,14 +85,7 @@ pub fn build_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &
 
     select.limit(u64::from(query.pagination.limit)).offset(u64::from(query.pagination.offset));
 
-    add_order_clause(
-        &mut select,
-        &rows,
-        &query.ordering.terms,
-        query.selection.geo.as_ref(),
-        query.ordering.geometry.as_ref(),
-        &names.attributes,
-    )?;
+    result_ordering::apply(&mut select, &rows, &query.ordering, query.selection.geo.as_ref(), &names.attributes)?;
 
     // Fallback count query covers the zero-row edge case described above.
     let count = if query.pagination.count == CountPolicy::Emit {
@@ -152,14 +132,7 @@ pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, name
     relations.apply_from(&mut select);
     select.cond_where(condition);
 
-    add_order_clause(
-        &mut select,
-        &rows,
-        &query.ordering.terms,
-        query.selection.geo.as_ref(),
-        query.ordering.geometry.as_ref(),
-        &names.attributes,
-    )?;
+    result_ordering::apply(&mut select, &rows, &query.ordering, query.selection.geo.as_ref(), &names.attributes)?;
 
     select.limit(u64::from(query.pagination.limit)).offset(u64::from(query.pagination.offset));
 
@@ -169,6 +142,17 @@ pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, name
 /// Builds sea-query `Condition` from compiled entity query filters.
 fn build_entity_conditions(target: &ContextTarget, query: &CompiledEntityQuery, names: &QueryNames, rows: &EntityRowRefs) -> Result<Condition, RenderError> {
     let mut condition = Condition::all().add(rows.identity_column(Entities::ContextSpaceKey).eq(target.key().as_i64()));
+
+    // Clause 5.5.14: a request narrowed to an empty identifier set considers no
+    // entity, so nothing can match it whatever the selectors and filters admit.
+    // Rendered as a constant `FALSE` rather than as an empty
+    // `id = ANY(ARRAY[]::text[])`: the two match the same nothing, and the
+    // constant is the one PostgreSQL folds into a one-time filter that reads no
+    // row at all.
+    match query.selection.considered {
+        ConsideredEntities::Selected => {}
+        ConsideredEntities::NoEntity => condition = condition.add(false_literal()),
+    }
 
     // Entity selectors, unioned (clause 5.2.33): `(sel1) OR (sel2) OR ...`,
     // where each selector ANDs its own id / idPattern / type. A union that
@@ -243,73 +227,6 @@ fn selector_condition(rows: &EntityRowRefs, selector: &EntitySelector, types: &R
     condition
 }
 
-/// The SQL expression an `orderBy` term sorts on.
-///
-/// Clause 4.23 admits `id` and `type` alongside attribute names. Those are
-/// columns of the identity and search rows, not members of the payload, so they
-/// are read directly; every other term addresses an attribute value inside the
-/// JSONB payload.
-fn order_value_expr(rows: &EntityRowRefs, target: &OrderTarget, collation: Option<&IcuCollation>) -> SimpleExpr {
-    let base: SimpleExpr = match target {
-        OrderTarget::Id => rows.identity_column(Entities::Id),
-        // The interned keys sort by dictionary id, which is meaningless to a
-        // client; the IRIs are read back through the dictionary and sorted.
-        OrderTarget::Type => type_names_of(rows.search_column(EntitySearch::TypeIds)),
-        // The scope path column is an `ltree[]`, which no client collation applies to.
-        OrderTarget::Scope => return rows.search_column(EntitySearch::ScopePaths),
-        OrderTarget::Attribute(name) => {
-            let json_path = attribute_value_jsonpath(name.as_str(), &[], &[], VALUE.as_str());
-            jsonb_path_query_first(rows.payload_column(), &json_path)
-        }
-    };
-    match collation {
-        Some(collation) => collate(base, collation.as_str()),
-        None => base,
-    }
-}
-
-/// Adds an ORDER BY clause to the select statement.
-///
-/// Always terminates the ordering with `id ASC`, even when no `orderBy` terms
-/// were supplied, so pagination is stable: clause 5.5.9 requires a consistent
-/// order across pages, and `LIMIT`/`OFFSET` over an otherwise unordered result
-/// can repeat and skip rows between pages.
-fn add_order_clause(
-    select: &mut SelectStatement,
-    rows: &EntityRowRefs,
-    order_by: &[CompiledOrderTerm],
-    geo: Option<&GeoQuery>,
-    ordering_geometry: Option<&OrderingGeometry>,
-    attribute_names: &ResolvedNames<AttributeName>,
-) -> Result<(), RenderError> {
-    for term in order_by {
-        let order = match term.direction {
-            OrderDirection::Asc | OrderDirection::DistAsc => Order::Asc,
-            OrderDirection::Desc | OrderDirection::DistDesc => Order::Desc,
-        };
-
-        if term.direction.is_distance() {
-            // Distance-based ordering — reference geometry binds as EWKB.
-            let ref_ewkb = match (ordering_geometry, geo) {
-                (Some(og), _) => encode(&og.geometry)?,
-                (None, Some(geo)) => encode(&geo.geometry)?,
-                (None, None) => {
-                    return Err(RenderError::Query(QueryError::DistanceOrderWithoutReference));
-                }
-            };
-            let dist_expr = geo_order_distance(&term.target, attribute_names, rows, &ref_ewkb.to_vec());
-            select.order_by_expr(dist_expr, order);
-        } else {
-            select.order_by_expr(order_value_expr(rows, &term.target, term.collation.as_ref()), order);
-        }
-    }
-
-    // Always add id ASC as tiebreaker
-    select.order_by((Entities::Table, Entities::Id), Order::Asc);
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,15 +235,21 @@ mod tests {
         context_space_key::ContextSpaceKey,
     };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
     use andromeda_ngsi_ld_query::{
-        entity_selection::{EntitySelection, EntitySelector},
+        entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
         filter::{
             expression::Expr,
             parser,
             path::{AttrPath, QueryPath},
             predicate::{OrderingOp, Predicate},
             scalar::Scalar,
+        },
+        geo::query::GeoQuery,
+        ordering::{
+            collation::IcuCollation,
+            geometry::OrderingGeometry,
+            term::{CompiledOrderTerm, OrderDirection, OrderTarget},
         },
         pagination::CountPolicy,
         pattern::Pattern,
@@ -503,6 +426,39 @@ mod tests {
             "the id set is one bound text[] value: {:?}",
             built.bind_values
         );
+    }
+
+    /// Clause 5.5.14: "An `EntityMap` fixes the Entities to be considered for
+    /// subsequent requests based on it." A request whose identifiers do not
+    /// intersect the map it runs under is left considering no entity, and the
+    /// statement must match nothing rather than fall back on the unconstrained
+    /// reading an empty identifier list would otherwise have.
+    #[test]
+    fn a_query_that_considers_no_entity_renders_an_unsatisfiable_statement() {
+        let mut q = empty_query();
+        q.selection.considered = ConsideredEntities::NoEntity;
+        let built = build(&q, &known_types());
+        assert!(built.sql.contains("FALSE"), "the statement is unsatisfiable: {}", built.sql);
+    }
+
+    /// The clause 5.5.14 narrowing is conjoined with the rest of the query, so
+    /// the filters a map-scoped request still carries cannot widen it back.
+    #[test]
+    fn considering_no_entity_survives_beside_the_other_filters() {
+        let mut q = empty_query();
+        q.selection.considered = ConsideredEntities::NoEntity;
+        q.selection.selectors = vec![EntitySelector::builder().ids(ids(&["urn:a"])).build()];
+        let built = build(&q, &known_types());
+        assert!(built.sql.contains("FALSE"), "the statement stays unsatisfiable: {}", built.sql);
+        assert!(built.sql.contains("\"id\" = ANY("), "the selector is still rendered: {}", built.sql);
+    }
+
+    /// A request that named no identifier at all considers whatever it selects,
+    /// which is the case an empty identifier list must never be confused with.
+    #[test]
+    fn a_query_that_named_no_identifier_renders_no_unsatisfiable_term() {
+        let built = build(&empty_query(), &known_types());
+        assert!(!built.sql.contains("FALSE"), "an unconstrained query stays unconstrained: {}", built.sql);
     }
 
     /// A warm spatial prefilter feeds its candidate id set into the selector,
@@ -738,6 +694,9 @@ mod tests {
         assert!(!built.bind_values.is_empty(), "should have bind values for limit/offset");
     }
 
+    /// Clause 4.23.1 sorts by the attribute's value, which the statement reads
+    /// out of the payload, and clause 4.23.2 ranks that value's datatype before
+    /// comparing it.
     #[test]
     fn build_with_order_by_asc() {
         let mut q = empty_query();
@@ -749,7 +708,9 @@ mod tests {
         let built = build(&q, &known_types());
         assert!(built.sql.contains("ORDER BY"));
         assert!(built.sql.contains("ASC"));
-        assert!(built.sql.contains("hasValue"));
+        assert!(built.sql.contains("jsonb_path_query_first("), "{}", built.sql);
+        assert!(built.sql.contains("https://example.com/name"), "{}", built.sql);
+        assert!(built.sql.contains("array_position("), "the datatype rank decides first: {}", built.sql);
     }
 
     #[test]
@@ -782,7 +743,7 @@ mod tests {
             collation: None,
         }];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("ST_Distance"));
+        assert!(built.sql.contains("ST_DistanceSphere("), "{}", built.sql);
         assert!(built.sql.contains("ASC"));
     }
 
@@ -855,11 +816,11 @@ mod tests {
         assert!(built.bind_values.iter().any(|b| matches!(b, Value::Bytes(_))));
     }
 
-    /// Clause 4.23 orders on distance over the sphere (Haversine), and the `geography`
-    /// cast the ordering expression applies ignores any third ordinate. An
-    /// `orderGeometry` that carries an altitude must therefore render exactly
-    /// the statement a flat one renders; only the bound reference differs,
-    /// because the bind keeps the altitude it was given.
+    /// Clause 4.23.1 orders on distance over the sphere (Haversine), and the
+    /// spherical measurement ignores any third ordinate. An `orderGeometry`
+    /// that carries an altitude must therefore render exactly the statement a
+    /// flat one renders; only the bound reference differs, because the bind
+    /// keeps the altitude it was given.
     #[test]
     fn a_three_dimensional_ordering_geometry_renders_the_same_distance_sql() {
         let ordering_term = CompiledOrderTerm {
@@ -879,8 +840,12 @@ mod tests {
         let elevated = build(&elevated_query, &known_types());
 
         assert_eq!(elevated.sql, flat.sql, "distance ordering must not vary with the reference dimensionality");
-        assert!(elevated.sql.contains("ST_Distance"), "{}", elevated.sql);
-        assert!(elevated.sql.contains("::geography"), "{}", elevated.sql);
+        assert!(elevated.sql.contains("ST_DistanceSphere("), "{}", elevated.sql);
+        assert!(
+            !elevated.sql.contains("::geography"),
+            "the spheroidal measurement must not be used: {}",
+            elevated.sql
+        );
 
         let bytes = |built: &Built| -> Vec<Vec<u8>> {
             built
@@ -1084,11 +1049,13 @@ mod tests {
         assert_eq!(apostrophe_count(&built.sql) % 2, 0, "unbalanced SQL literal: {}", built.sql);
     }
 
-    /// A distance ordering reaches its `GeoProperty` by dictionary key too, so
-    /// the same IRI that is interpolated into a value ordering's jsonpath is
-    /// absent from a distance ordering's statement text.
+    /// A distance ordering measures through the dictionary key, so no IRI
+    /// reaches its distance subquery. Clause 4.23.2 still ranks the entities
+    /// whose attribute is not a `GeoProperty` by value, and that comparison
+    /// interpolates the IRI into a jsonpath, where an apostrophe in it is
+    /// doubled rather than closing the literal.
     #[test]
-    fn a_distance_ordering_geoproperty_iri_never_reaches_the_statement_text() {
+    fn a_distance_ordering_escapes_the_geoproperty_iri_its_value_comparison_reads() {
         let mut q = empty_query();
         let geometry = Geometry::from_geojson_value(&serde_json::json!({
             "type": "Point",
@@ -1106,8 +1073,13 @@ mod tests {
             AttributeNameId::from(9_i32),
         )]));
         let built = build(&q, &names);
-        assert!(!built.sql.contains("brien"), "{}", built.sql);
-        assert!(built.sql.contains("MIN(ST_Distance("), "the nearest instance decides: {}", built.sql);
+        assert!(built.sql.contains("MIN(ST_DistanceSphere("), "the nearest instance decides: {}", built.sql);
+        assert!(
+            built.sql.contains("\"attribute_name_id\" = $"),
+            "the geometry is reached by dictionary key: {}",
+            built.sql
+        );
+        assert!(built.sql.contains("o''brien"), "{}", built.sql);
         assert_eq!(apostrophe_count(&built.sql) % 2, 0, "unbalanced SQL literal: {}", built.sql);
     }
 }

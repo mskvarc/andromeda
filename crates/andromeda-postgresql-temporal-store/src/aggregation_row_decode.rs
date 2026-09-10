@@ -19,12 +19,16 @@ use crate::{
     history_row_decode::{decode_attribute_name, decode_dataset_id, decode_unit_code_id},
     stored_decimal::json_number_of,
 };
-use andromeda_ngsi_ld_model::temporal::{AggregationMinMax, TemporalAggregationRow};
+use andromeda_ngsi_ld_lexicon::ngsi_ld_time::NgsiLdTime;
+use andromeda_ngsi_ld_model::temporal::{AggregationAverage, AggregationMinMax, TemporalAggregationRow};
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, registry::UnknownCompactCode, value_kind::ValueKind};
-use andromeda_postgresql_temporal_query::aggregation_group::{AggregationGroupSpan, CodeSpan, ObservedUnits};
+use andromeda_postgresql_codes::{attribute_kind::AttributeKind, registry::UnknownCompactCode};
+use andromeda_postgresql_temporal_query::{
+    aggregation_group::{AggregationGroupSpan, CodeSpan, ObservedUnits},
+    recorded_shape::RecordedShape,
+};
 use bigdecimal::BigDecimal;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveTime, Utc};
 use sqlx::{Decode, Postgres, Row, Type, postgres::PgRow};
 
 /// Read the span of families, value shapes and unit identities one aggregation group covered.
@@ -33,7 +37,7 @@ pub(crate) fn decode_aggregation_group_span(row: &PgRow) -> Result<AggregationGr
         attribute_name: decode_attribute_name(row)?,
         units: decode_observed_units(row)?,
         families: decode_code_span::<AttributeKind>(row, "attribute_kind_lowest", "attribute_kind_highest")?,
-        value_shapes: decode_code_span::<ValueKind>(row, "value_kind_lowest", "value_kind_highest")?,
+        value_shapes: decode_code_span::<RecordedShape>(row, "recorded_shape_lowest", "recorded_shape_highest")?,
     })
 }
 
@@ -54,7 +58,7 @@ pub(crate) fn decode_aggregation_row(row: &PgRow, span: &AggregationGroupSpan) -
         dataset_id: decode_dataset_id(row)?,
         bucket_start: projected_column(row, "bucket_start")?,
         bucket_end: projected_column(row, "bucket_end")?,
-        avg: decode_exact_aggregate(row, "agg_avg")?,
+        avg: decode_average(row, value_shape)?,
         min: decode_extremum(row, value_shape, "agg_min", "agg_min_str", "agg_min_dt")?,
         max: decode_extremum(row, value_shape, "agg_max", "agg_max_str", "agg_max_dt")?,
         sum: decode_exact_aggregate(row, "agg_sum")?,
@@ -82,18 +86,28 @@ enum ExtremumColumn {
 
 /// The column the extremum of a value shape is taken from.
 ///
-/// Only shapes with an ordering have one. The unified numeric expression
-/// measures an array's length, and the longest array is not the greatest value,
-/// so an object or array has no extremum rather than the length of one; a
-/// geometry is likewise unordered, a URI is aggregated by count alone, and a
-/// tombstone carries no value at all (clause 4.5.7).
-const fn extremum_column(value_shape: ValueKind) -> ExtremumColumn {
+/// One arm per column of Tables 4.5.19.1-1, 4.5.19.1-2 and 4.5.19.1-3. A JSON
+/// Array reads the numeric aggregate because the table takes its `min` and
+/// `max` over "the size of the arrays inside the period", which is what the
+/// size-measuring operand computed; a JSON Object has no `min` or `max` at all
+/// and so reads nothing. A `Date` and a `Time` read the text aggregate they
+/// were stored in, whose canonical fixed-width rendering orders byte-wise in
+/// chronological order. A geometry is unordered and a URI is aggregated by
+/// count alone, both being N/A for `min` and `max`.
+///
+/// The value shape alone does not decide a Relationship family, whose extrema
+/// Table 4.5.19.1-3 marks N/A whatever column its targets sit in: a
+/// `ListRelationship` holds an `objectList` as a JSON array and so reports the
+/// Array shape here. The statement is what refuses it — every extremum column
+/// is gated on the attribute family, so the aggregate this names is SQL NULL
+/// for such a group and no extremum is decoded.
+const fn extremum_column(value_shape: RecordedShape) -> ExtremumColumn {
     match value_shape {
-        ValueKind::Number => ExtremumColumn::Numeric,
-        ValueKind::Boolean => ExtremumColumn::NumericAsBoolean,
-        ValueKind::String => ExtremumColumn::Text,
-        ValueKind::DateTime => ExtremumColumn::Instant,
-        ValueKind::Object | ValueKind::Geometry | ValueKind::Uri | ValueKind::Tombstone => ExtremumColumn::Unordered,
+        RecordedShape::Number | RecordedShape::Array => ExtremumColumn::Numeric,
+        RecordedShape::Boolean => ExtremumColumn::NumericAsBoolean,
+        RecordedShape::String | RecordedShape::Date | RecordedShape::Time => ExtremumColumn::Text,
+        RecordedShape::DateTime => ExtremumColumn::Instant,
+        RecordedShape::Object | RecordedShape::Geometry | RecordedShape::Uri => ExtremumColumn::Unordered,
     }
 }
 
@@ -103,7 +117,7 @@ const fn extremum_column(value_shape: ValueKind) -> ExtremumColumn {
 /// validation only for counting methods, and those project no extremum column.
 fn decode_extremum(
     row: &PgRow,
-    value_shape: Option<ValueKind>,
+    value_shape: Option<RecordedShape>,
     numeric_column: &str,
     text_column: &str,
     instant_column: &str,
@@ -138,6 +152,24 @@ fn boolean_extremum(counted: &JsonNumber, column: &str) -> Result<AggregationMin
             "{column} of a boolean attribute is {counted}, which counts neither false nor true"
         )))
     }
+}
+
+/// Read the period's mean from the column its recorded shape names.
+///
+/// Table 4.5.19.1-1 makes `avg` a number for the JSON Number, JSON Boolean and
+/// JSON Array columns, while Table 4.5.19.1-2 makes it "the average time inside
+/// the period" for the Time column. Both are projected and the shape decides,
+/// the same way the three extremum columns are read.
+fn decode_average(row: &PgRow, value_shape: Option<RecordedShape>) -> Result<Option<AggregationAverage>, TemporalStoreError> {
+    if value_shape == Some(RecordedShape::Time) {
+        return match projected_column::<NaiveTime>(row, "agg_avg_time")? {
+            Some(mean) => Ok(Some(AggregationAverage::Time(
+                NgsiLdTime::normalise(mean).map_err(|error| TemporalStoreError::Validation(error.to_string()))?,
+            ))),
+            None => Ok(None),
+        };
+    }
+    Ok(decode_exact_aggregate(row, "agg_avg")?.map(AggregationAverage::Number))
 }
 
 /// Read one `NUMERIC` aggregate as the exact JSON number it is.
@@ -227,35 +259,46 @@ mod tests {
     use crate::aggregation_row_decode::{ExtremumColumn, boolean_extremum, extremum_column};
     use andromeda_ngsi_ld_model::temporal::AggregationMinMax;
     use andromeda_ngsi_ld_number::JsonNumber;
-    use andromeda_postgresql_codes::value_kind::ValueKind;
+    use andromeda_postgresql_temporal_query::recorded_shape::RecordedShape;
 
     /// The extremum is read from the column its value shape names, and a shape
-    /// with no ordering has none at all. Enumerated over the whole registry so a
-    /// shape added later cannot silently inherit the numeric column.
+    /// with no ordering has none at all. Enumerated over every shape the
+    /// projection can report so one added later cannot silently inherit the
+    /// numeric column.
     #[test]
     fn every_value_shape_names_the_column_its_extremum_lives_in() {
         let expected = [
-            (ValueKind::Number, ExtremumColumn::Numeric),
-            (ValueKind::Boolean, ExtremumColumn::NumericAsBoolean),
-            (ValueKind::String, ExtremumColumn::Text),
-            (ValueKind::DateTime, ExtremumColumn::Instant),
-            (ValueKind::Object, ExtremumColumn::Unordered),
-            (ValueKind::Geometry, ExtremumColumn::Unordered),
-            (ValueKind::Uri, ExtremumColumn::Unordered),
-            (ValueKind::Tombstone, ExtremumColumn::Unordered),
+            (RecordedShape::Number, ExtremumColumn::Numeric),
+            (RecordedShape::Array, ExtremumColumn::Numeric),
+            (RecordedShape::Boolean, ExtremumColumn::NumericAsBoolean),
+            (RecordedShape::String, ExtremumColumn::Text),
+            (RecordedShape::Date, ExtremumColumn::Text),
+            (RecordedShape::Time, ExtremumColumn::Text),
+            (RecordedShape::DateTime, ExtremumColumn::Instant),
+            (RecordedShape::Object, ExtremumColumn::Unordered),
+            (RecordedShape::Geometry, ExtremumColumn::Unordered),
+            (RecordedShape::Uri, ExtremumColumn::Unordered),
         ];
-        pretty_assertions::assert_eq!(expected.len(), ValueKind::ALL.len(), "a value shape is missing from the mapping");
+        pretty_assertions::assert_eq!(expected.len(), RecordedShape::ALL.len(), "a value shape is missing from the mapping");
         for (value_shape, column) in expected {
             pretty_assertions::assert_eq!(extremum_column(value_shape), column, "{value_shape:?}");
         }
     }
 
-    /// An object aggregated through the unified numeric expression yields an
-    /// array length, which is not one of the values that were observed, so it is
-    /// reported as no extremum rather than as a number.
+    /// Table 4.5.19.1-1, "JSON Object" column: an object has no `min` and no
+    /// `max`, so it is reported as no extremum rather than as the length the
+    /// size-measuring operand would have produced for an array beside it.
     #[test]
-    fn an_unordered_shape_has_no_extremum_rather_than_a_length() {
-        pretty_assertions::assert_eq!(extremum_column(ValueKind::Object), ExtremumColumn::Unordered);
+    fn an_object_has_no_extremum_rather_than_a_length() {
+        pretty_assertions::assert_eq!(extremum_column(RecordedShape::Object), ExtremumColumn::Unordered);
+    }
+
+    /// Table 4.5.19.1-1, "JSON Array" column: `min` and `max` are the minimum
+    /// and maximum size of the arrays inside the period, which is the number
+    /// the size-measuring operand aggregated.
+    #[test]
+    fn an_array_reports_the_extreme_size_the_numeric_aggregate_measured() {
+        pretty_assertions::assert_eq!(extremum_column(RecordedShape::Array), ExtremumColumn::Numeric);
     }
 
     #[test]

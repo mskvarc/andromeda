@@ -1,8 +1,8 @@
 //! How clause 4.9's comparison and pattern operators are spelled in PostgreSQL.
 
 use andromeda_ngsi_ld_query::filter::predicate::{CmpOp, PatternPolarity};
-use andromeda_postgresql_seaquery::pg_operator::PgBinaryOperator;
-use sea_query::{BinOper, Expr, ExprTrait, SimpleExpr};
+use andromeda_postgresql_seaquery::{operator::negate_total, pg_operator::PgBinaryOperator};
+use sea_query::{BinOper, Condition, Expr, ExprTrait, SimpleExpr};
 
 /// Build a clause 4.9 comparison between two already-lifted operands.
 ///
@@ -23,6 +23,19 @@ pub fn compare(lhs: SimpleExpr, op: CmpOp, rhs: SimpleExpr) -> SimpleExpr {
         CmpOp::Less => lhs.lt(rhs),
         CmpOp::LessEq => lhs.lte(rhs),
     }
+}
+
+/// Whether a comparison does not hold, counting an unknown as a non-match.
+///
+/// SQL's `NOT` propagates unknown: a comparison against a column the row leaves
+/// empty is NULL, and `NOT NULL` is NULL, which the enclosing `WHERE` drops.
+/// Clause 4.9's `unequal` requires the opposite reading — "If the data type of
+/// the target value and the data type of the Query Term value are different,
+/// then they shall be considered unequal" — so a target the comparison could not
+/// even be evaluated against is a match, not a silent rejection.
+#[must_use]
+pub fn does_not_hold(comparison: Condition) -> SimpleExpr {
+    negate_total(SimpleExpr::from(comparison))
 }
 
 /// Build a clause 4.9 pattern predicate between a target and a POSIX regex.

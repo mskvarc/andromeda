@@ -7,6 +7,7 @@
 //! filter is spelled in a storage dialect is a property of that backend and
 //! lives in the crate that owns it.
 
+pub mod attribute_axis;
 pub mod compaction;
 pub mod eval;
 pub mod expansion;
@@ -18,4 +19,5 @@ pub mod predicate;
 pub mod referenced_attributes;
 pub mod scalar;
 pub mod serialize;
+pub mod target_value;
 pub mod token;

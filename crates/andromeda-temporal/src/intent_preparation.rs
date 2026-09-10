@@ -2,6 +2,7 @@
 
 use crate::{
     append_intent::{TemporalAppendEntry, TemporalAppendIntent},
+    attribute_instance_value::{collect_metadata, extract_temporal_value},
     error::TemporalError,
     scope_observation::ScopeObservation,
 };
@@ -11,22 +12,15 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     instance_family::InstanceFamily,
     instance_identity::InstanceIdentity,
-    ngsi_ld_date::NgsiLdDate,
     ngsi_ld_date_time::NgsiLdDateTime,
-    ngsi_ld_time::NgsiLdTime,
     scope::grammar::ScopeBuf,
     uri::Uri,
 };
 use andromeda_ngsi_ld_model::{
-    expanded::{geo_property::expanded_geo_node_to_geometry, instance_key::is_system_attribute, null_sentinel::instance_is_null_sentinel},
-    temporal::{TemporalHistoryRow, TemporalValue},
+    expanded::{instance_key::is_system_attribute, null_sentinel::instance_is_null_sentinel},
+    temporal::TemporalHistoryRow,
 };
-use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_render::uri_decoding::decode_percent_encoded_uri;
-use andromeda_ngsi_ld_vocabulary::{
-    NULL_URI,
-    expanded::{classes as expanded_classes, properties as expanded_properties},
-};
+use andromeda_ngsi_ld_vocabulary::{NULL_URI, expanded::properties as expanded_properties};
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 use std::slice::from_ref;
@@ -186,14 +180,14 @@ fn merge_temporal_observation(envelope: &Map<String, Value>, observation: &Value
 }
 
 /// Return the expanded plural temporal-value member for an attribute kind.
+///
+/// The table lives in the lexicon beside its compacted twin: clause 4.5.9 gives
+/// the two list families `valueLists` / `objectLists` rather than the
+/// generalized `values` / `objects`, and a second copy of that mapping here is
+/// how the temporal write side came to store a `ListProperty` under `hasValues`
+/// while the renderer read it from `hasValueLists`.
 fn temporal_values_key(attribute_type: AttributeType) -> &'static str {
-    match attribute_type {
-        AttributeType::Relationship | AttributeType::ListRelationship => expanded_properties::OBJECTS.as_str(),
-        AttributeType::LanguageProperty => expanded_properties::LANGUAGE_MAPS.as_str(),
-        AttributeType::JsonProperty => expanded_properties::JSONS.as_str(),
-        AttributeType::VocabProperty => expanded_properties::VOCABS.as_str(),
-        AttributeType::Property | AttributeType::GeoProperty | AttributeType::ListProperty => expanded_properties::VALUES.as_str(),
-    }
+    attribute_type.expanded_temporal_values_key_str()
 }
 
 /// Append validated scope observations found in the expanded scope member.
@@ -313,231 +307,6 @@ fn extract_instance_id(instance: &Value) -> Result<Option<Uri>, TemporalError> {
                 .map_err(|error| TemporalError::validation(format!("invalid instanceId '{raw}': {error}")))
         })
         .transpose()
-}
-
-/// Retain expanded members that are metadata rather than dedicated value fields.
-fn collect_metadata(instance: &Value) -> Option<Value> {
-    let object = instance.as_object()?;
-    let metadata = object
-        .iter()
-        .filter(|(key, _)| !is_dedicated_key(key))
-        .map(|(key, value)| (key.clone(), value.clone())) // clone: metadata owns the retained expanded members.
-        .collect::<Map<String, Value>>();
-    (!metadata.is_empty()).then_some(Value::Object(metadata))
-}
-
-/// Return whether a member is persisted in a dedicated temporal column.
-fn is_dedicated_key(key: &str) -> bool {
-    key == "@id"
-        || key == "@type"
-        || key == expanded_properties::DATASET_ID.as_str()
-        || key == expanded_properties::JSON.as_str()
-        || key == expanded_properties::LANGUAGE_MAP.as_str()
-        || key == expanded_properties::OBJECT.as_str()
-        || key == expanded_properties::OBJECTS.as_str()
-        || key == expanded_properties::VALUE.as_str()
-        || key == expanded_properties::VALUES.as_str()
-        || key == expanded_properties::VOCAB.as_str()
-        || key == expanded_properties::VOCABS.as_str()
-        || key == expanded_properties::INSTANCE_ID.as_str()
-        || key == expanded_properties::OBSERVED_AT.as_str()
-        || key == expanded_properties::LANGUAGE_MAPS.as_str()
-        || key == expanded_properties::JSONS.as_str()
-}
-
-/// Decode one expanded attribute value into its neutral temporal form.
-fn extract_temporal_value(instance: &Value, attribute_type: AttributeType) -> Result<TemporalValue, TemporalError> {
-    match attribute_type {
-        AttributeType::Relationship => relationship_value(instance),
-        AttributeType::GeoProperty => geometry_value(instance),
-        AttributeType::VocabProperty => vocab_value(instance),
-        AttributeType::LanguageProperty => owned_member(instance, expanded_properties::LANGUAGE_MAP.as_str(), "LanguageProperty missing languageMap"),
-        AttributeType::JsonProperty => nested_value(instance, expanded_properties::JSON.as_str(), "JsonProperty missing json value"),
-        AttributeType::ListProperty => list_value(instance, expanded_properties::VALUE_LIST.as_str(), "ListProperty missing valueList"),
-        AttributeType::ListRelationship => list_relationship_value(instance),
-        AttributeType::Property => property_value(instance),
-    }
-}
-
-/// Decode a Relationship object IRI.
-fn relationship_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
-    let raw = first_member(instance, expanded_properties::OBJECT.as_str())
-        .and_then(|value| value.get("@id"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| TemporalError::validation("Relationship missing object"))?;
-    decode_percent_encoded_uri(raw)
-        .parse::<Uri>()
-        .map(TemporalValue::Uri)
-        .map_err(|error| TemporalError::validation(format!("Relationship object is not a valid URI: {error}")))
-}
-
-/// Decode an expanded or encoded `GeoProperty` value.
-fn geometry_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
-    let node = first_member(instance, expanded_properties::VALUE.as_str()).ok_or_else(|| TemporalError::validation("GeoProperty missing value"))?;
-    let geometry = if let Some(value) = node.get("@value") {
-        match value.as_str() {
-            Some(raw) => serde_json::from_str(raw).map_err(|error| TemporalError::validation(format!("invalid GeoProperty GeoJSON string: {error}")))?,
-            None => Value::clone(value), // clone: the intent owns the geometry value.
-        }
-    } else {
-        let geometry = expanded_geo_node_to_geometry(node).ok_or_else(|| TemporalError::validation("invalid expanded GeoProperty geometry"))?;
-        serde_json::to_value(geometry.to_geojson()).map_err(|error| TemporalError::internal(format!("failed to serialize GeoProperty geometry: {error}")))?
-    };
-    Ok(TemporalValue::Geometry(geometry))
-}
-
-/// Decode one or many `VocabProperty` identifiers.
-fn vocab_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
-    let values = instance
-        .get(expanded_properties::VOCAB.as_str())
-        .and_then(Value::as_array)
-        .ok_or_else(|| TemporalError::validation("VocabProperty missing vocab value"))?;
-    if values.len() > 1 {
-        Ok(TemporalValue::Object(Value::Array(
-            values
-                .iter()
-                .filter_map(|value| value.get("@id").or_else(|| value.get("@value")).cloned())
-                .collect(),
-        )))
-    } else {
-        values
-            .first()
-            .and_then(|value| value.get("@id").or_else(|| value.get("@value")))
-            .and_then(Value::as_str)
-            .map(|value| TemporalValue::String(value.to_owned()))
-            .ok_or_else(|| TemporalError::validation("VocabProperty missing vocab value"))
-    }
-}
-
-/// Own an expanded member used directly as a temporal object value.
-fn owned_member(instance: &Value, key: &str, error: &'static str) -> Result<TemporalValue, TemporalError> {
-    instance
-        .get(key)
-        .cloned()
-        .map(TemporalValue::Object)
-        .ok_or_else(|| TemporalError::validation(error))
-}
-
-/// Own the `@value` nested in the first expanded member.
-fn nested_value(instance: &Value, key: &str, error: &'static str) -> Result<TemporalValue, TemporalError> {
-    first_member(instance, key)
-        .and_then(|value| value.get("@value"))
-        .cloned()
-        .map(TemporalValue::Object)
-        .ok_or_else(|| TemporalError::validation(error))
-}
-
-/// Own the `@list` nested in the first expanded member.
-fn list_value(instance: &Value, key: &str, error: &'static str) -> Result<TemporalValue, TemporalError> {
-    first_member(instance, key)
-        .and_then(|value| value.get("@list"))
-        .cloned()
-        .map(TemporalValue::Object)
-        .ok_or_else(|| TemporalError::validation(error))
-}
-
-/// Decode a `ListRelationship` object list.
-///
-/// Each member names a target Entity URI (clause 4.5.22), but which JSON-LD
-/// keyword carries it depends on the context the client wrote the Entity under.
-/// The normative core context defines `objectList` with `@container: "@list"`
-/// and no `@type: "@id"` coercion — unlike the singular `object` — so an
-/// `objectList` written under it expands to `@value` nodes, while a context that
-/// does coerce, and every document written in expanded form, gives `@id` nodes.
-/// Both spell the same target, so both are read; a member that spells neither is
-/// not a target at all and refuses the write rather than silently shortening the
-/// list.
-fn list_relationship_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
-    let list = first_member(instance, expanded_properties::OBJECT_LIST.as_str())
-        .and_then(|value| value.get("@list"))
-        .and_then(Value::as_array)
-        .ok_or_else(|| TemporalError::validation("ListRelationship missing objectList"))?;
-    let targets = list
-        .iter()
-        .map(|member| {
-            member
-                .get("@id")
-                .or_else(|| member.get("@value"))
-                .filter(|target| target.is_string())
-                .cloned()
-                .ok_or_else(|| TemporalError::validation("ListRelationship objectList member names no target URI"))
-        })
-        .collect::<Result<Vec<Value>, TemporalError>>()?;
-    Ok(TemporalValue::Object(Value::Array(targets)))
-}
-
-/// Decode a Property scalar, structured value, or typed temporal literal.
-fn property_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
-    let value_node = first_member(instance, expanded_properties::VALUE.as_str()).ok_or_else(|| TemporalError::validation("Property missing value"))?;
-    let Some(value) = value_node.get("@value") else {
-        return Ok(TemporalValue::Object(Value::clone(value_node))); // clone: the intent owns the expanded node.
-    };
-    let type_hint = value_node.get("@type").and_then(Value::as_str);
-    if let Some(raw) = value.as_str()
-        && let Some(typed) = temporal_property_value(type_hint, raw)
-    {
-        return typed;
-    }
-    match value {
-        // The number keeps the shape it was parsed in all the way to the
-        // arbitrary-precision storage column: flattening it to a double here
-        // would round an integer beyond 2^53 before anything could refuse it.
-        Value::Number(number) => JsonNumber::try_from(number)
-            .map(TemporalValue::Number)
-            .map_err(|error| TemporalError::validation(format!("Property number cannot be carried: {error}"))),
-        Value::String(text) => Ok(TemporalValue::String(text.clone())), // clone: the intent owns the text.
-        Value::Bool(flag) => Ok(TemporalValue::Boolean(*flag)),
-        Value::Array(_) | Value::Object(_) => Ok(TemporalValue::Object(Value::clone(value))), // clone: the intent owns the structured value.
-        Value::Null => Ok(TemporalValue::String("null".to_owned())),
-    }
-}
-
-/// Decode a Property value the client typed as one of the three clause 4.6.3
-/// temporal forms, or `None` when the declared type is not one of them.
-///
-/// Each form is parsed rather than taken verbatim, and the two that are stored as
-/// text are stored in the canonical rendering their type defines. Clause 4.6.3
-/// admits many spellings of one `Time` — any offset, any fractional width — and
-/// clause 4.9 orders `Time` values chronologically; the string column those values
-/// land in orders them byte-wise, so only a fixed-width UTC rendering makes the
-/// two orders the same. `Date` is validated for the same reason: its canonical
-/// `YYYY-MM-DD` form already sorts chronologically, and a lenient spelling would
-/// not. `DateTime` is routed through [`NgsiLdDateTime`] rather than a bare
-/// `chrono` RFC 3339 parse for the same reason [`extract_observed_at`] routes
-/// `observedAt` through it: a non-`Z` offset or more than six fractional digits
-/// must be refused rather than silently reinterpreted into the `timestamptz`
-/// column, on every axis that carries a client-supplied instant, not only on
-/// `observedAt`.
-fn temporal_property_value(type_hint: Option<&str>, raw: &str) -> Option<Result<TemporalValue, TemporalError>> {
-    let hint = type_hint?;
-    if hint == expanded_classes::DATE_TIME.as_str() {
-        return Some(
-            raw.parse::<NgsiLdDateTime>()
-                .map(NgsiLdDateTime::get)
-                .map(TemporalValue::DateTime)
-                .map_err(|error| TemporalError::validation(format!("invalid datetime property '{raw}': {error}"))),
-        );
-    }
-    if hint == expanded_classes::TIME.as_str() {
-        return Some(
-            raw.parse::<NgsiLdTime>()
-                .map(|time| TemporalValue::String(time.to_string()))
-                .map_err(|error| TemporalError::validation(format!("invalid Time property '{raw}': {error}"))),
-        );
-    }
-    if hint == expanded_classes::DATE.as_str() {
-        return Some(
-            raw.parse::<NgsiLdDate>()
-                .map(|date| TemporalValue::String(date.to_string()))
-                .map_err(|error| TemporalError::validation(format!("invalid Date property '{raw}': {error}"))),
-        );
-    }
-    None
-}
-
-/// Borrow the first value of one expanded array member.
-fn first_member<'a>(instance: &'a Value, key: &str) -> Option<&'a Value> {
-    instance.get(key).and_then(Value::as_array).and_then(|values| values.first())
 }
 
 #[cfg(test)]

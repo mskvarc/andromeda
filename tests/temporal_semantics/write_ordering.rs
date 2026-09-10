@@ -189,12 +189,18 @@ async fn temporal_semantics_same_batch_reconstruction_takes_the_specified_final_
     assert_eq!(status, StatusCode::OK);
     assert_eq!(entity["speed"]["value"], json!(3), "the final specified change is the projected one");
 
+    // Clause 5.5.11.2: "For Temporal Evolution of Entities, all entity instances
+    // shall be taken into account, in the correct order." Both members of the
+    // batch are observations, so both are recorded; only the current state folds
+    // to the later one. Clause 5.5.11.0 makes the instances behave "as if they
+    // had all arrived in separate requests", which is what gives each its own
+    // history row rather than one row for the surviving value.
     let rows = stored_attribute_history(&pool, &entity_id, &attribute_iri("speed")).await;
-    assert_eq!(rows.len(), 1, "the batch resolves to the one change it specifies");
+    assert_eq!(rows.len(), 2, "every instance of the repeated identifier reaches the temporal evolution");
+    let recorded: Vec<Option<&str>> = rows.iter().map(|row| row.value_number.as_deref()).collect();
     assert_eq!(
-        rows[0].value_number.as_deref(),
-        Some("3"),
-        "history records the same change the projection holds"
+        recorded,
+        vec![Some("2"), Some("3")],
+        "history records both instances in the order the array specified"
     );
-    assert_eq!(rows[0].write_ordinal, 0, "the surviving consequence keeps a deterministic ordinal");
 }

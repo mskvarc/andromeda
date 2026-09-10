@@ -17,6 +17,7 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_model::expanded::geo_property::expanded_geo_node_to_geometry;
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
+use andromeda_temporal::attribute_instance_value::{object_list_target_iri, relationship_target_uri};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -116,19 +117,52 @@ pub fn extract_attribute_value(instance: &Value, attribute_type: AttributeType) 
     }
 }
 
-/// The object IRI one Relationship instance points at.
+/// The object IRIs one Relationship instance points at.
+///
+/// Clause 4.5.3.2 defines `object` as "the Relationship's object represented by
+/// a URI **or array of URIs**", so every identifier node of the member is read.
+/// One target keeps the URI column it has always occupied; several are held as
+/// the ordered array of URIs the clause admits, in the same JSON shape a
+/// `ListRelationship`'s `objectList` is stored in, so the two Relationship
+/// families Table 4.5.19.1-3 governs are held identically.
 fn relationship_object(instance: &Value) -> Result<AttributeValue, TemporalStoreError> {
-    let object = instance
+    let nodes = instance
         .get(expanded_properties::OBJECT.as_str())
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|obj| obj.get("@id"))
-        .and_then(|v| v.as_str())
+        .and_then(|value| value.as_array())
         .ok_or_else(|| TemporalStoreError::Validation("Relationship missing object".to_string()))?;
-    object
-        .parse::<Uri>()
-        .map(AttributeValue::Uri)
-        .map_err(|error| TemporalStoreError::Validation(format!("Relationship object is not a valid URI: {error}")))
+    let mut targets = nodes
+        .iter()
+        .map(|node| {
+            let raw = node
+                .get("@id")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| TemporalStoreError::Validation("Relationship object names no target URI".to_string()))?;
+            parse_target(raw, "Relationship object")
+        })
+        .collect::<Result<Vec<Uri>, TemporalStoreError>>()?;
+    match targets.pop() {
+        Some(single) if targets.is_empty() => Ok(AttributeValue::Uri(single)),
+        Some(last) => {
+            targets.push(last);
+            Ok(AttributeValue::Object(uri_array(&targets)))
+        }
+        None => Err(TemporalStoreError::Validation("Relationship missing object".to_string())),
+    }
+}
+
+/// Validate one Relationship target, decoding the percent-encoding a client may
+/// have written its entity identifier in.
+///
+/// The same narrow rule the append path applies, so an instance replaced under
+/// clause 5.6.15 and one appended under clause 5.6.12 store the same target.
+fn parse_target(raw: &str, context: &str) -> Result<Uri, TemporalStoreError> {
+    relationship_target_uri(raw).map_err(|error| TemporalStoreError::Validation(format!("{context} is not a valid URI: {error}")))
+}
+
+/// The JSON array of bare target URIs a multi-target Relationship family is
+/// stored as.
+fn uri_array(targets: &[Uri]) -> Value {
+    Value::Array(targets.iter().map(|target| Value::String(target.to_string())).collect())
 }
 
 /// The geometry one `GeoProperty` instance carries.
@@ -205,18 +239,31 @@ fn list_property_value(instance: &Value) -> Result<AttributeValue, TemporalStore
 }
 
 /// The ordered object IRIs one `ListRelationship` instance points at.
+///
+/// Which JSON-LD spelling a member carries is decided by the representation the
+/// client wrote and by its `@context`, and all of them are read through
+/// [`object_list_target_iri`] — the same decoder the append path uses, so an
+/// instance replaced under clause 5.6.15 and one appended under clause 5.6.12
+/// cannot come to disagree about which spellings name a target.
 fn list_relationship_objects(instance: &Value) -> Result<AttributeValue, TemporalStoreError> {
     let list = instance
         .get(expanded_properties::OBJECT_LIST.as_str())
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|obj| obj.get("@list"))
+        .and_then(|value| value.as_array())
+        .and_then(|entries| entries.first())
+        .and_then(|entry| entry.get("@list"))
         .ok_or_else(|| TemporalStoreError::Validation("ListRelationship missing objectList".to_string()))?;
-    let uris: Vec<Value> = list
+    let entries = list
         .as_array()
-        .map(|arr| arr.iter().filter_map(|obj| obj.get("@id").cloned()).collect()) // clone: need owned Values for collected Vec
-        .unwrap_or_default();
-    Ok(AttributeValue::Object(Value::Array(uris)))
+        .ok_or_else(|| TemporalStoreError::Validation("ListRelationship objectList is not a list".to_string()))?;
+    let targets = entries
+        .iter()
+        .map(|entry| {
+            let raw = object_list_target_iri(entry)
+                .ok_or_else(|| TemporalStoreError::Validation("ListRelationship objectList entry carries no object URI".to_string()))?;
+            parse_target(raw, "ListRelationship objectList entry")
+        })
+        .collect::<Result<Vec<Uri>, TemporalStoreError>>()?;
+    Ok(AttributeValue::Object(uri_array(&targets)))
 }
 
 /// The value one plain Property instance carries, in the shape its JSON names.

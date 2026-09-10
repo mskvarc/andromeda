@@ -11,9 +11,12 @@
 //! visible write and a reader that can see the entity can see its projected
 //! values.
 
+use crate::{error::ContextStoreError, schema_ddl::collation::create_icu_collation};
 use andromeda_entity::storage_profile::StorageProfile;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_query::ordering::{collation::IcuCollation, compiled::ResultOrdering};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
+use dashmap::DashSet;
 use sqlx::postgres::PgPool;
 use std::sync::Arc;
 
@@ -26,6 +29,12 @@ pub struct EntityRepository {
     pub(super) attribute_names: Arc<dyn NameLookup<AttributeName>>,
     /// The entity-type-name dictionary, shared with the temporal store.
     pub(super) entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
+    /// ICU collations already provisioned on this tenant's database.
+    ///
+    /// Collation objects are per-database and this repository owns one tenant's
+    /// pool, so the set is correctly scoped and the `CREATE COLLATION` for a
+    /// given identifier runs once per tenant rather than once per query.
+    pub(super) provisioned_collations: DashSet<IcuCollation>,
 }
 
 impl EntityRepository {
@@ -44,6 +53,31 @@ impl EntityRepository {
             pool: pool.clone(), // clone: Arc ref-count bump
             attribute_names,
             entity_type_names,
+            provisioned_collations: DashSet::new(),
         }
+    }
+
+    /// Provision every ICU collation an ordering names, once per tenant.
+    ///
+    /// Clause 4.23.1 lets a request name any ICU collation, and its own
+    /// examples use keyword forms (`und-u-ks-identic`, `de-u-co-phonebk`) that
+    /// PostgreSQL does not pre-import: only the `<locale>-x-icu` objects exist
+    /// out of the box. Ordering by one that has no object fails the statement
+    /// with `collation … does not exist`, so a conformant request would answer
+    /// 500. The identifier was validated as a collation by
+    /// [`IcuCollation::parse`] before it reached here.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the collation cannot be created.
+    pub(super) async fn ensure_collations(&self, ordering: &ResultOrdering) -> Result<(), ContextStoreError> {
+        for collation in ordering.terms.iter().filter_map(|term| term.collation.as_ref()) {
+            if self.provisioned_collations.contains(collation) {
+                continue;
+            }
+            sqlx::query(sqlx::AssertSqlSafe(create_icu_collation(collation))).execute(&self.pool).await?;
+            self.provisioned_collations.insert(collation.clone()); // clone: the cache owns the identifier the ordering keeps
+        }
+        Ok(())
     }
 }

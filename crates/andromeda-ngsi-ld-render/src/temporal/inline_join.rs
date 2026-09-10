@@ -12,6 +12,7 @@
 //! and compacted — so there is no entity type to render from, and the linked
 //! side arrives as the same kind of value the roots do.
 
+use crate::temporal::relationship_targets::rendered_relationship_targets;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
@@ -72,10 +73,10 @@ fn join_instance(fields: &mut Map<String, Value>, linked: &IndexMap<Uri, Value>,
         fields.insert("entity".to_owned(), nested);
     }
 
-    if let Some(object_list) = fields.get("objectList").and_then(Value::as_array) {
+    if let Some(object_list) = fields.get("objectList") {
         // The identifiers are read out first so the borrow of `fields` ends
         // before the nested values are inserted back into it.
-        let objects: Vec<Uri> = object_list.iter().filter_map(Value::as_str).filter_map(|raw| raw.parse().ok()).collect();
+        let objects = rendered_relationship_targets(object_list);
         let nested: Vec<Value> = objects.iter().filter_map(|object| nested_entity(object, linked, ancestors)).collect();
         if !nested.is_empty() {
             fields.insert("entityList".to_owned(), Value::Array(nested));
@@ -202,6 +203,32 @@ mod tests {
             "hasParts": [{
                 "type": "ListRelationship",
                 "objectList": ["urn:ngsi-ld:T:C", "urn:ngsi-ld:T:Missing", "urn:ngsi-ld:T:B"],
+                "observedAt": "2024-01-01T00:00:00Z"
+            }]
+        });
+
+        apply_temporal_inline_join(&mut entity, &resolved(&["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C"]));
+
+        let nested = entity["hasParts"][0]["entityList"].as_array().expect("entityList array");
+        pretty_assertions::assert_eq!(
+            nested.iter().map(|item| item["id"].as_str()).collect::<Vec<_>>(),
+            vec![Some("urn:ngsi-ld:T:C"), Some("urn:ngsi-ld:T:B")]
+        );
+    }
+
+    /// Clause 4.5.22.2 renders a normalized `objectList` as `{"object": …}`
+    /// members, and clause 4.5.23.2 nests the target Linked Entities of "a
+    /// `ListRelationship`'s `objectList` in normalized representation", so the
+    /// join has to read its targets out of that member shape as well as out of
+    /// the bare URIs of the concise form.
+    #[test]
+    fn a_normalized_object_list_nests_the_entities_its_object_members_name() {
+        let mut entity = json!({
+            "id": "urn:ngsi-ld:T:A",
+            "type": "Thing",
+            "hasParts": [{
+                "type": "ListRelationship",
+                "objectList": [{"object": "urn:ngsi-ld:T:C"}, {"object": "urn:ngsi-ld:T:Missing"}, {"object": "urn:ngsi-ld:T:B"}],
                 "observedAt": "2024-01-01T00:00:00Z"
             }]
         });

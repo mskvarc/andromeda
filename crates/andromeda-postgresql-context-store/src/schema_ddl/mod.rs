@@ -8,5 +8,6 @@
 //! interpolated into a larger query, and each is documented with why SeaQuery
 //! cannot express it.
 
+pub mod collation;
 pub mod database;
 pub mod session;

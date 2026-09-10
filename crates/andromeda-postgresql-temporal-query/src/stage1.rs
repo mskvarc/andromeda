@@ -17,7 +17,7 @@ use andromeda_context_space::context_space_key::ContextSpaceKey;
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
-    entity_selection::EntitySelector,
+    entity_selection::{ConsideredEntities, EntitySelector},
     pagination::CountPolicy,
     temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
 };
@@ -36,7 +36,10 @@ use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
     temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
 };
-use andromeda_postgresql_seaquery::{literal::int_literal, operator::regex_match};
+use andromeda_postgresql_seaquery::{
+    literal::{false_literal, int_literal},
+    operator::regex_match,
+};
 use iri_rs::IriBuf;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Func, JoinType, Order, SelectStatement};
 
@@ -141,6 +144,15 @@ fn build_entity_conditions_for_temporal(
             union = union.add(temporal_selector_condition(selector, &names.types));
         }
         condition = condition.add(union);
+    }
+
+    // Clause 5.5.14: "An EntityMap fixes the Entities to be considered." A
+    // request narrowed to no entity at all cannot say so through a selector's
+    // identifier list, where an empty list reads as no identifier constraint --
+    // so it is conjoined here, where nothing can widen it back.
+    match compiled.entities.considered {
+        ConsideredEntities::Selected => {}
+        ConsideredEntities::NoEntity => condition = condition.add(false_literal()),
     }
 
     if let Some(probe) = current_state_probe(context_space_key, compiled, names)? {

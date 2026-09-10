@@ -23,6 +23,9 @@ pub enum PostgresType {
     /// `timestamptz`, the instant type every observed/modified time carries.
     #[iden = "timestamptz"]
     Timestamptz,
+    /// `time`, the time-of-day type a clause 4.6.3 `Time` value casts to.
+    #[iden = "time"]
+    Time,
     /// `text`.
     #[iden = "text"]
     Text,
@@ -116,6 +119,7 @@ mod tests {
         assert_eq!(PostgresType::Numeric.to_string(), "numeric");
         assert_eq!(PostgresType::Boolean.to_string(), "boolean");
         assert_eq!(PostgresType::Timestamptz.to_string(), "timestamptz");
+        assert_eq!(PostgresType::Time.to_string(), "time");
         assert_eq!(PostgresType::Text.to_string(), "text");
         assert_eq!(PostgresType::Geography.to_string(), "geography");
         assert_eq!(PostgresType::Interval.to_string(), "interval");

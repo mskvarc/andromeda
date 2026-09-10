@@ -18,6 +18,7 @@ use andromeda_ngsi_ld_model::expanded::{
     mutation::attribute::partial_update_attr,
     removed_instance::removed_attribute_instances,
 };
+use andromeda_ngsi_ld_representation::normalization::normalize_attribute_node;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use serde_json::Value;
 use std::sync::Arc;
@@ -45,7 +46,7 @@ impl EntityService {
         id: &Uri,
         attr_name: &AttributeName,
         dataset_id: Option<&Uri>,
-        fragment: Value,
+        mut fragment: Value,
         context: &ContextSpec,
     ) -> Result<(), EntityError> {
         let entity_uri = id.clone(); // clone: notification and computed write own the identifier
@@ -59,6 +60,12 @@ impl EntityService {
             return Err(EntityError::validation("Scope is not a partially updatable attribute"));
         }
 
+        // Clauses 5.6.4 and 5.6.19 take a bare Attribute Fragment, so the
+        // entity-level normalization other write paths run does not reach it.
+        // Normalizing here is what applies the concise form and discards the
+        // output-only `previous...` member clauses 5.2.5 to 5.2.38 require an
+        // implementation to ignore when a Context Producer supplies one.
+        normalize_attribute_node(&mut fragment);
         let expanded = Arc::new(self.engine.expand(fragment, context).await?);
         validate_attribute_envelopes(&expanded)?;
         validate_geo_property_geometries(&expanded)?;

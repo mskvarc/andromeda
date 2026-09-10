@@ -6,6 +6,7 @@ use crate::{
     linked::candidates::TemporalLinkedCandidate,
     port::history_reader::TemporalHistoryReader,
     read::rendered_entity::HistoryPresence,
+    requested_identifiers::RequestedIdentifiers,
     service::{TemporalQueryResult, TemporalQueryWarning, TemporalRange, TemporalReadResult, TemporalService, has_explicit_context, iri_short_name},
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -304,7 +305,13 @@ impl TemporalService {
     /// [`TemporalError::Internal`] when the reader reports a stage-one outcome
     /// that paginated ahead of a residual predicate, and
     /// [`TemporalError::Persistence`] when the identifiers cannot be read.
-    pub async fn query_ids(&self, target: &ContextTarget, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<Vec<Uri>, TemporalError> {
+    pub async fn query_ids(
+        &self,
+        target: &ContextTarget,
+        params: &TemporalQueryParameters,
+        context: &ContextSpec,
+        identifiers: RequestedIdentifiers,
+    ) -> Result<Vec<Uri>, TemporalError> {
         params.validate(true)?;
         let compiled = self.compile_temporal_query(params, context).await?;
         let mut unpaged = compiled.clone();
@@ -313,6 +320,10 @@ impl TemporalService {
             offset: 0,
             count: CountPolicy::Omit,
         };
+        match identifiers {
+            RequestedIdentifiers::Narrow => {}
+            RequestedIdentifiers::Ignore => unpaged.entities.without_identifier_narrowing(),
+        }
         ensure_aggregation_supported(self.reader.as_ref(), &unpaged.representation.aggr_methods)?;
         let outcome = self.reader.query_entity_ids(target, &unpaged).await?;
         let (identifiers, _total) = outcome
@@ -325,9 +336,11 @@ impl TemporalService {
 impl TemporalService {
     /// Clause 5.7.4.4: an aggregated representation over an attribute that is
     /// not eligible for one of the requested methods is an `InvalidRequest`,
-    /// decided from the value shapes the attribute has been recorded with
-    /// before any history is read. Only the attributes the request named can
-    /// be checked ahead of the read; a request over every attribute is not.
+    /// decided from the families and value shapes the attribute has been
+    /// recorded with before any history is read. Only the attributes the
+    /// request named can be checked ahead of the read; a request over every
+    /// attribute is not, which is why the statement itself must also refuse to
+    /// fold a value-derived aggregate for a family Table 4.5.19.1-3 marks N/A.
     async fn ensure_requested_attributes_aggregable(&self, target: &ContextTarget, compiled: &CompiledTemporalQuery) -> Result<(), TemporalError> {
         if compiled.representation.format != TemporalFormat::AggregatedValues || compiled.instances.attr_filter.is_empty() {
             return Ok(());
@@ -339,7 +352,7 @@ impl TemporalService {
             .map(|iri| iri.as_str().parse::<AttributeName>())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| TemporalError::internal(format!("an expanded attribute IRI is not an attribute name: {error}")))?;
-        let recorded = self.reader.recorded_value_kinds(target, &attributes).await?;
+        let recorded = self.reader.recorded_attribute_shapes(target, &attributes).await?;
         ensure_aggregation_eligible(&attributes, &compiled.representation.aggr_methods, &recorded).map_err(TemporalError::from)
     }
 }

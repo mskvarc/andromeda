@@ -41,6 +41,7 @@ async-trait = "0.1.92"
 bigdecimal = "0.4.10"
 chrono = { version = "0.4.45", features = ["serde"] }
 confique = "0.4.0"
+dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["display", "is_variant"] }
 hex = "0.4.3"
 futures = "0.3.34"

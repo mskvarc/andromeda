@@ -1,6 +1,7 @@
 //! Deleted attribute and instance materialization.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339::whole_seconds, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, rfc3339::whole_seconds, uri::Uri};
+use andromeda_ngsi_ld_model::expanded::null_sentinel::expanded_null_value;
 use andromeda_ngsi_ld_vocabulary::{
     NULL_URI,
     expanded::{classes as expanded_classes, properties as expanded_properties},
@@ -31,24 +32,41 @@ pub(super) fn nullify_entity_attributes(entity: &mut Value) {
     }
 }
 
+/// Replace an instance's value with the NGSI-LD Null its own attribute family
+/// is deleted by (clause 4.5.0).
+///
+/// The null goes into the family's own value member, which is what keeps a
+/// deleted `ListProperty` or `ListRelationship` free of the `value` /
+/// `previousValue` and `object` / `previousObject` members clauses 4.5.21.2 and
+/// 4.5.22.2 prohibit on them: writing a Property's `value` onto a list instance
+/// would emit a prohibited member beside a stale list.
 pub(super) fn nullify_attribute_instance(instance: &mut Value) {
     let Some(obj) = instance.as_object_mut() else { return };
+    let attribute_type = attribute_family_of(obj);
+    obj.insert(attribute_type.value_key_str().to_string(), expanded_null_value(attribute_type));
+}
 
-    let null_value = serde_json::json!([{"@value": NULL_URI}]);
-    let null_object = serde_json::json!([{"@id": NULL_URI}]);
-    let null_json = serde_json::json!([{"@value": NULL_URI, "@type": "@json"}]);
-    let null_vocab = serde_json::json!([{"@id": NULL_URI}]);
-
-    if obj.contains_key(expanded_properties::OBJECT.as_str()) {
-        obj.insert(expanded_properties::OBJECT.as_str().to_string(), null_object);
-    } else if obj.contains_key(expanded_properties::LANGUAGE_MAP.as_str()) {
-        obj.insert(expanded_properties::LANGUAGE_MAP.as_str().to_string(), null_value);
-    } else if obj.contains_key(expanded_properties::JSON.as_str()) {
-        obj.insert(expanded_properties::JSON.as_str().to_string(), null_json);
-    } else if obj.contains_key(expanded_properties::VOCAB.as_str()) {
-        obj.insert(expanded_properties::VOCAB.as_str().to_string(), null_vocab);
-    } else {
-        obj.insert(expanded_properties::VALUE.as_str().to_string(), null_value);
+/// The attribute family an expanded instance belongs to.
+///
+/// A stored instance declares its clause 5.2.4 type, and that is what decides
+/// the member a deletion is written into. An instance that declares none is
+/// placed by the value member it carries instead, and a Property — the family
+/// of a bare value — when it carries none of those either.
+fn attribute_family_of(instance: &serde_json::Map<String, Value>) -> AttributeType {
+    let declared = instance
+        .get("@type")
+        .and_then(|types| match types {
+            Value::Array(names) => names.first().and_then(Value::as_str),
+            Value::String(name) => Some(name.as_str()),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => None,
+        })
+        .and_then(AttributeType::from_expanded_iri);
+    match declared {
+        Some(attribute_type) => attribute_type,
+        None => AttributeType::ALL
+            .into_iter()
+            .find(|candidate| instance.contains_key(candidate.value_key_str()))
+            .unwrap_or(AttributeType::Property),
     }
 }
 
@@ -175,8 +193,8 @@ pub(super) fn inject_deleted_at_on_instance(instance: &mut Value, ts: DateTime<U
 
 #[cfg(test)]
 mod tests {
-    use super::inject_deleted_attributes;
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+    use super::{inject_deleted_attributes, nullify_attribute_instance};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use serde_json::json;
     use std::slice;
@@ -203,5 +221,57 @@ mod tests {
         let instances = current[attribute.as_str()].as_array().expect("deleted attribute instances");
         assert_eq!(instances.len(), 1);
         assert_eq!(instances[0][expanded_properties::DATASET_ID.as_str()][0]["@id"], json!(dataset.as_str()));
+    }
+
+    /// Clauses 4.5.0 and 4.5.21.2: a deleted `ListProperty` is nullified in its
+    /// own `valueList`, as the array holding one single NGSI-LD Null. The
+    /// `value` clause 4.5.21.2 prohibits is never written, and the list it
+    /// replaces does not survive as a stale value beside it.
+    #[test]
+    fn a_deleted_list_property_is_nullified_in_its_own_value_list() {
+        let mut instance = json!({
+            "@type": [AttributeType::ListProperty.iri().as_str()],
+            expanded_properties::VALUE_LIST.as_str(): [{"@list": [{"@value": 1}, {"@value": 2}]}]
+        });
+
+        nullify_attribute_instance(&mut instance);
+
+        assert_eq!(
+            instance[expanded_properties::VALUE_LIST.as_str()],
+            json!([{"@list": [{"@value": "urn:ngsi-ld:null"}]}])
+        );
+        assert!(instance.get(expanded_properties::VALUE.as_str()).is_none(), "{instance}");
+    }
+
+    /// Clauses 4.5.0 and 4.5.22.2: the same for a `ListRelationship`, whose
+    /// `objectList` takes the single-null array and whose prohibited `object`
+    /// is never written.
+    #[test]
+    fn a_deleted_list_relationship_is_nullified_in_its_own_object_list() {
+        let mut instance = json!({
+            "@type": [AttributeType::ListRelationship.iri().as_str()],
+            expanded_properties::OBJECT_LIST.as_str(): [{"@list": [{"@value": "urn:ngsi-ld:Room:1"}]}]
+        });
+
+        nullify_attribute_instance(&mut instance);
+
+        assert_eq!(
+            instance[expanded_properties::OBJECT_LIST.as_str()],
+            json!([{"@list": [{"@value": "urn:ngsi-ld:null"}]}])
+        );
+        assert!(instance.get(expanded_properties::OBJECT.as_str()).is_none(), "{instance}");
+    }
+
+    /// An instance that declares no type is placed by the value member it
+    /// carries, so a Relationship written without one is still nullified in
+    /// its `object` (clause 4.5.3.2) rather than gaining a Property value.
+    #[test]
+    fn a_typeless_instance_is_nullified_in_the_value_member_it_carries() {
+        let mut instance = json!({expanded_properties::OBJECT.as_str(): [{"@id": "urn:ngsi-ld:Room:1"}]});
+
+        nullify_attribute_instance(&mut instance);
+
+        assert_eq!(instance[expanded_properties::OBJECT.as_str()], json!([{"@id": "urn:ngsi-ld:null"}]));
+        assert!(instance.get(expanded_properties::VALUE.as_str()).is_none(), "{instance}");
     }
 }

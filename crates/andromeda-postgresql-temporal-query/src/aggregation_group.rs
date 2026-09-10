@@ -13,8 +13,9 @@
 //! how many instances there were is the same question whatever the instances
 //! carried, so counting is answered over any span at all.
 
+use crate::recorded_shape::RecordedShape;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName};
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
+use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use thiserror::Error;
 
@@ -70,8 +71,10 @@ pub struct AggregationGroupSpan {
     pub units: ObservedUnits,
     /// The attribute families the group's rows were written as (clause 5.2.4).
     pub families: CodeSpan<AttributeKind>,
-    /// The value shapes the group's rows were recorded in.
-    pub value_shapes: CodeSpan<ValueKind>,
+    /// The value shapes the group's rows were recorded in, at the grain Tables
+    /// 4.5.19.1-1 and 4.5.19.1-2 distinguish rather than the grain the row's
+    /// typed value column does.
+    pub value_shapes: CodeSpan<RecordedShape>,
 }
 
 /// Whether an aggregate's result depends on more about its inputs than how many there were.
@@ -131,14 +134,14 @@ pub enum MixedAggregationGroup {
         second: AttributeKind,
     },
     /// One aggregation group's rows recorded their values in two different shapes.
-    #[error("attribute '{attribute_name}' aggregates over {} and {} values, which have no common ordering or scale", .first.label(), .second.label())]
+    #[error("attribute '{attribute_name}' aggregates over {first} and {second} values, which have no common ordering or scale")]
     ConflictingValueShapes {
         /// Expanded name of the aggregated attribute.
         attribute_name: AttributeName,
         /// The lower of the two contradicting shapes.
-        first: ValueKind,
+        first: RecordedShape,
         /// The higher of the two contradicting shapes.
-        second: ValueKind,
+        second: RecordedShape,
     },
 }
 
@@ -207,17 +210,20 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregation_group::{
-        AggregationGroupSpan,
-        CodeSpan,
-        MixedAggregationGroup,
-        MixingSensitivity,
-        ObservedUnits,
-        ensure_uniform_aggregation_groups,
-        mixing_sensitivity,
+    use crate::{
+        aggregation_group::{
+            AggregationGroupSpan,
+            CodeSpan,
+            MixedAggregationGroup,
+            MixingSensitivity,
+            ObservedUnits,
+            ensure_uniform_aggregation_groups,
+            mixing_sensitivity,
+        },
+        recorded_shape::RecordedShape,
     };
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName};
-    use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
+    use andromeda_postgresql_codes::attribute_kind::AttributeKind;
     use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 
     const WEIGHT: &str = "https://uri.etsi.org/ngsi-ld/default-context/weight";
@@ -240,8 +246,8 @@ mod tests {
                 highest: AttributeKind::Property,
             },
             value_shapes: CodeSpan {
-                lowest: ValueKind::Number,
-                highest: ValueKind::Number,
+                lowest: RecordedShape::Number,
+                highest: RecordedShape::Number,
             },
         }
     }
@@ -313,13 +319,13 @@ mod tests {
     fn a_group_spanning_two_value_shapes_is_refused() {
         let mut group = uniform_group(WEIGHT, ObservedUnits::Uniform(None));
         group.value_shapes = CodeSpan {
-            lowest: ValueKind::Number,
-            highest: ValueKind::String,
+            lowest: RecordedShape::Number,
+            highest: RecordedShape::String,
         };
         let expected = MixedAggregationGroup::ConflictingValueShapes {
             attribute_name: name(WEIGHT),
-            first: ValueKind::Number,
-            second: ValueKind::String,
+            first: RecordedShape::Number,
+            second: RecordedShape::String,
         };
         pretty_assertions::assert_eq!(ensure_uniform_aggregation_groups(&[group], &[AggrMethod::Max]), Err(expected));
     }
@@ -341,8 +347,8 @@ mod tests {
             highest: AttributeKind::Relationship,
         };
         group.value_shapes = CodeSpan {
-            lowest: ValueKind::Number,
-            highest: ValueKind::Uri,
+            lowest: RecordedShape::Number,
+            highest: RecordedShape::Uri,
         };
         let groups = [group];
         for methods in [
@@ -397,13 +403,13 @@ mod tests {
     #[test]
     fn a_span_reports_the_one_code_it_covers_and_nothing_when_it_covers_two() {
         let uniform = CodeSpan {
-            lowest: ValueKind::Number,
-            highest: ValueKind::Number,
+            lowest: RecordedShape::Number,
+            highest: RecordedShape::Number,
         };
-        pretty_assertions::assert_eq!(uniform.uniform(), Some(ValueKind::Number));
+        pretty_assertions::assert_eq!(uniform.uniform(), Some(RecordedShape::Number));
         let mixed = CodeSpan {
-            lowest: ValueKind::Number,
-            highest: ValueKind::String,
+            lowest: RecordedShape::Number,
+            highest: RecordedShape::String,
         };
         pretty_assertions::assert_eq!(mixed.uniform(), None);
     }

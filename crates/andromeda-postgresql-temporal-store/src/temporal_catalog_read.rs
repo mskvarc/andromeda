@@ -7,18 +7,21 @@
 //! 5.6.6 leaves the Temporal Evolution standing when the entity is deleted, so
 //! an answer taken from `entities` would report history that exists as absent.
 
-use crate::{error::TemporalStoreError, repo::TemporalRepository, write_record_release::release_named};
+use crate::{error::TemporalStoreError, repo::TemporalRepository, stored_attribute_shape::StoredAttributeShape, write_record_release::release_named};
 use andromeda_context_space::{context_space_key::ContextSpaceKey, context_target::ContextTarget};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_postgresql_codes::value_kind::ValueKind;
+use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
 use andromeda_postgresql_query::entity_type_names::type_names_of;
 use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
     temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
 };
 use andromeda_postgresql_seaquery::pg_array::{any, text_array};
-use andromeda_postgresql_temporal_query::alias::{Ah, An, S, Te};
-use sea_query::{Alias, DeleteStatement, Expr, ExprTrait, JoinType, LockType, PostgresQueryBuilder, Query, SelectStatement};
+use andromeda_postgresql_temporal_query::{
+    alias::{Ah, An, S, Te},
+    recorded_shape::{RecordedShape, RecordedShapeColumn, recorded_shape},
+};
+use sea_query::{Alias, DeleteStatement, Expr, ExprTrait, Iden, JoinType, LockType, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{AssertSqlSafe, Row};
 use std::collections::{HashMap, HashSet};
@@ -91,26 +94,36 @@ impl TemporalRepository {
         Ok(types_by_entity)
     }
 
-    /// The value shapes each named attribute has been recorded with across
-    /// the whole history, tombstones excepted (they carry no value).
+    /// The family-and-value-shape combinations each named attribute has been
+    /// recorded with across the whole history, tombstones excepted (they carry
+    /// no value).
+    ///
+    /// The family travels with the shape because Table 4.5.19.1-3 is keyed on
+    /// it alone: a Relationship and a `ListRelationship` have `distinctCount`
+    /// and `totalCount` and nothing else, whichever column their targets were
+    /// parked in. The shape itself is refined past the stored `value_kind`
+    /// code, because Tables 4.5.19.1-1 and 4.5.19.1-2 give a JSON Array methods
+    /// a JSON Object does not have and a `Time` an `avg` a `Date` does not
+    /// have, while one JSONB column holds both of the first pair and one text
+    /// column both of the second.
     ///
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::Database`] when the statement fails and
-    /// [`TemporalStoreError::Decode`] when a stored name or value-kind code is
-    /// not one the dictionary or the code registry knows.
-    pub(crate) async fn recorded_value_kinds(
+    /// [`TemporalStoreError::Decode`] when a stored name, family code or
+    /// projected shape code is not one the dictionary or the projection knows.
+    pub(crate) async fn stored_attribute_shapes(
         &self,
         target: &ContextTarget,
         attributes: &[AttributeName],
-    ) -> Result<HashMap<AttributeName, HashSet<ValueKind>>, TemporalStoreError> {
+    ) -> Result<HashMap<AttributeName, HashSet<StoredAttributeShape>>, TemporalStoreError> {
         if attributes.is_empty() {
             return Ok(HashMap::new());
         }
         let names: Vec<&str> = attributes.iter().map(AttributeName::as_str).collect();
-        let (sql, values) = recorded_value_kinds_query(target.key(), &names).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = stored_attribute_shapes_query(target.key(), &names).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
-        let mut kinds_by_attribute: HashMap<AttributeName, HashSet<ValueKind>> = HashMap::new();
+        let mut shapes_by_attribute: HashMap<AttributeName, HashSet<StoredAttributeShape>> = HashMap::new();
         for row in rows {
             let raw_name: String = row
                 .try_get("name")
@@ -118,13 +131,17 @@ impl TemporalRepository {
             let name = raw_name
                 .parse::<AttributeName>()
                 .map_err(|error| TemporalStoreError::Decode(format!("attribute_names.name '{raw_name}': {error}")))?;
+            let stored_kind: i16 = row
+                .try_get(Iden::to_string(&AttributeHistory::AttributeKind).as_str())
+                .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.attribute_kind: {error}")))?;
+            let kind = AttributeKind::try_from(stored_kind).map_err(|error| TemporalStoreError::Decode(error.to_string()))?;
             let code: i16 = row
-                .try_get("value_kind")
-                .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.value_kind: {error}")))?;
-            let kind = ValueKind::try_from(code).map_err(|error| TemporalStoreError::Decode(error.to_string()))?;
-            kinds_by_attribute.entry(name).or_default().insert(kind);
+                .try_get(Iden::to_string(&RecordedShapeColumn).as_str())
+                .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history recorded shape: {error}")))?;
+            let shape = RecordedShape::try_from(code).map_err(|error| TemporalStoreError::Decode(error.to_string()))?;
+            shapes_by_attribute.entry(name).or_default().insert(StoredAttributeShape { kind, shape });
         }
-        Ok(kinds_by_attribute)
+        Ok(shapes_by_attribute)
     }
 
     /// Whether the entity records any stream for the named attribute.
@@ -285,13 +302,22 @@ fn stream_catalog_join(statement: &mut SelectStatement) {
         );
 }
 
-/// The distinct `(name, value_kind)` pairs recorded for the named attributes,
-/// tombstone rows excluded.
-fn recorded_value_kinds_query(context_space_key: ContextSpaceKey, names: &[&str]) -> SelectStatement {
+/// The distinct `(name, recorded shape)` pairs recorded for the named
+/// attributes, tombstone rows excluded.
+///
+/// The shape is the refined one Tables 4.5.19.1-1 and 4.5.19.1-2 distinguish,
+/// not the stored `value_kind`: an array and an object share one JSONB column
+/// and admit different methods, and so do a `Time`, a `Date` and a plain string
+/// in the text column. The family is projected beside it because Table
+/// 4.5.19.1-3 is keyed on the family alone. Tombstone rows are excluded, which
+/// is also what makes the projection total — a deletion carries no value and so
+/// no shape.
+fn stored_attribute_shapes_query(context_space_key: ContextSpaceKey, names: &[&str]) -> SelectStatement {
     Query::select()
         .distinct()
         .column((An, AttributeNames::Name))
-        .column((Ah, AttributeHistory::ValueKind))
+        .column((Ah, AttributeHistory::AttributeKind))
+        .expr_as(recorded_shape(), RecordedShapeColumn)
         .from_as(AttributeHistory::Table, Ah)
         .join_as(
             JoinType::Join,

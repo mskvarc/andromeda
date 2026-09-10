@@ -227,11 +227,28 @@ mod tests {
         assert!(!sql.contains("current_attribute_values"), "sub-attributes are not projected: {sql}");
     }
 
+    /// Clause 4.9 gives `attr[member]` two readings — a compound value member,
+    /// and the target language of a `LanguageProperty` — and the query text
+    /// cannot tell them apart, so both are compiled and disjoined. This is the
+    /// compound half: the payload jsonpath still carries the member key.
     #[test]
     fn compound_value_path_falls_back_to_jsonpath_with_terminal_key() {
         let sql = render("\"https://example.com/address\"[city]==\"Berlin\"");
         assert!(sql.contains("jsonb_path_query_first"), "{sql}");
         assert!(sql.contains(".\\\"city\\\"") || sql.contains(".\"city\""), "{sql}");
+        assert!(
+            sql.contains("jsonb_build_object('@language'"),
+            "the language-map reading is compiled beside it: {sql}"
+        );
+        assert!(sql.contains(" OR "), "{sql}");
+    }
+
+    /// A sub-attribute path has no language reading at all: a target language
+    /// selects a key of the attribute's own `languageMap`, never one below a
+    /// sub-attribute, so nothing probes the projection here.
+    #[test]
+    fn a_sub_attribute_path_compiles_to_the_payload_alone() {
+        let sql = render("\"https://example.com/address\".\"https://example.com/sub\"==\"a\"");
         assert!(!sql.contains("current_attribute_values"), "{sql}");
     }
 

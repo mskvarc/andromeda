@@ -20,7 +20,12 @@ pub(super) enum SpatialNarrowing {
     /// and the store must not be consulted: an empty candidate set must never be
     /// expressed as an empty `ids` vector, which the statement builder reads as
     /// "no id filter" and — with the geo filter already dropped — turns into a
-    /// query that returns every entity matching the remaining filters.
+    /// query that returns every entity matching the remaining filters. Clause
+    /// 5.5.14 has its own spelling for a request that considers no entity
+    /// ([`ConsideredEntities::NoEntity`]); this one answers without a round trip
+    /// at all, which is what an index that already knows the answer is for.
+    ///
+    /// [`ConsideredEntities::NoEntity`]: andromeda_ngsi_ld_query::entity_selection::ConsideredEntities::NoEntity
     EmptyResult,
 }
 

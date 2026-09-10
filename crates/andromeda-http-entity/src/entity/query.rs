@@ -21,7 +21,7 @@ use crate::{
         query_forwarding::{MergedEntities, QueryForwarding},
         query_page::QueryPage,
         query_split_filters::{defer_filters, retain_matching},
-        request_entity_map::{LocalMapEntities, record_map_use, resolve_query_map_use},
+        request_entity_map::{LocalEntitySource, record_map_use, resolve_query_map_use},
         start_rendering,
         with_linked_resolution_warnings,
     },
@@ -33,6 +33,7 @@ use andromeda_federation::{
 };
 use andromeda_http_extraction::context_target;
 use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
+use andromeda_ngsi_ld_query::entity_selection::ConsideredEntities;
 use axum::http::HeaderMap;
 
 pub(crate) async fn query(
@@ -69,11 +70,18 @@ pub(crate) async fn query(
         let split = state.forwarding.split_entities(query.split_entities);
         let split_entities = !is_local && split == SplitEntities::Split;
 
+        // Clause 5.5.14: an EntityMap "fixes the Entities to be considered for
+        // subsequent requests based on it", so a request left considering none
+        // — its identifiers and the map's do not intersect — has no entity for
+        // any context source to hold, and contacting them could only widen the
+        // answer the map fixes.
+        let considers_nothing = matches!(ConsideredEntities::of_request(query.id.as_deref()), ConsideredEntities::NoEntity);
+
         // Distributed forwarding: query matching context sources unless
         // local=true. Forwarding reads the query as the client wrote it, so it
         // runs before the split-entities filters are held back from the local
         // query below.
-        let forwarded = if is_local {
+        let forwarded = if is_local || considers_nothing {
             None
         } else {
             let forwarding = QueryForwarding {
@@ -135,12 +143,13 @@ pub(crate) async fn query(
 
         // Table 6.4.3.2-3: 201 when an EntityMap has been (re)created.
         let status = if map_use.mints() { StatusCode::CREATED } else { StatusCode::OK };
-        let map_entities = LocalMapEntities::Queried {
+        let map_entities = LocalEntitySource::Queried {
             service,
             target: &target,
             query: &query,
             context: &context,
             join: resolved.as_ref(),
+            instance: &uri,
         };
         let entity_map_uri = record_map_use(&state.entity_maps, map_use, contributions, map_entities, &uri).await?;
 

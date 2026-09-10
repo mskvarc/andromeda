@@ -7,6 +7,8 @@
 /// Eligibility of attributes for aggregation methods (clause 5.7.4.4).
 pub mod aggregation_eligibility;
 pub mod append_intent;
+/// The temporal value one expanded attribute instance carries.
+pub mod attribute_instance_value;
 mod compilation;
 pub mod config;
 pub mod error;
@@ -24,6 +26,8 @@ pub mod port;
 mod read;
 /// The non-local half of Linked Entity resolution for the temporal API.
 pub mod remote_linked;
+/// Whether the identifiers a request specified narrow a listing of what it matches.
+pub mod requested_identifiers;
 pub mod scope_observation;
 pub mod service;
 /// The physical storage policy an operator sets for temporal history.

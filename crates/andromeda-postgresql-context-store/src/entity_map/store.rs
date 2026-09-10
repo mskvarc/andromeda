@@ -1,7 +1,7 @@
 //! `EntityMapStore` trait implementation for `EntityMapRepository`.
 
 use crate::entity_map::{
-    entries::{insert_children, read_entries, read_links, upsert_link},
+    entries::{insert_children, prune_entries, read_entries, read_links, upsert_link},
     lifecycle::{delete_expired, delete_live, delete_map_row, insert_map_row, read_live_control, update_expiry},
     mapper::rows_to_entity_map,
     persistence_error,
@@ -45,6 +45,10 @@ impl EntityMapStore for EntityMapRepository {
 
     fn link<'a>(&'a self, identifier: &'a Uri, registration: &'a Uri, linked_map: &'a Uri) -> EntityMapStoreFuture<'a, EntityMapMutation> {
         Box::pin(async move { upsert_link(self.pool(), identifier, registration, linked_map).await })
+    }
+
+    fn prune<'a>(&'a self, identifier: &'a Uri, entity_ids: &'a [Uri]) -> EntityMapStoreFuture<'a, ()> {
+        Box::pin(async move { prune_entries(self.pool(), identifier, entity_ids).await })
     }
 
     fn delete<'a>(&'a self, identifier: &'a Uri) -> EntityMapStoreFuture<'a, EntityMapMutation> {

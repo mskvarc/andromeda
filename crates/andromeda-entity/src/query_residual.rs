@@ -10,7 +10,7 @@
 //! implementation which is outside this crate's scope.
 
 use crate::residual_predicate::ResidualPredicate;
-use andromeda_ngsi_ld_query::entity_selection::EntitySelection;
+use andromeda_ngsi_ld_query::entity_selection::{ConsideredEntities, EntitySelection};
 
 /// The subset of an [`EntitySelection`] a store did not apply.
 ///
@@ -51,6 +51,7 @@ impl ResidualFilter {
             q_expr,
             geo,
             scope_q,
+            considered,
         } = &self.0;
         // The selector axes are the same across every selector, so a residual
         // that carries one clears that axis from every selector of the target.
@@ -58,6 +59,13 @@ impl ResidualFilter {
         // branches are exercised only by the conformance harness.
         if selectors.iter().any(|selector| !selector.ids.is_empty()) {
             selection.selectors.iter_mut().for_each(|selector| selector.ids.clear());
+        }
+        // Clause 5.5.14: what a reused EntityMap leaves to consider is an
+        // identifier predicate, so a store that hands the identifier axis back
+        // hands this back with it and the query it issues stops carrying it.
+        match considered {
+            ConsideredEntities::NoEntity => selection.considered = ConsideredEntities::Selected,
+            ConsideredEntities::Selected => {}
         }
         if selectors.iter().any(|selector| selector.id_pattern.is_some()) {
             selection.selectors.iter_mut().for_each(|selector| selector.id_pattern = None);
@@ -89,9 +97,13 @@ impl ResidualFilter {
             q_expr,
             geo,
             scope_q,
+            considered,
         } = &self.0;
         let mut kinds = Vec::new();
-        if selectors.iter().any(|selector| !selector.ids.is_empty()) {
+        // Clause 5.5.14: considering no entity is a predicate over identifiers,
+        // outstanding for whoever finishes the query in memory just as an
+        // identifier list is.
+        if selectors.iter().any(|selector| !selector.ids.is_empty()) || matches!(considered, ConsideredEntities::NoEntity) {
             kinds.push(ResidualPredicate::Identifier);
         }
         if selectors.iter().any(|selector| selector.id_pattern.is_some()) {

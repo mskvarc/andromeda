@@ -5,6 +5,14 @@
 //! and only then over HTTP. The L2 write happens once per URL, on the first
 //! remote-fetch success.
 //!
+//! The in-process cache has no cache-wide time-to-live. Clause 6.3.16 makes the
+//! `Expires` field and the `max-age`/`s-maxage` directives of a downloaded
+//! `@context` authoritative over how long it may be reused, so each entry
+//! carries its own lifetime and
+//! [`ResponseDrivenExpiry`](crate::loader::loaded_context::ResponseDrivenExpiry)
+//! applies it; the configured TTL is only the heuristic used when a response
+//! states none.
+//!
 //! Access accounting is deliberately not part of that path. Clause 5.13.3.5
 //! permits a `numberOfHits` counter (numberOfHits is optional per clause
 //! 5.13.3.5) but does not require it to be durable per
@@ -20,82 +28,27 @@ use crate::{
     engine::options::RemoteContextFetch,
     error::JsonLdError,
     hit_counter::{HitCounter, HitDelta},
-    loader::error::{LoaderError, LoaderErrorKind},
+    loader::{
+        cache_lifetime::CacheLifetime,
+        durable_cache::{fetch_and_persist, load_from_durable_cache},
+        error::LoaderError,
+        loaded_context::{ContextDurability, EntryLifetime, LoadedContext, ResponseDrivenExpiry, registry_context},
+        pending_persistence::PersistenceRetryLease,
+        remote_document::{fetch_and_parse, ld_json_media_type},
+    },
 };
-use andromeda_http_headers::json_ld_accept::JsonLdAccept;
-use headers::HeaderMapExt;
 use iri_rs::{Iri, IriBuf};
 use jsonld::{LoadError, Loader, RemoteDocument};
-use jsonld_syntax::Parse;
-use mediatype::MediaTypeBuf;
 use moka::future::Cache;
-use reqwest::{Client, header::HeaderMap, redirect::Policy};
-use serde_json::Value;
+use reqwest::{Client, redirect::Policy};
 use std::{
-    str::from_utf8,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
-use tracing::{trace, warn};
-
-/// A loaded context together with the backing-store ownership of its hit count.
-///
-/// Only contexts that have a durable cache row participate in clause 5.13.3.5
-/// accounting. Registry and preloaded contexts have no row to update.
-#[derive(Debug, Clone)]
-struct LoadedContext {
-    /// The parsed JSON-LD context payload supplied to the processor.
-    value: Arc<jsonld_syntax::Value>,
-    /// Where the cached document's durability and hit accounting live.
-    durability: ContextDurability,
-    /// Whether the remote response permits retaining this L1 entry.
-    cacheable: bool,
-}
-
-#[derive(Debug)]
-/// Parsed remote context and its response-specific storage permission.
-struct FetchedContext {
-    /// Parsed JSON-LD document.
-    value: jsonld_syntax::Value,
-    /// Whether response caching directives permit storage.
-    cacheable: bool,
-}
-
-#[derive(Debug, Clone)]
-/// Durability and hit-accounting ownership of one L1 entry.
-enum ContextDurability {
-    /// Embedded or preloaded registry entry with no durable hit row.
-    Registry,
-    /// Entry already persisted in the durable cache.
-    Durable,
-    /// Remotely loaded entry awaiting persistence.
-    Pending(Arc<PendingPersistence>),
-}
-
-#[derive(Debug)]
-/// State retained while an L1 context awaits durable persistence.
-struct PendingPersistence {
-    /// Valid remote payload served while persistence is pending.
-    payload: Value,
-    /// Single-flight guard for the persistence retry.
-    retrying: AtomicBool,
-    /// L1 hits accumulated before persistence completes.
-    hits: AtomicU64,
-    /// Whether a retry has completed durable persistence.
-    durable: AtomicBool,
-}
-
-/// Cancellation-safe ownership of one persistence retry.
-struct PersistenceRetryLease<'a>(&'a AtomicBool);
-
-impl Drop for PersistenceRetryLease<'_> {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
-    }
-}
+use tracing::warn;
 
 /// Resolves a context URL to a context document.
 ///
@@ -114,6 +67,9 @@ pub struct HttpContextLoader {
     hit_counter: Option<Arc<HitCounter>>,
     /// Whether configuration permits a remote fetch at all.
     allow_remote: RemoteContextFetch,
+    /// The lifetime assigned to a response that states no expiration time
+    /// (clause 6.3.16).
+    default_lifetime: CacheLifetime,
     /// The size beyond which a remote document is refused.
     max_context_bytes: usize,
 }
@@ -131,7 +87,7 @@ impl HttpContextLoader {
         timeout_seconds: u64,
         max_redirects: u32,
         cache_capacity: u64,
-        cache_ttl_seconds: u64,
+        default_lifetime: CacheLifetime,
         max_context_bytes: usize,
     ) -> Result<HttpContextLoader, JsonLdError> {
         let client = Client::builder()
@@ -140,10 +96,9 @@ impl HttpContextLoader {
             .build()
             .map_err(JsonLdError::ClientBuild)?;
 
-        let cache = Cache::builder()
-            .max_capacity(cache_capacity)
-            .time_to_live(Duration::from_secs(cache_ttl_seconds))
-            .build();
+        // No `time_to_live`: a cache-wide bound would cut a `max-age` the origin
+        // server granted short of what clause 6.3.16 requires be honoured.
+        let cache = Cache::builder().max_capacity(cache_capacity).expire_after(ResponseDrivenExpiry).build();
 
         Ok(HttpContextLoader {
             client,
@@ -152,6 +107,7 @@ impl HttpContextLoader {
             l2_cache: None,
             hit_counter: None,
             allow_remote,
+            default_lifetime,
             max_context_bytes,
         })
     }
@@ -204,6 +160,7 @@ impl HttpContextLoader {
         let registry = Arc::clone(&self.registry); // clone: Arc ref-count bump into the cache-fill future
         let client = self.client.clone(); // clone: reqwest::Client is an Arc handle
         let allow_remote = self.allow_remote;
+        let default_lifetime = self.default_lifetime;
         let max_bytes = self.max_context_bytes;
         let l2_cache = self.l2_cache.clone(); // clone: Arc ref-count bump into the cache-fill future
         let filled_here = Arc::new(AtomicBool::new(false));
@@ -231,14 +188,16 @@ impl HttpContextLoader {
 
                 // A registry entry is preferable to a failed expansion when the
                 // source has become unreachable.
-                fetch_and_persist(&client, &url_iri, max_bytes, l2_cache.as_ref())
+                fetch_and_persist(&client, &url_iri, max_bytes, default_lifetime, l2_cache.as_ref())
                     .await
                     .or_else(|unreachable_source| registry.get(&url_iri).map(registry_context).ok_or(unreachable_source))
             })
             .await;
 
         let loaded = result?;
-        if !loaded.cacheable {
+        if matches!(loaded.lifetime, EntryLifetime::Immediate) {
+            // The per-entry expiry lapses it too, but only once housekeeping
+            // runs; a response that forbade storage gets the entry removed now.
             self.cache.invalidate(url).await;
         }
         if !filled_here.load(Ordering::Relaxed) {
@@ -253,7 +212,7 @@ impl HttpContextLoader {
         Ok(loaded.value)
     }
 
-    /// Record one L1 access and retry pending persistence when necessary.
+    /// Record one in-process access and retry pending persistence when necessary.
     async fn record_cached_access(&self, url: &IriBuf, loaded: &LoadedContext) {
         match &loaded.durability {
             ContextDurability::Registry => {}
@@ -276,7 +235,7 @@ impl HttpContextLoader {
                 let Some(ref cache) = self.l2_cache else {
                     return;
                 };
-                match cache.put(url, &pending.payload).await {
+                match cache.put(url, &pending.payload, pending.lifetime).await {
                     Ok(()) => {
                         pending.durable.store(true, Ordering::Release);
                         let count = pending.hits.swap(0, Ordering::AcqRel);
@@ -305,7 +264,7 @@ impl HttpContextLoader {
         if self.allow_remote == RemoteContextFetch::Deny {
             return Err(LoaderError::fetch_disabled(url.clone()));
         }
-        let fetched = fetch_and_parse(&self.client, url, self.max_context_bytes).await?;
+        let fetched = fetch_and_parse(&self.client, url, self.max_context_bytes, self.default_lifetime).await?;
         Ok(Arc::new(without_embedded_core_context(url, fetched.value)))
     }
 }
@@ -322,226 +281,16 @@ impl Loader for HttpContextLoader {
     }
 }
 
-/// The media type a [`RemoteDocument`] reports for a loaded context.
-fn ld_json_media_type() -> MediaTypeBuf {
-    jsonld_core::LD_JSON_MEDIA_TYPE.into()
-}
-
-/// A cacheable entry that owns no durable hit row.
-///
-/// Registry documents are embedded or preloaded, so clause 5.13.3.5 accounting
-/// has no `jsonld_contexts` row to attribute an access to.
-const fn registry_context(value: Arc<jsonld_syntax::Value>) -> LoadedContext {
-    LoadedContext {
-        value,
-        durability: ContextDurability::Registry,
-        cacheable: true,
-    }
-}
-
-/// The durable-cache step, yielding a context when the L2 cache holds one.
-///
-/// A read failure is fatal only when configuration forbids the network. With
-/// remote fetch allowed the failure is logged and resolution continues to the
-/// source, because a degraded cache must not make a reachable context
-/// unresolvable.
-///
-/// # Errors
-///
-/// Returns [`LoaderErrorKind::Cache`] when the durable read fails and remote
-/// fetch is denied.
-async fn load_from_durable_cache(cache: &dyn ContextCache, url: &IriBuf, allow_remote: RemoteContextFetch) -> Result<Option<LoadedContext>, LoaderError> {
-    match cache.get(url).await {
-        Ok(Some(payload)) => {
-            trace!("L2 cache hit for context: {url}");
-            let parsed = jsonld_syntax::Value::from_serde_json(payload);
-            Ok(Some(LoadedContext {
-                value: Arc::new(without_embedded_core_context(url, parsed)),
-                durability: ContextDurability::Durable,
-                cacheable: true,
-            }))
-        }
-        Ok(None) => Ok(None),
-        Err(degraded) if allow_remote == RemoteContextFetch::Allow => {
-            warn!(url = %url, error = %degraded, "Durable context-cache read failed; attempting remote resolution");
-            Ok(None)
-        }
-        Err(unavailable) => Err(LoaderError {
-            url: url.clone(), // clone: resolution continues to report under this URL
-            kind: LoaderErrorKind::Cache(unavailable.to_string()),
-        }),
-    }
-}
-
-/// The remote step: fetch the context and, on a first success, persist it.
-///
-/// # Errors
-///
-/// Returns whatever [`fetch_and_parse`] reports; a failed durable write is not
-/// an error, only a downgrade to [`ContextDurability::Pending`].
-async fn fetch_and_persist(client: &Client, url: &IriBuf, max_bytes: usize, l2_cache: Option<&Arc<dyn ContextCache>>) -> Result<LoadedContext, LoaderError> {
-    let fetched = fetch_and_parse(client, url, max_bytes).await?;
-    let normalized = without_embedded_core_context(url, fetched.value);
-    if !fetched.cacheable {
-        return Ok(LoadedContext {
-            value: Arc::new(normalized),
-            durability: ContextDurability::Registry,
-            cacheable: false,
-        });
-    }
-    // Written to L2 only here, on the first remote-fetch success: the row
-    // carries no counter, because hit accounting is the HitCounter's job.
-    let durability = match l2_cache {
-        Some(cache) => persist_to_durable_cache(cache.as_ref(), url, &normalized).await,
-        None => ContextDurability::Registry,
-    };
-    Ok(LoadedContext {
-        value: Arc::new(normalized),
-        durability,
-        cacheable: true,
-    })
-}
-
-/// Persist a freshly fetched context, classifying the entry by whether the
-/// durable write landed.
-///
-/// A write failure keeps the document serving from L1 and hands the payload to
-/// [`PendingPersistence`], so the next access retries it rather than losing the
-/// row.
-async fn persist_to_durable_cache(cache: &dyn ContextCache, url: &IriBuf, normalized: &jsonld_syntax::Value) -> ContextDurability {
-    let payload = jsonld_syntax::Value::into_serde_json(normalized.clone()); // clone: the normalized document is also returned to the caller
-    match cache.put(url, &payload).await {
-        Ok(()) => {
-            trace!("Persisted context to L2 cache: {url}");
-            ContextDurability::Durable
-        }
-        Err(unwritten) => {
-            warn!(url = %url, error = %unwritten, "Serving remotely loaded context while durable persistence is pending");
-            ContextDurability::Pending(Arc::new(PendingPersistence {
-                payload,
-                retrying: AtomicBool::new(false),
-                hits: AtomicU64::new(0),
-                durable: AtomicBool::new(false),
-            }))
-        }
-    }
-}
-
-/// Fetch a context over HTTP and parse it, refusing anything that is not
-/// JSON-shaped or is larger than the configured limit.
-async fn fetch_and_parse(client: &Client, url: &IriBuf, max_bytes: usize) -> Result<FetchedContext, LoaderError> {
-    let mut request_headers = HeaderMap::new();
-    request_headers.typed_insert(JsonLdAccept);
-    let response = client.get(url.as_str()).headers(request_headers).send().await.map_err(|error| LoaderError {
-        url: url.clone(),
-        kind: LoaderErrorKind::Request(error.to_string()),
-    })?;
-
-    if !response.status().is_success() {
-        return Err(LoaderError {
-            url: url.clone(),
-            kind: LoaderErrorKind::Http(response.status()),
-        });
-    }
-
-    if let Some(content_type) = response.headers().typed_get::<headers::ContentType>()
-        && !is_json_like(&content_type.to_string())
-    {
-        return Err(LoaderError {
-            url: url.clone(),
-            kind: LoaderErrorKind::Invalid(format!("Unsupported context content type: {content_type}")),
-        });
-    }
-
-    // Checked twice on purpose: the advertised length rejects an oversized
-    // body before it is read, and the measured length catches a server that
-    // did not advertise one.
-    if let Some(advertised) = response.content_length() {
-        // An advertised length wider than the address space saturates: such a
-        // body could not be held in memory, so `usize::MAX` refuses it under
-        // every configured limit.
-        let advertised_bytes = usize::try_from(advertised).unwrap_or(usize::MAX);
-        if advertised_bytes > max_bytes {
-            return Err(too_large(url.clone(), advertised_bytes, max_bytes));
-        }
-    }
-
-    let cacheable = response
-        .headers()
-        .typed_get::<headers::CacheControl>()
-        .is_none_or(|value| !value.no_store() && !value.no_cache() && value.max_age() != Some(Duration::ZERO));
-    let bytes = response.bytes().await.map_err(|error| LoaderError {
-        url: url.clone(),
-        kind: LoaderErrorKind::Request(error.to_string()),
-    })?;
-
-    if bytes.len() > max_bytes {
-        return Err(too_large(url.clone(), bytes.len(), max_bytes));
-    }
-
-    let text = from_utf8(&bytes).map_err(|error| LoaderError {
-        url: url.clone(),
-        kind: LoaderErrorKind::Invalid(error.to_string()),
-    })?;
-
-    let json = serde_json::from_str::<Value>(text).map_err(|error| LoaderError {
-        url: url.clone(),
-        kind: LoaderErrorKind::Invalid(error.to_string()),
-    })?;
-    if !json.as_object().is_some_and(|object| object.contains_key("@context")) {
-        return Err(LoaderError {
-            url: url.clone(),
-            kind: LoaderErrorKind::Invalid("remote document has no usable top-level @context".to_owned()),
-        });
-    }
-    let (value, _) = jsonld_syntax::Value::parse_str(text).map_err(|error| LoaderError {
-        url: url.clone(),
-        kind: LoaderErrorKind::Invalid(error.to_string()),
-    })?;
-    Ok(FetchedContext { value, cacheable })
-}
-
-/// Whether one Cache-Control field permits retaining the remote context.
-#[cfg(test)]
-fn cache_control_allows_storage(value: &str) -> bool {
-    !value.split(',').map(str::trim).any(|directive| {
-        directive.eq_ignore_ascii_case("no-store")
-            || directive.eq_ignore_ascii_case("no-cache")
-            || directive
-                .split_once('=')
-                .is_some_and(|(name, seconds)| name.trim().eq_ignore_ascii_case("max-age") && seconds.trim() == "0")
-    })
-}
-
-/// Whether a `Content-Type` names something a context can be parsed from.
-fn is_json_like(content_type: &str) -> bool {
-    match content_type.parse::<MediaTypeBuf>() {
-        Ok(media_type) => {
-            let subtype = media_type.subty().as_str();
-            subtype == "json"
-                || subtype == "ld+json"
-                || media_type.suffix().is_some_and(|suffix| suffix.as_str() == "json")
-                || (media_type.ty().as_str() == "text" && subtype == "plain")
-        }
-        Err(_) => false,
-    }
-}
-
-/// The failure reported for a context past the configured size limit.
-const fn too_large(url: IriBuf, size: usize, max: usize) -> LoaderError {
-    LoaderError {
-        url,
-        kind: LoaderErrorKind::TooLarge { size, max },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
-        context_cache::{ContextCache, ContextCacheError},
+        context_cache::{CachedContext, ContextCache, ContextCacheError},
         context_registry::ContextRegistry,
         engine::options::RemoteContextFetch,
-        loader::http::{HttpContextLoader, cache_control_allows_storage, is_json_like},
+        loader::{
+            cache_lifetime::{CacheLifetime, ResidualLifetime},
+            http::HttpContextLoader,
+        },
     };
     use iri_rs::IriBuf;
     use jsonld::Loader;
@@ -555,19 +304,28 @@ mod tests {
     }
 
     fn offline_loader(registry: Arc<ContextRegistry>) -> HttpContextLoader {
-        HttpContextLoader::new(registry, RemoteContextFetch::Deny, 30, 5, 1024, 3600, 2_000_000).expect("loader builds")
+        HttpContextLoader::new(registry, RemoteContextFetch::Deny, 30, 5, 1024, CacheLifetime::DEFAULT, 2_000_000).expect("loader builds")
     }
 
-    /// An L2 cache that always hands back one stored payload.
+    /// An L2 cache that always hands back one stored payload, with the span the
+    /// row has left before it lapses.
     #[derive(Debug)]
-    struct FixedL2(serde_json::Value);
+    struct FixedL2 {
+        /// The stored `@context` document.
+        payload: serde_json::Value,
+        /// What the fixture reports is left of the row's lifetime.
+        residual: ResidualLifetime,
+    }
 
     #[async_trait::async_trait]
     impl ContextCache for FixedL2 {
-        async fn get(&self, _url: &IriBuf) -> Result<Option<serde_json::Value>, ContextCacheError> {
-            Ok(Some(self.0.clone()))
+        async fn get(&self, _url: &IriBuf) -> Result<Option<CachedContext>, ContextCacheError> {
+            Ok(Some(CachedContext {
+                payload: self.payload.clone(), // clone: the fixture keeps its payload for the next read
+                residual: self.residual,
+            }))
         }
-        async fn put(&self, _url: &IriBuf, _payload: &serde_json::Value) -> Result<(), ContextCacheError> {
+        async fn put(&self, _url: &IriBuf, _payload: &serde_json::Value, _lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
             Ok(())
         }
     }
@@ -578,7 +336,10 @@ mod tests {
         // old `to_string`/`parse_str` round trip fell back to an empty string on
         // a (serde-impossible) failure and then reported an unrelated "invalid
         // context" error. Even with remote fetching denied, an L2 hit resolves.
-        let l2 = Arc::new(FixedL2(json!({ "@context": { "name": "https://example.com/name" } })));
+        let l2 = Arc::new(FixedL2 {
+            payload: json!({ "@context": { "name": "https://example.com/name" } }),
+            residual: ResidualLifetime::Bounded(CacheLifetime::from_seconds(30).expect("thirty seconds is a positive lifetime")),
+        });
         let loader = offline_loader(Arc::new(ContextRegistry::new())).with_l2_cache(l2);
 
         let url = IriBuf::new("https://example.com/from-l2.jsonld".to_string()).expect("valid URL");
@@ -610,25 +371,5 @@ mod tests {
         let error = loader.load_value(&url).await.expect_err("no registry entry");
 
         assert!(error.is_context_not_available(), "expected a loading failure, got {error}");
-    }
-
-    #[test]
-    fn only_json_shaped_content_types_are_accepted_for_a_context() {
-        for accepted in ["application/json", "application/ld+json", "application/vnd.example+json", "text/plain"] {
-            assert!(is_json_like(accepted), "{accepted} must be accepted");
-        }
-        for rejected in ["text/html", "application/octet-stream", "not a media type"] {
-            assert!(!is_json_like(rejected), "{rejected} must be refused");
-        }
-    }
-
-    #[test]
-    fn cache_control_directives_that_require_revalidation_are_not_stored() {
-        for value in ["no-store", "NO-CACHE", "public, max-age=0"] {
-            assert!(!cache_control_allows_storage(value), "{value} must disable storage");
-        }
-        for value in ["public, max-age=60", "immutable"] {
-            assert!(cache_control_allows_storage(value), "{value} permits storage");
-        }
     }
 }

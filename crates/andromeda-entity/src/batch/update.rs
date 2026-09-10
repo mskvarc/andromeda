@@ -4,6 +4,12 @@
 //! once, each request fragment is applied in memory, and the results go back
 //! as one statement. The per-id guards are held across the whole window so two
 //! concurrent batches touching one entity cannot lose each other's writes.
+//!
+//! Reading the stored payloads once is only sound because a chunk never carries
+//! two instances of the same entity: the coordinator gives each instance of a
+//! repeated identifier a round of its own, so the second instance reads what
+//! the first committed. Clause 5.5.11.3 requires exactly that, one separate
+//! notification per individual update.
 
 use crate::{
     EntityService,
@@ -47,12 +53,12 @@ impl EntityService {
     pub(super) async fn batch_update_chunk(
         &self,
         target: &ContextTarget,
-        entities: &[Entity],
+        entities: &[&Entity],
         context: &ContextSpec,
         overwrite: OverwritePolicy,
         mode: BatchSideEffectMode,
     ) -> Result<BatchResult, EntityError> {
-        let (prepared, mut errors) = self.prepare_entities(entities, context).await;
+        let (prepared, mut errors) = self.prepare_entity_refs(entities, context).await;
         if prepared.is_empty() {
             return Ok(BatchResult { success: Vec::new(), errors });
         }

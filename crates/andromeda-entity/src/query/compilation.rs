@@ -11,7 +11,7 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedT
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
-    entity_selection::EntitySelection,
+    entity_selection::{ConsideredEntities, EntitySelection},
     error::QueryError,
     filter::{
         expansion::{apply_expand_values, apply_json_keys, expand_q_expr},
@@ -125,6 +125,10 @@ impl EntityQueryService {
                     .q_expr(q_expr)
                     .geo(geo)
                     .scope_q(params.scope_q.clone())
+                    // Clause 5.5.14: a request narrowed to an empty identifier
+                    // set considers no entity, which the selectors' identifier
+                    // lists cannot say on their own.
+                    .considered(ConsideredEntities::of_request(params.id.as_deref()))
                     .build(),
             )
             .projection(Projection::builder().pick(pick).omit(omit).build())

@@ -3,6 +3,12 @@
 //! Like batch update, a read-modify-write over the whole chunk; unlike it, the
 //! fragment is applied with clause 5.6.2 merge semantics rather than by
 //! updating and appending in turn.
+//!
+//! A chunk carries at most one instance of any entity, because the coordinator
+//! gives each instance of a repeated identifier a round of its own. That is
+//! what makes the stored entity "the entity resulting from merging all of the
+//! entity instances, in the correct order" and puts every instance into the
+//! Temporal Evolution of Entities (clause 5.5.11.5).
 
 use crate::{
     EntityService,
@@ -22,11 +28,11 @@ impl EntityService {
     pub(super) async fn batch_merge_chunk(
         &self,
         target: &ContextTarget,
-        entities: &[Entity],
+        entities: &[&Entity],
         context: &ContextSpec,
         mode: BatchSideEffectMode,
     ) -> Result<BatchResult, EntityError> {
-        let (prepared, mut errors) = self.prepare_entities(entities, context).await;
+        let (prepared, mut errors) = self.prepare_entity_refs(entities, context).await;
         if prepared.is_empty() {
             return Ok(BatchResult { success: Vec::new(), errors });
         }

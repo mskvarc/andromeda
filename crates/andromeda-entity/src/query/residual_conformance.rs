@@ -43,7 +43,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         entity::compiled::CompiledEntityQuery,
-        entity_selection::EntitySelection,
+        entity_selection::{ConsideredEntities, EntitySelection},
         filter::{eval, parser},
         geo::query::GeoQuery,
         pagination::{CountPolicy, Pagination},
@@ -73,6 +73,12 @@ mod tests {
             geo_property_instance_geometries(entity, geo.geoproperty.as_str()).any(|subject| matches(&geo.georel, &subject, &geo.geometry))
         });
         let scope_holds = selection.scope_q.as_ref().is_none_or(|scope_q| scope_q.matches(&extract_scopes(entity)));
+        // Clause 5.5.14: an EntityMap "fixes the Entities to be considered", so
+        // a request left considering none admits no entity at all.
+        let considered_holds = match selection.considered {
+            ConsideredEntities::Selected => true,
+            ConsideredEntities::NoEntity => false,
+        };
         // Clause 5.2.33 union of selectors: an unconstrained union admits every
         // entity, otherwise any one selector's id and type must both hold.
         let selectors_hold = !selection.selectors_constrain()
@@ -84,7 +90,7 @@ mod tests {
                 let id_ok = selector.ids.is_empty() || extract_id(entity).is_some_and(|id| selector.ids.contains(&id));
                 type_ok && id_ok
             });
-        q_holds && geo_holds && scope_holds && selectors_hold
+        q_holds && geo_holds && scope_holds && selectors_hold && considered_holds
     }
 
     /// An entity store that holds its rows in memory and answers exactly as much

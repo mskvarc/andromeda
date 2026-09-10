@@ -1,7 +1,7 @@
 //! HTTP handling for temporal retrieve.
 
 use crate::{
-    error::{single_source_declined, temporal_problem},
+    error::{TemporalHttpClassify, single_source_declined, temporal_problem},
     history_read::TemporalHistoryRead,
     join::{apply_temporal_join, single_retrieval_payload},
     temporal::{
@@ -28,13 +28,16 @@ use crate::{
         ValidatedQuery,
         Value,
         collect_temporal_warnings,
+        local_map_entities::LocalHistoryEntities,
         merge_temporal_retrieve_results,
         start_rendering,
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::{
+    contribution::SourceContribution,
     fingerprint::{FingerprintedRequest, fingerprint_of},
+    recording::RecordingFailure,
     reuse::{EntityMapFlag, EntityMapUse},
     service::EntityMapService,
 };
@@ -42,7 +45,7 @@ use andromeda_federation::{
     FederationService,
     entity_result::temporal_contributions_of,
     forwarded_query::ClientQuery,
-    outcome::{ForwardReadOutcome, MatchedSources, SourceContribution},
+    outcome::{ForwardReadOutcome, MatchedSources},
     request::{EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
     temporal_last_n::truncate_to_last_n,
 };
@@ -129,7 +132,7 @@ pub async fn get(
         entity_map_uri,
     } = retrieved;
 
-    let content_range = range.and_then(|range| build_content_range(&range.interval, range.observed, range.partition_total, range.last_n_origin));
+    let content_range = range.and_then(|range| build_content_range(&range.interval, range.observed, range.last_n_origin));
     let read = TemporalHistoryRead {
         service: &state.temporal,
         target: &target,
@@ -333,7 +336,10 @@ async fn distributed_retrieval(
 /// Table 6.19.3.1-1 `entityMap`: the map the retrieval used is returned,
 /// created now when none was in use (clause 5.7.3.4), naming this broker and
 /// every registration that returned history; a reused map instead records the
-/// maps its own sources answered with (clause 5.5.14).
+/// maps its own sources answered with (clause 5.5.14). The recording is the one
+/// every read under a map performs; a retrieval's half of it is the single
+/// history it held itself, and the fact that it applied no filter and so sheds
+/// nothing (clause 4.3.6.7).
 ///
 /// # Errors
 ///
@@ -345,24 +351,14 @@ async fn record_retrieve_map(
     local_id: Option<Uri>,
     instance: &RequestUri,
 ) -> Result<Option<Uri>, ProblemResponse> {
-    match map_use {
-        EntityMapUse::Reuse(map) => {
-            let links = contributions
-                .iter()
-                .filter_map(|contribution| contribution.linked_map.as_ref().map(|linked| (&contribution.registration, linked)));
-            entity_maps.record_linked_maps(&map.id, links).await.with_instance(instance)?;
-            Ok(Some(map.id))
-        }
-        EntityMapUse::Mint(mut map) => {
-            map.add_local_entities(local_id);
-            for contribution in contributions {
-                map.add_contribution(&contribution.registration, contribution.entity_ids, contribution.linked_map);
-            }
-            entity_maps.store(&map).await.with_instance(instance)?;
-            Ok(Some(map.id))
-        }
-        EntityMapUse::None => Ok(None),
-    }
+    let local = LocalHistoryEntities::Retrieved(local_id.as_ref());
+    entity_maps
+        .record_read(map_use, contributions, &local, local.page_filtering())
+        .await
+        .map_err(|failure| match failure {
+            RecordingFailure::LocalEntities(problem) => problem,
+            RecordingFailure::Store(error) => error.classify_for_temporal_http().with_instance(instance.clone()), // clone: the problem response owns the request URI it names
+        })
 }
 
 /// The payload the retrieval answers with, and the warnings that accompany it.

@@ -16,6 +16,10 @@
 //! reason as separate fields precisely so the caller can categorise it
 //! without re-parsing a message.
 //!
+//! Clause 5.13.2.3's rule that everything outside a referenced context
+//! object's `@context` subtree is discarded belongs to no single caller, so
+//! [`context_subtree`] owns it for the resolver and the Context Registry alike.
+//!
 //! Two ports point outward and are declared here because this crate calls
 //! them: [`context_cache::ContextCache`], the durable cache a broker may
 //! attach, and `andromeda_ngsi_ld_query::term_expander::TermExpander`, which
@@ -31,6 +35,7 @@ pub mod config;
 pub mod context_cache;
 pub mod context_registry;
 pub mod context_spec;
+pub mod context_subtree;
 pub mod context_validation;
 pub mod core_context;
 pub mod core_context_precedence;

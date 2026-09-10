@@ -7,28 +7,33 @@
 //! Entities and Retrieve Entity — differ only in how the entities this broker
 //! holds itself are listed, which is why that half alone is a parameter here.
 
-use crate::{error::EntityResultExt, join::ResolvedJoin};
+use crate::{
+    error::{EntityHttpClassify, EntityResultExt},
+    join::ResolvedJoin,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_entity_map::{
+    contribution::SourceContribution,
     fingerprint::{FingerprintedRequest, fingerprint_of},
+    recording::{LocalMapEntities, MapListing, PageFiltering, RecordingFailure},
     reuse::{EntityMapFlag, EntityMapUse},
     service::EntityMapService,
 };
-use andromeda_federation::outcome::SourceContribution;
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_query::pagination::{CountPolicy, Pagination};
 use andromeda_ngsi_ld_request::{entity::GetEntityParams, query::entity::parameters::EntityQueryParameters};
 use axum::http::Uri as HttpUri;
 
-/// Where the entities a minted map attributes to this broker come from.
+/// Where the entities a map attributes to this broker come from.
 ///
 /// Listing them is not free for a query — it costs a second pass over the
-/// store — so the source is described here and read only when a map is
-/// actually minted.
+/// store — so the source is described here and read only when the recording
+/// asks for it.
 #[derive(Clone, Copy)]
-pub(crate) enum LocalMapEntities<'a> {
+pub(crate) enum LocalEntitySource<'a> {
     /// The single entity a retrieval held locally, if it held one.
     Retrieved(Option<&'a Uri>),
     /// Every entity a query matched locally, which is the whole result and not
@@ -45,27 +50,60 @@ pub(crate) enum LocalMapEntities<'a> {
         /// The resolved clause 4.5.23 join, whose Linked Entities belong to the
         /// same unitary request.
         join: Option<&'a ResolvedJoin<'a>>,
+        /// The request URI a failed listing names.
+        instance: &'a HttpUri,
     },
 }
 
-impl LocalMapEntities<'_> {
-    /// The identifiers a minted map records as held by this broker.
+impl LocalEntitySource<'_> {
+    /// Whether preparing this read's page applied the request's filters to the
+    /// entities of the map it ran under (clause 4.3.6.7).
     ///
-    /// # Errors
-    ///
-    /// Returns a [`ProblemResponse`] when the query cannot be compiled against
-    /// the active context or the store cannot be read.
-    async fn identifiers(self, instance: &HttpUri) -> Result<Vec<Uri>, ProblemResponse> {
+    /// A query applies its query, geoquery, scope query and attribute filters
+    /// to an entity before it joins a result page; a retrieval applies none of
+    /// them, reading the map only to learn which context sources hold the one
+    /// entity it asked for.
+    pub(crate) const fn page_filtering(&self) -> PageFiltering {
         match self {
-            LocalMapEntities::Retrieved(entity_id) => Ok(entity_id.cloned().into_iter().collect()), // clone: the map owns its identifiers
-            LocalMapEntities::Queried {
+            LocalEntitySource::Retrieved(_) => PageFiltering::NotApplied,
+            LocalEntitySource::Queried { .. } => PageFiltering::Applied,
+        }
+    }
+}
+
+impl LocalMapEntities for LocalEntitySource<'_> {
+    type Error = ProblemResponse;
+
+    async fn identifiers(&self, listing: MapListing) -> Result<Vec<Uri>, ProblemResponse> {
+        match *self {
+            LocalEntitySource::Retrieved(entity_id) => Ok(entity_id.cloned().into_iter().collect()), // clone: the map owns its identifiers
+            LocalEntitySource::Queried {
                 service,
                 target,
                 query,
                 context,
                 join,
+                instance,
             } => {
-                let compiled = service.compile_query_public(query, context).await.with_entity_instance(instance)?;
+                let mut compiled = service.compile_query_public(query, context).await.with_entity_instance(instance)?;
+                // Clause 5.5.14: the map fixes every entity the request matched,
+                // so the identifier pass ignores the window the client asked for
+                // and runs over the whole result.
+                compiled.pagination = Pagination {
+                    limit: u32::MAX,
+                    offset: 0,
+                    count: CountPolicy::Omit,
+                };
+                match listing {
+                    MapListing::Minted => {}
+                    // Clause 4.3.6.7 rechecks the filters of the request the map
+                    // was created for, and clause 5.5.14 lets a follow-up name
+                    // its own identifiers: a request asking about one entity of
+                    // the map has not checked the others, so it must not shed
+                    // them.
+                    MapListing::Rechecked => compiled.selection.without_identifier_narrowing(),
+                }
+                let compiled = compiled;
                 let mut identifiers = service.query_ids(target, &compiled).await.with_entity_instance(instance)?;
                 // Clause 5.5.14: the Linked Entities the join resolved belong to
                 // the same unitary request as the entities that named them.
@@ -152,9 +190,10 @@ pub(crate) async fn resolve_retrieval_map_use(
 /// Record what the read's sources contributed to the map it ran under, and
 /// answer with the map's location (Table 6.5.3.1-1 `entityMap`).
 ///
-/// A reused map records the maps its sources answered with (clause 5.5.14); a
-/// minted one names this broker and every registration that returned an
-/// entity, each entity attributed to the sources that hold it (clause 5.2.39).
+/// The recording itself is the same for every read that runs under a map and
+/// belongs to the map policy; this is the entity binding's half of it: where
+/// the entities this broker holds come from, and how the two vocabularies of
+/// failure are classified for an HTTP response.
 ///
 /// # Errors
 ///
@@ -164,25 +203,13 @@ pub(crate) async fn record_map_use(
     maps: &EntityMapService,
     map_use: EntityMapUse,
     contributions: Vec<SourceContribution>,
-    local: LocalMapEntities<'_>,
+    local: LocalEntitySource<'_>,
     instance: &HttpUri,
 ) -> Result<Option<Uri>, ProblemResponse> {
-    match map_use {
-        EntityMapUse::Reuse(map) => {
-            let links = contributions
-                .iter()
-                .filter_map(|contribution| contribution.linked_map.as_ref().map(|linked| (&contribution.registration, linked)));
-            maps.record_linked_maps(&map.id, links).await.with_entity_instance(instance)?;
-            Ok(Some(map.id))
-        }
-        EntityMapUse::Mint(mut map) => {
-            map.add_local_entities(local.identifiers(instance).await?);
-            for contribution in contributions {
-                map.add_contribution(&contribution.registration, contribution.entity_ids, contribution.linked_map);
-            }
-            maps.store(&map).await.with_entity_instance(instance)?;
-            Ok(Some(map.id))
-        }
-        EntityMapUse::None => Ok(None),
-    }
+    maps.record_read(map_use, contributions, &local, local.page_filtering())
+        .await
+        .map_err(|failure| match failure {
+            RecordingFailure::LocalEntities(problem) => problem,
+            RecordingFailure::Store(error) => error.classify_for_entity_http().with_instance(instance.clone()), // clone: the problem response owns the request URI it names
+        })
 }

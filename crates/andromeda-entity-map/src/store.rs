@@ -39,6 +39,16 @@ pub trait EntityMapStore: Send + Sync + 'static {
     /// (clause 5.5.14), replacing the link recorded for that registration.
     fn link<'a>(&'a self, identifier: &'a Uri, registration: &'a Uri, linked_map: &'a Uri) -> EntityMapStoreFuture<'a, EntityMapMutation>;
 
+    /// Remove `entity_ids`, with every source attributed to them, from a live
+    /// Entity Map.
+    ///
+    /// Clause 4.3.6.7 sheds "identifiers of Entities not matching the filters at
+    /// the time of checking" from the map while a result page is prepared, and
+    /// clause 5.5.14 makes that the duty of the broker that created it. An
+    /// identifier the map does not list, and a map that expired meanwhile, are
+    /// both left exactly as they are.
+    fn prune<'a>(&'a self, identifier: &'a Uri, entity_ids: &'a [Uri]) -> EntityMapStoreFuture<'a, ()>;
+
     /// Remove a live Entity Map.
     fn delete<'a>(&'a self, identifier: &'a Uri) -> EntityMapStoreFuture<'a, EntityMapMutation>;
 

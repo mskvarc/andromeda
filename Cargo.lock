@@ -521,6 +521,7 @@ dependencies = [
  "indexmap 2.14.2",
  "pretty_assertions",
  "serde_json",
+ "strum",
  "thiserror 2.0.20",
  "tokio",
  "tower",
@@ -1089,6 +1090,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-vocabulary",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -1273,6 +1275,7 @@ dependencies = [
  "bigdecimal",
  "chrono",
  "confique",
+ "dashmap",
  "derive_more",
  "futures",
  "hex",
@@ -1416,6 +1419,7 @@ dependencies = [
  "pretty_assertions",
  "sea-query",
  "serde_json",
+ "strum",
  "thiserror 2.0.20",
 ]
 

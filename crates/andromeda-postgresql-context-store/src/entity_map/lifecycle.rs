@@ -9,7 +9,7 @@ use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use andromeda_postgresql_schema::entity_map::EntityMaps;
 use andromeda_postgresql_seaquery::clock::now;
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query, QueryStatementBuilder, SimpleExpr};
+use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query, QueryStatementBuilder, SelectStatement, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgConnection, PgPool, Row};
 
@@ -22,13 +22,28 @@ pub(crate) struct MapControlRecord {
     pub(crate) request_fingerprint: Option<String>,
 }
 
-/// `(SELECT entity_maps.map_key FROM entity_maps WHERE entity_maps.id = <id>)`.
-pub(crate) fn map_key_of(id: SimpleExpr) -> SimpleExpr {
+/// The `SELECT` resolving a map's URI to the surrogate the child tables carry.
+fn map_key_lookup(id: SimpleExpr) -> SelectStatement {
     let mut lookup = Query::select();
     lookup
         .column((EntityMaps::Table, EntityMaps::MapKey))
         .from(EntityMaps::Table)
         .and_where(Expr::col((EntityMaps::Table, EntityMaps::Id)).eq(id));
+    lookup
+}
+
+/// `(SELECT entity_maps.map_key FROM entity_maps WHERE entity_maps.id = <id>)`.
+pub(crate) fn map_key_of(id: SimpleExpr) -> SimpleExpr {
+    SimpleExpr::SubQuery(None, Box::new(map_key_lookup(id).into_sub_query_statement()))
+}
+
+/// The same lookup restricted to a map that is still live at the database
+/// clock: an expired map resolves to NULL, so a statement keyed on it matches
+/// nothing rather than reaching into a map clause 5.5.14 says yields no
+/// inference.
+pub(crate) fn live_map_key_of(id: SimpleExpr) -> SimpleExpr {
+    let mut lookup = map_key_lookup(id);
+    lookup.and_where(live());
     SimpleExpr::SubQuery(None, Box::new(lookup.into_sub_query_statement()))
 }
 

@@ -1,14 +1,18 @@
-//! Temporal values renderer (NGSI-LD clause 4.5.8).
+//! Temporal values renderer (NGSI-LD clause 4.5.9).
 //!
 //! [`TemporalValuesRenderer`] transforms a compacted temporal entity into the
 //! `temporalValues` simplified representation.
 
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_type::{AttributeType, TemporalValueEncoding},
+    uri::Uri,
+};
+use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use indexmap::IndexMap;
 use serde_json::{Value, json};
 use thiserror::Error;
 
-/// The entity-level members that pass through untouched: clause 4.5.8 collapses
+/// The entity-level members that pass through untouched: clause 4.5.9 collapses
 /// attributes alone, so the identity and the clause 4.8 system timestamps are
 /// copied across rather than read as instance arrays.
 const RESERVED: &[&str] = &["id", "type", "@context", "createdAt", "modifiedAt", "deletedAt"];
@@ -25,7 +29,7 @@ pub enum TemporalValuesError {
 }
 
 /// Transforms a compacted temporal entity into `temporalValues` form
-/// (NGSI-LD clause 4.5.8).
+/// (NGSI-LD clause 4.5.9).
 ///
 /// Each attribute is collapsed into `[value, observedAt]` pairs grouped by
 /// dataset ID. Reserved entity-level keys (`id`, `type`, `@context`,
@@ -43,7 +47,7 @@ impl TemporalValuesRenderer {
         TemporalValuesRenderer { payload }
     }
 
-    /// Collapse each attribute into the clause 4.5.8 `temporalValues` pairs.
+    /// Collapse each attribute into the clause 4.5.9 `temporalValues` pairs.
     ///
     /// # Errors
     ///
@@ -102,19 +106,13 @@ impl TemporalValuesRenderer {
                     .map(|raw| raw.parse::<AttributeType>().map_err(|_error| TemporalValuesError::InvalidAttributeType))
                     .transpose()?
                     .unwrap_or(AttributeType::Property);
-                let (value_key, extract_key) = attr_type.temporal_values_keys();
+                let value_key = attr_type.temporal_values_key();
+                let extract_key = attr_type.compact_value_key();
 
                 let mut pairs: Vec<Value> = Vec::new();
                 for inst in insts {
                     let val = inst.get(extract_key).cloned().unwrap_or(Value::Null);
-                    let val = if matches!(
-                        attr_type,
-                        AttributeType::LanguageProperty | AttributeType::JsonProperty | AttributeType::VocabProperty
-                    ) {
-                        json!({extract_key: val})
-                    } else {
-                        val
-                    };
+                    let val = simplified_value(val, attr_type, extract_key);
                     let obs = inst.get("observedAt").or_else(|| inst.get("deletedAt")).cloned().unwrap_or(Value::Null);
                     pairs.push(json!([val, obs]));
                 }
@@ -138,6 +136,56 @@ impl TemporalValuesRenderer {
         }
 
         Ok(Value::Object(result))
+    }
+}
+
+/// The value one clause 4.5.9 pair carries, read out of the normalized
+/// instance the projection runs over.
+///
+/// Three families wrap their value in a one-member object (clause 4.5.9's
+/// `languageMaps`, `jsons` and `vocabs`); the rest carry it bare. A
+/// `ListRelationship` is the one family whose bare value is not the member it
+/// was read from: clause 4.5.9 gives its `objectLists` pairs "an ordered array
+/// of Relationship objects (URIs)" — EXAMPLE 7 spells them as bare strings —
+/// while the normalized `objectList` those are read from holds the
+/// `{"object": …}` members clause 4.5.22.2 mandates.
+fn simplified_value(value: Value, attr_type: AttributeType, extract_key: &str) -> Value {
+    match attr_type.temporal_value_encoding() {
+        TemporalValueEncoding::Wrapped => json!({extract_key: value}),
+        TemporalValueEncoding::Bare => match attr_type {
+            AttributeType::ListRelationship => bare_object_list(value),
+            AttributeType::Property
+            | AttributeType::GeoProperty
+            | AttributeType::Relationship
+            | AttributeType::ListProperty
+            | AttributeType::LanguageProperty
+            | AttributeType::JsonProperty
+            | AttributeType::VocabProperty => value,
+        },
+    }
+}
+
+/// One `objectList` reduced to the bare target URIs a clause 4.5.9 pair holds.
+fn bare_object_list(value: Value) -> Value {
+    match value {
+        Value::Array(members) => Value::Array(members.into_iter().map(bare_object).collect()),
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => other,
+    }
+}
+
+/// The URI one normalized `objectList` member names.
+///
+/// A member that is already the bare URI of the concise form (clause 4.5.22.3)
+/// passes through, and so does anything that is neither — clause 4.5.9 has no
+/// place to report a malformed member, and dropping it would silently shorten
+/// the list.
+fn bare_object(member: Value) -> Value {
+    match member {
+        Value::Object(mut fields) => match fields.remove(compact_properties::OBJECT) {
+            Some(target) => target,
+            None => Value::Object(fields),
+        },
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => other,
     }
 }
 
@@ -211,6 +259,142 @@ mod tests {
         let objects = result["isParked"]["objects"].as_array().expect("objects array");
         pretty_assertions::assert_eq!(objects.len(), 2);
         pretty_assertions::assert_eq!(objects[0][0], "urn:p1");
+    }
+
+    /// Clause 4.5.9: "For each `ListProperty` ... shall only contain a member
+    /// whose key shall be `valueLists` ... Each array element shall be another
+    /// array containing exactly two elements: the first element shall be an
+    /// ordered array of Property values, and the second element shall
+    /// correspond to the associated Temporal Property".
+    #[test]
+    fn a_list_property_collapses_into_value_lists_of_ordered_arrays() {
+        let input = json!({
+            "id": "urn:x",
+            "type": "Building",
+            "period": [
+                {"type": "ListProperty", "valueList": ["First", "Second"], "observedAt": "2022-08-09T18:25:02Z"},
+                {"type": "ListProperty", "valueList": ["1st", "2nd"], "observedAt": "2022-08-10T18:25:02Z"}
+            ]
+        });
+        let result = transform(input);
+        pretty_assertions::assert_eq!(result["period"]["type"], "ListProperty");
+        pretty_assertions::assert_eq!(
+            result["period"]["valueLists"],
+            json!([[["First", "Second"], "2022-08-09T18:25:02Z"], [["1st", "2nd"], "2022-08-10T18:25:02Z"]])
+        );
+        // Clause 4.5.21.2 prohibits `value` on a ListProperty, and clause 4.5.9
+        // gives the family one member alone, so the generalized `values` the
+        // Property family collapses into is absent as well.
+        assert!(result["period"].get("values").is_none(), "{}", result["period"]);
+        assert!(result["period"].get("value").is_none(), "{}", result["period"]);
+    }
+
+    /// Clause 4.5.9: for each `ListRelationship` the member is `objectLists`,
+    /// whose pairs hold "an ordered array of Relationship objects (URIs)" and
+    /// the associated Temporal Property.
+    #[test]
+    fn a_list_relationship_collapses_into_object_lists_of_ordered_uris() {
+        let input = json!({
+            "id": "urn:x",
+            "type": "Building",
+            "membersPresent": [
+                {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Person:Alice", "urn:ngsi-ld:Person:Bob"], "observedAt": "2022-08-09T18:25:02Z"}
+            ]
+        });
+        let result = transform(input);
+        pretty_assertions::assert_eq!(result["membersPresent"]["type"], "ListRelationship");
+        pretty_assertions::assert_eq!(
+            result["membersPresent"]["objectLists"],
+            json!([[["urn:ngsi-ld:Person:Alice", "urn:ngsi-ld:Person:Bob"], "2022-08-09T18:25:02Z"]])
+        );
+        // Clause 4.5.22.2 prohibits `object` on a ListRelationship, so neither
+        // it nor the `objects` the Relationship family collapses into appears.
+        assert!(result["membersPresent"].get("objects").is_none(), "{}", result["membersPresent"]);
+        assert!(result["membersPresent"].get("object").is_none(), "{}", result["membersPresent"]);
+    }
+
+    /// Clause 4.5.9, `ListRelationship` bullet: "the first element shall be an
+    /// ordered array of Relationship objects (URIs)", and EXAMPLE 7 spells them
+    /// as bare strings. The normalized instance this is projected from holds the
+    /// `{"object": …}` members clause 4.5.22.2 mandates, so the projection reads
+    /// each member's target back out rather than carrying the member itself.
+    #[test]
+    fn a_normalized_object_list_collapses_into_the_bare_uris_clause_4_5_9_names() {
+        let input = json!({
+            "id": "urn:x",
+            "type": "Building",
+            "membersPresent": [{
+                "type": "ListRelationship",
+                "objectList": [{"object": "urn:ngsi-ld:Person:Alice"}, {"object": "urn:ngsi-ld:Person:Bob"}],
+                "observedAt": "2022-08-09T18:25:02Z"
+            }]
+        });
+        let result = transform(input);
+        pretty_assertions::assert_eq!(
+            result["membersPresent"]["objectLists"],
+            json!([[["urn:ngsi-ld:Person:Alice", "urn:ngsi-ld:Person:Bob"], "2022-08-09T18:25:02Z"]])
+        );
+    }
+
+    /// Clause 4.5.9, Relationship bullet: "the first element shall be a
+    /// Relationship object (a URI or array of URIs)", which EXAMPLE 7 shows as
+    /// the array of targets one observation named. The array is carried
+    /// through as it stands.
+    #[test]
+    fn a_multi_target_relationship_collapses_into_the_array_of_uris_it_named() {
+        let input = json!({
+            "id": "urn:x",
+            "type": "Building",
+            "activeDevices": [{
+                "type": "Relationship",
+                "object": ["urn:ngsi-ld:Device:14142", "urn:ngsi-ld:Device:13562"],
+                "observedAt": "2022-08-09T18:25:02Z"
+            }]
+        });
+        let result = transform(input);
+        pretty_assertions::assert_eq!(
+            result["activeDevices"]["objects"],
+            json!([[["urn:ngsi-ld:Device:14142", "urn:ngsi-ld:Device:13562"], "2022-08-09T18:25:02Z"]])
+        );
+    }
+
+    /// Clause 4.5.9 keeps every other family on the member it names: `values`,
+    /// `objects`, `languageMaps`, `jsons` and `vocabs`, the last three
+    /// wrapping their value in a one-member object.
+    #[test]
+    fn the_other_families_keep_the_members_clause_4_5_9_names_for_them() {
+        let input = json!({
+            "id": "urn:x",
+            "type": "Person",
+            "speed": [{"type": "Property", "value": 25, "observedAt": "t1"}],
+            "location": [{"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}, "observedAt": "t1"}],
+            "spouse": [{"type": "Relationship", "object": "urn:ngsi-ld:Person:1", "observedAt": "t1"}],
+            "says": [{"type": "LanguageProperty", "languageMap": {"en": "yes"}, "observedAt": "t1"}],
+            "gender": [{"type": "VocabProperty", "vocab": "Male", "observedAt": "t1"}],
+            "tickets": [{"type": "JsonProperty", "json": {"id": "1"}, "observedAt": "t1"}]
+        });
+        let result = transform(input);
+        pretty_assertions::assert_eq!(result["speed"]["values"], json!([[25, "t1"]]));
+        pretty_assertions::assert_eq!(result["location"]["values"], json!([[{"type": "Point", "coordinates": [1.0, 2.0]}, "t1"]]));
+        pretty_assertions::assert_eq!(result["spouse"]["objects"], json!([["urn:ngsi-ld:Person:1", "t1"]]));
+        pretty_assertions::assert_eq!(result["says"]["languageMaps"], json!([[{"languageMap": {"en": "yes"}}, "t1"]]));
+        pretty_assertions::assert_eq!(result["gender"]["vocabs"], json!([[{"vocab": "Male"}, "t1"]]));
+        pretty_assertions::assert_eq!(result["tickets"]["jsons"], json!([[{"json": {"id": "1"}}, "t1"]]));
+    }
+
+    /// Clauses 4.5.0 and 4.5.21.2: a deleted `ListProperty` instance carries
+    /// the array holding one single NGSI-LD Null, paired with the `deletedAt`
+    /// that stands in for the Temporal Property it never observed.
+    #[test]
+    fn a_deleted_list_property_pairs_the_single_null_array_with_its_deletion_instant() {
+        let input = json!({
+            "id": "urn:x",
+            "type": "Building",
+            "period": [{"type": "ListProperty", "valueList": ["urn:ngsi-ld:null"], "deletedAt": "2022-08-11T18:25:02Z"}]
+        });
+        let result = transform(input);
+        pretty_assertions::assert_eq!(result["period"]["valueLists"], json!([[["urn:ngsi-ld:null"], "2022-08-11T18:25:02Z"]]));
+        assert!(result["period"].get("value").is_none(), "{}", result["period"]);
     }
 
     #[test]

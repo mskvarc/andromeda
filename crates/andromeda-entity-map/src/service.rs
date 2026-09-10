@@ -2,6 +2,7 @@
 
 use crate::{
     error::EntityMapError,
+    pruning::PageCheck,
     reuse::{EntityMapFlag, EntityMapUse},
     store::{EntityMapMutation, EntityMapStore},
 };
@@ -164,6 +165,28 @@ impl EntityMapService {
         Ok(())
     }
 
+    /// Shed from a live map every entity a prepared result page checked and
+    /// found no longer matching, returning the identifiers removed.
+    ///
+    /// Clause 4.3.6.7: the original request's filters are applied to an entity
+    /// before it joins a page, and the identifiers of those that no longer match
+    /// at the time of checking leave the map. Clause 5.5.9.3 says the same for
+    /// the candidate entities a split-entity map holds, and clause 5.5.14 makes
+    /// the broker that created the map responsible for the removal. A map that
+    /// expired meanwhile is left alone.
+    ///
+    /// # Errors
+    ///
+    /// [`EntityMapError::Persistence`] when the store cannot remove the
+    /// identifiers.
+    pub async fn prune_unmatched(&self, map: &EntityMap, check: &PageCheck) -> Result<Vec<Uri>, EntityMapError> {
+        let shed = check.shed_from(map);
+        if !shed.is_empty() {
+            self.store.prune(&map.id, &shed).await?;
+        }
+        Ok(shed)
+    }
+
     /// Intersect query identifiers with a live map while preserving query order.
     #[must_use]
     pub fn scope_query_ids(map: &EntityMap, existing_ids: Option<&[Uri]>) -> Vec<Uri> {
@@ -212,6 +235,7 @@ mod tests {
     use crate::{
         error::EntityMapError,
         fingerprint::{FingerprintedRequest, fingerprint_of},
+        pruning::PageCheck,
         reuse::{EntityMapFlag, EntityMapUse},
         service::{EntityMapService, ReferencedEntityMap},
         store::{EntityMapMutation, EntityMapStore, EntityMapStoreFuture},
@@ -269,6 +293,16 @@ mod tests {
                     }
                     None => Ok(EntityMapMutation::Missing),
                 }
+            })
+        }
+
+        fn prune<'a>(&'a self, identifier: &'a Uri, entity_ids: &'a [Uri]) -> EntityMapStoreFuture<'a, ()> {
+            Box::pin(async move {
+                let mut maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
+                if let Some(map) = maps.iter_mut().find(|map| &map.id == identifier && !map.is_expired()) {
+                    map.entity_map.retain(|entity_id, _| !entity_ids.contains(entity_id));
+                }
+                Ok(())
             })
         }
 
@@ -415,6 +449,44 @@ mod tests {
             service.resolve_use(None, EntityMapFlag::NotRequested, &fingerprint, None).await?,
             EntityMapUse::None
         ));
+        Ok(())
+    }
+
+    /// Clause 4.3.6.7: the identifiers a page preparation checked and found not
+    /// matching leave the stored map, while the ones it still matched stay and a
+    /// later page narrows to the survivors alone.
+    #[tokio::test]
+    async fn a_page_preparation_sheds_the_entities_it_found_no_longer_matching() -> Result<(), EntityMapError> {
+        let service = service();
+        let map = stored_map(
+            &service,
+            vec![identifier("urn:a")?, identifier("urn:b")?, identifier("urn:c")?],
+            any_fingerprint(),
+        )
+        .await?;
+
+        let check = PageCheck::new([identifier("urn:a")?, identifier("urn:c")?], Vec::new());
+        let shed = service.prune_unmatched(&map, &check).await?;
+        pretty_assertions::assert_eq!(shed, vec![identifier("urn:b")?]);
+
+        let stored = service.retrieve(&map.id).await?;
+        pretty_assertions::assert_eq!(stored.entity_ids().collect::<Vec<_>>(), vec![&identifier("urn:a")?, &identifier("urn:c")?]);
+        pretty_assertions::assert_eq!(
+            EntityMapService::scope_query_ids(&stored, None),
+            vec![identifier("urn:a")?, identifier("urn:c")?]
+        );
+        Ok(())
+    }
+
+    /// A preparation in which everything still matched writes nothing and leaves
+    /// the map exactly as it was.
+    #[tokio::test]
+    async fn a_preparation_that_matched_everything_sheds_nothing() -> Result<(), EntityMapError> {
+        let service = service();
+        let map = stored_map(&service, vec![identifier("urn:a")?], any_fingerprint()).await?;
+        let check = PageCheck::new([identifier("urn:a")?], Vec::new());
+        pretty_assertions::assert_eq!(service.prune_unmatched(&map, &check).await?, Vec::<Uri>::new());
+        pretty_assertions::assert_eq!(service.retrieve(&map.id).await?.entity_ids().count(), 1);
         Ok(())
     }
 

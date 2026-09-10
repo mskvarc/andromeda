@@ -3,18 +3,22 @@
 //! Both are written in bulk through `UNNEST`, so a map over thousands of
 //! entities is one statement per child table rather than one per row.
 
-use crate::entity_map::{lifecycle::map_key_of, persistence_error};
+use crate::entity_map::{
+    lifecycle::{live_map_key_of, map_key_of},
+    persistence_error,
+};
 use andromeda_entity_map::{error::EntityMapError, store::EntityMapMutation};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use andromeda_postgresql_schema::entity_map::{EntityMapEntries, EntityMapLinks, EntityMaps as EntityMapsTable};
 use andromeda_postgresql_seaquery::{
     clock::now,
+    pg_array::{any, text_array},
     pg_type::PostgresType,
     placeholder::external_placeholder,
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
-use sea_query::{Expr, ExprTrait, Iden, InsertStatement, IntoIden, OnConflict, Order, PostgresQueryBuilder, Query};
+use sea_query::{DeleteStatement, Expr, ExprTrait, Iden, InsertStatement, IntoIden, OnConflict, Order, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgConnection, PgPool, Row};
 
@@ -175,6 +179,34 @@ pub(crate) async fn upsert_link(pool: &PgPool, id: &Uri, registration: &Uri, lin
     })
 }
 
+/// The delete shedding entities from a live map: every `(entity, source)` row
+/// naming one of `entity_ids` goes, so the entity leaves the map together with
+/// the registrations it was attributed to.
+///
+/// The map key is resolved off the live control record, so an expired map
+/// resolves to NULL and nothing is removed.
+fn entries_delete(id: &Uri, entity_ids: &[&str]) -> DeleteStatement {
+    let mut delete = Query::delete();
+    delete
+        .from_table(EntityMapEntries::Table)
+        .and_where(Expr::col(EntityMapEntries::MapKey).eq(live_map_key_of(Expr::val(id.as_str()))))
+        .and_where(Expr::col(EntityMapEntries::EntityId).eq(any(text_array(entity_ids))));
+    delete
+}
+
+/// Remove `entity_ids` from a live map (clauses 4.3.6.7 and 5.5.14): the
+/// identifiers a prepared result page checked and found no longer matching
+/// stop being considered by the pages that follow.
+pub(crate) async fn prune_entries(pool: &PgPool, id: &Uri, entity_ids: &[Uri]) -> Result<(), EntityMapError> {
+    let entity_ids: Vec<&str> = entity_ids.iter().map(Uri::as_str).collect();
+    let (sql, values) = entries_delete(id, &entity_ids).build_sqlx(PostgresQueryBuilder);
+    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .execute(pool)
+        .await
+        .map_err(persistence_error)?;
+    Ok(())
+}
+
 /// A map's `(entity_id, source)` pairs in the order they were produced.
 pub(crate) async fn read_entries(pool: &PgPool, id: &Uri) -> Result<Vec<(String, String)>, EntityMapError> {
     let (sql, values) = Query::select()
@@ -223,7 +255,7 @@ pub(crate) async fn read_links(pool: &PgPool, id: &Uri) -> Result<Vec<(String, S
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_map::entries::{entries_insert_sql, link_upsert, links_insert_sql};
+    use crate::entity_map::entries::{entries_delete, entries_insert_sql, link_upsert, links_insert_sql};
     use sea_query::PostgresQueryBuilder;
 
     #[test]
@@ -251,6 +283,24 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains("UNNEST($2::text[], $3::text[]) AS d(registration_id, linked_map_id)"), "{sql}");
+    }
+
+    /// Clause 4.3.6.7: the identifiers shed by a page preparation leave the map
+    /// with every source attributed to them, and only while the map is live.
+    #[test]
+    fn the_prune_delete_removes_the_named_entities_from_the_live_map_alone() {
+        let (sql, values) = entries_delete(
+            &"urn:ngsi-ld:EntityMap:1".parse().expect("valid URI"),
+            &["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"],
+        )
+        .build(PostgresQueryBuilder);
+        assert!(sql.contains(r#"DELETE FROM "entity_map_entries""#), "{sql}");
+        assert!(
+            sql.contains(r#""map_key" = (SELECT "entity_maps"."map_key" FROM "entity_maps" WHERE "entity_maps"."id" = $1 AND "entity_maps"."expires_at" > "#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#""entity_id" = ANY($2)"#), "{sql}");
+        assert_eq!(values.0.len(), 2, "the map URI and the whole identifier array are the only bound values: {sql}");
     }
 
     #[test]

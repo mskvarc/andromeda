@@ -19,6 +19,17 @@ pub enum ContextRegistryError {
     /// An embedded core Context cannot be deleted.
     #[error("an embedded NGSI-LD core context cannot be deleted")]
     CoreContextDeletion,
+    /// The full content of a `Cached` Context was requested.
+    ///
+    /// Clause 5.13.4.4: a served `@context` comes from internal storage only
+    /// when it is of kind `Hosted` or `ImplicitlyCreated`; a `Cached` one is a
+    /// local performance copy of someone else's document (clause 5.13.1) and
+    /// serving it would republish it under this broker's identifier.
+    #[error("a cached context is not served on demand: {identifier}")]
+    CachedContextNotServed {
+        /// The cached Context identifier.
+        identifier: Uri,
+    },
     /// Reload was requested for a Context that was not populated by the cache.
     #[error("only cached contexts can be reloaded: {identifier}")]
     ReloadRequiresCached {

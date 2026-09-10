@@ -10,7 +10,7 @@
 //! carry the same period bounds.
 
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, attribute_type::AttributeType, rfc3339::whole_seconds, uri::Uri};
-use andromeda_ngsi_ld_model::temporal::{AggregationMinMax, TemporalAggregationRow};
+use andromeda_ngsi_ld_model::temporal::{AggregationAverage, AggregationMinMax, TemporalAggregationRow};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use indexmap::IndexMap;
 use serde_json::{Value, json};
@@ -46,6 +46,18 @@ impl<'a> TemporalAggregationRenderer<'a> {
 /// The numeric extremum serialises through its own JSON-number shape, so an
 /// integer beyond 2^53 is emitted as that integer rather than as the double
 /// nearest to it.
+fn aggregation_average_to_json(value: Option<&AggregationAverage>) -> Value {
+    match value {
+        Some(AggregationAverage::Number(number)) => json!(number),
+        // Table 4.5.19.1-2: `avg` over a `Time` is "the average time inside the
+        // period", so it is rendered in the clause 4.6.3 `Time` lexical form
+        // rather than as the number of seconds it was computed from.
+        Some(AggregationAverage::Time(time)) => json!(time.to_string()),
+        None => Value::Null,
+    }
+}
+
+/// Render a typed minimum or maximum in the family it was observed in.
 fn aggregation_min_max_to_json(value: Option<&AggregationMinMax>) -> Value {
     match value {
         Some(AggregationMinMax::Number(number)) => json!(number),
@@ -106,7 +118,7 @@ impl TemporalAggregationRenderer<'_> {
                             AggrMethod::DistinctCount => row.distinct_count.map_or(Value::Null, |count| json!(count)),
                             AggrMethod::Min => aggregation_min_max_to_json(row.min.as_ref()),
                             AggrMethod::Max => aggregation_min_max_to_json(row.max.as_ref()),
-                            AggrMethod::Avg => row.avg.as_ref().map_or(Value::Null, |number| json!(number)),
+                            AggrMethod::Avg => aggregation_average_to_json(row.avg.as_ref()),
                             AggrMethod::Sum => row.sum.as_ref().map_or(Value::Null, |number| json!(number)),
                             AggrMethod::SumSq => row.sumsq.as_ref().map_or(Value::Null, |number| json!(number)),
                             AggrMethod::StdDev => row.stddev.as_ref().map_or(Value::Null, |number| json!(number)),
@@ -152,7 +164,7 @@ mod tests {
         temporal_format::TemporalFormat,
         time_prop::TimeProp,
     };
-    use andromeda_ngsi_ld_model::temporal::{AggregationMinMax, TemporalAggregationRow};
+    use andromeda_ngsi_ld_model::temporal::{AggregationAverage, AggregationMinMax, TemporalAggregationRow};
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
@@ -229,7 +241,7 @@ mod tests {
     fn every_decimal_aggregate_is_rendered_without_binary64_conversion() {
         let exact = |value: &str| JsonNumber::from_str(value).expect("supported exact aggregate");
         let mut row = bucket(None, None);
-        row.avg = Some(exact("0.150000000000000005"));
+        row.avg = Some(AggregationAverage::Number(exact("0.150000000000000005")));
         row.min = Some(AggregationMinMax::Number(exact("0.100000000000000005")));
         row.max = Some(AggregationMinMax::Number(exact("0.200000000000000005")));
         row.sum = Some(exact("0.300000000000000010"));

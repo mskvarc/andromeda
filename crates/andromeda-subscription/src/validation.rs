@@ -15,6 +15,7 @@ use andromeda_ngsi_ld_query::{
         grammar::{TypeExpr, TypeExprRaw},
     },
 };
+use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use chrono::Utc;
 use serde_json::Value;
 use tracing::warn;
@@ -59,6 +60,43 @@ pub fn validate_create_payload(payload: &Value) -> Result<(), SubscriptionError>
     }
 
     validate_common_fields(payload)?;
+    validate_subscribed_scope(payload)?;
+    Ok(())
+}
+
+/// Reject a subscription that names nothing to match against (clause 5.2.12).
+///
+/// Table 5.2.12-1 and the sentence closing clause 5.2.12 place two conditions
+/// on the pair `entities` / `watchedAttributes`: "At least one of (a) entities
+/// or (b) watchedAttributes shall be present, unless the member localOnly is
+/// set to true", and `entities` is "Mandatory if timeInterval is present,
+/// unless the execution of the request is limited to local scope (see clause
+/// 5.5.13)". `localOnly` is exactly that local scope for a subscription, so
+/// both conditions lift together when it is set.
+///
+/// Checked on creation only. Clause 5.8.2 updates a subscription with a
+/// fragment, which need not restate members it is not changing, so the same
+/// check against a fragment would refuse a lawful partial update.
+fn validate_subscribed_scope(payload: &Value) -> Result<(), SubscriptionError> {
+    if payload.get("localOnly").and_then(Value::as_bool) == Some(true) {
+        return Ok(());
+    }
+    // Table 5.2.12-1 forbids an empty `entities` array, so an empty one names no
+    // entities and satisfies neither presence rule.
+    let names_entities = payload
+        .get("entities")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|entities| !entities.is_empty());
+    if !names_entities && payload.get("watchedAttributes").is_none() {
+        return Err(SubscriptionError::validation(
+            "at least one of 'entities' or 'watchedAttributes' is required, unless 'localOnly' is true",
+        ));
+    }
+    if payload.get("timeInterval").is_some() && !names_entities {
+        return Err(SubscriptionError::validation(
+            "'entities' is required when 'timeInterval' is present, unless the request is limited to local scope",
+        ));
+    }
     Ok(())
 }
 
@@ -99,10 +137,12 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
         return Err(SubscriptionError::validation("timeInterval and throttling are mutually exclusive"));
     }
 
+    // Table 5.2.12-1 restricts `throttling` to "Greater than 0", the same
+    // restriction `timeInterval` below carries.
     if let Some(throttling) = payload.get("throttling").and_then(serde_json::Value::as_f64)
-        && throttling < 0.0
+        && throttling <= 0.0
     {
-        return Err(SubscriptionError::validation("throttling must be greater than or equal to 0"));
+        return Err(SubscriptionError::validation("throttling must be greater than 0"));
     }
 
     if let Some(time_interval) = payload.get("timeInterval").and_then(serde_json::Value::as_f64)
@@ -146,6 +186,52 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
         return Err(SubscriptionError::validation("watchedAttributes must not be empty"));
     }
 
+    // Table 5.2.12-1, `entities` row: "Empty array (0 length) is not allowed."
+    // An empty array would otherwise satisfy both clause 5.2.12 presence rules
+    // while selecting nothing.
+    if let Some(entities) = payload.get("entities")
+        && let Some(arr) = entities.as_array()
+        && arr.is_empty()
+    {
+        return Err(SubscriptionError::validation("entities must not be empty"));
+    }
+
+    if let Some(notification) = payload.get("notification") {
+        validate_show_changes_format(notification)?;
+    }
+
+    Ok(())
+}
+
+/// Reject a notification asking for `showChanges` under a simplified format
+/// (clause 5.2.14.1).
+///
+/// Table 5.2.14.1-1 states that "showChanges cannot be true in case format is
+/// `keyValues`". The simplified rendering of clause 4.5.4 reduces an attribute
+/// to its value alone, leaving nowhere for the `previousValue`,
+/// `previousObject` or `previousLanguageMap` that `showChanges` exists to
+/// deliver, so the combination asks for something no notification could carry.
+/// Refusing it at creation and update is what stops a client holding a live
+/// subscription whose defining option silently does nothing.
+///
+/// `simplified` is the same rendering under the name Table 5.2.14.1-1 gives as
+/// the primary one, with `keyValues` listed as its synonym, so both are
+/// refused. A `format` outside the four of Table 5.2.14.1-1 is a different
+/// failure and is left to the caller that reads it.
+fn validate_show_changes_format(notification: &Value) -> Result<(), SubscriptionError> {
+    let Some(true) = notification.get("showChanges").and_then(Value::as_bool) else {
+        return Ok(());
+    };
+    let simplified = notification
+        .get("format")
+        .and_then(Value::as_str)
+        .and_then(|format| format.parse::<ResponseFormat>().ok())
+        .is_some_and(ResponseFormat::is_simplified);
+    if simplified {
+        return Err(SubscriptionError::validation(
+            "notification.showChanges cannot be true when notification.format is keyValues",
+        ));
+    }
     Ok(())
 }
 
@@ -445,6 +531,107 @@ mod tests {
 
         let georel_only = validate_common_fields(&serde_json::json!({"geoQ": {"georel": "near;maxDistance==2000"}}));
         assert!(georel_only.is_ok(), "an incomplete geoQ is a different failure: {georel_only:?}");
+    }
+
+    /// Clause 5.2.12: "At least one of (a) entities or (b) watchedAttributes
+    /// shall be present, unless the member localOnly is set to true".
+    #[test]
+    fn a_subscription_naming_neither_entities_nor_watched_attributes_is_rejected() {
+        let payload = json!({
+            "type": "Subscription",
+            "notification": {"endpoint": {"uri": "http://127.0.0.1:8085/notify"}}
+        });
+        let error = validate_create_payload(&payload).expect_err("clause 5.2.12 requires one of the two");
+        assert!(error.to_string().contains("watchedAttributes"), "got {error}");
+    }
+
+    /// Either member on its own satisfies clause 5.2.12, and `localOnly` lifts
+    /// the requirement altogether (clause 5.5.13).
+    #[test]
+    fn entities_watched_attributes_or_local_only_each_satisfy_clause_5_2_12() {
+        let notification = json!({"endpoint": {"uri": "http://127.0.0.1:8085/notify"}});
+        let variants = [
+            json!({"type": "Subscription", "notification": notification, "entities": [{"type": "Building"}]}),
+            json!({"type": "Subscription", "notification": notification, "watchedAttributes": ["temperature"]}),
+            json!({"type": "Subscription", "notification": notification, "localOnly": true}),
+        ];
+        for payload in variants {
+            let result = validate_create_payload(&payload);
+            assert!(result.is_ok(), "{payload} should be accepted: {result:?}");
+        }
+    }
+
+    /// Clause 5.2.12, Table 5.2.12-1: `entities` is "Mandatory if timeInterval
+    /// is present, unless the execution of the request is limited to local
+    /// scope (see clause 5.5.13)".
+    #[test]
+    fn a_periodic_subscription_without_entities_is_rejected_unless_it_is_local_only() {
+        let notification = json!({"endpoint": {"uri": "http://127.0.0.1:8085/notify"}});
+        let error = validate_create_payload(&json!({
+            "type": "Subscription",
+            "notification": notification,
+            "timeInterval": 5,
+            "watchedAttributes": ["temperature"]
+        }))
+        .expect_err("clause 5.2.12 makes entities mandatory beside timeInterval");
+        // `watchedAttributes` beside `timeInterval` is refused first by the
+        // mutual exclusion Table 5.2.12-1 states for the pair.
+        assert!(error.to_string().contains("mutually exclusive"), "got {error}");
+
+        let error = validate_create_payload(&json!({
+            "type": "Subscription",
+            "notification": notification,
+            "timeInterval": 5,
+            "q": "temperature>20"
+        }))
+        .expect_err("clause 5.2.12 makes entities mandatory beside timeInterval");
+        assert!(
+            error.to_string().contains("watchedAttributes") || error.to_string().contains("timeInterval"),
+            "got {error}"
+        );
+
+        let local = validate_create_payload(&json!({
+            "type": "Subscription",
+            "notification": notification,
+            "timeInterval": 5,
+            "localOnly": true
+        }));
+        assert!(local.is_ok(), "local scope lifts the requirement: {local:?}");
+    }
+
+    /// Clause 5.2.14.1, Table 5.2.14.1-1: "showChanges cannot be true in case
+    /// format is `keyValues`". The simplified rendering of clause 4.5.4 has
+    /// nowhere to carry a `previousValue`, so the combination is refused rather
+    /// than silently doing nothing.
+    #[test]
+    fn show_changes_under_a_simplified_notification_format_is_rejected() {
+        for format in ["keyValues", "simplified"] {
+            let payload = json!({
+                "type": "Subscription",
+                "entities": [{"type": "Building"}],
+                "notification": {"format": format, "showChanges": true, "endpoint": {"uri": "http://127.0.0.1:8085/notify"}}
+            });
+            let error = validate_create_payload(&payload).expect_err("clause 5.2.14.1 forbids the combination");
+            assert!(error.to_string().contains("showChanges"), "{format}: {error}");
+            // The same fragment is refused on update, which validates the
+            // notification it carries the same way.
+            assert!(validate_common_fields(&payload).is_err(), "{format}");
+        }
+    }
+
+    /// The combination is only refused for the simplified renderings; the
+    /// normalized and concise ones carry the previous member fine.
+    #[test]
+    fn show_changes_under_a_normalized_or_concise_format_is_accepted() {
+        for format in ["normalized", "concise"] {
+            let payload = json!({
+                "type": "Subscription",
+                "entities": [{"type": "Building"}],
+                "notification": {"format": format, "showChanges": true, "endpoint": {"uri": "http://127.0.0.1:8085/notify"}}
+            });
+            let result = validate_create_payload(&payload);
+            assert!(result.is_ok(), "{format}: {result:?}");
+        }
     }
 
     #[test]

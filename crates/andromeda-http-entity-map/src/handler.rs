@@ -30,6 +30,7 @@ use andromeda_ngsi_ld_request::{
     body::entity_map::UpdateEntityMapBody,
     query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
 };
+use andromeda_temporal::requested_identifiers::RequestedIdentifiers;
 use axum::{
     Json,
     extract::{OriginalUri, rejection::JsonRejection},
@@ -146,7 +147,9 @@ async fn create_from_temporal_query(
     // the candidates the same way they bound a temporal query.
     let local_ids = state
         .temporal
-        .query_ids(&state.live_target, params, rendering.context)
+        // Clause 5.14.5.4: the map being created fixes exactly what this
+        // request matched, identifiers included.
+        .query_ids(&state.live_target, params, rendering.context, RequestedIdentifiers::Narrow)
         .await
         .with_entity_map_instance(rendering.uri)?;
     create_map(

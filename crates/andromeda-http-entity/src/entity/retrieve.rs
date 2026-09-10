@@ -27,7 +27,7 @@ use crate::{
         ValidatedQuery,
         Value,
         public_error,
-        request_entity_map::{LocalMapEntities, record_map_use, resolve_retrieval_map_use},
+        request_entity_map::{LocalEntitySource, record_map_use, resolve_retrieval_map_use},
         retrieve_forwarding::{RetrieveForwarding, registered_identity},
         start_rendering,
         with_linked_resolution_warnings,
@@ -159,7 +159,7 @@ pub(crate) async fn get(
         // Table 6.5.3.1-1 `entityMap`: the map the retrieval used is returned,
         // created now when none was in use (clause 5.7.1.4), naming this
         // broker and every registration that returned the entity.
-        let map_entities = LocalMapEntities::Retrieved(held_locally.then_some(&id));
+        let map_entities = LocalEntitySource::Retrieved(held_locally.then_some(&id));
         let map_uri = record_map_use(&state.entity_maps, map_use, retrieved.contributions, map_entities, &uri).await?;
         (entity, retrieved.warnings, map_uri)
     };

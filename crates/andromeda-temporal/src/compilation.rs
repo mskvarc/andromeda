@@ -5,7 +5,7 @@ use andromeda_entity::query::selector_compilation::compile_entity_selectors;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_query::{
-    entity_selection::EntitySelection,
+    entity_selection::{ConsideredEntities, EntitySelection},
     error::QueryError,
     filter::{
         expansion::{apply_expand_values, apply_json_keys, expand_q_expr},
@@ -82,6 +82,10 @@ impl TemporalService {
                     .geo(geo)
                     // clone: the compiled selection owns its scope query independently of the reusable request parameters.
                     .scope_q(params.scope_q.clone())
+                    // Clause 5.5.14: a request narrowed to an empty identifier
+                    // set considers no entity, which the selectors' identifier
+                    // lists cannot say on their own.
+                    .considered(ConsideredEntities::of_request(params.id.as_deref()))
                     .build(),
             )
             .window(
@@ -161,7 +165,7 @@ fn compile_last_n(params: &TemporalQueryParameters, format: TemporalFormat, cap:
         return LastNSelection {
             effective: params.last_n,
             origin: match params.last_n {
-                Some(_) => LastNOrigin::UserSpecified,
+                Some(requested) => LastNOrigin::UserSpecified { requested },
                 Option::None => LastNOrigin::None,
             },
         };
@@ -169,8 +173,8 @@ fn compile_last_n(params: &TemporalQueryParameters, format: TemporalFormat, cap:
     LastNSelection {
         effective: Some(params.last_n.map_or(cap, |requested| requested.min(cap))),
         origin: match params.last_n {
-            Some(requested) if requested > cap => LastNOrigin::UserSpecifiedCapped,
-            Some(_) => LastNOrigin::UserSpecified,
+            Some(requested) if requested > cap => LastNOrigin::UserSpecifiedCapped { requested },
+            Some(requested) => LastNOrigin::UserSpecified { requested },
             Option::None => LastNOrigin::SystemCapped,
         },
     }

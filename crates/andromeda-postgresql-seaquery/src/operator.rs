@@ -1,8 +1,9 @@
 //! The generic SQL operators sea-query has no native form for: array
-//! containment, POSIX regex, and the presence-and-value conjunction.
+//! containment, POSIX regex, the presence-and-value conjunction, and the total
+//! negation of a predicate over nullable columns.
 
-use crate::{pg_operator::PgBinaryOperator, pg_type::PostgresType};
-use sea_query::{Expr, ExprTrait, Iden, SimpleExpr};
+use crate::{literal::false_literal, pg_operator::PgBinaryOperator, pg_type::PostgresType};
+use sea_query::{Expr, ExprTrait, Func, Iden, SimpleExpr};
 
 /// Combine a presence test with a value test.
 ///
@@ -62,6 +63,22 @@ pub fn regex_match(col: SimpleExpr, pattern: SimpleExpr) -> SimpleExpr {
     col.posix_matches(pattern)
 }
 
+/// The total negation of a predicate: `NOT COALESCE(predicate, FALSE)`.
+///
+/// Plain `NOT` propagates the unknown a comparison against a NULL yields, and
+/// the enclosing `WHERE` then drops the row — so `NOT` is not the complement of
+/// a predicate over nullable columns, only of one over rows where every operand
+/// is present. Wrapping the predicate first makes the negation total: a row the
+/// predicate could not be evaluated for satisfies the negation.
+///
+/// `COALESCE` rather than the equivalent `IS NOT TRUE`, whose right-hand side is
+/// grammar rather than an expression: sea-query parenthesises every operand it
+/// renders, and PostgreSQL rejects `… IS NOT (TRUE)`.
+#[must_use]
+pub fn negate_total(predicate: SimpleExpr) -> SimpleExpr {
+    Func::coalesce([predicate, false_literal()]).not()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,6 +124,17 @@ mod tests {
         let value = Expr::col("stored").eq("x");
         let sql = Query::select().expr(present_and(presence, value)).to_owned().to_string(PostgresQueryBuilder);
         assert!(sql.contains(" IS NOT NULL AND "), "presence is conjoined, never disjoined: {sql}");
+    }
+
+    /// A row the predicate cannot be evaluated for satisfies the negation,
+    /// which plain `NOT` would drop instead.
+    #[test]
+    fn a_total_negation_wraps_the_predicate_before_negating_it() {
+        let predicate = Expr::col("stored").eq("x");
+        let sql = Query::select().expr(negate_total(predicate)).to_owned().to_string(PostgresQueryBuilder);
+        assert!(sql.contains("NOT COALESCE("), "{sql}");
+        assert!(sql.contains("FALSE"), "{sql}");
+        assert!(!sql.contains("IS NOT (TRUE)"), "PostgreSQL rejects a parenthesised IS NOT operand: {sql}");
     }
 
     #[test]

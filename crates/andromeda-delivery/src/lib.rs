@@ -30,6 +30,7 @@ pub mod error;
 pub mod host_port;
 pub mod http;
 pub mod mqtt;
+pub mod notification_context_placement;
 pub mod outcome;
 pub mod request;
 pub mod stream;

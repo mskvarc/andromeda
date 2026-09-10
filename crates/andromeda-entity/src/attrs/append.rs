@@ -60,7 +60,12 @@ impl EntityService {
         reject_null_content(&expanded)?;
         validate_geo_property_geometries(&expanded)?;
 
-        let (merged, not_appended, events) = self
+        // Clause 5.6.3.5 reports "the list of Attributes actually appended", so
+        // the reported set starts from the fragment's own attributes. Reading it
+        // from the merged entity instead would report every attribute the entity
+        // already held as if this request had appended it.
+        let requested = extract_attribute_names(unwrap_expanded_ref(&expanded));
+        let (not_appended, events) = self
             .commit_computed_write(target, &entity_uri, |previous| {
                 let mut existing = previous.clone(); // clone: the append mutates its own copy of the stored payload
                 let not_appended = append_entity_attrs(&mut existing, unwrap_expanded_ref(&expanded), overwrite)?;
@@ -76,15 +81,14 @@ impl EntityService {
                 let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
 
                 let write = payload_write(&entity_uri, &merged, vec![HistoryRecord::Observations(Arc::clone(&expanded))], plan.matches); // clone: Arc ref-count bump
-                Ok((write, (merged, not_appended, plan.events)))
+                Ok((write, (not_appended, plan.events)))
             })
             .await?;
 
-        let attr_keys = extract_attribute_names(&merged);
         for event in events {
             self.emit_change(target, event);
         }
 
-        Ok((attr_keys, not_appended))
+        Ok((requested, not_appended))
     }
 }

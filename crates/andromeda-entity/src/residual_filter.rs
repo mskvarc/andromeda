@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_model::expanded::{
     query_match::matches_geo_query,
 };
 use andromeda_ngsi_ld_query::{
-    entity_selection::{EntitySelection, EntitySelector},
+    entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
     filter::{eval, expression::Expr},
     geo::query::GeoQuery,
     pattern::Pattern,
@@ -37,12 +37,25 @@ pub fn matches(residual: &ResidualFilter, expanded: &Value) -> bool {
         q_expr,
         geo,
         scope_q,
+        considered,
     } = residual.selection();
-    selectors_match(selectors, expanded)
+    considers_any_entity(*considered)
+        && selectors_match(selectors, expanded)
         && attributes_present(attrs, expanded)
         && value_filter_matches(q_expr.as_ref(), expanded)
         && geo_matches(geo.as_ref(), expanded)
         && scope_matches(scope_q.as_ref(), expanded)
+}
+
+/// Clause 5.5.14: a request narrowed to an empty identifier set considers no
+/// entity, so nothing satisfies it — the same reading the SQL renderer gives it
+/// as a constant `FALSE`, kept here so an entity a context source returned
+/// cannot enter a page the store would never have answered with.
+const fn considers_any_entity(considered: ConsideredEntities) -> bool {
+    match considered {
+        ConsideredEntities::Selected => true,
+        ConsideredEntities::NoEntity => false,
+    }
 }
 
 /// Clause 5.2.33 union of selectors: an entity matches when any selector admits
@@ -126,7 +139,7 @@ mod tests {
     use crate::{query_residual::ResidualFilter, residual_filter::matches};
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_query::{
-        entity_selection::{EntitySelection, EntitySelector},
+        entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
         filter::{eval, expression::Expr, parser},
         geo::query::GeoQuery,
         pattern::Pattern,
@@ -396,6 +409,16 @@ mod tests {
                 false,
             ),
             (
+                "clause 5.5.14: a request narrowed to an empty identifier set considers no entity",
+                EntitySelection::builder().considered(ConsideredEntities::NoEntity).build(),
+                false,
+            ),
+            (
+                "clause 5.5.14: a request under no EntityMap considers whatever it selects",
+                EntitySelection::builder().considered(ConsideredEntities::Selected).build(),
+                true,
+            ),
+            (
                 "clause 5.2.8 idPattern: the expression matches the identifier",
                 EntitySelection::builder()
                     .selectors(vec![
@@ -524,8 +547,8 @@ mod tests {
 
     #[test]
     fn every_predicate_kind_reads_its_clause_the_way_the_specification_states_it() {
-        // One table over all seven members of an `EntitySelection`, including
-        // the four no `StorageProfile` axis can produce today. The expected
+        // One table over every predicate an `EntitySelection` can carry,
+        // including the four no `StorageProfile` axis can produce today. The expected
         // verdicts are read off the specification rather than off the
         // implementation, which is what makes this a check and not a restatement
         // -- an earlier reading of `attrs` as a conjunction passed every test

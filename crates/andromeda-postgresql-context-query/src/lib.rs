@@ -10,11 +10,14 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod attribute_value_order;
 pub mod csr;
 pub mod entity;
 pub mod entity_relations;
 pub mod order_geography;
+pub mod result_ordering;
 pub mod snapshot_purge;
+pub mod sort_direction;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

@@ -17,9 +17,11 @@
 //! answerable at all.
 
 use crate::{
+    aggregated_value::{arithmetic_numeric_expr, average_time_expr, distinct_value_expr, ordered_instant_expr, ordered_text_expr, sized_numeric_expr},
     alias::{Ah, An, S},
     axis::axis_column,
     history::base_history_source,
+    recorded_shape::recorded_shape,
 };
 use andromeda_ngsi_ld_lexicon::aggr_method::AggrMethod;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
@@ -30,12 +32,11 @@ use andromeda_postgresql_schema::{
 use andromeda_postgresql_seaquery::{
     aggregate::{bool_or, count_all, count_distinct, stddev},
     cast::{cast, typed_null},
-    jsonb::{jsonb_array_length, jsonb_typeof},
     literal::int_literal,
     pg_type::PostgresType,
     timescale::time_bucket,
 };
-use sea_query::{Alias, CaseStatement, Condition, Expr, ExprTrait, Func, Iden, JoinType, Order, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Condition, Expr, ExprTrait, Func, Iden, JoinType, Order, Query, SelectStatement, SimpleExpr};
 
 /// Lateral projection that computes one bucket boundary per history row.
 #[derive(Iden, Clone, Copy)]
@@ -57,24 +58,6 @@ struct BucketOrigin;
 #[iden = "origin"]
 struct Origin;
 
-/// Unified numeric expression for type-aware aggregation (NGSI-LD 4.5.19.1).
-///
-/// Booleans count as 0/1 and arrays as their length, so `avg` and `sum` mean
-/// something for attributes the client did not write as numbers.
-///
-/// Every branch is `NUMERIC`, the type the value column itself carries: a JSON
-/// number is an exact decimal (clause 4.5.2 gives no precision limit), and
-/// widening it to binary floating point to aggregate would report a minimum or a
-/// maximum that was never observed.
-fn numeric_expr() -> SimpleExpr {
-    let bool_as_numeric = cast(cast(Expr::col((Ah, AttributeHistory::ValueBool)), PostgresType::Integer), PostgresType::Numeric);
-    let array_length = CaseStatement::new().case(
-        Expr::expr(jsonb_typeof(Expr::col((Ah, AttributeHistory::ValueObject)))).eq("array"),
-        cast(jsonb_array_length(Expr::col((Ah, AttributeHistory::ValueObject))), PostgresType::Numeric),
-    );
-    Func::coalesce([Expr::col((Ah, AttributeHistory::ValueNumber)), bool_as_numeric, array_length.into()]).into()
-}
-
 /// The span of registry codes and unit identities one aggregation group covered.
 ///
 /// Every entry is an aggregate over the group rather than a group key, which is
@@ -83,14 +66,19 @@ fn numeric_expr() -> SimpleExpr {
 /// catalogue, so an attribute whose type changed within a period is one period
 /// whose rows disagree, not two periods. `MIN`/`MAX` skip nulls, so the unit
 /// span also carries whether any row carried no unit at all.
+///
+/// The value shape is spanned at the grain the aggregation tables distinguish
+/// rather than at the grain the row stores: an object and an array share one
+/// JSONB column, and a group holding both has no single `min` even though every
+/// row of it declared the same `value_kind`.
 fn project_group_span(select: &mut SelectStatement) {
     select.expr_as(Func::min(Expr::col((Ah, AttributeHistory::AttributeKind))), Alias::new("attribute_kind_lowest"));
     select.expr_as(
         Func::max(Expr::col((Ah, AttributeHistory::AttributeKind))),
         Alias::new("attribute_kind_highest"),
     );
-    select.expr_as(Func::min(Expr::col((Ah, AttributeHistory::ValueKind))), Alias::new("value_kind_lowest"));
-    select.expr_as(Func::max(Expr::col((Ah, AttributeHistory::ValueKind))), Alias::new("value_kind_highest"));
+    select.expr_as(Func::min(recorded_shape()), Alias::new("recorded_shape_lowest"));
+    select.expr_as(Func::max(recorded_shape()), Alias::new("recorded_shape_highest"));
     select.expr_as(Func::min(Expr::col((Ah, AttributeHistory::UnitCodeId))), Alias::new("unit_code_id_lowest"));
     select.expr_as(Func::max(Expr::col((Ah, AttributeHistory::UnitCodeId))), Alias::new("unit_code_id_highest"));
     select.expr_as(bool_or(Expr::col((Ah, AttributeHistory::UnitCodeId)).is_null()), Alias::new("any_unitless"));
@@ -98,24 +86,36 @@ fn project_group_span(select: &mut SelectStatement) {
 
 /// The aggregate projections clause 4.5.19 asks for, one per method, plus the
 /// typed columns `min`/`max` read from.
+///
+/// `avg`, `min`, `max` and `sum` fold the operand that measures an array by its
+/// size, which is what Table 4.5.19.1-1 defines them over; `sumsq` and
+/// `stddev`, which that table marks N/A for a JSON Array, fold the narrower
+/// operand that never reaches the JSONB column. Every one of those operands is
+/// gated on the attribute family, so a Relationship, `ListRelationship` or
+/// `VocabProperty` — for which Table 4.5.19.1-3 and the "URI" column of Table
+/// 4.5.19.1-2 mark all six N/A — contributes to none of them. Only the two
+/// counting methods read such a row.
 fn aggregate_columns(methods: &[AggrMethod]) -> Vec<(SimpleExpr, &'static str)> {
     let mut columns: Vec<(SimpleExpr, &'static str)> = Vec::new();
     for method in methods {
         match method {
-            AggrMethod::Avg => columns.push((Func::avg(numeric_expr()).into(), "agg_avg")),
+            AggrMethod::Avg => {
+                columns.push((Func::avg(sized_numeric_expr()).into(), "agg_avg"));
+                columns.push((average_time_expr(), "agg_avg_time"));
+            }
             AggrMethod::Min => {
-                columns.push((Func::min(numeric_expr()).into(), "agg_min"));
-                columns.push((Func::min(Expr::col((Ah, AttributeHistory::ValueString))).into(), "agg_min_str"));
-                columns.push((Func::min(Expr::col((Ah, AttributeHistory::ValueDatetime))).into(), "agg_min_dt"));
+                columns.push((Func::min(sized_numeric_expr()).into(), "agg_min"));
+                columns.push((Func::min(ordered_text_expr()).into(), "agg_min_str"));
+                columns.push((Func::min(ordered_instant_expr()).into(), "agg_min_dt"));
             }
             AggrMethod::Max => {
-                columns.push((Func::max(numeric_expr()).into(), "agg_max"));
-                columns.push((Func::max(Expr::col((Ah, AttributeHistory::ValueString))).into(), "agg_max_str"));
-                columns.push((Func::max(Expr::col((Ah, AttributeHistory::ValueDatetime))).into(), "agg_max_dt"));
+                columns.push((Func::max(sized_numeric_expr()).into(), "agg_max"));
+                columns.push((Func::max(ordered_text_expr()).into(), "agg_max_str"));
+                columns.push((Func::max(ordered_instant_expr()).into(), "agg_max_dt"));
             }
-            AggrMethod::Sum => columns.push((Func::sum(numeric_expr()).into(), "agg_sum")),
-            AggrMethod::SumSq => columns.push((Func::sum(numeric_expr().mul(numeric_expr())).into(), "agg_sumsq")),
-            AggrMethod::StdDev => columns.push((stddev(numeric_expr()), "agg_stddev")),
+            AggrMethod::Sum => columns.push((Func::sum(sized_numeric_expr()).into(), "agg_sum")),
+            AggrMethod::SumSq => columns.push((Func::sum(arithmetic_numeric_expr().mul(arithmetic_numeric_expr())).into(), "agg_sumsq")),
+            AggrMethod::StdDev => columns.push((stddev(arithmetic_numeric_expr()), "agg_stddev")),
             AggrMethod::TotalCount => columns.push((count_all(), "agg_total_count")),
             AggrMethod::DistinctCount => columns.push((count_distinct(distinct_value_expr()), "agg_distinct_count")),
         }
@@ -124,20 +124,6 @@ fn aggregate_columns(methods: &[AggrMethod]) -> Vec<(SimpleExpr, &'static str)> 
         columns.push((count_all(), "agg_total_count"));
     }
     columns
-}
-
-/// The single text projection `distinctCount` counts unique values of, folding
-/// every typed value column into one comparable text.
-fn distinct_value_expr() -> SimpleExpr {
-    Func::coalesce([
-        cast(Expr::col((Ah, AttributeHistory::ValueNumber)), PostgresType::Text),
-        Expr::col((Ah, AttributeHistory::ValueString)),
-        cast(Expr::col((Ah, AttributeHistory::ValueBool)), PostgresType::Text),
-        cast(Expr::col((Ah, AttributeHistory::ValueDatetime)), PostgresType::Text),
-        Expr::col((Ah, AttributeHistory::ValueUri)),
-        cast(Expr::col((Ah, AttributeHistory::ValueObject)), PostgresType::Text),
-    ])
-    .into()
 }
 
 /// The bucket origin, measured over the same entity's streams through the stream
@@ -305,11 +291,16 @@ mod tests {
         assert!(sql.contains("AS \"bucket_start\") AS \"bucket\""), "{sql}");
         assert!(sql.contains("\"bucket\".\"bucket_start\" +"), "{sql}");
         pretty_assertions::assert_eq!(sql.matches("\"ah\".\"observed_at\"").count(), 1, "{sql}");
-        pretty_assertions::assert_eq!(
-            sql.matches("::interval").count(),
-            2,
-            "the bucket width and bucket-end width must each be bound once: {sql}"
-        );
+        // The bound width, not every interval cast in the statement: an `avg`
+        // also projects the Table 4.5.19.1-2 mean time of day, which casts a
+        // time column to an interval for reasons unrelated to bucketing. A
+        // bucket width is a bound parameter, so it is the cast that follows a
+        // placeholder.
+        let bound_widths = sql
+            .match_indices("::interval")
+            .filter(|(index, _)| sql[..*index].ends_with(|character: char| character.is_ascii_digit()))
+            .count();
+        pretty_assertions::assert_eq!(bound_widths, 2, "the bucket width and bucket-end width must each be bound once: {sql}");
     }
 
     /// Clause 4.5.19: the bucket is computed on the same axis the window filters
@@ -375,20 +366,46 @@ mod tests {
 
     /// The family is a fact of the row rather than of the mutable catalogue, so
     /// it is read from the hypertable - as the span of the group's rows, since it
-    /// no longer keys them.
+    /// no longer keys them. The value shape is spanned at the grain Tables
+    /// 4.5.19.1-1 and 4.5.19.1-2 distinguish, which the stored `value_kind`
+    /// code alone is too coarse to give.
     #[test]
     fn the_attribute_family_and_value_shape_are_projected_as_the_span_of_the_group() {
         let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
         for projection in [
             "MIN(\"ah\".\"attribute_kind\") AS \"attribute_kind_lowest\"",
             "MAX(\"ah\".\"attribute_kind\") AS \"attribute_kind_highest\"",
-            "MIN(\"ah\".\"value_kind\") AS \"value_kind_lowest\"",
-            "MAX(\"ah\".\"value_kind\") AS \"value_kind_highest\"",
+            "AS \"recorded_shape_lowest\"",
+            "AS \"recorded_shape_highest\"",
         ] {
             assert!(sql.contains(projection), "{projection} missing: {sql}");
         }
+        assert!(sql.contains("jsonb_typeof"), "the shape span separates an array from an object: {sql}");
         assert!(!sql.contains("attribute_type"), "{sql}");
         assert!(!sql.contains("value_type"), "{sql}");
+    }
+
+    /// Table 4.5.19.1-1, "JSON Array" column: `avg`, `min`, `max` and `sum` are
+    /// taken over the sizes of the arrays inside the period, so each of them
+    /// measures the JSONB column by its element count.
+    #[test]
+    fn the_size_measuring_methods_aggregate_an_array_by_its_length() {
+        for method in [AggrMethod::Avg, AggrMethod::Min, AggrMethod::Max, AggrMethod::Sum] {
+            let sql = sql_of(&aggregated(vec![method], None));
+            assert!(sql.contains("jsonb_array_length(\"ah\".\"value_object\")"), "{method}: {sql}");
+        }
+    }
+
+    /// Table 4.5.19.1-1 marks `stddev` and `sumsq` N/A in the "JSON Array"
+    /// column while defining them for numbers and booleans, so neither may fold
+    /// an array size in and answer a request the table refuses.
+    #[test]
+    fn standard_deviation_and_the_sum_of_squares_never_measure_an_array() {
+        for method in [AggrMethod::StdDev, AggrMethod::SumSq] {
+            let sql = sql_of(&aggregated(vec![method], None));
+            assert!(!sql.contains("jsonb_array_length"), "{method}: {sql}");
+            assert!(sql.contains("\"ah\".\"value_bool\"::integer::numeric"), "{method}: {sql}");
+        }
     }
 
     /// Clause 4.5.2 attaches a `unitCode` to the instance, not to the attribute,

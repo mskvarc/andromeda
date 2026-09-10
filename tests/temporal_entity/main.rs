@@ -54,7 +54,7 @@ async fn clean_database() -> SerializedEnvironment {
         .expect("serialized test database environment")
 }
 
-/// Parse Content-Range header: `date-time <start>-<end>/<size>`
+/// Parse Content-Range header: `DateTime <start>-<end>/<size>` (clause 6.3.10).
 fn parse_content_range(headers: &HeaderMap) -> Option<(String, String, String, String)> {
     let val = headers.get("content-range")?.to_str().ok()?;
     let re = regex::Regex::new(r"([a-zA-Z\-]+) (.*-.*-.*)-(.*-.*-.*)/(.*)").ok()?;

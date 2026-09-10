@@ -34,6 +34,7 @@ pub mod pg_type;
 pub mod placeholder;
 pub mod postgis;
 pub mod queue;
+pub mod spherical_distance;
 pub mod timescale;
 pub mod transaction;
 pub mod unnest;

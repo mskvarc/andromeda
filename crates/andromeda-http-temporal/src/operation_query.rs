@@ -134,7 +134,7 @@ pub async fn query(
         response = response.with_status(StatusCode::PARTIAL_CONTENT);
     }
     if let Some(range) = range
-        && let Some(content_range) = build_content_range(&range.interval, range.observed, range.partition_total, range.last_n_origin)
+        && let Some(content_range) = build_content_range(&range.interval, range.observed, range.last_n_origin)
     {
         response = response.with_content_range(content_range);
     }

@@ -15,7 +15,7 @@
 //! `LanguageProperty`, a bare `GeoJSON` geometry a `GeoProperty`, and so on — only a
 //! value with no such marker becomes an implicit Property.
 
-use crate::entity_members::ENTITY_MEMBERS;
+use crate::{entity_members::ENTITY_MEMBERS, output_only_member::discard_output_only_member};
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use serde_json::{Map, Value};
 use std::{mem::take, str::FromStr};
@@ -52,6 +52,28 @@ pub fn normalize_merge_fragment(payload: &mut Value) {
         }
         normalize_attribute(value);
     }
+}
+
+/// Rewrite one bare attribute node, as clauses 5.6.4 and 5.6.19 supply it.
+///
+/// Partial Attribute Update and Replace Attribute take an Attribute Fragment
+/// rather than an Entity Fragment, so they have no entity envelope to walk and
+/// cannot go through [`normalize_entity_attributes`]. Without this they would
+/// skip the concise-form normalization every other write path applies, and with
+/// it the discarding of the output-only `previous...` member clauses 5.2.5 to
+/// 5.2.38 require an implementation to ignore when a Context Producer supplies
+/// one.
+pub fn normalize_attribute_node(value: &mut Value) {
+    let Some(instance) = value.as_object_mut() else {
+        return;
+    };
+    // The fragment IS the attribute instance, so it is normalized as one. It
+    // must not go through the slot logic: that reads a typeless object with no
+    // distinguishing member as the concise Property VALUE clause 4.5.2.3
+    // abbreviates, and a fragment updating only a sub-attribute -- which carries
+    // neither `type` nor a value member -- would be wrapped as a value instead
+    // of walked as an instance.
+    normalize_concise_instance(instance);
 }
 
 /// Rewrite one attribute slot: one instance, several, or a concise value.
@@ -144,7 +166,8 @@ fn attribute_type_of(instance: &Map<String, Value>) -> Option<AttributeType> {
 /// bare value is an implicit Property, and a `GeoProperty` is inferred from its
 /// geometry shape. More than one distinguishing member is ambiguous, so no
 /// type is inferred and the object falls through to an implicit Property.
-fn distinguishing_member_type(instance: &Map<String, Value>) -> Option<AttributeType> {
+#[must_use]
+pub fn distinguishing_member_type(instance: &Map<String, Value>) -> Option<AttributeType> {
     let mut inferred = None;
     for candidate in AttributeType::ALL {
         let member = candidate.compact_value_key();
@@ -198,10 +221,16 @@ fn is_geojson_geometry(instance: &Map<String, Value>) -> bool {
 
 /// Rewrite the sub-attributes of one instance, leaving its reserved members
 /// alone.
+///
+/// The family's own output-only member goes first: clause 5.2.5 and its seven
+/// siblings say a `previous…` a Context Producer supplied "shall be ignored",
+/// so it is dropped here rather than normalized into a sub-attribute and
+/// stored.
 fn normalize_instance(instance: &mut Map<String, Value>) {
     let Some(declared) = attribute_type_of(instance) else {
         return;
     };
+    discard_output_only_member(instance, declared);
     let reserved = declared.reserved_fields();
     for (member, value) in instance.iter_mut() {
         if member == "type" || reserved.contains(&member.as_str()) {
@@ -294,6 +323,50 @@ mod tests {
         normalize_entity_attributes(&mut payload);
 
         pretty_assertions::assert_eq!(payload, untouched);
+    }
+
+    /// Clause 5.2.5: `previousValue` is read-only and "if provided in update
+    /// or create operations shall be ignored", so it is dropped rather than
+    /// wrapped into a sub-attribute and carried into the store.
+    #[test]
+    fn a_supplied_output_only_member_is_dropped_rather_than_normalized() {
+        let mut payload = json!({
+            "id": "urn:ngsi-ld:Device:1",
+            "type": "Device",
+            "speed": { "type": "Property", "value": 42, "previousValue": 9 },
+            "belongsTo": { "object": "urn:ngsi-ld:Site:1", "previousObject": "urn:ngsi-ld:Site:0" }
+        });
+
+        normalize_entity_attributes(&mut payload);
+
+        pretty_assertions::assert_eq!(payload["speed"], json!({ "type": "Property", "value": 42 }));
+        pretty_assertions::assert_eq!(payload["belongsTo"], json!({ "type": "Relationship", "object": "urn:ngsi-ld:Site:1" }));
+    }
+
+    /// The same holds one level down: a sub-attribute is an attribute
+    /// (clause 4.5.2.2), so its own output-only member is ignored too.
+    #[test]
+    fn a_sub_attributes_output_only_member_is_dropped_as_well() {
+        let mut payload = json!({
+            "id": "urn:ngsi-ld:Device:1",
+            "type": "Device",
+            "speed": { "type": "Property", "value": 42, "accuracy": { "type": "Property", "value": 0.5, "previousValue": 0.9 } }
+        });
+
+        normalize_entity_attributes(&mut payload);
+
+        pretty_assertions::assert_eq!(payload["speed"]["accuracy"], json!({ "type": "Property", "value": 0.5 }));
+    }
+
+    /// A `previousValue` inside a Property's value is part of that value, not
+    /// a member of the instance, so it is preserved verbatim.
+    #[test]
+    fn an_output_only_name_inside_a_property_value_is_left_alone() {
+        let mut payload = json!({ "id": "urn:ngsi-ld:Device:1", "type": "Device", "raw": { "previousValue": 9, "other": 1 } });
+
+        normalize_entity_attributes(&mut payload);
+
+        pretty_assertions::assert_eq!(payload["raw"], json!({ "type": "Property", "value": { "previousValue": 9, "other": 1 } }));
     }
 
     #[test]

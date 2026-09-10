@@ -169,6 +169,7 @@ impl EntityRepository {
     /// when a returned row does not carry the expected payload column.
     pub async fn query_compiled(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Value>, ContextStoreError> {
         let planned = pushdown::plan(compiled, EntityRepository::PROFILE);
+        self.ensure_collations(&planned.query.ordering).await?;
         let names = self.resolve_names(&planned.query).await?;
         let built = entity_sql::build_query(target, &planned.query, &names)?;
 
@@ -206,6 +207,7 @@ impl EntityRepository {
     /// identifier is no longer a valid URI.
     pub async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, ContextStoreError> {
         let planned = pushdown::plan(compiled, EntityRepository::PROFILE);
+        self.ensure_collations(&planned.query.ordering).await?;
         let names = self.resolve_names(&planned.query).await?;
         let statement = entity_sql::build_ids_query(target, &planned.query, &names)?;
 

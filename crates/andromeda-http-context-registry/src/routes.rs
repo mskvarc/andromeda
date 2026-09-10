@@ -39,10 +39,10 @@ mod tests {
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
         body::Body,
-        http::{Method, Request, StatusCode},
+        http::{Error as HttpError, Method, Request, StatusCode},
     };
     use futures::future::BoxFuture;
-    use std::{error::Error, sync::Arc};
+    use std::sync::Arc;
     use tower::ServiceExt;
 
     struct RejectingResolver;
@@ -58,7 +58,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn owns_the_complete_context_registry_inventory() -> Result<(), Box<dyn Error>> {
+    async fn owns_the_complete_context_registry_inventory() -> Result<(), HttpError> {
         let routes = super::ContextRegistryRoutes::new(Arc::new(RejectingResolver)).into_router();
         for (method, path) in [
             (Method::POST, "/jsonldContexts"),
@@ -71,7 +71,12 @@ mod tests {
                 .uri(path)
                 .header("content-type", "application/json")
                 .body(Body::from("{}"))?;
-            let response = routes.clone().oneshot(request).await?;
+            // A `Router`'s service error type is uninhabited, so the call has
+            // no failure case to propagate.
+            let response = match routes.clone().oneshot(request).await {
+                Ok(response) => response,
+                Err(never) => match never {},
+            };
             assert_ne!(response.status(), StatusCode::NOT_FOUND, "{method} {path} was not routed");
             assert_ne!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{method} {path} lost its method");
         }

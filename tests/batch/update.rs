@@ -1,10 +1,9 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
-use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
-use reqwest::{Method, StatusCode};
-use serial_test::serial;
-
 use crate::helpers::*;
+use andromeda_test_fixtures::context::{COMPOUND_CONTEXT, CORE_CONTEXT};
+use reqwest::{Method, StatusCode};
 use serde_json::json;
+use serial_test::serial;
 
 #[tokio::test]
 #[serial]
@@ -212,4 +211,48 @@ async fn batch_update_entity_type_returns_204() {
 
     let (status, _) = batch_update(&c, &updates, false).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+/// NGSI-LD 5.5.11.3 with 5.5.11.0: an array may name the same entity twice, its
+/// instances are processed in array order, and implementations "shall treat the
+/// entity instances as if they had all arrived in separate requests" -- so the
+/// second update applies to what the first one produced. Computing both from a
+/// single pre-batch snapshot would silently drop the earlier update.
+#[tokio::test]
+#[serial]
+async fn batch_update_repeated_id_applies_each_instance_to_the_previous_result_returns_204() {
+    let _serialized_environment = clean_database().await;
+    let c = client();
+
+    let id = unique_id("urn:ngsi-ld:Building:005_06_01");
+    let entity = building_simple_attributes(&id);
+    let (status, _, _) = create_entity(&c, &entity).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Two fragments for one entity, each naming a different attribute of it.
+    let first = json!({
+        "id": &id,
+        "type": "Building",
+        "name": {"type": "Property", "value": "Tour Eiffel"},
+        "@context": [CORE_CONTEXT]
+    });
+    let second = json!({
+        "id": &id,
+        "type": "Building",
+        "subCategory": {"type": "Property", "value": "landmark"},
+        "@context": [CORE_CONTEXT]
+    });
+    let updates = json!([first, second]);
+
+    let (status, _) = batch_update(&c, &updates, false).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, _, body) = get_entity(&c, &id, "", true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["name"]["value"], "Tour Eiffel", "the first instance's update must survive the second");
+    pretty_assertions::assert_eq!(
+        body["subCategory"]["value"],
+        "landmark",
+        "the second instance's update must be applied on top of the first"
+    );
 }

@@ -2,8 +2,9 @@
 
 use crate::{
     attribute_instance_merge::{MergePolicy, merge_entity_attributes},
-    outcome::{ForwardedEntities, ForwardedTemporalEntities, ForwardedWriteResult, SourceContribution},
+    outcome::{ForwardedEntities, ForwardedTemporalEntities, ForwardedWriteResult},
 };
+use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, registration::ForwardingMode};

@@ -9,7 +9,7 @@ use crate::{
         history_reader::{
             AggregationPushdown,
             HistoryVisibility,
-            RecordedValueKind,
+            RecordedAttributeShape,
             TemporalHistoryObservation,
             TemporalHistoryOutcome,
             TemporalHistoryReader,
@@ -329,11 +329,11 @@ impl TemporalHistoryReader for RecordingSink {
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         Err(TemporalError::operation_not_supported("recording sink has no aggregation"))
     }
-    async fn recorded_value_kinds(
+    async fn recorded_attribute_shapes(
         &self,
         _target: &ContextTarget,
         _attributes: &[AttributeName],
-    ) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
+    ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError> {
         Ok(HashMap::new())
     }
 }

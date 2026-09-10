@@ -46,6 +46,16 @@ struct JsonbExists;
 #[iden = "jsonb_array_length"]
 struct JsonbArrayLength;
 
+/// The `jsonb_build_array(VARIADIC "any")` constructor.
+#[derive(Iden, Clone, Copy)]
+#[iden = "jsonb_build_array"]
+struct JsonbBuildArray;
+
+/// The `jsonb_build_object(VARIADIC "any")` constructor.
+#[derive(Iden, Clone, Copy)]
+#[iden = "jsonb_build_object"]
+struct JsonbBuildObject;
+
 /// The `jsonb_path_exists(target, jsonpath)` predicate function.
 #[derive(Iden, Clone, Copy)]
 #[iden = "jsonb_path_exists"]
@@ -114,6 +124,25 @@ pub fn jsonb_object_keys(object: SimpleExpr) -> FunctionCall {
 #[must_use]
 pub fn jsonb_typeof(value: SimpleExpr) -> SimpleExpr {
     Func::cust(JsonbTypeof).args([value]).into()
+}
+
+/// JSONB: `jsonb_build_array(element)` - a JSONB array holding one element.
+///
+/// Used to compare a Query Term against a target the NGSI-LD information model
+/// stores as a structured value (clause 4.9): the comparison is JSONB
+/// containment, so the term is built into the same shape the stored value has.
+/// Building it here rather than as JSON text keeps each operand bound as its
+/// own PostgreSQL type and hand-rolls no JSON escaping.
+#[must_use]
+pub fn jsonb_build_array(element: SimpleExpr) -> SimpleExpr {
+    Func::cust(JsonbBuildArray).args([element]).into()
+}
+
+/// JSONB: `jsonb_build_object(key, value, ...)` - a JSONB object, taking its
+/// arguments already paired.
+#[must_use]
+pub fn jsonb_build_object<Members: IntoIterator<Item = SimpleExpr>>(members: Members) -> SimpleExpr {
+    Func::cust(JsonbBuildObject).args(members).into()
 }
 
 /// JSONB: `jsonb_array_length(array)` - the number of elements in a JSONB array.

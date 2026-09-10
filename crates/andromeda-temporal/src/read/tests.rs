@@ -6,7 +6,7 @@ use crate::{
     port::history_reader::{
         AggregationPushdown,
         HistoryVisibility,
-        RecordedValueKind,
+        RecordedAttributeShape,
         TemporalHistoryOutcome,
         TemporalHistoryReader,
         TemporalReaderCapabilities,
@@ -73,11 +73,11 @@ impl TemporalHistoryReader for RefusingReader {
         Err(TemporalError::internal("query must not execute"))
     }
 
-    async fn recorded_value_kinds(
+    async fn recorded_attribute_shapes(
         &self,
         _target: &ContextTarget,
         _attributes: &[AttributeName],
-    ) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
+    ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
         Err(TemporalError::internal("query must not execute"))
     }

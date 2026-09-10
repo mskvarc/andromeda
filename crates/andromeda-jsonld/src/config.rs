@@ -33,7 +33,8 @@ pub enum JsonLdConfigError {
     /// `cache_capacity` was zero, which would cache nothing.
     #[error("jsonld.cache_capacity must be at least 1")]
     ZeroCacheCapacity,
-    /// `cache_ttl_seconds` was zero, which would expire every entry at once.
+    /// `cache_ttl_seconds` was zero, which would expire on arrival every
+    /// context whose response states no expiration time of its own.
     #[error("jsonld.cache_ttl_seconds must be at least 1")]
     ZeroCacheTtl,
 }
@@ -61,7 +62,15 @@ pub struct JsonLdConfig {
     #[config(env = "ANDROMEDA_JSONLD_CACHE_CAPACITY", default = 1024)]
     pub cache_capacity: u64,
 
-    /// How long an in-process cache entry lives.
+    /// How long a term-cache entry lives, and how long a downloaded `@context`
+    /// whose response states no expiration time is kept.
+    ///
+    /// Clause 6.3.16 requires compliance with the `Expires` header field and
+    /// with the `max-age` and `s-maxage` directives of `Cache-Control` carried
+    /// by a downloaded `@context`, so a response that names one of those sets
+    /// its own lifetime and this setting never applies to it. It is the
+    /// heuristic expiration time the same clause recommends assigning when the
+    /// origin server specifies none.
     #[config(env = "ANDROMEDA_JSONLD_CACHE_TTL_SECONDS", default = 3600)]
     pub cache_ttl_seconds: u64,
 

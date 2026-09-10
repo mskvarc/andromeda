@@ -8,6 +8,23 @@ use iri_rs::Iri;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
+/// How clause 4.5.9 carries one attribute value inside a simplified temporal
+/// pair.
+///
+/// The first element of each `[value, Temporal Property]` pair is either the
+/// value itself or a one-member object naming it, and which of the two a family
+/// takes is fixed by the clause rather than by the value at hand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TemporalValueEncoding {
+    /// The value stands alone: a Property or `GeoProperty` value, a
+    /// Relationship object, and the ordered arrays of the two list families.
+    Bare,
+    /// The value is wrapped in a one-member object keyed by the family's value
+    /// member, which clause 4.5.9 requires of `languageMap`, `json` and
+    /// `vocab`.
+    Wrapped,
+}
+
 /// The eight NGSI-LD attribute types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString, strum::IntoStaticStr)]
 pub enum AttributeType {
@@ -138,15 +155,66 @@ impl AttributeType {
         }
     }
 
-    /// Returns (`plural_key`, `singular_key`) for temporal values format.
+    /// Returns the compacted member the simplified temporal representation
+    /// collapses this attribute type into (clause 4.5.9).
+    ///
+    /// Clause 4.5.9 gives every family exactly one member, whose value is an
+    /// array of two-element `[value, Temporal Property]` arrays: `values` for a
+    /// Property or a `GeoProperty`, `objects` for a Relationship,
+    /// `languageMaps`, `jsons` and `vocabs` for their own families, and
+    /// `valueLists` / `objectLists` for the two list families — never the
+    /// generalized `values` / `objects` those specialize, since clauses
+    /// 4.5.21.2 and 4.5.22.2 prohibit the generalization on them.
+    ///
+    /// The value inside each pair is read from
+    /// [`AttributeType::compact_value_key`] and carried as
+    /// [`AttributeType::temporal_value_encoding`] prescribes.
     #[must_use]
-    pub const fn temporal_values_keys(self) -> (&'static str, &'static str) {
+    pub const fn temporal_values_key(self) -> &'static str {
         match self {
-            Self::Relationship | Self::ListRelationship => (compact_properties::OBJECTS, compact_properties::OBJECT),
-            Self::LanguageProperty => (compact_properties::LANGUAGE_MAPS, compact_properties::LANGUAGE_MAP),
-            Self::JsonProperty => (compact_properties::JSONS, compact_properties::JSON),
-            Self::VocabProperty => (compact_properties::VOCABS, compact_properties::VOCAB),
-            Self::Property | Self::GeoProperty | Self::ListProperty => (compact_properties::VALUES, compact_properties::VALUE),
+            Self::Relationship => compact_properties::OBJECTS,
+            Self::ListRelationship => compact_properties::OBJECT_LISTS,
+            Self::LanguageProperty => compact_properties::LANGUAGE_MAPS,
+            Self::JsonProperty => compact_properties::JSONS,
+            Self::VocabProperty => compact_properties::VOCABS,
+            Self::ListProperty => compact_properties::VALUE_LISTS,
+            Self::Property | Self::GeoProperty => compact_properties::VALUES,
+        }
+    }
+
+    /// Returns the expanded IRI of the clause 4.5.9 temporal-values member.
+    ///
+    /// The same eight-way table as [`AttributeType::temporal_values_key`],
+    /// spelled as IRIs. The temporal write path stores expanded documents and
+    /// needs this one; the renderer works on compacted JSON and needs the other.
+    /// Keeping both here is what stops the read and write sides of the temporal
+    /// store from disagreeing on which member a list family is held under.
+    #[must_use]
+    pub const fn expanded_temporal_values_key(self) -> Iri<&'static str> {
+        match self {
+            Self::Relationship => expanded_properties::OBJECTS,
+            Self::ListRelationship => expanded_properties::OBJECT_LISTS,
+            Self::LanguageProperty => expanded_properties::LANGUAGE_MAPS,
+            Self::JsonProperty => expanded_properties::JSONS,
+            Self::VocabProperty => expanded_properties::VOCABS,
+            Self::ListProperty => expanded_properties::VALUE_LISTS,
+            Self::Property | Self::GeoProperty => expanded_properties::VALUES,
+        }
+    }
+
+    /// Returns the expanded temporal-values member as a static string slice.
+    #[must_use]
+    pub fn expanded_temporal_values_key_str(self) -> &'static str {
+        self.expanded_temporal_values_key().into_inner()
+    }
+
+    /// Returns how clause 4.5.9 carries this attribute type's value inside one
+    /// simplified temporal pair.
+    #[must_use]
+    pub const fn temporal_value_encoding(self) -> TemporalValueEncoding {
+        match self {
+            Self::LanguageProperty | Self::JsonProperty | Self::VocabProperty => TemporalValueEncoding::Wrapped,
+            Self::Property | Self::GeoProperty | Self::Relationship | Self::ListProperty | Self::ListRelationship => TemporalValueEncoding::Bare,
         }
     }
 
@@ -204,15 +272,18 @@ impl AttributeType {
                 compact_properties::PREVIOUS_JSON,
                 compact_properties::VALUE_TYPE,
             ],
+            // The plural member is this family's own, `valueLists`, not the
+            // generalized `values`: clause 4.5.21.2 prohibits the generalization
+            // outright, and clause 4.5.9 gives the family `valueLists`.
             Self::ListProperty => reserved_compact_members![
                 compact_properties::VALUE_LIST,
-                compact_properties::VALUES,
+                compact_properties::VALUE_LISTS,
                 compact_properties::PREVIOUS_VALUE_LIST,
                 compact_properties::VALUE_TYPE,
             ],
             Self::ListRelationship => reserved_compact_members![
                 compact_properties::OBJECT_LIST,
-                compact_properties::OBJECTS,
+                compact_properties::OBJECT_LISTS,
                 compact_properties::PREVIOUS_OBJECT_LIST,
                 compact_properties::OBJECT_TYPE,
                 compact_properties::ENTITY_LIST,
@@ -356,6 +427,57 @@ mod tests {
         pretty_assertions::assert_eq!(AttributeType::VocabProperty.value_key(), expanded_properties::VOCAB);
         pretty_assertions::assert_eq!(AttributeType::LanguageProperty.value_key(), expanded_properties::LANGUAGE_MAP);
         pretty_assertions::assert_eq!(AttributeType::JsonProperty.value_key(), expanded_properties::JSON);
+    }
+
+    /// Clause 4.5.9 names the member each family collapses into, and names
+    /// `valueLists` / `objectLists` for the two list families rather than the
+    /// `values` / `objects` they specialize.
+    #[test]
+    fn every_family_collapses_into_the_simplified_temporal_member_clause_4_5_9_names_it() {
+        let expected = [
+            (AttributeType::Property, "values"),
+            (AttributeType::GeoProperty, "values"),
+            (AttributeType::Relationship, "objects"),
+            (AttributeType::LanguageProperty, "languageMaps"),
+            (AttributeType::JsonProperty, "jsons"),
+            (AttributeType::VocabProperty, "vocabs"),
+            (AttributeType::ListProperty, "valueLists"),
+            (AttributeType::ListRelationship, "objectLists"),
+        ];
+        for (variant, member) in expected {
+            pretty_assertions::assert_eq!(variant.temporal_values_key(), member, "{variant}");
+        }
+    }
+
+    /// Clause 4.5.9 pairs each simplified temporal member with the instance
+    /// member the value is read from, which is the family's own value member:
+    /// `valueList` for a `ListProperty`, `objectList` for a
+    /// `ListRelationship`, never the generalization.
+    #[test]
+    fn the_simplified_temporal_member_reads_from_the_families_own_value_member() {
+        for variant in AttributeType::ALL {
+            let plural = variant.temporal_values_key();
+            let singular = variant.compact_value_key();
+            assert!(
+                plural.starts_with(singular),
+                "clause 4.5.9 pairs {variant}'s '{plural}' with its own value member, but that is '{singular}'"
+            );
+        }
+    }
+
+    /// Clause 4.5.9 wraps a `languageMap`, a `json` and a `vocab` in a
+    /// one-member object and leaves every other family's value bare.
+    #[test]
+    fn only_the_three_wrapped_families_name_their_value_inside_the_temporal_pair() {
+        let wrapped = [AttributeType::LanguageProperty, AttributeType::JsonProperty, AttributeType::VocabProperty];
+        for variant in AttributeType::ALL {
+            let expected = if wrapped.contains(&variant) {
+                TemporalValueEncoding::Wrapped
+            } else {
+                TemporalValueEncoding::Bare
+            };
+            pretty_assertions::assert_eq!(variant.temporal_value_encoding(), expected, "{variant}");
+        }
     }
 
     #[test]

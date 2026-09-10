@@ -1,10 +1,9 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
+use crate::helpers::*;
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use reqwest::{Method, StatusCode};
-use serial_test::serial;
-
-use crate::helpers::*;
 use serde_json::json;
+use serial_test::serial;
 
 #[tokio::test]
 #[serial]
@@ -363,25 +362,75 @@ async fn batch_upsert_empty_json_returns_400() {
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
+/// NGSI-LD 5.5.11.2: an array that names the same entity twice creates it from
+/// the first instance and replaces it with the second, "in chronological
+/// order", so the state left behind is the one produced by applying every
+/// instance in turn rather than whichever instance a deduplication pass
+/// happened to keep. The entity is still created once, so the 201 body names it
+/// once.
 #[tokio::test]
 #[serial]
-async fn batch_upsert_duplicate_ids_returns_201() {
+async fn batch_upsert_repeated_id_replaces_in_array_order_returns_201() {
     let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:004_07_01a");
     let id2 = unique_id("urn:ngsi-ld:Building:004_07_01b");
 
-    let e1 = building_minimal(&id1);
-    let e2 = building_minimal(&id2);
-    let e3 = building_simple_attributes(&id1);
-    let entities = json!([e1, e2, e3]);
+    // The first instance of id1 carries properties, the second only a
+    // relationship: a replace keeps what the later instance states and drops
+    // what it omits, so the two are told apart by what survives.
+    let first = building_simple_attributes(&id1);
+    let other = building_minimal(&id2);
+    let second = building_relationship(&id1);
+    let entities = json!([first, other, second]);
 
     let (status, body) = batch_upsert(&c, &entities, false).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let uris = body.as_array().expect("should be array of URIs");
-    assert!(uris.len() <= 2, "should deduplicate IDs");
+    pretty_assertions::assert_eq!(uris.len(), 2, "an entity is created once however many instances name it");
+
+    let (status, _, body) = get_entity(&c, &id1, "", true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(
+        body["locatedAt"]["object"],
+        "urn:ngsi-ld:City:Paris",
+        "the instance with the higher array index is the one applied last"
+    );
+    assert!(
+        body.get("name").is_none(),
+        "the second instance replaces the entity, so what it omits is gone: {body}"
+    );
+}
+
+/// NGSI-LD 5.5.11.2 in update mode: "only the entity resulting from merging all
+/// of the entity instances, in the correct order, is maintained in the current
+/// state". Two instances carrying different attributes therefore leave the union
+/// of both behind; discarding the earlier instance would lose its attributes.
+#[tokio::test]
+#[serial]
+async fn batch_upsert_update_option_repeated_id_merges_every_instance_returns_201() {
+    let _serialized_environment = clean_database().await;
+    let c = client();
+
+    let id = unique_id("urn:ngsi-ld:Building:004_07_02");
+
+    let first = building_simple_attributes(&id);
+    let second = building_relationship(&id);
+    let entities = json!([first, second]);
+
+    let (status, _) = batch_upsert(&c, &entities, true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    let (status, _, body) = get_entity(&c, &id, "", true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower", "the first instance's attributes must survive the second");
+    pretty_assertions::assert_eq!(
+        body["locatedAt"]["object"],
+        "urn:ngsi-ld:City:Paris",
+        "the second instance's attributes must be applied too"
+    );
 }
 
 #[tokio::test]

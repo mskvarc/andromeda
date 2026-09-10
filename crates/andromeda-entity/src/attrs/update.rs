@@ -13,7 +13,10 @@ use andromeda_context_commit::{change_event::ChangeEvent, history_record::mutati
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::expanded::{entity_member::extract_types, mutation::entity::update_entity_attrs};
+use andromeda_ngsi_ld_model::expanded::{
+    entity_member::{extract_attribute_names, extract_types},
+    mutation::entity::update_entity_attrs,
+};
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use serde_json::Value;
 use std::sync::Arc;
@@ -21,9 +24,14 @@ use std::sync::Arc;
 impl EntityService {
     /// Update the attributes an entity already carries (clause 5.6.2).
     ///
-    /// Returns the attribute IRIs that were NOT updated, because the entity did
-    /// not already carry them. The handler uses that to decide between 204 and
-    /// 207.
+    /// Returns the attribute IRIs the fragment asked to update, and those that
+    /// were NOT updated because the entity did not already carry them. Clause
+    /// 5.6.2.5 makes both halves output data: a status code saying whether all
+    /// or only some attributes were updated, and "the list of Attributes
+    /// (Properties or Relationships) actually updated". The requested set is
+    /// the fragment's own attributes, not the merged entity's, so an attribute
+    /// the entity already held and this request never mentioned is not reported
+    /// as updated.
     ///
     /// The update is computed from a payload read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
@@ -39,13 +47,22 @@ impl EntityService {
     /// [`EntityError::Contention`] when concurrent writers superseded the
     /// computed write on every attempt, and [`EntityError::Persistence`] when
     /// the store could not apply it.
-    pub async fn update_attrs(&self, target: &ContextTarget, id: &Uri, mut fragment: Value, context: &ContextSpec) -> Result<Vec<AttributeName>, EntityError> {
+    pub async fn update_attrs(
+        &self,
+        target: &ContextTarget,
+        id: &Uri,
+        mut fragment: Value,
+        context: &ContextSpec,
+    ) -> Result<(Vec<AttributeName>, Vec<AttributeName>), EntityError> {
         let entity_uri = id.clone(); // clone: notification and computed write own the identifier
 
         normalize_entity_attributes(&mut fragment);
         let expanded = Arc::new(self.engine.expand(fragment, context).await?);
         validate_attribute_envelopes(&expanded)?;
         validate_geo_property_geometries(&expanded)?;
+        // Clause 5.6.2.5 reports the attributes this request asked for, so the
+        // set is read from the fragment before the write merges it away.
+        let requested = extract_attribute_names(unwrap_expanded_ref(&expanded));
         let (events, not_updated): (Vec<ChangeEvent>, Vec<AttributeName>) = self
             .commit_computed_write(target, &entity_uri, |previous| {
                 let mut existing = previous.clone(); // clone: the update mutates its own copy of the stored payload
@@ -70,6 +87,6 @@ impl EntityService {
             self.emit_change(target, event);
         }
 
-        Ok(not_updated)
+        Ok((requested, not_updated))
     }
 }

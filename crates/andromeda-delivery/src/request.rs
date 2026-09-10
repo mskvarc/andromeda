@@ -1,5 +1,6 @@
 //! One notification, ready to hand to a transport.
 
+use crate::notification_context_placement::{NotificationContextPlacement, notification_context_placement};
 use andromeda_http_headers::{link::header::Link, media_type::ResponseMediaType, ngsild_snapshot::NgsiLdSnapshot, ngsild_tenant::NgsiLdTenant};
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
 use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
@@ -27,6 +28,9 @@ pub struct DeliveryRequest {
     pub endpoint_uri: Url,
     /// The media type the body is serialised as.
     pub content_type: ResponseMediaType,
+    /// Where clause 6.3.8 puts this notification's `@context`, decided once
+    /// from the media type and the subscription's `Prefer` `receiverInfo` entry.
+    pub context_placement: NotificationContextPlacement,
     /// The `@context` this notification advertises, when the subscription
     /// named one. [`context_link`](DeliveryRequest::context_link) supplies the
     /// core context when it did not.
@@ -44,13 +48,15 @@ pub struct DeliveryRequest {
 impl DeliveryRequest {
     /// The `Link` header this notification carries its `@context` in, if any.
     ///
-    /// Clause 5.5.7: `application/ld+json` carries the `@context` inside the
-    /// body, and the other two media types carry it in a `Link` header. Every
+    /// Clause 6.3.8 decides this per notification, not per media type alone:
+    /// `application/json` always uses the header, `application/ld+json` always
+    /// uses the body, and `application/geo+json` uses the body unless the
+    /// subscription's `receiverInfo` asks for `Prefer: body=json`. Every
     /// transport asks this rather than deciding for itself, because three
     /// transports deciding independently is how `application/geo+json` came to
     /// carry no `@context` at all in either place.
     pub fn context_link(&self) -> Option<Link> {
-        if self.content_type.include_context_in_body() {
+        if self.context_placement == NotificationContextPlacement::Body {
             return None;
         }
         // The `@context` a notification advertises is an IRI reference, so the
@@ -102,9 +108,10 @@ impl NotificationDelivery<'_> {
     /// each transport against the body shape it sends.
     pub fn assemble(&self) -> DeliveryRequest {
         let content_type = notification_media_type(self.accept);
+        let context_placement = notification_context_placement(content_type, self.receiver_info);
         // clone: the request owns the notification body the borrow points at, and the `Arc` lets each transport read it without another copy
         let mut payload = self.payload.clone();
-        if content_type.include_context_in_body()
+        if context_placement == NotificationContextPlacement::Body
             && let Some(document) = payload.as_object_mut()
         {
             let context = self.jsonld_context.map_or(NGSI_LD_CORE_CONTEXT_URL.as_str(), Url::as_str);
@@ -114,6 +121,7 @@ impl NotificationDelivery<'_> {
             payload: Arc::new(payload),
             endpoint_uri: self.endpoint_uri.clone(), // clone: the request outlives this borrow of the subscription
             content_type,
+            context_placement,
             context_url: self.jsonld_context.cloned(), // clone: same
             // clone: `NgsiLdTenant` owns its name and the request outlives this borrow
             tenant: self.tenant.map(|name| NgsiLdTenant::new(name.clone())),
@@ -228,19 +236,28 @@ mod tests {
         pretty_assertions::assert_eq!(named.payload["@context"], json!("https://example.com/ctx.jsonld"));
     }
 
-    /// The other media types carry the context in the `Link` header and never
-    /// in the body.
+    /// Clause 6.3.8: an `application/json` notification carries the context in
+    /// the `Link` header, so its body holds no `@context` member.
     #[test]
-    fn a_json_or_geo_json_notification_body_carries_no_context_member() {
-        for accept in ["application/json", "application/geo+json"] {
-            let request = assemble(Some(&media(accept)), Some("https://example.com/ctx.jsonld"));
-            assert!(
-                request.payload.get("@context").is_none(),
-                "{accept} must not embed a context: {}",
-                request.payload
-            );
-        }
+    fn a_json_notification_body_carries_no_context_member() {
+        let request = assemble(Some(&media("application/json")), Some("https://example.com/ctx.jsonld"));
+        assert!(
+            request.payload.get("@context").is_none(),
+            "a JSON body must not embed a context: {}",
+            request.payload
+        );
         assert!(assemble(None, None).payload.get("@context").is_none());
+    }
+
+    /// Clause 6.3.8: with `geo+json` and no `receiverInfo`, "the HTTP
+    /// notification request includes an `@context` element in the payload
+    /// body". This is the notification rule, and it is the opposite of the
+    /// clause 6.3.7 rule for a `GeoJSON` *response*.
+    #[test]
+    fn a_geo_json_notification_body_carries_the_context_member_by_default() {
+        let request = assemble(Some(&media("application/geo+json")), Some("https://example.com/ctx.jsonld"));
+
+        pretty_assertions::assert_eq!(request.payload["@context"], json!("https://example.com/ctx.jsonld"));
     }
 
     #[test]
@@ -250,10 +267,38 @@ mod tests {
         assert!(rendered.contains(NGSI_LD_CORE_CONTEXT_URL.as_str()), "{rendered}");
     }
 
+    /// Clause 6.3.8: a `GeoJSON` notification whose subscription asked for no
+    /// `Prefer: body=json` carries its context in the body, so it emits no
+    /// `Link` header.
     #[test]
-    fn a_geo_json_notification_carries_a_context_link_too_because_clause_5_5_7_makes_no_exception() {
-        let link = assemble(Some(&media("application/geo+json")), None).context_link().expect("a Link");
-        let rendered = link.to_header_string().expect("the Link encodes");
+    fn a_geo_json_notification_carries_no_context_link_by_default() {
+        assert!(assemble(Some(&media("application/geo+json")), None).context_link().is_none());
+    }
+
+    /// Clause 6.3.8: `Prefer: body=json` in `receiverInfo` moves a `GeoJSON`
+    /// notification's context out of the body and into the `Link` header.
+    #[test]
+    fn a_geo_json_notification_preferring_json_carries_a_context_link_and_no_body_member() {
+        let pairs = vec![KeyValuePair {
+            key: "Prefer".into(),
+            value: "body=json".into(),
+        }];
+        let endpoint = endpoint();
+        let subscription = subscription();
+        let request = NotificationDelivery {
+            payload: &json!({"id": "urn:ngsi-ld:Notification:1"}),
+            endpoint_uri: &endpoint,
+            accept: Some(&media("application/geo+json")),
+            receiver_info: Some(&pairs),
+            jsonld_context: None,
+            tenant: None,
+            snapshot: None,
+            subscription_id: &subscription,
+        }
+        .assemble();
+
+        assert!(request.payload.get("@context").is_none(), "{}", request.payload);
+        let rendered = request.context_link().expect("a Link").to_header_string().expect("the Link encodes");
         assert!(rendered.contains(NGSI_LD_CORE_CONTEXT_URL.as_str()), "{rendered}");
     }
 

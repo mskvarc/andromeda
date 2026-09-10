@@ -189,7 +189,7 @@ async fn build_tenant_state(
     Ok((
         services.state,
         BrokerTenantRuntime::new(
-            storage.context_hit_flush,
+            storage.context_workers,
             supervision.handles,
             transports.dispatcher,
             storage.pool,

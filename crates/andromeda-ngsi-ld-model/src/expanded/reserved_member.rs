@@ -31,8 +31,13 @@ fn is_entity_member(name: &AttributeName) -> bool {
 
 /// Whether an expanded IRI names the value carrier of an attribute family.
 ///
-/// Both spellings are listed: the singular member of clause 5.2.5 and the
-/// plural one the Temporal API's `temporalValues` representation carries.
+/// All three spellings are listed: the singular member of clause 5.2.5, the
+/// plural one the Temporal API's `temporalValues` representation carries, and
+/// the output-only `previous…` one clause 5.2.14.1 puts in a notification when
+/// `showChanges` was requested. The last of those carries a value exactly as
+/// the first does — clause 5.2.5 says its "representation is the same as that
+/// of `value`" — so a walk that read it as an attribute would attribute the
+/// multi-instance rules of clause 4.5.5.1 to a value.
 fn is_value_carrier(name: &AttributeName) -> bool {
     [
         properties::JSON,
@@ -42,9 +47,18 @@ fn is_value_carrier(name: &AttributeName) -> bool {
         properties::OBJECT,
         properties::OBJECTS,
         properties::OBJECT_LIST,
+        properties::OBJECT_LISTS,
+        properties::PREVIOUS_JSON,
+        properties::PREVIOUS_LANGUAGE_MAP,
+        properties::PREVIOUS_OBJECT,
+        properties::PREVIOUS_OBJECT_LIST,
+        properties::PREVIOUS_VALUE,
+        properties::PREVIOUS_VALUE_LIST,
+        properties::PREVIOUS_VOCAB,
         properties::VALUE,
         properties::VALUES,
         properties::VALUE_LIST,
+        properties::VALUE_LISTS,
         properties::VOCAB,
         properties::VOCABS,
     ]
@@ -84,6 +98,24 @@ mod tests {
             properties::VOCAB,
             properties::VOCABS,
             properties::VALUE_LIST,
+        ] {
+            assert!(is_reserved_member(&name(reserved.as_str())), "{reserved} carries a value, not an attribute");
+        }
+    }
+
+    /// Clause 5.2.14.1 gives every family an output-only `previous…` member
+    /// whose representation is that of the family's value, so it carries a
+    /// value rather than an attribute.
+    #[test]
+    fn every_familys_output_only_spelling_is_reserved_too() {
+        for reserved in [
+            properties::PREVIOUS_VALUE,
+            properties::PREVIOUS_OBJECT,
+            properties::PREVIOUS_OBJECT_LIST,
+            properties::PREVIOUS_LANGUAGE_MAP,
+            properties::PREVIOUS_JSON,
+            properties::PREVIOUS_VOCAB,
+            properties::PREVIOUS_VALUE_LIST,
         ] {
             assert!(is_reserved_member(&name(reserved.as_str())), "{reserved} carries a value, not an attribute");
         }

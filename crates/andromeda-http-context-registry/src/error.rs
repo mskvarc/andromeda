@@ -15,6 +15,9 @@ pub fn classify_context_registry_error(error: &ContextRegistryError) -> Classifi
             ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string())
         }
         ContextRegistryError::NotFound { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, error.to_string()),
+        // Clause 5.13.4.4: serving the full content of a `Cached` @context
+        // "shall give back OperationNotSupported".
+        ContextRegistryError::CachedContextNotServed { .. } => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, error.to_string()),
         ContextRegistryError::ContextUnavailable { .. } => ClassifiedReport::public(NgsiLdErrorType::LdContextNotAvailable, error.to_string()),
         ContextRegistryError::MissingSourceUrl { .. }
         | ContextRegistryError::Persistence { .. }
@@ -51,11 +54,12 @@ mod tests {
     use andromeda_context_registry::error::ContextRegistryError;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-    use std::error::Error;
 
     #[test]
-    fn focused_context_registry_categories_and_disclosure_are_stable() -> Result<(), Box<dyn Error>> {
-        let identifier = "urn:ngsi-ld:Context:1".parse::<Uri>()?;
+    fn focused_context_registry_categories_and_disclosure_are_stable() -> Result<(), ContextRegistryError> {
+        let identifier = "urn:ngsi-ld:Context:1"
+            .parse::<Uri>()
+            .map_err(|error| ContextRegistryError::Invariant { detail: error.to_string() })?;
         for (error, expected) in [
             (ContextRegistryError::MissingTopLevelContext, NgsiLdErrorType::InvalidRequest),
             (ContextRegistryError::NotFound { identifier }, NgsiLdErrorType::ResourceNotFound),

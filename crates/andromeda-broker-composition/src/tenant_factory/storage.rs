@@ -1,10 +1,11 @@
 //! Initialization of one tenant's database-backed storage graph.
 
 use crate::{
+    cached_context_invalidation::{CACHED_CONTEXT_INVALIDATION_INTERVAL, CachedContextInvalidationWorker},
     context_hit_flush::ContextHitFlushWorker,
     tenant_factory::{TenantFactoryConfig, error::TenantAssemblyError},
 };
-use andromeda_context_registry::hit_store::ContextHitStore;
+use andromeda_context_registry::{cached_context_invalidation::CachedContextInvalidation, hit_store::ContextHitStore};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     port::{
@@ -49,7 +50,7 @@ pub(super) struct TenantStorage {
     pub(super) pool: PgPool,
     pub(super) live_target: ContextTarget,
     pub(super) engine: JsonLdEngine,
-    pub(super) context_hit_flush: Option<ContextHitFlushWorker>,
+    pub(super) context_workers: TenantContextWorkers,
     pub(super) attribute_names: Arc<dyn NameLookup<AttributeName>>,
     pub(super) entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
     pub(super) temporal_repo: Arc<TemporalRepository>,
@@ -60,6 +61,32 @@ pub(super) struct TenantStorage {
     pub(super) snapshot_store: Arc<dyn SnapshotStore>,
     pub(super) subscription_cache: Arc<SubscriptionCache>,
     pub(super) spatial_index: Arc<SpatialEntityIndex>,
+}
+
+/// The background workers one tenant runs over its stored `@contexts`.
+///
+/// Both are driven by clause 5.13 and by the same `jsonld_contexts` table, and
+/// both are stopped together when the tenant is torn down, so they travel as
+/// one rather than as two more parameters threaded through the runtime.
+pub(super) struct TenantContextWorkers {
+    /// Clause 5.13.3.5 hit accounting, when the engine attached a counter.
+    hit_flush: Option<ContextHitFlushWorker>,
+    /// The clause 5.13.1 pass that invalidates lapsed cached `@contexts`.
+    invalidation: CachedContextInvalidationWorker,
+}
+
+impl TenantContextWorkers {
+    /// Stop both workers, waiting for the hit counter's final drain.
+    ///
+    /// The invalidation pass stops first because it holds nothing: it reclaims
+    /// rows that are already unservable, so there is nothing to lose by ending
+    /// it, while the hit flush still owes the store its accumulated deltas.
+    pub(super) async fn shutdown(self) {
+        self.invalidation.shutdown().await;
+        if let Some(worker) = self.hit_flush {
+            worker.shutdown().await;
+        }
+    }
 }
 
 /// Focused capabilities supplied by the tenant's entity repository.
@@ -86,13 +113,25 @@ pub(super) async fn initialize_storage(config: &TenantFactoryConfig, database_ur
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
     let engine = config.jsonld.build_engine(Arc::clone(&context_repo))?;
-    let context_hit_flush = engine.hit_counter().map(|hit_counter| {
-        ContextHitFlushWorker::spawn(
-            hit_counter,
-            Arc::clone(&context_repo) as Arc<dyn ContextHitStore>,
-            Duration::from_secs(config.database.context_hit_flush_secs),
-        )
-    });
+    let context_workers = TenantContextWorkers {
+        hit_flush: engine.hit_counter().map(|hit_counter| {
+            ContextHitFlushWorker::spawn(
+                hit_counter,
+                Arc::clone(&context_repo) as Arc<dyn ContextHitStore>,
+                Duration::from_secs(config.database.context_hit_flush_secs),
+            )
+        }),
+        // Clause 5.13.1: "Implementations shall periodically invalidate the
+        // "Cached" @contexts." Unconditional, because the obligation is the
+        // broker's and not the resolver's: it holds whether or not a hit
+        // counter was attached, and whether or not another `@context` is ever
+        // downloaded.
+        // clone: the pass and every other Context capability share one repository.
+        invalidation: CachedContextInvalidationWorker::spawn(
+            Arc::clone(&context_repo) as Arc<dyn CachedContextInvalidation>,
+            CACHED_CONTEXT_INVALIDATION_INTERVAL,
+        ),
+    };
 
     let attribute_names = Arc::new(NameCache::<AttributeName>::new(&pool));
     let entity_type_names = Arc::new(NameCache::<EntityTypeName>::new(&pool));
@@ -163,7 +202,7 @@ pub(super) async fn initialize_storage(config: &TenantFactoryConfig, database_ur
         pool,
         live_target,
         engine,
-        context_hit_flush,
+        context_workers,
         attribute_names,
         entity_type_names,
         temporal_repo,

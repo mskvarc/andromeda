@@ -13,11 +13,13 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod aggregated_value;
 pub mod aggregation;
 pub mod aggregation_group;
 pub mod alias;
 pub mod axis;
 pub mod history;
+pub mod recorded_shape;
 pub mod stage1;
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 //! Typed results of context-source federation attempts.
 
+use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, registration::ForwardingMode};
@@ -147,19 +148,6 @@ impl ForwardedTemporalEntities {
             linked_map: self.linked_map.clone(), // clone: same
         })
     }
-}
-
-/// What one registration's context source contributed to a read, for the
-/// `EntityMap` of the request (Table 5.2.39-2): the entities it returned and
-/// the map it answered with.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SourceContribution {
-    /// The registration whose source answered.
-    pub registration: Uri,
-    /// The entities it returned.
-    pub entity_ids: Vec<Uri>,
-    /// The `EntityMap` it used, when it returned one.
-    pub linked_map: Option<Uri>,
 }
 
 /// What a forwarded read learnt about the registrations it selected, beyond

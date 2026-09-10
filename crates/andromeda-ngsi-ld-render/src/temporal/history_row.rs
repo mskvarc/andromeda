@@ -2,12 +2,12 @@
 
 use crate::temporal::geojson_ld::expand_geojson;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_family::InstanceFamily, rfc3339::whole_seconds};
-use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_vocabulary::{
-    NULL_URI,
-    expanded::{classes as expanded_classes, properties as expanded_properties},
+use andromeda_ngsi_ld_model::{
+    expanded::null_sentinel::expanded_null_value,
+    temporal::{TemporalHistoryRow, TemporalValue},
 };
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 
@@ -50,18 +50,13 @@ fn expanded_datetime(instant: DateTime<Utc>) -> Value {
 /// Clauses 4.5.7 and 4.5.8: a deleted instance renders the `urn:ngsi-ld:null`
 /// value for its attribute family beside its `deletedAt`. The null URI is
 /// synthesised here from the tombstone itself; storage never holds it, so no
-/// client value spelling it can be mistaken for a deletion. Clause 4.18
-/// reserves `urn:ngsi-ld:null` for a deleted scope, and a `LanguageProperty`'s
-/// `@none` key expands to a bare `@value` node -- the language-map convention
-/// the expansion engine writes and reads, since `@none` is not a well-formed
-/// language tag (JSON-LD 1.1 clause 9.5).
+/// client value spelling it can be mistaken for a deletion. Which node each
+/// family takes is clause 4.5.0's answer, shared with the deletion a patch
+/// writes so the two can never disagree: a deleted `ListProperty` or
+/// `ListRelationship` renders the single-null array of clauses 4.5.21.2 and
+/// 4.5.22.2 in its own list member, never the `value` those clauses prohibit.
 fn insert_deleted_value(instance: &mut Map<String, Value>, row: &TemporalHistoryRow) {
-    let null_value = if row.attribute_type == AttributeType::Relationship {
-        json!([{"@id": NULL_URI.as_str()}])
-    } else {
-        json!([{"@value": NULL_URI.as_str()}])
-    };
-    instance.insert(row.attribute_type.value_key_str().to_string(), null_value);
+    instance.insert(row.attribute_type.value_key_str().to_string(), expanded_null_value(row.attribute_type));
 }
 
 /// Insert the value member of a live observation, in the expanded shape the
@@ -90,8 +85,17 @@ fn insert_observed_value(instance: &mut Map<String, Value>, row: &TemporalHistor
 
 /// The expanded shape a structured value renders in, which the attribute family
 /// decides: a `JsonProperty` keeps its JSON literal, a `LanguageProperty` is
-/// stored already expanded, and a `VocabProperty` names one or more vocabulary
-/// members by identifier.
+/// stored already expanded, a `VocabProperty` names one or more vocabulary
+/// members by identifier, a Relationship with more than one target names each
+/// of them by identifier (clause 4.5.3.2's "URI or array of URIs"), and the two
+/// list families of clauses 4.5.21 and 4.5.22 render an ordered `@list`, which
+/// is the container the core context gives `valueList` and `objectList` and the
+/// only shape that compacts back to the ordered array those clauses mandate.
+///
+/// A `ListProperty` stores its members already expanded, so the list is its own
+/// rendering; a `ListRelationship` stores the bare target URIs its `objectList`
+/// names and rebuilds each of them into the normalized member clause 4.5.22.2
+/// mandates.
 fn expanded_structured_value(object: &Value, attribute_type: AttributeType) -> Value {
     match attribute_type {
         AttributeType::JsonProperty => json!([{"@value": object, "@type": "@json"}]),
@@ -101,10 +105,40 @@ fn expanded_structured_value(object: &Value, attribute_type: AttributeType) -> V
             || json!([{"@id": object}]),
             |members| Value::Array(members.iter().map(|member| json!({"@id": member})).collect()),
         ),
-        AttributeType::Property | AttributeType::Relationship | AttributeType::GeoProperty | AttributeType::ListProperty | AttributeType::ListRelationship => {
-            json!([{"@value": object}])
-        }
+        // Clause 4.5.3.2 defines `object` as "the Relationship's object
+        // represented by a URI or array of URIs", so a stored multi-target
+        // Relationship renders one identifier node per target and compacts back
+        // to the array of URIs the clause names.
+        AttributeType::Relationship => object.as_array().map_or_else(
+            || json!([{"@id": object}]),
+            |targets| Value::Array(targets.iter().map(|target| json!({"@id": target})).collect()),
+        ),
+        AttributeType::ListProperty => json!([{"@list": object}]),
+        AttributeType::ListRelationship => object.as_array().map_or_else(
+            || json!([{"@list": [expanded_object_list_member(object)]}]),
+            |targets| json!([{"@list": targets.iter().map(expanded_object_list_member).collect::<Vec<Value>>()}]),
+        ),
+        AttributeType::Property | AttributeType::GeoProperty => json!([{"@value": object}]),
     }
+}
+
+/// One member of a normalized `objectList`, in expanded form.
+///
+/// Clause 4.5.22.2, Mandatory: "`objectList`: a JSON representation of an
+/// ordered array of Relationship Objects each consisting of a JSON object
+/// containing a single Attribute with a key called `object` and its value
+/// holding the Relationship's object represented by a URI." Table 5.2.37-1
+/// spells out the split the two representations make of that array — "In the
+/// normalized form, each array element holds a JSON object containing a single
+/// Attribute with a key called `object` ... In the concise form, each string in
+/// the array holds a valid URI" — and a temporal retrieval answers in the
+/// normalized form, so the member is built as the `object`-keyed node that
+/// compacts to `{"object": "urn:..."}` rather than as the literal that would
+/// compact to the bare URI of the concise form.
+fn expanded_object_list_member(target: &Value) -> Value {
+    let mut member = Map::new();
+    member.insert(expanded_properties::OBJECT.as_str().to_owned(), json!([{"@id": target}]));
+    Value::Object(member)
 }
 
 /// Insert the Temporal Properties the observation carries.
@@ -267,8 +301,10 @@ mod tests {
     }
 
     /// Clauses 4.5.7 and 4.5.8: a deleted instance renders the null member its
-    /// own family prescribes — `object` for a Relationship, the family's value
-    /// member otherwise — never a Property value the instance never had.
+    /// own family prescribes — `object` for a Relationship, the single-null
+    /// array of clause 4.5.0 in `valueList` / `objectList` for the two list
+    /// families of clauses 4.5.21.2 and 4.5.22.2, the family's value member
+    /// otherwise — never a Property value the instance never had.
     #[test]
     fn a_tombstone_renders_the_null_member_of_the_family_the_instance_belonged_to() {
         let deleted_at = instant(1_700_000_300);
@@ -278,8 +314,10 @@ mod tests {
             (AttributeType::Property, json!([{"@value": null_uri}])),
             (AttributeType::LanguageProperty, json!([{"@value": null_uri}])),
             (AttributeType::GeoProperty, json!([{"@value": null_uri}])),
-            (AttributeType::VocabProperty, json!([{"@value": null_uri}])),
-            (AttributeType::JsonProperty, json!([{"@value": null_uri}])),
+            (AttributeType::VocabProperty, json!([{"@id": null_uri}])),
+            (AttributeType::JsonProperty, json!([{"@value": null_uri, "@type": "@json"}])),
+            (AttributeType::ListProperty, json!([{"@list": [{"@value": null_uri}]}])),
+            (AttributeType::ListRelationship, json!([{"@list": [{"@value": null_uri}]}])),
         ];
         for (attribute_type, expected) in families {
             let mut row = row(TemporalValue::Tombstone { deleted_at });
@@ -288,6 +326,64 @@ mod tests {
             pretty_assertions::assert_eq!(member(&rendered, attribute_type.value_key_str()), Some(&expected), "{attribute_type}");
             pretty_assertions::assert_eq!(member(&rendered, "@type"), Some(&json!([attribute_type.iri().as_str()])));
         }
+    }
+
+    /// Clauses 4.5.21.2 and 4.5.22.2: a live list observation renders as the
+    /// ordered `@list` its member is a container for, so compaction gives back
+    /// the ordered array those clauses mandate rather than one value node
+    /// holding an array.
+    #[test]
+    fn a_list_observation_renders_as_the_ordered_list_its_member_contains() {
+        let mut list_property = row(TemporalValue::Object(json!([{"@value": "first"}, {"@value": "second"}])));
+        list_property.attribute_type = AttributeType::ListProperty;
+        let rendered = neutral_row_to_expanded_instance(&list_property, SysAttrsInclusion::Strip);
+        pretty_assertions::assert_eq!(
+            member(&rendered, AttributeType::ListProperty.value_key_str()),
+            Some(&json!([{"@list": [{"@value": "first"}, {"@value": "second"}]}]))
+        );
+    }
+
+    /// Clause 4.5.22.2, Mandatory: each `objectList` element is "a JSON object
+    /// containing a single Attribute with a key called `object` and its value
+    /// holding the Relationship's object represented by a URI", which Table
+    /// 5.2.37-1 reserves to the normalized form. The expanded member is
+    /// therefore an `object`-keyed identifier node, never the literal that
+    /// compacts to the bare URI of the concise form.
+    #[test]
+    fn a_list_relationship_renders_each_member_as_the_normalized_object_node() {
+        let mut list_relationship = row(TemporalValue::Object(json!(["urn:ngsi-ld:Room:1", "urn:ngsi-ld:Room:2"])));
+        list_relationship.attribute_type = AttributeType::ListRelationship;
+        let rendered = neutral_row_to_expanded_instance(&list_relationship, SysAttrsInclusion::Strip);
+        let object = expanded_properties::OBJECT.as_str();
+        pretty_assertions::assert_eq!(
+            member(&rendered, AttributeType::ListRelationship.value_key_str()),
+            Some(&json!([{"@list": [
+                {object: [{"@id": "urn:ngsi-ld:Room:1"}]},
+                {object: [{"@id": "urn:ngsi-ld:Room:2"}]},
+            ]}]))
+        );
+    }
+
+    /// Clause 4.5.3.2: `object` is "the Relationship's object represented by a
+    /// URI or array of URIs", so every target of a stored multi-target
+    /// Relationship renders as its own identifier node and none is dropped.
+    #[test]
+    fn a_multi_target_relationship_renders_one_identifier_node_per_target() {
+        let mut relationship = row(TemporalValue::Object(json!(["urn:ngsi-ld:Device:14142", "urn:ngsi-ld:Device:13562"])));
+        relationship.attribute_type = AttributeType::Relationship;
+        let rendered = neutral_row_to_expanded_instance(&relationship, SysAttrsInclusion::Strip);
+        pretty_assertions::assert_eq!(
+            member(&rendered, AttributeType::Relationship.value_key_str()),
+            Some(&json!([{"@id": "urn:ngsi-ld:Device:14142"}, {"@id": "urn:ngsi-ld:Device:13562"}]))
+        );
+
+        let mut single = row(TemporalValue::Uri("urn:ngsi-ld:Device:14142".parse().expect("a valid URI")));
+        single.attribute_type = AttributeType::Relationship;
+        let rendered = neutral_row_to_expanded_instance(&single, SysAttrsInclusion::Strip);
+        pretty_assertions::assert_eq!(
+            member(&rendered, AttributeType::Relationship.value_key_str()),
+            Some(&json!([{"@id": "urn:ngsi-ld:Device:14142"}]))
+        );
     }
 
     /// A whole-valued double renders as the double it is: reshaping it into an

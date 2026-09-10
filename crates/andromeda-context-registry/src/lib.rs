@@ -3,6 +3,8 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+/// The narrow port for periodically invalidating cached contexts.
+pub mod cached_context_invalidation;
 /// Embedded NGSI-LD core Context representation.
 mod core_context;
 /// The permitted origins of newly persisted hosted contexts.

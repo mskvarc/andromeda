@@ -4,6 +4,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     instance_identity::InstanceIdentity,
+    ngsi_ld_time::NgsiLdTime,
     time_prop::TimeProp,
     uri::Uri,
 };
@@ -159,6 +160,21 @@ pub enum AggregationMinMax {
     DateTime(DateTime<Utc>),
 }
 
+/// The arithmetic mean of one aggregation period.
+///
+/// Table 4.5.19.1-1 defines `avg` over numbers, booleans and array sizes as a
+/// number, but Table 4.5.19.1-2 defines it over a `Time` as "the average time
+/// inside the period" -- a time of day, not a count. Carrying both in one type
+/// is what lets the renderer emit each in its own lexical form instead of
+/// forcing a time through a numeric member.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AggregationAverage {
+    /// A numeric mean, in the exact shape the stored values have.
+    Number(JsonNumber),
+    /// The mean time of day, in the clause 4.6.3 `Time` rendering.
+    Time(NgsiLdTime),
+}
+
 /// One backend-neutral aggregation bucket for one temporal attribute.
 ///
 /// Clause 4.5.19 gives one aggregate value per attribute, `datasetId` and
@@ -181,8 +197,8 @@ pub struct TemporalAggregationRow {
     pub bucket_start: Option<DateTime<Utc>>,
     /// End of the aggregation bucket.
     pub bucket_end: Option<DateTime<Utc>>,
-    /// Arithmetic mean.
-    pub avg: Option<JsonNumber>,
+    /// Arithmetic mean, or the mean time of day for a `Time`-valued Property.
+    pub avg: Option<AggregationAverage>,
     /// Typed minimum.
     pub min: Option<AggregationMinMax>,
     /// Typed maximum.

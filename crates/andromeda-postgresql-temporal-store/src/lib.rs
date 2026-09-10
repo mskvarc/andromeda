@@ -63,6 +63,8 @@ pub mod scope_history_write;
 pub mod semantic_time_axes;
 /// Reconciling the temporal hypertables' storage policy with configuration.
 pub mod storage_policy;
+/// The family and value shape one attribute-history row was written with.
+pub(crate) mod stored_attribute_shape;
 /// The JSON number a stored `NUMERIC` column names.
 pub(crate) mod stored_decimal;
 /// Splitting one stored instance identity across its two history columns.

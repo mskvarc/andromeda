@@ -7,6 +7,7 @@
 //! apart from the traversal in [`crate::linked`] that consumes it.
 
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_render::temporal::relationship_targets::rendered_relationship_targets;
 use indexmap::IndexSet;
 use serde_json::Value;
 use std::slice;
@@ -42,7 +43,7 @@ pub struct TemporalLinkedCandidate {
     /// first-encounter order, each appearing once.
     ///
     /// Read off the rendered representation's key at the same point
-    /// [`identifiers_in`] reads the object it points at -- before any format
+    /// [`rendered_relationship_targets`] reads the object it points at -- before any format
     /// projection (clause 4.5.5, 4.5.19) collapses the attribute's instances
     /// and erases the association. This is what lets a clause 4.21 nested
     /// `pick=rel{a}` / `omit=rel{a}` sub-projection be matched to the right
@@ -133,7 +134,7 @@ fn collect_from_instance(
 
     let objects = fields.get("object").into_iter().chain(fields.get("objectList"));
     for object in objects {
-        for id in identifiers_in(object) {
+        for id in rendered_relationship_targets(object) {
             if visited.contains(&id) {
                 continue;
             }
@@ -157,19 +158,5 @@ fn collect_from_instance(
                 });
             }
         }
-    }
-}
-
-/// The identifiers one `object` or `objectList` value names, in order.
-///
-/// `object` is a single URI and `objectList` an array of them, and either may
-/// carry a value that is not a URI at all, which is skipped rather than
-/// rejected: clause 4.5.23 degrades an unusable reference instead of failing
-/// the retrieval.
-pub(crate) fn identifiers_in(value: &Value) -> Vec<Uri> {
-    match value {
-        Value::String(raw) => raw.parse().into_iter().collect(),
-        Value::Array(items) => items.iter().filter_map(Value::as_str).filter_map(|raw| raw.parse().ok()).collect(),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => Vec::new(),
     }
 }

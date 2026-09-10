@@ -22,19 +22,33 @@
 //! # Eligibility
 //!
 //! Not every predicate can use the projection. `current_attribute_values` stores
-//! one typed value per attribute instance; it does not store sub-attributes or
-//! the interior of compound values. So:
+//! one value per attribute instance; it does not store sub-attributes or the
+//! interior of compound values. What a path addresses is decided once, by
+//! [`local_target`](crate::q_predicate::local_target::local_target):
 //!
 //! | Predicate shape | Compiles to |
 //! |---|---|
 //! | comparison or pattern with no sub-attribute and no value path | `EXISTS` on `current_attribute_values` |
 //! | bare existence | `EXISTS` on `current_attribute_values`, presence alone |
-//! | anything carrying a sub-attribute or value path | JSONB jsonpath fallback |
+//! | equality or existence with one trailing member (`attr[member]`) | both: a `languageMap` probe on the projection, disjoined with the jsonpath fallback |
+//! | anything carrying a sub-attribute or a deeper value path | JSONB jsonpath fallback |
+//! | ordering or pattern with any value path | JSONB jsonpath fallback |
 //! | attribute IRI absent from `attribute_names` | constant `FALSE` |
 //!
 //! The fallback keeps the previous semantics for the shapes the projection
 //! cannot answer. It is still unindexed; it is now the exception rather than
 //! the rule.
+//!
+//! # Attribute families beyond Property and Relationship
+//!
+//! A scalar Property value and a Relationship object occupy a typed column each.
+//! Every other clause 5.2.4 family lands in `value_object`: a
+//! `LanguageProperty`'s `languageMap`, a `ListProperty`'s `valueList`, a
+//! `ListRelationship`'s `objectList`, a multi-term `VocabProperty`'s `vocab`,
+//! and any Property value that is an array or an object. Clause 4.9 names every
+//! one of those a target value, so a Query Term is compared against
+//! `value_object` by JSONB containment as well as against the typed columns —
+//! see [`structured_target`](crate::q_predicate::structured_target).
 //!
 //! # Deleted attributes
 //!
@@ -69,5 +83,9 @@
 
 pub mod attribute_names;
 pub mod fallback;
+pub mod local_target;
 pub mod projection;
+pub mod projection_probe;
+pub mod structured_target;
 pub mod traversal;
+pub mod typed_column;

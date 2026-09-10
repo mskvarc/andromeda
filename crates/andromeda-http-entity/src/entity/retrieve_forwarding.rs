@@ -3,12 +3,13 @@
 
 use crate::entity::single_source_declined;
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_federation::{
     FederationService,
     entity_result::{collect_warnings, contributions_of, merge_retrieve_results},
     forwarded_query::ClientQuery,
     operation::ForwardingOperation,
-    outcome::{ForwardReadOutcome, ForwardedEntities, MatchedSources, SourceContribution},
+    outcome::{ForwardReadOutcome, ForwardedEntities, MatchedSources},
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;

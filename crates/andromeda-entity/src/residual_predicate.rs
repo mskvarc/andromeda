@@ -8,13 +8,15 @@ use strum::Display;
 /// the only thing this vocabulary is used for is telling a client which part of
 /// its request could not be answered.
 ///
-/// All seven members of an `EntitySelection` are named, not just the three
+/// Every predicate an `EntitySelection` can carry is named, not just the three
 /// `StorageProfile` has axes for today. The residual *is* a selection, so
 /// `ResidualFilter::kinds` must be able to name whatever a selection can
 /// carry; a shorter enum would make some selections unnameable. Four of the
 /// seven therefore have no production constructor, and the in-memory readings
 /// of those four are held to the pushed-down renderings by the profile-driven
-/// conformance tests rather than by a live caller.
+/// conformance tests rather than by a live caller. The clause 5.5.14 narrowing
+/// of a map-scoped request is an identifier predicate and is named by
+/// [`ResidualPredicate::Identifier`] with the `id` list itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
 pub enum ResidualPredicate {
     /// The `id` list.

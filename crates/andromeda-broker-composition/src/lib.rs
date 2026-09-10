@@ -4,6 +4,7 @@
 
 mod blocking_executor;
 mod broker;
+mod cached_context_invalidation;
 mod component_report;
 pub mod config;
 mod context_hit_flush;

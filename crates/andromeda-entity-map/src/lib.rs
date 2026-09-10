@@ -3,12 +3,18 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+/// What one context source contributed to the Entity Map of a read.
+pub mod contribution;
 /// Failures reported by Entity Map policy and storage implementations.
 pub mod error;
 /// Bounded expiry of Entity Maps past their `expiresAt`.
 pub mod expiry;
 /// The canonical digest of a map-creating request's filter parameters.
 pub mod fingerprint;
+/// Which entities a prepared result page sheds from the Entity Map it ran under.
+pub mod pruning;
+/// Recording what a read did to the Entity Map it ran under.
+pub mod recording;
 /// What a read does about Entity Maps: reuse, mint, or neither.
 pub mod reuse;
 /// Entity Map lifecycle and intersection semantics.

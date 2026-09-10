@@ -12,6 +12,11 @@
 //!
 //! Update mode merges instead of replacing, so only explicit null-sentinel
 //! removals imply tombstones.
+//!
+//! Neither mode sees an identifier twice: clause 5.5.11.2 requires the
+//! instances an array repeats to be replaced or updated "in chronological
+//! order", so the coordinator hands each one to a separate round, and a chunk
+//! carries at most one instance of any entity.
 
 use crate::{
     EntityService,
@@ -34,11 +39,7 @@ use andromeda_ngsi_ld_model::{
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::{
-    collections::{HashMap, HashSet},
-    mem::take,
-    sync::Arc,
-};
+use std::{collections::HashMap, mem::take, sync::Arc};
 
 /// One chunk's per-entity upsert results.
 type UpsertOutcome = (BatchResult, Vec<Uri>);
@@ -48,20 +49,6 @@ type UpsertOutcome = (BatchResult, Vec<Uri>);
 pub(super) type UpsertChunkOutcome = (BatchResult, Vec<(Uri, EntityError)>, Vec<Uri>);
 
 impl EntityService {
-    /// Keep only the last appearance of each identifier, which is the one a
-    /// later write would have left behind anyway.
-    pub(super) fn dedupe_upsert_entities(entities: &[Entity]) -> Vec<&Entity> {
-        let mut seen = HashSet::with_capacity(entities.len());
-        entities
-            .iter()
-            .rev()
-            .filter(|entity| seen.insert(&entity.id))
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect()
-    }
-
     pub(super) async fn batch_upsert_replace_chunk(
         &self,
         target: &ContextTarget,

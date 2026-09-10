@@ -1,6 +1,6 @@
 //! Runtime resources owned by one tenant and their shutdown order.
 
-use crate::context_hit_flush::ContextHitFlushWorker;
+use crate::tenant_factory::storage::TenantContextWorkers;
 use andromeda_delivery::{dispatch::TransportDispatcher, mqtt::pool::MqttTransportPool};
 use andromeda_task_runtime::{supervisor::TaskSupervisor, wake_trigger::WakeHandle};
 use andromeda_tenancy::state_factory::TenantRuntime;
@@ -12,7 +12,7 @@ use tracing::{error, info};
 
 /// Everything one tenant's runtime holds open.
 pub struct BrokerTenantRuntime {
-    context_hit_flush: Option<ContextHitFlushWorker>,
+    context_workers: TenantContextWorkers,
     background_handles: Vec<JoinHandle<()>>,
     transport: Arc<TransportDispatcher>,
     pool: PgPool,
@@ -23,7 +23,7 @@ pub struct BrokerTenantRuntime {
 
 impl BrokerTenantRuntime {
     pub(super) const fn new(
-        context_hit_flush: Option<ContextHitFlushWorker>,
+        context_workers: TenantContextWorkers,
         background_handles: Vec<JoinHandle<()>>,
         transport: Arc<TransportDispatcher>,
         pool: PgPool,
@@ -32,7 +32,7 @@ impl BrokerTenantRuntime {
         drain_wakes: Vec<WakeHandle>,
     ) -> BrokerTenantRuntime {
         BrokerTenantRuntime {
-            context_hit_flush,
+            context_workers,
             background_handles,
             transport,
             pool,
@@ -59,9 +59,7 @@ impl TenantRuntime for BrokerTenantRuntime {
         stop_background_tasks(self.background_handles).await;
         info!(event = "tenant_background_tasks_stopped");
         self.transport.shutdown().await;
-        if let Some(worker) = self.context_hit_flush {
-            worker.shutdown().await;
-        }
+        self.context_workers.shutdown().await;
         info!(event = "tenant_context_hits_flushed");
         self.pool.close().await;
         info!(event = "tenant_pool_closed");

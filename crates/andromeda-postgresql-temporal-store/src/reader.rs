@@ -8,16 +8,17 @@
 
 use crate::{
     aggregation_row_decode::{decode_aggregation_group_span, decode_aggregation_row},
+    attribute_kind_code::attribute_type_of,
     error::TemporalStoreError,
     history_row_decode::decode_history_row,
     repo::TemporalRepository,
+    stored_attribute_shape::StoredAttributeShape,
     temporal_query_execution::TemporalStatement,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::{pagination::CountPolicy, temporal::compiled::CompiledTemporalQuery};
-use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     projected_attribute_names::projected_attribute_names,
@@ -26,6 +27,7 @@ use andromeda_postgresql_query::{
 use andromeda_postgresql_temporal_query::{
     aggregation_group::ensure_uniform_aggregation_groups,
     history::build_temporal_history_query,
+    recorded_shape::RecordedShape,
     stage1::build_stage1_entity_ids,
 };
 use andromeda_temporal::{
@@ -34,6 +36,7 @@ use andromeda_temporal::{
     port::history_reader::{
         AggregationPushdown,
         HistoryVisibility,
+        RecordedAttributeShape,
         RecordedValueKind,
         TemporalHistoryOutcome,
         TemporalHistoryReader,
@@ -44,18 +47,38 @@ use async_trait::async_trait;
 use sqlx::Row;
 use std::collections::{HashMap, HashSet};
 
-/// The neutral value shape a stored value-kind code stands for; a tombstone
-/// carries no value and so no shape.
-const fn recorded_value_kind(kind: ValueKind) -> Option<RecordedValueKind> {
-    match kind {
-        ValueKind::Tombstone => None,
-        ValueKind::Number => Some(RecordedValueKind::Number),
-        ValueKind::String => Some(RecordedValueKind::String),
-        ValueKind::Boolean => Some(RecordedValueKind::Boolean),
-        ValueKind::Geometry => Some(RecordedValueKind::Geometry),
-        ValueKind::Object => Some(RecordedValueKind::Object),
-        ValueKind::DateTime => Some(RecordedValueKind::DateTime),
-        ValueKind::Uri => Some(RecordedValueKind::Uri),
+/// The neutral value shape one projected [`RecordedShape`] stands for.
+///
+/// The two vocabularies are the same set of shapes named on either side of the
+/// port, one member per column of Tables 4.5.19.1-1, 4.5.19.1-2 and
+/// 4.5.19.1-3, so the mapping is total: no shape the statement projects is
+/// dropped on its way to the eligibility check, which is what would silently
+/// widen or narrow a table column.
+const fn recorded_value_kind(shape: RecordedShape) -> RecordedValueKind {
+    match shape {
+        RecordedShape::Number => RecordedValueKind::Number,
+        RecordedShape::String => RecordedValueKind::String,
+        RecordedShape::Boolean => RecordedValueKind::Boolean,
+        RecordedShape::Geometry => RecordedValueKind::Geometry,
+        RecordedShape::Object => RecordedValueKind::Object,
+        RecordedShape::Array => RecordedValueKind::Array,
+        RecordedShape::DateTime => RecordedValueKind::DateTime,
+        RecordedShape::Date => RecordedValueKind::Date,
+        RecordedShape::Time => RecordedValueKind::Time,
+        RecordedShape::Uri => RecordedValueKind::Uri,
+    }
+}
+
+/// The neutral shape one stored family-and-value-shape pair stands for.
+///
+/// Both halves cross the port, because clause 4.5.19.1's tables are not indexed
+/// the same way: the datatype decides for a Property (Tables 4.5.19.1-1 and
+/// 4.5.19.1-2) and the family alone decides for a Relationship (Table
+/// 4.5.19.1-3).
+const fn neutral_attribute_shape(stored: StoredAttributeShape) -> RecordedAttributeShape {
+    RecordedAttributeShape {
+        family: attribute_type_of(stored.kind),
+        value_kind: recorded_value_kind(stored.shape),
     }
 }
 
@@ -80,15 +103,15 @@ impl TemporalHistoryReader for TemporalRepository {
         self.temporal_entity_types(target, entity_ids).await.map_err(TemporalError::from)
     }
 
-    async fn recorded_value_kinds(
+    async fn recorded_attribute_shapes(
         &self,
         target: &ContextTarget,
         attributes: &[AttributeName],
-    ) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
-        let recorded = self.recorded_value_kinds(target, attributes).await.map_err(TemporalError::from)?;
+    ) -> Result<HashMap<AttributeName, HashSet<RecordedAttributeShape>>, TemporalError> {
+        let recorded = self.stored_attribute_shapes(target, attributes).await.map_err(TemporalError::from)?;
         Ok(recorded
             .into_iter()
-            .map(|(name, kinds)| (name, kinds.into_iter().filter_map(recorded_value_kind).collect()))
+            .map(|(name, shapes)| (name, shapes.into_iter().map(neutral_attribute_shape).collect()))
             .collect())
     }
 

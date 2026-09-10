@@ -44,12 +44,21 @@ async fn delete_unknown_context_returns_404() {
     pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
 }
 
-/// `051_04_01`: Delete wrong ID + reload=true -> 400.
+/// `051_04_01`: Delete wrong ID + reload=true -> 404.
+///
+/// Clause 5.13.5.4 settles the two refusals in order: "If the @context
+/// identifier does not correspond to any existing entry in the @context
+/// storage, then an error of type `ResourceNotFound` shall be raised" comes
+/// before either reload rule, and an identifier that names nothing has no kind
+/// for "only cached contexts can be reloaded" to object to. This case
+/// previously expected `BadRequestData`, which reported a kind mismatch for a
+/// Context that was never there.
 #[tokio::test]
-async fn delete_unknown_with_reload_true_returns_400() {
+async fn delete_unknown_with_reload_true_returns_404() {
     let c = client();
-    let (status, _) = delete_context(&c, "urn:ngsi-ld:unknown:ctx", "reload=true").await;
-    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, body) = delete_context(&c, "urn:ngsi-ld:unknown:ctx", "reload=true").await;
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
 }
 
 /// `051_04_02`: Delete wrong ID + reload=false -> 404.
@@ -134,20 +143,27 @@ async fn delete_core_context_reload_false_returns_400() {
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-/// `051_09_01`: Delete core context with reload=true -> 204, then verify re-downloaded.
+/// `051_09_01`: Delete core context with reload=true -> 400, and it stays served.
+///
+/// Clause 5.13.5.4: "If reload is true and the kind of the @context is not
+/// "Cached", implementations shall return a `BadRequestData` error." Clause
+/// 5.13.1 flags the embedded core @context `ImplicitlyCreated`, so there is no
+/// original URL to re-download it from — exactly as for the
+/// `ImplicitlyCreated` Context that `051_07_01` covers. This case previously
+/// expected `204`, claiming a re-download that never happened.
 #[tokio::test]
-async fn delete_and_reload_core_context_returns_204() {
+async fn delete_and_reload_core_context_returns_400() {
     let c = client();
 
     // Verify it exists first
     let (status, _) = get_context(&c, CORE_CONTEXT, "").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    // Delete with reload
-    let (status, _) = delete_context_raw(&c, CORE_CONTEXT, "reload=true").await;
-    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, body) = delete_context(&c, CORE_CONTEXT, "reload=true").await;
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 
-    // Verify still accessible after reload
+    // The refusal leaves the embedded core @context exactly where it was.
     let (status, _) = get_context(&c, CORE_CONTEXT, "").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 }

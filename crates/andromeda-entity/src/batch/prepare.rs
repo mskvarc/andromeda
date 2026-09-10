@@ -341,11 +341,6 @@ impl EntityService {
         }
         (prepared, errors)
     }
-
-    pub(super) async fn prepare_entities(&self, entities: &[Entity], context: &ContextSpec) -> (Vec<PreparedEntity>, Vec<(Uri, EntityError)>) {
-        let refs: Vec<&Entity> = entities.iter().collect();
-        self.prepare_entity_refs(&refs, context).await
-    }
 }
 
 #[cfg(test)]

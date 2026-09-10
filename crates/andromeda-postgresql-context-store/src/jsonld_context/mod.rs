@@ -5,8 +5,11 @@
 //! - [`mapper`] — row → domain parsing.
 //! - [`registry_store`] — hosted-context lifecycle persistence.
 //! - [`context_cache`] — JSON-LD resolver cache persistence.
+//! - [`cached_context_invalidation`] — the clause 5.13.1 periodic sweep.
 //! - [`hit_store`] — durable resolver-hit accounting.
 
+/// Periodic invalidation of lapsed cached Contexts.
+pub mod cached_context_invalidation;
 /// JSON-LD resolver cache persistence.
 pub mod context_cache;
 /// Durable resolver-hit accounting.

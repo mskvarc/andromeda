@@ -12,7 +12,7 @@ use crate::{
     engine::{options::RemoteContextFetch, processor::JsonLdEngine, term_lookup::TermCache, term_map::vocabulary::CoreVocabulary},
     error::JsonLdError,
     hit_counter::HitCounter,
-    loader::http::HttpContextLoader,
+    loader::{cache_lifetime::CacheLifetime, http::HttpContextLoader},
 };
 use iri_rs::{Iri, IriBuf, iri};
 use jsonld_syntax::Parse;
@@ -50,7 +50,8 @@ pub struct JsonLdEngineBuilder {
     max_redirects: u32,
     /// Entry bound shared by the context cache and the term cache.
     cache_capacity: u64,
-    /// Entry lifetime shared by the context cache and the term cache.
+    /// The term cache's entry lifetime, and the heuristic lifetime a context
+    /// falls back to when its response states no expiration time.
     cache_ttl_seconds: u64,
     /// The size beyond which a remote context is refused.
     max_context_bytes: u64,
@@ -118,7 +119,12 @@ impl JsonLdEngineBuilder {
         self
     }
 
-    /// The entry lifetime of the in-process caches, in seconds.
+    /// The term cache's entry lifetime, in seconds, and the heuristic lifetime
+    /// assigned to a downloaded `@context` whose response states none.
+    ///
+    /// Clause 6.3.16 makes a response's own `Expires` field and `max-age` or
+    /// `s-maxage` directives authoritative over how long the `@context` it
+    /// carries may be reused, so this is a fallback rather than a cap.
     #[must_use]
     pub const fn cache_ttl_seconds(mut self, ttl: u64) -> JsonLdEngineBuilder {
         self.cache_ttl_seconds = ttl;
@@ -174,13 +180,18 @@ impl JsonLdEngineBuilder {
         // than failing the build: no response that large could be held in
         // memory, so `usize::MAX` refuses exactly the same set of documents.
         let max_context_bytes = usize::try_from(self.max_context_bytes).unwrap_or(usize::MAX);
+        // Clause 6.3.16: the configured TTL is the heuristic expiration time
+        // assigned when a response states none, not the lifetime of every
+        // entry. `JsonLdConfig::validate` refuses a zero setting; a builder
+        // driven without a configuration falls back to the same default.
+        let default_lifetime = CacheLifetime::from_seconds(self.cache_ttl_seconds).unwrap_or(CacheLifetime::DEFAULT);
         let mut loader = HttpContextLoader::new(
             Arc::clone(&self.registry), // clone: Arc ref-count bump
             self.allow_remote,
             self.timeout_seconds,
             self.max_redirects,
             self.cache_capacity,
-            self.cache_ttl_seconds,
+            default_lifetime,
             max_context_bytes,
         )?;
 

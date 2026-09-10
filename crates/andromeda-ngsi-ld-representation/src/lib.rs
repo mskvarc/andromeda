@@ -20,6 +20,16 @@
 //! gatekeeper: a node that declares a `type` outside clause 5.2.4 is rejected
 //! before normalization could mistake it for a value.
 //!
+//! The three member rules beside them say which members an attribute of a given
+//! family may carry at all. [`family_member_admission`] holds the fourteen
+//! "Prohibited" lists of clauses 4.5.2 through 4.5.24 as the one rule they
+//! are, [`proof_seal_admission`] the `ngsildproof` exception of clause 4.5.2.2,
+//! and [`output_only_member`] the `previous…` member clauses 5.2.5 through
+//! 5.2.38 say a Context Producer may not supply. They are stated here rather
+//! than beside a store or a service because each is a statement about a
+//! representation and nothing else, and because every layer that admits a
+//! written attribute has to agree on them.
+//!
 //! How a client *asks* for one is not here. Media-type negotiation, version
 //! conformance and language ranges arrive as HTTP headers and are spelled by
 //! the header grammars that carry them, so they live in
@@ -31,10 +41,13 @@
 
 pub mod attribute_type_validation;
 pub mod entity_members;
+pub mod family_member_admission;
 pub mod join_mode;
 pub mod linked_resolution_failure;
 pub mod merge_representation;
 pub mod normalization;
+pub mod output_only_member;
+pub mod proof_seal_admission;
 pub mod response_format;
 pub mod sys_attrs;
 
@@ -42,6 +55,7 @@ pub mod sys_attrs;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-ngsi-ld-lexicon",
+        "andromeda-ngsi-ld-vocabulary",
     ],
     allow_workspace_dev_dependencies: [
     ],

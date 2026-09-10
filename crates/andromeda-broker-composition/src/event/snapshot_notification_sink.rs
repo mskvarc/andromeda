@@ -3,6 +3,7 @@
 use andromeda_delivery::{
     dispatch::{DeliveryResult, TransportDispatcher},
     endpoint::transport::EndpointTransport,
+    notification_context_placement::notification_context_placement,
     request::DeliveryRequest,
 };
 use andromeda_http_headers::media_type::ResponseMediaType;
@@ -124,6 +125,9 @@ impl DeliverySnapshotNotificationSink {
             payload: Arc::new(payload),
             endpoint_uri: delivery.endpoint.clone(),
             content_type: ResponseMediaType::JsonLd,
+            // The `@context` was just inserted above; clause 6.3.8 is asked
+            // where it belongs rather than the answer being restated here.
+            context_placement: notification_context_placement(ResponseMediaType::JsonLd, delivery.receiver_info.as_deref()),
             context_url: None,
             tenant: None,
             snapshot: None,
