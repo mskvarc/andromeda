@@ -10,45 +10,109 @@
 //! The rule is not specific to the non-temporal entity representation: a
 //! compacted temporal representation (`andromeda-temporal`) carries the same
 //! `id` / `type` members and is pruned by the same rule, once compaction has
-//! turned its expanded `@id` / `@type` into them. The function is public so
-//! that crate can reuse it rather than reimplementing the rule.
+//! turned its expanded `@id` / `@type` into them. The type is public so that
+//! crate can reuse it rather than reimplementing the rule.
 
 use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
 use serde_json::Value;
 
-/// Keep or drop the `id`, `type` and `scope` keys of a rendered entity value
-/// according to the clause 4.21 structural-member rule.
+/// The JSON-LD keyword carrying the active context.
 ///
-/// A non-object value (should not occur for an entity rendering) is left
-/// untouched rather than treated as an error, since pruning has nothing to
-/// remove from it.
-pub fn prune_structural_members(value: &mut Value, projection: &Projection) {
-    let Some(map) = value.as_object_mut() else {
-        return;
-    };
+/// A JSON-LD keyword rather than an NGSI-LD member, so no vocabulary constant
+/// names it and none should.
+const CONTEXT_KEYWORD: &str = "@context";
 
-    if !projection.pick.is_empty() {
-        if !projection.pick.contains(&ProjectionTerm::Id) {
-            map.remove("id");
-        }
-        if !projection.pick.contains(&ProjectionTerm::Type) {
-            map.remove("type");
-        }
-        if !projection.pick.contains(&ProjectionTerm::Scope) {
-            map.remove("scope");
+/// The clause 4.21 `pick` / `omit` terms that decide a rendered value's
+/// structural members.
+///
+/// Borrowed term lists rather than a [`Projection`] because the rule applies at
+/// two depths: to a response's own entities, where the lists are the request's
+/// own, and to a Linked Entity, where they are the nested `{...}` sub-terms of
+/// the Relationship that reached it (clause 4.21, clause 5.7.1.5 "applies to
+/// all Entities in the payload in the case of Linked Entity retrieval"). A
+/// nested level holds slices of the request's projection tree and owns no
+/// `Projection` of its own.
+#[derive(Clone, Copy, Debug)]
+pub struct StructuralProjection<'a> {
+    /// The `pick` terms in force at this depth.
+    pick: &'a [ProjectionTerm],
+    /// The `omit` terms in force at this depth.
+    omit: &'a [ProjectionTerm],
+}
+
+impl<'a> StructuralProjection<'a> {
+    /// The rule stated by one pair of term lists.
+    #[must_use]
+    pub const fn new(pick: &'a [ProjectionTerm], omit: &'a [ProjectionTerm]) -> StructuralProjection<'a> {
+        StructuralProjection { pick, omit }
+    }
+
+    /// Keep or drop the `id`, `type` and `scope` keys of a rendered entity
+    /// value according to the clause 4.21 structural-member rule.
+    ///
+    /// A non-object value (should not occur for an entity rendering) is left
+    /// untouched rather than treated as an error, since pruning has nothing to
+    /// remove from it.
+    pub fn prune(self, value: &mut Value) {
+        let Some(map) = value.as_object_mut() else {
+            return;
+        };
+        for (keyword, key) in [
+            (ProjectionTerm::Id, ProjectionTerm::ID_KEYWORD),
+            (ProjectionTerm::Type, ProjectionTerm::TYPE_KEYWORD),
+            (ProjectionTerm::Scope, ProjectionTerm::SCOPE_KEYWORD),
+        ] {
+            if !self.keeps(&keyword) {
+                map.remove(key);
+            }
         }
     }
 
-    if !projection.omit.is_empty() {
-        if projection.omit.contains(&ProjectionTerm::Id) {
-            map.remove("id");
+    /// Whether a structural member survives: a non-empty `pick` keeps it only
+    /// when it is listed, and an `omit` drops it when it is.
+    #[must_use]
+    pub fn keeps(self, keyword: &ProjectionTerm) -> bool {
+        if !self.pick.is_empty() && !self.pick.contains(keyword) {
+            return false;
         }
-        if projection.omit.contains(&ProjectionTerm::Type) {
-            map.remove("type");
-        }
-        if projection.omit.contains(&ProjectionTerm::Scope) {
-            map.remove("scope");
-        }
+        !self.omit.contains(keyword)
+    }
+}
+
+// A request's own projection states the rule for the entities it selected.
+impl<'a> From<&'a Projection> for StructuralProjection<'a> {
+    fn from(projection: &'a Projection) -> StructuralProjection<'a> {
+        StructuralProjection::new(&projection.pick, &projection.omit)
+    }
+}
+
+/// Whether a rendered entity value still carries an Entity member.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RenderedEntityMembers {
+    /// At least one Entity member is written, so there is an entity to answer
+    /// with.
+    Present,
+    /// Nothing but JSON-LD transport is left.
+    None,
+}
+
+/// What a clause 4.21 projection left of a rendered entity value.
+///
+/// Clause 5.7.1.5 reduces an Entity "down to only contain the defined Entity
+/// members"; when the projection defines none of the members the Entity has,
+/// what is left is no Entity at all, and clause 5.7.1.4 answers a retrieval of
+/// it with `ResourceNotFound`. `@context` is a JSON-LD transport concern rather
+/// than an Entity member (clause 5.2.4), so it does not keep an entity alive.
+///
+/// A value that is no object carries no member either, which is the same
+/// answer.
+#[must_use]
+pub fn rendered_entity_members(value: &Value) -> RenderedEntityMembers {
+    let carries_member = value.as_object().is_some_and(|map| map.keys().any(|key| key != CONTEXT_KEYWORD));
+    if carries_member {
+        RenderedEntityMembers::Present
+    } else {
+        RenderedEntityMembers::None
     }
 }
 
@@ -72,7 +136,7 @@ mod tests {
             omit: Vec::new(),
         };
 
-        prune_structural_members(&mut value, &projection);
+        StructuralProjection::from(&projection).prune(&mut value);
 
         assert_eq!(value["id"], "urn:x");
         assert!(value.get("type").is_none());
@@ -88,7 +152,7 @@ mod tests {
             omit: vec![ProjectionTerm::Scope],
         };
 
-        prune_structural_members(&mut value, &projection);
+        StructuralProjection::from(&projection).prune(&mut value);
 
         assert_eq!(value["id"], "urn:x");
         assert_eq!(value["type"], "T");
@@ -104,7 +168,7 @@ mod tests {
             omit: vec![ProjectionTerm::Type],
         };
 
-        prune_structural_members(&mut value, &projection);
+        StructuralProjection::from(&projection).prune(&mut value);
 
         assert_eq!(value["id"], "urn:x");
         assert!(value.get("type").is_none());
@@ -123,7 +187,7 @@ mod tests {
             omit: Vec::new(),
         };
 
-        prune_structural_members(&mut value, &projection);
+        StructuralProjection::from(&projection).prune(&mut value);
 
         assert!(value.get("id").is_none());
         assert!(value.get("type").is_none());
@@ -136,11 +200,33 @@ mod tests {
     fn an_empty_projection_leaves_structural_members_untouched() {
         let mut value = json!({"id": "urn:x", "type": "T", "scope": "/Madrid"});
 
-        prune_structural_members(&mut value, &Projection::default());
+        StructuralProjection::from(&Projection::default()).prune(&mut value);
 
         assert_eq!(value["id"], "urn:x");
         assert_eq!(value["type"], "T");
         assert_eq!(value["scope"], "/Madrid");
+    }
+
+    /// Clause 5.7.1.5: a value reduced to JSON-LD transport alone is no Entity.
+    #[test]
+    fn a_value_left_with_only_a_context_carries_no_entity_member() {
+        assert_eq!(
+            rendered_entity_members(&json!({"@context": "https://example.com/c.jsonld"})),
+            RenderedEntityMembers::None
+        );
+        assert_eq!(rendered_entity_members(&json!({})), RenderedEntityMembers::None);
+        assert_eq!(rendered_entity_members(&Value::Null), RenderedEntityMembers::None);
+    }
+
+    /// One surviving member, structural or attribute, is an Entity to answer
+    /// with.
+    #[test]
+    fn a_value_left_with_one_member_carries_an_entity_member() {
+        assert_eq!(rendered_entity_members(&json!({"id": "urn:x"})), RenderedEntityMembers::Present);
+        assert_eq!(
+            rendered_entity_members(&json!({"@context": "https://example.com/c.jsonld", "speed": {"type": "Property", "value": 1}})),
+            RenderedEntityMembers::Present
+        );
     }
 
     /// `@context` is a JSON-LD transport concern, never a structural member,
@@ -153,7 +239,7 @@ mod tests {
             omit: Vec::new(),
         };
 
-        prune_structural_members(&mut value, &projection);
+        StructuralProjection::from(&projection).prune(&mut value);
 
         assert_eq!(value["@context"], "https://example.com/context.jsonld");
     }

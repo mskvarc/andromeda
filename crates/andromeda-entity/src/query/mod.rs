@@ -20,8 +20,12 @@ pub mod linked_entity;
 /// Deriving the nested projection that applies to each linked entity
 /// (clause 4.21).
 pub(crate) mod linked_projection;
+/// Which Linked Entities a payload's Relationships still name (clause 4.5.23).
+pub mod linked_reachability;
 /// Compiling raw `pick`/`omit` terms into the clause 4.21 projection.
 pub mod projection_compilation;
+/// What a clause 4.21 projection leaves of an entity.
+pub mod projection_remainder;
 /// Refusing a query the store cannot narrow at all.
 pub mod pushdown_refusal;
 /// Resolving a Linked Entity the local store does not hold (clause 4.5.23.1).

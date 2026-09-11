@@ -1,7 +1,10 @@
 //! Filtering an entity's attributes down to what the client asked for
 //! (clause 4.21 `pick` and `omit`, clause 5.7.2 `attrs`).
 
-use crate::{error::EntityError, query::EntityQueryService};
+use crate::{
+    error::EntityError,
+    query::{EntityQueryService, projection_remainder::projection_remainder},
+};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::{
@@ -24,13 +27,13 @@ impl EntityQueryService {
             }
 
             self.project_entity(&mut entity, &query.projection, context).await?;
-            // A `pick` reduces an entity to only its listed members (clause
-            // 6.5.7). When it names only attributes the entity lacks and no
-            // structural keyword, nothing survives; consistent with the `attrs`
-            // rule that an entity having none of the requested attributes is not
-            // returned (a 404 on single retrieval), such an entity is dropped
-            // from a query result rather than emitted as an empty object.
-            if !projects_to_empty(&entity, &query.projection) {
+            // Clause 5.7.2.5 reduces "every Entity within the payload body" to
+            // the members the projection defines. An Entity reduced to none of
+            // them is not in the payload, so it is dropped from the result
+            // rather than emitted as an empty object -- the query's answer to
+            // the question clause 5.7.1.4 answers with `ResourceNotFound` on a
+            // single retrieval.
+            if projection_remainder(&entity, &query.projection).is_members() {
                 projected.push(entity);
             }
         }
@@ -55,22 +58,24 @@ impl EntityQueryService {
     /// through the context.
     pub async fn project_entity(&self, entity: &mut Entity, projection: &Projection, context: &ContextSpec) -> Result<(), EntityError> {
         if !projection.pick.is_empty() {
-            let mut keys_to_remove = Vec::new();
-            for key in entity.attrs.keys() {
-                let iri = self.expanded_key(key.as_str(), context).await?;
-                if !projection.pick.iter().any(|term| term.matches_attribute(key.as_str(), &iri)) {
-                    keys_to_remove.push(key.clone()); // clone: owned key to avoid borrowing entity.attrs during removal
+            let names = member_names(entity);
+            let mut names_to_remove = Vec::new();
+            for name in &names {
+                let iri = self.expanded_key(name, context).await?;
+                if !projection.pick.iter().any(|term| term.matches_attribute(name, &iri)) {
+                    names_to_remove.push(name);
                 }
             }
-            for key in keys_to_remove {
-                entity.attrs.shift_remove(&key);
+            for name in names_to_remove {
+                entity.remove_attribute_member(name);
             }
         }
 
         if !projection.omit.is_empty() {
-            let mut keys_to_remove = Vec::new();
-            for key in entity.attrs.keys() {
-                let iri = self.expanded_key(key.as_str(), context).await?;
+            let names = member_names(entity);
+            let mut names_to_remove = Vec::new();
+            for name in &names {
+                let iri = self.expanded_key(name, context).await?;
                 // Clause 4.21: `omit=rel{a}` omits `a` inside the entity `rel`
                 // links to, not `rel` itself. Only a bare `omit` term -- one
                 // carrying no linked sub-projection -- removes the attribute
@@ -78,14 +83,14 @@ impl EntityQueryService {
                 let removed = projection
                     .omit
                     .iter()
-                    .filter(|term| term.matches_attribute(key.as_str(), &iri))
+                    .filter(|term| term.matches_attribute(name, &iri))
                     .any(|term| term.linked_terms().is_empty());
                 if removed {
-                    keys_to_remove.push(key.clone()); // clone: owned key to avoid borrowing entity.attrs during removal
+                    names_to_remove.push(name);
                 }
             }
-            for key in keys_to_remove {
-                entity.attrs.shift_remove(&key);
+            for name in names_to_remove {
+                entity.remove_attribute_member(name);
             }
         }
 
@@ -104,33 +109,30 @@ impl EntityQueryService {
     /// Returns [`EntityError`] when an attribute key cannot be expanded
     /// through the context.
     pub async fn filter_entity_attrs(&self, entity: &mut Entity, wanted_iris: &[IriBuf], context: &ContextSpec) -> Result<(), EntityError> {
-        let mut keys_to_remove = Vec::new();
-        for key in entity.attrs.keys() {
-            let iri = self.expanded_key(key.as_str(), context).await?;
+        let names = member_names(entity);
+        let mut names_to_remove = Vec::new();
+        for name in &names {
+            let iri = self.expanded_key(name, context).await?;
             if !wanted_iris.contains(&iri) {
-                keys_to_remove.push(key.clone()); // clone: owned key to avoid borrowing entity.attrs during removal
+                names_to_remove.push(name);
             }
         }
-        for key in keys_to_remove {
-            entity.attrs.shift_remove(&key);
+        for name in names_to_remove {
+            entity.remove_attribute_member(name);
         }
         Ok(())
     }
 }
 
-/// Whether a `pick` projection has emptied an entity so completely that it
-/// renders as `{}` and must be dropped from a query result set.
+/// The entity's Attribute member names, owned, so the entity can be edited
+/// while the walk over them is still in progress.
 ///
-/// Only `pick` can strip an entity's structural members (clause 4.21), so
-/// only `pick` can empty it: when it names none of `id`, `type` or `scope` and
-/// the entity has no surviving attribute, nothing would render. An `omit` or
-/// `attrs` selection always leaves `id` and `type`, so it never empties.
-fn projects_to_empty(entity: &Entity, projection: &Projection) -> bool {
-    !projection.pick.is_empty()
-        && entity.attrs.is_empty()
-        && !projection.pick.contains(&ProjectionTerm::Id)
-        && !projection.pick.contains(&ProjectionTerm::Type)
-        && !projection.pick.contains(&ProjectionTerm::Scope)
+/// Clause 5.2.4 keeps `location`, `observationSpace` and `operationSpace` in
+/// their own Entity members, and [`Entity::attribute_member_names`] is what
+/// puts them back alongside the rest: a narrowing that read `attrs` alone
+/// would leave all three standing whatever the request selected.
+fn member_names(entity: &Entity) -> Vec<String> {
+    entity.attribute_member_names().map(ToOwned::to_owned).collect()
 }
 
 /// Apply the clause 4.21 structural-member rule to `scope`: with a
@@ -225,70 +227,5 @@ mod tests {
 
     fn iri(value: &str) -> IriBuf {
         IriBuf::new(value.to_string()).expect("valid IRI")
-    }
-
-    fn entity_with_name() -> Entity {
-        serde_json::from_value(json!({
-            "id": "urn:ngsi-ld:Building:1",
-            "type": "Building",
-            "name": {"type": "Property", "value": "Eiffel Tower"}
-        }))
-        .expect("entity")
-    }
-
-    /// Clause 5.7.2: a `pick` naming only an attribute the entity does not
-    /// carry, and no structural keyword, empties the rendered entity, so it
-    /// drops out of the result set.
-    #[test]
-    fn a_pick_matching_no_attribute_or_structural_member_empties_the_entity() {
-        let entity = entity_with_scope();
-        let projection = Projection {
-            pick: vec![ProjectionTerm::Attribute {
-                iri: iri("https://example.com/name"),
-                linked: Vec::new(),
-            }],
-            omit: Vec::new(),
-        };
-
-        assert!(projects_to_empty(&entity, &projection));
-    }
-
-    /// A `pick` naming a structural keyword keeps the entity: `id` still renders.
-    #[test]
-    fn a_pick_naming_a_structural_member_keeps_the_entity() {
-        let entity = entity_with_scope();
-        let projection = Projection {
-            pick: vec![ProjectionTerm::Id],
-            omit: Vec::new(),
-        };
-
-        assert!(!projects_to_empty(&entity, &projection));
-    }
-
-    /// A surviving attribute keeps the entity in the result set.
-    #[test]
-    fn a_pick_leaving_a_surviving_attribute_keeps_the_entity() {
-        let entity = entity_with_name();
-        let projection = Projection {
-            pick: vec![ProjectionTerm::Attribute {
-                iri: iri("https://example.com/name"),
-                linked: Vec::new(),
-            }],
-            omit: Vec::new(),
-        };
-
-        assert!(!projects_to_empty(&entity, &projection));
-    }
-
-    /// `omit` always leaves `id` and `type`, so it never empties an entity.
-    #[test]
-    fn an_omit_never_empties_the_entity() {
-        let entity = entity_with_scope();
-        let projection = Projection {
-            pick: Vec::new(),
-            omit: vec![ProjectionTerm::Scope],
-        };
-
-        assert!(!projects_to_empty(&entity, &projection));
     }
 }

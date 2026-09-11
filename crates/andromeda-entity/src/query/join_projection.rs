@@ -17,16 +17,34 @@ use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection};
 use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
 use indexmap::IndexMap;
+use std::collections::HashMap;
+
+/// What the join mode's clause 4.21 preparation left for the renderer.
+#[derive(Debug)]
+pub enum PreparedJoinProjection {
+    /// The request named no nested sub-projection, so no linked entity is
+    /// narrowed at all.
+    Unrestricted,
+    /// `join=flat` narrowed each linked entity in place. The projections it
+    /// applied are carried so the renderer can settle `id`, `type` and `scope`,
+    /// which are members of the rendered representation rather than of the
+    /// typed entity.
+    Flat(HashMap<Uri, Projection>),
+    /// `join=inline` left the linked entities whole; the renderer narrows each
+    /// nested copy under the Relationship that named it, matching terms against
+    /// attribute keys with this index.
+    Inline(AttributeIriIndex),
+}
 
 impl EntityQueryService {
     /// Apply the clause 4.21 nested projections to a resolved join.
     ///
     /// For [`RetrievingJoin::Flat`] the linked entities are narrowed in place
-    /// by the union rule and the caller has nothing further to do, which is
-    /// what the `None` return says. For [`RetrievingJoin::Inline`] the
-    /// entities are left whole and the returned index is handed to the
-    /// renderer, which applies the sub-projections one Relationship instance
-    /// at a time.
+    /// by the union rule, and the projections applied travel back so the
+    /// renderer can settle their structural members. For
+    /// [`RetrievingJoin::Inline`] the entities are left whole and the returned
+    /// index is handed to the renderer, which applies the sub-projections one
+    /// Relationship instance at a time.
     ///
     /// The parameter is a [`RetrievingJoin`] rather than a `JoinMode` because
     /// `join=@none` and an absent `join` retrieve no linked entity at all:
@@ -45,23 +63,23 @@ impl EntityQueryService {
         projection: &Projection,
         context: &ContextSpec,
         join: RetrievingJoin,
-    ) -> Result<Option<AttributeIriIndex>, EntityError> {
+    ) -> Result<PreparedJoinProjection, EntityError> {
         // Only a term carrying a `{...}` sub-projection says anything about a
         // linked entity (clause 4.21). A `pick`/`omit` of plain attribute
         // names narrows the roots and nothing else, so neither the union pass
         // nor the expansion index is worth building.
         let nests = projection.pick.iter().chain(projection.omit.iter()).any(|term| !term.linked_terms().is_empty());
         if !nests {
-            return Ok(None);
+            return Ok(PreparedJoinProjection::Unrestricted);
         }
         match join {
             RetrievingJoin::Flat => {
-                self.apply_flat_linked_projections(roots, linked, projection, context).await?;
-                Ok(None)
+                let applied = self.apply_flat_linked_projections(roots, linked, projection, context).await?;
+                Ok(PreparedJoinProjection::Flat(applied))
             }
             RetrievingJoin::Inline => {
                 let index = self.attribute_iri_index(roots.iter().chain(linked.values()), context).await?;
-                Ok(Some(index))
+                Ok(PreparedJoinProjection::Inline(index))
             }
         }
     }

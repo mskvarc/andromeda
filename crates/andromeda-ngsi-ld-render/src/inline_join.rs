@@ -300,8 +300,9 @@ mod tests {
         )
         .expect("inline join");
 
-        // Reached through the sub-projection: narrowed, identity intact.
-        pretty_assertions::assert_eq!(entity["relA"]["entity"]["id"], "urn:t");
+        // Reached through the sub-projection: reduced to the one member the
+        // nested terms defined (clause 5.7.1.5).
+        assert!(entity["relA"]["entity"].get("id").is_none());
         assert!(entity["relA"]["entity"].get("category").is_some());
         assert!(entity["relA"]["entity"].get("name").is_none());
         // Reached without one: rendered in full.
@@ -352,7 +353,7 @@ mod tests {
         assert!(level_one.get("inner").is_some());
         assert!(level_one.get("name").is_none());
         let level_two = &level_one["inner"]["entity"];
-        pretty_assertions::assert_eq!(level_two["id"], "urn:c");
+        assert!(level_two.get("id").is_none());
         assert!(level_two.get("zone").is_some());
         assert!(level_two.get("name").is_none());
     }

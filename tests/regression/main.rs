@@ -40,6 +40,7 @@ mod ordering_attribute_paths;
 mod ordering_collation;
 mod prefer_version_representation;
 mod prior_findings;
+mod projection_linked_entities;
 mod projection_selector_exclusivity;
 mod proof_seal_representation;
 mod query_language_evaluator;

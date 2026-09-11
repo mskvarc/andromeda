@@ -13,12 +13,11 @@ use crate::{
     language_negotiation::render_attribute_value,
     nested_projection::LinkedProjection,
     simplify::{simplify_entity, simplify_value},
-    structural_projection::prune_structural_members,
+    structural_projection::StructuralProjection,
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{rfc3339::whole_seconds, uri::Uri};
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_query::projection::compiled::Projection;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use indexmap::IndexMap;
 use serde::Serialize;
@@ -43,7 +42,7 @@ pub struct EntityRenderer<'a> {
     mode: ResponseFormat,
     /// The clause 4.21 `pick`/`omit` structural-member rule to apply to
     /// the rendered value's `id`, `type` and `scope` keys, if any.
-    structural_projection: Option<&'a Projection>,
+    structural_projection: Option<StructuralProjection<'a>>,
     /// The clause 4.21 nested sub-projections `join=inline` applies to the
     /// linked entities it nests, if any.
     linked_projection: Option<LinkedProjection<'a>>,
@@ -93,7 +92,7 @@ impl<'a> EntityRenderer<'a> {
     /// Takes an `Option` so a caller that may or may not have compiled a
     /// projection has one spelling to reach for; `None` prunes nothing.
     #[must_use]
-    pub const fn with_optional_structural_projection(mut self, projection: Option<&'a Projection>) -> Self {
+    pub const fn with_optional_structural_projection(mut self, projection: Option<StructuralProjection<'a>>) -> Self {
         self.structural_projection = projection;
         self
     }
@@ -119,11 +118,14 @@ impl<'a> EntityRenderer<'a> {
 /// this, so the flat shape is assembled in one place rather than hand-rolled at
 /// each endpoint. A response with no join passes an empty `linked`.
 ///
-/// The two groups are taken separately because the clause 4.21
-/// structural-member rule applies only to the roots: `root_projection` names
-/// what the *request* selected, whereas a linked entity is narrowed — if at
-/// all — by the clause 4.21 sub-projection of the Relationship that reached
-/// it, which the traversal has already applied by the time it gets here.
+/// The two groups are taken separately because they are narrowed by different
+/// terms, not by different rules: `root_projection` is what the *request*
+/// selected, whereas each linked entity carries the clause 4.21 sub-projection
+/// of the Relationship that reached it. Clause 5.7.1.5 applies the restriction
+/// "to all Entities in the payload in the case of Linked Entity retrieval", so
+/// the structural half of the rule runs on both — the attribute half of a
+/// linked entity's own is already applied to the typed entity by the time it
+/// gets here.
 ///
 /// # Errors
 ///
@@ -131,10 +133,10 @@ impl<'a> EntityRenderer<'a> {
 /// turned into a JSON value.
 pub fn render_flat_join<'a>(
     roots: impl IntoIterator<Item = &'a Entity>,
-    linked: impl IntoIterator<Item = &'a Entity>,
+    linked: impl IntoIterator<Item = (&'a Entity, Option<StructuralProjection<'a>>)>,
     language_filter: Option<&'a LanguageFilter>,
     mode: ResponseFormat,
-    root_projection: Option<&'a Projection>,
+    root_projection: Option<StructuralProjection<'a>>,
 ) -> Result<Vec<Value>, RenderError> {
     let rendered_roots = roots.into_iter().map(|entity| {
         EntityRenderer::new(entity)
@@ -143,10 +145,11 @@ pub fn render_flat_join<'a>(
             .with_optional_structural_projection(root_projection)
             .render()
     });
-    let rendered_linked = linked.into_iter().map(|entity| {
+    let rendered_linked = linked.into_iter().map(|(entity, projection)| {
         EntityRenderer::new(entity)
             .with_optional_language_filter(language_filter)
             .with_mode(mode)
+            .with_optional_structural_projection(projection)
             .render()
     });
     rendered_roots.chain(rendered_linked).collect()
@@ -234,7 +237,7 @@ impl EntityRenderer<'_> {
 
         // Step 4: clause 4.21 structural-member pruning
         if let Some(projection) = self.structural_projection {
-            prune_structural_members(&mut value, projection);
+            projection.prune(&mut value);
         }
 
         Ok(value)
@@ -258,6 +261,7 @@ mod tests {
     use crate::{
         entity::{EntityRenderer, render_flat_join},
         simplify::simplify_entity,
+        structural_projection::StructuralProjection,
     };
     use andromeda_http_headers::language::LanguageFilter;
     use andromeda_ngsi_ld_model::entity::Entity;
@@ -283,32 +287,75 @@ mod tests {
         let root = parse_entity(json!({"id": "urn:ngsi-ld:A:1", "type": "A"}));
         let mut linked = IndexMap::new();
         linked.insert("urn:ngsi-ld:B:1".to_string(), parse_entity(json!({"id": "urn:ngsi-ld:B:1", "type": "B"})));
-        let rendered = render_flat_join(once(&root), linked.values(), None, ResponseFormat::Normalized, None).expect("renders");
+        let rendered = render_flat_join(
+            once(&root),
+            linked.values().map(|entity| (entity, None)),
+            None,
+            ResponseFormat::Normalized,
+            None,
+        )
+        .expect("renders");
         pretty_assertions::assert_eq!(rendered.len(), 2);
         pretty_assertions::assert_eq!(rendered[0]["id"], "urn:ngsi-ld:A:1");
         pretty_assertions::assert_eq!(rendered[1]["id"], "urn:ngsi-ld:B:1");
     }
 
-    /// Clause 4.21 narrows what the *request* selected, so the structural
-    /// rule reaches the matching entities only. A linked entity carries
-    /// whatever the clause 4.21 sub-projection of its Relationship left it
-    /// with, and keeps its `id` so the flat collection stays navigable.
+    /// Clause 5.7.1.5 applies a restrictive list "to all Entities in the
+    /// payload in the case of Linked Entity retrieval", so a linked entity
+    /// reached by a nested sub-projection is narrowed by that sub-projection's
+    /// own terms -- `id` and `type` included -- and not by the request's.
     #[test]
-    fn render_flat_join_applies_the_structural_rule_to_the_roots_only() {
+    fn render_flat_join_narrows_each_entity_by_the_rule_that_governs_it() {
         let root = parse_entity(json!({"id": "urn:ngsi-ld:A:2", "type": "A"}));
         let linked = parse_entity(json!({"id": "urn:ngsi-ld:B:2", "type": "B"}));
-        let projection = Projection {
+        let requested = Projection {
             pick: vec![ProjectionTerm::Attribute {
                 iri: iri("https://example.com/speed"),
                 linked: Vec::new(),
             }],
             omit: Vec::new(),
         };
+        let nested = Projection {
+            pick: vec![ProjectionTerm::Id],
+            omit: Vec::new(),
+        };
 
-        let rendered = render_flat_join(once(&root), once(&linked), None, ResponseFormat::Normalized, Some(&projection)).expect("renders");
+        let rendered = render_flat_join(
+            once(&root),
+            once((&linked, Some(StructuralProjection::from(&nested)))),
+            None,
+            ResponseFormat::Normalized,
+            Some(StructuralProjection::from(&requested)),
+        )
+        .expect("renders");
 
         assert!(!rendered[0].as_object().expect("an entity object").contains_key("id"));
         pretty_assertions::assert_eq!(rendered[1]["id"], "urn:ngsi-ld:B:2");
+        assert!(!rendered[1].as_object().expect("an entity object").contains_key("type"));
+    }
+
+    /// A linked entity no nested sub-projection reached is narrowed by nothing
+    /// and renders whole, whatever the request selected of its own entities.
+    #[test]
+    fn render_flat_join_leaves_an_ungoverned_linked_entity_whole() {
+        let root = parse_entity(json!({"id": "urn:ngsi-ld:A:3", "type": "A"}));
+        let linked = parse_entity(json!({"id": "urn:ngsi-ld:B:3", "type": "B"}));
+        let requested = Projection {
+            pick: vec![ProjectionTerm::Id],
+            omit: Vec::new(),
+        };
+
+        let rendered = render_flat_join(
+            once(&root),
+            once((&linked, None)),
+            None,
+            ResponseFormat::Normalized,
+            Some(StructuralProjection::from(&requested)),
+        )
+        .expect("renders");
+
+        assert!(!rendered[0].as_object().expect("an entity object").contains_key("type"));
+        pretty_assertions::assert_eq!(rendered[1]["id"], "urn:ngsi-ld:B:3");
         pretty_assertions::assert_eq!(rendered[1]["type"], "B");
     }
 
@@ -527,7 +574,7 @@ mod tests {
         };
 
         let rendered = EntityRenderer::new(&entity)
-            .with_optional_structural_projection(Some(&projection))
+            .with_optional_structural_projection(Some(StructuralProjection::from(&projection)))
             .render()
             .expect("rendered entity");
         let object = rendered.as_object().expect("an entity object");
@@ -552,7 +599,7 @@ mod tests {
         };
 
         let rendered = EntityRenderer::new(&entity)
-            .with_optional_structural_projection(Some(&projection))
+            .with_optional_structural_projection(Some(StructuralProjection::from(&projection)))
             .render()
             .expect("rendered entity");
         let object = rendered.as_object().expect("an entity object");
@@ -572,7 +619,7 @@ mod tests {
         };
 
         let rendered = EntityRenderer::new(&entity)
-            .with_optional_structural_projection(Some(&projection))
+            .with_optional_structural_projection(Some(StructuralProjection::from(&projection)))
             .render()
             .expect("rendered entity");
         let object = rendered.as_object().expect("an entity object");
@@ -600,7 +647,7 @@ mod tests {
         };
 
         let rendered = EntityRenderer::new(&entity)
-            .with_optional_structural_projection(Some(&projection))
+            .with_optional_structural_projection(Some(StructuralProjection::from(&projection)))
             .render()
             .expect("rendered entity");
         let object = rendered.as_object().expect("an entity object");

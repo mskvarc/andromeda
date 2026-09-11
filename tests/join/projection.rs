@@ -12,6 +12,11 @@ use serde_json::json;
 
 /// Clause 4.21: `pick=rel{a}` narrows the entity `rel` links to down to `a`,
 /// while `rel` itself survives on the matching entity so the link remains.
+///
+/// Clause 5.7.2.5 reduces "every Entity within the payload body", the Linked
+/// Entities included, so the nested terms govern the linked entity's `id` and
+/// `type` as well: they survive because this `pick` names them, and the
+/// companion case below is where they do not.
 #[tokio::test]
 async fn join_pick_linked_term_reduces_linked_entities() {
     let scope = TestEnvironment::from_suite("join").await.expect("isolated test environment");
@@ -23,7 +28,7 @@ async fn join_pick_linked_term_reduces_linked_entities() {
 
     let body = query(
         client,
-        &format!("id={id_a}&type=Building&join=flat&joinLevel=1&pick=linkedTo%7Bcategory%7D,id,type"),
+        &format!("id={id_a}&type=Building&join=flat&joinLevel=1&pick=linkedTo%7Bcategory,id,type%7D,id,type"),
     )
     .await;
 
@@ -37,6 +42,29 @@ async fn join_pick_linked_term_reduces_linked_entities() {
     let linked = member_with_id(&body, &id_b);
     assert!(linked.get("category").is_some(), "the nested pick keeps `category`: {linked}");
     assert!(linked.get("name").is_none(), "the nested pick drops `name`: {linked}");
+    assert_eq!(linked["type"].as_str(), Some("Building"), "the nested pick names `type`: {linked}");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.7.2.5, the other half of the rule above: a nested `pick` that
+/// names no structural keyword leaves the Linked Entity with neither `id` nor
+/// `type`, exactly as it leaves a matching entity with neither.
+#[tokio::test]
+async fn join_pick_linked_term_without_a_keyword_drops_the_linked_identity() {
+    let scope = TestEnvironment::from_suite("join").await.expect("isolated test environment");
+    let client = scope.client();
+    let id_b = scope.id("Building:pickbare-B");
+    let id_a = scope.id("Building:pickbare-A");
+    create(client, &described_building(&id_b)).await;
+    create(client, &linked_building(&id_a, &id_b)).await;
+
+    let body = query(client, &format!("id={id_a}&type=Building&join=flat&joinLevel=1&pick=linkedTo%7Bcategory%7D,id")).await;
+
+    let members = body.as_array().expect("a flat join answers with a collection");
+    assert_eq!(members.len(), 2, "the root and the entity it links to: {body}");
+    let linked = members.iter().find(|member| member.get("id").is_none()).expect("the linked entity lost its id");
+    assert!(linked.get("category").is_some(), "the nested pick keeps `category`: {linked}");
+    assert!(linked.get("type").is_none(), "the nested pick names no `type` keyword: {linked}");
     scope.finish().await.expect("cleanup failed");
 }
 
@@ -194,12 +222,13 @@ async fn pick_linked_term_on_single_entity_get_narrows_nested_entity() {
     create(client, &described_building(&id_b)).await;
     create(client, &linked_building(&id_a, &id_b)).await;
 
-    let body = get_one(client, &id_a, "join=inline&joinLevel=1&pick=linkedTo%7Bcategory%7D,id").await;
+    let body = get_one(client, &id_a, "join=inline&joinLevel=1&pick=linkedTo%7Bcategory,id%7D,id").await;
 
     let nested = &body["linkedTo"]["entity"];
     assert_eq!(nested["id"].as_str(), Some(id_b.as_str()));
     assert!(nested.get("category").is_some(), "the nested pick keeps `category`: {nested}");
     assert!(nested.get("name").is_none(), "the nested pick drops `name`: {nested}");
+    assert!(nested.get("type").is_none(), "the nested pick names no `type` keyword: {nested}");
     scope.finish().await.expect("cleanup failed");
 }
 

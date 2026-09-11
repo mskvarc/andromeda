@@ -21,7 +21,7 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::options::CompactOption
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, temporal_format::TemporalFormat, uri::Uri};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_ngsi_ld_render::{
-    structural_projection::prune_structural_members,
+    structural_projection::StructuralProjection,
     temporal::{array_normalizer::TemporalArrayNormalizer, entity::TemporalEntityRenderer, history_row::TimeRange, values::TemporalValuesRenderer},
 };
 use indexmap::IndexSet;
@@ -141,7 +141,7 @@ impl TemporalService {
         // expanded representation, keyed by attribute IRI; `id` and `type`
         // only exist as such once compaction has turned `@id` / `@type` into
         // them, so their half of the structural rule runs here instead.
-        prune_structural_members(&mut compacted, &compiled.projection);
+        StructuralProjection::from(&compiled.projection).prune(&mut compacted);
         // Read the Linked Entities off the normalized form, before the clause
         // 4.5.8 projection below erases the `object` members they live in.
         let candidates = collect_candidates(slice::from_ref(&compacted), &IndexSet::new());

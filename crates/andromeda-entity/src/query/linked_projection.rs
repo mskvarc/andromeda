@@ -2,10 +2,16 @@
 //! deriving it from the `pick`/`omit` sub-projections its referencing
 //! Relationships carry (clause 4.21), and applying it to the entity.
 
-use crate::{error::EntityError, query::EntityQueryService};
+use crate::{
+    error::EntityError,
+    query::{
+        EntityQueryService,
+        linked_reachability::{relationship_targets, retain_reachable},
+    },
+};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::{attribute::instance::Attribute, entity::Entity};
+use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
 use indexmap::IndexMap;
 use iri_rs::IriBuf;
@@ -48,12 +54,22 @@ impl EntityQueryService {
     /// applies to it under the `join=flat` union rule (clause 4.21
     /// `LinkedEntityTerm`).
     ///
-    /// `pick=rel{a,b}` reduces the entities reached through `rel` to `a`, `b`,
-    /// `id` and `type`: the nested terms govern the linked entity's attribute
-    /// members only, and its identity members always survive so a joined
-    /// entity stays identifiable. A linked entity with no nested projection,
-    /// or one reached by any Relationship that carried none, is left
-    /// untouched.
+    /// `pick=rel{a,b}` reduces the entities reached through `rel` to exactly
+    /// what those nested terms name, structural members included: clause
+    /// 5.7.1.5 applies the restriction "to all Entities in the payload in the
+    /// case of Linked Entity retrieval", so `rel{a,b}` leaves neither `id` nor
+    /// `type` unless it names them. A linked entity with no nested projection,
+    /// or one reached by any Relationship that carried none, is left untouched.
+    ///
+    /// The projections applied are returned, keyed by identifier, because only
+    /// the attribute half of each can be applied to the typed entity: `id` and
+    /// `type` are members of the rendered representation, so the renderer
+    /// settles them from the same terms.
+    ///
+    /// Narrowing a linked entity can cut the graph: clause 5.7.1.5 appends to
+    /// the array what the *returned* Attributes name, so a Relationship this
+    /// pass removed no longer brings its target along, and
+    /// [`retain_reachable`] drops whatever is left stranded.
     ///
     /// This is the flat rule and only the flat rule. `join=flat` returns each
     /// linked entity exactly once, so one narrowing has to serve every
@@ -71,8 +87,9 @@ impl EntityQueryService {
         linked: &mut IndexMap<Uri, Entity>,
         projection: &Projection,
         context: &ContextSpec,
-    ) -> Result<(), EntityError> {
+    ) -> Result<HashMap<Uri, Projection>, EntityError> {
         let nested = self.linked_projections(roots, linked, projection, context).await?;
+        let mut applied = HashMap::with_capacity(nested.len());
         for (id, nested) in nested {
             // An absent entry and an explicit `None` both mean "render in
             // full"; only a `Some` narrows the entity.
@@ -81,9 +98,11 @@ impl EntityQueryService {
             };
             if let Some(entity) = linked.get_mut(&id) {
                 self.project_entity(entity, &nested, context).await?;
+                applied.insert(id, nested);
             }
         }
-        Ok(())
+        retain_reachable(roots, linked);
+        Ok(applied)
     }
 
     /// Union of the nested projections that apply to each linked entity,
@@ -270,21 +289,6 @@ fn merge_full(result: &mut HashMap<Uri, Accumulator>, id: &Uri) {
 /// root entities' own attributes.
 fn term_for_attribute<'p>(key: &str, expanded: &IriBuf, terms: &'p [ProjectionTerm]) -> Option<&'p ProjectionTerm> {
     terms.iter().find(|term| term.matches_attribute(key, expanded))
-}
-
-/// The identifiers a Relationship or `ListRelationship` instance points at, or
-/// `None` for every other attribute family.
-fn relationship_targets(attr: &Attribute) -> Option<Vec<Uri>> {
-    match attr {
-        Attribute::Relationship(relationship) => Some(relationship.object.iter().cloned().collect()), // clone: owned ids returned to the caller
-        Attribute::ListRelationship(list) => Some(list.object_list.iter().cloned().collect()),        // clone: owned ids returned to the caller
-        Attribute::Property(_)
-        | Attribute::GeoProperty(_)
-        | Attribute::JsonProperty(_)
-        | Attribute::LanguageProperty(_)
-        | Attribute::ListProperty(_)
-        | Attribute::VocabProperty(_) => None,
-    }
 }
 
 #[cfg(test)]
@@ -724,15 +728,17 @@ mod tests {
 
     /// The `join=flat` half of the shape contract the two join modes share.
     ///
-    /// Clause 4.21 reduces a linked entity to the named attributes plus `id`
-    /// and `type`; `scope` follows the clause 4.21 structural keyword rule
-    /// and is dropped by a nested `pick` that does not name it. Every other
-    /// entity member lives outside the attribute map -- the clause 4.8
-    /// timestamps and the clause 4.7 geo-properties -- and neither mode may
-    /// touch it, or the same linked entity would come back in two shapes.
+    /// Clause 5.7.1.5 reduces a linked entity to the members the nested terms
+    /// name -- Attributes by name, `id`, `type` and `scope` by the clause 4.21
+    /// keyword rule -- and the three clause 5.2.4 geo-properties are Attributes
+    /// that this model happens to key outside the attribute map. What neither
+    /// mode may touch is the clause 4.8 timestamps and the clause 4.22 expiry:
+    /// whether those appear is the `sysAttrs` option's decision, not the
+    /// projection's. Both modes must leave the same linked entity in the same
+    /// shape, or one request would answer two ways.
     ///
     /// The inline counterpart is `andromeda-ngsi-ld-render`'s
-    /// `a_nested_pick_preserves_every_entity_member_outside_the_attribute_map`
+    /// `a_nested_pick_keeps_only_the_members_the_nested_terms_defined`
     /// and `a_nested_pick_drops_scope_unless_the_scope_keyword_is_nested_too`.
     /// The two must agree member for member.
     #[tokio::test]
@@ -779,9 +785,12 @@ mod tests {
         assert!(target.modified_at.is_some());
         assert!(target.deleted_at.is_some());
         assert!(target.expires_at.is_some());
-        assert!(target.location.is_some());
-        assert!(target.observation_space.is_some());
-        assert!(target.operation_space.is_some());
+        // Clause 5.2.4 keeps these three in Entity members of their own, but
+        // they are Attributes: a nested `pick` that does not name one drops it
+        // like any other.
+        assert!(target.location.is_none());
+        assert!(target.observation_space.is_none());
+        assert!(target.operation_space.is_none());
         assert!(target.attrs.contains_key("temperature"));
         assert!(!target.attrs.contains_key("humidity"));
     }

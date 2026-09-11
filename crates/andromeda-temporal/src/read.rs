@@ -23,7 +23,10 @@ use andromeda_ngsi_ld_query::{
     pagination::{CountPolicy, Pagination},
     temporal::compiled::CompiledTemporalQuery,
 };
-use andromeda_ngsi_ld_render::temporal::aggregation::TemporalAggregationRenderer;
+use andromeda_ngsi_ld_render::{
+    structural_projection::{RenderedEntityMembers, rendered_entity_members},
+    temporal::aggregation::TemporalAggregationRenderer,
+};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 use chrono::{DateTime, Utc};
@@ -83,6 +86,18 @@ impl TemporalService {
             )));
         }
 
+        // Clause 5.7.3.5 reduces the Temporal Evolution "down to only contain
+        // the defined Entity members", and Tables 6.4.3.2-1 and 5.2.14.1-1 make
+        // `attrs` "a synonym for pick": a projection that leaves no member at
+        // all is the same `ResourceNotFound` the `attrs` rule above raises,
+        // which clause 5.7.1.4 states in full for the non-temporal twin.
+        let projected = !compiled.projection.pick.is_empty() || !compiled.projection.omit.is_empty();
+        if projected && rendered_entity_members(&rendered.value) == RenderedEntityMembers::None {
+            return Err(TemporalError::not_found(format!(
+                "No temporal representation of entity {entity_id} is left by the requested projection"
+            )));
+        }
+
         let range = if rendered.truncated {
             Some(TemporalRange {
                 interval: compiled.window.interval,
@@ -131,6 +146,7 @@ impl TemporalService {
         // state a clause 5.6.6 deletion has already removed.
         let entity_types_map: HashMap<Uri, Vec<EntityTypeName>> = self.reader.entity_types(target, &entity_ids).await?;
 
+        let projected = !compiled.projection.pick.is_empty() || !compiled.projection.omit.is_empty();
         let mut entities = Vec::new();
         let mut warnings = Vec::new();
         let mut linked_candidates: Vec<TemporalLinkedCandidate> = Vec::new();
@@ -144,6 +160,11 @@ impl TemporalService {
                 // An entity the window selects no history for is simply not part
                 // of the result set.
                 Ok(rendered) if rendered.presence == HistoryPresence::Absent => {}
+                // Clause 5.7.4.5 reduces "every Entity within the payload body"
+                // to the members the projection defines, so an Entity reduced
+                // to none of them is not in the payload -- the query's answer to
+                // what a retrieval answers with `ResourceNotFound`.
+                Ok(rendered) if projected && rendered_entity_members(&rendered.value) == RenderedEntityMembers::None => {}
                 Ok(rendered) => {
                     if rendered.truncated {
                         any_truncated = true;

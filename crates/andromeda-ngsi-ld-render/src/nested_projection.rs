@@ -9,10 +9,17 @@
 //! must show the target narrowed under `relA` and in full under `relB`, which
 //! only the code that walks the Relationships one instance at a time can do.
 //!
-//! Identity survives every nested projection. Clause 4.21 reduces a linked
-//! entity to the named attributes *plus* `id` and `type`; a nested entity
-//! stripped of its identifier would name nothing at all.
+//! A linked entity is narrowed by exactly the rule its Relationship's nested
+//! terms state, structural members included. Clause 5.7.1.5 says so in one
+//! parenthesis -- a restrictive list reduces the Entity "down to only contain
+//! the defined Entity members (applies to all Entities in the payload in the
+//! case of Linked Entity retrieval)" -- and clause 4.21 gives the projection
+//! language the same reach: it specifies "the Attributes to be retrieved within
+//! an Entity (or associated Linked Entities when Linked Entity Retrieval is
+//! used)". So `pick=locatedAt{id,name}` leaves the linked entity with `id` and
+//! `name`, and with no `type`, because the nested terms did not name it.
 
+use crate::structural_projection::StructuralProjection;
 use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection, matching::matching_term, term::ProjectionTerm};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use serde_json::Value;
@@ -25,33 +32,36 @@ const CONTEXT_KEYWORD: &str = "@context";
 
 /// The members a nested projection never removes.
 ///
-/// These are exactly the members an [`Entity`] holds outside its attribute
-/// map: its identity (clause 4.21 keeps `id` and `type` on every linked
-/// entity), the clause 4.8 system timestamps, the clause 4.22 expiry, and the
-/// clause 4.7 default geo-properties. `join=flat` narrows a linked entity by
-/// editing that attribute map, so none of these is reachable there either —
-/// preserving them here is what keeps the two join modes returning the same
-/// linked entity in the same shape. Whether the timestamps appear at all is
-/// the `sysAttrs` representation option (clause 4.8), which is orthogonal to
-/// the clause 4.21 projection and must not be overridden by it.
+/// `@context` is a JSON-LD transport concern rather than an Entity member, and
+/// the clause 4.8 system timestamps and the clause 4.22 expiry are governed by
+/// the `sysAttrs` representation option instead -- whether they appear at all
+/// is that option's decision (clause 4.8), which is orthogonal to the clause
+/// 4.21 projection and must not be overridden by it. `join=flat` narrows a
+/// linked entity by editing the typed entity rather than the rendered value and
+/// reaches none of these either, which is what keeps the two join modes
+/// returning the same linked entity in the same shape.
 ///
-/// `scope` is deliberately absent: it is the one entity member both join modes
-/// narrow, by the clause 4.21 structural *keyword* rule rather than by an
-/// attribute term. See [`NestedProjection::keeps_scope`].
-///
-/// [`Entity`]: andromeda_ngsi_ld_model::entity::Entity
-const PRESERVED_MEMBERS: [&str; 10] = [
-    ProjectionTerm::ID_KEYWORD,
-    ProjectionTerm::TYPE_KEYWORD,
+/// `id`, `type` and `scope` are deliberately absent: clause 4.21 names all
+/// three by *keyword*, so [`StructuralProjection`] decides them rather than a
+/// term match. The clause 4.7 geo-properties are absent too: they are ordinary
+/// Attributes that the model happens to keep in Entity members of their own
+/// (clause 5.2.4), and a projection selects them by name like any other.
+const PRESERVED_MEMBERS: [&str; 5] = [
     CONTEXT_KEYWORD,
     compact_properties::CREATED_AT,
     compact_properties::MODIFIED_AT,
     compact_properties::DELETED_AT,
     compact_properties::EXPIRES_AT,
-    compact_properties::LOCATION,
-    compact_properties::OBSERVATION_SPACE,
-    compact_properties::OPERATION_SPACE,
 ];
+
+/// Whether `key` is one of the three members clause 4.21 names by keyword.
+///
+/// Those three are left standing by the attribute passes and settled
+/// afterwards by [`StructuralProjection::prune`], because a term match can
+/// never recognize them: they have no IRI to expand to.
+fn is_structural_member(key: &str) -> bool {
+    matches!(key, ProjectionTerm::ID_KEYWORD | ProjectionTerm::TYPE_KEYWORD | ProjectionTerm::SCOPE_KEYWORD)
+}
 
 /// The clause 4.21 nested projection a `join=inline` rendering carries.
 ///
@@ -121,55 +131,42 @@ impl<'a> NestedProjection<'a> {
         self.pick.is_empty() && self.omit.is_empty()
     }
 
-    /// Whether `scope` survives this projection.
+    /// The clause 4.21 keyword rule this projection states for `id`, `type`
+    /// and `scope`.
     ///
-    /// Clause 4.21 governs `scope` by keyword, not by attribute term: a
-    /// non-empty `pick` keeps it only when the nested terms name the `scope`
-    /// keyword, and a non-empty `omit` drops it when they do. This is the same
-    /// rule `join=flat` applies to the typed entity, so both join modes narrow
-    /// `scope` identically.
-    fn keeps_scope(&self) -> bool {
-        if !self.pick.is_empty() && !self.pick.contains(&ProjectionTerm::Scope) {
-            return false;
-        }
-        self.omit.is_empty() || !self.omit.contains(&ProjectionTerm::Scope)
+    /// The same rule `join=flat` applies to its own linked entities, so both
+    /// join modes narrow the structural members identically.
+    const fn structural(&self) -> StructuralProjection<'a> {
+        StructuralProjection::new(self.pick, self.omit)
     }
 
-    /// Remove from a rendered linked entity the attribute members this
-    /// projection excludes.
+    /// Reduce a rendered linked entity to the members this projection keeps.
     pub(crate) fn narrow(&self, value: &mut Value) {
         let Some(index) = self.index else {
             return;
         };
-        let keeps_scope = self.keeps_scope();
-        let Some(map) = value.as_object_mut() else {
-            return;
-        };
 
-        if !self.pick.is_empty() {
-            map.retain(|key, _| {
-                if key == ProjectionTerm::SCOPE_KEYWORD {
-                    return keeps_scope;
-                }
-                PRESERVED_MEMBERS.contains(&key.as_str()) || matching_term(key, self.pick, index).is_some()
-            });
+        if let Some(map) = value.as_object_mut() {
+            if !self.pick.is_empty() {
+                map.retain(|key, _| is_structural_member(key) || PRESERVED_MEMBERS.contains(&key.as_str()) || matching_term(key, self.pick, index).is_some());
+            }
+
+            if !self.omit.is_empty() {
+                map.retain(|key, _| {
+                    is_structural_member(key)
+                        || PRESERVED_MEMBERS.contains(&key.as_str())
+                        || match matching_term(key, self.omit, index) {
+                            // Clause 4.21: `omit=rel{a}` omits `a` inside whatever
+                            // `rel` links to, so `rel` itself survives and the
+                            // omission travels one level further down.
+                            Some(term) => !term.linked_terms().is_empty(),
+                            None => true,
+                        }
+                });
+            }
         }
 
-        if !self.omit.is_empty() {
-            map.retain(|key, _| {
-                if key == ProjectionTerm::SCOPE_KEYWORD {
-                    return keeps_scope;
-                }
-                PRESERVED_MEMBERS.contains(&key.as_str())
-                    || match matching_term(key, self.omit, index) {
-                        // Clause 4.21: `omit=rel{a}` omits `a` inside whatever
-                        // `rel` links to, so `rel` itself survives and the
-                        // omission travels one level further down.
-                        Some(term) => !term.linked_terms().is_empty(),
-                        None => true,
-                    }
-            });
-        }
+        self.structural().prune(value);
     }
 }
 
@@ -225,8 +222,10 @@ mod tests {
         let mut value = json!({"id": "urn:b", "type": "B", "category": {"type": "Property", "value": "x"}, "name": {"type": "Property", "value": "y"}});
         target.narrow(&mut value);
 
-        assert_eq!(value["id"], "urn:b");
-        assert_eq!(value["type"], "B");
+        // Clause 5.7.1.5 reduces the linked entity "down to only contain the
+        // defined Entity members", and the nested terms defined one.
+        assert!(value.get("id").is_none());
+        assert!(value.get("type").is_none());
         assert_eq!(value["category"]["value"], "x");
         assert!(value.get("name").is_none());
     }
@@ -374,15 +373,20 @@ mod tests {
         assert_eq!(kept["scope"], "/Madrid");
     }
 
-    /// Clause 4.8: the system-generated timestamps and the clause 4.7
-    /// geo-properties are entity members outside the attribute map, so
-    /// `join=flat`'s narrowing — which edits that map — cannot reach them.
-    /// A nested projection must not reach them either, or the same linked
-    /// entity would come back in two different shapes depending on the join
-    /// mode. `sysAttrs` is a representation option (clause 4.8), orthogonal to
-    /// the clause 4.21 projection.
+    /// What a nested projection may and may not reach.
+    ///
+    /// `@context` is JSON-LD transport, and whether the clause 4.8 timestamps
+    /// and the clause 4.22 expiry appear is the `sysAttrs` representation
+    /// option's decision — orthogonal to the clause 4.21 projection, which must
+    /// not override it. Everything else the entity carries is a member clause
+    /// 5.7.1.5 reduces away unless the nested terms defined it, the three
+    /// clause 5.2.4 geo-properties included. The `join=flat` counterpart is
+    /// `andromeda-entity`'s
+    /// `the_flat_narrowing_leaves_the_same_linked_entity_shape_as_the_inline_one`,
+    /// and the two must agree member for member or one request would answer
+    /// two ways.
     #[test]
-    fn a_nested_pick_preserves_every_entity_member_outside_the_attribute_map() {
+    fn a_nested_pick_keeps_only_the_members_the_nested_terms_defined() {
         let projection = Projection {
             pick: vec![nested("rel", vec![leaf("category")])],
             omit: Vec::new(),
@@ -410,22 +414,14 @@ mod tests {
         .descend("rel")
         .narrow(&mut value);
 
-        for member in [
-            "id",
-            "type",
-            "@context",
-            "createdAt",
-            "modifiedAt",
-            "deletedAt",
-            "expiresAt",
-            "location",
-            "observationSpace",
-            "operationSpace",
-            "category",
-        ] {
+        for member in ["@context", "createdAt", "modifiedAt", "deletedAt", "expiresAt", "category"] {
             assert!(value.get(member).is_some(), "{member} must survive a nested projection");
         }
-        assert!(value.get("name").is_none(), "an unnamed attribute is still dropped");
+        // Clause 5.2.4 gives these three their own Entity member, but each is
+        // an Attribute the nested terms did not name.
+        for member in ["id", "type", "location", "observationSpace", "operationSpace", "name"] {
+            assert!(value.get(member).is_none(), "{member} is not a member the nested terms defined");
+        }
     }
 
     /// A rendering with no projection at all narrows nothing at any depth.

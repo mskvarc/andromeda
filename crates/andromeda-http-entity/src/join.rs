@@ -10,13 +10,13 @@
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     error::EntityError,
-    query::{EntityQueryService, linked_entity::ResolvedLinkedEntities},
+    query::{EntityQueryService, join_projection::PreparedJoinProjection, linked_entity::ResolvedLinkedEntities},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection};
-use andromeda_ngsi_ld_render::nested_projection::LinkedProjection;
+use andromeda_ngsi_ld_query::projection::compiled::Projection;
+use andromeda_ngsi_ld_render::{nested_projection::LinkedProjection, structural_projection::StructuralProjection};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, linked_resolution_failure::LinkedResolutionFailure, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_request::{
     join_traversal::{RetrievingJoin, traversal_bounds},
@@ -59,9 +59,8 @@ pub(crate) struct ResolvedJoin<'a> {
     pub(crate) failures: Vec<LinkedResolutionFailure>,
     /// The projection an inline rendering walks for its sub-projections.
     projection: Option<&'a Projection>,
-    /// The attribute-key expansions an inline rendering matches terms with,
-    /// absent whenever nothing is left for the renderer to narrow.
-    index: Option<AttributeIriIndex>,
+    /// What the join mode's clause 4.21 preparation left for the renderer.
+    prepared: PreparedJoinProjection,
 }
 
 impl<'a> ResolvedJoin<'a> {
@@ -96,9 +95,9 @@ impl<'a> ResolvedJoin<'a> {
 
         // Clause 4.21: a `pick`/`omit` term may carry a nested sub-projection
         // governing how the entities it links to render.
-        let index = match request.projection {
+        let prepared = match request.projection {
             Some(projection) => service.prepare_join_projection(roots, &mut linked, projection, context, join).await?,
-            None => None,
+            None => PreparedJoinProjection::Unrestricted,
         };
 
         Ok(Some(ResolvedJoin {
@@ -106,7 +105,7 @@ impl<'a> ResolvedJoin<'a> {
             linked,
             failures,
             projection: request.projection,
-            index,
+            prepared,
         }))
     }
 
@@ -142,7 +141,28 @@ impl<'a> ResolvedJoin<'a> {
     /// left any for the renderer.
     pub(crate) fn linked_projection(&self) -> Option<LinkedProjection<'_>> {
         let projection = self.projection?;
-        let index = self.index.as_ref()?;
-        Some(LinkedProjection { projection, index })
+        match &self.prepared {
+            PreparedJoinProjection::Inline(index) => Some(LinkedProjection { projection, index }),
+            PreparedJoinProjection::Unrestricted | PreparedJoinProjection::Flat(_) => None,
+        }
+    }
+
+    /// Each linked entity paired with the clause 4.21 structural rule that
+    /// governs it in a flat rendering.
+    ///
+    /// Clause 5.7.1.5 applies a restrictive list "to all Entities in the
+    /// payload in the case of Linked Entity retrieval", and `id`, `type` and
+    /// `scope` are members of the rendered representation rather than of the
+    /// typed entity, so the terms that narrowed each entity's attributes have
+    /// to reach the renderer to narrow these three as well. An entity no
+    /// nested sub-projection reached is paired with `None` and renders whole.
+    pub(crate) fn flat_linked(&self) -> impl Iterator<Item = (&Entity, Option<StructuralProjection<'_>>)> {
+        let applied = match &self.prepared {
+            PreparedJoinProjection::Flat(applied) => Some(applied),
+            PreparedJoinProjection::Unrestricted | PreparedJoinProjection::Inline(_) => None,
+        };
+        self.linked
+            .iter()
+            .map(move |(id, entity)| (entity, applied.and_then(|applied| applied.get(id)).map(StructuralProjection::from)))
     }
 }

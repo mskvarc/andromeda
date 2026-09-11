@@ -26,7 +26,9 @@ async fn join_inline_nests_linked_entity_under_relationship() {
 }
 
 /// Clause 4.21: the sub-projection a Relationship carries governs the copy of
-/// the linked entity nested under that Relationship.
+/// the linked entity nested under that Relationship — clause 5.7.2.5 reducing
+/// "every Entity within the payload body", so the nested terms decide the
+/// nested copy's `id` and `type` as they decide its Attributes.
 #[tokio::test]
 async fn join_pick_linked_term_inline() {
     let scope = TestEnvironment::from_suite("join").await.expect("isolated test environment");
@@ -38,15 +40,16 @@ async fn join_pick_linked_term_inline() {
 
     let body = query(
         client,
-        &format!("id={id_a}&type=Building&join=inline&joinLevel=1&pick=linkedTo%7Bcategory%7D,id,type"),
+        &format!("id={id_a}&type=Building&join=inline&joinLevel=1&pick=linkedTo%7Bcategory,id%7D,id,type"),
     )
     .await;
 
     let root = &body.as_array().expect("query returns a collection")[0];
     assert_eq!(root["id"].as_str(), Some(id_a.as_str()));
     let nested = &root["linkedTo"]["entity"];
-    assert_eq!(nested["id"].as_str(), Some(id_b.as_str()));
+    assert_eq!(nested["id"].as_str(), Some(id_b.as_str()), "the nested pick names `id`: {nested}");
     assert!(nested.get("category").is_some(), "the nested pick keeps `category`: {nested}");
     assert!(nested.get("name").is_none(), "the nested pick drops `name`: {nested}");
+    assert!(nested.get("type").is_none(), "the nested pick names no `type` keyword: {nested}");
     scope.finish().await.expect("cleanup failed");
 }

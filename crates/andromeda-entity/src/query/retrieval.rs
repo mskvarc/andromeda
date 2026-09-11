@@ -7,6 +7,7 @@ use crate::{
     query::{
         EntityQueryService,
         dataset_filter::filter_entity_by_dataset_id,
+        projection_remainder::projection_remainder,
         pushdown_refusal::refuse_unnarrowable,
         residual::finish_page,
         spatial_prefilter::SpatialNarrowing,
@@ -70,7 +71,12 @@ impl EntityQueryService {
             }
             self.filter_entity_attrs(&mut entity, &wanted_iris, context).await?;
 
-            if entity.attrs.is_empty() {
+            // Clause 5.7.1.4: "If the optional Attribute list is present and
+            // the NGSI-LD endpoint does know about a matching Entity for the
+            // Entity ID, but this Entity does not have any of the Attributes in
+            // the Attribute list, then an error of type ResourceNotFound shall
+            // be raised."
+            if !entity.has_attribute_members() {
                 return Err(EntityError::not_found(id));
             }
         }
@@ -80,6 +86,14 @@ impl EntityQueryService {
         // runs inside the query and the join follows it.
         if let Some(projection) = narrowing.projection {
             self.project_entity(&mut entity, projection, context).await?;
+            // Tables 6.4.3.2-1 and 5.2.14.1-1 make `attrs` "a synonym for
+            // pick", so the clause 5.7.1.4 rule above is the same rule here,
+            // and clause 5.7.1.5 reduces the Entity "down to only contain the
+            // defined Entity members" -- an Entity left with none of them is an
+            // Entity the retrieval cannot answer with.
+            if projection_remainder(&entity, projection).is_nothing() {
+                return Err(EntityError::not_found(id));
+            }
         }
 
         if !narrowing.dataset_ids.is_empty() {

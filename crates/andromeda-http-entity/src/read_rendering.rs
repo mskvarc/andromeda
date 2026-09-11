@@ -14,7 +14,10 @@ use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::compiled::Projection;
-use andromeda_ngsi_ld_render::entity::{EntityRenderer, render_flat_join};
+use andromeda_ngsi_ld_render::{
+    entity::{EntityRenderer, render_flat_join},
+    structural_projection::StructuralProjection,
+};
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
 use axum::http::Uri as HttpUri;
@@ -39,6 +42,11 @@ impl<'a> EntityRepresentation<'a> {
             mode,
             projection,
         }
+    }
+
+    /// The clause 4.21 rule the renderer applies to `id`, `type` and `scope`.
+    pub(crate) fn structural_projection(&self) -> Option<StructuralProjection<'a>> {
+        self.projection.map(StructuralProjection::from)
     }
 }
 
@@ -86,7 +94,7 @@ pub(crate) fn render_entities(entities: &[Entity], representation: &EntityRepres
         empty(),
         representation.language_filter,
         representation.mode,
-        representation.projection,
+        representation.structural_projection(),
     )
     .with_entity_instance(instance)
 }
@@ -108,7 +116,7 @@ pub(crate) fn render_entity(
 ) -> Result<Value, ProblemResponse> {
     let mut renderer = EntityRenderer::new(entity)
         .with_optional_language_filter(representation.language_filter)
-        .with_optional_structural_projection(representation.projection)
+        .with_optional_structural_projection(representation.structural_projection())
         .with_mode(representation.mode);
     if let Some(resolved) = inline {
         renderer = renderer
@@ -138,10 +146,10 @@ pub(crate) fn render_joined_entities(
     match resolved.join {
         RetrievingJoin::Flat => render_flat_join(
             entities.iter(),
-            resolved.linked.values(),
+            resolved.flat_linked(),
             representation.language_filter,
             representation.mode,
-            representation.projection,
+            representation.structural_projection(),
         )
         .with_entity_instance(instance),
         RetrievingJoin::Inline => entities
@@ -151,7 +159,7 @@ pub(crate) fn render_joined_entities(
                     .with_optional_language_filter(representation.language_filter)
                     .with_inline_linked_entities(&resolved.linked)
                     .with_optional_linked_projection(resolved.linked_projection())
-                    .with_optional_structural_projection(representation.projection)
+                    .with_optional_structural_projection(representation.structural_projection())
                     .with_mode(representation.mode)
                     .render()
                     .with_entity_instance(instance)

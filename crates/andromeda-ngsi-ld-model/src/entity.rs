@@ -6,6 +6,7 @@ use crate::{
     notification::SysAttrsSnapshot,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, scope::grammar::ScopeBuf, uri::Uri};
+use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use jsonld::Expandable;
@@ -186,6 +187,61 @@ impl Entity {
             self.attrs.shift_remove(attribute.as_str());
         }
         !self.attrs.is_empty()
+    }
+
+    /// The name of every Attribute member the entity carries, the three
+    /// clause 5.2.4 geo-properties included.
+    ///
+    /// `location`, `observationSpace` and `operationSpace` are Attributes that
+    /// this type keeps in a field of their own rather than in [`Entity::attrs`],
+    /// because clause 4.7 and clause 5.2.4 give each a fixed meaning. Every
+    /// narrowing that selects Attributes by name -- `attrs` (clause 5.7.1.3),
+    /// `pick` and `omit` (clause 4.21) -- has to reach them all the same, so
+    /// this is what such a narrowing iterates rather than `attrs` alone.
+    pub fn attribute_member_names(&self) -> impl Iterator<Item = &str> {
+        self.attrs.keys().map(AttributeName::as_str).chain(
+            self.geo_property_members()
+                .into_iter()
+                .filter_map(|(name, value)| value.is_some().then_some(name)),
+        )
+    }
+
+    /// Remove the Attribute member `name` names, from wherever this type keeps
+    /// it.
+    ///
+    /// A name that is no member of the entity removes nothing.
+    pub fn remove_attribute_member(&mut self, name: &str) {
+        if self.attrs.shift_remove(name).is_some() {
+            return;
+        }
+        match name {
+            compact_properties::LOCATION => self.location = None,
+            compact_properties::OBSERVATION_SPACE => self.observation_space = None,
+            compact_properties::OPERATION_SPACE => self.operation_space = None,
+            // Any other name was an ordinary attribute, removed above, or no
+            // member of this entity at all.
+            _other => {}
+        }
+    }
+
+    /// Whether the entity carries any Attribute member at all.
+    ///
+    /// Clause 5.7.1.4 turns an entity left with none by the requested
+    /// Attribute list into a `ResourceNotFound`, so the question has to count
+    /// the geo-properties too.
+    #[must_use]
+    pub fn has_attribute_members(&self) -> bool {
+        !self.attrs.is_empty() || self.geo_property_members().iter().any(|(_, value)| value.is_some())
+    }
+
+    /// The three clause 5.2.4 geo-property members, each paired with the field
+    /// this type keeps it in.
+    const fn geo_property_members(&self) -> [(&'static str, &Option<AttributeValue>); 3] {
+        [
+            (compact_properties::LOCATION, &self.location),
+            (compact_properties::OBSERVATION_SPACE, &self.observation_space),
+            (compact_properties::OPERATION_SPACE, &self.operation_space),
+        ]
     }
 
     /// Remove attribute instances whose `expiresAt` has passed (clause 4.22).

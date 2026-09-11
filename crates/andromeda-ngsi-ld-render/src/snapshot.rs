@@ -16,7 +16,7 @@ use crate::{
     inline_join::apply_inline_join,
     object_list::normalize_object_lists,
     simplify::simplify_value,
-    structural_projection::prune_structural_members,
+    structural_projection::StructuralProjection,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::entity::Entity;
@@ -132,7 +132,7 @@ impl<'a> SnapshotRenderer<'a> {
         };
 
         if let Some(projection) = structural_projection {
-            prune_structural_members(&mut transformed, projection);
+            StructuralProjection::from(projection).prune(&mut transformed);
         }
 
         Ok(transformed)
