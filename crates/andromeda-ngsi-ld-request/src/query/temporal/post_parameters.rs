@@ -10,10 +10,7 @@
 //! `options` and `format`. Those are exactly what the URL carries here;
 //! everything else the query says travels in the body.
 
-use crate::{
-    options::{TemporalRepresentationOptions, deserialize_temporal_representation_options},
-    query::temporal::{TemporalQueryParameters, deserialization::deserialize_option_temporal_format},
-};
+use crate::{options::TemporalRepresentationOptions, query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
 use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
 use serde::Deserialize;
 
@@ -33,12 +30,10 @@ pub struct TemporalPostQueryParams {
     /// (clause 6.3.13 `count`).
     pub count: Option<bool>,
     /// The temporal representation the response uses (clause 6.3.12 `format`).
-    #[serde(default, deserialize_with = "deserialize_option_temporal_format")]
-    pub format: Option<TemporalFormat>,
+    pub format: Option<WrittenValue<TemporalFormat>>,
     /// The deprecated representation selector and the system-attribute
     /// selector (clauses 6.3.11 and 6.3.12 `options`).
-    #[serde(default, deserialize_with = "deserialize_temporal_representation_options")]
-    pub options: Option<TemporalRepresentationOptions>,
+    pub options: Option<WrittenValue<TemporalRepresentationOptions>>,
     /// Whether the operation is confined to this broker (clause 5.5.13), which
     /// clause 5.7.4.4 admits as an entity selection criterion of its own.
     pub local: Option<bool>,
@@ -51,7 +46,7 @@ impl TemporalPostQueryParams {
     /// Nothing is overwritten: Table 5.2.23-1 defines none of these members, so
     /// the body conversion leaves every one of them absent and the URL is the
     /// only place they can come from.
-    pub const fn apply_to(self, params: &mut TemporalQueryParameters) {
+    pub fn apply_to(self, params: &mut TemporalQueryParameters) {
         let TemporalPostQueryParams {
             limit,
             offset,
@@ -77,6 +72,7 @@ mod tests {
             SharedQueryParams,
             temporal::{TemporalQueryParameters, post_parameters::TemporalPostQueryParams},
         },
+        representation_parameter::WrittenValue,
     };
     use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -96,13 +92,13 @@ mod tests {
     #[test]
     fn the_post_binding_reads_its_representation_from_the_url() {
         let params = serde_urlencoded::from_str::<TemporalPostQueryParams>("format=temporalValues&options=sysAttrs").expect("query parses");
-        pretty_assertions::assert_eq!(params.format, Some(TemporalFormat::TemporalValues));
+        pretty_assertions::assert_eq!(params.format, Some(WrittenValue::Supported(TemporalFormat::TemporalValues)));
         pretty_assertions::assert_eq!(
             params.options,
-            Some(TemporalRepresentationOptions {
+            Some(WrittenValue::Supported(TemporalRepresentationOptions {
                 format: None,
                 sys_attrs: SysAttrsInclusion::Include,
-            })
+            }))
         );
     }
 

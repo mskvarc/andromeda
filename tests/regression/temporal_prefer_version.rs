@@ -116,7 +116,9 @@ async fn retrieve(client: &TestClient, id: &str, selection: &str, prefer: Option
 
 /// The query of clause 6.18.3.2, answered as the one Entity it selected.
 async fn query_one(client: &TestClient, id: &str, prefer: Option<&str>) -> (StatusCode, Option<String>, Value) {
-    let path = format!("/ngsi-ld/v1/temporal/entities?id={}&{WINDOW}", urlencoding::encode(id));
+    // Clause 5.7.4.4 lists no identifier among the narrowing inputs, so the
+    // type selector is what lets this query run at all.
+    let path = format!("/ngsi-ld/v1/temporal/entities?type=Vehicle&id={}&{WINDOW}", urlencoding::encode(id));
     let (status, applied, body) = read(client, &path, prefer).await;
     (status, applied, single(&body))
 }

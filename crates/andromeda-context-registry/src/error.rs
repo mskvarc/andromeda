@@ -1,5 +1,6 @@
 //! Failures reported by Context Registry policy and implementations.
 
+use crate::identifier::ContextIdentifier;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use iri_rs::IriBuf;
 use thiserror::Error;
@@ -13,8 +14,8 @@ pub enum ContextRegistryError {
     /// The requested Context is not registered.
     #[error("context not found: {identifier}")]
     NotFound {
-        /// The requested Context identifier or URL.
-        identifier: Uri,
+        /// The identifier the request wrote, whether or not it keys a row.
+        identifier: ContextIdentifier,
     },
     /// An embedded core Context cannot be deleted.
     #[error("an embedded NGSI-LD core context cannot be deleted")]

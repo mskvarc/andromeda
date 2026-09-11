@@ -4,7 +4,7 @@ use crate::{
     error::ParameterError,
     impl_shared_query_params,
     language_filter::deserialize_optional_language_filter,
-    options::{SysAttrsOptions, deserialize_sys_attrs_options},
+    options::SysAttrsOptions,
     query::{
         SharedQueryParams,
         deserialization::{
@@ -17,6 +17,8 @@ use crate::{
             deserialize_optional_uri_csv,
         },
     },
+    query_narrowing::{AdmittedNarrowings, NarrowingInputs, require_narrowing},
+    representation_parameter::{WrittenValue, supported_option},
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
@@ -105,8 +107,7 @@ pub struct CsrQueryParameters {
     /// How many results to skip before the page (`offset`).
     pub offset: Option<u32>,
     /// The legacy representation selector, comma-separated (`options`).
-    #[serde(default, deserialize_with = "deserialize_sys_attrs_options")]
-    pub options: Option<SysAttrsOptions>,
+    pub options: Option<WrittenValue<SysAttrsOptions>>,
 }
 
 impl_shared_query_params!(CsrQueryParameters {
@@ -120,21 +121,32 @@ impl_shared_query_params!(CsrQueryParameters {
 });
 
 impl CsrQueryParameters {
-    /// Parses the `options` parameter into structured flags.
-    #[must_use]
-    pub fn parse_options(&self) -> SysAttrsOptions {
-        self.options.unwrap_or_default()
+    /// The system-attribute selection the `options` parameter made.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParameterError::OptionsInvalid`] for a value clause 6.3.11
+    /// does not define (clause 6.3.20).
+    pub fn parse_options(&self) -> Result<SysAttrsOptions, ParameterError> {
+        Ok(supported_option(self.options.as_ref())?.unwrap_or_default())
     }
 
-    /// Whether the query narrows the registrations at all.
+    /// The clause 5.10.2.4 narrowing inputs this discovery carries.
     ///
-    /// Clause 5.10.2.4 admits exactly four narrowing inputs: the type selector,
-    /// the attribute list, the `q` query and the geoquery. Entity identifiers
-    /// and an `idPattern` on their own are too wide (clause 5.10.2.3), and so
-    /// are `csf`, `scopeQ` and the temporal window.
+    /// Clause 5.10.2.4 admits exactly four: the type selector, the attribute
+    /// list, the `q` query and the geoquery. Entity identifiers and an
+    /// `idPattern` on their own are too wide (clause 5.10.2.3), and so are
+    /// `csf`, `scopeQ` and the temporal window.
     #[must_use]
-    pub const fn has_filter(&self) -> bool {
-        self.entity_type.is_some() || self.attrs.is_some() || self.q.is_some() || self.geo.0.is_some()
+    pub fn narrowing_inputs(&self) -> NarrowingInputs<'_> {
+        NarrowingInputs::builder()
+            .admitted(AdmittedNarrowings::REGISTRATIONS)
+            .entity_type(self.entity_type.as_ref())
+            .attrs(self.attrs.as_deref())
+            .pick(self.pick.as_deref())
+            .q(self.q.as_ref())
+            .geo(self.geo.0.as_ref())
+            .build()
     }
 
     /// Validates the CSR query parameters for completeness and correctness.
@@ -150,9 +162,10 @@ impl CsrQueryParameters {
     /// [`ParameterError::Query`] when the `timerel`, `timeAt` and `endTimeAt`
     /// group is incomplete for the requested temporal relation.
     pub fn validate(&self) -> Result<(), ParameterError> {
-        if !self.has_filter() {
-            return Err(ParameterError::SelectorRequired("At least one of type, attrs, q, or georel must be provided"));
-        }
+        // Clause 6.3.20: `sysAttrs` is the one value clause 6.3.11 defines for
+        // this operation's `options`.
+        self.parse_options()?;
+        require_narrowing(&self.narrowing_inputs())?;
 
         // The `timerel`/`timeAt`/`endTimeAt` combination rule is owned by the
         // query crate, so the request seam asks rather than re-deriving it.
@@ -182,7 +195,7 @@ mod tests {
     fn validate_requires_at_least_one_filter() {
         let p = params_from_query("");
         let err = p.validate().expect_err("expected error");
-        assert!(err.to_string().contains("At least one of"));
+        assert!(err.to_string().contains("too wide query"), "{err}");
     }
 
     /// Clause 5.10.2.4: `type`, `attrs`, `q` and the geoquery each narrow the
@@ -196,7 +209,6 @@ mod tests {
             "georel=near%3BmaxDistance==100&geometry=Point&coordinates=[1,2]",
         ] {
             let p = params_from_query(query);
-            assert!(p.has_filter(), "{query} must count as a filter");
             assert!(p.validate().is_ok(), "{query} must validate");
         }
     }
@@ -215,7 +227,6 @@ mod tests {
             "datasetId=urn:ngsi-ld:dataset:1",
         ] {
             let p = params_from_query(query);
-            assert!(!p.has_filter(), "{query} must not count as a filter");
             assert!(matches!(p.validate(), Err(ParameterError::SelectorRequired(_))), "{query} must be rejected");
         }
     }
@@ -275,13 +286,13 @@ mod tests {
     #[test]
     fn parse_options_sys_attrs() {
         let p = params_from_query("type=Vehicle&options=sysAttrs");
-        pretty_assertions::assert_eq!(p.parse_options().sys_attrs, SysAttrsInclusion::Include);
+        pretty_assertions::assert_eq!(p.parse_options().expect("a supported options value").sys_attrs, SysAttrsInclusion::Include);
     }
 
     #[test]
     fn parse_options_default() {
         let p = params_from_query("type=Vehicle");
-        pretty_assertions::assert_eq!(p.parse_options().sys_attrs, SysAttrsInclusion::Strip);
+        pretty_assertions::assert_eq!(p.parse_options().expect("a supported options value").sys_attrs, SysAttrsInclusion::Strip);
     }
 
     #[test]

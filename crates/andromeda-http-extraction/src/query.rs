@@ -1,7 +1,8 @@
 //! Generic validated query parameter extractor for NGSI-LD API handlers.
 //!
 //! Wraps [`serde_urlencoded`] deserialization with NGSI-LD error classification,
-//! mapping parse failures to the correct `InvalidRequest` or `BadRequestData` type.
+//! mapping parse failures to the correct `InvalidRequest` or `BadRequestData`
+//! type (clause 6.3.20).
 
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use axum::{
@@ -14,8 +15,8 @@ use std::future::{Future, ready};
 /// Axum extractor that deserializes and validates query parameters.
 ///
 /// Wraps the deserialized value of type `T` after parsing the URI query string
-/// with [`serde_urlencoded`]. Parse failures are classified into NGSI-LD error
-/// types based on the error message content.
+/// with [`serde_urlencoded`]. Parse failures are classified by
+/// [`classify_query_parse_error`].
 pub struct ValidatedQuery<T>(pub T);
 
 /// Deserialize the request's query string into `T`, classifying parse failures.
@@ -27,10 +28,6 @@ where
     let query_str = parts.uri.query().unwrap_or("");
 
     serde_urlencoded::from_str::<T>(query_str).map(ValidatedQuery).map_err(|error| {
-        // serde_urlencoded only provides string error messages (no structured error kinds).
-        // Serde's "unknown field" message is stable across versions, so this heuristic
-        // is reliable for distinguishing unsupported parameters (-> InvalidRequest)
-        // from invalid parameter values (-> BadRequestData).
         let error_str = error.to_string();
         let error_msg = format!("Invalid query parameters: {error_str}");
         classify_query_parse_error(&error_str, error_msg, uri)
@@ -51,40 +48,43 @@ where
     }
 }
 
-/// Classify a `serde_urlencoded` error into the appropriate NGSI-LD rejection.
+/// Classify a `serde_urlencoded` failure into the NGSI-LD rejection it names.
 ///
-/// The `serde_urlencoded` crate only provides unstructured string error messages.
-/// Serde's "unknown field" message is stable across versions, making this heuristic
-/// reliable for distinguishing unsupported parameters (`InvalidRequest`) from
-/// invalid parameter values (`BadRequestData`).
+/// Two failures can reach here and clause 6.3.20 separates them. A parameter
+/// the operation does not define is one of the "parameters that are
+/// incompatible with the operation", answered with `InvalidRequest`; serde
+/// reports it through `deny_unknown_fields`, whose message is the only signal
+/// the crate offers and is stable across versions. Everything else is a value
+/// inside a parameter the operation does define -- a `limit` that is not a
+/// number, a half-specified geoquery (clauses 4.10, 5.7.2.4, 5.10.2.4) -- which
+/// is input that does not meet the requirements of the operation, answered with
+/// `BadRequestData`.
+///
+/// The two parameters whose *values* clause 6.3.20 also gives to
+/// `InvalidRequest`, `format` and `options`, never fail here: they deserialize
+/// as written and are refused by the parameter set's `validate`, where the
+/// error type is typed rather than read out of a message. See
+/// [`andromeda_ngsi_ld_request::representation_parameter`].
 pub fn classify_query_parse_error(error_str: &str, error_msg: String, uri: Uri) -> ExtractorRejection {
-    // `format` and `options` are syntax-level representation selectors. Their
-    // custom deserializers report invalid tokens as ordinary serde strings,
-    // so preserve the clause distinction here instead of treating them like
-    // invalid data values such as `limit=abc`.
-    //
-    // A half-specified geoquery is not one of these. Clause 4.10 names
-    // `georel`, `geometry` and `coordinates` as the three parameters needed to
-    // fully specify a geoquery, so a request carrying only some of them --
-    // whichever ones -- is a geoquery that is not valid as per clause 4.10, and
-    // clauses 5.7.2.4 and 5.10.2.4 both make that `BadRequestData`. Clause
-    // 6.3.20's `InvalidRequest` is for parameters the operation cannot use at
-    // all, which `georel` is not.
-    if error_str.contains("unknown field")
-        || error_str.contains("invalid format")
-        || error_str.contains("invalid options")
-        || error_str.contains("invalid temporal format")
-    {
+    if error_str.contains(UNKNOWN_PARAMETER) {
         ExtractorRejection::invalid_request(error_msg, uri)
     } else {
         ExtractorRejection::bad_request_data(error_msg, uri)
     }
 }
 
+/// Serde's report of a parameter the deserialized parameter set does not define.
+const UNKNOWN_PARAMETER: &str = "unknown field";
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_ngsi_ld_request::query::deserialization::{GEOREL_WITHOUT_GEOMETRY, INCOMPLETE_GEOQUERY};
+    use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
+    use andromeda_ngsi_ld_request::{
+        options::EntityRepresentationOptions,
+        query::deserialization::{GEOREL_WITHOUT_GEOMETRY, INCOMPLETE_GEOQUERY},
+        representation_parameter::WrittenValue,
+    };
     use axum::{extract::FromRequestParts, http::Request};
     use serde::Deserialize;
 
@@ -120,16 +120,6 @@ mod tests {
     }
 
     #[test]
-    fn invalid_representation_format_is_invalid_request() {
-        let rejection = classify_query_parse_error(
-            "invalid format value: bananas",
-            "invalid format".to_owned(),
-            "/test".parse().expect("valid URI"),
-        );
-        assert!(matches!(rejection, ExtractorRejection::InvalidRequest { .. }));
-    }
-
-    #[test]
     fn a_reference_geometry_without_a_relation_is_bad_request_data() {
         // Clauses 5.7.2.4 and 5.10.2.4: a geoquery that is not valid as per
         // clause 4.10 is `BadRequestData`.
@@ -146,13 +136,28 @@ mod tests {
         assert!(matches!(rejection, ExtractorRejection::BadRequestData { .. }));
     }
 
-    #[test]
-    fn invalid_representation_options_are_invalid_request() {
-        let rejection = classify_query_parse_error(
-            "invalid options value: bananas",
-            "invalid options".to_owned(),
-            "/test".parse().expect("valid URI"),
-        );
-        assert!(matches!(rejection, ExtractorRejection::InvalidRequest { .. }));
+    /// Clause 6.3.20 gives an unsupported `format` or `options` value the same
+    /// `InvalidRequest` as an unknown parameter, but neither reaches this
+    /// classification: both deserialize as written and are refused by the
+    /// parameter set's `validate`, which names the error type itself.
+    #[tokio::test]
+    async fn a_representation_parameter_never_fails_deserialization() {
+        #[derive(Debug, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct RepresentationParams {
+            format: Option<WrittenValue<ResponseFormat>>,
+            options: Option<WrittenValue<EntityRepresentationOptions>>,
+        }
+
+        let req = Request::builder()
+            .uri("/test?format=invalidFormat&options=keyValues,invalid")
+            .body(())
+            .expect("valid request");
+        let (mut parts, ()) = req.into_parts();
+        let query = ValidatedQuery::<RepresentationParams>::from_request_parts(&mut parts, &())
+            .await
+            .expect("an unsupported value still deserializes");
+        assert!(query.0.format.expect("present").supported().is_err());
+        assert!(query.0.options.expect("present").supported().is_err());
     }
 }

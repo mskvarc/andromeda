@@ -27,7 +27,7 @@ use crate::temporal::{
     provision_response,
 };
 use andromeda_http_extraction::context_target;
-use andromeda_ngsi_ld_model::registration::ForwardingMode;
+use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
 
 pub async fn delete(
     context_target::ExistingTargetedTenantState {

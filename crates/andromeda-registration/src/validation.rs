@@ -10,7 +10,7 @@ use crate::{error::RegistrationError, mode_rules::validate_structure};
 use andromeda_ngsi_ld_model::{
     context_source_info::ContextSourceInfo,
     key_value_pair::KeyValuePair,
-    registration::{CsrOperation, ForwardingMode, RegistrationInfo},
+    registration::{forwarding_mode::ForwardingMode, info::RegistrationInfo, operation::CsrOperation},
 };
 use chrono::{DateTime, Utc};
 
@@ -46,7 +46,7 @@ mod tests {
     use crate::validation::{RegistrationShape, validate_shape};
     use andromeda_ngsi_ld_model::{
         key_value_pair::KeyValuePair,
-        registration::{CsrOperation, ForwardingMode, RegistrationInfo},
+        registration::{forwarding_mode::ForwardingMode, info::RegistrationInfo, operation::CsrOperation},
     };
     use chrono::{Duration, Utc};
     use serde_json::json;

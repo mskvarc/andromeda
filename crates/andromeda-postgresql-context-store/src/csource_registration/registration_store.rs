@@ -13,7 +13,7 @@ use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_registration::{
     error::RegistrationError,
     resolved_update::ResolvedCsrUpdate,
-    store::{CreateCsrParams, ForwardingOutcome, RegistrationMutation, RegistrationPage, RegistrationStore},
+    store::{RegistrationStore, create_params::CreateCsrParams, forwarding_outcome::ForwardingOutcome, mutation::RegistrationMutation, page::RegistrationPage},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -152,7 +152,7 @@ impl RegistrationStore for PostgresRegistrationStore {
 #[cfg(test)]
 mod tests {
     use crate::csource_registration::registration_store::mutation_outcome;
-    use andromeda_registration::store::RegistrationMutation;
+    use andromeda_registration::store::mutation::RegistrationMutation;
 
     /// Zero affected rows preserve the policy-level missing outcome.
     #[test]

@@ -144,7 +144,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         let referenced = entity_map_header.as_ref().map(NgsiLdEntityMap::as_inner);
         let map_use = resolve_query_map_use(&state.entity_maps, &target, &mut query, referenced, &uri).await?;
 
-        let opts = query.parse_options();
+        let opts = query.parse_options().with_entity_instance(&uri)?;
         let is_local = !target.permits_federation() || query.is_local();
         let split = state.forwarding.split_entities(query.split_entities);
         let split_entities = !is_local && split == SplitEntities::Split;

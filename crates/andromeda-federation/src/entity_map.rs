@@ -130,7 +130,7 @@ impl FederationService {
         let matched = registrations.len();
         let answers = stream::iter(registrations)
             .map(|registration| async move {
-                let url = forwarding_url(&registration.access.endpoint, kind.path(), query_string);
+                let url = forwarding_url(registration.access.endpoint.url(), kind.path(), query_string);
                 // Clause 6.3.17 allows caching for `/entities` only.
                 let outcome = self.forward_get(&registration, url, context, triggering, Cacheability::Uncacheable, None).await;
                 let error_status = outcome.error_status();

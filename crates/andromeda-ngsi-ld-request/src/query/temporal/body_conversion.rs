@@ -7,6 +7,7 @@ use crate::{
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_model::query::body::Query;
+use andromeda_ngsi_ld_query::projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity};
 
 impl TryFrom<Query> for TemporalQueryParameters {
     type Error = ParameterError;
@@ -79,14 +80,13 @@ impl TryFrom<Query> for TemporalQueryParameters {
         // 4.18 reifies the Scope in, so `scope` is an Attribute name here.
         validate_attrs(parameters.attrs.as_deref(), AttrsAdmission::ReifiedScopeAdmitted)?;
         // Clause 4.21 governs the POST body's projection exactly as it
-        // governs the query string's, so the body cannot smuggle both members
+        // governs the query string's, so the body cannot smuggle two selectors
         // past the rule the GET binding enforces.
-        if parameters.pick.is_some() && parameters.omit.is_some() {
-            return Err(ParameterError::PickOmitExclusive);
-        }
-        if (parameters.pick.is_some() || parameters.omit.is_some()) && parameters.attrs.is_some() {
-            return Err(ParameterError::PickOmitWithAttrs);
-        }
+        check_projection_exclusivity(ProjectionSelectors {
+            pick: Presence::of(parameters.pick.as_deref()),
+            omit: Presence::of(parameters.omit.as_deref()),
+            attrs: Presence::of(parameters.attrs.as_deref()),
+        })?;
         Ok(parameters)
     }
 }
@@ -96,6 +96,7 @@ mod tests {
     use crate::{error::ParameterError, query::temporal::TemporalQueryParameters};
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
     use andromeda_ngsi_ld_model::query::body::Query;
+    use andromeda_ngsi_ld_query::projection::exclusivity::ProjectionConflict;
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use std::num::NonZeroU32;
 
@@ -109,7 +110,7 @@ mod tests {
     fn a_canonical_temporal_query_naming_pick_and_omit_is_rejected() {
         let request = canonical(r#"{"type":"Query","pick":["speed"],"omit":["fuel"],"temporalQ":{"timerel":"after","timeAt":"2024-01-01T00:00:00Z"}}"#);
         let err = TemporalQueryParameters::try_from(request).expect_err("pick and omit are mutually exclusive");
-        assert!(matches!(err, ParameterError::PickOmitExclusive));
+        assert!(matches!(err, ParameterError::Projection(ProjectionConflict::PickWithOmit)));
     }
 
     /// The POST body carries the join the same way the query string does

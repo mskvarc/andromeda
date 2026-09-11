@@ -13,25 +13,24 @@
 use crate::{
     config::SplitEntities,
     forwarded_parameter::ForwardedParameter,
-    registration_selection::{compact_attribute_name, information_matches_entity},
+    forwarded_query::{
+        client_query::ClientQuery,
+        registration_coverage::{covered_attrs, covered_ids, covered_type, rfc3339},
+    },
     request::SourcePage,
 };
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, temporal_format::TemporalFormat, uri::Uri};
-use andromeda_ngsi_ld_model::{
-    entity_info::EntityTypeSelection,
-    registration::{ContextSourceRegistration, RegistrationInfo},
-};
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, geo::input::GeoQueryInput, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, temporal_format::TemporalFormat, uri::Uri};
+use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, geo::input::GeoQueryInput, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_request::{
-    entity::GetEntityParams,
-    query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
-};
-use chrono::{DateTime, SecondsFormat, Utc};
+use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
 use std::num::NonZeroU32;
 use tracing::warn;
 use url::form_urlencoded;
+
+pub mod client_query;
+mod registration_coverage;
 
 /// The `options` token asking a source for its system-generated attributes
 /// (clause 4.8; Table 6.3.11-1).
@@ -39,50 +38,6 @@ const SYS_ATTRS_OPTION: &str = "sysAttrs";
 /// The maximum source page the Core API accepts before the hub applies its
 /// own post-merge page window.
 const SOURCE_PAGE_LIMIT: &str = "1000";
-
-/// The query a client sent, as the typed parameters of the operation it is.
-#[derive(Debug, Clone, Copy)]
-pub enum ClientQuery<'a> {
-    /// A Query Entities request (clause 5.7.2).
-    EntityQuery(&'a EntityQueryParameters),
-    /// A Retrieve Entity request (clause 5.7.1).
-    EntityRetrieve(&'a GetEntityParams),
-    /// A temporal query or retrieval (clauses 5.7.3 and 5.7.4).
-    Temporal(&'a TemporalQueryParameters),
-}
-
-impl ClientQuery<'_> {
-    /// The clause 4.17 type selector the client wrote, if the operation has one.
-    #[must_use]
-    pub const fn entity_type(&self) -> Option<&TypeExprRaw> {
-        match self {
-            ClientQuery::EntityQuery(params) => params.entity_type.as_ref(),
-            ClientQuery::Temporal(params) => params.entity_type.as_ref(),
-            ClientQuery::EntityRetrieve(_) => None,
-        }
-    }
-
-    /// The entity identifiers the client selected, if the operation has any.
-    #[must_use]
-    pub fn entity_ids(&self) -> Option<&[Uri]> {
-        match self {
-            ClientQuery::EntityQuery(params) => params.id.as_deref(),
-            ClientQuery::Temporal(params) => params.id.as_deref(),
-            ClientQuery::EntityRetrieve(_) => None,
-        }
-    }
-
-    /// The scope query used to preselect registrations by their declared
-    /// coverage footprint.
-    #[must_use]
-    pub const fn scope_q(&self) -> Option<&ScopeQuery> {
-        match self {
-            ClientQuery::EntityQuery(params) => params.scope_q.as_ref(),
-            ClientQuery::Temporal(params) => params.scope_q.as_ref(),
-            ClientQuery::EntityRetrieve(_) => None,
-        }
-    }
-}
 
 /// The query string one registration is sent: the client's parameters,
 /// narrowed to what the registration covers and to what the split-entities
@@ -130,13 +85,13 @@ impl ForwardedQuery {
                 query.push_optional(ForwardedParameter::Csf, params.csf.as_ref().map(ToString::to_string));
                 query.push_dataset_ids(params.dataset_id.as_deref());
                 query.push_lang(params.lang.as_ref());
-                query.push_sys_attrs(params.options.map(|options| options.sys_attrs));
+                query.push_sys_attrs(params.options.as_ref().and_then(WrittenValue::if_supported).map(|options| options.sys_attrs));
             }
             ClientQuery::EntityRetrieve(params) => {
                 query.push_attrs(params.attrs.as_deref(), registration)?;
                 query.push_dataset_ids(params.dataset_id.as_deref());
                 query.push_lang(params.lang.as_ref());
-                query.push_sys_attrs(params.options.map(|options| options.sys_attrs));
+                query.push_sys_attrs(params.options.as_ref().and_then(WrittenValue::if_supported).map(|options| options.sys_attrs));
                 query.push_traversal(params.join.map(|join| join.to_string()), params.join_level, params.contained_by.as_deref());
             }
             ClientQuery::Temporal(params) => {
@@ -169,8 +124,10 @@ impl ForwardedQuery {
                     ForwardedParameter::Format,
                     params
                         .format
-                        .filter(|format| *format != TemporalFormat::Normalized)
-                        .map(|format| format.to_string()),
+                        .as_ref()
+                        .and_then(WrittenValue::if_supported)
+                        .filter(|format| **format != TemporalFormat::Normalized)
+                        .map(ToString::to_string),
                 );
                 query.push_temporal_options(params);
                 query.push_optional(
@@ -309,7 +266,7 @@ impl ForwardedQuery {
     /// has to be the one the local history is rendered in for the two to merge,
     /// so the deprecated `options` spelling of the format travels as written.
     fn push_temporal_options(&mut self, params: &TemporalQueryParameters) {
-        let Some(options) = params.options else {
+        let Some(options) = params.options.as_ref().and_then(WrittenValue::if_supported) else {
             return;
         };
         let mut tokens = Vec::new();
@@ -334,125 +291,12 @@ impl ForwardedQuery {
     }
 }
 
-/// An instant in the RFC 3339 form the temporal parameters are written in.
-fn rfc3339(instant: DateTime<Utc>) -> String {
-    instant.to_rfc3339_opts(SecondsFormat::AutoSi, true)
-}
-
-/// The identifiers among `ids` that some information entry of the registration
-/// covers, or `None` when it covers none of them.
-fn covered_ids(ids: &[Uri], registration: &ContextSourceRegistration) -> Option<Vec<Uri>> {
-    let covered = ids
-        .iter()
-        .filter(|id| {
-            registration
-                .coverage
-                .information
-                .iter()
-                .any(|information| information_matches_entity(information, None, Some(id)))
-        })
-        .cloned() // clone: the forwarded query owns the identifiers it writes
-        .collect::<Vec<_>>();
-    (!covered.is_empty()).then_some(covered)
-}
-
-/// The part of the client's type selector the registration covers, or `None`
-/// when it covers none of it.
-///
-/// Only a flat alternation of names can be narrowed; the wildcard and a
-/// conjunction are forwarded whole, because removing a member would change
-/// what they select rather than restrict it.
-fn covered_type(entity_type: &TypeExprRaw, registration: &ContextSourceRegistration) -> Option<TypeExprRaw> {
-    let selectors = registration
-        .coverage
-        .information
-        .iter()
-        .filter_map(|information| information.entities.as_deref())
-        .flatten()
-        .map(|selector| &selector.type_)
-        .collect::<Vec<_>>();
-    let unrestricted = registration.coverage.information.iter().any(|information| information.entities.is_none());
-    if unrestricted || selectors.is_empty() {
-        return Some(entity_type.clone()); // clone: the forwarded query owns the selector it writes
-    }
-    let leaves = match entity_type {
-        TypeExprRaw::Type(name) => vec![name],
-        TypeExprRaw::Or(children) => children
-            .iter()
-            .map(|child| match child {
-                TypeExprRaw::Type(name) => Some(name),
-                TypeExprRaw::Wildcard | TypeExprRaw::And(_) | TypeExprRaw::Or(_) => None,
-            })
-            .collect::<Option<Vec<_>>>()?,
-        TypeExprRaw::Wildcard | TypeExprRaw::And(_) => return Some(entity_type.clone()), // clone: same
-    };
-    let mut covered = leaves
-        .into_iter()
-        .filter(|name| selectors.iter().any(|selector| selector_covers_type(selector, name)))
-        .cloned() // clone: the narrowed selector owns its names
-        .map(TypeExprRaw::Type)
-        .collect::<Vec<_>>();
-    match covered.len() {
-        0 => None,
-        1 => covered.pop(),
-        _ => Some(TypeExprRaw::Or(covered)),
-    }
-}
-
-/// Whether a registered type selection (Table 5.2.8-1: one name or several)
-/// admits the client's compact or expanded type name. Registered names are
-/// stored expanded, so a compact client name is compared against the last
-/// segment of the registered IRI as well.
-fn selector_covers_type(selector: &EntityTypeSelection, name: &EntityTypeName) -> bool {
-    selector
-        .names()
-        .iter()
-        .any(|registered| registered == name || compact_type_name(registered).as_ref() == Some(name))
-}
-
-/// The last fragment or path segment of an expanded type IRI, as the compact
-/// name a client most likely wrote for it.
-fn compact_type_name(name: &EntityTypeName) -> Option<EntityTypeName> {
-    let iri = name.as_ref();
-    let compact = match iri.rfind('#') {
-        Some(position) => &iri[position + 1..],
-        None => iri.rfind('/').map(|position| &iri[position + 1..])?,
-    };
-    compact.parse().ok()
-}
-
-/// The attributes among `attrs` the registration declares, or every one of
-/// them when it declares no attribute names at all (clause 5.2.10: a block
-/// without names covers every attribute of its entities); `None` when it
-/// declares names and none of the requested ones is among them.
-fn covered_attrs(attrs: &[AttributeName], registration: &ContextSourceRegistration) -> Option<Vec<AttributeName>> {
-    let declared = registration
-        .coverage
-        .information
-        .iter()
-        .flat_map(RegistrationInfo::attribute_names)
-        .collect::<Vec<_>>();
-    if declared.is_empty() {
-        return Some(attrs.to_vec()); // clone: the forwarded query owns the names it writes
-    }
-    let covered = attrs
-        .iter()
-        .filter(|attribute| {
-            declared
-                .iter()
-                .any(|name| *name == *attribute || compact_attribute_name(name).as_ref() == Some(attribute))
-        })
-        .cloned() // clone: same
-        .collect::<Vec<_>>();
-    (!covered.is_empty()).then_some(covered)
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
         config::SplitEntities,
         forwarded_parameter::ForwardedParameter,
-        forwarded_query::{ClientQuery, ForwardedQuery},
+        forwarded_query::{ForwardedQuery, client_query::ClientQuery},
         request::SourcePage,
     };
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;

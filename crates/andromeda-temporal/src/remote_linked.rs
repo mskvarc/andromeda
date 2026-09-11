@@ -24,7 +24,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
 use andromeda_ngsi_ld_query::temporal::aggregation_period::AggregationPeriod;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
-use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -71,7 +71,7 @@ impl TemporalLinkedWindow {
             end_time_at: params.end_time_at,
             timeproperty: params.timeproperty_or_default(),
             last_n: params.last_n,
-            format: params.parse_format(),
+            format: params.selected_format(),
             aggr_methods: params.aggr_methods.clone(), // clone: the window outlives the borrowed request
             aggr_period_duration: params.aggr_period_duration,
         }
@@ -91,7 +91,7 @@ impl TemporalLinkedWindow {
             end_time_at: self.end_time_at,
             timeproperty: Some(self.timeproperty),
             last_n: self.last_n,
-            format: Some(self.format),
+            format: Some(WrittenValue::Supported(self.format)),
             aggr_methods: self.aggr_methods.clone(), // clone: the derived request owns its methods
             aggr_period_duration: self.aggr_period_duration,
             ..TemporalQueryParameters::default()

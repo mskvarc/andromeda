@@ -134,7 +134,7 @@ pub async fn get(
     // Table 6.19.3.1-2 carries the 203 row and clause 6.3.6 the
     // `Preference-Applied` echo, so the preference the request expressed is the
     // one that renders; `NgsiLdResponse` turns the outcome into both.
-    let rendered = start_rendering_temporal(accept.media_type(), &context, protocol.prefer.rendering_preferences(), params.parse_format())
+    let rendered = start_rendering_temporal(accept.media_type(), &context, protocol.prefer.rendering_preferences(), params.selected_format())
         .with_payload(payload)
         .render()
         .with_instance(&uri)?;

@@ -61,7 +61,7 @@ pub(crate) async fn batch_upsert(
     // the input Array": every entity answers for itself, so the clause 5.5.4
     // validation an entity fails contributes a BatchEntityError of its own
     // rather than failing the whole request.
-    let upsert_mode = params.options.unwrap_or_default();
+    let upsert_mode = params.mode().with_entity_instance(&uri)?;
     let upsert_policy = match upsert_mode {
         UpsertMode::Update => UpsertPolicy::Update,
         UpsertMode::Replace => UpsertPolicy::Replace,
@@ -80,7 +80,7 @@ pub(crate) async fn batch_upsert(
         ));
     }
 
-    let query_string = params.options.map(|option| format!("options={option}"));
+    let query_string = Some(format!("options={upsert_mode}"));
     let triggering = TriggeringRequest {
         via: incoming_via.as_ref(),
         headers: Some(batch_body.headers()),

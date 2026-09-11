@@ -1,12 +1,9 @@
 //! Query parameters for the NGSI-LD Temporal API.
 
 use crate::{
-    attribute_selection::{AttrsAdmission, validate_attrs},
-    error::ParameterError,
     impl_shared_query_params,
     language_filter::deserialize_optional_language_filter,
-    linked_retrieval_consistency::{validate_filter_join_depth, validate_projection_join_depth},
-    options::{TemporalRepresentationOptions, deserialize_temporal_representation_options},
+    options::TemporalRepresentationOptions,
     query::{
         SharedQueryParams,
         deserialization::{
@@ -20,13 +17,9 @@ use crate::{
             deserialize_optional_uri_csv,
         },
         entity_selector::EntitySelectorParams,
-        temporal::deserialization::{
-            deserialize_option_temporal_format,
-            deserialize_option_timeproperty,
-            deserialize_option_timerel,
-            deserialize_optional_aggr_methods,
-        },
+        temporal::deserialization::{deserialize_option_timeproperty, deserialize_option_timerel, deserialize_optional_aggr_methods},
     },
+    representation_parameter::WrittenValue,
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{
@@ -44,14 +37,10 @@ use andromeda_ngsi_ld_query::{
     pattern::Pattern,
     projection::grammar::RawProjectionTerm,
     scope::query::ScopeQuery,
-    temporal::{
-        aggregation_period::{AggregationPeriod, optional},
-        ordering::TemporalEntityOrdering,
-        window::{BoundPresence, TimeInterval},
-    },
+    temporal::aggregation_period::{AggregationPeriod, optional},
     type_selection::grammar::TypeExprRaw,
 };
-use andromeda_ngsi_ld_representation::{join_mode::JoinMode, sys_attrs::SysAttrsInclusion};
+use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::Deserialize;
@@ -63,6 +52,8 @@ pub mod body_conversion;
 pub mod deserialization;
 /// The URL parameters the POST binding carries beside its clause 5.2.23 body.
 pub mod post_parameters;
+/// What a temporal query has to satisfy before it runs.
+pub mod validation;
 
 /// Raw HTTP query parameters for temporal entity queries.
 ///
@@ -119,11 +110,9 @@ pub struct TemporalQueryParameters {
     #[serde(rename = "lastN")]
     pub last_n: Option<u32>,
     /// The representation the response uses (clause 4.5.1 `format`).
-    #[serde(default, deserialize_with = "deserialize_option_temporal_format")]
-    pub format: Option<TemporalFormat>,
+    pub format: Option<WrittenValue<TemporalFormat>>,
     /// Typed temporal representation and system-attribute options (`options`).
-    #[serde(default, deserialize_with = "deserialize_temporal_representation_options")]
-    pub options: Option<TemporalRepresentationOptions>,
+    pub options: Option<WrittenValue<TemporalRepresentationOptions>>,
     /// The aggregation methods, comma-separated (clause 4.5.19 `aggrMethods`).
     #[serde(rename = "aggrMethods")]
     #[serde(default, deserialize_with = "deserialize_optional_aggr_methods")]
@@ -221,172 +210,6 @@ impl_shared_query_params!(TemporalQueryParameters {
     offset: offset
 });
 
-/// Which Entity members `attrs` admits at each of the two temporal endpoints.
-///
-/// Both tables restrict `attrs` to "an Attribute (Property or Relationship)
-/// name", and clause 4.18 makes the Scope "a special scope Property that is
-/// non-reified in the normalized Entity representation and reified in the
-/// temporal representation of an Entity" — so on a temporal answer `scope` is
-/// an Attribute name and Table 6.18.3.2-1 excludes nothing further. Table
-/// 6.19.3.1-1 excludes it explicitly on the retrieval, "except that id, type,
-/// scope are not allowed", and an explicit prohibition beats an inference from
-/// the representation, so the same spelling is a bad request there.
-const fn attrs_admission(require_temporal: bool) -> AttrsAdmission {
-    if require_temporal {
-        AttrsAdmission::ReifiedScopeAdmitted
-    } else {
-        AttrsAdmission::AttributeNamesOnly
-    }
-}
-
-impl TemporalQueryParameters {
-    /// Returns whether the query should be local-only (no distributed forwarding).
-    ///
-    /// Per NGSI-LD Table 6.18.3.2-1, `type=*` implies `local=true` since wildcard
-    /// type queries are undefined across federated sources.
-    #[must_use]
-    pub fn is_local(&self) -> bool {
-        if self.local == Some(true) {
-            return true;
-        }
-        // type=* implies local=true per spec Table 6.18.3.2-1
-        matches!(self.entity_type, Some(TypeExprRaw::Wildcard))
-    }
-
-    /// The temporal property the window applies to, defaulting to `observedAt`
-    /// (clause 4.8) when the request named none. The value was validated as a
-    /// [`TimeProp`] at the query boundary.
-    #[must_use]
-    pub fn timeproperty_or_default(&self) -> TimeProp {
-        self.timeproperty.unwrap_or_default()
-    }
-
-    /// Parses the temporal response format from `format` and `options` parameters.
-    ///
-    /// The `format` parameter takes precedence over `options`. Recognized values
-    /// are `"temporalValues"` and `"aggregatedValues"`. Defaults to
-    /// `TemporalFormat::Normalized`.
-    #[must_use]
-    pub fn parse_format(&self) -> TemporalFormat {
-        self.format.or_else(|| self.options.and_then(|options| options.format)).unwrap_or_default()
-    }
-
-    /// Returns whether the `sysAttrs` option is present in the `options` parameter.
-    #[must_use]
-    pub fn has_sys_attrs(&self) -> bool {
-        self.options.is_some_and(|options| options.sys_attrs == SysAttrsInclusion::Include)
-    }
-
-    /// Returns whether the query requests simplified (key-values) output.
-    ///
-    /// Checks both `keyValues` and `simplified` option values, which are
-    /// equivalent per NGSI-LD spec.
-    #[must_use]
-    pub const fn is_simplified(&self) -> bool {
-        false
-    }
-
-    /// Validate parameters.
-    /// - For query endpoint (`require_temporal=true)`: timerel and timeAt are REQUIRED.
-    /// - For single-entity GET (`require_temporal=false)`: timerel and timeAt are optional (both or neither).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ParameterError::AttrsReservedMember`] when `attrs` names an
-    /// Entity member, [`ParameterError::PickOmitExclusive`] and
-    /// [`ParameterError::PickOmitWithAttrs`] for the clause 4.21 projection
-    /// conflicts, the clause 5.7.2.4 depth errors when a nested projection
-    /// term or a `q` hop names a Linked Entity the requested traversal does
-    /// not reach, [`ParameterError::InlineJoinWithoutInstances`] when
-    /// `join=inline` meets a representation with no instance to nest under,
-    /// [`ParameterError::OrderingRequiresLocalScope`] and
-    /// [`ParameterError::Query`] carrying a temporal-ordering failure for an
-    /// ordering clause 5.7.4.3 does not admit,
-    /// [`ParameterError::TimerelTimeatRequired`] and
-    /// [`ParameterError::SelectorRequired`] when a query endpoint omits the
-    /// temporal window or every entity selector,
-    /// [`ParameterError::Query`] when the `timerel`, `timeAt` and `endTimeAt`
-    /// group is incomplete, and [`ParameterError::AggrMethodsRequired`] when
-    /// `format=aggregatedValues` carries no aggregation methods.
-    pub fn validate(&self, require_temporal: bool) -> Result<(), ParameterError> {
-        validate_attrs(self.attrs.as_deref(), attrs_admission(require_temporal))?;
-        // Clause 4.21: pick and omit select opposite ends of the same
-        // projection, so a request naming both is contradictory rather than a
-        // request the broker can merge. The temporal API inherits the rule
-        // unchanged.
-        if self.pick.is_some() && self.omit.is_some() {
-            return Err(ParameterError::PickOmitExclusive);
-        }
-        if (self.pick.is_some() || self.omit.is_some()) && self.attrs.is_some() {
-            return Err(ParameterError::PickOmitWithAttrs);
-        }
-        // Clauses 5.7.3.4 and 5.7.4.4 admit no Linked Entity retrieval on the
-        // temporal operations at all, raising an error where projection
-        // attributes or filter conditions indicate one. Andromeda's join
-        // extension accepts them instead, and holds them to the bound clause
-        // 5.7.2.4 sets on the entity bindings: a nested projection term and a
-        // `q` hop each reach only as far as the requested join walks.
-        validate_projection_join_depth(self.pick.as_deref(), self.omit.as_deref(), self.join, self.join_level)?;
-        validate_filter_join_depth(self.q.as_ref(), self.join, self.join_level)?;
-        // Clause 4.5.23 nests a linked entity under the attribute instance that
-        // names it. The simplified representation of clause 4.5.5 and the
-        // aggregated one of clause 4.5.19 both collapse instances into value
-        // arrays, leaving nothing to nest under, so `join=inline` has no
-        // meaning there and is refused rather than silently ignored. A flat
-        // join stays available: it puts the linked entities beside the roots
-        // and needs no nesting site.
-        if self.join == Some(JoinMode::Inline) {
-            let format = self.parse_format();
-            match format {
-                TemporalFormat::TemporalValues | TemporalFormat::AggregatedValues => {
-                    return Err(ParameterError::InlineJoinWithoutInstances(format));
-                }
-                TemporalFormat::Normalized => {}
-            }
-        }
-        // Clause 5.7.4.4: "If the ordering parameter is present and the
-        // execution of the operation is not limited to the local scope (see
-        // clause 5.5.13) then an error of type BadRequestData shall be
-        // raised."
-        if !self.ordering.order_by.is_empty() && !self.is_local() {
-            return Err(ParameterError::OrderingRequiresLocalScope);
-        }
-        // Which orderings clause 5.7.4.3 admits is a property of the ordering
-        // itself; the request seam asks the compiled form rather than
-        // restating the rule, and compilation later reads the same answer.
-        TemporalEntityOrdering::of_parameters(&self.ordering).map_err(ParameterError::Query)?;
-        if require_temporal {
-            if self.timerel.is_none() || self.time_at.is_none() {
-                return Err(ParameterError::TimerelTimeatRequired);
-            }
-            // At least one entity selection criterion is required for temporal query
-            if self.id.is_none()
-                && self.entity_type.is_none()
-                && self.id_pattern.is_none()
-                && self.attrs.is_none()
-                && self.q.is_none()
-                && self.entity_selectors.is_empty()
-            {
-                return Err(ParameterError::SelectorRequired(
-                    "At least one of id, type, idPattern, attrs, or q is required for temporal query",
-                ));
-            }
-        }
-        // The `timerel`/`timeAt`/`endTimeAt` combination rule is owned by the
-        // query crate, so the request seam asks rather than re-deriving it.
-        TimeInterval::check_time_bounds(
-            self.timerel,
-            BoundPresence::of(self.time_at.as_ref()),
-            BoundPresence::of(self.end_time_at.as_ref()),
-        )
-        .map_err(ParameterError::Query)?;
-        if self.parse_format() == TemporalFormat::AggregatedValues && self.aggr_methods.is_none() {
-            return Err(ParameterError::AggrMethodsRequired);
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -395,7 +218,7 @@ mod tests {
         query::{SharedQueryParams, temporal::TemporalQueryParameters},
     };
     use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
-    use andromeda_ngsi_ld_query::error::QueryError;
+    use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict};
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use std::num::NonZeroU32;
 
@@ -411,19 +234,19 @@ mod tests {
     #[test]
     fn parse_format_precedence_over_options() {
         let p = params_from_query("format=aggregatedValues&options=temporalValues");
-        pretty_assertions::assert_eq!(p.parse_format(), TemporalFormat::AggregatedValues);
+        pretty_assertions::assert_eq!(p.parse_format().expect("a supported rendering"), TemporalFormat::AggregatedValues);
     }
 
     #[test]
     fn parse_format_from_options() {
         let p = params_from_query("options=temporalValues");
-        pretty_assertions::assert_eq!(p.parse_format(), TemporalFormat::TemporalValues);
+        pretty_assertions::assert_eq!(p.parse_format().expect("a supported rendering"), TemporalFormat::TemporalValues);
     }
 
     #[test]
     fn parse_format_normalized_default() {
         let p = params_from_query("");
-        pretty_assertions::assert_eq!(p.parse_format(), TemporalFormat::Normalized);
+        pretty_assertions::assert_eq!(p.parse_format().expect("a supported rendering"), TemporalFormat::Normalized);
     }
 
     #[test]
@@ -475,7 +298,7 @@ mod tests {
 
         let err = p.validate(false).expect_err("pick and omit are mutually exclusive");
 
-        assert!(matches!(err, ParameterError::PickOmitExclusive));
+        assert!(matches!(err, ParameterError::Projection(ProjectionConflict::PickWithOmit)));
         assert!(err.to_string().contains("mutually exclusive"));
     }
 
@@ -488,7 +311,7 @@ mod tests {
             let err = params_from_query(query)
                 .validate(false)
                 .expect_err("projection and attrs are mutually exclusive");
-            assert!(matches!(err, ParameterError::PickOmitWithAttrs));
+            assert!(matches!(err, ParameterError::Projection(ProjectionConflict::ProjectionWithAttrs)));
         }
     }
 
@@ -740,12 +563,14 @@ mod tests {
 
     #[test]
     fn is_simplified_with_key_values() {
-        assert!(serde_urlencoded::from_str::<TemporalQueryParameters>("options=keyValues").is_err());
+        let entity_token: TemporalQueryParameters = serde_urlencoded::from_str("options=keyValues").expect("the parameter set decodes");
+        assert!(entity_token.parse_format().is_err(), "Table 6.3.12-1 defines no keyValues token");
     }
 
     #[test]
     fn is_simplified_with_simplified_option() {
-        assert!(serde_urlencoded::from_str::<TemporalQueryParameters>("options=simplified").is_err());
+        let entity_token: TemporalQueryParameters = serde_urlencoded::from_str("options=simplified").expect("the parameter set decodes");
+        assert!(entity_token.parse_format().is_err(), "Table 6.3.12-1 defines no simplified token");
     }
 
     #[test]

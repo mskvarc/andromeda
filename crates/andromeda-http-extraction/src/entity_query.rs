@@ -1,8 +1,10 @@
-//! Entity query extractor with NGSI-LD filter validation.
+//! The entity-query extractor: the query string, decoded and classified.
 //!
-//! Parses and validates query parameters for entity listing endpoints,
-//! enforcing the filter requirement from ETSI GS CIM 009 clause 5.7.2.4:
-//! at least one filter or `local=true` must be present.
+//! What the decoded parameters then have to satisfy -- the clause 5.7.2.4
+//! narrowing rule among it -- belongs to
+//! [`EntityQueryParameters::validate`](andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters),
+//! which every binding of the operation calls. This seam owns only the decoding
+//! and the clause 6.3.20 classification of a failure to decode.
 
 use crate::query::classify_query_parse_error;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
@@ -12,15 +14,12 @@ use std::future::{Future, ready};
 
 /// Axum extractor for NGSI-LD entity query parameters.
 ///
-/// Deserializes the query string into [`EntityQueryParameters`], validates
-/// option values and parameter constraints, and enforces the NGSI-LD 5.7.2.4
-/// requirement that at least one filter (type, id, idPattern, q, etc.) or
-/// `local=true` must be present.
+/// Deserializes the query string into [`EntityQueryParameters`] and classifies
+/// a failure to decode it (clause 6.3.20).
 #[derive(Debug)]
 pub struct EntityQuery(pub EntityQueryParameters);
 
-/// Deserialize the entity query string and enforce the clause 5.7.2.4 filter
-/// requirement.
+/// Deserialize the entity query string, classifying a failure to decode it.
 fn resolve_entity_query(parts: &Parts) -> Result<EntityQuery, ExtractorRejection> {
     let uri = parts.uri.clone();
     let query_str = parts.uri.query().unwrap_or("");
@@ -29,14 +28,6 @@ fn resolve_entity_query(parts: &Parts) -> Result<EntityQuery, ExtractorRejection
         let message = format!("Invalid query parameters: {error_text}");
         classify_query_parse_error(&error_text, message, uri.clone())
     })?;
-
-    // Clause 5.7.2.4: at least one filter OR local=true must be provided.
-    if !params.local.unwrap_or(false) && !params.has_any_filter() {
-        return Err(ExtractorRejection::bad_request_data(
-            "At least one of type, id, idPattern, q, or local=true must be provided",
-            uri,
-        ));
-    }
 
     Ok(EntityQuery(params))
 }
@@ -57,22 +48,18 @@ mod tests {
     use super::*;
     use axum::{body::Body, http::Request};
 
+    /// A query string the parameter set can decode is extracted whatever the
+    /// clause 5.7.2.4 narrowing rule will make of it: that rule is applied by
+    /// the parameter set's own validation, which the operation runs.
     #[tokio::test]
-    async fn rejects_missing_filters() {
-        let req = Request::builder().uri("/ngsi-ld/v1/entities").body(Body::empty()).unwrap();
-        let (mut parts, _) = req.into_parts();
+    async fn a_decodable_query_string_is_extracted() {
+        for query in ["", "local=true", "type=Vehicle", "id=urn:ngsi-ld:Vehicle:1"] {
+            let req = Request::builder().uri(format!("/ngsi-ld/v1/entities?{query}")).body(Body::empty()).unwrap();
+            let (mut parts, _) = req.into_parts();
 
-        let result = EntityQuery::from_request_parts(&mut parts, &()).await;
-        assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
-    }
-
-    #[tokio::test]
-    async fn allows_empty_query_with_local_true() {
-        let req = Request::builder().uri("/ngsi-ld/v1/entities?local=true").body(Body::empty()).unwrap();
-        let (mut parts, _) = req.into_parts();
-
-        let result = EntityQuery::from_request_parts(&mut parts, &()).await;
-        assert!(result.is_ok(), "expected Ok when local=true, even without filters");
+            let result = EntityQuery::from_request_parts(&mut parts, &()).await;
+            assert!(result.is_ok(), "'{query}' decodes");
+        }
     }
 
     #[tokio::test]

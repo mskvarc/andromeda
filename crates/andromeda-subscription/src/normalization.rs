@@ -7,7 +7,10 @@ use andromeda_jsonld::{
     term_compaction::ContextualCompactor,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::subscription::{SubscriptionFilters, SubscriptionStatus};
+use andromeda_ngsi_ld_model::{
+    notification::DEFAULT_NOTIFICATION_TRIGGERS,
+    subscription::{SubscriptionFilters, SubscriptionStatus},
+};
 use andromeda_ngsi_ld_query::{
     filter::{
         compaction::{compact_q_expr, revert_expand_values},
@@ -49,12 +52,22 @@ fn whole_seconds(seconds: f64) -> Option<i64> {
     format!("{seconds:.0}").parse().ok()
 }
 
-/// Inject default notificationTrigger if absent.
+/// Render the clause 5.2.12 default `notificationTrigger` a Subscription that
+/// named none is matched under.
+///
+/// Table 5.2.12-1: "If not present, the default is the combination
+/// attributeCreated and attributeUpdated". What the Context Subscriber wrote is
+/// what the broker stores, so the default is supplied when the Subscription is
+/// served rather than when it is created -- and it is supplied here, on the
+/// Subscription of clause 5.2.12, not on the Context Source Registration
+/// Subscription of clause 5.11, whose notifications carry a `triggerReason`
+/// (clause 5.3.2) that no notification trigger selects.
 pub fn fixup_default_notification_trigger(value: &mut Value) {
     if value.get("notificationTrigger").is_none()
         && let Some(obj) = value.as_object_mut()
     {
-        obj.insert("notificationTrigger".to_string(), serde_json::json!(["attributeCreated", "attributeUpdated"]));
+        let defaults = DEFAULT_NOTIFICATION_TRIGGERS.map(|trigger| trigger.to_string()).to_vec();
+        obj.insert("notificationTrigger".to_string(), serde_json::json!(defaults));
     }
 }
 

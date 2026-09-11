@@ -40,7 +40,9 @@ pub mod local;
 pub mod options;
 pub mod protocol;
 pub mod query;
-pub mod representation_params;
+pub mod query_narrowing;
+pub mod representation_format;
+pub mod representation_parameter;
 pub mod subscription;
 
 #[cfg(test)]

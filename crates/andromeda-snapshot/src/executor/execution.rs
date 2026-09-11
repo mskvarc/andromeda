@@ -10,7 +10,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::{
     entity_result::collect_warnings,
-    forwarded_query::ClientQuery,
+    forwarded_query::client_query::ClientQuery,
     operation::ForwardingOperation,
     request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, ForwardTemporalQueryRequest, SourcePage, TriggeringRequest},
     temporal_result::merge_temporal_query_results,

@@ -9,7 +9,7 @@ use crate::compiled::CompiledCsrSubscription;
 use andromeda_ngsi_ld_geometry::{geometry::Geometry, relation::matches as geometry_matches};
 use andromeda_ngsi_ld_lexicon::{scope::grammar::ScopeBuf, time_prop::TimeProp};
 use andromeda_ngsi_ld_model::{
-    registration::{ContextSourceRegistration, RegistrationInfo},
+    registration::{ContextSourceRegistration, info::RegistrationInfo},
     registration_matching::{EntitySpecification, RegistrationMatchSpecification},
     subscription::SubscriptionStatus,
 };

@@ -1,7 +1,7 @@
 //! The registration statements the read and write sides build on.
 
 use crate::csource_registration::registration_store::persistence_error;
-use andromeda_ngsi_ld_model::registration::{CsrOperation, CsrStatus, ForwardingMode};
+use andromeda_ngsi_ld_model::registration::{forwarding_mode::ForwardingMode, operation::CsrOperation, status::CsrStatus};
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_postgresql_schema::csr::Csr;
 use andromeda_postgresql_seaquery::{
@@ -12,7 +12,7 @@ use andromeda_postgresql_seaquery::{
     placeholder::external_placeholder,
     postgis::{geometry_as_geojson, validated_geom_from_ewkb},
 };
-use andromeda_registration::{error::RegistrationError, store::ForwardingOutcome};
+use andromeda_registration::{error::RegistrationError, store::forwarding_outcome::ForwardingOutcome};
 use sea_query::{CaseStatement, Expr as SeaExpr, ExprTrait, Keyword, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 
 /// Add the full registration row projection to `select`, decoding each stored
@@ -216,7 +216,7 @@ pub(super) fn proxied_mode() -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::csource_registration::registration_statements::{csr_create_sql, csr_update_sql, health_update_sql};
-    use andromeda_registration::store::ForwardingOutcome;
+    use andromeda_registration::store::forwarding_outcome::ForwardingOutcome;
 
     #[test]
     fn the_create_writes_its_type_geometries_and_mode_with_contiguous_markers() {

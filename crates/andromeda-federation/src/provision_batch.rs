@@ -25,7 +25,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     expanded::mutation::selection::OverwritePolicy,
-    registration::{ContextSourceRegistration, ForwardingMode},
+    registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
 };
 use andromeda_ngsi_ld_request::options::UpsertMode;
 use futures::{StreamExt, stream};
@@ -429,7 +429,7 @@ impl FederationService {
                     .collect::<Vec<_>>();
                 let body = serde_json::to_vec(&array).ok();
                 let url = forwarding_url(
-                    &csr.access.endpoint,
+                    csr.access.endpoint.url(),
                     &["entityOperations", request.operation.batch_path()],
                     request.query_string.unwrap_or(""),
                 );
@@ -480,7 +480,7 @@ impl FederationService {
         entity: &NarrowedEntity,
         request: &ForwardBatchRequest<'_>,
     ) -> ForwardedWriteOutcome {
-        let (url, method, body) = single_write_request(write, &csr.access.endpoint, entity);
+        let (url, method, body) = single_write_request(write, csr.access.endpoint.url(), entity);
         let outcome = self.forward_write(csr, url, method, body.as_deref(), request.context, request.triggering).await;
         let SingleWrite::CreateThenOnConflict(follow_up) = write else {
             return outcome;
@@ -491,7 +491,7 @@ impl FederationService {
         let Some(follow_up) = follow_up_write(follow_up) else {
             return ForwardedWriteOutcome::UpsertFollowUpNotAdvertised;
         };
-        let (url, method, body) = single_write_request(follow_up, &csr.access.endpoint, entity);
+        let (url, method, body) = single_write_request(follow_up, csr.access.endpoint.url(), entity);
         self.forward_write(csr, url, method, body.as_deref(), request.context, request.triggering).await
     }
 }

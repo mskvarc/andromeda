@@ -13,7 +13,7 @@ use andromeda_federation::{
 use andromeda_http_response::{batch_projection::forwarded_write_error, problem_response::ProblemResponse};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::{entity::Entity, entity_type::EntityTypeValue, registration::ForwardingMode};
+use andromeda_ngsi_ld_model::{entity::Entity, entity_type::EntityTypeValue, registration::forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
 use axum::http::{StatusCode, Uri as HttpUri};
 use serde_json::Value;
@@ -196,7 +196,7 @@ mod tests {
     use andromeda_entity::error::EntityError;
     use andromeda_federation::{outcome::ForwardedWriteOutcome, provision_batch::BatchForwardedResult};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-    use andromeda_ngsi_ld_model::{entity::Entity, registration::ForwardingMode};
+    use andromeda_ngsi_ld_model::{entity::Entity, registration::forwarding_mode::ForwardingMode};
     use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
     use serde_json::json;
 

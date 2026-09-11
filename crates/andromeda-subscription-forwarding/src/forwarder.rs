@@ -14,7 +14,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     notification::{CsourceNotification, CsrTriggerReason},
-    registration::{ContextSourceRegistration, ForwardingMode},
+    registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
     subscription::Subscription,
 };
 use tracing::{debug, warn};
@@ -193,7 +193,7 @@ impl SubscriptionForwardingService {
 mod tests {
     use crate::forwarder::{ForwardDecision, decide};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
-    use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, registration::ForwardingMode};
+    use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, registration::forwarding_mode::ForwardingMode};
 
     fn remote() -> Uri {
         "urn:ngsi-ld:Subscription:forwarded:1".parse().expect("valid URI")

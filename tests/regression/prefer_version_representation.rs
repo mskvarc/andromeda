@@ -95,7 +95,9 @@ async fn retrieve(client: &TestClient, id: &str, selection: &str, prefer: Option
 /// Query for one entity under `selection`, optionally naming a version in
 /// `Prefer`, and answer with the single entity the collection carries.
 async fn query_one(client: &TestClient, id: &str, selection: &str, prefer: Option<&str>) -> (StatusCode, Value) {
-    let path = format!("/ngsi-ld/v1/entities?id={}&{selection}", urlencoding::encode(id));
+    // Clause 5.7.2.4 lists no identifier among the narrowing inputs, so the
+    // type selector is what lets this query run at all.
+    let path = format!("/ngsi-ld/v1/entities?type=Vehicle&id={}&{selection}", urlencoding::encode(id));
     let (status, body) = send(client, &path, prefer).await;
     let entities = body.as_array().expect("a query answers with an array");
     assert_eq!(entities.len(), 1, "exactly one entity must match: {body}");

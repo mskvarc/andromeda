@@ -57,11 +57,15 @@ async fn reg_client_supplied_health_fields_ignored() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A freshly created registration reports non-negative delivery counters and, if
-/// present, a `status` drawn from the `CsrStatus` tokens (clause 5.2.9). Confirms
-/// REQ-REG-31, REQ-REG-32.
+/// A freshly created registration reports none of the Table 5.2.9-2 members.
+///
+/// Every one of them has cardinality 0..1 and reports an observation: `status`
+/// follows "the last attempt to perform a distributed operation", `timesSent`
+/// counts the operations the registration triggered, and `lastSuccess` is
+/// "created on first successful operation". A registration that has triggered
+/// nothing has none of that to report. Confirms REQ-REG-31, REQ-REG-32.
 #[tokio::test]
-async fn reg_fresh_registration_counters_nonnegative() {
+async fn reg_fresh_registration_reports_no_observed_health() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:health-fresh");
     let created = topology
@@ -81,14 +85,11 @@ async fn reg_fresh_registration_counters_nonnegative() {
         .expect("retrieve registration");
     assert_status(&retrieved, 200);
     let stored = json_body(&retrieved);
-    if let Some(times_sent) = stored["timesSent"].as_i64() {
-        assert!(times_sent >= 0, "timesSent is non-negative on a fresh registration, got {times_sent}");
-    }
-    if let Some(times_failed) = stored["timesFailed"].as_i64() {
-        assert!(times_failed >= 0, "timesFailed is non-negative on a fresh registration, got {times_failed}");
-    }
-    if let Some(status) = stored["status"].as_str() {
-        assert!(matches!(status, "ok" | "failed"), "status is one of the CsrStatus tokens, got {status}");
+    for member in ["status", "timesSent", "timesFailed", "lastSuccess", "lastFailure"] {
+        assert!(
+            stored.get(member).is_none(),
+            "a registration that has forwarded nothing reports no '{member}' (Table 5.2.9-2): {stored}"
+        );
     }
 
     topology.finish().await.expect("topology cleanup");

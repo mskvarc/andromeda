@@ -16,7 +16,7 @@ use andromeda_entity::{
 };
 use andromeda_federation::{
     FederationService,
-    forwarded_query::ClientQuery,
+    forwarded_query::client_query::ClientQuery,
     operation::ForwardingOperation,
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
 };

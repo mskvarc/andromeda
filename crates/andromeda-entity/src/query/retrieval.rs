@@ -122,7 +122,7 @@ impl EntityQueryService {
         refuse_unnarrowable(*self.query_store.profile(), &narrowed.selection)?;
         let outcome = self.query_store.query_compiled(target, &narrowed).await?;
         let page = finish_page(outcome, compiled.pagination)?;
-        let sys_attrs = query.parse_options().sys_attrs;
+        let sys_attrs = query.parse_options()?.sys_attrs;
 
         // One batch read rather than one per entity.
         let sys_attrs_map = if sys_attrs == SysAttrsInclusion::Include {

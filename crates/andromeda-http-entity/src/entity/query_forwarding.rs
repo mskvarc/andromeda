@@ -20,7 +20,7 @@ use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::{
     FederationService,
     config::SplitEntities,
-    forwarded_query::ClientQuery,
+    forwarded_query::client_query::ClientQuery,
     outcome::{ForwardReadOutcome, ForwardedEntities},
     request::{EntityMapInUse, TriggeringRequest},
 };

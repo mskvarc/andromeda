@@ -160,7 +160,7 @@ mod tests {
         outcome::{ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure},
     };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
-    use andromeda_ngsi_ld_model::registration::ForwardingMode;
+    use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use axum::{
         http::{StatusCode, Uri as HttpUri},

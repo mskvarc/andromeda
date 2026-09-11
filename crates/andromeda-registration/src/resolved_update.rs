@@ -5,12 +5,18 @@
 //! produced [`ResolvedCsrUpdate`](crate::resolved_update::ResolvedCsrUpdate) as
 //! an unconditional UPDATE.
 
-use crate::{error::RegistrationError, mode_rules::default_operations, nullable_member::NullableMember, store::CsrUpdateFragment};
+use crate::{error::RegistrationError, mode_rules::default_operations, nullable_member::NullableMember, store::update_fragment::CsrUpdateFragment};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, non_empty_text::NonEmptyText, scope::grammar::ScopeBuf, tenant::TenantName};
+use andromeda_ngsi_ld_lexicon::{
+    context_source_pseudonym::ContextSourcePseudonym,
+    dereferenceable_uri::DereferenceableUri,
+    non_empty_text::NonEmptyText,
+    scope::grammar::ScopeBuf,
+    tenant::TenantName,
+};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
-    registration::{ContextSourceRegistration, CsrOperation, ForwardingMode, RegistrationInfo},
+    registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode, info::RegistrationInfo, operation::CsrOperation},
     registration_management::RegistrationManagementInfo,
     time_interval::TimeInterval,
 };
@@ -20,7 +26,6 @@ use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
 use serde_json::Value;
 use typed_builder::TypedBuilder;
-use url::Url;
 
 /// Fully-resolved CSR update values for a single row. Every field carries
 /// the final value that will be written, with merge semantics already
@@ -44,7 +49,7 @@ pub struct ResolvedCsrUpdate {
     /// New `expires_at` timestamp.
     pub expires_at: Option<DateTime<Utc>>,
     /// New `endpoint` (required).
-    pub endpoint: Url,
+    pub endpoint: DereferenceableUri,
     /// New `accept` MIME type.
     pub accept: Option<MediaTypeBuf>,
     /// New forwarding mode.
@@ -61,7 +66,7 @@ pub struct ResolvedCsrUpdate {
     /// New context-source-info object.
     pub context_source_info: Option<Vec<KeyValuePair>>,
     /// New JSON-LD context identifier.
-    pub jsonld_context: Option<Url>,
+    pub jsonld_context: Option<DereferenceableUri>,
     /// New Via alias pseudonym.
     pub context_source_alias: Option<ContextSourcePseudonym>,
     /// New non-standard-properties blob (after shallow merge).

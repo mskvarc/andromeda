@@ -123,10 +123,12 @@ where
             return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
         };
         // Clause 6.3.5: an `application/ld+json` body names its context in the
-        // body, so it must not be combined with a context `Link` header.
+        // body, so "the presence of a JSON-LD Link header in the incoming HTTP
+        // request when the Content-Type header is application/ld+json shall
+        // result in an HTTP error response of type BadRequestData".
         if content_kind == ContentKind::LdJson && carries_context_link(&parts.headers) {
             return Err(public_error(
-                NgsiLdErrorType::InvalidRequest,
+                NgsiLdErrorType::BadRequestData,
                 "application/ld+json must not be combined with a Link context header",
                 &uri,
             )

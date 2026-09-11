@@ -55,7 +55,9 @@ pub async fn query(
     let context = context.merge(body_context);
     let mut params = TemporalQueryParameters::try_from(request).with_instance(&uri)?;
     url_params.apply_to(&mut params);
-    run(TemporalQueryRequest {
+    // Boxed: a temporal query parameter set is wide enough that the operation's
+    // future overflows the task-local budget the `large_futures` lint guards.
+    Box::pin(run(TemporalQueryRequest {
         services,
         target,
         accept,
@@ -76,6 +78,6 @@ pub async fn query(
         // remaining NGSI-LD Elements" is served here by the clause 6.3.13
         // `NGSILD-Results-Count` a counted query asks for.
         pointers: PagePointers::NotDereferenceable,
-    })
+    }))
     .await
 }

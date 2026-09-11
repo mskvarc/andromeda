@@ -89,7 +89,7 @@ impl EntityQueryService {
         let attrs = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
         let q_expr = self.compile_q_expression(params, &prepared_context).await?;
         let geo = self.compile_geo_query(params, &prepared_context).await?;
-        let opts = params.parse_options();
+        let opts = params.parse_options()?;
 
         let pick = expand_projection_terms(params.pick.as_deref().unwrap_or_default(), &expander).await?;
         let omit = expand_projection_terms(params.omit.as_deref().unwrap_or_default(), &expander).await?;

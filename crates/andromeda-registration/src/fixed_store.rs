@@ -3,10 +3,10 @@
 use crate::{
     error::RegistrationError,
     resolved_update::ResolvedCsrUpdate,
-    store::{CreateCsrParams, ForwardingOutcome, RegistrationMutation, RegistrationPage, RegistrationStore},
+    store::{RegistrationStore, create_params::CreateCsrParams, forwarding_outcome::ForwardingOutcome, mutation::RegistrationMutation, page::RegistrationPage},
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, RegistrationInfo};
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, info::RegistrationInfo};
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;

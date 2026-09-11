@@ -9,6 +9,7 @@ use crate::csource_registration::{
 };
 use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonym,
+    dereferenceable_uri::DereferenceableUri,
     non_empty_text::NonEmptyText,
     scope::grammar::ScopeBuf,
     tenant::TenantName,
@@ -20,7 +21,7 @@ use andromeda_postgresql_schema::csr::{Csr, RegistrationInformation};
 use andromeda_registration::{
     error::RegistrationError,
     resolved_update::ResolvedCsrUpdate,
-    store::{CreateCsrParams, ForwardingOutcome, RegistrationMutation},
+    store::{create_params::CreateCsrParams, forwarding_outcome::ForwardingOutcome, mutation::RegistrationMutation},
 };
 use chrono::{DateTime, Utc};
 use sea_query::{Expr as SeaExpr, ExprTrait, Order, PostgresQueryBuilder, Query};
@@ -113,7 +114,7 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Uri, params: 
         .bind(params.refresh_rate.as_ref().map(ToString::to_string))
         .bind(management)
         .bind(context_source_info)
-        .bind(params.jsonld_context.as_ref().map(url::Url::as_str))
+        .bind(params.jsonld_context.as_ref().map(DereferenceableUri::as_str))
         .bind(params.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
         .bind(&params.additional_properties)
         .execute(&mut *transaction)
@@ -165,7 +166,7 @@ pub(super) async fn update(store: &PostgresRegistrationStore, id: &Uri, values: 
         .bind(values.refresh_rate.as_ref().map(ToString::to_string))
         .bind(management)
         .bind(context_source_info)
-        .bind(values.jsonld_context.as_ref().map(url::Url::as_str))
+        .bind(values.jsonld_context.as_ref().map(DereferenceableUri::as_str))
         .bind(values.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
         .bind(&values.additional_properties)
         .execute(&mut *transaction)

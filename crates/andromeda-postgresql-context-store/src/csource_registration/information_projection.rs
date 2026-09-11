@@ -77,7 +77,7 @@
 //! registration so one indexed row carries every dimension a preselect tests.
 
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::{entity_info::EntityInfo, registration::RegistrationInfo};
+use andromeda_ngsi_ld_model::{entity_info::EntityInfo, registration::info::RegistrationInfo};
 use andromeda_ngsi_ld_query::pattern::Pattern;
 use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
 use std::{collections::HashMap, hash::BuildHasher};
@@ -375,7 +375,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
     use andromeda_ngsi_ld_model::{
         entity_info::{EntityInfo, EntityTypeSelection},
-        registration::RegistrationInfo,
+        registration::info::RegistrationInfo,
     };
     use andromeda_ngsi_ld_query::pattern::Pattern;
     use andromeda_postgresql_query::attribute_name_id::AttributeNameId;

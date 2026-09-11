@@ -12,7 +12,7 @@
 
 use crate::linked_retrieval_term::LinkedRetrievalTerm;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, temporal_format::TemporalFormat};
-use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict};
 use thiserror::Error;
 
 /// A query parameter the broker cannot act on.
@@ -25,8 +25,9 @@ pub enum ParameterError {
     #[error(transparent)]
     Query(#[from] QueryError),
 
-    /// An unrecognised token appeared in the `options` parameter list.
-    #[error("Invalid options value: '{0}'")]
+    /// The `options` parameter carried a value the operation does not support
+    /// (clause 6.3.20). The message names the token and why.
+    #[error("{0}")]
     OptionsInvalid(String),
     /// The `format` parameter value was not a recognised output format.
     #[error("Invalid format value: '{0}'")]
@@ -55,13 +56,10 @@ pub enum ParameterError {
     /// `drop` and `keep` were both provided on an entity purge.
     #[error("drop and keep parameters are mutually exclusive")]
     DropKeepExclusive,
-    /// `pick` and `omit` were both provided on a query.
-    #[error("pick and omit are mutually exclusive (clause 4.21)")]
-    PickOmitExclusive,
-    /// The legacy `attrs` selector was combined with the clause-4.21
-    /// projection selectors. They are alternative ways to shape a response.
-    #[error("pick/omit and attrs are mutually exclusive")]
-    PickOmitWithAttrs,
+    /// The request combined clause 4.21 selectors that shape the same
+    /// projection.
+    #[error(transparent)]
+    Projection(#[from] ProjectionConflict),
     /// `limit=0` appeared without the `count` option, which clause 6.3.10 Table
     /// 6.3.10-1 permits only when a count is requested.
     #[error("limit=0 is only allowed together with the count option (clause 6.3.10)")]

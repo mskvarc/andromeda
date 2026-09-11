@@ -50,6 +50,16 @@ impl HitCounter {
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    /// The count accumulated for a URL since the last drain.
+    ///
+    /// A reader of clause 5.13.3.5's `numberOfHits` adds this to the stored
+    /// count, so the number it reports is current rather than as of the last
+    /// flush.
+    #[must_use]
+    pub fn pending(&self, url: &IriBuf) -> u64 {
+        self.pending.get(url).map_or(0, |entry| entry.value().load(Ordering::Relaxed))
+    }
+
     /// Remove every pending count and answer with the drained deltas.
     #[must_use]
     pub fn drain(&self) -> Vec<HitDelta> {

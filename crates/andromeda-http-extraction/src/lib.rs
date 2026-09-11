@@ -47,6 +47,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-vocabulary",
     ],
     allow_production_dependencies: ["axum"],

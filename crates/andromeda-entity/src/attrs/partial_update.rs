@@ -8,15 +8,11 @@ use crate::{
     notification_plan::attribute_change_groups,
     write_admission::{AttributeWrite, admit_expanded_attribute},
 };
-use andromeda_context_commit::history_record::HistoryRecord;
+use andromeda_context_commit::history_record::mutation_history;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{attribute_fragment::expand_attribute_fragment, context_spec::ContextSpec};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::expanded::{
-    entity_member::extract_types,
-    mutation::attribute::partial_update_attr,
-    removed_instance::removed_attribute_instances,
-};
+use andromeda_ngsi_ld_model::expanded::{entity_member::extract_types, mutation::attribute::partial_update_attr};
 use andromeda_ngsi_ld_representation::normalization::normalize_attribute_node;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use serde_json::Value;
@@ -84,12 +80,7 @@ impl EntityService {
                 let types = extract_types(&merged);
                 let groups = attribute_change_groups(previous, &merged);
                 let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
-                let removed = removed_attribute_instances(previous, &merged);
-                let history = if removed.is_empty() {
-                    vec![HistoryRecord::Observations(Arc::clone(&expanded))]
-                } else {
-                    removed.into_iter().map(HistoryRecord::Tombstone).collect()
-                };
+                let history = mutation_history(&expanded, previous, &merged);
 
                 let write = payload_write(&entity_uri, &merged, history, plan.matches);
                 Ok((write, MutatedEntity { events: plan.events }))

@@ -7,7 +7,7 @@
 //! use, and clauses 5.10.2.5 and 5.11.7 return the registration trimmed to the
 //! matching elements. This module is that reading.
 
-use crate::{entity_info::EntityInfo, registration::RegistrationInfo, subscription::EntitySelector};
+use crate::{entity_info::EntityInfo, registration::info::RegistrationInfo, subscription::EntitySelector};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
 

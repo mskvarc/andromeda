@@ -74,7 +74,7 @@ impl FederationService {
 
         stream::iter(csrs)
             .map(|csr| async move {
-                let url = build_discovery_url(&csr.access.endpoint, path, query_string);
+                let url = build_discovery_url(csr.access.endpoint.url(), path, query_string);
                 // Clause 6.3.17 allows caching for `/entities` only.
                 let outcome = self.forward_get(&csr, url, context, triggering, Cacheability::Uncacheable, None).await;
                 match outcome {

@@ -3,6 +3,7 @@
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
     instance_key::{AttributeInstanceKey, attribute_instance_families},
+    null_sentinel::without_null_sentinels,
     removed_instance::{RemovedAttributeInstance, removed_attribute_instances},
     scope_member::extract_scopes,
 };
@@ -60,10 +61,21 @@ pub fn tombstone(attr: &AttributeName, dataset_id: Option<&Uri>, attribute_type:
 /// is gone from current state and its temporal interval has to close with it.
 /// A mutation that names a different Scope needs no record of its own — the
 /// event it writes is itself what ends the interval before it.
+///
+/// The observation is the payload the write carried, minus its NGSI-LD Null
+/// deletion instructions: clause 4.5.0 introduces the sentinel to encode a
+/// deletion rather than a value, and what it deleted is already recorded by the
+/// tombstones below it. Keeping it would write `urn:ngsi-ld:null` into history
+/// as the value of the member the write removed.
 pub fn mutation_history(observed: &Arc<Value>, previous: &Value, current: &Value) -> Vec<HistoryRecord> {
     let removed = removed_attribute_instances(previous, current);
     let mut history = Vec::with_capacity(removed.len() + 2);
-    history.push(HistoryRecord::Observations(Arc::clone(observed))); // clone: history and change-event paths share the observed payload.
+    let observation = match without_null_sentinels(observed) {
+        Some(stripped) => Arc::new(stripped),
+        // clone: history and change-event paths share an unchanged observed payload.
+        None => Arc::clone(observed),
+    };
+    history.push(HistoryRecord::Observations(observation));
     history.extend(removed.into_iter().map(HistoryRecord::Tombstone));
     if scope_was_cleared(previous, current) {
         history.push(HistoryRecord::ScopeRemoval);

@@ -21,7 +21,7 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedT
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     entity_info::EntityTypeSelection,
-    registration::{ContextSourceRegistration, ForwardingMode},
+    registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
 };
 use andromeda_ngsi_ld_query::{
     filter::{eval::evaluate as eval_q_expr, expression::Expr},
@@ -251,7 +251,7 @@ mod tests {
         outcome::ForwardedEntities,
         read_fan_out::{SourceAnswer, read_outcome, registered_type_of},
     };
-    use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, ForwardingMode};
+    use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
     use serde_json::{Value, json};
 
     fn registration(information: &Value) -> ContextSourceRegistration {

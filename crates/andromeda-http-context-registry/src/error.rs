@@ -45,7 +45,7 @@ impl<T> ContextRegistryResultExt<T> for Result<T, ContextRegistryError> {
 #[cfg(test)]
 mod tests {
     use super::classify_context_registry_error;
-    use andromeda_context_registry::error::ContextRegistryError;
+    use andromeda_context_registry::{error::ContextRegistryError, identifier::ContextIdentifier};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 
@@ -56,7 +56,12 @@ mod tests {
             .map_err(|error| ContextRegistryError::Invariant { detail: error.to_string() })?;
         for (error, expected) in [
             (ContextRegistryError::MissingTopLevelContext, NgsiLdErrorType::InvalidRequest),
-            (ContextRegistryError::NotFound { identifier }, NgsiLdErrorType::ResourceNotFound),
+            (
+                ContextRegistryError::NotFound {
+                    identifier: ContextIdentifier::from(identifier),
+                },
+                NgsiLdErrorType::ResourceNotFound,
+            ),
             (ContextRegistryError::CoreContextDeletion, NgsiLdErrorType::BadRequestData),
             (
                 ContextRegistryError::Persistence {

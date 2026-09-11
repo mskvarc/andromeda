@@ -1,7 +1,7 @@
 //! Registration-information matching and federated-fragment partitioning.
 
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, scope::grammar::ScopeBuf, uri::Uri};
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, RegistrationInfo};
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, info::RegistrationInfo};
 use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
 use iri_rs::IriBuf;
 use serde_json::{Map, Value};

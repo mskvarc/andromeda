@@ -3,7 +3,7 @@
 use crate::{
     impl_shared_query_params,
     language_filter::deserialize_optional_language_filter,
-    options::{EntityRepresentationOptions, deserialize_entity_representation_options},
+    options::EntityRepresentationOptions,
     query::{
         SharedQueryParams,
         deserialization::{
@@ -18,7 +18,7 @@ use crate::{
         },
         entity_selector::EntitySelectorParams,
     },
-    representation_params::deserialize_option_response_format,
+    representation_parameter::WrittenValue,
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
@@ -81,8 +81,7 @@ pub struct EntityQueryParameters {
     /// Whether the response reports the total number of matches (`count`).
     pub count: Option<bool>,
     /// Typed representation and system-attribute options (`options`).
-    #[serde(default, deserialize_with = "deserialize_entity_representation_options")]
-    pub options: Option<EntityRepresentationOptions>,
+    pub options: Option<WrittenValue<EntityRepresentationOptions>>,
     /// Whether the operation is confined to this broker (clause 5.10 `local`).
     #[serde(rename = "local")]
     pub local: Option<bool>,
@@ -114,8 +113,7 @@ pub struct EntityQueryParameters {
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
     pub json_keys: Option<Vec<AttributeName>>,
     /// The representation the response uses (clause 4.5.1 `format`).
-    #[serde(default, deserialize_with = "deserialize_option_response_format")]
-    pub format: Option<ResponseFormat>,
+    pub format: Option<WrittenValue<ResponseFormat>>,
     /// How linked entities reach the response (clause 4.5.23 `join`).
     pub join: Option<JoinMode>,
     /// How many links deep the traversal goes (`joinLevel`).
@@ -178,7 +176,7 @@ mod tests {
     use super::*;
     use crate::{error::ParameterError, params_from_query, query::SharedQueryParams};
     use andromeda_ngsi_ld_model::query::body::Query;
-    use andromeda_ngsi_ld_query::ordering::term::OrderDirection;
+    use andromeda_ngsi_ld_query::{ordering::term::OrderDirection, projection::exclusivity::ProjectionConflict};
 
     fn params_from_query(query: &str) -> EntityQueryParameters {
         params_from_query!(query, EntityQueryParameters)
@@ -307,16 +305,20 @@ mod tests {
         // conflicting `options`. `format=normalized&options=keyValues` must
         // render normalized, not simplified.
         let p = params_from_query("format=normalized&options=keyValues");
-        pretty_assertions::assert_eq!(p.parse_options().render_mode, ResponseFormat::Normalized);
+        pretty_assertions::assert_eq!(p.parse_options().expect("a supported options value").render_mode, ResponseFormat::Normalized);
         let p = params_from_query("format=concise&options=keyValues");
-        pretty_assertions::assert_eq!(p.parse_options().render_mode, ResponseFormat::Concise);
+        pretty_assertions::assert_eq!(p.parse_options().expect("a supported options value").render_mode, ResponseFormat::Concise);
     }
 
     #[test]
     fn parse_options_matches_whole_tokens_not_substrings() {
         // `options` carries whole comma-separated tokens; a value that merely
-        // contains `keyValues` as a substring is not the keyValues option.
-        assert!(serde_urlencoded::from_str::<EntityQueryParameters>("options=mykeyValues").is_err());
+        // contains `keyValues` as a substring is not the keyValues option, and
+        // clause 6.3.20 refuses it rather than reading a rendering out of it.
+        let refused = params_from_query("type=Vehicle&options=mykeyValues")
+            .validate()
+            .expect_err("a substring of a token is not that token");
+        assert!(matches!(refused, ParameterError::OptionsInvalid(_)), "{refused}");
     }
 
     #[test]
@@ -349,9 +351,9 @@ mod tests {
 
     #[test]
     fn pick_and_omit_together_rejected() {
-        let p = params_from_query("pick=speed&omit=scope");
+        let p = params_from_query("type=Vehicle&pick=speed&omit=scope");
         let err = p.validate().expect_err("expected mutual exclusivity error");
-        assert!(matches!(err, ParameterError::PickOmitExclusive));
+        assert!(matches!(err, ParameterError::Projection(ProjectionConflict::PickWithOmit)));
         assert!(err.to_string().contains("mutually exclusive"));
     }
 
@@ -359,7 +361,7 @@ mod tests {
     fn pick_or_omit_with_attrs_is_rejected() {
         for query in ["type=Vehicle&pick=speed&attrs=fuelLevel", "type=Vehicle&omit=speed&attrs=fuelLevel"] {
             let err = params_from_query(query).validate().expect_err("projection and attrs are mutually exclusive");
-            assert!(matches!(err, ParameterError::PickOmitWithAttrs));
+            assert!(matches!(err, ParameterError::Projection(ProjectionConflict::ProjectionWithAttrs)));
         }
     }
 
@@ -471,7 +473,7 @@ mod tests {
 
     #[test]
     fn parse_order_from_accepted() {
-        let p = params_from_query("orderFrom=%5B13.3986%2C52.5547%5D");
+        let p = params_from_query("type=Vehicle&local=true&orderFrom=%5B13.3986%2C52.5547%5D");
         let geometry = p.ordering.geometry.as_ref().expect("typed ordering geometry");
         pretty_assertions::assert_eq!(
             serde_json::to_value(geometry.geometry.to_geojson()).expect("geometry serializes"),
@@ -482,7 +484,7 @@ mod tests {
 
     #[test]
     fn parse_order_from_with_geometry() {
-        let p = params_from_query("orderFrom=%5B%5B2.3%2C48.8%5D%2C%5B2.4%2C48.9%5D%5D&orderGeometry=LineString");
+        let p = params_from_query("type=Vehicle&local=true&orderFrom=%5B%5B2.3%2C48.8%5D%2C%5B2.4%2C48.9%5D%5D&orderGeometry=LineString");
         let geometry = p.ordering.geometry.as_ref().expect("typed ordering geometry");
         pretty_assertions::assert_eq!(
             serde_json::to_value(geometry.geometry.to_geojson()).expect("geometry serializes"),
@@ -506,22 +508,32 @@ mod tests {
         assert!(serde_urlencoded::from_str::<EntityQueryParameters>("orderFrom=notjson").is_err());
     }
 
+    /// Clause 5.7.2.4 lists the type selector, the attribute list, the `q`
+    /// filter, the geoquery and the local scope as the narrowing inputs, and
+    /// lists no identifier among them: "it is not possible to retrieve a set of
+    /// entities by only specifying desired Entity identifiers".
     #[test]
-    fn has_any_filter_with_type() {
-        let p = params_from_query("type=Vehicle");
-        assert!(p.has_any_filter());
-    }
-
-    #[test]
-    fn has_any_filter_with_id() {
-        let p = params_from_query("id=urn:ngsi-ld:T:1");
-        assert!(p.has_any_filter());
-    }
-
-    #[test]
-    fn has_any_filter_with_q() {
-        let p = params_from_query("q=speed%3E50");
-        assert!(p.has_any_filter());
+    fn each_listed_narrowing_input_satisfies_the_rule_and_an_identifier_does_not() {
+        for query in [
+            "type=Vehicle",
+            "attrs=speed",
+            "q=speed%3E50",
+            "georel=near%3BmaxDistance==100&geometry=Point&coordinates=[1,2]",
+            "local=true",
+        ] {
+            assert!(params_from_query(query).validate().is_ok(), "{query} must narrow the query");
+        }
+        for query in [
+            "id=urn:ngsi-ld:T:1",
+            "idPattern=urn:ngsi-ld:T:.*",
+            "scopeQ=/Madrid",
+            "id=urn:ngsi-ld:T:1&idPattern=urn:.*",
+        ] {
+            assert!(
+                matches!(params_from_query(query).validate(), Err(ParameterError::SelectorRequired(_))),
+                "{query} must be too wide"
+            );
+        }
     }
 
     #[test]
@@ -531,9 +543,8 @@ mod tests {
     }
 
     #[test]
-    fn has_any_filter_no_params() {
-        let p = params_from_query("");
-        assert!(!p.has_any_filter());
+    fn a_query_with_no_parameter_at_all_is_too_wide() {
+        assert!(matches!(params_from_query("").validate(), Err(ParameterError::SelectorRequired(_))));
     }
 
     #[test]
@@ -547,12 +558,6 @@ mod tests {
             params_from_query("type=*&local=false").validate(),
             Err(ParameterError::WildcardTypeWithLocalFalse)
         ));
-    }
-
-    #[test]
-    fn has_any_filter_local_only_does_not_count() {
-        let p = params_from_query("local=true");
-        assert!(!p.has_any_filter());
     }
 
     #[test]

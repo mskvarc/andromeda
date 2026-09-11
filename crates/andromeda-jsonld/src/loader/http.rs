@@ -213,6 +213,14 @@ impl HttpContextLoader {
     }
 
     /// Record one in-process access and retry pending persistence when necessary.
+    ///
+    /// Clause 5.13.3.5's `numberOfHits` is the "number of times the @context was
+    /// found in the storage", and the in-process cache is the broker's own copy
+    /// of that storage rather than a separate place: a request served from it
+    /// was served by what the storage holds, so it counts. What the clause does
+    /// not settle is how many times *one* request that expands several
+    /// documents counts, which is why a single Entity creation shows as several
+    /// finds.
     async fn record_cached_access(&self, url: &IriBuf, loaded: &LoadedContext) {
         match &loaded.durability {
             ContextDurability::Registry => {}

@@ -36,7 +36,7 @@
 //! JSON-LD expansion of `information` happens in the service layer before any
 //! store call, so entity types, property names and relationship names reach
 //! this port already expanded to IRIs inside the typed
-//! [`RegistrationInfo`](andromeda_ngsi_ld_model::registration::RegistrationInfo)
+//! [`RegistrationInfo`](andromeda_ngsi_ld_model::registration::info::RegistrationInfo)
 //! values carried by [`CreateCsrParams`](crate::store::CreateCsrParams) and
 //! [`ResolvedCsrUpdate`](crate::resolved_update::ResolvedCsrUpdate). Those
 //! values are the complete and authoritative input to the projection; deriving
@@ -45,255 +45,23 @@
 //! Implementations therefore derive projection rows store-side from the typed
 //! `information` they are handed, and own the encoding of that derivation.
 
-use crate::{error::RegistrationError, nullable_member::NullableMember, resolved_update::ResolvedCsrUpdate};
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{
-    context_source_pseudonym::ContextSourcePseudonym,
-    non_empty_text::NonEmptyText,
-    scope::grammar::ScopeBuf,
-    tenant::TenantName,
-    uri::Uri,
+pub mod create_params;
+pub mod forwarding_outcome;
+pub mod mutation;
+pub mod page;
+pub mod update_fragment;
+
+use crate::{
+    error::RegistrationError,
+    resolved_update::ResolvedCsrUpdate,
+    store::{create_params::CreateCsrParams, forwarding_outcome::ForwardingOutcome, mutation::RegistrationMutation, page::RegistrationPage},
 };
-use andromeda_ngsi_ld_model::{
-    key_value_pair::KeyValuePair,
-    registration::{ContextSourceRegistration, CsrOperation, ForwardingMode, RegistrationInfo},
-    registration_management::RegistrationManagementInfo,
-    time_interval::TimeInterval,
-};
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, dataset::DatasetSelector, pagination::Pagination};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use iri_rs::IriBuf;
-use iso8601_duration::Duration as Iso8601Duration;
-use mediatype::MediaTypeBuf;
-use serde_json::Value;
-use typed_builder::TypedBuilder;
-use url::Url;
-
-/// Parameters for creating a new context source registration.
-#[derive(Debug, TypedBuilder)]
-pub struct CreateCsrParams {
-    /// Human-readable name of the registration.
-    #[builder(default = Default::default())]
-    pub registration_name: Option<NonEmptyText>,
-    /// Free-text description of the registration.
-    #[builder(default = Default::default())]
-    pub description: Option<NonEmptyText>,
-    /// Registration information entries describing provided entities/attributes.
-    pub information: Vec<RegistrationInfo>,
-    /// The `datasetId`s of the attribute instances the source provides.
-    #[builder(default = Default::default())]
-    pub dataset_id: Option<Vec<DatasetSelector>>,
-    /// Tenant identifier for multi-tenancy.
-    #[builder(default = Default::default())]
-    pub tenant: Option<TenantName>,
-    /// Interval the source's observations span.
-    #[builder(default = Default::default())]
-    pub observation_interval: Option<TimeInterval>,
-    /// Interval the source's management data spans.
-    #[builder(default = Default::default())]
-    pub management_interval: Option<TimeInterval>,
-    /// The `location` geometry.
-    #[builder(default = Default::default())]
-    pub location: Option<Geometry>,
-    /// The `observationSpace` geometry.
-    #[builder(default = Default::default())]
-    pub observation_space: Option<Geometry>,
-    /// The `operationSpace` geometry.
-    #[builder(default = Default::default())]
-    pub operation_space: Option<Geometry>,
-    /// Expiration timestamp for the registration.
-    #[builder(default = Default::default())]
-    pub expires_at: Option<DateTime<Utc>>,
-    /// Base endpoint URL of the context source.
-    pub endpoint: Url,
-    /// Preferred MIME type for responses from the context source.
-    #[builder(default = Default::default())]
-    pub accept: Option<MediaTypeBuf>,
-    /// Forwarding mode for distributed operations.
-    #[builder(default = Default::default())]
-    pub mode: ForwardingMode,
-    /// NGSI-LD operations supported by the context source; the clause 4.20
-    /// `federationOps` default is already materialised here.
-    pub operations: Vec<CsrOperation>,
-    /// Scope values for the registration.
-    #[builder(default = Default::default())]
-    pub scope: Option<Vec<ScopeBuf>>,
-    /// ISO 8601 duration between context source refreshes.
-    #[builder(default = Default::default())]
-    pub refresh_rate: Option<Iso8601Duration>,
-    /// Management information for the registration.
-    #[builder(default = Default::default())]
-    pub management: Option<RegistrationManagementInfo>,
-    /// Additional context source metadata entries.
-    #[builder(default = Default::default())]
-    pub context_source_info: Option<Vec<KeyValuePair>>,
-    /// JSON-LD context associated with this registration.
-    #[builder(default = Default::default())]
-    pub jsonld_context: Option<Url>,
-    /// Unique pseudonym for Via-based loop detection.
-    #[builder(default = Default::default())]
-    pub context_source_alias: Option<ContextSourcePseudonym>,
-    /// Non-standard properties preserved from the original request.
-    #[builder(default = Default::default())]
-    pub additional_properties: Option<Value>,
-}
-
-impl CreateCsrParams {
-    /// Keys recognized as standard NGSI-LD CSR properties.
-    pub const STANDARD_KEYS: &'static [&'static str] = &[
-        "id",
-        "type",
-        "@context",
-        "registrationName",
-        "description",
-        "information",
-        "datasetId",
-        "tenant",
-        "observationInterval",
-        "managementInterval",
-        "location",
-        "observationSpace",
-        "operationSpace",
-        "expiresAt",
-        "endpoint",
-        "accept",
-        "mode",
-        "operations",
-        "scope",
-        "refreshRate",
-        "management",
-        "contextSourceInfo",
-        "jsonldContext",
-        "contextSourceAlias",
-        "status",
-        "timesSent",
-        "timesFailed",
-        "lastSuccess",
-        "lastFailure",
-        "createdAt",
-        "modifiedAt",
-    ];
-}
-
-/// Typed fragment for CSR updates.
-///
-/// Every member clause 5.5.8 lets a fragment remove is a
-/// [`NullableMember`]: omitted keeps the stored value, `null` clears it and a
-/// value replaces it. The members the clause gives no removal semantics carry
-/// a plain [`Option`], where `None` simply means the fragment left them alone.
-#[derive(Debug, Default, TypedBuilder)]
-pub struct CsrUpdateFragment {
-    /// Updated registration name.
-    #[builder(default = Default::default())]
-    pub registration_name: NullableMember<NonEmptyText>,
-    /// Updated description.
-    #[builder(default = Default::default())]
-    pub description: NullableMember<NonEmptyText>,
-    /// Updated registration information entries.
-    #[builder(default = Default::default())]
-    pub information: Option<Vec<RegistrationInfo>>,
-    /// Updated dataset identifiers.
-    #[builder(default = Default::default())]
-    pub dataset_id: NullableMember<Vec<DatasetSelector>>,
-    /// Updated tenant identifier.
-    #[builder(default = Default::default())]
-    pub tenant: NullableMember<TenantName>,
-    /// Updated observation interval.
-    #[builder(default = Default::default())]
-    pub observation_interval: NullableMember<TimeInterval>,
-    /// Updated management interval.
-    #[builder(default = Default::default())]
-    pub management_interval: NullableMember<TimeInterval>,
-    /// Updated `location` geometry.
-    #[builder(default = Default::default())]
-    pub location: NullableMember<Geometry>,
-    /// Updated `observationSpace` geometry.
-    #[builder(default = Default::default())]
-    pub observation_space: NullableMember<Geometry>,
-    /// Updated `operationSpace` geometry.
-    #[builder(default = Default::default())]
-    pub operation_space: NullableMember<Geometry>,
-    /// Updated expiration timestamp.
-    #[builder(default = Default::default())]
-    pub expires_at: NullableMember<DateTime<Utc>>,
-    /// Updated endpoint URL.
-    #[builder(default = Default::default())]
-    pub endpoint: Option<Url>,
-    /// Updated accepted MIME type.
-    #[builder(default = Default::default())]
-    pub accept: NullableMember<MediaTypeBuf>,
-    /// Updated forwarding mode.
-    #[builder(default = Default::default())]
-    pub mode: Option<ForwardingMode>,
-    /// Updated supported operations.
-    #[builder(default = Default::default())]
-    pub operations: NullableMember<Vec<CsrOperation>>,
-    /// Updated scope values.
-    #[builder(default = Default::default())]
-    pub scope: NullableMember<Vec<ScopeBuf>>,
-    /// Updated refresh rate duration.
-    #[builder(default = Default::default())]
-    pub refresh_rate: NullableMember<Iso8601Duration>,
-    /// Updated management information.
-    #[builder(default = Default::default())]
-    pub management: NullableMember<RegistrationManagementInfo>,
-    /// Updated context source metadata entries.
-    #[builder(default = Default::default())]
-    pub context_source_info: NullableMember<Vec<KeyValuePair>>,
-    /// Updated JSON-LD context reference.
-    #[builder(default = Default::default())]
-    pub jsonld_context: NullableMember<Url>,
-    /// Updated context source alias pseudonym.
-    #[builder(default = Default::default())]
-    pub context_source_alias: NullableMember<ContextSourcePseudonym>,
-    /// Updated non-standard properties.
-    #[builder(default = Default::default())]
-    pub additional_properties: Option<Value>,
-}
-
-/// How one distributed operation through a registration ended, for the
-/// read-only health members of Table 5.2.9-2.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ForwardingOutcome {
-    /// The source answered the operation.
-    Succeeded,
-    /// The source failed to answer, or answered with an error.
-    Failed,
-}
-
-/// Outcome of a mutation against one registration identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RegistrationMutation {
-    /// One registration was changed.
-    Applied,
-    /// No registration matched the identifier.
-    Missing,
-}
-
-/// One backend-neutral page of registrations and its full match count.
-#[derive(Debug)]
-pub struct RegistrationPage {
-    /// Registrations in the requested deterministic page.
-    pub registrations: Vec<ContextSourceRegistration>,
-    /// Total registrations matching the request before pagination.
-    pub total: u64,
-}
-
-impl RegistrationMutation {
-    /// Require a mutation to have changed the requested registration.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RegistrationError::NotFound`] when the mutation matched no
-    /// registration carrying `identifier`.
-    pub fn require_applied(self, identifier: &Uri) -> Result<(), RegistrationError> {
-        match self {
-            RegistrationMutation::Applied => Ok(()),
-            RegistrationMutation::Missing => Err(RegistrationError::not_found(identifier)),
-        }
-    }
-}
 
 /// Storing context source registrations (clause 5.9).
 ///

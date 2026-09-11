@@ -4,6 +4,7 @@
 
 pub mod attribute_iri_index;
 pub mod compiled;
+pub mod exclusivity;
 pub mod expansion;
 pub mod grammar;
 pub mod matching;

@@ -1,22 +1,20 @@
 //! Handlers for the `/jsonldContexts` endpoints.
 
 use crate::{error::ContextRegistryResultExt, state::ContextRegistryTenantState};
-use andromeda_context_registry::{detail_level::ContextDetailLevel, removal::ContextRemoval};
+use andromeda_context_registry::{detail_level::ContextDetailLevel, identifier::ContextIdentifier, removal::ContextRemoval};
 use andromeda_http_extraction::{
     content_length_precondition::DeclaredBodyLength,
     origin::RequestOrigin,
     query::ValidatedQuery,
     tenant_state::ExistingTenantState,
-    typed_path::TypedPath,
 };
 use andromeda_http_response::{classified_report::ClassifiedReport, headers::with_location, problem_response::ProblemResponse};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_request::jsonld_context::{DeleteParams, ListParams, ServeParams};
 use axum::{
     Json,
     body::Bytes,
-    extract::OriginalUri,
+    extract::{OriginalUri, Path},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -63,27 +61,29 @@ pub(crate) async fn query(
 pub(crate) async fn get(
     ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(context_id): TypedPath<Uri>,
+    Path(context_id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<ServeParams>,
 ) -> Result<Response, ProblemResponse> {
     let detail_level = match params.details {
         Some(true) => ContextDetailLevel::Full,
         Some(false) | None => ContextDetailLevel::Summary,
     };
-    let result = state.contexts.get(&context_id, detail_level).await.with_context_registry_instance(&uri)?;
+    let requested = ContextIdentifier::from(context_id.as_str());
+    let result = state.contexts.get(&requested, detail_level).await.with_context_registry_instance(&uri)?;
     Ok((StatusCode::OK, Json(result)).into_response())
 }
 
 pub(crate) async fn delete(
     ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(context_id): TypedPath<Uri>,
+    Path(context_id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<DeleteParams>,
 ) -> Result<Response, ProblemResponse> {
     let removal = match params.reload {
         Some(true) => ContextRemoval::Reload,
         Some(false) | None => ContextRemoval::Delete,
     };
-    state.contexts.remove(&context_id, removal).await.with_context_registry_instance(&uri)?;
+    let requested = ContextIdentifier::from(context_id.as_str());
+    state.contexts.remove(&requested, removal).await.with_context_registry_instance(&uri)?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }

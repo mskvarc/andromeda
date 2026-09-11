@@ -15,7 +15,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     entity_info::EntityInfo,
-    registration::{ContextSourceRegistration, CsrOperation, ForwardingMode, RegistrationInfo},
+    registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode, info::RegistrationInfo, operation::CsrOperation},
 };
 use iri_rs::IriBuf;
 
@@ -221,7 +221,7 @@ mod tests {
         mode_rules::{check_conflicts, default_operations, validate_structure},
     };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
-    use andromeda_ngsi_ld_model::registration::{CsrOperation, ForwardingMode, RegistrationInfo};
+    use andromeda_ngsi_ld_model::registration::{forwarding_mode::ForwardingMode, info::RegistrationInfo, operation::CsrOperation};
     use serde_json::json;
     use std::slice;
 

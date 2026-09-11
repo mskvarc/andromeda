@@ -25,7 +25,7 @@ use andromeda_ngsi_ld_query::{
     projection::grammar::RawProjectionTerm,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
+use andromeda_ngsi_ld_request::{query::entity::parameters::EntityQueryParameters, representation_parameter::WrittenValue};
 use moka::future::Cache;
 use std::{
     fmt::Write,
@@ -82,8 +82,9 @@ impl CompiledQueryKey {
         let id_pattern = params.id_pattern.as_ref().map(ToString::to_string);
         let q = params.q.as_ref().map(ToString::to_string);
         let entity_type = params.entity_type.as_ref().map(ToString::to_string);
-        let option_format = params.options.and_then(|options| options.format).map(|format| format.to_string());
-        let option_sys_attrs = params.options.map(|options| match options.sys_attrs {
+        let options = params.options.as_ref().and_then(WrittenValue::if_supported);
+        let option_format = options.and_then(|options| options.format).map(|format| format.to_string());
+        let option_sys_attrs = options.map(|options| match options.sys_attrs {
             SysAttrsInclusion::Include => "include",
             SysAttrsInclusion::Strip => "strip",
         });

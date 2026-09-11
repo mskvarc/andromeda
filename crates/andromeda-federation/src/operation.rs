@@ -1,6 +1,6 @@
 //! NGSI-LD operation capability matching for federation (clause 4.20).
 
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation};
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, operation::CsrOperation};
 
 /// The resource a forwarded provision operation addresses below the API base
 /// (clause 6.2): the current entities or their temporal evolutions.
@@ -214,7 +214,7 @@ impl ForwardingOperation {
 #[cfg(test)]
 mod tests {
     use crate::operation::{ForwardingOperation, ProvisionResource};
-    use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation};
+    use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, operation::CsrOperation};
     use serde_json::json;
     use std::str::FromStr;
 

@@ -1,6 +1,6 @@
 //! Boundary deserialisers for the temporal-only query parameters.
 
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel};
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, time_prop::TimeProp, time_rel::TimeRel};
 use serde::{Deserialize, Deserializer, de::Error};
 
 /// Deserialise the `timerel` query parameter as the [`TimeRel`] it names
@@ -35,20 +35,6 @@ where
         .transpose()
 }
 
-/// Deserialise a temporal `format` query parameter at the request boundary.
-pub(crate) fn deserialize_option_temporal_format<'de, D>(deserializer: D) -> Result<Option<TemporalFormat>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| match value.as_str() {
-        "temporalValues" => Ok(TemporalFormat::TemporalValues),
-        "aggregatedValues" => Ok(TemporalFormat::AggregatedValues),
-        other => Err(Error::custom(format!("invalid temporal format: {other}"))),
-    })
-    .transpose()
-}
-
 /// Deserialize a comma-separated `aggrMethods` value into validated methods.
 pub(crate) fn deserialize_optional_aggr_methods<'de, D>(deserializer: D) -> Result<Option<Vec<AggrMethod>>, D::Error>
 where
@@ -61,7 +47,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{params_from_query, query::temporal::TemporalQueryParameters};
+    use crate::{params_from_query, query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel};
 
     fn params_from_query(query: &str) -> TemporalQueryParameters {
@@ -97,9 +83,18 @@ mod tests {
 
     #[test]
     fn the_two_temporal_formats_parse_and_an_unknown_one_is_rejected() {
-        pretty_assertions::assert_eq!(params_from_query("format=temporalValues").format, Some(TemporalFormat::TemporalValues));
-        pretty_assertions::assert_eq!(params_from_query("format=aggregatedValues").format, Some(TemporalFormat::AggregatedValues));
-        assert!(serde_urlencoded::from_str::<TemporalQueryParameters>("format=normalized").is_err());
+        pretty_assertions::assert_eq!(
+            params_from_query("format=temporalValues").format,
+            Some(WrittenValue::Supported(TemporalFormat::TemporalValues))
+        );
+        pretty_assertions::assert_eq!(
+            params_from_query("format=aggregatedValues").format,
+            Some(WrittenValue::Supported(TemporalFormat::AggregatedValues))
+        );
+        // Clause 6.3.20: the value survives decoding so the refusal can name
+        // its error type, and Table 6.3.12-1's grammar refuses it.
+        let normalized: TemporalQueryParameters = serde_urlencoded::from_str("format=normalized").expect("the parameter set decodes");
+        assert!(normalized.parse_format().is_err());
     }
 
     #[test]

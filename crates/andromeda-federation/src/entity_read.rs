@@ -14,7 +14,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, ForwardingMode};
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use chrono::Utc;
 use serde_json::Value;
 use std::slice::from_ref;
@@ -179,7 +179,7 @@ impl FederationService {
         let answers = self
             .fan_out_get(
                 targets,
-                |registration, query| build_query_url(&registration.access.endpoint, &query.to_query_string()),
+                |registration, query| build_query_url(registration.access.endpoint.url(), &query.to_query_string()),
                 FederationService::entities_of,
                 ForwardedGetConditions {
                     context,
@@ -254,7 +254,7 @@ impl FederationService {
         let answers = self
             .fan_out_get(
                 targets,
-                |registration, query| build_retrieve_url(&registration.access.endpoint, entity_id, &query.to_query_string()),
+                |registration, query| build_retrieve_url(registration.access.endpoint.url(), entity_id, &query.to_query_string()),
                 FederationService::entities_of,
                 ForwardedGetConditions {
                     context,

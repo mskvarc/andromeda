@@ -2,7 +2,7 @@
 
 use crate::outcome::ForwardedTemporalEntities;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::registration::ForwardingMode;
+use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
 use indexmap::IndexMap;
 use serde_json::Value;
 use std::{collections::HashSet, mem::replace, slice::from_ref};

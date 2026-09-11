@@ -2,10 +2,11 @@
 
 use crate::{
     case_insensitive_bool::deserialize_option_bool_case_insensitive,
+    error::ParameterError,
     language_filter::deserialize_optional_language_filter,
-    options::{EntityRepresentationOptions, OverwritePolicy, UpsertMode, deserialize_entity_representation_options, deserialize_overwrite_policy},
+    options::{EntityRepresentationOptions, OverwritePolicy, UpsertMode},
     query::deserialization::{deserialize_optional_dataset_selectors, deserialize_optional_projection_terms},
-    representation_params::deserialize_option_response_format,
+    representation_parameter::{WrittenValue, supported_option},
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -19,7 +20,7 @@ use std::num::NonZeroU32;
 #[serde(deny_unknown_fields)]
 pub struct UpsertParams {
     /// Whether existing entities are replaced or updated.
-    pub options: Option<UpsertMode>,
+    pub options: Option<WrittenValue<UpsertMode>>,
 }
 
 /// Query parameters for `PATCH /entityOperations/update`.
@@ -27,8 +28,31 @@ pub struct UpsertParams {
 #[serde(deny_unknown_fields)]
 pub struct UpdateParams {
     /// Whether existing attributes may be overwritten.
-    #[serde(default, deserialize_with = "deserialize_overwrite_policy")]
-    pub options: Option<OverwritePolicy>,
+    pub options: Option<WrittenValue<OverwritePolicy>>,
+}
+
+impl UpsertParams {
+    /// Whether an entity that already exists is replaced or updated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParameterError::OptionsInvalid`] for a value clause 6.15.3.1
+    /// does not define, which clause 6.3.20 answers with `InvalidRequest`.
+    pub fn mode(&self) -> Result<UpsertMode, ParameterError> {
+        Ok(supported_option(self.options.as_ref())?.unwrap_or_default())
+    }
+}
+
+impl UpdateParams {
+    /// Whether the update may overwrite an attribute the entity already has.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParameterError::OptionsInvalid`] for a value other than
+    /// `noOverwrite`, which clause 6.3.20 answers with `InvalidRequest`.
+    pub fn overwrite_policy(&self) -> Result<OverwritePolicy, ParameterError> {
+        Ok(supported_option(self.options.as_ref())?.unwrap_or_default())
+    }
 }
 
 /// Query parameters for `POST /entityOperations/query`.
@@ -51,11 +75,9 @@ pub struct PostQueryParams {
     #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub count: Option<bool>,
     /// Typed representation and system-attribute options (`options`).
-    #[serde(default, deserialize_with = "deserialize_entity_representation_options")]
-    pub options: Option<EntityRepresentationOptions>,
+    pub options: Option<WrittenValue<EntityRepresentationOptions>>,
     /// The representation the response uses (clause 4.5.1 `format`).
-    #[serde(default, deserialize_with = "deserialize_option_response_format")]
-    pub format: Option<ResponseFormat>,
+    pub format: Option<WrittenValue<ResponseFormat>>,
     /// Clause-4.15 natural-language selection preferences.
     #[serde(default, deserialize_with = "deserialize_optional_language_filter")]
     pub lang: Option<LanguageFilter>,

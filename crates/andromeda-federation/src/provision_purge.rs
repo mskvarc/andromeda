@@ -19,7 +19,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, ForwardingMode};
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use tracing::debug;
 use url::form_urlencoded;
@@ -122,7 +122,7 @@ impl FederationService {
         for csr in csrs.into_iter().filter(|csr| csr.access.mode != Some(ForwardingMode::Auxiliary)) {
             let ids = reported_ids(&csr, request.local_ids);
             if ForwardingOperation::PurgeEntity.matches(&csr) {
-                let url = forwarding_url(&csr.access.endpoint, &["entities"], &query_string);
+                let url = forwarding_url(csr.access.endpoint.url(), &["entities"], &query_string);
                 reported.push((csr.id.clone(), ids)); // clone: the report is keyed by the registration the write contacts
                 planned.push(PlannedWrite {
                     registration: csr,

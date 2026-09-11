@@ -112,13 +112,20 @@ async fn entity_map_create_from_get_with_lifetime_pt5m_sets_expires_at_in_range(
 
 #[tokio::test]
 #[serial]
-async fn entity_map_create_from_get_without_filters_returns_400() {
+async fn entity_map_create_from_get_without_a_narrowing_input_returns_400() {
     let _serialized_environment = clean_database().await;
     let c = client();
 
-    let (status, _, body) = create_entity_map_from_get(&c, "local=true").await;
+    // Clause 5.14.4.4 restates the clause 5.7.2.4 rule word for word: the
+    // narrowing inputs are the type selector, the attribute list, the query,
+    // the geoquery and the local scope, and an identifier is none of them.
+    let (status, _, body) = create_entity_map_from_get(&c, "id=urn:ngsi-ld:Vehicle:em-too-wide").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+
+    // Input (e) admits a creation limited to this broker.
+    let (status, _, _) = create_entity_map_from_get(&c, "local=true").await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 }
 
 #[tokio::test]

@@ -65,7 +65,7 @@ pub(crate) async fn get(
     let context: ContextSpec = context.into_inner();
     let registration = state.registrations.get(&registration_id, &context).await.with_registration_instance(&uri)?;
     let payload = RegistrationRenderer::new(registration)
-        .with_sys_attrs(params.parse_options().sys_attrs)
+        .with_sys_attrs(params.parse_options().with_registration_instance(&uri)?.sys_attrs)
         .with_pick(params.pick.as_deref())
         .with_omit(params.omit.as_deref())
         .with_language_filter(params.lang.as_ref())
@@ -91,7 +91,7 @@ pub(crate) async fn query(
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
     let context: ContextSpec = context.into_inner();
-    let options = params.parse_options();
+    let options = params.parse_options().with_registration_instance(&uri)?;
     let limit = i64::from(params.effective_limit());
     let offset = i64::from(params.effective_offset());
     // Clause 4.3.6.4: the `Via` chain lists the context sources the request

@@ -17,6 +17,8 @@ pub mod error;
 pub mod fetched_context;
 /// The narrow port for durably flushing resolver hit deltas.
 pub mod hit_store;
+/// The identifier that addresses one stored Context.
+pub mod identifier;
 /// Parameters for listing hosted and cached contexts.
 pub mod list_query;
 /// A list returned by the registry persistence port.

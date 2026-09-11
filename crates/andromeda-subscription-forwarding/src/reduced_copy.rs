@@ -13,7 +13,7 @@ use crate::receiver::ReceiverEndpoint;
 use andromeda_federation::config::SplitEntities;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
-    registration::{ContextSourceRegistration, RegistrationInfo},
+    registration::{ContextSourceRegistration, info::RegistrationInfo},
     subscription::{EntitySelector, Subscription},
 };
 use serde_json::{Map, Value, json};

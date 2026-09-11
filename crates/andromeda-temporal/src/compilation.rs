@@ -27,7 +27,6 @@ use andromeda_ngsi_ld_query::{
     },
     term_expander::TermExpander,
 };
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, temporal::TemporalQueryParameters};
 use std::collections::HashSet;
 
@@ -71,7 +70,7 @@ impl TemporalService {
         let q_expr = compile_q_filter(params, &expander).await?;
         let geo = self.compile_geo_query(params, &prepared_context).await?;
 
-        let format = params.parse_format();
+        let format = params.parse_format()?;
         let last_n = compile_last_n(params, format, self.default_last_n);
 
         Ok(CompiledTemporalQuery::builder()
@@ -191,11 +190,7 @@ fn compile_representation(params: &TemporalQueryParameters, format: TemporalForm
         // clone: the compiled representation owns its methods independently of the reusable request parameters.
         .aggr_methods(params.aggr_methods.clone().unwrap_or_default())
         .aggr_period_duration(params.aggr_period_duration)
-        .sys_attrs(if params.has_sys_attrs() {
-            SysAttrsInclusion::Include
-        } else {
-            SysAttrsInclusion::Strip
-        })
+        .sys_attrs(params.sys_attrs())
         .build()
 }
 

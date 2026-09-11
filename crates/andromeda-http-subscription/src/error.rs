@@ -1,9 +1,10 @@
 //! Exhaustive HTTP classification for subscription failures.
 
-use andromeda_http_extraction::classification::{classify_jsonld_error, classify_query_error};
+use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_render::error::RenderError;
+use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_subscription::error::SubscriptionError;
 use axum::http::Uri;
 use std::fmt::Display;
@@ -27,6 +28,14 @@ impl SubscriptionHttpClassify for SubscriptionError {
             | SubscriptionError::Persistence { .. }
             | SubscriptionError::Internal { .. } => ClassifiedReport::internal(self),
         }
+    }
+}
+
+// Clause 6.3.20 separates an unsupported parameter value from invalid data,
+// and `classify_parameter_error` is where that distinction is already drawn.
+impl SubscriptionHttpClassify for ParameterError {
+    fn classify_for_subscription_http(&self) -> ClassifiedReport {
+        classify_parameter_error(self)
     }
 }
 

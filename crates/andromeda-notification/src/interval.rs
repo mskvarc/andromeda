@@ -167,7 +167,7 @@ impl IntervalNotificationOperation {
                     }
                 };
 
-                let endpoint_uri = &sub.notification.endpoint.uri;
+                let endpoint_uri = sub.notification.endpoint.uri.url();
 
                 let endpoint_transport = match parse_endpoint_transport(endpoint_uri, sub.notification.endpoint.notifier_info.as_deref()) {
                     Ok(t) => t,
@@ -179,7 +179,7 @@ impl IntervalNotificationOperation {
 
                 let request = (NotificationDelivery {
                     payload: &payload,
-                    endpoint_uri: &sub.notification.endpoint.uri,
+                    endpoint_uri: sub.notification.endpoint.uri.url(),
                     accept: sub.notification.endpoint.accept.as_ref(),
                     receiver_info: sub.notification.endpoint.receiver_info.as_deref(),
                     jsonld_context: sub.delivery.jsonld_context.as_ref(),

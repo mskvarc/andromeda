@@ -1,9 +1,10 @@
 //! Endpoint-specific interpretations of the HTTP `options` parameter.
 
+use crate::representation_parameter::{RepresentationGrammar, RepresentationParameter, SelectedRepresentation};
 use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
 use andromeda_ngsi_ld_query::pagination::CountPolicy;
 use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
-use serde::{Deserialize, Deserializer, de::Error};
+use serde::Deserialize;
 use strum::{Display, EnumString};
 
 /// Entity list/retrieval options from clauses 6.3.7 and 6.3.11.
@@ -65,138 +66,123 @@ pub enum UpsertMode {
     Update,
 }
 
-/// Deserialize optional entity representation options, rejecting unknown,
-/// repeated, and conflicting tokens.
-///
-/// # Errors
-///
-/// Returns a deserialization error when the list is empty or holds an empty
-/// member, when a token is none of `normalized`, `concise`, `simplified`,
-/// `keyValues` and `sysAttrs`, when a token is repeated, or when two tokens
-/// name different representations.
-pub fn deserialize_entity_representation_options<'de, D>(deserializer: D) -> Result<Option<EntityRepresentationOptions>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Option::<String>::deserialize(deserializer)?
-        .map(|raw| parse_entity_options(&raw).map_err(Error::custom))
-        .transpose()
+impl SelectedRepresentation for EntityRepresentationOptions {
+    type Representation = ResponseFormat;
+
+    fn representation(&self) -> Option<ResponseFormat> {
+        self.format
+    }
 }
 
-/// Deserialize optional temporal representation options, rejecting unknown,
-/// repeated, and conflicting tokens.
-///
-/// # Errors
-///
-/// Returns a deserialization error when the list is empty or holds an empty
-/// member, when a token is none of `temporalValues`, `aggregatedValues` and
-/// `sysAttrs`, when a token is repeated, or when both representation tokens
-/// are present.
-pub fn deserialize_temporal_representation_options<'de, D>(deserializer: D) -> Result<Option<TemporalRepresentationOptions>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Option::<String>::deserialize(deserializer)?
-        .map(|raw| parse_temporal_options(&raw).map_err(Error::custom))
-        .transpose()
+impl SelectedRepresentation for TemporalRepresentationOptions {
+    type Representation = TemporalFormat;
+
+    fn representation(&self) -> Option<TemporalFormat> {
+        self.format
+    }
 }
 
-/// Deserialize subscription-list options, rejecting unknown and repeated tokens.
-///
-/// # Errors
-///
-/// Returns a deserialization error when the list is empty or holds an empty
-/// member, when a token is neither `count` nor `sysAttrs`, or when either
-/// token is repeated.
-pub fn deserialize_list_options<'de, D>(deserializer: D) -> Result<Option<ListOptions>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Option::<String>::deserialize(deserializer)?
-        .map(|raw| parse_list_options(&raw).map_err(Error::custom))
-        .transpose()
+// Table 6.3.7-1 gives `options` the same three renderings as `format`, plus
+// the `sysAttrs` token of clause 6.3.11. A repeated token and two tokens naming
+// different renderings are both values the operation cannot act on, so clause
+// 6.3.20 refuses them alongside a token it does not define.
+impl RepresentationGrammar for EntityRepresentationOptions {
+    const PARAMETER: RepresentationParameter = RepresentationParameter::Options;
+
+    fn parse(written: &str) -> Result<EntityRepresentationOptions, String> {
+        let mut parsed = EntityRepresentationOptions::default();
+        for token in option_tokens(written)? {
+            match token {
+                "normalized" => set_entity_format(&mut parsed, ResponseFormat::Normalized)?,
+                "concise" => set_entity_format(&mut parsed, ResponseFormat::Concise)?,
+                "simplified" | "keyValues" => set_entity_format(&mut parsed, ResponseFormat::Simplified)?,
+                "sysAttrs" if parsed.sys_attrs == SysAttrsInclusion::Strip => parsed.sys_attrs = SysAttrsInclusion::Include,
+                "sysAttrs" => return Err("duplicate options token 'sysAttrs'".to_owned()),
+                other => return Err(format!("unsupported options token '{other}'")),
+            }
+        }
+        Ok(parsed)
+    }
 }
 
-/// Deserialize the singleton `sysAttrs` option, rejecting every other token.
-///
-/// # Errors
-///
-/// Returns a deserialization error for any value other than `sysAttrs`.
-pub fn deserialize_sys_attrs_options<'de, D>(deserializer: D) -> Result<Option<SysAttrsOptions>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Option::<String>::deserialize(deserializer)?
-        .map(|raw| match raw.as_str() {
+// Table 6.3.12-1: "Only one of the two keywords can be present in the values of
+// the parameter."
+impl RepresentationGrammar for TemporalRepresentationOptions {
+    const PARAMETER: RepresentationParameter = RepresentationParameter::Options;
+
+    fn parse(written: &str) -> Result<TemporalRepresentationOptions, String> {
+        let mut parsed = TemporalRepresentationOptions::default();
+        for token in option_tokens(written)? {
+            match token {
+                "temporalValues" => set_temporal_format(&mut parsed, TemporalFormat::TemporalValues)?,
+                "aggregatedValues" => set_temporal_format(&mut parsed, TemporalFormat::AggregatedValues)?,
+                "sysAttrs" if parsed.sys_attrs == SysAttrsInclusion::Strip => parsed.sys_attrs = SysAttrsInclusion::Include,
+                "sysAttrs" => return Err("duplicate options token 'sysAttrs'".to_owned()),
+                other => return Err(format!("unsupported options token '{other}'")),
+            }
+        }
+        Ok(parsed)
+    }
+}
+
+// Clauses 6.3.13 and 6.3.11: a listing's `options` carries `count` and
+// `sysAttrs` and nothing else.
+impl RepresentationGrammar for ListOptions {
+    const PARAMETER: RepresentationParameter = RepresentationParameter::Options;
+
+    fn parse(written: &str) -> Result<ListOptions, String> {
+        let mut parsed = ListOptions::default();
+        for token in option_tokens(written)? {
+            match token {
+                "count" if parsed.count == CountPolicy::Omit => parsed.count = CountPolicy::Emit,
+                "count" => return Err("duplicate options token 'count'".to_owned()),
+                "sysAttrs" if parsed.sys_attrs == SysAttrsInclusion::Strip => parsed.sys_attrs = SysAttrsInclusion::Include,
+                "sysAttrs" => return Err("duplicate options token 'sysAttrs'".to_owned()),
+                other => return Err(format!("unsupported options token '{other}'")),
+            }
+        }
+        Ok(parsed)
+    }
+}
+
+// Clause 6.3.11 is the only `options` value an operation with no representation
+// choice of its own accepts.
+impl RepresentationGrammar for SysAttrsOptions {
+    const PARAMETER: RepresentationParameter = RepresentationParameter::Options;
+
+    fn parse(written: &str) -> Result<SysAttrsOptions, String> {
+        match written {
             "sysAttrs" => Ok(SysAttrsOptions {
                 sys_attrs: SysAttrsInclusion::Include,
             }),
-            other => Err(Error::custom(format!("unsupported options value '{other}'"))),
-        })
-        .transpose()
+            other => Err(format!("unsupported options token '{other}'")),
+        }
+    }
 }
 
-/// Deserialize the singleton `noOverwrite` option used by append and batch update.
-///
-/// # Errors
-///
-/// Returns a deserialization error for any value other than `noOverwrite`.
-pub fn deserialize_overwrite_policy<'de, D>(deserializer: D) -> Result<Option<OverwritePolicy>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Option::<String>::deserialize(deserializer)?
-        .map(|raw| match raw.as_str() {
+// Clause 6.3.9: `noOverwrite` is the one value append and batch update define.
+impl RepresentationGrammar for OverwritePolicy {
+    const PARAMETER: RepresentationParameter = RepresentationParameter::Options;
+
+    fn parse(written: &str) -> Result<OverwritePolicy, String> {
+        match written {
             "noOverwrite" => Ok(OverwritePolicy::NoOverwrite),
-            other => Err(Error::custom(format!("unsupported options value '{other}'"))),
-        })
-        .transpose()
-}
-
-/// Parse entity representation and system-attribute option tokens.
-fn parse_entity_options(raw: &str) -> Result<EntityRepresentationOptions, String> {
-    let mut parsed = EntityRepresentationOptions::default();
-    for token in option_tokens(raw)? {
-        match token {
-            "normalized" => set_entity_format(&mut parsed, ResponseFormat::Normalized)?,
-            "concise" => set_entity_format(&mut parsed, ResponseFormat::Concise)?,
-            "simplified" | "keyValues" => set_entity_format(&mut parsed, ResponseFormat::Simplified)?,
-            "sysAttrs" if parsed.sys_attrs == SysAttrsInclusion::Strip => parsed.sys_attrs = SysAttrsInclusion::Include,
-            "sysAttrs" => return Err("duplicate options token 'sysAttrs'".to_owned()),
-            other => return Err(format!("unsupported options token '{other}'")),
+            other => Err(format!("unsupported options token '{other}'")),
         }
     }
-    Ok(parsed)
 }
 
-/// Parse temporal representation option tokens.
-fn parse_temporal_options(raw: &str) -> Result<TemporalRepresentationOptions, String> {
-    let mut parsed = TemporalRepresentationOptions::default();
-    for token in option_tokens(raw)? {
-        match token {
-            "temporalValues" => set_temporal_format(&mut parsed, TemporalFormat::TemporalValues)?,
-            "aggregatedValues" => set_temporal_format(&mut parsed, TemporalFormat::AggregatedValues)?,
-            "sysAttrs" if parsed.sys_attrs == SysAttrsInclusion::Strip => parsed.sys_attrs = SysAttrsInclusion::Include,
-            "sysAttrs" => return Err("duplicate options token 'sysAttrs'".to_owned()),
-            other => return Err(format!("unsupported options token '{other}'")),
-        }
-    }
-    Ok(parsed)
-}
+// Clause 6.15.3.1 defines the two upsert modes and no other `options` value.
+impl RepresentationGrammar for UpsertMode {
+    const PARAMETER: RepresentationParameter = RepresentationParameter::Options;
 
-/// Parse subscription list-option tokens.
-fn parse_list_options(raw: &str) -> Result<ListOptions, String> {
-    let mut parsed = ListOptions::default();
-    for token in option_tokens(raw)? {
-        match token {
-            "count" if parsed.count == CountPolicy::Omit => parsed.count = CountPolicy::Emit,
-            "count" => return Err("duplicate options token 'count'".to_owned()),
-            "sysAttrs" if parsed.sys_attrs == SysAttrsInclusion::Strip => parsed.sys_attrs = SysAttrsInclusion::Include,
-            "sysAttrs" => return Err("duplicate options token 'sysAttrs'".to_owned()),
-            other => return Err(format!("unsupported options token '{other}'")),
+    fn parse(written: &str) -> Result<UpsertMode, String> {
+        match written {
+            "replace" => Ok(UpsertMode::Replace),
+            "update" => Ok(UpsertMode::Update),
+            other => Err(format!("unsupported options token '{other}'")),
         }
     }
-    Ok(parsed)
 }
 
 /// Validate and iterate a comma-separated option list.
@@ -233,71 +219,73 @@ fn set_temporal_format(options: &mut TemporalRepresentationOptions, format: Temp
 
 #[cfg(test)]
 mod tests {
-    use crate::options::{EntityRepresentationOptions, ListOptions, OverwritePolicy, TemporalRepresentationOptions};
+    use crate::{
+        options::{EntityRepresentationOptions, ListOptions, OverwritePolicy, SysAttrsOptions, TemporalRepresentationOptions, UpsertMode},
+        representation_parameter::RepresentationGrammar,
+    };
     use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
     use andromeda_ngsi_ld_query::pagination::CountPolicy;
     use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
-    use serde::Deserialize;
-
-    #[derive(Deserialize)]
-    struct EntityWire {
-        #[serde(default, deserialize_with = "crate::options::deserialize_entity_representation_options")]
-        options: Option<EntityRepresentationOptions>,
-    }
-
-    #[derive(Deserialize)]
-    struct TemporalWire {
-        #[serde(default, deserialize_with = "crate::options::deserialize_temporal_representation_options")]
-        options: Option<TemporalRepresentationOptions>,
-    }
-
-    #[derive(Deserialize)]
-    struct OverwriteWire {
-        #[serde(default, deserialize_with = "crate::options::deserialize_overwrite_policy")]
-        options: Option<OverwritePolicy>,
-    }
-
-    #[derive(Deserialize)]
-    struct ListWire {
-        #[serde(default, deserialize_with = "crate::options::deserialize_list_options")]
-        options: Option<ListOptions>,
-    }
 
     #[test]
     fn entity_options_are_typed_and_conflicts_are_rejected() {
-        let parsed: EntityWire = serde_urlencoded::from_str("options=keyValues%2CsysAttrs").expect("valid options");
-        let options = parsed.options.expect("options present");
+        let options = EntityRepresentationOptions::parse("keyValues,sysAttrs").expect("valid options");
         pretty_assertions::assert_eq!(options.format, Some(ResponseFormat::Simplified));
         pretty_assertions::assert_eq!(options.sys_attrs, SysAttrsInclusion::Include);
-        assert!(serde_urlencoded::from_str::<EntityWire>("options=normalized%2Cconcise").is_err());
-        assert!(serde_urlencoded::from_str::<EntityWire>("options=unknown").is_err());
-        assert!(serde_urlencoded::from_str::<EntityWire>("options=sysAttrs%2CsysAttrs").is_err());
+        assert!(EntityRepresentationOptions::parse("normalized,concise").is_err());
+        assert!(EntityRepresentationOptions::parse("unknown").is_err());
+        assert!(EntityRepresentationOptions::parse("sysAttrs,sysAttrs").is_err());
+        assert!(EntityRepresentationOptions::parse("").is_err());
+    }
+
+    /// Clause 6.3.20: an unsupported token anywhere in the list is refused,
+    /// not silently dropped, whichever position it takes.
+    #[test]
+    fn one_unsupported_token_refuses_the_whole_list() {
+        assert!(EntityRepresentationOptions::parse("keyValues,invalid").is_err());
+        assert!(EntityRepresentationOptions::parse("invalid,keyValues").is_err());
+        assert!(TemporalRepresentationOptions::parse("temporalValues,invalidOptions").is_err());
     }
 
     #[test]
     fn temporal_options_are_typed_and_conflicts_are_rejected() {
-        let parsed: TemporalWire = serde_urlencoded::from_str("options=temporalValues%2CsysAttrs").expect("valid options");
-        let options = parsed.options.expect("options present");
+        let options = TemporalRepresentationOptions::parse("temporalValues,sysAttrs").expect("valid options");
         pretty_assertions::assert_eq!(options.format, Some(TemporalFormat::TemporalValues));
         pretty_assertions::assert_eq!(options.sys_attrs, SysAttrsInclusion::Include);
-        assert!(serde_urlencoded::from_str::<TemporalWire>("options=temporalValues%2CaggregatedValues").is_err());
+        assert!(TemporalRepresentationOptions::parse("temporalValues,aggregatedValues").is_err());
     }
 
     #[test]
     fn overwrite_options_accept_only_no_overwrite() {
-        let parsed: OverwriteWire = serde_urlencoded::from_str("options=noOverwrite").expect("valid option");
-        pretty_assertions::assert_eq!(parsed.options, Some(OverwritePolicy::NoOverwrite));
-        assert!(serde_urlencoded::from_str::<OverwriteWire>("options=overwrite").is_err());
+        pretty_assertions::assert_eq!(OverwritePolicy::parse("noOverwrite"), Ok(OverwritePolicy::NoOverwrite));
+        assert!(OverwritePolicy::parse("overwrite").is_err());
+    }
+
+    #[test]
+    fn upsert_options_accept_only_the_two_modes() {
+        pretty_assertions::assert_eq!(UpsertMode::parse("replace"), Ok(UpsertMode::Replace));
+        pretty_assertions::assert_eq!(UpsertMode::parse("update"), Ok(UpsertMode::Update));
+        assert!(UpsertMode::parse("merge").is_err());
+    }
+
+    #[test]
+    fn sys_attrs_options_accept_only_that_token() {
+        pretty_assertions::assert_eq!(
+            SysAttrsOptions::parse("sysAttrs"),
+            Ok(SysAttrsOptions {
+                sys_attrs: SysAttrsInclusion::Include
+            })
+        );
+        assert!(SysAttrsOptions::parse("count").is_err());
     }
 
     #[test]
     fn list_options_are_typed_and_repeated_tokens_are_rejected() {
-        let parsed: ListWire = serde_urlencoded::from_str("options=count%2CsysAttrs").expect("valid options");
-        let options = parsed.options.expect("options present");
+        let options = ListOptions::parse("count,sysAttrs").expect("valid options");
         pretty_assertions::assert_eq!(options.count, CountPolicy::Emit);
         pretty_assertions::assert_eq!(options.sys_attrs, SysAttrsInclusion::Include);
-        assert!(serde_urlencoded::from_str::<ListWire>("options=count%2Ccount").is_err());
-        assert!(serde_urlencoded::from_str::<ListWire>("options=unknown").is_err());
-        assert!(serde_urlencoded::from_str::<ListWire>("options=").is_err());
+        assert!(ListOptions::parse("count,count").is_err());
+        assert!(ListOptions::parse("unknown").is_err());
+        assert!(ListOptions::parse("").is_err());
     }
 }

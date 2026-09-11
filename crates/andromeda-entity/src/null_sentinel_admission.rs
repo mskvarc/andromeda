@@ -36,6 +36,7 @@
 use crate::error::EntityError;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::expanded::{
+    json_literal_merge::json_object_carries_null_sentinel,
     node::expanded_nodes,
     null_sentinel::{instance_is_null_sentinel, member_is_null_sentinel},
     reserved_member::is_reserved_member,
@@ -209,10 +210,29 @@ fn dataset_id_is_sentinel(instance: &Value) -> bool {
 ///
 /// The value node itself is not examined: a `value` that *is* the sentinel is
 /// the second prohibition of clause 5.5.4, not the third.
+///
+/// A `JsonProperty` is examined too. Clause 4.5.24.2 prohibits `value` on that
+/// family "as value is a generalization of json", so the object clause 5.5.4
+/// describes as "the right-hand side of the value of a Property" is its `json`
+/// member — and because clause 4.5.24.2 keeps that value "not available for
+/// JSON-LD interpretation", the sentinel sits there as a bare string rather
+/// than as an expanded node.
 fn value_object_carries_sentinel(instance: &Value) -> bool {
-    instance
+    let property_value = instance
         .get(properties::VALUE.as_str())
-        .is_some_and(|value| expanded_nodes(value).iter().any(node_members_carry_sentinel))
+        .is_some_and(|value| expanded_nodes(value).iter().any(node_members_carry_sentinel));
+    property_value || json_literal_carries_sentinel(instance)
+}
+
+/// Whether the raw JSON of a `JsonProperty` holds the sentinel under any of its
+/// own keys, at any depth.
+fn json_literal_carries_sentinel(instance: &Value) -> bool {
+    instance.get(properties::JSON.as_str()).is_some_and(|member| {
+        expanded_nodes(member)
+            .iter()
+            .filter_map(|node| node.get("@value"))
+            .any(json_object_carries_null_sentinel)
+    })
 }
 
 /// Whether any non-keyword member of one expanded node holds the sentinel.

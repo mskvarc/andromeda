@@ -138,7 +138,7 @@ pub(crate) async fn get(
     // NGSI-LD request-parameter validation).
     params.validate().with_entity_instance(&uri)?;
 
-    let sys_attrs = params.options.unwrap_or_default().sys_attrs;
+    let sys_attrs = params.sys_attrs().with_entity_instance(&uri)?;
     // Clause 4.21 governs the single-entity retrieval exactly as it governs
     // a query: the compiled projection narrows the retrieved entity and, when
     // its terms carry clause 4.21 sub-projections, the entities the join
@@ -200,7 +200,11 @@ pub(crate) async fn get(
         (entity, retrieved.warnings, map_uri)
     };
 
-    let representation = EntityRepresentation::new(language_filter.as_ref(), params.resolve_render_mode(), projection.as_ref());
+    let representation = EntityRepresentation::new(
+        language_filter.as_ref(),
+        params.resolve_render_mode().with_entity_instance(&uri)?,
+        projection.as_ref(),
+    );
     let request = JoinRequest {
         join: params.join,
         join_level: params.join_level,

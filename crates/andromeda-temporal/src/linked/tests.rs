@@ -53,7 +53,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::{projection::grammar::parse_projection_list, temporal::compiled::CompiledTemporalQuery};
 use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
-use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use indexmap::IndexSet;
@@ -562,7 +562,7 @@ fn window() -> TemporalQueryParameters {
     let mut params = serde_json::from_value::<TemporalQueryParameters>(json!({})).expect("empty temporal query");
     params.timerel = Some(TimeRel::After);
     params.time_at = Some("1970-01-01T00:00:00Z".parse().expect("valid instant"));
-    params.format = Some(TemporalFormat::Normalized);
+    params.format = Some(WrittenValue::Supported(TemporalFormat::Normalized));
     params
 }
 
@@ -964,7 +964,7 @@ async fn a_nested_pick_narrows_the_linked_entity_under_temporal_values() {
         attributes: vec![attribute_name("linksTo")],
     }];
     let mut params = window();
-    params.format = Some(TemporalFormat::TemporalValues);
+    params.format = Some(WrittenValue::Supported(TemporalFormat::TemporalValues));
     params.pick = Some(parse_projection_list("linksTo{reading}").expect("valid projection list"));
 
     let resolved = service(broker)

@@ -65,7 +65,7 @@ pub(crate) async fn append_attrs(
     admit_written_entity(service, EntityWrite::AppendAttributes, &fragment, &context)
         .await
         .with_entity_instance(&uri)?;
-    let no_overwrite = params.options == Some(RequestOverwritePolicy::NoOverwrite);
+    let no_overwrite = params.overwrite_policy().with_entity_instance(&uri)? == RequestOverwritePolicy::NoOverwrite;
     let overwrite = if no_overwrite {
         OverwritePolicy::Preserve
     } else {

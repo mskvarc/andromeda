@@ -8,7 +8,7 @@ use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, received_protocol::R
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
 use andromeda_ngsi_ld_model::{
     attribute::instance::AttributeValue,
-    registration::{ContextSourceRegistration, ForwardingMode},
+    registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
 };
 use url::Url;
 

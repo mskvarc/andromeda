@@ -3,7 +3,7 @@
 use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::{entity::Entity, registration::ForwardingMode};
+use andromeda_ngsi_ld_model::{entity::Entity, registration::forwarding_mode::ForwardingMode};
 use serde_json::Value;
 
 /// Why no HTTP response was obtained from a context source.

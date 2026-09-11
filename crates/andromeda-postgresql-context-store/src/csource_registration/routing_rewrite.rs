@@ -12,7 +12,7 @@ use crate::{
     error::ContextStoreError,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::registration::{CsrOperation, RegistrationInfo};
+use andromeda_ngsi_ld_model::registration::{info::RegistrationInfo, operation::CsrOperation};
 use andromeda_ngsi_ld_query::pattern::Pattern;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_schema::csr::RegistrationInformation;
@@ -122,7 +122,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
     use andromeda_ngsi_ld_model::{
         entity_info::{EntityInfo, EntityTypeSelection},
-        registration::RegistrationInfo,
+        registration::info::RegistrationInfo,
     };
     use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
     use pretty_assertions::assert_eq;

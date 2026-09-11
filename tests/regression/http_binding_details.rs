@@ -1,12 +1,14 @@
 //! HTTP binding details that diverged from ETSI GS CIM 009 v1.9.1.
 //!
-//! Four defects, each asserted against the clause that fixes its behaviour:
+//! Five defects, each asserted against the clause that fixes its behaviour:
 //! the clause 6.3.10 temporal `Content-Range` (its range unit, its size under
 //! `lastN`, and its forwards `range-start`), the clause 5.6.2.5 list of
 //! attributes actually updated, the clause 6.3.8 placement of a `GeoJSON`
-//! notification's `@context`, and Table 6.23.3.1-1's `EntityMap` answer on
+//! notification's `@context`, Table 6.23.3.1-1's `EntityMap` answer on
 //! `POST /entityOperations/query`, which clause 6.23.1 makes a second decoder
-//! of the clause 6.4.3.2 operation rather than a second implementation of it.
+//! of the clause 6.4.3.2 operation rather than a second implementation of it,
+//! and the error type clause 6.3.5 gives a request that names its `@context`
+//! twice.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -582,6 +584,45 @@ async fn regression_entity_query_post_binding_points_at_no_page_it_cannot_serve(
         "the GET binding's query is in its URI, so its pointer is dereferenceable: {}",
         link_values(&got)
     );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 6.3.5: "the presence of a JSON-LD Link header in the incoming HTTP
+/// request when the Content-Type header is 'application/ld+json' shall result
+/// in an HTTP error response of type `BadRequestData`". The batch bindings
+/// answered `InvalidRequest`, which is the type clause 5.5.4 reserves for a
+/// payload body that is not a valid JSON document; a body that is valid JSON
+/// and names its `@context` in both admitted places is the other failure.
+#[tokio::test]
+async fn regression_context_resolution_ld_json_with_a_link_header_is_bad_request_data() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let link = jsonld_link_header(TEST_SUITE_CONTEXT).expect("test-suite context Link must be valid");
+    let entity = json!({"id": scope.id("Vehicle:context-mix"), "type": "Vehicle", "@context": [TEST_SUITE_CONTEXT]});
+
+    for (path, body) in [
+        ("entityOperations/create", json!([entity])),
+        ("entityOperations/upsert", json!([entity])),
+        ("entityOperations/update", json!([entity])),
+        ("entities", entity.clone()), // clone: the single-entity binding takes the same body
+    ] {
+        let response = client
+            .raw(Method::POST, path)
+            .header("Content-Type", "application/ld+json")
+            .header("Link", link.clone()) // clone: every binding is sent the same header
+            .json(&body)
+            .send()
+            .await
+            .expect("request with both @context spellings");
+        assert_eq!(response.status, StatusCode::BAD_REQUEST, "{path}: {:?}", response.body);
+        let problem = response.json_value().expect("a refusal carries a problem details body");
+        assert_eq!(
+            problem["type"],
+            json!("https://uri.etsi.org/ngsi-ld/errors/BadRequestData"),
+            "{path} must be the clause 6.3.5 BadRequestData: {problem}"
+        );
+    }
 
     scope.finish().await.expect("cleanup failed");
 }

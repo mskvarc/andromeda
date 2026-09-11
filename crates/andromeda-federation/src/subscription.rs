@@ -142,7 +142,7 @@ impl FederationService {
             }
             SubscriptionForward::Delete { remote_id } => (reqwest::Method::DELETE, vec!["subscriptions", remote_id.as_str()], None, &CORE_CONTEXT),
         };
-        let url = match forwarding_url(&registration.access.endpoint, &path, "") {
+        let url = match forwarding_url(registration.access.endpoint.url(), &path, "") {
             Ok(url) => url,
             Err(error) => return unreachable(error.to_string()),
         };

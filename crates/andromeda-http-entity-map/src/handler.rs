@@ -5,7 +5,7 @@ use crate::{
     error::{EntityMapResultExt, bad_request_data, internal_problem, invalid_request},
     forwarded_query_string::{ForwardedFilters, body_query_string, forwarded_query_string, forwarded_temporal_query_string, temporal_body_query_string},
     state::{EntityMapRouteServices, EntityMapTenantState},
-    validation::{validate_entity_map_has_filter, validate_entity_map_query, validate_temporal_entity_map_query},
+    validation::{validate_entity_map_query, validate_temporal_entity_map_query},
 };
 use andromeda_entity_map::fingerprint::{FingerprintedRequest, fingerprint_of};
 use andromeda_federation::{entity_map::EntityMapQueryKind, request::TriggeringRequest};
@@ -110,8 +110,6 @@ async fn create_from_entity_query(
     rendering: &CreationRendering<'_>,
     triggering: TriggeringRequest<'_>,
 ) -> Result<Response, ProblemResponse> {
-    // Clause 5.14.4.4: at least one filter must be provided for EntityMap creation.
-    validate_entity_map_has_filter(query, rendering.uri)?;
     let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities(query)).with_entity_map_instance(rendering.uri)?;
     let local_ids = local_entity_ids(state, query, rendering.context, rendering.uri).await?;
     create_map(

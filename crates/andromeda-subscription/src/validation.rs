@@ -4,7 +4,10 @@
 
 use crate::error::SubscriptionError;
 use andromeda_ngsi_ld_geometry::{geometry::Geometry, geometry_type::GeometryType};
-use andromeda_ngsi_ld_query::filter::{expression::Expr, parser, predicate::Predicate};
+use andromeda_ngsi_ld_query::{
+    filter::{expression::Expr, parser, predicate::Predicate},
+    projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
+};
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use chrono::Utc;
 use serde_json::Value;
@@ -183,9 +186,28 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
 
     if let Some(notification) = payload.get("notification") {
         validate_show_changes_format(notification)?;
+        validate_notification_projection(notification)?;
     }
 
     Ok(())
+}
+
+/// Reject a notification combining clause 4.21 selectors that shape the same
+/// projection.
+///
+/// Table 5.2.14.1-1 gives `NotificationParams` the same three members a query
+/// carries on its URL -- `pick`, `omit` and the deprecated `attributes`, "a
+/// synonym for pick" -- so it carries the same rule about combining them. The
+/// rule itself is owned by
+/// [`andromeda_ngsi_ld_query::projection::exclusivity`], which the query
+/// bindings apply to their own parameters.
+fn validate_notification_projection(notification: &Value) -> Result<(), SubscriptionError> {
+    check_projection_exclusivity(ProjectionSelectors {
+        pick: Presence::of(notification.get("pick")),
+        omit: Presence::of(notification.get("omit")),
+        attrs: Presence::of(notification.get("attributes")),
+    })
+    .map_err(|conflict| SubscriptionError::validation(conflict.to_string()))
 }
 
 /// Reject a notification asking for `showChanges` under a simplified format

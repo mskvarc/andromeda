@@ -6,6 +6,7 @@ use crate::{
     detail_level::ContextDetailLevel,
     error::ContextRegistryError,
     fetched_context::FetchedContext,
+    identifier::ContextIdentifier,
     list_query::ContextListQuery,
     listed_contexts::ListedContexts,
     mutation::ContextMutation,
@@ -14,7 +15,7 @@ use crate::{
 };
 use andromeda_jsonld::{context_subtree::context_subtree, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
+use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::IriBuf;
 use serde_json::Value;
@@ -97,6 +98,9 @@ impl ContextRegistryService {
                 if include_core {
                     metadata.push(core_context::metadata(&core_context_identifier()?)?);
                 }
+                for entry in &mut metadata {
+                    self.add_pending_hits(entry);
+                }
                 serialize(metadata)
             }
             ListedContexts::Summary(mut identifiers) => {
@@ -120,7 +124,15 @@ impl ContextRegistryService {
     /// representable metadata or document, and
     /// [`ContextRegistryError::Representation`] when the metadata cannot be
     /// serialized.
-    pub async fn get(&self, identifier: &Uri, detail_level: ContextDetailLevel) -> Result<Value, ContextRegistryError> {
+    pub async fn get(&self, requested: &ContextIdentifier, detail_level: ContextDetailLevel) -> Result<Value, ContextRegistryError> {
+        // Clause 5.13.4.4: "It shall give back ResourceNotFound if the
+        // identifier is not found." An identifier that keys no row at all is
+        // one such, and is answered before the storage is consulted.
+        let Some(identifier) = requested.stored() else {
+            return Err(ContextRegistryError::NotFound {
+                identifier: requested.clone(), // clone: the error must own the identifier after this call returns.
+            });
+        };
         if core_context::is_core_context(identifier) {
             return match detail_level {
                 ContextDetailLevel::Full => serialize(core_context::metadata(identifier)?),
@@ -141,20 +153,41 @@ impl ContextRegistryService {
             });
         }
         let fetched = self.store.get(identifier, detail_level).await?.ok_or_else(|| ContextRegistryError::NotFound {
-            identifier: identifier.clone(), // clone: the error must own the identifier after this call returns.
+            identifier: ContextIdentifier::from(identifier.clone()), // clone: the error must own the identifier after this call returns.
         })?;
         if detail_level == ContextDetailLevel::Summary {
             let access = self.store.record_access(identifier).await?;
             if access == ContextMutation::Missing {
                 return Err(ContextRegistryError::NotFound {
-                    identifier: identifier.clone(), // clone: the row disappeared between its read and access update.
+                    identifier: ContextIdentifier::from(identifier.clone()), // clone: the row disappeared between its read and access update.
                 });
             }
         }
         match fetched {
-            FetchedContext::Detailed(metadata) => serialize(*metadata),
+            FetchedContext::Detailed(mut metadata) => {
+                self.add_pending_hits(&mut metadata);
+                serialize(*metadata)
+            }
             FetchedContext::Payload(payload) => Ok(payload),
         }
+    }
+
+    /// Add the accesses this process has counted but not yet flushed.
+    ///
+    /// Clause 5.13.3.5 defines `numberOfHits` as "number of times the @context
+    /// was found in the storage", which is a fact about the accesses that have
+    /// happened rather than about the ones that have been written down. The
+    /// resolver accumulates them per URL and a background task folds them into
+    /// the stored row in batches, so a client reading the metadata in between
+    /// would otherwise be told a number that is already out of date.
+    fn add_pending_hits(&self, metadata: &mut ContextMetadata) {
+        let Some(counter) = self.engine.hit_counter() else {
+            return;
+        };
+        let Some(url) = metadata.url.as_ref().and_then(|url| IriBuf::new(url.to_string()).ok()) else {
+            return;
+        };
+        metadata.number_of_hits = metadata.number_of_hits.saturating_add(counter.pending(&url));
     }
 
     /// Delete a Context or reload a cached Context from its source.
@@ -172,7 +205,16 @@ impl ContextRegistryService {
     /// cannot complete the deletion or the replacement, and
     /// [`ContextRegistryError::Invariant`] when the stored identifier is not an
     /// IRI reference the in-process cache can be invalidated by.
-    pub async fn remove(&self, identifier: &Uri, removal: ContextRemoval) -> Result<(), ContextRegistryError> {
+    pub async fn remove(&self, requested: &ContextIdentifier, removal: ContextRemoval) -> Result<(), ContextRegistryError> {
+        // Clause 5.13.5.4: "If the @context identifier does not correspond to
+        // any existing entry in the @context storage, then an error of type
+        // ResourceNotFound shall be raised." Only a *missing* identifier is
+        // `BadRequestData`, and a path segment is never missing.
+        let Some(identifier) = requested.stored() else {
+            return Err(ContextRegistryError::NotFound {
+                identifier: requested.clone(), // clone: the error must own the identifier after this call returns.
+            });
+        };
         if core_context::is_core_context(identifier) {
             return match removal {
                 ContextRemoval::Delete => Err(ContextRegistryError::CoreContextDeletion),
@@ -197,7 +239,7 @@ impl ContextRegistryService {
         let source_url = self.store.lookup(identifier).await?.and_then(|stored| stored.source_url);
         if self.store.delete(identifier).await? == ContextMutation::Missing {
             return Err(ContextRegistryError::NotFound {
-                identifier: identifier.clone(), // clone: the error must own the identifier after this call returns.
+                identifier: ContextIdentifier::from(identifier.clone()), // clone: the error must own the identifier after this call returns.
             });
         }
         if let Some(source_url) = source_url {
@@ -218,7 +260,7 @@ impl ContextRegistryService {
         // the kind is considered, because an identifier naming nothing has no
         // kind to object to.
         let stored = self.store.lookup(identifier).await?.ok_or_else(|| ContextRegistryError::NotFound {
-            identifier: identifier.clone(), // clone: the error must own the identifier after this call returns.
+            identifier: ContextIdentifier::from(identifier.clone()), // clone: the error must own the identifier after this call returns.
         })?;
         if stored.kind != ContextKind::Cached {
             return Err(ContextRegistryError::ReloadRequiresCached {
@@ -243,7 +285,9 @@ impl ContextRegistryService {
         // in a second `@context` produced a document no expansion can use, and
         // clause 5.13.5 offers no operation that could undo that.
         if self.store.replace_payload(&stored.identifier, resolved).await? == ContextMutation::Missing {
-            return Err(ContextRegistryError::NotFound { identifier: stored.identifier });
+            return Err(ContextRegistryError::NotFound {
+                identifier: ContextIdentifier::from(stored.identifier),
+            });
         }
         self.engine.invalidate_context(&source_url).await;
         Ok(())

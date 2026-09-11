@@ -21,7 +21,7 @@ use andromeda_http_headers::{
     warning::Warning,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{spec_version::SpecVersion, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{dereferenceable_uri::DereferenceableUri, spec_version::SpecVersion, uri::Uri};
 use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, registration::ContextSourceRegistration, registration_management::LocalScope};
 use headers::{Header, HeaderMapExt};
 use http::{HeaderMap, HeaderName, HeaderValue};
@@ -68,7 +68,14 @@ impl FederationService {
         body: Option<&[u8]>,
     ) -> Result<ForwardedPayload, FederationError> {
         let info = context_source_info(registration)?;
-        build_forwarded_payload(&self.engine, inbound, body, &info, registration.access.jsonld_context.as_ref()).await
+        build_forwarded_payload(
+            &self.engine,
+            inbound,
+            body,
+            &info,
+            registration.access.jsonld_context.as_ref().map(DereferenceableUri::url),
+        )
+        .await
     }
 
     /// Make a GET request to a context source endpoint.

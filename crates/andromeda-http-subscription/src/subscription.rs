@@ -77,7 +77,7 @@ pub async fn get(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.subscriptions;
     let context: ContextSpec = context.into_inner();
-    let options = params.options.unwrap_or_default();
+    let options = params.list_options().with_subscription_instance(&uri)?;
 
     let subscription = service
         .get_for_response(&target, &subscription_id, &context)
@@ -110,7 +110,7 @@ pub async fn query(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.subscriptions;
     let context: ContextSpec = context.into_inner();
-    let options = params.options.unwrap_or_default();
+    let options = params.list_options().with_subscription_instance(&uri)?;
 
     let (limit, offset) = match (params.limit, params.offset) {
         (Some(limit), Some(offset)) => (limit, offset),

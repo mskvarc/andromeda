@@ -252,6 +252,7 @@ dependencies = [
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-vocabulary",
  "chrono",
+ "derive_more",
  "iri-rs",
  "pretty_assertions",
  "serde",
@@ -580,6 +581,7 @@ dependencies = [
  "andromeda-ngsi-ld-number",
  "andromeda-ngsi-ld-problem-details",
  "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-request",
  "andromeda-tenancy",
  "axum",
@@ -1119,6 +1121,7 @@ dependencies = [
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
  "chrono",
+ "derive_more",
  "headers",
  "http",
  "iso8601-duration",
@@ -1129,6 +1132,7 @@ dependencies = [
  "serde_urlencoded",
  "strum",
  "thiserror 2.0.20",
+ "typed-builder",
 ]
 
 [[package]]

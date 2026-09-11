@@ -71,12 +71,17 @@ pub(crate) async fn batch_update(
         ));
     }
 
-    let overwrite = match params.options {
-        Some(RequestOverwritePolicy::NoOverwrite) => OverwritePolicy::Preserve,
-        Some(RequestOverwritePolicy::Overwrite) | None => OverwritePolicy::Overwrite,
+    let requested = params.overwrite_policy().with_entity_instance(&uri)?;
+    let overwrite = match requested {
+        RequestOverwritePolicy::NoOverwrite => OverwritePolicy::Preserve,
+        RequestOverwritePolicy::Overwrite => OverwritePolicy::Overwrite,
     };
 
-    let query_string = params.options.map(|option| format!("options={option}"));
+    // Clause 6.3.9: only the non-default policy is a token to forward.
+    let query_string = match requested {
+        RequestOverwritePolicy::NoOverwrite => Some(format!("options={requested}")),
+        RequestOverwritePolicy::Overwrite => None,
+    };
     let triggering = TriggeringRequest {
         via: incoming_via.as_ref(),
         headers: Some(batch_body.headers()),

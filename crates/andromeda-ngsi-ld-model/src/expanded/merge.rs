@@ -1,50 +1,13 @@
 //! Merging expanded JSON-LD fragments into a stored payload.
 
-use crate::expanded::{dataset_id::get_instance_dataset_id, null_sentinel::member_is_null_sentinel};
+use crate::expanded::{
+    dataset_id::get_instance_dataset_id,
+    json_literal_merge::merge_json_literal,
+    null_sentinel::{instance_is_null_sentinel, member_is_null_sentinel},
+};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde_json::{Map, Value};
-
-/// Merge `patch` into `base` following NGSI-LD expanded form conventions.
-///
-/// - Arrays are merged element-by-element (recursively).
-/// - An object patch on an array-wrapped base merges into the first element.
-/// - Object keys starting with `@` are never overwritten.
-/// - Object members are replaced (not recursively merged), matching NGSI-LD
-///   partial update semantics where attribute instance members are top-level atomic units.
-/// - Scalars: replaced entirely.
-pub fn merge_json(base: &mut Value, patch: &Value) {
-    match (base, patch) {
-        (Value::Array(base_arr), Value::Array(patch_arr)) => {
-            for (i, patch_elem) in patch_arr.iter().enumerate() {
-                if i < base_arr.len() {
-                    merge_json(&mut base_arr[i], patch_elem);
-                } else {
-                    // clone: the patch is borrowed and the base takes ownership of the new element.
-                    base_arr.push(patch_elem.clone());
-                }
-            }
-        }
-        (Value::Array(base_arr), Value::Object(_)) => {
-            if let Some(first) = base_arr.first_mut() {
-                merge_json(first, patch);
-            }
-        }
-        (Value::Object(base_obj), Value::Object(patch_obj)) => {
-            for (key, value) in patch_obj {
-                if key.starts_with('@') {
-                    continue;
-                }
-                // clone: both the key and the value are borrowed from the patch and stored owned.
-                base_obj.insert(key.clone(), value.clone());
-            }
-        }
-        (base, patch) => {
-            // clone: the patch is borrowed and wholly replaces the owned base.
-            *base = patch.clone();
-        }
-    }
-}
 
 /// How deeply a matched attribute instance is patched (clause 5.6).
 ///
@@ -127,6 +90,14 @@ fn instance_type_changed(existing_inst: &Value, patch_inst: &Value) -> bool {
 /// deleted that way — and every other member recurses so a Property value
 /// object is merged to arbitrary depth.
 fn merge_node(base: &mut Value, patch: &Value) {
+    // A `JsonProperty`'s value is a leaf to JSON-LD and a structure to clause
+    // 5.5.12, which merges "up to an arbitrary depth, e.g. including going into
+    // JSON objects representing a Property value". Expansion never walks into a
+    // `@json` literal, so the merge has to be performed on the raw value.
+    if let (Some(base_json), Some(patch_json)) = (json_literal_value_mut(base), json_literal_value(patch)) {
+        merge_json_literal(base_json, patch_json);
+        return;
+    }
     // Only two non-leaf structured nodes deep-merge; a leaf value or any shape
     // mismatch is atomic and the patch replaces the base wholesale.
     let mergeable = matches!((base.as_object(), patch.as_object()), (Some(base_obj), Some(patch_obj)) if !is_leaf_node(base_obj) && !is_leaf_node(patch_obj));
@@ -217,9 +188,46 @@ fn is_leaf_node(node: &Map<String, Value>) -> bool {
     node.contains_key("@value") || node.contains_key("@id")
 }
 
-/// Whether an array-wrapped member is the `urn:ngsi-ld:null` deletion sentinel.
+/// The raw JSON an expanded `@json` literal node carries, if the node is one.
+///
+/// Clause 4.5.24.2 keeps a `JsonProperty`'s value "not available for JSON-LD
+/// interpretation", which expansion expresses as `{"@type": "@json", "@value":
+/// <raw>}`.
+fn json_literal_value(node: &Value) -> Option<&Value> {
+    let members = node.as_object()?;
+    (members.get("@type").and_then(Value::as_str) == Some("@json")).then(|| members.get("@value"))?
+}
+
+/// The mutable twin of [`json_literal_value`].
+fn json_literal_value_mut(node: &mut Value) -> Option<&mut Value> {
+    let members = node.as_object_mut()?;
+    if members.get("@type").and_then(Value::as_str) != Some("@json") {
+        return None;
+    }
+    members.get_mut("@value")
+}
+
+/// Whether an array-wrapped member of a merge fragment deletes the key it
+/// stands on.
+///
+/// Clause 5.5.12 removes "each member of the Fragment, whose value is an
+/// NGSI-LD Null", and clause 4.5.0 gives that value two spellings. A
+/// non-reified member -- an `observedAt`, a `unitCode` -- carries the bare URI
+/// and expands to a plain node. A sub-attribute carries its own family's
+/// deletion sentinel instead: clauses 4.5.2, 4.5.3, 4.5.18, 4.5.21 and 4.5.22
+/// each state that an NGSI-LD Null on the right-hand side of the family's value
+/// member indicates "a deletion of the Property" -- of the whole sub-attribute,
+/// not of its value alone -- so recognising only the first spelling would leave
+/// behind a valueless instance the fragment asked to remove.
+///
+/// Clause 4.5.0 admits exactly one NGSI-LD Null where an array is required, so
+/// a member holding more than one node is data even when one of them is the
+/// sentinel.
 fn member_is_null(member: &Value) -> bool {
-    member.as_array().and_then(|entries| entries.first()).is_some_and(member_is_null_sentinel)
+    let Some(nodes) = member.as_array() else {
+        return member_is_null_sentinel(member) || instance_is_null_sentinel(member);
+    };
+    nodes.len() == 1 && nodes.iter().all(|node| member_is_null_sentinel(node) || instance_is_null_sentinel(node))
 }
 
 /// Remove instances matching a dataset ID (or the default instance if `None`)
@@ -253,7 +261,7 @@ pub(crate) fn remove_instances_by_dataset(entity_obj: &mut Map<String, Value>, k
 
 #[cfg(test)]
 mod tests {
-    use crate::expanded::merge::{InstancePatchDepth, deep_merge_attribute, merge_json, remove_instances_by_dataset};
+    use crate::expanded::merge::{InstancePatchDepth, deep_merge_attribute, remove_instances_by_dataset};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use serde_json::{Map, Value, json};
 
@@ -271,48 +279,6 @@ mod tests {
         let mut object = Map::new();
         object.insert("https://example.com/speed".to_string(), Value::Array(instances));
         object
-    }
-
-    #[test]
-    fn merging_two_arrays_merges_them_element_by_element() {
-        let mut base = json!([{"a": 1}, {"b": 2}]);
-        merge_json(&mut base, &json!([{"a": 9}]));
-        pretty_assertions::assert_eq!(base, json!([{"a": 9}, {"b": 2}]));
-    }
-
-    #[test]
-    fn merging_a_longer_array_appends_the_surplus_elements() {
-        let mut base = json!([{"a": 1}]);
-        merge_json(&mut base, &json!([{"a": 1}, {"b": 2}]));
-        pretty_assertions::assert_eq!(base, json!([{"a": 1}, {"b": 2}]));
-    }
-
-    #[test]
-    fn merging_an_object_into_an_array_merges_into_its_first_element() {
-        let mut base = json!([{"a": 1}, {"b": 2}]);
-        merge_json(&mut base, &json!({"a": 9}));
-        pretty_assertions::assert_eq!(base, json!([{"a": 9}, {"b": 2}]));
-    }
-
-    #[test]
-    fn merging_an_object_into_an_empty_array_changes_nothing() {
-        let mut base = json!([]);
-        merge_json(&mut base, &json!({"a": 9}));
-        pretty_assertions::assert_eq!(base, json!([]));
-    }
-
-    #[test]
-    fn merging_two_objects_replaces_members_but_never_a_keyword() {
-        let mut base = json!({"@id": "urn:ngsi-ld:Vehicle:1", "a": {"nested": 1}});
-        merge_json(&mut base, &json!({"@id": "urn:ngsi-ld:Vehicle:2", "a": {"other": 2}}));
-        pretty_assertions::assert_eq!(base, json!({"@id": "urn:ngsi-ld:Vehicle:1", "a": {"other": 2}}));
-    }
-
-    #[test]
-    fn merging_onto_a_scalar_replaces_it_wholesale() {
-        let mut base = json!(1);
-        merge_json(&mut base, &json!({"a": 2}));
-        pretty_assertions::assert_eq!(base, json!({"a": 2}));
     }
 
     #[test]

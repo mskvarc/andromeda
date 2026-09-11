@@ -33,7 +33,7 @@ use andromeda_context_commit::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
-    expanded::{entity_member::extract_types, removed_instance::removed_attribute_instances},
+    expanded::{entity_member::extract_types, null_sentinel::without_null_sentinels, removed_instance::removed_attribute_instances},
     notification::NotificationTrigger,
 };
 use serde_json::Value;
@@ -174,6 +174,16 @@ impl EntityService {
         precondition: Precondition,
     ) -> ChunkWrite {
         let UpdatedPayloads { previous, merged, observed } = payloads;
+        // Clause 4.5.0 makes an NGSI-LD Null an encoding of `null` rather than a
+        // value, so it is an instruction to this write and not something the
+        // Temporal Evolution observed; what it removed is recorded by the
+        // tombstones below. Clause 5.6.20.4 runs the merge behaviour of clause
+        // 5.6.17 per entity, so a batch carries exactly the same instructions a
+        // single-entity merge does.
+        let observed = match without_null_sentinels(&observed) {
+            Some(stripped) => Arc::new(stripped),
+            None => observed,
+        };
         let tombstones = removed_attribute_instances(previous, &merged)
             .into_iter()
             .map(HistoryRecord::Tombstone)

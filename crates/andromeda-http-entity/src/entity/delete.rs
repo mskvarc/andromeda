@@ -25,7 +25,7 @@ use crate::entity::{
 use andromeda_entity::error::EntityError;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
-use andromeda_ngsi_ld_model::registration::ForwardingMode;
+use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
 use axum::http::{HeaderMap, Method};
 
 pub(crate) async fn delete(

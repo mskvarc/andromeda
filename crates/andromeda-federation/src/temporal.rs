@@ -6,7 +6,7 @@ use crate::{
     config::SplitEntities,
     entity_read::own_loop_warning,
     error::FederationError,
-    forwarded_query::{ClientQuery, ForwardedQuery},
+    forwarded_query::{ForwardedQuery, client_query::ClientQuery},
     forwarding_url::{build_temporal_query_url, build_temporal_retrieve_url},
     outcome::{ForwardGetOutcome, ForwardReadOutcome, ForwardedResponse, ForwardedTemporalEntities, MatchedSources},
     read_fan_out::{ForwardedGetConditions, ReadSelection, read_outcome, registered_type_of},
@@ -14,7 +14,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, ForwardingMode};
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use serde_json::Value;
 use std::slice::from_ref;
 use tracing::warn;
@@ -150,7 +150,7 @@ impl FederationService {
         let answers = self
             .fan_out_get(
                 targets,
-                |registration, query| build_temporal_query_url(&registration.access.endpoint, &query.to_query_string()),
+                |registration, query| build_temporal_query_url(registration.access.endpoint.url(), &query.to_query_string()),
                 FederationService::temporal_entities_of,
                 ForwardedGetConditions {
                     context,
@@ -224,7 +224,7 @@ impl FederationService {
         let answers = self
             .fan_out_get(
                 targets,
-                |registration, query| build_temporal_retrieve_url(&registration.access.endpoint, entity_id, &query.to_query_string()),
+                |registration, query| build_temporal_retrieve_url(registration.access.endpoint.url(), entity_id, &query.to_query_string()),
                 FederationService::temporal_entities_of,
                 ForwardedGetConditions {
                     context,

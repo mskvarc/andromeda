@@ -13,7 +13,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, ForwardingMode};
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use futures::{StreamExt, stream};
 use serde_json::Value;
 use std::time::Duration;
@@ -112,7 +112,7 @@ impl FederationService {
                             .filter(|segment| !segment.is_empty()),
                     );
                 }
-                let url = forwarding_url(&csr.access.endpoint, &path, request_ref.query_string.unwrap_or(""));
+                let url = forwarding_url(csr.access.endpoint.url(), &path, request_ref.query_string.unwrap_or(""));
 
                 let proxied_attrs = if is_proxied(&csr) {
                     collect_matching_attrs(
@@ -337,7 +337,7 @@ mod tests {
         outcome::{ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure},
         provision::{remote_detail, single_source_failure},
     };
-    use andromeda_ngsi_ld_model::registration::ForwardingMode;
+    use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
     use serde_json::json;
 
     fn result(mode: ForwardingMode, outcome: ForwardedWriteOutcome) -> ForwardedWriteResult {

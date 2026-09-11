@@ -7,7 +7,7 @@ use crate::{
     language_filter::deserialize_optional_language_filter,
     language_tag::deserialize_optional_language_tag,
     linked_retrieval_consistency::validate_projection_join_depth,
-    options::{EntityRepresentationOptions, OverwritePolicy, deserialize_entity_representation_options, deserialize_overwrite_policy},
+    options::{EntityRepresentationOptions, OverwritePolicy},
     query::deserialization::{
         deserialize_optional_attribute_names,
         deserialize_optional_dataset_selector,
@@ -16,12 +16,24 @@ use crate::{
         deserialize_optional_projection_terms,
         deserialize_optional_uri_csv,
     },
-    representation_params::deserialize_option_response_format,
+    representation_parameter::{WrittenValue, resolve_representation, supported_option},
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::grammar::RawProjectionTerm, type_selection::grammar::TypeExprRaw};
-use andromeda_ngsi_ld_representation::{join_mode::JoinMode, merge_representation::MergeRepresentation, response_format::ResponseFormat};
+use andromeda_ngsi_ld_query::{
+    dataset::DatasetSelector,
+    projection::{
+        exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
+        grammar::RawProjectionTerm,
+    },
+    type_selection::grammar::TypeExprRaw,
+};
+use andromeda_ngsi_ld_representation::{
+    join_mode::JoinMode,
+    merge_representation::MergeRepresentation,
+    response_format::ResponseFormat,
+    sys_attrs::SysAttrsInclusion,
+};
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use langtag::LangTagBuf;
@@ -33,8 +45,19 @@ use std::num::NonZeroU32;
 #[serde(deny_unknown_fields)]
 pub struct AppendParams {
     /// Whether existing attributes may be overwritten.
-    #[serde(default, deserialize_with = "deserialize_overwrite_policy")]
-    pub options: Option<OverwritePolicy>,
+    pub options: Option<WrittenValue<OverwritePolicy>>,
+}
+
+impl AppendParams {
+    /// Whether the append may overwrite an attribute the entity already has.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParameterError::OptionsInvalid`] for a value other than
+    /// `noOverwrite`, which clause 6.3.20 answers with `InvalidRequest`.
+    pub fn overwrite_policy(&self) -> Result<OverwritePolicy, ParameterError> {
+        Ok(supported_option(self.options.as_ref())?.unwrap_or_default())
+    }
 }
 
 /// Query parameters for `PATCH /entities/{id}/attrs/{attrId}` (partial update).
@@ -64,8 +87,7 @@ pub struct MergeParams {
     /// The representation the fragment is written in: `simplified` (or
     /// `keyValues`) says the fragment carries bare values whose attribute
     /// types the target entity fixes.
-    #[serde(default, deserialize_with = "deserialize_option_response_format")]
-    pub format: Option<ResponseFormat>,
+    pub format: Option<WrittenValue<ResponseFormat>>,
     /// The natural language of string values merged into a pre-existing
     /// `LanguageProperty`: the `languageMap` key they update.
     #[serde(default, deserialize_with = "deserialize_optional_language_tag")]
@@ -75,8 +97,7 @@ pub struct MergeParams {
     #[serde(rename = "observedAt")]
     pub observed_at: Option<DateTime<Utc>>,
     /// The deprecated alternative to `format` (`options=simplified`).
-    #[serde(default, deserialize_with = "deserialize_entity_representation_options")]
-    pub options: Option<EntityRepresentationOptions>,
+    pub options: Option<WrittenValue<EntityRepresentationOptions>>,
     /// The clause 4.17 selector the target entity's types must satisfy.
     #[serde(rename = "type")]
     pub entity_type: Option<TypeExprRaw>,
@@ -94,7 +115,7 @@ impl MergeParams {
     /// [`ParameterError::FormatInvalid`] for a representation Table 6.5.3.4-1
     /// does not admit as a merge input (`concise`).
     pub fn representation(&self) -> Result<MergeRepresentation, ParameterError> {
-        let format = self.format.or_else(|| self.options.and_then(|options| options.format)).unwrap_or_default();
+        let format = resolve_representation(self.format.as_ref(), self.options.as_ref())?;
         MergeRepresentation::try_from(format).map_err(|error| ParameterError::FormatInvalid(error.to_string()))
     }
 }
@@ -114,11 +135,9 @@ pub struct GetEntityParams {
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
     pub attrs: Option<Vec<AttributeName>>,
     /// Typed representation and system-attribute options (`options`).
-    #[serde(default, deserialize_with = "deserialize_entity_representation_options")]
-    pub options: Option<EntityRepresentationOptions>,
+    pub options: Option<WrittenValue<EntityRepresentationOptions>>,
     /// The representation the response uses (clause 4.5.1 `format`).
-    #[serde(default, deserialize_with = "deserialize_option_response_format")]
-    pub format: Option<ResponseFormat>,
+    pub format: Option<WrittenValue<ResponseFormat>>,
     /// Members the response is narrowed to (clause 4.21 `pick`), each term
     /// carrying whatever clause 4.21 sub-projection it was written with.
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
@@ -166,10 +185,26 @@ impl GetEntityParams {
     ///
     /// `format` takes precedence over the legacy `options` (clause 4.5.1). The
     /// resolution is shared with the GET-query parameter set so the two paths
-    /// cannot disagree; see [`resolve_response_format`].
-    #[must_use]
-    pub fn resolve_render_mode(&self) -> ResponseFormat {
-        self.format.or_else(|| self.options.and_then(|options| options.format)).unwrap_or_default()
+    /// cannot disagree; see [`resolve_representation`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParameterError::FormatInvalid`] or
+    /// [`ParameterError::OptionsInvalid`] when either parameter named a
+    /// rendering Table 6.3.7-1 does not define (clause 6.3.20).
+    pub fn resolve_render_mode(&self) -> Result<ResponseFormat, ParameterError> {
+        resolve_representation(self.format.as_ref(), self.options.as_ref())
+    }
+
+    /// Whether the retrieval includes the system-generated temporal attributes
+    /// (clause 6.3.11 `options=sysAttrs`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParameterError::OptionsInvalid`] when `options` carried a
+    /// value Table 6.3.7-1 does not define (clause 6.3.20).
+    pub fn sys_attrs(&self) -> Result<SysAttrsInclusion, ParameterError> {
+        Ok(supported_option(self.options.as_ref())?.unwrap_or_default().sys_attrs)
     }
 
     /// Reject a `format` or `options` value outside the clause 4.5.1 grammar.
@@ -181,29 +216,29 @@ impl GetEntityParams {
     /// # Errors
     ///
     /// Returns [`ParameterError::AttrsReservedMember`] when `attrs` names an
-    /// Entity member, [`ParameterError::PickOmitExclusive`] when both `pick`
-    /// and `omit` are given, [`ParameterError::PickOmitWithAttrs`] when either
-    /// of them is combined with `attrs`, and
+    /// Entity member, [`ParameterError::Projection`] when the clause 4.21
+    /// selectors contradict each other, and
     /// [`ParameterError::ProjectionLinkedTermsWithoutJoin`] or
     /// [`ParameterError::ProjectionDepthExceedsJoinLevel`] when a nested
     /// projection term names a Linked Entity the requested traversal does not
     /// reach.
     pub fn validate(&self) -> Result<(), ParameterError> {
+        // Clause 6.3.20: a `format` or `options` value Table 6.3.7-1 does not
+        // define is refused here rather than during deserialisation, where the
+        // error type would have been lost (see `crate::representation_parameter`).
+        self.resolve_render_mode()?;
         // Table 6.5.3.1-1 restricts `attrs` to "an Attribute (Property or
         // Relationship) name" and says outright that "id, type, scope are not
         // allowed". Clause 4.18 agrees for this representation: an Entity
         // retrieval leaves the Scope non-reified, so it is no Attribute here.
         validate_attrs(self.attrs.as_deref(), AttrsAdmission::AttributeNamesOnly)?;
-        // Clause 4.21: pick and omit select opposite ends of the same
-        // projection, so a request naming both is contradictory rather than
-        // a request the broker can merge. The rule is the query's rule; the
-        // retrieval carries the same two parameters and so the same rule.
-        if self.pick.is_some() && self.omit.is_some() {
-            return Err(ParameterError::PickOmitExclusive);
-        }
-        if (self.pick.is_some() || self.omit.is_some()) && self.attrs.is_some() {
-            return Err(ParameterError::PickOmitWithAttrs);
-        }
+        // Clause 4.21: the retrieval carries the same three selectors a query
+        // does, and so the same rule about combining them.
+        check_projection_exclusivity(ProjectionSelectors {
+            pick: Presence::of(self.pick.as_deref()),
+            omit: Presence::of(self.omit.as_deref()),
+            attrs: Presence::of(self.attrs.as_deref()),
+        })?;
         // Clause 5.7.2.4: a nested sub-projection describes a Linked Entity,
         // so it is only meaningful as far as the requested join reaches.
         validate_projection_join_depth(self.pick.as_deref(), self.omit.as_deref(), self.join, self.join_level)?;
@@ -215,6 +250,7 @@ impl GetEntityParams {
 mod tests {
     use super::*;
     use crate::query::entity::parameters::EntityQueryParameters;
+    use andromeda_ngsi_ld_query::projection::exclusivity::ProjectionConflict;
 
     #[test]
     fn a_retrieve_accepts_the_entity_map_flag_and_lifetime() {
@@ -248,40 +284,40 @@ mod tests {
     #[test]
     fn resolve_render_mode_default_is_normalized() {
         let params = default_params();
-        pretty_assertions::assert_eq!(params.resolve_render_mode(), ResponseFormat::Normalized);
+        pretty_assertions::assert_eq!(params.resolve_render_mode().expect("a supported rendering"), ResponseFormat::Normalized);
     }
 
     #[test]
     fn resolve_render_mode_format_key_values() {
         let mut params = default_params();
-        params.format = Some(ResponseFormat::Simplified);
-        pretty_assertions::assert_eq!(params.resolve_render_mode(), ResponseFormat::Simplified);
+        params.format = Some(WrittenValue::Supported(ResponseFormat::Simplified));
+        pretty_assertions::assert_eq!(params.resolve_render_mode().expect("a supported rendering"), ResponseFormat::Simplified);
     }
 
     #[test]
     fn resolve_render_mode_format_simplified() {
         let mut params = default_params();
-        params.format = Some(ResponseFormat::Simplified);
-        pretty_assertions::assert_eq!(params.resolve_render_mode(), ResponseFormat::Simplified);
+        params.format = Some(WrittenValue::Supported(ResponseFormat::Simplified));
+        pretty_assertions::assert_eq!(params.resolve_render_mode().expect("a supported rendering"), ResponseFormat::Simplified);
     }
 
     #[test]
     fn resolve_render_mode_options_concise() {
         let params: GetEntityParams = serde_urlencoded::from_str("options=concise").expect("valid options");
-        pretty_assertions::assert_eq!(params.resolve_render_mode(), ResponseFormat::Concise);
+        pretty_assertions::assert_eq!(params.resolve_render_mode().expect("a supported rendering"), ResponseFormat::Concise);
     }
 
     #[test]
     fn resolve_render_mode_format_concise() {
         let mut params = default_params();
-        params.format = Some(ResponseFormat::Concise);
-        pretty_assertions::assert_eq!(params.resolve_render_mode(), ResponseFormat::Concise);
+        params.format = Some(WrittenValue::Supported(ResponseFormat::Concise));
+        pretty_assertions::assert_eq!(params.resolve_render_mode().expect("a supported rendering"), ResponseFormat::Concise);
     }
 
     #[test]
     fn resolve_render_mode_options_key_values() {
         let params: GetEntityParams = serde_urlencoded::from_str("options=keyValues").expect("valid options");
-        pretty_assertions::assert_eq!(params.resolve_render_mode(), ResponseFormat::Simplified);
+        pretty_assertions::assert_eq!(params.resolve_render_mode().expect("a supported rendering"), ResponseFormat::Simplified);
     }
 
     #[test]
@@ -292,20 +328,25 @@ mod tests {
         // disagree: `format=normalized` with `options=keyValues` must render
         // normalized, not simplified.
         let params: GetEntityParams = serde_urlencoded::from_str("format=normalized&options=keyValues").expect("valid options");
-        pretty_assertions::assert_eq!(params.resolve_render_mode(), ResponseFormat::Normalized);
+        pretty_assertions::assert_eq!(params.resolve_render_mode().expect("a supported rendering"), ResponseFormat::Normalized);
 
         let params: GetEntityParams = serde_urlencoded::from_str("format=concise&options=keyValues").expect("valid options");
-        pretty_assertions::assert_eq!(params.resolve_render_mode(), ResponseFormat::Concise);
+        pretty_assertions::assert_eq!(params.resolve_render_mode().expect("a supported rendering"), ResponseFormat::Concise);
     }
 
+    /// Clause 6.3.20: a `format` or `options` value Table 6.3.7-1 does not
+    /// define survives deserialisation, so the rejection can name the error
+    /// type, and is refused by `validate`.
     #[test]
-    fn validate_rejects_unknown_format() {
-        assert!(serde_urlencoded::from_str::<GetEntityParams>("format=bananas").is_err());
-    }
-
-    #[test]
-    fn validate_rejects_unknown_options_token() {
-        assert!(serde_urlencoded::from_str::<GetEntityParams>("options=keyValues%2Cbogus").is_err());
+    fn validate_rejects_a_representation_the_table_does_not_define() {
+        for query in ["format=bananas", "options=keyValues%2Cbogus"] {
+            let params: GetEntityParams = serde_urlencoded::from_str(query).expect("the parameter set decodes");
+            let refused = params.validate().expect_err("the grammar refuses it");
+            assert!(
+                matches!(refused, ParameterError::FormatInvalid(_) | ParameterError::OptionsInvalid(_)),
+                "{query}: {refused}"
+            );
+        }
     }
 
     /// Clause 4.21: a single-entity GET parses `pick` through the projection
@@ -328,7 +369,7 @@ mod tests {
     fn get_validate_rejects_pick_and_omit_together() {
         let params: GetEntityParams = serde_urlencoded::from_str("pick=speed&omit=scope").expect("valid projection terms");
         let error = params.validate().expect_err("expected mutual exclusivity error");
-        assert!(matches!(error, ParameterError::PickOmitExclusive));
+        assert!(matches!(error, ParameterError::Projection(ProjectionConflict::PickWithOmit)));
     }
 
     #[test]
@@ -336,7 +377,7 @@ mod tests {
         for query in ["pick=speed&attrs=fuelLevel", "omit=speed&attrs=fuelLevel"] {
             let params: GetEntityParams = serde_urlencoded::from_str(query).expect("valid selectors");
             let error = params.validate().expect_err("projection and attrs are mutually exclusive");
-            assert!(matches!(error, ParameterError::PickOmitWithAttrs));
+            assert!(matches!(error, ParameterError::Projection(ProjectionConflict::ProjectionWithAttrs)));
         }
     }
 

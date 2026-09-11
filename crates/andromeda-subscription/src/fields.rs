@@ -4,7 +4,7 @@ use crate::{error::SubscriptionError, lifecycle::DatasetIdPolicy, store::Subscri
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion, uri::Uri};
 use andromeda_ngsi_ld_model::{
     attribute_name_csv,
-    notification::{DEFAULT_NOTIFICATION_TRIGGERS, NotificationTrigger},
+    notification::NotificationTrigger,
     subscription::{EntitySelector, NotificationParams, Subscription},
 };
 use andromeda_ngsi_ld_query::{filter::expression::Expr, scope::query::ScopeQuery};
@@ -196,7 +196,7 @@ pub fn extract_create_fields(payload: &Value, dataset_id_policy: DatasetIdPolicy
         description: payload.get("description").and_then(Value::as_str).map(String::from),
         entities: deserialize_member(payload, "entities")?,
         watched_attributes: deserialize_member(payload, "watchedAttributes")?,
-        notification_trigger: Some(deserialize_member(payload, "notificationTrigger")?.unwrap_or_else(|| DEFAULT_NOTIFICATION_TRIGGERS.to_vec())),
+        notification_trigger: deserialize_member(payload, "notificationTrigger")?,
         time_interval: payload.get("timeInterval").and_then(Value::as_f64),
         q: deserialize_member(payload, "q")?,
         geo_q: payload.get("geoQ").cloned(), // clone: the write values own request JSON across the database await.
@@ -240,11 +240,7 @@ pub fn merge_update_fields(payload: &Value, existing: Subscription, dataset_id_p
         description: payload.get("description").and_then(Value::as_str).map(String::from).or(description),
         entities: deserialize_member(payload, "entities")?.or(selection.entities),
         watched_attributes: deserialize_member(payload, "watchedAttributes")?.or(selection.watched_attributes),
-        notification_trigger: Some(
-            deserialize_member(payload, "notificationTrigger")?
-                .or(selection.notification_trigger)
-                .unwrap_or_else(|| DEFAULT_NOTIFICATION_TRIGGERS.to_vec()),
-        ),
+        notification_trigger: deserialize_member(payload, "notificationTrigger")?.or(selection.notification_trigger),
         time_interval: payload.get("timeInterval").and_then(Value::as_f64).or(delivery.time_interval),
         q: deserialize_member(payload, "q")?.or(filters.q),
         geo_q: payload

@@ -82,7 +82,7 @@ use andromeda_ngsi_ld_lexicon::{
     uri::Uri,
 };
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use andromeda_registration::store::{ForwardingOutcome, RegistrationStore};
+use andromeda_registration::store::{RegistrationStore, forwarding_outcome::ForwardingOutcome};
 use chrono::Utc;
 use std::{sync::Arc, time::Duration};
 use tracing::warn;

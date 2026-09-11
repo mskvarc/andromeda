@@ -159,7 +159,7 @@ mod tests {
     use andromeda_ngsi_ld_model::{
         attribute::instance::{Attribute, AttributeValue},
         entity::Entity,
-        registration::ForwardingMode,
+        registration::forwarding_mode::ForwardingMode,
     };
     use serde_json::{Value, json};
 

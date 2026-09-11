@@ -105,7 +105,9 @@ pub async fn query(
     protocol: NgsiLdProtocolHeaders,
     ValidatedQuery(params): ValidatedQuery<TemporalQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
-    run(TemporalQueryRequest {
+    // Boxed: a temporal query parameter set is wide enough that the operation's
+    // future overflows the task-local budget the `large_futures` lint guards.
+    Box::pin(run(TemporalQueryRequest {
         services,
         target,
         accept,
@@ -117,7 +119,7 @@ pub async fn query(
         // Clause 6.18.3.2 carries the whole query in the request URI, so a
         // pointer built from it retrieves the next page on its own.
         pointers: PagePointers::OverRequestUri,
-    })
+    }))
     .await
 }
 
@@ -253,7 +255,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     query_response(
         accept,
         protocol.prefer,
-        params.parse_format(),
+        params.selected_format(),
         &context,
         values,
         TemporalCollectionMetadata {

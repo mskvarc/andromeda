@@ -3,18 +3,29 @@
 
 use crate::expanded::{
     dataset_id::get_instance_dataset_id,
-    merge::{merge_json, remove_instances_by_dataset},
+    merge::remove_instances_by_dataset,
     mutation::{error::ExpandedEntityError, selection::DatasetSelection},
     node::expanded_object_mut,
     null_sentinel::instance_is_null_sentinel,
+    partial_update_patch::patch_attribute_instance,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
 use iri_rs::IriBuf;
 use serde_json::Value;
 
-/// Partial update of a single attribute (clause 5.6.4): merge `fragment` into the
-/// attribute identified by `attr_iri`, optionally targeting a specific
-/// `dataset_id`.
+/// Partial update of a single attribute (clause 5.6.4): patch `fragment` into
+/// the attribute identified by `attr_iri`, following clause 5.5.8.
+///
+/// The instance the patch lands on is the one clause 5.6.4.4 names: "as an
+/// instance with the specified datasetId if present", otherwise the default
+/// instance. Table 6.7.3.1-1 gives the operation no `datasetId` URL parameter,
+/// so the `datasetId` clause 5.5.8 matches on is the Fragment's own; the
+/// parameter Andromeda additionally accepts selects ahead of it when a client
+/// sends one.
+///
+/// A `fragment` that is the NGSI-LD Null of clause 4.5.0 deletes the selected
+/// instance, which clause 5.5.8 hands to clause 5.6.5: the attribute itself is
+/// gone once its last instance is.
 ///
 /// # Errors
 ///
@@ -31,64 +42,76 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Op
         return Err(ExpandedEntityError::AttributeNotFound { attribute: attr_iri.clone() });
     }
 
-    // datasetId selection is controlled by query parameter (datasetId).
-    // A datasetId embedded in the payload does not select the target instance.
-    let effective_ds = dataset_id;
+    let fragment_dataset = get_instance_dataset_id(fragment);
+    let effective_ds = dataset_id.or(fragment_dataset.as_ref());
 
     if instance_is_null_sentinel(fragment) {
-        remove_instances_by_dataset(entity_obj, attr_iri.as_str(), effective_ds);
-        return Ok(());
+        return delete_selected_instance(entity_obj, attr_iri, effective_ds);
     }
 
-    // Extract the fragment's @type (if present) for type-mismatch validation
     let fragment_types = attribute_types(fragment)?;
+    let Some(Value::Array(instances)) = entity_obj.get_mut(attr_iri.as_str()) else {
+        return patch_unwrapped_attribute(entity_obj, attr_iri, effective_ds, &fragment_types, fragment);
+    };
 
-    if let Some(ds_id) = effective_ds {
-        let Some(Value::Array(instances)) = entity_obj.get_mut(attr_iri.as_str()) else {
-            return Err(ExpandedEntityError::AttributeHasNoInstances { attribute: attr_iri.clone() });
-        };
+    let selected = match effective_ds {
+        Some(ds_id) => instances.iter_mut().find(|instance| get_instance_dataset_id(instance).as_ref() == Some(ds_id)),
+        None => instances.iter_mut().find(|instance| get_instance_dataset_id(instance).is_none()),
+    };
 
-        let found = instances.iter_mut().find(|instance| get_instance_dataset_id(instance).as_ref() == Some(ds_id));
-
-        match found {
-            Some(instance) => {
-                validate_type_match(&fragment_types, instance, attr_iri)?;
-                merge_json(instance, fragment);
-            }
-            None => {
-                return Err(ExpandedEntityError::DatasetNotFound {
-                    attribute: attr_iri.clone(),
-                    dataset_id: Box::new(ds_id.clone()),
-                });
-            }
-        }
-    } else {
-        // No datasetId: target the default instance (the one without datasetId)
-        let Some(Value::Array(instances)) = entity_obj.get_mut(attr_iri.as_str()) else {
-            let Some(attr_value) = entity_obj.get_mut(attr_iri.as_str()) else {
-                return Err(ExpandedEntityError::AttributeNotFound { attribute: attr_iri.clone() });
-            };
-            if !fragment_types.is_empty() {
-                validate_type_match(&fragment_types, attr_value, attr_iri)?;
-            }
-            merge_json(attr_value, fragment);
-            return Ok(());
-        };
-
-        let found = instances.iter_mut().find(|instance| get_instance_dataset_id(instance).is_none());
-
-        match found {
-            Some(instance) => {
-                validate_type_match(&fragment_types, instance, attr_iri)?;
-                merge_json(instance, fragment);
-            }
-            None => {
-                return Err(ExpandedEntityError::DefaultInstanceNotFound { attribute: attr_iri.clone() });
-            }
-        }
-    }
-
+    let Some(instance) = selected else {
+        return Err(missing_instance(attr_iri, effective_ds));
+    };
+    validate_type_match(&fragment_types, instance, attr_iri)?;
+    patch_attribute_instance(instance, fragment);
     Ok(())
+}
+
+/// Delete the instance an NGSI-LD Null fragment selected (clauses 5.5.8 and
+/// 5.6.5).
+fn delete_selected_instance(entity_obj: &mut serde_json::Map<String, Value>, attr_iri: &IriBuf, effective_ds: Option<&Uri>) -> Result<(), ExpandedEntityError> {
+    if remove_instances_by_dataset(entity_obj, attr_iri.as_str(), effective_ds) {
+        Ok(())
+    } else {
+        Err(missing_instance(attr_iri, effective_ds))
+    }
+}
+
+/// Patch an attribute member the store does not hold as an instance array.
+///
+/// Clause 4.5.1 wraps multiple instances in an array and leaves a single one
+/// bare, so a payload written before expansion normalized it can reach the
+/// patch as one node.
+fn patch_unwrapped_attribute(
+    entity_obj: &mut serde_json::Map<String, Value>,
+    attr_iri: &IriBuf,
+    effective_ds: Option<&Uri>,
+    fragment_types: &[AttributeType],
+    fragment: &Value,
+) -> Result<(), ExpandedEntityError> {
+    let Some(attr_value) = entity_obj.get_mut(attr_iri.as_str()) else {
+        return Err(ExpandedEntityError::AttributeNotFound { attribute: attr_iri.clone() });
+    };
+    if effective_ds.is_some() && get_instance_dataset_id(attr_value).as_ref() != effective_ds {
+        return Err(missing_instance(attr_iri, effective_ds));
+    }
+    if !fragment_types.is_empty() {
+        validate_type_match(fragment_types, attr_value, attr_iri)?;
+    }
+    patch_attribute_instance(attr_value, fragment);
+    Ok(())
+}
+
+/// The clause 5.6.4.4 `ResourceNotFound` for the instance that was selected but
+/// is not there: the one carrying `effective_ds`, or the default instance.
+fn missing_instance(attr_iri: &IriBuf, effective_ds: Option<&Uri>) -> ExpandedEntityError {
+    match effective_ds {
+        Some(dataset_id) => ExpandedEntityError::DatasetNotFound {
+            attribute: attr_iri.clone(),
+            dataset_id: Box::new(dataset_id.clone()),
+        },
+        None => ExpandedEntityError::DefaultInstanceNotFound { attribute: attr_iri.clone() },
+    }
 }
 
 /// Check that the fragment's `@type` (if specified) matches the instance's `@type`.

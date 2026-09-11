@@ -46,8 +46,7 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::OrderGeometryCollection
         | ParameterError::OrderFromInvalid { .. }
         | ParameterError::DropKeepExclusive
-        | ParameterError::PickOmitExclusive
-        | ParameterError::PickOmitWithAttrs
+        | ParameterError::Projection(_)
         | ParameterError::LimitZeroWithoutCount
         | ParameterError::ProjectionLinkedTermsWithoutJoin
         | ParameterError::ProjectionDepthExceedsJoinLevel { .. }

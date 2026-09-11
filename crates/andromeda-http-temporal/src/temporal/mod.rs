@@ -40,7 +40,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_model::{
     expanded::query_match::{matches_geo_query, matches_scope_query},
-    registration::ForwardingMode,
+    registration::forwarding_mode::ForwardingMode,
 };
 use andromeda_ngsi_ld_query::{
     filter::{

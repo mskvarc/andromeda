@@ -4,6 +4,7 @@ use crate::{attribute_name_csv, key_value_pair::KeyValuePair, notification::Noti
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     constant_string,
+    dereferenceable_uri::DereferenceableUri,
     positive_milliseconds::PositiveMilliseconds,
     rfc3339,
     spec_version::SpecVersion,
@@ -76,7 +77,11 @@ pub struct EntitySelector {
 pub struct Endpoint {
     /// The notification target URI, absolute and carrying the scheme the
     /// transport is chosen from (`http`, `https` or `mqtt`).
-    pub uri: Url,
+    ///
+    /// Kept as the subscriber wrote it: clause 5.2.2 has the broker serve a
+    /// client's members back as they were supplied, and a bare [`url::Url`]
+    /// would answer with the canonical spelling instead.
+    pub uri: DereferenceableUri,
     /// Preferred content type for the notification payload.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accept: Option<MediaTypeBuf>,
@@ -522,8 +527,8 @@ mod tests {
     fn a_subscription_endpoint_uri_is_an_absolute_url() {
         let endpoint: Endpoint =
             serde_json::from_value(serde_json::json!({"uri": "https://receiver.example.com/notify", "accept": "application/json"})).expect("parses");
-        pretty_assertions::assert_eq!(endpoint.uri.scheme(), "https");
-        pretty_assertions::assert_eq!(endpoint.uri.host_str(), Some("receiver.example.com"));
+        pretty_assertions::assert_eq!(endpoint.uri.url().scheme(), "https");
+        pretty_assertions::assert_eq!(endpoint.uri.url().host_str(), Some("receiver.example.com"));
     }
 
     #[test]
@@ -534,7 +539,7 @@ mod tests {
     #[test]
     fn a_subscription_endpoint_accepts_an_mqtt_target() {
         let endpoint: Endpoint = serde_json::from_value(serde_json::json!({"uri": "mqtt://broker.example.com:1883/topic"})).expect("parses");
-        pretty_assertions::assert_eq!(endpoint.uri.scheme(), "mqtt");
+        pretty_assertions::assert_eq!(endpoint.uri.url().scheme(), "mqtt");
         assert!(endpoint.accept.is_none());
     }
 

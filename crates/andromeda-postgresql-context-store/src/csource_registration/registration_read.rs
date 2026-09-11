@@ -16,7 +16,7 @@ use andromeda_postgresql_context_query::csr::{
 };
 use andromeda_postgresql_schema::csr::Csr;
 use andromeda_postgresql_seaquery::aggregate::count_all;
-use andromeda_registration::{error::RegistrationError, store::RegistrationPage};
+use andromeda_registration::{error::RegistrationError, store::page::RegistrationPage};
 use iri_rs::IriBuf;
 use sea_query::{Expr as SeaExpr, ExprTrait, Order, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;

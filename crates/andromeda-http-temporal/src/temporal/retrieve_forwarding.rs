@@ -35,7 +35,7 @@ use andromeda_entity_map::{
 use andromeda_federation::{
     FederationService,
     entity_result::temporal_contributions_of,
-    forwarded_query::ClientQuery,
+    forwarded_query::client_query::ClientQuery,
     outcome::{ForwardReadOutcome, MatchedSources},
     request::{EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
     temporal_last_n::truncate_to_last_n,

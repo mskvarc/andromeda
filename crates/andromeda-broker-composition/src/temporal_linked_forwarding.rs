@@ -17,7 +17,7 @@ use crate::{linked_resolution_failure_mapping::resolution_failure, linked_traver
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_federation::{
     FederationService,
-    forwarded_query::ClientQuery,
+    forwarded_query::client_query::ClientQuery,
     operation::ForwardingOperation,
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
 };
@@ -134,6 +134,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
     use andromeda_ngsi_ld_query::temporal::aggregation_period::AggregationPeriod;
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
+    use andromeda_ngsi_ld_request::representation_parameter::WrittenValue;
     use andromeda_temporal::remote_linked::TemporalLinkedWindow;
     use std::num::NonZeroU32;
 
@@ -184,7 +185,7 @@ mod tests {
         pretty_assertions::assert_eq!(parameters.end_time_at, window.end_time_at);
         pretty_assertions::assert_eq!(parameters.timeproperty, Some(TimeProp::Modified));
         pretty_assertions::assert_eq!(parameters.last_n, Some(5));
-        pretty_assertions::assert_eq!(parameters.format, Some(TemporalFormat::AggregatedValues));
+        pretty_assertions::assert_eq!(parameters.format, Some(WrittenValue::Supported(TemporalFormat::AggregatedValues)));
         pretty_assertions::assert_eq!(parameters.aggr_methods, Some(vec![AggrMethod::Avg, AggrMethod::Max]));
         pretty_assertions::assert_eq!(parameters.aggr_period_duration.map(|period| period.as_iso8601()), Some("PT1H".to_owned()));
         pretty_assertions::assert_eq!(parameters.join, Some(JoinMode::Flat));

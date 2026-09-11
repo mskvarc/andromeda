@@ -14,7 +14,7 @@ use andromeda_entity::{error::EntityError, query::retrieval::RetrievalNarrowing}
 use andromeda_federation::{
     config::SplitEntities,
     entity_result::merge_retrieve_results,
-    forwarded_query::ClientQuery,
+    forwarded_query::client_query::ClientQuery,
     operation::ForwardingOperation,
     outcome::ForwardedEntities,
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::{
     entity::Entity,
     notification::{Notification, NotificationType},
-    registration::ForwardingMode,
+    registration::forwarding_mode::ForwardingMode,
 };
 use andromeda_ngsi_ld_render::{entity::EntityRenderer, notification_conformance::amend_notification_entities};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -233,11 +233,11 @@ impl SubscriptionForwardingService {
         };
         let payload = serde_json::to_value(&copy)?;
         let endpoint = &subscription.notification.endpoint;
-        let transport = parse_endpoint_transport(&endpoint.uri, endpoint.notifier_info.as_deref())
+        let transport = parse_endpoint_transport(endpoint.uri.url(), endpoint.notifier_info.as_deref())
             .map_err(|error| SubscriptionForwardingError::internal(format!("local subscription endpoint is not deliverable: {error}")))?;
         let request = NotificationDelivery {
             payload: &payload,
-            endpoint_uri: &endpoint.uri,
+            endpoint_uri: endpoint.uri.url(),
             accept: endpoint.accept.as_ref(),
             receiver_info: endpoint.receiver_info.as_deref(),
             jsonld_context: subscription.delivery.jsonld_context.as_ref(),

@@ -2,7 +2,7 @@
 
 use crate::{
     config::SplitEntities,
-    forwarded_query::ClientQuery,
+    forwarded_query::client_query::ClientQuery,
     operation::{ForwardingOperation, ProvisionResource},
 };
 use andromeda_entity_map::reuse::EntityMapUse;

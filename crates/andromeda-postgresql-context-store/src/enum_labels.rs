@@ -15,7 +15,7 @@
 mod tests {
     use andromeda_ngsi_ld_model::{
         jsonld_context::ContextKind,
-        registration::{CsrStatus, ForwardingMode},
+        registration::{forwarding_mode::ForwardingMode, status::CsrStatus},
         snapshot::SnapshotStatus,
         subscription::SubscriptionStatus,
     };

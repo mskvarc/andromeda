@@ -11,13 +11,18 @@ use crate::{
     geometry::unwrap_geo_property_to_geometry,
     mode_rules::default_operations,
     nullable_member::NullableMember,
-    store::{CreateCsrParams, CsrUpdateFragment},
+    store::{create_params::CreateCsrParams, update_fragment::CsrUpdateFragment},
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, non_empty_text::NonEmptyText, tenant::TenantName};
+use andromeda_ngsi_ld_lexicon::{
+    context_source_pseudonym::ContextSourcePseudonym,
+    dereferenceable_uri::DereferenceableUri,
+    non_empty_text::NonEmptyText,
+    tenant::TenantName,
+};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
-    registration::{ContextSourceRegistrationType, CsrOperation, ForwardingMode, RegistrationInfo},
+    registration::{ContextSourceRegistrationType, forwarding_mode::ForwardingMode, info::RegistrationInfo, operation::CsrOperation},
     registration_management::RegistrationManagementInfo,
     time_interval::TimeInterval,
 };
@@ -27,7 +32,6 @@ use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use url::Url;
 
 /// Read one optional member into its type; absent stays `None`.
 fn deserialize_member<T>(payload: &Value, key: &str) -> Result<Option<T>, RegistrationError>
@@ -130,7 +134,7 @@ pub(super) fn extract_create_params(payload: &Value) -> Result<CreateCsrParams, 
         observation_space: deserialize_geometry(payload, "observationSpace")?,
         operation_space: deserialize_geometry(payload, "operationSpace")?,
         expires_at: payload.get("expiresAt").map(|value| parse_datetime(value, "expiresAt")).transpose()?,
-        endpoint: deserialize_required::<Url>(payload, "endpoint")?,
+        endpoint: deserialize_required::<DereferenceableUri>(payload, "endpoint")?,
         accept: deserialize_member::<MediaTypeBuf>(payload, "accept")?,
         mode,
         operations,
@@ -138,7 +142,7 @@ pub(super) fn extract_create_params(payload: &Value) -> Result<CreateCsrParams, 
         refresh_rate: payload.get("refreshRate").map(|value| parse_duration_value(value, "refreshRate")).transpose()?,
         management: deserialize_member::<RegistrationManagementInfo>(payload, "management")?,
         context_source_info: deserialize_member::<Vec<KeyValuePair>>(payload, "contextSourceInfo")?,
-        jsonld_context: deserialize_member::<Url>(payload, "jsonldContext")?,
+        jsonld_context: deserialize_member::<DereferenceableUri>(payload, "jsonldContext")?,
         context_source_alias: deserialize_member::<ContextSourcePseudonym>(payload, "contextSourceAlias")?,
         additional_properties: extract_additional_properties(payload),
     })
@@ -165,7 +169,7 @@ pub(super) fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragm
             Some(value) if value.is_null() => NullableMember::Cleared,
             Some(value) => NullableMember::Set(parse_datetime(value, "expiresAt")?),
         },
-        endpoint: deserialize_member::<Url>(fragment, "endpoint")?,
+        endpoint: deserialize_member::<DereferenceableUri>(fragment, "endpoint")?,
         accept: deserialize_nullable::<MediaTypeBuf>(fragment, "accept")?,
         mode: deserialize_member::<ForwardingMode>(fragment, "mode")?,
         operations: deserialize_nullable::<Vec<CsrOperation>>(fragment, "operations")?,
@@ -177,7 +181,7 @@ pub(super) fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragm
         },
         management: deserialize_nullable::<RegistrationManagementInfo>(fragment, "management")?,
         context_source_info: deserialize_nullable::<Vec<KeyValuePair>>(fragment, "contextSourceInfo")?,
-        jsonld_context: deserialize_nullable::<Url>(fragment, "jsonldContext")?,
+        jsonld_context: deserialize_nullable::<DereferenceableUri>(fragment, "jsonldContext")?,
         context_source_alias: deserialize_nullable::<ContextSourcePseudonym>(fragment, "contextSourceAlias")?,
         additional_properties: extract_additional_properties(fragment),
     })
@@ -199,7 +203,7 @@ mod tests {
         nullable_member::NullableMember,
         payload::{extract_create_params, extract_update_fragment},
     };
-    use andromeda_ngsi_ld_model::registration::CsrOperation;
+    use andromeda_ngsi_ld_model::registration::operation::CsrOperation;
     use serde_json::json;
 
     fn baseline() -> serde_json::Value {

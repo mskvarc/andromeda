@@ -3,6 +3,7 @@
 use crate::error::ContextStoreError;
 use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonym,
+    dereferenceable_uri::DereferenceableUri,
     non_empty_text::NonEmptyText,
     scope::grammar::ScopeBuf,
     tenant::TenantName,
@@ -11,14 +12,14 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     registration::{
-        ContextSourceAccess,
         ContextSourceRegistration,
-        CsrOperation,
-        CsrStatus,
-        ForwardingMode,
-        RegistrationCoverage,
-        RegistrationHealth,
-        RegistrationLifecycle,
+        access::ContextSourceAccess,
+        coverage::RegistrationCoverage,
+        forwarding_mode::ForwardingMode,
+        health::RegistrationHealth,
+        lifecycle::RegistrationLifecycle,
+        operation::CsrOperation,
+        status::CsrStatus,
     },
     registration_management::RegistrationManagementInfo,
     time_interval::TimeInterval,
@@ -29,7 +30,6 @@ use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
 use serde_json::Value;
 use sqlx::{Row, postgres::PgRow};
-use url::Url;
 
 /// Convert a `context_source_registrations` row into the domain type.
 ///
@@ -124,7 +124,9 @@ fn row_to_coverage(row: &PgRow) -> Result<RegistrationCoverage, ContextStoreErro
 /// Rebuild the access members: how the broker reaches the context source.
 fn row_to_access(row: &PgRow) -> Result<ContextSourceAccess, ContextStoreError> {
     let endpoint_raw: String = row.get("endpoint");
-    let endpoint = Url::parse(&endpoint_raw).map_err(|e| ContextStoreError::Internal(format!("Invalid CSR endpoint '{endpoint_raw}': {e}")))?;
+    let endpoint = endpoint_raw
+        .parse::<DereferenceableUri>()
+        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR endpoint '{endpoint_raw}': {e}")))?;
     let accept: Option<MediaTypeBuf> = row
         .get::<Option<String>, _>("accept")
         .map(|raw| raw.parse())
@@ -166,10 +168,10 @@ fn row_to_access(row: &PgRow) -> Result<ContextSourceAccess, ContextStoreError> 
         .map(serde_json::from_value::<Vec<KeyValuePair>>)
         .transpose()
         .map_err(|error| ContextStoreError::Internal(format!("Invalid CSR contextSourceInfo: {error}")))?;
-    let jsonld_context: Option<Url> = row
+    let jsonld_context: Option<DereferenceableUri> = row
         .get::<Option<String>, _>("jsonld_context")
         .as_deref()
-        .map(Url::parse)
+        .map(str::parse)
         .transpose()
         .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR jsonldContext: {e}")))?;
     let context_source_alias = row_to_alias(row)?;
@@ -204,24 +206,49 @@ fn row_to_alias(row: &PgRow) -> Result<Option<ContextSourcePseudonym>, ContextSt
 }
 
 /// Rebuild the health members: the forwarding outcome counters and timestamps.
+///
+/// Every member of Table 5.2.9-2 has cardinality 0..1 and reports something the
+/// broker has observed -- `status` "if the last attempt to perform a
+/// distributed operation succeeded", `timesSent` the number of operations the
+/// registration triggered, `lastSuccess` "created on first successful
+/// operation". A registration that has triggered nothing has observed nothing,
+/// so it reports none of them rather than a health and two zeroes that stand
+/// for the absence of evidence. The stored row still carries the column the
+/// forwarding outcome writes; the timestamps are what say whether an attempt
+/// has happened at all, because `health_update_sql` writes them with the status
+/// in one statement.
 fn row_to_health(row: &PgRow) -> Result<RegistrationHealth, ContextStoreError> {
-    // `status` is projected as `::text` for the same reason as `mode`.
-    let status_label: String = row.get("status");
-    let status = status_label
-        .parse::<CsrStatus>()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR status '{status_label}': {e}")))?;
-    let times_sent: i32 = row.get("times_sent");
-    let times_failed: i32 = row.get("times_failed");
     let last_success: Option<DateTime<Utc>> = row.get("last_success");
     let last_failure: Option<DateTime<Utc>> = row.get("last_failure");
+    let attempted = last_success.is_some() || last_failure.is_some();
+
+    // `status` is projected as `::text` for the same reason as `mode`.
+    let status_label: String = row.get("status");
+    let status = attempted
+        .then(|| {
+            status_label
+                .parse::<CsrStatus>()
+                .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR status '{status_label}': {e}")))
+        })
+        .transpose()?;
 
     Ok(RegistrationHealth::builder()
         .status(status)
-        .times_sent(Some(times_sent))
-        .times_failed(Some(times_failed))
+        .times_sent(observed_counter(row.get("times_sent")))
+        .times_failed(observed_counter(row.get("times_failed")))
         .last_success(last_success)
         .last_failure(last_failure)
         .build())
+}
+
+/// The member a Table 5.2.9-2 counter renders as.
+///
+/// The column floors at zero because a counter has to be somewhere before it is
+/// first advanced. A counter still at rest reports nothing, which is the
+/// absence the member's 0..1 cardinality provides for; a negative count is not
+/// reachable through the column's own `CHECK` and is read the same way.
+const fn observed_counter(counted: i32) -> Option<i32> {
+    if counted > 0 { Some(counted) } else { None }
 }
 
 /// Rebuild the lifecycle members: the timestamps the broker maintains itself.

@@ -13,7 +13,7 @@
 //! a registration that declared a group declared the group, and expanding it at
 //! write time would freeze one release's reading of the table into stored rows.
 
-use andromeda_ngsi_ld_model::registration::CsrOperation;
+use andromeda_ngsi_ld_model::registration::operation::CsrOperation;
 use andromeda_postgresql_codes::csr_operation::CsrOperationCode;
 
 /// The registry member the projection persists for an operation.

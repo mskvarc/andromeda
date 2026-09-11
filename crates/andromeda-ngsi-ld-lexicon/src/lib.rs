@@ -23,6 +23,7 @@ pub mod attribute_name;
 pub mod attribute_type;
 pub mod constant_string;
 pub mod context_source_pseudonym;
+pub mod dereferenceable_uri;
 pub mod entity_type_name;
 pub mod fractional_seconds;
 pub mod instance_family;

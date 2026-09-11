@@ -16,6 +16,7 @@ use crate::{
     error::ParameterError,
     options::EntityRepresentationOptions,
     query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
+    representation_parameter::{WrittenValue, supported_option},
 };
 use andromeda_http_headers::{ngsild_dataset_id::NgsiLdDatasetId, ngsild_response_format::NgsiLdResponseFormat, ngsild_scope::NgsiLdScope};
 use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
@@ -56,7 +57,7 @@ impl ProtocolExtensions<'_> {
     /// Returns [`ParameterError::FormatInvalid`] when the header names a
     /// rendering that is not one an entity has.
     pub fn apply_to_entity_get(&self, params: &mut GetEntityParams) -> Result<(), ParameterError> {
-        self.apply_format(&mut params.format, params.options)?;
+        self.apply_format(&mut params.format, params.options.as_ref())?;
         self.apply_dataset_ids(&mut params.dataset_id);
         self.apply_join(&mut params.join, &mut params.join_level);
         Ok(())
@@ -76,7 +77,7 @@ impl ProtocolExtensions<'_> {
             // that borrow, so owning its already-validated AST is necessary.
             params.scope_q = Some(scope.query().clone());
         }
-        self.apply_format(&mut params.format, params.options)?;
+        self.apply_format(&mut params.format, params.options.as_ref())?;
         self.apply_dataset_ids(&mut params.dataset_id);
         self.apply_join(&mut params.join, &mut params.join_level);
         Ok(())
@@ -95,13 +96,13 @@ impl ProtocolExtensions<'_> {
             if !header_is_temporal_format(response_format) {
                 return Err(ParameterError::FormatInvalid(<&'static str>::from(response_format).to_string()));
             }
-            params.format = Some(match response_format {
+            params.format = Some(WrittenValue::Supported(match response_format {
                 NgsiLdResponseFormat::TemporalValues => TemporalFormat::TemporalValues,
                 NgsiLdResponseFormat::AggregatedValues => TemporalFormat::AggregatedValues,
                 NgsiLdResponseFormat::Normalized | NgsiLdResponseFormat::KeyValues | NgsiLdResponseFormat::Simplified | NgsiLdResponseFormat::Concise => {
                     return Err(ParameterError::FormatInvalid(<&'static str>::from(response_format).to_string()));
                 }
-            });
+            }));
         }
         self.apply_dataset_ids(&mut params.dataset_id);
         Ok(())
@@ -111,8 +112,14 @@ impl ProtocolExtensions<'_> {
     ///
     /// `format` and the legacy `options` are two spellings of the same choice,
     /// so a rendering named in either one silences the header.
-    fn apply_format(&self, format: &mut Option<ResponseFormat>, options: Option<EntityRepresentationOptions>) -> Result<(), ParameterError> {
-        let query_chose_a_format = format.is_some() || options.is_some_and(|options| options.format.is_some());
+    fn apply_format(
+        &self,
+        format: &mut Option<WrittenValue<ResponseFormat>>,
+        options: Option<&WrittenValue<EntityRepresentationOptions>>,
+    ) -> Result<(), ParameterError> {
+        // A `format` the operation does not support still counts as a choice:
+        // `validate` refuses it, and a header must not quietly stand in for it.
+        let query_chose_a_format = format.is_some() || supported_option(options)?.is_some_and(|options| options.format.is_some());
         if query_chose_a_format {
             return Ok(());
         }
@@ -124,14 +131,14 @@ impl ProtocolExtensions<'_> {
         if header_is_temporal_format(response_format) {
             return Err(ParameterError::FormatInvalid(<&'static str>::from(response_format).to_string()));
         }
-        *format = Some(match response_format {
+        *format = Some(WrittenValue::Supported(match response_format {
             NgsiLdResponseFormat::Normalized => ResponseFormat::Normalized,
             NgsiLdResponseFormat::KeyValues | NgsiLdResponseFormat::Simplified => ResponseFormat::Simplified,
             NgsiLdResponseFormat::Concise => ResponseFormat::Concise,
             NgsiLdResponseFormat::TemporalValues | NgsiLdResponseFormat::AggregatedValues => {
                 return Err(ParameterError::FormatInvalid(<&'static str>::from(response_format).to_string()));
             }
-        });
+        }));
         Ok(())
     }
 
@@ -169,6 +176,7 @@ mod tests {
         error::ParameterError,
         protocol::ProtocolExtensions,
         query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
+        representation_parameter::WrittenValue,
     };
     use andromeda_http_headers::{ngsild_dataset_id::NgsiLdDatasetId, ngsild_response_format::NgsiLdResponseFormat, ngsild_scope::NgsiLdScope};
     use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
@@ -217,7 +225,7 @@ mod tests {
         };
         extensions.apply_to_entity_get(&mut params).expect("headers apply");
 
-        pretty_assertions::assert_eq!(params.format, Some(ResponseFormat::Simplified));
+        pretty_assertions::assert_eq!(params.format, Some(WrittenValue::Supported(ResponseFormat::Simplified)));
         pretty_assertions::assert_eq!(params.dataset_id.as_deref().map(|ids| ids[0].to_string()), Some("urn:ds:1".to_owned()));
         pretty_assertions::assert_eq!(params.join, Some(JoinMode::Inline));
         pretty_assertions::assert_eq!(params.join_level.map(NonZeroU32::get), Some(2));
@@ -236,7 +244,7 @@ mod tests {
         };
         extensions.apply_to_entity_get(&mut params).expect("headers apply");
 
-        pretty_assertions::assert_eq!(params.format, Some(ResponseFormat::Concise));
+        pretty_assertions::assert_eq!(params.format, Some(WrittenValue::Supported(ResponseFormat::Concise)));
         pretty_assertions::assert_eq!(params.dataset_id.as_deref().map(|ids| ids[0].to_string()), Some("urn:ds:9".to_owned()));
         pretty_assertions::assert_eq!(params.join, Some(JoinMode::Flat));
         pretty_assertions::assert_eq!(params.join_level.map(NonZeroU32::get), Some(7));
@@ -273,7 +281,7 @@ mod tests {
             ..ProtocolExtensions::default()
         };
         extensions.apply_to_temporal_query(&mut params).expect("headers apply");
-        pretty_assertions::assert_eq!(params.format, Some(TemporalFormat::TemporalValues));
+        pretty_assertions::assert_eq!(params.format, Some(WrittenValue::Supported(TemporalFormat::TemporalValues)));
     }
 
     #[test]

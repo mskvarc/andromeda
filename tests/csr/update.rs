@@ -45,7 +45,11 @@ async fn update_endpoint_returns_204() {
 
     let (status, body) = retrieve_registration(&c, &id, None, None).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
-    pretty_assertions::assert_eq!(body["endpoint"], "http://my.new.csource.org:1026/");
+    // Clause 5.2.2 serves a Context Producer's members back as they were
+    // supplied, and Table 5.2.9-1 asks only that `endpoint` be a dereferenceable
+    // URI -- so the authority-only spelling the fragment carried is what the
+    // retrieval answers, not the empty path a URL parser would append to it.
+    pretty_assertions::assert_eq!(body["endpoint"], "http://my.new.csource.org:1026");
 
     cleanup_registration(&c, &id).await;
 }
