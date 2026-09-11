@@ -15,7 +15,7 @@ use andromeda_http_extraction::{
     request_envelope::NgsiLdRequestEnvelope,
     typed_path::TypedPath,
 };
-use andromeda_http_response::{problem_response::ProblemResponse, render::start_rendering, single::NgsiLdResponse};
+use andromeda_http_response::{problem_response::ProblemResponse, render::start_rendering_normalized, single::NgsiLdResponse};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
@@ -90,7 +90,7 @@ pub async fn query(
         (merged, warnings)
     };
 
-    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+    let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Single(result))
         .render()
         .with_entity_instance(&uri)?;
@@ -162,7 +162,7 @@ pub async fn get(
         (merged, warnings)
     };
 
-    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+    let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Single(result))
         .render()
         .with_entity_instance(&uri)?;

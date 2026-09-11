@@ -20,7 +20,7 @@ use andromeda_http_response::{
     headers::with_location,
     pagination::{PageExtent, PaginationStyle, append_pagination_links},
     problem_response::ProblemResponse,
-    render::start_rendering,
+    render::start_rendering_normalized,
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -91,7 +91,7 @@ pub async fn get(
         .with_sys_attrs(options.sys_attrs)
         .render();
 
-    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+    let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Single(subscription))
         .render()
         .with_subscription_instance(&uri)?;
@@ -135,7 +135,7 @@ pub async fn query(
         })
         .collect::<Vec<_>>();
 
-    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+    let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Collection(subscriptions))
         .render()
         .with_subscription_instance(&uri)?;

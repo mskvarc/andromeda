@@ -64,6 +64,12 @@ impl TryFrom<Query> for EntityQueryParameters {
             drop: None,
             keep: None,
         };
+        // Table 5.2.23-1 restricts the `Query` datatype's `attrs` member to
+        // "Attribute name as short hand strings or URIs", where `pick` and
+        // `omit` beside it take an "Entity member ("id", "type", "scope" or a
+        // projected Attribute name)". A body without a `temporalQ` is answered
+        // in an Entity representation, and clause 4.18 leaves the Scope
+        // non-reified there, so `scope` is no Attribute name to give `attrs`.
         validate_attrs(parameters.attrs.as_deref(), AttrsAdmission::AttributeNamesOnly)?;
         Ok(parameters)
     }

@@ -9,7 +9,9 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod array_valued_property_history;
+mod attribute_discovery_type_spelling;
 mod attribute_member_validation;
+mod attrs_scope_admission;
 mod batch_context_expansion;
 mod batch_upsert_duplicates;
 mod coerced_term_representation;
@@ -31,6 +33,7 @@ mod null_sentinel_admission;
 mod operation_group_expansion;
 mod ordering_attribute_paths;
 mod ordering_collation;
+mod prefer_version_representation;
 mod prior_findings;
 mod proof_seal_representation;
 mod query_language_evaluator;
@@ -45,9 +48,11 @@ mod temporal_aggregation;
 mod temporal_collation;
 mod temporal_entity_map;
 mod temporal_evolution_delete_order;
+mod temporal_prefer_version;
 mod temporal_scope_evolution;
 mod term_declaration_prefix_resolution;
 mod time_value_restrictions;
+mod tls_terminator_deployment;
 mod transient_entity_conflict;
 mod unit_code_family_admission;
 mod uri_comparison;

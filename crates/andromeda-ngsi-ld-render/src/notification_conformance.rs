@@ -9,7 +9,7 @@
 //! in the notification that operation runs; the operation itself is
 //! [`crate::version`].
 
-use crate::version::VersionRenderer;
+use crate::version::renderer::VersionRenderer;
 use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use serde_json::Value;

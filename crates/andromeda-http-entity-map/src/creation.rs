@@ -16,7 +16,7 @@ use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{
     declined_representation::single_source_declined,
     problem_response::ProblemResponse,
-    render::start_rendering,
+    render::start_rendering_normalized,
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -118,7 +118,7 @@ pub(crate) async fn create_map(
 fn render_created(map: &EntityMap, resource: &str, rendering: &CreationRendering<'_>, warnings: Vec<NgsiLdWarning>) -> Result<Response, ProblemResponse> {
     let location = format!("/ngsi-ld/v1/{resource}/{}", map.id);
     let value = serde_json::to_value(map).map_err(|error| internal_problem(&error, rendering.uri))?;
-    let rendered = start_rendering(rendering.accept.media_type(), rendering.context, rendering.prefer.rendering_preferences())
+    let rendered = start_rendering_normalized(rendering.accept.media_type(), rendering.context, rendering.prefer.rendering_preferences())
         .with_payload(ResponsePayload::Single(value))
         .render()
         .with_entity_map_instance(rendering.uri)?;

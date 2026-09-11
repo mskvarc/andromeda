@@ -225,9 +225,8 @@ pub(crate) async fn get(
         None => RetrievedPayload::Single(render_entity(&entity, None, &representation, &uri)?),
     };
 
-    let rendering = start_rendering(accept.media_type(), &context, prefer.rendering_preferences()).with_geometry_selection(GeometrySelection::new(
-        params.geometry_property.as_ref(),
-        params.dataset_id.as_deref().unwrap_or_default(),
-    ));
+    let rendering = start_rendering(accept.media_type(), &context, prefer.rendering_preferences(), representation.mode).with_geometry_selection(
+        GeometrySelection::new(params.geometry_property.as_ref(), params.dataset_id.as_deref().unwrap_or_default()),
+    );
     retrieval_response(payload, rendering, warnings, entity_map_uri, &uri)
 }

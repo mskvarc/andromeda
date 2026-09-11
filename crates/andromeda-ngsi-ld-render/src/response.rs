@@ -21,10 +21,11 @@ use crate::{
     geojson::{GeoJsonRenderer, GeoJsonShape},
     geometry_selection::GeometrySelection,
     uri_decoding::decode_percent_encoded_uris,
-    version::{VersionAdaptation, VersionRenderer},
+    version::{adaptation::VersionAdaptation, adapted_payload::AdaptedPayload, renderer::VersionRenderer},
 };
 use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType};
 use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
+use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use iri_rs::IriRefBuf;
 use serde_json::Value;
 use std::sync::Arc;
@@ -95,6 +96,10 @@ pub struct ResponseRenderer<'a> {
     geo_json_body: GeoJsonBodyPreference,
     /// The `Prefer: ngsi-ld=` version to adapt the payload to, if any.
     requested_version: Option<SpecVersion>,
+    /// The clause 4.5 representation the payload was already rendered in.
+    format: ResponseFormat,
+    /// Which NGSI-LD Element the payload is, which version adaptation reads.
+    adapted_payload: AdaptedPayload,
     /// The clause 4.5.16.1 rule a `GeoJSON` geometry is selected by.
     geometry_selection: GeometrySelection<'a>,
 }
@@ -136,8 +141,38 @@ impl<'a> ResponseRenderer<'a> {
             context,
             geo_json_body: GeoJsonBodyPreference::LdJson,
             requested_version: None,
+            format: ResponseFormat::Normalized,
+            adapted_payload: AdaptedPayload::Entity,
             geometry_selection: GeometrySelection::new(None, &[]),
         }
+    }
+
+    /// Set the clause 4.5 representation the payload was already rendered in.
+    ///
+    /// Only version adaptation reads it, and only because clause 4.3.6.8's
+    /// fallback tables are applied to whatever the payload already looks like:
+    /// clause 4.5.1 reifies an attribute, clause 4.5.2.3 leaves its family to be
+    /// inferred, and clause 4.5.4 reduces it to a bare value or one of three
+    /// one-member wrappers. A payload rendered under clause 4.5.4 and adapted
+    /// under the normalized reading comes back with a `{"value": ...}` object
+    /// that clause defines for nothing, so this is not an optimization: the
+    /// representation the payload is in has to be stated.
+    #[must_use]
+    pub const fn with_format(mut self, format: ResponseFormat) -> Self {
+        self.format = format;
+        self
+    }
+
+    /// Set which NGSI-LD Element the payload is.
+    ///
+    /// Only version adaptation reads it, and only for the two rows of the
+    /// clause 4.3.6.8 tables that read differently once an attribute's array is
+    /// the clause 4.5.7 sequence of instances in time. Every resource whose
+    /// payload is an Entity leaves it at its default.
+    #[must_use]
+    pub const fn with_adapted_payload(mut self, adapted_payload: AdaptedPayload) -> Self {
+        self.adapted_payload = adapted_payload;
+        self
     }
 
     /// Set the `Prefer: body=` token, which decides where a `GeoJSON` response
@@ -227,7 +262,11 @@ impl ReadyResponse<'_> {
         // short-circuits and leaves the payload authoritative (200).
         let version_adaptation = match renderer.requested_version {
             Some(target) => {
-                let (adapted, adaptation) = VersionRenderer::new(target).with_payload(value).render();
+                let (adapted, adaptation) = VersionRenderer::new(target)
+                    .with_format(renderer.format)
+                    .with_adapted_payload(renderer.adapted_payload)
+                    .with_payload(value)
+                    .render();
                 value = adapted;
                 adaptation
             }
@@ -292,7 +331,7 @@ mod tests {
     use crate::{
         context::{ContextLocation, ResponseContext},
         response::{ResponsePayload, ResponseRenderer},
-        version::VersionAdaptation,
+        version::adaptation::VersionAdaptation,
     };
     use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType};
     use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;

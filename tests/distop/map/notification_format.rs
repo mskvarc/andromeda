@@ -18,16 +18,29 @@ use std::time::Duration;
 const DELIVER: Duration = Duration::from_secs(12);
 
 /// The entity carried in the notification with the given id.
+///
+/// A notification that carries no `data`, or none for this entity, is a failure
+/// of the case under test rather than a `Value::Null` for it to assert against:
+/// a null propagates through every `["member"]` index and satisfies any
+/// assertion phrased as an absence.
 fn notified_entity(notification: &CapturedNotification, entity_id: &str) -> Value {
+    let absent = format!("the notification carries {entity_id}: {}", notification.body);
     notified_entities(notification)
         .into_iter()
         .find(|entity| entity["id"].as_str() == Some(entity_id))
-        .unwrap_or(Value::Null)
+        .expect(&absent)
 }
 
-/// Create a subscription with a `notification.format` and return the notified
-/// representation of a freshly created `Vehicle`.
-async fn notify_with_format(topology: &MultiBrokerTopology<BrokerRole>, receiver: &NotificationAdapter, local: &str, format: &str) -> Value {
+/// Create a subscription with a `notification.format`, then a `Vehicle`
+/// carrying `attributes`, and return that entity as the notification rendered
+/// it.
+async fn notify_with_format(
+    topology: &MultiBrokerTopology<BrokerRole>,
+    receiver: &NotificationAdapter,
+    local: &str,
+    format: &str,
+    attributes: &[(&str, Value)],
+) -> Value {
     let id = topology.id(&format!("Subscription:{local}"));
     let mut body = subscription(&id, &receiver.endpoint_url());
     body["notification"]["format"] = json!(format);
@@ -47,7 +60,7 @@ async fn notify_with_format(topology: &MultiBrokerTopology<BrokerRole>, receiver
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 20))
+            .post_entity(&entity(&entity_id, "Vehicle", attributes))
             .with_ld_json()
             .send()
             .await
@@ -59,15 +72,37 @@ async fn notify_with_format(topology: &MultiBrokerTopology<BrokerRole>, receiver
 }
 
 /// The `concise` format produces a concise body (clause 4.5.15). Confirms REQ-MAP-85.
+///
+/// The watched Property carries a sub-Property, which is what separates the
+/// three formats: clause 4.5.2.3 renders a Property with sub-attributes as an
+/// object whose mandatory member is `value`, whose `type` is left to be
+/// inferred from that `value`, and whose sub-attributes are themselves concise,
+/// so `speed` arrives as `{"value": 20, "accuracy": 0.5}`. Normalized keeps
+/// `"type": "Property"` on both levels and simplified reduces the whole
+/// Property to `20`, so each of the three assertions below fails against one of
+/// the other two formats.
 #[tokio::test]
 async fn notif_format_concise_produces_concise_body() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
-    let notified = notify_with_format(&topology, &receiver, "concise", "concise").await;
-    assert_ne!(
-        notified["speed"]["type"].as_str(),
-        Some("Property"),
+    let watched = [(
+        "speed",
+        json!({ "type": "Property", "value": 20, "accuracy": { "type": "Property", "value": 0.5 } }),
+    )];
+    let notified = notify_with_format(&topology, &receiver, "concise", "concise", &watched).await;
+    assert_eq!(
+        notified["speed"]["value"].as_i64(),
+        Some(20),
+        "clause 4.5.2.3 keeps `value` on a Property that has sub-attributes: {notified}"
+    );
+    assert!(
+        notified["speed"].get("type").is_none(),
         "the concise body drops the explicit Property wrapper: {notified}"
+    );
+    assert_eq!(
+        notified["speed"]["accuracy"].as_f64(),
+        Some(0.5),
+        "a sub-attribute is itself concise, so it is its bare value: {notified}"
     );
     receiver.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -79,7 +114,8 @@ async fn notif_format_concise_produces_concise_body() {
 async fn notif_format_simplified_produces_key_values_body() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
-    let notified = notify_with_format(&topology, &receiver, "simplified", "simplified").await;
+    let watched = [("speed", property(json!(20)))];
+    let notified = notify_with_format(&topology, &receiver, "simplified", "simplified", &watched).await;
     assert_eq!(notified["speed"].as_i64(), Some(20), "the key-values body renders the bare value: {notified}");
     receiver.shutdown().await;
     topology.finish().await.expect("topology cleanup");

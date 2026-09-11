@@ -228,7 +228,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
             None => render_entities(&entities, &representation, &uri)?,
         };
         let geometry = GeometrySelection::new(query.geometry_property.as_ref(), query.dataset_id.as_deref().unwrap_or_default());
-        let rendered = start_rendering(accept.media_type(), &context, prefer.rendering_preferences())
+        let rendered = start_rendering(accept.media_type(), &context, prefer.rendering_preferences(), opts.render_mode)
             .with_geometry_selection(geometry)
             .with_payload(ResponsePayload::Collection(payload))
             .render()

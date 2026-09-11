@@ -9,7 +9,7 @@ use andromeda_http_response::{
     classified_report::ClassifiedReport,
     headers::with_location,
     problem_response::ProblemResponse,
-    render::{RenderingPreferences, start_rendering},
+    render::{RenderingPreferences, start_rendering_normalized},
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -54,7 +54,7 @@ pub async fn get(
     let snapshot = state.snapshots.get(&snapshot_id).await.with_snapshot_instance(&uri)?;
 
     let body = serde_json::to_value(&snapshot).map_err(|error| internal_problem(&error, &uri))?;
-    let rendered = start_rendering(accept.media_type(), &ContextSpec::none(), RenderingPreferences::default())
+    let rendered = start_rendering_normalized(accept.media_type(), &ContextSpec::none(), RenderingPreferences::default())
         .with_payload(ResponsePayload::Single(body))
         .render()
         .map_err(|error| internal_problem(&error, &uri))?;
@@ -72,7 +72,7 @@ pub async fn update(
     let updated = state.snapshots.update(&snapshot_id, patch).await.with_snapshot_instance(&uri)?;
 
     let body = serde_json::to_value(&updated).map_err(|error| internal_problem(&error, &uri))?;
-    let rendered = start_rendering(accept.media_type(), &ContextSpec::none(), RenderingPreferences::default())
+    let rendered = start_rendering_normalized(accept.media_type(), &ContextSpec::none(), RenderingPreferences::default())
         .with_payload(ResponsePayload::Single(body))
         .render()
         .map_err(|error| internal_problem(&error, &uri))?;

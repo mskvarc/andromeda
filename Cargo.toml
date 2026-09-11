@@ -63,6 +63,7 @@ shadow-rs = "2.0.0"
 andromeda-context-commit.workspace = true
 andromeda-context-space.workspace = true
 andromeda-entity.workspace = true
+andromeda-http-headers.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-notification.workspace = true
@@ -88,6 +89,7 @@ regex = "1.13.1"
 reqwest = { version = "0.13.4", features = ["json"] }
 rumqttc = { version = "0.25.1", features = ["use-rustls"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
+serde_norway = "0.9.42"
 serial_test = "4.0.1"
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 thiserror = "2.0.20"

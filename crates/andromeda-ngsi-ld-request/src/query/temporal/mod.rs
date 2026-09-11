@@ -223,16 +223,17 @@ impl_shared_query_params!(TemporalQueryParameters {
 
 /// Which Entity members `attrs` admits at each of the two temporal endpoints.
 ///
-/// Table 6.18.3.2-1 makes `attrs` on the query "a synonym for a combination of
-/// the pick and q parameters", and `pick` names Entity members — "id", "type",
-/// "scope" or an Attribute name — so annex C clause C.5.16's
-/// `attrs=speed,scope` is a query the specification writes itself. Table
-/// 6.19.3.1-1 makes `attrs` on the retrieval "a synonym for the pick parameter,
-/// except that id, type, scope are not allowed", so the same spelling is a bad
-/// request there.
+/// Both tables restrict `attrs` to "an Attribute (Property or Relationship)
+/// name", and clause 4.18 makes the Scope "a special scope Property that is
+/// non-reified in the normalized Entity representation and reified in the
+/// temporal representation of an Entity" — so on a temporal answer `scope` is
+/// an Attribute name and Table 6.18.3.2-1 excludes nothing further. Table
+/// 6.19.3.1-1 excludes it explicitly on the retrieval, "except that id, type,
+/// scope are not allowed", and an explicit prohibition beats an inference from
+/// the representation, so the same spelling is a bad request there.
 const fn attrs_admission(require_temporal: bool) -> AttrsAdmission {
     if require_temporal {
-        AttrsAdmission::ScopeAdmitted
+        AttrsAdmission::ReifiedScopeAdmitted
     } else {
         AttrsAdmission::AttributeNamesOnly
     }

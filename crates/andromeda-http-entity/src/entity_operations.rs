@@ -31,7 +31,7 @@ use andromeda_http_response::{
     batch::NgsiLdBatchResponse,
     batch_projection::batch_operation_result,
     problem_response::ProblemResponse,
-    render::start_rendering,
+    render::start_rendering_normalized,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -71,7 +71,7 @@ const fn async_preference(prefer: PreferHeader) -> AsyncPreference {
 /// negotiated `Accept`, so it carries no JSON-LD context.
 fn multi_status_response(result: &BatchOperationResult, context: &ContextSpec, uri: &HttpUri, mode: BatchSideEffectMode) -> Result<Response, ProblemResponse> {
     let value = serde_json::to_value(result).with_entity_instance(uri)?;
-    let rendered = start_rendering(ResponseMediaType::Json, context, PreferHeader::default().rendering_preferences())
+    let rendered = start_rendering_normalized(ResponseMediaType::Json, context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Batch(value))
         .render()
         .with_entity_instance(uri)?;
@@ -91,7 +91,7 @@ fn created_response(
     mode: BatchSideEffectMode,
 ) -> Result<Response, ProblemResponse> {
     let value = serde_json::to_value(created).with_entity_instance(uri)?;
-    let rendered = start_rendering(accept.media_type(), context, PreferHeader::default().rendering_preferences())
+    let rendered = start_rendering_normalized(accept.media_type(), context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Batch(value))
         .render()
         .with_entity_instance(uri)?;

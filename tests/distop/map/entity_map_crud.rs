@@ -13,15 +13,21 @@ use andromeda_test_fixtures::problem_detail::{BAD_REQUEST_DATA, RESOURCE_NOT_FOU
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use serde_json::json;
 
-/// Create a `Vehicle` and an `EntityMap` over it, returning the map id.
+/// Create a `Vehicle` under the topology's own prefix and an `EntityMap` over
+/// it, returning the map id.
 async fn create_map(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -> String {
-    let entity_id = topology.id(local);
+    create_map_over(topology, &topology.id(local)).await
+}
+
+/// Create the named `Vehicle` on broker A and an `EntityMap` over every
+/// `Vehicle`, returning the map id.
+async fn create_map_over(topology: &MultiBrokerTopology<BrokerRole>, entity_id: &str) -> String {
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 20))
+            .post_entity(&vehicle(entity_id, 20))
             .with_ld_json()
             .send()
             .await
@@ -269,21 +275,32 @@ async fn entity_map_delete_removes_and_returns_204() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An `EntityMap` is durably stored: it is retrievable after creation through
-/// the persisted row, not a process-local cache (test plan §6.3).
-
+/// An `EntityMap` is durably stored: its candidate set comes back from the
+/// persisted row rather than from the memory of the process that minted it
+/// (test plan §6.3).
+///
+/// broker-a2 is a second instance of the broker-a identity over the same store,
+/// so a read there cannot be answered from broker-a's process state. Retrieving
+/// the map on the instance that created it proves nothing about durability at
+/// all: an entirely in-memory map answers that request too.
 #[tokio::test]
-async fn entity_map_durability_survives_restart() {
-    let topology = topology::single().await.expect("single-broker topology");
-    let map_id = create_map(&topology, "Vehicle:durability").await;
-    let retrieved = topology
-        .broker(BrokerRole::A)
-        .expect("topology broker A")
+async fn entity_map_contents_survive_the_process_that_minted_them() {
+    let topology = topology::replica_pair().await.expect("replica-pair topology");
+    let entity_id = topology.id("Vehicle:durability");
+    let map_id = create_map_over(&topology, &entity_id).await;
+    let on_replica = topology
+        .broker(BrokerRole::AReplica)
+        .expect("topology broker A replica")
         .client()
         .retrieve_entity_map(&map_id)
         .await
-        .expect("retrieve after restart");
-    assert_status(&retrieved, 200);
+        .expect("retrieve on the second instance");
+    assert_status(&on_replica, 200);
+    let map = json_body(&on_replica)["entityMap"].clone();
+    assert!(
+        map.get(&entity_id).is_some(),
+        "the persisted row carries the candidate set, not just the map id: {map}"
+    );
     topology.finish().await.expect("topology cleanup");
 }
 

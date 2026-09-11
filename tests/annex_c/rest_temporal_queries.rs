@@ -139,15 +139,18 @@ async fn annex_c_5_16_temporal_scope_queries_example() {
     )
     .await;
 
-    // The printed request selects `attrs=speed,scope`. Tables 6.20.3.1-1 and
-    // 6.21.3.1-1 define `attrs` as "a synonym for the pick parameter, except
-    // that id, type, scope are not allowed", so the printed request contradicts
-    // the normative parameter it uses. `pick`, which does admit `scope`, is
-    // what the printed answer needs.
-    let query = format!("type=Vehicle&pick=id,type,speed,scope&{WINDOW}&scopeQ=%2FMadrid%2FCentro&format=temporalValues");
-    let actual = temporal_query(&link, &query).await;
+    // The printed request selects `attrs=speed,scope`, which Table 6.18.3.2-1
+    // admits: it restricts `attrs` to "an Attribute (Property or Relationship)
+    // name", and clause 4.18 makes the Scope "a special scope Property that is
+    // non-reified in the normalized Entity representation and reified in the
+    // temporal representation of an Entity". `pick` selects the same members by
+    // the other lawful spelling, so both are replayed against the one answer.
     let expected = corpus(include_str!("corpus/c-5-16-temporal-answer.json"));
-    assert_matches_example("C.5.16", &expected, &actual, ContextMember::Ignored, EntityOrder::Unordered);
+    for selection in ["attrs=speed,scope", "pick=id,type,speed,scope"] {
+        let query = format!("type=Vehicle&{selection}&{WINDOW}&scopeQ=%2FMadrid%2FCentro&format=temporalValues");
+        let actual = temporal_query(&link, &query).await;
+        assert_matches_example("C.5.16", &expected, &actual, ContextMember::Ignored, EntityOrder::Unordered);
+    }
 
     environment.reset_and_finish().await.expect("tenant reset");
 }

@@ -67,6 +67,11 @@ impl EntityQueryParameters {
     /// nested projection term or a `q` hop names a Linked Entity the requested
     /// traversal does not reach.
     pub fn validate(&self) -> Result<(), ParameterError> {
+        // Table 6.4.3.2-1 restricts `attrs` to "an Attribute (Property or
+        // Relationship) name", which is the whole restriction whether or not
+        // the row repeats `pick`'s exception. A query answers in an Entity
+        // representation, where clause 4.18 leaves the Scope non-reified and so
+        // not an Attribute at all, so `scope` names nothing the row admits.
         validate_attrs(self.attrs.as_deref(), AttrsAdmission::AttributeNamesOnly)?;
         // Table 5.2.33-1: `type=*` implies local scope, which the request may
         // not then contradict with `local=false`.

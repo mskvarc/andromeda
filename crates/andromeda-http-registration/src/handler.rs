@@ -20,7 +20,7 @@ use andromeda_http_response::{
     headers::with_location,
     pagination::{PageExtent, PaginationStyle, append_pagination_links},
     problem_response::ProblemResponse,
-    render::start_rendering,
+    render::start_rendering_normalized,
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -70,7 +70,7 @@ pub(crate) async fn get(
         .with_omit(params.omit.as_deref())
         .with_language_filter(params.lang.as_ref())
         .render();
-    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+    let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_geometry_selection(GeometrySelection::new(params.geometry_property.as_ref(), &[]))
         .with_payload(ResponsePayload::Single(payload))
         .render()
@@ -113,7 +113,7 @@ pub(crate) async fn query(
                 .render()
         })
         .collect::<Vec<_>>();
-    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+    let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_geometry_selection(GeometrySelection::new(params.geometry_property.as_ref(), &[]))
         .with_payload(ResponsePayload::Collection(registrations))
         .render()

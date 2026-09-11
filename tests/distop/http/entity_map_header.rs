@@ -182,7 +182,15 @@ async fn dist_http_purge_supports_entity_map_request_header() {
 }
 
 /// A retrieve naming an existing map in the `NGSILD-EntityMap` request header
-/// reuses that map (clause 6.3.15). Confirms REQ-HTTP-64.
+/// reuses that map (Table 6.5.3.1-2: "If present, the `EntityMap` supplied is
+/// used for determining the extent of the Entity data requested during the
+/// retrieval operation. The location of the `EntityMap` used in the retrieval
+/// operation is returned in the response"). Confirms REQ-HTTP-64.
+///
+/// The returned location is what makes the named map observable: a retrieve
+/// that omits the header answers `200` with no `NGSILD-EntityMap` header at
+/// all, and one that names a map the broker does not honour answers `200`
+/// carrying a freshly minted map id instead of this one.
 #[tokio::test]
 async fn dist_http_retrieve_with_entity_map_request_header_uses_named_map() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -234,6 +242,11 @@ async fn dist_http_retrieve_with_entity_map_request_header_uses_named_map() {
         .await
         .expect("named-map retrieve");
     assert_status(&response, 200);
+    assert_eq!(
+        entity_map_header(&response).as_deref(),
+        Some(map_id.as_str()),
+        "the retrieve answers with the location of the EntityMap it used"
+    );
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

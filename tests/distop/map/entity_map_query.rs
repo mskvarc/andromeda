@@ -47,12 +47,21 @@ async fn emq_returns_candidate_ids_not_entities() {
 }
 
 /// Irrelevant query parameters are ignored (clause 5.14.4). Confirms REQ-MAP-112.
+///
+/// "Ignored" is a claim about the candidate set, not about acceptance: a `201`
+/// alone would also be answered by a broker that let `lang` narrow the query.
+/// The seeded entity therefore has to still be a candidate.
 #[tokio::test]
 async fn emq_ignores_irrelevant_query_params() {
     let topology = topology::single().await.expect("single-broker topology");
-    seed_vehicle(&topology, "Vehicle:irrelevant-params").await;
+    let entity_id = seed_vehicle(&topology, "Vehicle:irrelevant-params").await;
     let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle&lang=en").await;
     assert_status(&created, 201);
+    let map = json_body(&created)["entityMap"].clone();
+    assert!(
+        map.get(&entity_id).is_some(),
+        "the irrelevant lang parameter left the candidate set alone: {map}"
+    );
     topology.finish().await.expect("topology cleanup");
 }
 

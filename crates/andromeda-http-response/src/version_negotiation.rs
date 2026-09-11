@@ -9,7 +9,7 @@
 //! collection and batch wrappers from drifting apart.
 
 use andromeda_http_headers::preference_applied::PreferenceApplied;
-use andromeda_ngsi_ld_render::version::VersionAdaptation;
+use andromeda_ngsi_ld_render::version::adaptation::VersionAdaptation;
 use axum::http::{HeaderMap, StatusCode};
 use headers::HeaderMapExt;
 
@@ -34,7 +34,7 @@ mod tests {
     use crate::version_negotiation::apply_version_negotiation;
     use andromeda_http_headers::preference_applied::PreferenceApplied;
     use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
-    use andromeda_ngsi_ld_render::version::VersionAdaptation;
+    use andromeda_ngsi_ld_render::version::adaptation::VersionAdaptation;
     use axum::http::{HeaderMap, StatusCode};
     use headers::HeaderMapExt;
 

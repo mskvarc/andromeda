@@ -189,8 +189,10 @@ impl GetEntityParams {
     /// projection term names a Linked Entity the requested traversal does not
     /// reach.
     pub fn validate(&self) -> Result<(), ParameterError> {
-        // Table 6.5.3.1-1: on a retrieval `attrs` is "a synonym for the pick
-        // parameter, except that id, type, scope are not allowed".
+        // Table 6.5.3.1-1 restricts `attrs` to "an Attribute (Property or
+        // Relationship) name" and says outright that "id, type, scope are not
+        // allowed". Clause 4.18 agrees for this representation: an Entity
+        // retrieval leaves the Scope non-reified, so it is no Attribute here.
         validate_attrs(self.attrs.as_deref(), AttrsAdmission::AttributeNamesOnly)?;
         // Clause 4.21: pick and omit select opposite ends of the same
         // projection, so a request naming both is contradictory rather than

@@ -21,7 +21,7 @@ use andromeda_http_response::{
     headers::with_location,
     pagination::{PageExtent, PaginationStyle, append_pagination_links},
     problem_response::ProblemResponse,
-    render::start_rendering,
+    render::start_rendering_normalized,
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -92,7 +92,7 @@ pub async fn get(
     // names, or the default context. The subscription's own `jsonldContext`
     // governs its notifications (clause 5.8.1.4), not this response, and it
     // stays in the clause 5.2.12 document as a member.
-    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+    let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Single(subscription))
         .render()
         .with_subscription_instance(&uri)?;
@@ -136,7 +136,7 @@ pub async fn query(
         })
         .collect::<Vec<_>>();
 
-    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+    let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Collection(subscriptions))
         .render()
         .with_subscription_instance(&uri)?;

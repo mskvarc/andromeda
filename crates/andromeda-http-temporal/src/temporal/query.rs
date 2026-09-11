@@ -246,8 +246,14 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     } else {
         StatusCode::OK
     };
+    // Table 6.18.3.2-2 carries the 203 row and clause 6.3.6 the
+    // `Preference-Applied` echo, so the preference the request expressed is
+    // what renders; clause 6.3.12's representation is what decides how clause
+    // 4.3.6.8 reads an Attribute of the answer.
     query_response(
         accept,
+        protocol.prefer,
+        params.parse_format(),
         &context,
         values,
         TemporalCollectionMetadata {

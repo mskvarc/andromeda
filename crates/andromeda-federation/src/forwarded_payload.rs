@@ -17,7 +17,7 @@ use andromeda_jsonld::{
     engine::{options::CompactOptions, processor::JsonLdEngine},
 };
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfo;
-use andromeda_ngsi_ld_render::version::VersionRenderer;
+use andromeda_ngsi_ld_render::version::renderer::VersionRenderer;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::IriRefBuf;
 use serde_json::Value;

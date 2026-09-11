@@ -673,6 +673,23 @@ async fn dist_http_merge_entity_supports_format_lang_observedat_options_type_par
         .expect("parametrised merge");
     assert_status(&response, 204);
 
+    // A broker that accepted the parameters and applied nothing answers `204`
+    // too, so the merged value is what shows the operation ran under them.
+    let merged = topology
+        .broker(BrokerRole::A)
+        .expect("topology broker A")
+        .client()
+        .get_entity(&entity_id, "options=keyValues", "application/ld+json", Some(context_link()))
+        .await
+        .expect("read back the merged entity");
+    assert_status(&merged, 200);
+    assert_eq!(
+        json_body(&merged)["speed"].as_i64(),
+        Some(99),
+        "the parametrised merge applied its fragment: {}",
+        json_body(&merged)
+    );
+
     topology.finish().await.expect("topology cleanup");
 }
 

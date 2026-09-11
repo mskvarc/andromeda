@@ -10,7 +10,7 @@ use crate::{
     state::SourceIdentityState,
 };
 use andromeda_http_extraction::{accept::AcceptFormatNoGeo, context::ContextUrl, prefer::PreferHeader, tenant::TenantHeader};
-use andromeda_http_response::{problem_response::ProblemResponse, render::start_rendering, single::NgsiLdResponse};
+use andromeda_http_response::{problem_response::ProblemResponse, render::start_rendering_normalized, single::NgsiLdResponse};
 use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use axum::{
@@ -46,7 +46,7 @@ pub async fn get(
         .map_err(SourceIdentityError::from)
         .map_err(|error| classify(&error).with_instance(uri.clone()))?;
     let context = context.into_inner();
-    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+    let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Single(value))
         .render()
         .map_err(SourceIdentityError::from)

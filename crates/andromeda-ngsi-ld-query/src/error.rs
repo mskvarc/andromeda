@@ -214,13 +214,14 @@ pub enum QueryError {
     /// A repetition operator immediately followed another repetition operator, which PostgreSQL's POSIX engine rejects.
     #[error("invalid POSIX regular expression: a repetition operator cannot follow another repetition operator")]
     PatternRepeatedQuantifier,
-    /// The pattern used a construct outside IEEE 1003.2 that only one of the
-    /// broker's two regular-expression engines supports.
+    /// The pattern used a construct the broker's two regular-expression engines
+    /// do not run identically.
     ///
-    /// Clause 4.9 mandates IEEE 1003.2, which both engines implement; the
-    /// construct named here is an extension of one of them, and admitting it
-    /// would make the filter fail or mean something different depending on
-    /// which engine answered the request.
+    /// Clause 4.9 mandates IEEE 1003.2. The construct named here is either an
+    /// extension of one engine the other cannot run, or one of the few IEEE
+    /// 1003.2 constructs the two read differently; admitting it would make the
+    /// filter fail or mean something different depending on which engine
+    /// answered the request. `crate::posix_dialect` names each case.
     #[error("invalid POSIX regular expression: {construct} is not supported")]
     PatternNonPosixConstruct {
         /// How the unsupported construct is spelled.

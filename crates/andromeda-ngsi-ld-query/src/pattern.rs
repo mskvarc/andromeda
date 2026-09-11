@@ -23,11 +23,20 @@
 //! `500 InternalError`, and let `\b` mean a word boundary in memory and a
 //! backspace in the store.
 //!
-//! What survives both checks is IEEE 1003.2 plus the extensions the two engines
-//! share, so nothing clause 4.9 mandates is turned away.
+//! One divergence is settled by configuration rather than by refusal, because
+//! the construct is POSIX.2 itself and cannot be turned away: `.` matches a
+//! newline in POSIX.2 and in PostgreSQL, whose default is newline-insensitive
+//! matching, and does not in the `regex` crate's default. The in-memory engine
+//! is therefore built with `dot_matches_new_line`, so `name~="a.b"` selects a
+//! value spelled `a\nb` on both sides.
+//!
+//! What survives is IEEE 1003.2, less the handful of its constructs the two
+//! engines cannot be made to agree on, plus the extensions they share.
+//! `crate::posix_dialect` names each narrowing and
+//! `docs/spec-conformance-sweep.md` records why.
 
 use crate::{error::QueryError, posix_dialect::check_posix_dialect};
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use regex_syntax::ast::parse::Parser;
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
@@ -58,7 +67,11 @@ impl Pattern {
     /// [`check_posix_dialect`] finds a construct PostgreSQL's POSIX engine does
     /// not share.
     pub fn parse(pattern: &str) -> Result<Pattern, QueryError> {
-        let compiled = Regex::new(pattern)?;
+        // `dot_matches_new_line` is PostgreSQL's default and the POSIX.2
+        // reading of `.`; the `regex` crate's default excludes a newline, which
+        // would make one filter select different values in memory than in the
+        // store.
+        let compiled = RegexBuilder::new(pattern).dot_matches_new_line(true).build()?;
         let ast = Parser::new().parse(pattern).map_err(|_| QueryError::PatternRepeatedQuantifier)?;
         check_posix_dialect(&ast)?;
         Ok(Pattern(compiled))
@@ -170,5 +183,24 @@ mod tests {
         let pattern = Pattern::parse("erc").expect("valid");
         assert!(pattern.is_match("Mercedes"));
         assert!(!pattern.is_match("BMW"));
+    }
+
+    /// POSIX.2 gives `.` no newline exception, and PostgreSQL's default is
+    /// newline-insensitive matching: `SELECT E'a\nb' ~ 'a.b'` is true. The
+    /// `regex` crate's default is the opposite, so the in-memory engine has to
+    /// be built to POSIX's reading or one filter means two things.
+    #[test]
+    fn a_dot_matches_a_newline_as_posix_and_the_store_both_read_it() {
+        assert!(Pattern::parse("a.b").expect("valid").is_match("a\nb"));
+        assert!(Pattern::parse("^a.b$").expect("valid").is_match("a\nb"));
+    }
+
+    /// `^` and `$` anchor the whole subject in both engines unless `(?m)` asks
+    /// otherwise, which is the other half of PostgreSQL's newline-insensitive
+    /// default.
+    #[test]
+    fn an_anchor_holds_to_the_whole_subject_until_multi_line_is_asked_for() {
+        assert!(!Pattern::parse("^b").expect("valid").is_match("a\nb"));
+        assert!(Pattern::parse("(?m)^b").expect("valid").is_match("a\nb"));
     }
 }

@@ -19,7 +19,7 @@ use headers::HeaderMapExt;
 /// Constructed from a [`RenderedOutput`] produced by the rendering pipeline:
 ///
 /// ```ignore
-/// let rendered = start_rendering(format, &context, prefer)
+/// let rendered = start_rendering(media_type, &context, prefer, format)
 ///     .with_payload(ResponsePayload::Single(entity_value))
 ///     .render()?;
 /// NgsiLdResponse::ok(rendered)

@@ -26,7 +26,7 @@ use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     problem_response::ProblemResponse,
     provision::{LocalOutcome, provision_response},
-    render::start_rendering,
+    render::start_rendering_temporal,
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};

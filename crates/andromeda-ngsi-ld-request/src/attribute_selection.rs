@@ -10,23 +10,53 @@ const SCOPE_MEMBER: &str = "scope";
 /// Which Entity members the deprecated `attrs` synonym admits beside Attribute
 /// names.
 ///
-/// The specification does not give one answer for every operation. Tables
-/// 6.5.3.1-1 and 6.19.3.1-1 make `attrs` on a retrieval "a synonym for the pick
-/// parameter, except that id, type, scope are not allowed", while Tables
-/// 6.4.3.2-1 and 6.18.3.2-1 make it on a query "a synonym for a combination of
-/// the pick and q parameters" with no such exception — and `pick` names Entity
-/// members: "id", "type", "scope" or an Attribute name. Annex C, clause C.5.16
-/// is the specification writing such a query itself, with
-/// `attrs=speed,scope` against the temporal query endpoint.
+/// Every `attrs` row in the specification restricts the parameter the same way:
+/// "Each String is an Attribute (Property or Relationship) name." Table
+/// 6.4.3.2-1 says it of Query Entities, Table 6.5.3.1-1 of Retrieve Entity,
+/// Table 6.8.3.2-1 of Query Context Source Registrations, Table 6.18.3.2-1 of
+/// Query Temporal Evolution of Entities and Table 6.19.3.1-1 of Retrieve
+/// Temporal Evolution of an Entity. `pick` is the parameter that is not so
+/// restricted -- "Each String is an Entity member ("id", "type", "scope" or an
+/// Attribute name)" -- which is why the two differ at all.
+///
+/// The restricting sentence is therefore what decides, and not the sentence
+/// above it: the retrieval rows add "except that id, type, scope are not
+/// allowed" because they call `attrs` "a synonym for the pick parameter" with
+/// nothing else said, while the query rows call it "a synonym for a combination
+/// of the pick and q parameters" and restrict in the next breath. An omission
+/// cannot grant what the row it sits in withholds.
+///
+/// What the restriction admits is then a question about `scope` rather than
+/// about `attrs`, and clause 4.18 answers it in one sentence: "The Scope is
+/// represented as a special scope Property that is non-reified in the
+/// normalized Entity representation and reified in the temporal representation
+/// of an Entity." In an Entity representation `scope` is an Entity member and
+/// no Attribute at all, so `attrs=scope` names nothing the row admits. In a
+/// temporal representation it is a Property, so the row admits it -- and clause
+/// 4.18 points at annex C clause C.5.16 for the Temporal Evolution of a Scope,
+/// which is a `GET /temporal/entities` carrying exactly `attrs=speed,scope`.
+/// That annex is informative (clause C.1) and settles nothing on its own; it
+/// corroborates a reading the normative row already reaches.
+///
+/// Table 6.19.3.1-1 then takes it back for the temporal retrieval alone, in so
+/// many words, and an explicit prohibition beats an inference from the
+/// representation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AttrsAdmission {
-    /// Attribute names alone: the retrieval reading, where `id`, `type` and
-    /// `scope` are named as not allowed.
+    /// Attribute names alone.
+    ///
+    /// Query Entities and Retrieve Entity answer in an Entity representation
+    /// where clause 4.18 leaves the Scope non-reified, so `scope` is no
+    /// Attribute name there; Retrieve Temporal Evolution of an Entity answers in
+    /// a representation where it is one, and Table 6.19.3.1-1 excludes it
+    /// anyway.
     AttributeNamesOnly,
-    /// The `scope` Entity member beside the Attribute names, which the temporal
-    /// query admits because clause 4.18 reifies the Scope in the temporal
-    /// representation and `pick` names it.
-    ScopeAdmitted,
+    /// The `scope` Property beside the Attribute names.
+    ///
+    /// Query Temporal Evolution of Entities answers in the representation clause
+    /// 4.18 reifies the Scope in, so `scope` is an Attribute name there and
+    /// Table 6.18.3.2-1 excludes nothing.
+    ReifiedScopeAdmitted,
 }
 
 impl AttrsAdmission {
@@ -34,7 +64,7 @@ impl AttrsAdmission {
     fn admits(self, name: &AttributeName) -> bool {
         match self {
             AttrsAdmission::AttributeNamesOnly => false,
-            AttrsAdmission::ScopeAdmitted => name.as_str() == SCOPE_MEMBER,
+            AttrsAdmission::ReifiedScopeAdmitted => name.as_str() == SCOPE_MEMBER,
         }
     }
 }
@@ -64,10 +94,12 @@ mod tests {
         raw.iter().map(|name| name.parse::<AttributeName>().expect("a valid name")).collect()
     }
 
-    /// Tables 6.5.3.1-1 and 6.19.3.1-1: on a retrieval `attrs` is "a synonym
-    /// for the pick parameter, except that id, type, scope are not allowed".
+    /// Every `attrs` row restricts the parameter to "an Attribute (Property or
+    /// Relationship) name", and clause 4.18 leaves the Scope non-reified in an
+    /// Entity representation, so none of the three structural members is one:
+    /// Tables 6.4.3.2-1, 6.5.3.1-1 and 6.19.3.1-1 all refuse them.
     #[test]
-    fn a_retrieval_admits_no_entity_member_in_attrs() {
+    fn an_entity_representation_admits_no_entity_member_in_attrs() {
         for member in ["id", "type", "scope"] {
             let selection = attrs(&["speed", member]);
             assert!(
@@ -77,22 +109,24 @@ mod tests {
         }
     }
 
-    /// Table 6.18.3.2-1 makes `attrs` on the temporal query a synonym for pick
-    /// and q, and annex C clause C.5.16 queries with `attrs=speed,scope`.
+    /// Clause 4.18 reifies the Scope in the temporal representation, so `scope`
+    /// satisfies Table 6.18.3.2-1's "Each String is an Attribute (Property or
+    /// Relationship) name" on the temporal query, which is the request annex C
+    /// clause C.5.16 prints.
     #[test]
-    fn the_temporal_query_admits_the_scope_member_in_attrs() {
+    fn the_temporal_query_admits_the_reified_scope_property_in_attrs() {
         let selection = attrs(&["speed", "scope"]);
-        assert!(validate_attrs(Some(&selection), AttrsAdmission::ScopeAdmitted).is_ok());
+        assert!(validate_attrs(Some(&selection), AttrsAdmission::ReifiedScopeAdmitted).is_ok());
     }
 
-    /// `scope` is the one Entity member the wider reading admits: `id` and
-    /// `type` name no Attribute instance a temporal query could select.
+    /// `scope` is the one member clause 4.18 reifies. `id` and `type` stay
+    /// Entity members in every representation, so no `attrs` row admits them.
     #[test]
     fn the_wider_admission_still_refuses_the_identity_members() {
         for member in ["id", "type"] {
             let selection = attrs(&["speed", member]);
             assert!(
-                matches!(validate_attrs(Some(&selection), AttrsAdmission::ScopeAdmitted), Err(ParameterError::AttrsReservedMember(named)) if named.as_str() == member),
+                matches!(validate_attrs(Some(&selection), AttrsAdmission::ReifiedScopeAdmitted), Err(ParameterError::AttrsReservedMember(named)) if named.as_str() == member),
                 "{member} must be refused"
             );
         }
@@ -102,6 +136,15 @@ mod tests {
     fn genuine_attribute_names_are_accepted_by_either_admission() {
         let selection = attrs(&["speed"]);
         assert!(validate_attrs(Some(&selection), AttrsAdmission::AttributeNamesOnly).is_ok());
-        assert!(validate_attrs(Some(&selection), AttrsAdmission::ScopeAdmitted).is_ok());
+        assert!(validate_attrs(Some(&selection), AttrsAdmission::ReifiedScopeAdmitted).is_ok());
+    }
+
+    /// An absent or empty `attrs` names nothing to refuse.
+    #[test]
+    fn an_absent_or_empty_attrs_is_admitted_by_either_admission() {
+        for admission in [AttrsAdmission::AttributeNamesOnly, AttrsAdmission::ReifiedScopeAdmitted] {
+            assert!(validate_attrs(None, admission).is_ok());
+            assert!(validate_attrs(Some(&[]), admission).is_ok());
+        }
     }
 }

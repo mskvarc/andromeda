@@ -15,11 +15,11 @@ use crate::temporal::{
     TemporalSimplifyPayload,
     TemporalSimplifyRenderer,
     query::page::QueriedPage,
-    start_rendering,
+    start_rendering_temporal,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::content_range::build_content_range;
-use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
+use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, uri::Uri as NgsiLdUri};
 use andromeda_temporal::service::TemporalRange;
 use axum::http::Uri;
 use serde_json::Value;
@@ -65,6 +65,8 @@ pub(crate) struct TemporalCollectionMetadata {
 /// be produced.
 pub(crate) fn query_response(
     accept: AcceptFormatNoGeo,
+    prefer: PreferHeader,
+    format: TemporalFormat,
     context: &ContextSpec,
     entities: Vec<Value>,
     metadata: TemporalCollectionMetadata,
@@ -79,7 +81,14 @@ pub(crate) fn query_response(
         page,
         returned,
     } = metadata;
-    let rendered = start_rendering(accept.media_type(), context, PreferHeader::default().rendering_preferences())
+    // Table 6.18.3.2-2 carries the 203 row and clause 6.3.6 the
+    // `Preference-Applied` echo, so the preference the request expressed is the
+    // one that renders; `NgsiLdCollectionResponse` turns the outcome into both.
+    // Table 6.24.3.1-1 prints no 203 row for the POST form, but clause 6.24.3.1
+    // gives it the clause 5.7.4 behaviour of the GET and clause 6.3.6 ties the
+    // echo to any response carrying a payload body, so both bindings answer the
+    // same way.
+    let rendered = start_rendering_temporal(accept.media_type(), context, prefer.rendering_preferences(), format)
         .with_payload(ResponsePayload::Collection(entities))
         .render()
         .with_instance(instance)?;
