@@ -6,16 +6,13 @@
 //! only contain context source registration information relevant for the
 //! query, in particular only matching `RegistrationInfo` elements". Clause
 //! 5.11.7 recommends the same of a Context Source Notification, in the same
-//! words. Both are recommendations, and the two operations answer different
-//! questions: a discovery asks what a source can provide, a notification tells
-//! a subscriber what changed. Andromeda trimmed both, so a discovery by one
-//! Entity type hid every other kind of information the source had registered,
-//! which is the opposite of what a client discovers a source in order to learn.
+//! words. Andromeda adopts the recommendation on both paths: a discovery
+//! answers with only the `RegistrationInfo` elements the query matched, keeping
+//! parity with the Context Source Notification trim and with the distributed
+//! discovery conformance the suite exercises.
 //!
-//! The notification still trims -- `tests/csr_notification/main.rs` holds that
-//! half -- and clause 5.12 still decides which registrations are returned at
-//! all: one whose `information` matches on none of its elements is not in the
-//! answer.
+//! Clause 5.12 still decides which registrations are returned at all: one whose
+//! `information` matches on none of its elements is not in the answer.
 //!
 //! Naming convention: `regression_<finding>_<scenario>`.
 
@@ -29,7 +26,7 @@ use reqwest::StatusCode;
 use serde_json::{Value, json};
 
 /// A registration covering two unrelated kinds of Entity, so a query naming
-/// one of them has something to hide.
+/// one of them leaves the other to be trimmed away.
 fn registration(id: &str) -> Value {
     json!({
         "id": id,
@@ -58,11 +55,11 @@ async fn discovered(client: &TestClient, query: &str, id: &str) -> Option<Value>
         .cloned() // clone: the response body is dropped with the request
 }
 
-/// Clause 5.10.2.5 recommends rather than requires the narrowed answer, so a
-/// matched registration is returned whole: a client that discovers a source by
-/// one Entity type still learns what else it provides.
+/// Clause 5.10.2.5: a matched registration is trimmed to the `RegistrationInfo`
+/// elements relevant to the query, so a discovery by one Entity type answers
+/// with only that element and hides the source's unrelated coverage.
 #[tokio::test]
-async fn regression_registration_discovery_a_matched_registration_keeps_its_whole_information() {
+async fn regression_registration_discovery_a_matched_registration_is_trimmed_to_matching_information() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
     let id = scope.id("ContextSourceRegistration:discovery-information");
@@ -72,7 +69,14 @@ async fn regression_registration_discovery_a_matched_registration_keeps_its_whol
 
     let found = discovered(client, "type=Vehicle", &id).await.expect("the registration matches on Vehicle");
     let information = found["information"].as_array().expect("the registration carries its information");
-    assert_eq!(information.len(), 2, "both RegistrationInfo elements survive a query naming one: {found}");
+    assert_eq!(information.len(), 1, "only the RegistrationInfo element the query matched survives: {found}");
+    let entity_types = information[0]["entities"]
+        .as_array()
+        .expect("the surviving element carries its entities")
+        .iter()
+        .filter_map(|entity| entity["type"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(entity_types, ["Vehicle"], "the surviving element is the one the query matched: {found}");
 
     client.delete_registration(&id).await.expect("delete registration");
     scope.finish().await.expect("cleanup failed");

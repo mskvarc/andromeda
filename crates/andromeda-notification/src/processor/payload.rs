@@ -25,6 +25,7 @@ use andromeda_jsonld::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, expanded::attribute_system_time::strip_attribute_instants, notification::NotificationTrigger};
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
+use andromeda_ngsi_ld_query::projection::term::ProjectionTerm;
 use andromeda_ngsi_ld_render::{
     notification_conformance::amend_notification_entities,
     snapshot::SnapshotRenderer,
@@ -127,8 +128,16 @@ pub(super) async fn build_notification_data(params: &NotificationBuildParams<'_>
     // projection ran above on the expanded entity, keyed by attribute IRI; the
     // three structural members only exist as such once compaction has turned
     // `@id` and `@type` into them, so their half of the rule runs here -- the
-    // same rule, and the same code, a query response applies.
+    // same rule, and the same code, a query response applies. Clause 5.8.6 holds
+    // `id` back from that rule: a notification carries Entities and an Entity is
+    // only actionable with its `id` (clause 4.5.1), so `id` is captured and
+    // restored around the prune while `type` and `scope` follow the projection.
+    // clone: the id is captured before the prune that may drop it, then restored.
+    let notified_id = compacted.get(ProjectionTerm::ID_KEYWORD).cloned();
     StructuralProjection::from(&params.sub.notification_projection).prune(&mut compacted);
+    if let (Some(id), Some(map)) = (notified_id, compacted.as_object_mut()) {
+        map.entry(ProjectionTerm::ID_KEYWORD.to_owned()).or_insert(id);
+    }
     apply_show_changes(&mut compacted, params, &context).await;
 
     let payload = apply_join(compacted, params, &context).await;

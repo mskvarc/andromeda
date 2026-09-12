@@ -148,21 +148,22 @@ impl RegistrationService {
     }
 }
 
-/// The registration when the compiled query matches at least one of its
-/// `RegistrationInfo` elements (clause 5.12), or nothing when none does.
+/// The registration trimmed to the `RegistrationInfo` elements the compiled
+/// query matches (clause 5.10.2.5), or nothing when none match.
 ///
-/// The statement preselects on the same clause 5.12 reading, but it decides the
-/// two regular-expression cases in the database's dialect; the typed evaluation
+/// The statement preselects on the clause 5.12 reading, but it decides the two
+/// regular-expression cases in the database's dialect; the typed evaluation
 /// here is the authority, and it is what settles the response.
 ///
-/// The surviving registration keeps its whole `information`. Clause 5.10.2.5
-/// only recommends the narrower answer -- implementations "should return
-/// filtered Context Source Registrations, which only contain context source
-/// registration information relevant for the query" -- and a discovery client
-/// asks what a source can provide, not merely which part of it matched the
-/// question it happened to ask. A Context Source Notification is the other
-/// case and does trim (clause 5.11.7), because there the subscriber is being
-/// told what changed rather than what exists.
+/// Clause 5.10.2.5 states the trimming as a recommendation -- implementations
+/// "should return filtered Context Source Registrations, which only contain
+/// context source registration information relevant for the query, in
+/// particular only matching `RegistrationInfo` elements". Andromeda adopts it as
+/// behaviour: it answers what a discovery client actually asks (which parts of
+/// a source are relevant to the query), and it keeps parity with the Context
+/// Source Notification path, which trims on the identically worded clause
+/// 5.11.7 recommendation. A registration none of whose elements match is
+/// dropped entirely.
 fn registration_matching_the_query(
     registration: ContextSourceRegistration,
     compiled: &CompiledCsrQuery,
@@ -192,6 +193,9 @@ fn registration_matching_the_query(
         entities: &entities,
         attributes: &attributes,
     };
-    let matches = registration.coverage.information.iter().any(|info| specification.matches_information(info));
-    Ok(matches.then_some(registration))
+    // Clause 5.10.2.5: keep only the RegistrationInfo elements the query
+    // matches, and drop the whole registration when none remain.
+    let mut registration = registration;
+    registration.coverage.information.retain(|info| specification.matches_information(info));
+    Ok((!registration.coverage.information.is_empty()).then_some(registration))
 }

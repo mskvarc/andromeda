@@ -75,13 +75,27 @@ async fn emq_at_least_one_filter_accepted() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// No filter is rejected `400 BadRequestData` (clause 5.14.4). Confirms REQ-MAP-114.
+/// No narrowing input at all is rejected `400 BadRequestData` (clause 5.14.4.4
+/// "too wide query"). Confirms REQ-MAP-114. Local scope is deliberately not sent:
+/// clause 5.14.4.4 lists it (item e) among the inputs that narrow a creation, so
+/// `local=true` belongs to the accepted case below, not to this one.
 #[tokio::test]
 async fn emq_no_filter_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
-    let response = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "local=true").await;
+    let response = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "").await;
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// Local scope alone narrows a creation: clause 5.14.4.4 item (e) admits "local
+/// scope (see clause 5.5.13)" as one of its inputs, so `local=true` with nothing
+/// else is accepted `201`. Confirms REQ-MAP-113.
+#[tokio::test]
+async fn emq_local_scope_alone_accepted() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "local=true").await;
+    assert_status(&created, 201);
     topology.finish().await.expect("topology cleanup");
 }
 

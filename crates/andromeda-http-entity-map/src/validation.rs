@@ -24,10 +24,18 @@ pub(crate) fn validate_entity_map_query(query: &EntityQueryParameters, uri: &Uri
 }
 
 /// Validate the parameters of a temporal entity map creation (clause
-/// 5.14.5.4): Linked Entity retrieval is not available on the operation, so
-/// `join`/`joinLevel`, a nested projection term and a `q` hop into a Linked
-/// Entity are each an error of type `BadRequestData`.
+/// 5.14.5.4): the temporal query's own constraints, which the clause restates
+/// from Query Temporal Evolution -- the clause 5.7.4.4 "too wide query"
+/// narrowing rule included -- and then, on top of them, that Linked Entity
+/// retrieval is not available on the operation, so `join`/`joinLevel`, a
+/// nested projection term and a `q` hop into a Linked Entity are each an error
+/// of type `BadRequestData`.
 pub(crate) fn validate_temporal_entity_map_query(params: &TemporalQueryParameters, uri: &Uri) -> Result<(), ProblemResponse> {
+    // Clauses 5.14.5.4 / 5.7.4.4: the creation is a temporal query and inherits
+    // its parameter validation, including the clause 5.7.2.4 narrowing rule that
+    // the map's own join/linked-hop checks below do not cover. `require_temporal`
+    // is true, matching the temporal query endpoint the map is created from.
+    params.validate(true).with_entity_map_instance(uri)?;
     if params.join.is_some() || params.join_level.is_some() {
         return Err(bad_request_data(
             "join and joinLevel are not applicable to temporal EntityMap creation: Linked Entity retrieval is not available on this operation",
@@ -81,6 +89,18 @@ mod tests {
         assert!(validate_entity_map_query(&entity_query("id=urn:ngsi-ld:Vehicle:1"), &uri()).is_err());
         assert!(validate_entity_map_query(&entity_query("local=true"), &uri()).is_ok());
         assert!(validate_entity_map_query(&entity_query("type=Vehicle"), &uri()).is_ok());
+    }
+
+    /// Clause 5.14.5.4 carries the clause 5.7.4.4 narrowing rule (itself the
+    /// clause 5.7.2.4 rule verbatim, local-scope exemption included), so a
+    /// temporal creation whose only input is the temporal window is too wide,
+    /// while one that also names a type or the local scope is not.
+    #[test]
+    fn a_temporal_creation_without_any_narrowing_input_is_a_bad_request() {
+        const WINDOW: &str = "timerel=before&timeAt=2022-01-01T00:00:00Z";
+        assert!(validate_temporal_entity_map_query(&temporal_query(WINDOW), &uri()).is_err());
+        assert!(validate_temporal_entity_map_query(&temporal_query(&format!("type=Vehicle&{WINDOW}")), &uri()).is_ok());
+        assert!(validate_temporal_entity_map_query(&temporal_query(&format!("local=true&{WINDOW}")), &uri()).is_ok());
     }
 
     /// Clause 5.14.4.4: `geometryProperty` needs a `GeoJSON` `Accept`, which

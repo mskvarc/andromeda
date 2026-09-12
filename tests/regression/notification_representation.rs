@@ -22,6 +22,12 @@
 //! now applies that one rule after compaction, where `id`, `type` and `scope`
 //! exist as such.
 //!
+//! Clause 5.8.6 holds one member back from that rule: a notification carries
+//! Entities and an Entity is only actionable if it carries its `id` (clause
+//! 4.5.1), so `id` survives a `notification.pick`/`notification.omit` that
+//! would otherwise drop it, while `type` and `scope` follow the projection as a
+//! query response does.
+//!
 //! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
@@ -175,6 +181,40 @@ async fn regression_notification_projection_a_pick_drops_the_type_it_does_not_na
     assert!(notified.get("name").is_some(), "the picked attribute stays: {notified}");
     assert!(notified.get("type").is_none(), "`type` was not picked: {notified}");
     assert!(notified.get("category").is_none(), "nor was the other attribute: {notified}");
+
+    client.delete_subscription(&subscription_id).await.expect("delete subscription");
+    client.delete_entity(&entity_id).await.expect("delete entity");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.8.6 with clause 4.5.1: a notified Entity must carry its `id` to be
+/// actionable, so a `notification.pick` naming only attributes still leaves
+/// `id` in place, even though the same projection drops it from a query
+/// response (clause 5.7.1.5). `type`, not force-kept, follows the projection.
+#[tokio::test]
+async fn regression_notification_projection_a_pick_naming_only_attributes_keeps_id() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let receiver = NotificationAdapter::start().await;
+    let entity_id = scope.id("Building:pick-only-attributes");
+    let subscription_id = scope.id("Subscription:pick-only-attributes");
+
+    create(client, &building(&entity_id)).await;
+    let mut body = subscription(&subscription_id, &entity_id, &receiver.endpoint_url(), "application/json");
+    body["notification"]["pick"] = json!(["name"]);
+    subscribe(client, &body).await;
+    touch(client, &entity_id).await;
+
+    let notification = receiver.wait_for_subscription_notification(&subscription_id, ARRIVAL).await;
+    let notified = &notification.body["data"][0];
+    assert_eq!(
+        notified["id"],
+        json!(entity_id),
+        "the id is force-kept so the notification is actionable: {notified}"
+    );
+    assert!(notified.get("name").is_some(), "the picked attribute stays: {notified}");
+    assert!(notified.get("type").is_none(), "`type` was not picked and is not force-kept: {notified}");
+    assert!(notified.get("category").is_none(), "the attribute the pick did not name is gone: {notified}");
 
     client.delete_subscription(&subscription_id).await.expect("delete subscription");
     client.delete_entity(&entity_id).await.expect("delete entity");

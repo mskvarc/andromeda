@@ -1,6 +1,7 @@
 //! Typed subscription persistence values and update merging.
 
 use crate::{error::SubscriptionError, store::SubscriptionFields, variant::DatasetIdPolicy};
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion, uri::Uri};
 use andromeda_ngsi_ld_model::{
     attribute_name_csv,
@@ -189,8 +190,36 @@ fn ngsild_conformance(payload: &Value) -> Result<Option<SpecVersion>, Subscripti
         .map_err(|error| SubscriptionError::validation(format!("Invalid 'ngsildConformance' value: {error}")))
 }
 
+/// The single `@context` URL a subscription creation carried in its `Link`
+/// header, used to initialise `jsonldContext` when the request named none.
+///
+/// Clause 5.8.2.4: "The @context to be used for sending Notifications related
+/// to this Subscription shall be the one specified in the jsonldContext field.
+/// If not present, the jsonldContext field shall be initialized with the
+/// @context applicable for the Subscription." `jsonldContext` is a single
+/// dereferenceable URI (clause 5.2.12, Table 5.2.12-1), so only a creation
+/// naming exactly one `Link` context is representable here; a creation naming
+/// several, or supplying its context inline in the body, cannot be captured by
+/// this single-URL carrier and falls through to the core context (clause
+/// 5.5.5) rather than to a partial one.
+fn creation_context_fallback(context: &ContextSpec) -> Option<Url> {
+    match context.link_contexts() {
+        [single] => Url::parse(single.as_str()).ok(),
+        _ => None,
+    }
+}
+
 /// Parse a create payload into validated persistence values.
-pub fn extract_create_fields(payload: &Value, dataset_id_policy: DatasetIdPolicy) -> Result<SubscriptionWriteValues, SubscriptionError> {
+///
+/// `creation_context` carries the request's own `@context` so that, per clause
+/// 5.8.2.4, a subscription with no `jsonldContext` member is initialised with
+/// the context applicable at creation; an explicit `jsonldContext` member takes
+/// precedence over it, and the core context is the fallback for neither.
+pub fn extract_create_fields(
+    payload: &Value,
+    dataset_id_policy: DatasetIdPolicy,
+    creation_context: &ContextSpec,
+) -> Result<SubscriptionWriteValues, SubscriptionError> {
     Ok(SubscriptionWriteValues {
         subscription_name: payload.get("subscriptionName").and_then(Value::as_str).map(String::from),
         description: payload.get("description").and_then(Value::as_str).map(String::from),
@@ -214,7 +243,7 @@ pub fn extract_create_fields(payload: &Value, dataset_id_policy: DatasetIdPolicy
         expand_values: attribute_name_csv_member(payload, "expandValues")?,
         json_keys: attribute_name_csv_member(payload, "jsonKeys")?,
         lang: deserialize_member(payload, "lang")?,
-        jsonld_context: deserialize_member(payload, "jsonldContext")?,
+        jsonld_context: deserialize_member(payload, "jsonldContext")?.or_else(|| creation_context_fallback(creation_context)),
         local_only: payload.get("localOnly").and_then(Value::as_bool).unwrap_or(false),
         split_entities: payload.get("splitEntities").and_then(Value::as_bool),
         ngsild_conformance: ngsild_conformance(payload)?,
@@ -280,11 +309,16 @@ mod tests {
         fields::{extract_create_fields, merged_attribute_name_csv},
         variant::DatasetIdPolicy,
     };
+    use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
 
     #[test]
     fn entity_subscription_creation_retains_dataset_identifiers() -> Result<(), SubscriptionError> {
-        let values = extract_create_fields(&serde_json::json!({"datasetId": ["urn:ngsi-ld:Dataset:one"]}), DatasetIdPolicy::Retain)?;
+        let values = extract_create_fields(
+            &serde_json::json!({"datasetId": ["urn:ngsi-ld:Dataset:one"]}),
+            DatasetIdPolicy::Retain,
+            &ContextSpec::none(),
+        )?;
 
         assert_eq!(
             values
@@ -299,7 +333,11 @@ mod tests {
 
     #[test]
     fn context_source_subscription_creation_discards_dataset_identifiers() -> Result<(), SubscriptionError> {
-        let values = extract_create_fields(&serde_json::json!({"datasetId": ["urn:ngsi-ld:Dataset:one"]}), DatasetIdPolicy::Discard)?;
+        let values = extract_create_fields(
+            &serde_json::json!({"datasetId": ["urn:ngsi-ld:Dataset:one"]}),
+            DatasetIdPolicy::Discard,
+            &ContextSpec::none(),
+        )?;
 
         assert!(values.dataset_id.is_none());
         Ok(())
@@ -348,7 +386,7 @@ mod tests {
 
     #[test]
     fn malformed_expiration_is_rejected() {
-        let result = extract_create_fields(&serde_json::json!({"expiresAt": "tomorrow"}), DatasetIdPolicy::Retain);
+        let result = extract_create_fields(&serde_json::json!({"expiresAt": "tomorrow"}), DatasetIdPolicy::Retain, &ContextSpec::none());
         assert!(matches!(result, Err(SubscriptionError::Validation { .. })));
     }
 
@@ -356,7 +394,7 @@ mod tests {
     /// well-formed one is carried through to the write values.
     #[test]
     fn a_well_formed_ngsild_conformance_is_parsed_into_a_spec_version() -> Result<(), SubscriptionError> {
-        let values = extract_create_fields(&serde_json::json!({"ngsildConformance": "1.4"}), DatasetIdPolicy::Retain)?;
+        let values = extract_create_fields(&serde_json::json!({"ngsildConformance": "1.4"}), DatasetIdPolicy::Retain, &ContextSpec::none())?;
 
         pretty_assertions::assert_eq!(values.ngsild_conformance, Some(SpecVersion::V1_4));
         Ok(())
@@ -368,7 +406,7 @@ mod tests {
     /// older, which is what decides what `1.5` receives.
     #[test]
     fn a_version_the_fallback_tables_do_not_name_is_still_admitted() -> Result<(), SubscriptionError> {
-        let values = extract_create_fields(&serde_json::json!({"ngsildConformance": "1.5"}), DatasetIdPolicy::Retain)?;
+        let values = extract_create_fields(&serde_json::json!({"ngsildConformance": "1.5"}), DatasetIdPolicy::Retain, &ContextSpec::none())?;
 
         pretty_assertions::assert_eq!(values.ngsild_conformance, Some(SpecVersion::new(1, 5)));
         Ok(())
@@ -388,7 +426,7 @@ mod tests {
             serde_json::json!(1.4),
             serde_json::json!(null),
         ] {
-            let result = extract_create_fields(&serde_json::json!({"ngsildConformance": token}), DatasetIdPolicy::Retain);
+            let result = extract_create_fields(&serde_json::json!({"ngsildConformance": token}), DatasetIdPolicy::Retain, &ContextSpec::none());
             assert!(matches!(result, Err(SubscriptionError::Validation { .. })), "{token} must be refused");
         }
     }
@@ -397,7 +435,7 @@ mod tests {
     /// fall back to.
     #[test]
     fn an_absent_ngsild_conformance_leaves_no_version() -> Result<(), SubscriptionError> {
-        let values = extract_create_fields(&serde_json::json!({}), DatasetIdPolicy::Retain)?;
+        let values = extract_create_fields(&serde_json::json!({}), DatasetIdPolicy::Retain, &ContextSpec::none())?;
 
         assert!(values.ngsild_conformance.is_none());
         Ok(())
