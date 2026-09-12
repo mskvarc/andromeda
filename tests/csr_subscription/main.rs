@@ -309,20 +309,37 @@ pub fn assert_problem_detail_type(body: &Value, expected_type: &str) {
 }
 
 #[tokio::test]
-async fn csr_subscription_sys_attrs_does_not_leak_the_internal_jsonld_context() {
-    // R2-76 (clause 5.2.9, Table 5.2.9-2): `?options=sysAttrs` adds createdAt and
-    // modifiedAt, but must not stop scrubbing the internal `jsonldContext` the
-    // broker stores. Gating five unrelated scrubbing policies on one sysAttrs
-    // flag leaked it.
+async fn csr_subscription_sys_attrs_adds_the_timestamps_without_changing_the_other_members() {
+    // Clause 4.8: `?options=sysAttrs` governs the system timestamps and nothing
+    // else. Every other policy the renderer applies -- hiding `isActive` and
+    // `localOnly` at their defaults -- is independent of it, and the clause
+    // 5.2.12 members are served either way. `jsonldContext` is one of them:
+    // clause 5.11.2.3 takes the Subscription data type unchanged and clause
+    // 5.11.4.5 returns "the subscription details as mandated by clause 5.2.12",
+    // while clause 5.8.1.4 requires the member to be initialised from the
+    // @context the subscription was created under. The broker used to scrub it
+    // here as though it were internal.
     let client = client();
     let id = "urn:ngsi-ld:Subscription:r2-76-sysattrs-leak";
     let (status, _, _) = create_csource_subscription(&client, &csource_subscription_payload(id)).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    let (status, body) = retrieve_csource_subscription(&client, id, Some("sysAttrs")).await;
+    let (status, plain) = retrieve_csource_subscription(&client, id, None).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.get("jsonldContext").is_none(), "sysAttrs must not leak the internal jsonldContext: {body}");
-    assert!(body.get("createdAt").is_some(), "sysAttrs must still add createdAt");
+    let (status, with_sys_attrs) = retrieve_csource_subscription(&client, id, Some("sysAttrs")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    assert!(with_sys_attrs.get("createdAt").is_some(), "sysAttrs adds createdAt: {with_sys_attrs}");
+    assert!(plain.get("createdAt").is_none(), "and only sysAttrs does: {plain}");
+    pretty_assertions::assert_eq!(
+        with_sys_attrs.get("jsonldContext"),
+        plain.get("jsonldContext"),
+        "the clause 5.2.12 members do not depend on sysAttrs: {with_sys_attrs}"
+    );
+    assert!(
+        plain.get("jsonldContext").is_some(),
+        "clause 5.8.1.4 initialises the member from the applicable @context: {plain}"
+    );
 
     delete_csource_subscription(&client, id).await;
 }

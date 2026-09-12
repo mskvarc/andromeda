@@ -27,10 +27,7 @@ use andromeda_http_response::{
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
 use andromeda_ngsi_ld_query::pagination::CountPolicy;
-use andromeda_ngsi_ld_render::{
-    response::ResponsePayload,
-    subscription::{SubscriptionFlavor, SubscriptionRenderer},
-};
+use andromeda_ngsi_ld_render::{response::ResponsePayload, subscription::SubscriptionRenderer};
 use andromeda_ngsi_ld_request::{empty::EmptyParams, subscription::ListParams};
 use axum::{
     extract::OriginalUri,
@@ -84,9 +81,7 @@ pub async fn get(
         .await
         .with_subscription_instance(&uri)?;
 
-    let subscription = SubscriptionRenderer::new(subscription, SubscriptionFlavor::Local)
-        .with_sys_attrs(options.sys_attrs)
-        .render();
+    let subscription = SubscriptionRenderer::new(subscription).with_sys_attrs(options.sys_attrs).render();
 
     // Clause 6.3.5: a GET is rendered under the context its `Link` header
     // names, or the default context. The subscription's own `jsonldContext`
@@ -129,11 +124,7 @@ pub async fn query(
 
     let subscriptions = subscriptions
         .into_iter()
-        .map(|sub| {
-            SubscriptionRenderer::new(sub, SubscriptionFlavor::Local)
-                .with_sys_attrs(options.sys_attrs)
-                .render()
-        })
+        .map(|sub| SubscriptionRenderer::new(sub).with_sys_attrs(options.sys_attrs).render())
         .collect::<Vec<_>>();
 
     let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())

@@ -1,9 +1,9 @@
 use crate::{
     change::CsourceSubscriptionChange,
     error::SubscriptionError,
-    lifecycle::{DatasetIdPolicy, SubscriptionVariant},
     normalization,
     term_expansion,
+    variant::{DatasetIdPolicy, SubscriptionVariant},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};

@@ -1,10 +1,10 @@
 use crate::{
     change::SubscriptionChange,
     error::SubscriptionError,
-    lifecycle::{DatasetIdPolicy, SubscriptionVariant},
     normalization,
     term_expansion,
     validation,
+    variant::{DatasetIdPolicy, SubscriptionVariant},
 };
 use andromeda_context_registry::service::ContextRegistryService;
 use andromeda_context_space::context_target::ContextTarget;

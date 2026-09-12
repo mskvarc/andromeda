@@ -18,9 +18,10 @@ use andromeda_postgresql_context_store::{
 };
 use andromeda_subscription::{
     csource::CsrSubscriptionVariant,
+    endpoint_admission::SubscriptionEndpointValidator,
     entity::EntitySubscriptionVariant,
     forwarding_hook::SubscriptionForwardingHook,
-    lifecycle::{SubscriptionEndpointValidator, SubscriptionService},
+    lifecycle::SubscriptionService,
     store::SubscriptionStore,
 };
 use andromeda_subscription_forwarding::{

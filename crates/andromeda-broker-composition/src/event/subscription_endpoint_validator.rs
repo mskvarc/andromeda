@@ -2,7 +2,7 @@
 
 use andromeda_delivery::endpoint::transport::parse_endpoint_transport;
 use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
-use andromeda_subscription::{error::SubscriptionError, lifecycle::SubscriptionEndpointValidator};
+use andromeda_subscription::{endpoint_admission::SubscriptionEndpointValidator, error::SubscriptionError};
 use url::Url;
 
 /// Validates endpoint configuration against the broker's selected delivery bindings.

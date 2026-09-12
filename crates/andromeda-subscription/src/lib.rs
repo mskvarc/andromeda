@@ -24,6 +24,10 @@ pub mod csource;
 pub mod csource_cache;
 /// Matching context source registration subscriptions against registrations.
 pub mod csource_matching;
+/// When a context source registration subscription is owed a notification.
+pub mod csource_notification_cadence;
+/// Admitting a subscription's notification endpoint.
+pub mod endpoint_admission;
 /// Entity subscription lifecycle policy.
 pub mod entity;
 /// Subscription policy failures.
@@ -58,6 +62,8 @@ mod term_expansion;
 /// Throttling-window arithmetic.
 pub mod throttle;
 mod validation;
+/// What one kind of subscription does differently from the other.
+pub mod variant;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

@@ -1,6 +1,6 @@
 //! Typed subscription persistence values and update merging.
 
-use crate::{error::SubscriptionError, lifecycle::DatasetIdPolicy, store::SubscriptionFields};
+use crate::{error::SubscriptionError, store::SubscriptionFields, variant::DatasetIdPolicy};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion, uri::Uri};
 use andromeda_ngsi_ld_model::{
     attribute_name_csv,
@@ -278,7 +278,7 @@ mod tests {
     use crate::{
         error::SubscriptionError,
         fields::{extract_create_fields, merged_attribute_name_csv},
-        lifecycle::DatasetIdPolicy,
+        variant::DatasetIdPolicy,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
 

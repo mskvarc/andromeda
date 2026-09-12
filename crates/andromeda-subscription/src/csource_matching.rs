@@ -19,16 +19,27 @@ use chrono::Utc;
 use serde_json::Value;
 
 /// Whether a change to `registration` notifies `sub`: the subscription is
-/// active, unexpired and change-driven, and the registration matches it.
+/// live and change-driven, and the registration matches it.
+///
+/// Clause 5.11.2.4 ties a `timeInterval` subscription's notifications to its
+/// schedule alone, "independent of any changes to the set of Context Source
+/// registrations", so a change reaches only the subscriptions without one.
 #[must_use]
 pub fn matches_csource_subscription(sub: &CompiledCsrSubscription, registration: &ContextSourceRegistration) -> bool {
-    if sub.status != SubscriptionStatus::Active {
-        return false;
-    }
-    if sub.expires_at.is_some_and(|expires_at| expires_at <= Utc::now()) || sub.time_interval_secs.is_some() {
+    if !csource_subscription_is_live(sub) || sub.time_interval_secs.is_some() {
         return false;
     }
     csource_subscription_selects_registration(sub, registration)
+}
+
+/// Whether `sub` may be notified at all: it is active and has not reached its
+/// `expiresAt` (Table 5.2.12-2, clause 5.11.7).
+///
+/// The cadence is a separate question -- this is the lifecycle one both
+/// cadences ask first.
+#[must_use]
+pub fn csource_subscription_is_live(sub: &CompiledCsrSubscription) -> bool {
+    sub.status == SubscriptionStatus::Active && sub.expires_at.is_none_or(|expires_at| expires_at > Utc::now())
 }
 
 /// Whether `registration` is one of the registrations `sub` asks about,

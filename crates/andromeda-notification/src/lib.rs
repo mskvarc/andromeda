@@ -3,8 +3,12 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+/// Sending one context source notification.
+mod csource_delivery;
 /// Context-source interval notification evaluation.
 pub mod csource_interval;
+/// The registrations a context source registration subscription selects.
+mod csource_match_set;
 /// Context-source event notification evaluation.
 pub mod csource_processor;
 /// Attempt ceiling after which a notification delivery is dead-lettered.

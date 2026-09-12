@@ -31,10 +31,7 @@ use andromeda_snapshot::{
     expiry::SnapshotExpiry,
     store::SnapshotStore,
 };
-use andromeda_subscription::{
-    expiry::SubscriptionExpiry,
-    lifecycle::{SubscriptionService, SubscriptionVariant},
-};
+use andromeda_subscription::{expiry::SubscriptionExpiry, lifecycle::SubscriptionService, variant::SubscriptionVariant};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     failure::TaskFailure,

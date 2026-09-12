@@ -18,6 +18,7 @@ mod coerced_term_representation;
 mod context_cache_expiry;
 mod context_source_alias_tenancy;
 mod context_source_subscription_members;
+mod csource_subscription_notification;
 mod discovery_name_compaction;
 mod embedded_user_context;
 mod entity_map_pruning;
@@ -33,6 +34,7 @@ mod invalid_parameter_values;
 mod list_attribute_families;
 mod list_relationship_representation;
 mod minimal_query_parameters;
+mod notification_representation;
 mod null_sentinel_admission;
 mod null_sentinel_deletion;
 mod operation_group_expansion;
@@ -47,6 +49,7 @@ mod query_language_evaluator;
 mod query_language_targets;
 mod query_pattern_dialect;
 mod query_string_escapes;
+mod registration_discovery_information;
 mod registration_health_members;
 mod scope_null_sentinel;
 mod scoped_user_context;
@@ -69,5 +72,7 @@ mod uri_comparison;
 pub mod context_source_adapter;
 #[path = "../support/hosted_context.rs"]
 pub mod hosted_context;
+#[path = "../support/notification_adapter.rs"]
+pub mod notification_adapter;
 #[path = "../support/probe_entity_type.rs"]
 pub mod probe_entity_type;

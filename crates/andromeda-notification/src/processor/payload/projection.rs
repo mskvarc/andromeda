@@ -1,11 +1,16 @@
-//! The clause 5.8.6 `notification.pick` / `notification.omit` projection,
-//! applied to an expanded entity before it is compacted for delivery.
+//! The attribute half of the clause 5.8.6 `notification.pick` /
+//! `notification.omit` projection, applied to an expanded entity before it is
+//! compacted for delivery.
 //!
 //! An expanded entity keys its attributes by IRI, which is how the compiled
 //! [`Projection`] names them too, so the clause 4.21 attribute rule is a key
-//! comparison here. Of the structural members, only `scope` is subject to the
-//! rule: `id` and `type` are mandatory for every Entity (Table 5.2.4-1) and a
-//! notification carries Entities (clause 5.3.1), so they always survive.
+//! comparison here. `id`, `type` and `scope` are not attributes and are not
+//! decided here: they exist as such only once compaction has turned `@id` and
+//! `@type` into them, so `StructuralProjection` prunes them afterwards, by the
+//! same rule a query response uses. Clause 5.8.6 reduces "every Entity within
+//! the payload body ... down to only contain the defined entity members
+//! listed", which is clause 5.7.1.5's sentence verbatim, so the two must not
+//! read it differently.
 
 use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
@@ -13,10 +18,10 @@ use serde_json::Value;
 
 /// Apply a compiled `pick`/`omit` projection to one expanded entity node.
 ///
-/// With a non-empty `pick`, only the picked attributes survive and `scope`
-/// only when the pick names it; a non-empty `omit` removes the attributes it
-/// names bare and `scope` when it names it. The JSON-LD keywords and the
-/// clause 4.8 system timestamps are never attributes and are left alone.
+/// With a non-empty `pick` only the picked attributes survive; a non-empty
+/// `omit` removes the attributes it names bare. The JSON-LD keywords, the
+/// clause 4.8 system timestamps and the `scope` member are never attributes
+/// and are left alone here.
 pub(crate) fn apply_notification_projection(entity: &mut Value, projection: &Projection) {
     let Some(object) = entity.as_object_mut() else {
         return;
@@ -29,11 +34,13 @@ pub(crate) fn apply_notification_projection(entity: &mut Value, projection: &Pro
     }
 }
 
-/// Whether a key of an expanded entity is outside the clause 4.21 rule: the
-/// JSON-LD keywords (`@id`, `@type`) and the system timestamps, which are
-/// governed by `sysAttrs` rather than by a projection.
+/// Whether a key of an expanded entity is outside this half of the clause 4.21
+/// rule: the JSON-LD keywords (`@id`, `@type`) and `scope`, which the
+/// structural pass decides after compaction, and the system timestamps, which
+/// `sysAttrs` governs rather than a projection.
 fn is_never_projected(key: &str) -> bool {
     key.starts_with('@')
+        || is_scope(key)
         || key == expanded_properties::CREATED_AT.as_str()
         || key == expanded_properties::MODIFIED_AT.as_str()
         || key == expanded_properties::DELETED_AT.as_str()
@@ -45,24 +52,16 @@ fn is_scope(key: &str) -> bool {
     key == expanded_properties::SCOPE.as_str()
 }
 
-/// Clause 4.21: a non-empty `pick` keeps the attributes it names and `scope`
-/// only when it lists the keyword.
+/// Clause 4.21: a non-empty `pick` keeps the attributes it names.
 fn kept_by_pick(key: &str, pick: &[ProjectionTerm]) -> bool {
-    if is_scope(key) {
-        return pick.contains(&ProjectionTerm::Scope);
-    }
     pick.iter()
         .any(|term| matches!(term, ProjectionTerm::Attribute { iri, .. } if iri.as_str() == key))
 }
 
-/// Clause 4.21: `omit` removes the attributes it names bare and `scope` when
-/// it lists the keyword. `omit=rel{a}` omits `a` inside the entity `rel`
-/// links to, not `rel` itself, so a term carrying a linked sub-projection
-/// removes nothing here.
+/// Clause 4.21: `omit` removes the attributes it names bare. `omit=rel{a}`
+/// omits `a` inside the entity `rel` links to, not `rel` itself, so a term
+/// carrying a linked sub-projection removes nothing here.
 fn removed_by_omit(key: &str, omit: &[ProjectionTerm]) -> bool {
-    if is_scope(key) {
-        return omit.contains(&ProjectionTerm::Scope);
-    }
     omit.iter()
         .any(|term| matches!(term, ProjectionTerm::Attribute { iri, linked } if iri.as_str() == key && linked.is_empty()))
 }
@@ -107,31 +106,46 @@ mod tests {
         pretty_assertions::assert_eq!(entity, expanded_entity());
     }
 
-    /// Clause 5.8.6 / 4.21: a pick reduces the entity to the picked attribute;
-    /// the keywords and the system timestamps stay, `scope` goes unpicked.
+    /// Clause 5.8.6 / 4.21: a pick reduces the entity to the picked attribute.
+    /// The keywords, `scope` and the system timestamps are not this pass's to
+    /// decide and stay for the one that owns them.
     #[test]
-    fn a_pick_keeps_only_the_picked_attribute_beside_the_keywords_and_timestamps() {
+    fn a_pick_keeps_only_the_picked_attribute_beside_what_this_pass_does_not_decide() {
         let mut entity = expanded_entity();
         let projection = Projection::builder().pick(vec![attribute(SPEED, Vec::new())]).build();
 
         apply_notification_projection(&mut entity, &projection);
 
-        pretty_assertions::assert_eq!(keys(&entity), vec!["@id", "@type", SPEED, expanded_properties::CREATED_AT.as_str()]);
+        pretty_assertions::assert_eq!(
+            keys(&entity),
+            vec![
+                "@id",
+                "@type",
+                SPEED,
+                expanded_properties::CREATED_AT.as_str(),
+                expanded_properties::SCOPE.as_str()
+            ]
+        );
     }
 
+    /// A pick that names only a structural keyword removes every attribute and
+    /// leaves the three structural members for the pass that owns them.
     #[test]
-    fn a_pick_naming_scope_keeps_scope() {
+    fn a_pick_naming_only_a_keyword_removes_every_attribute() {
         let mut entity = expanded_entity();
         let projection = Projection::builder().pick(vec![ProjectionTerm::Scope]).build();
 
         apply_notification_projection(&mut entity, &projection);
 
-        assert!(entity.get(expanded_properties::SCOPE.as_str()).is_some(), "{entity}");
         assert!(entity.get(SPEED).is_none() && entity.get(COLOUR).is_none(), "{entity}");
+        assert!(
+            entity.get(expanded_properties::SCOPE.as_str()).is_some(),
+            "`scope` is settled after compaction, not here: {entity}"
+        );
     }
 
     #[test]
-    fn an_omit_removes_the_named_attribute_and_scope_only_when_listed() {
+    fn an_omit_removes_the_named_attribute_and_leaves_the_structural_members() {
         let mut entity = expanded_entity();
         let projection = Projection::builder().omit(vec![attribute(COLOUR, Vec::new())]).build();
         apply_notification_projection(&mut entity, &projection);
@@ -141,7 +155,10 @@ mod tests {
         let mut entity = expanded_entity();
         let projection = Projection::builder().omit(vec![ProjectionTerm::Scope]).build();
         apply_notification_projection(&mut entity, &projection);
-        assert!(entity.get(expanded_properties::SCOPE.as_str()).is_none(), "{entity}");
+        assert!(
+            entity.get(expanded_properties::SCOPE.as_str()).is_some(),
+            "`scope` is settled after compaction, not here: {entity}"
+        );
         assert!(entity.get(SPEED).is_some() && entity.get(COLOUR).is_some(), "{entity}");
     }
 

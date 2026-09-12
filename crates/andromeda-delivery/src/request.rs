@@ -107,11 +107,22 @@ impl NotificationDelivery<'_> {
     /// Resolve everything a transport reads, carrying the notification body
     /// through as a shared [`Value`] for each transport to serialise once.
     ///
-    /// Clauses 5.2.13 and 6.3.5: an `application/ld+json` body is a JSON-LD
-    /// document and carries its `@context` itself, once, at the top level of
-    /// the notification; the entities in `data` are plain members of that
-    /// document and carry none of their own. The other media types carry the
-    /// context in the `Link` header [`DeliveryRequest::context_link`] builds.
+    /// Clause 6.3.6: when the body's media type is `application/ld+json` "the
+    /// response payload body provided by the HTTP response shall include a
+    /// JSON-LD @context". The other media types carry it in the `Link` header
+    /// [`DeliveryRequest::context_link`] builds instead, and clause 6.3.5
+    /// forbids mixing the two.
+    ///
+    /// The body is written in two places because it is two documents. The
+    /// Notification itself is one -- Table 5.3.1-1 gives it an `id` that is the
+    /// JSON-LD `@id` and a `type` that is the `@type` -- and every Entity in
+    /// its `data` is another, since clause 4.5.1 gives an Entity the same two.
+    /// A subscriber that lifts one Entity out of `data` holds a complete
+    /// NGSI-LD document, exactly as it would from an entity query, where an
+    /// array body leaves each Entity to carry its own. Both are written with
+    /// the one `@context` clause 5.8.6 names, "the one specified in the
+    /// jsonldContext field", so the inner one restates the outer rather than
+    /// narrowing it.
     ///
     /// Infallible: serialisation, the only step that could fail, now happens in
     /// each transport against the body shape it sends.
@@ -125,6 +136,11 @@ impl NotificationDelivery<'_> {
         {
             let context = self.jsonld_context.map_or(NGSI_LD_CORE_CONTEXT_URL.as_str(), Url::as_str);
             document.insert("@context".to_owned(), Value::String(context.to_owned()));
+            for notified in document.get_mut("data").and_then(Value::as_array_mut).into_iter().flatten() {
+                if let Some(notified) = notified.as_object_mut() {
+                    notified.insert("@context".to_owned(), Value::String(context.to_owned()));
+                }
+            }
         }
         DeliveryRequest {
             payload: Arc::new(payload),
@@ -245,6 +261,39 @@ mod tests {
 
         let named = assemble(Some(&media("application/ld+json")), Some("https://example.com/ctx.jsonld"));
         pretty_assertions::assert_eq!(named.payload["@context"], json!("https://example.com/ctx.jsonld"));
+    }
+
+    /// Clause 6.3.6 has the `application/ld+json` body carry a JSON-LD
+    /// `@context`, and every Entity in `data` is a document of its own
+    /// (clause 4.5.1 gives it `@id` and `@type`), so it carries the same one:
+    /// a subscriber can lift one Entity out of `data` and still expand it.
+    #[test]
+    fn a_json_ld_notification_writes_the_context_on_every_notified_entity_too() {
+        let endpoint = endpoint();
+        let subscription = subscription();
+        let context = Url::parse("https://example.com/ctx.jsonld").expect("a well-formed context URI");
+        let accept = media("application/ld+json");
+        let request = NotificationDelivery {
+            payload: &json!({
+                "id": "urn:ngsi-ld:Notification:1",
+                "type": "Notification",
+                "data": [{"id": "urn:ngsi-ld:Building:1", "type": "Building"}, {"id": "urn:ngsi-ld:Building:2", "type": "Building"}]
+            }),
+            endpoint_uri: &endpoint,
+            accept: Some(&accept),
+            receiver_info: None,
+            jsonld_context: Some(&context),
+            tenant: None,
+            snapshot: None,
+            timeout: None,
+            subscription_id: &subscription,
+        }
+        .assemble();
+
+        pretty_assertions::assert_eq!(request.payload["@context"], json!("https://example.com/ctx.jsonld"));
+        for notified in request.payload["data"].as_array().expect("the data array survives") {
+            pretty_assertions::assert_eq!(notified["@context"], json!("https://example.com/ctx.jsonld"), "{notified}");
+        }
     }
 
     /// Clause 6.3.8: an `application/json` notification carries the context in

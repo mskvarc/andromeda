@@ -1,8 +1,10 @@
 //! Construction and supervision of one tenant's background tasks.
 
+mod csource_notification;
+mod entity_notification;
 mod expiry;
 mod maintenance;
-mod notification;
+mod notification_schedule;
 mod pool_gauges;
 mod retention;
 mod temporal_retention;
@@ -13,9 +15,10 @@ use crate::tenant_factory::{
     services::ConstructedServices,
     storage::TenantStorage,
     tasks::{
+        csource_notification::{CsourceNotificationStreams, register_csource_notification_workers},
+        entity_notification::{compose_notification_processor, register_interval_notification, register_notification_workers},
         expiry::{register_expiry_workers, register_snapshot_workers},
         maintenance::{register_entity_side_effects, register_spatial_workers},
-        notification::{CsourceNotificationStreams, compose_notification_processor, register_interval_workers, register_notification_workers},
         pool_gauges::register_pool_gauges,
         temporal_retention::register_temporal_retention,
     },
@@ -118,11 +121,11 @@ pub(super) fn supervise_tasks(
         subscription,
     )?);
     register_expiry_workers(&task_supervisor, config, storage, &services.state, &registration)?;
-    register_interval_workers(
+    register_interval_notification(&task_supervisor, storage, transport, entity_subscriptions)?;
+    register_csource_notification_workers(
         &task_supervisor,
         storage,
         transport,
-        entity_subscriptions,
         csource_subscriptions,
         CsourceNotificationStreams {
             registrations: registration,

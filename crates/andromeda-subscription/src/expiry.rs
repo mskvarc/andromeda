@@ -1,9 +1,6 @@
 //! Bounded subscription expiry policy operations.
 
-use crate::{
-    error::SubscriptionError,
-    lifecycle::{SubscriptionService, SubscriptionVariant},
-};
+use crate::{error::SubscriptionError, lifecycle::SubscriptionService, variant::SubscriptionVariant};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use chrono::{DateTime, Utc};

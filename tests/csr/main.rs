@@ -431,14 +431,17 @@ fn expected_query_detailed(id: &str) -> Value {
     }])
 }
 
-/// Expected query result for the basic CSR when only its `Vehicle`
-/// `RegistrationInfo` matches.
+/// Expected query result for the basic CSR when one of its `RegistrationInfo`
+/// elements matches.
 ///
-/// Clause 5.10.2.5: "implementations should return filtered Context Source
-/// Registrations, which only contain context source registration information
-/// relevant for the query, in particular only matching `RegistrationInfo`
-/// elements."
-fn expected_query_basic_vehicle_information(id: &str) -> Value {
+/// Clause 5.10.2.5 only recommends the narrower answer -- implementations
+/// "should return filtered Context Source Registrations, which only contain
+/// context source registration information relevant for the query" -- so a
+/// registration that matches is returned whole: a discovery client asks what
+/// a source can provide, not which part of it matched the question it happened
+/// to ask. A Context Source Notification is the other case (clause 5.11.7) and
+/// does trim, because there the subscriber is told what changed.
+fn expected_query_basic_whole_information(id: &str) -> Value {
     json!([{
         "id": id,
         "type": "ContextSourceRegistration",
@@ -447,21 +450,7 @@ fn expected_query_basic_vehicle_information(id: &str) -> Value {
                 "entities": [{"id": "urn:ngsi-ld:Vehicle:A456", "type": "Vehicle"}],
                 "propertyNames": ["brandName", "speed"],
                 "relationshipNames": ["isParked"]
-            }
-        ],
-        "endpoint": "http://my.csource.org:1026/",
-        "mode": "inclusive",
-        "operations": ["federationOps"]
-    }])
-}
-
-/// Expected query result for the basic CSR when only its `OffStreetParking`
-/// `RegistrationInfo` matches (clause 5.10.2.5).
-fn expected_query_basic_parking_information(id: &str) -> Value {
-    json!([{
-        "id": id,
-        "type": "ContextSourceRegistration",
-        "information": [
+            },
             {
                 "entities": [
                     {"idPattern": ".*downtown$", "type": "OffStreetParking"},

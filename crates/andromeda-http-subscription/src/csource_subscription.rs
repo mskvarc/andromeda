@@ -26,10 +26,7 @@ use andromeda_http_response::{
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
 use andromeda_ngsi_ld_query::pagination::CountPolicy;
-use andromeda_ngsi_ld_render::{
-    response::ResponsePayload,
-    subscription::{SubscriptionFlavor, SubscriptionRenderer},
-};
+use andromeda_ngsi_ld_render::{response::ResponsePayload, subscription::SubscriptionRenderer};
 use andromeda_ngsi_ld_request::{csource_subscription::ListParams, empty::EmptyParams};
 use axum::{
     extract::OriginalUri,
@@ -87,9 +84,7 @@ pub async fn get(
         .await
         .with_subscription_instance(&uri)?;
 
-    let subscription = SubscriptionRenderer::new(subscription, SubscriptionFlavor::ContextSource)
-        .with_sys_attrs(options.sys_attrs)
-        .render();
+    let subscription = SubscriptionRenderer::new(subscription).with_sys_attrs(options.sys_attrs).render();
 
     let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Single(subscription))
@@ -128,11 +123,7 @@ pub async fn query(
 
     let subscriptions = subscriptions
         .into_iter()
-        .map(|sub| {
-            SubscriptionRenderer::new(sub, SubscriptionFlavor::ContextSource)
-                .with_sys_attrs(options.sys_attrs)
-                .render()
-        })
+        .map(|sub| SubscriptionRenderer::new(sub).with_sys_attrs(options.sys_attrs).render())
         .collect::<Vec<_>>();
 
     let rendered = start_rendering_normalized(accept.media_type(), &context, PreferHeader::default().rendering_preferences())

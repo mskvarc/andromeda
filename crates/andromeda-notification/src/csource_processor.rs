@@ -4,23 +4,24 @@
 //! every subscription or registration change, decides which of them are
 //! notified of which registrations; the delivery itself lives beside it.
 
-use crate::{csource_processor::matching::notified_registration, error::NotificationError};
+use crate::{csource_delivery::CsourceNotificationDelivery, csource_match_set::matching_registrations, error::NotificationError};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::dispatch::TransportDispatcher;
+use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     notification::{CsrChangeEvent, CsrTriggerReason},
     registration::ContextSourceRegistration,
     subscription::SubscriptionStatus,
 };
-use andromeda_ngsi_ld_query::pagination::{CountPolicy, Pagination};
 use andromeda_registration::store::RegistrationStore;
 use andromeda_subscription::{
     change::CsourceSubscriptionChange,
     compilation::compile_csource_subscription,
     compiled::CompiledCsrSubscription,
     csource_cache::CsourceSubscriptionCache,
-    csource_matching::matches_csource_subscription,
+    csource_matching::csource_subscription_is_live,
+    csource_notification_cadence::CsourceNotificationCadence,
     store::SubscriptionStore,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -28,9 +29,6 @@ use futures::{StreamExt, stream};
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
 use tracing::{debug, error};
-
-mod delivery;
-pub(crate) mod matching;
 
 const CSR_NOTIFICATION_CONCURRENCY: usize = 20;
 
@@ -53,8 +51,7 @@ pub struct CsourceNotificationProcessor {
     sub_repo: Arc<dyn SubscriptionStore>,
     csr_repo: Arc<dyn RegistrationStore>,
     cache: CsourceSubscriptionCache,
-    transport: Arc<TransportDispatcher>,
-    tenant: TenantRef,
+    delivery: CsourceNotificationDelivery,
 }
 
 impl CsourceNotificationProcessor {
@@ -63,16 +60,16 @@ impl CsourceNotificationProcessor {
         target: ContextTarget,
         sub_repo: Arc<dyn SubscriptionStore>,
         csr_repo: Arc<dyn RegistrationStore>,
+        engine: JsonLdEngine,
         transport: Arc<TransportDispatcher>,
         tenant: TenantRef,
-    ) -> Self {
-        Self {
-            target,
-            sub_repo,
+    ) -> CsourceNotificationProcessor {
+        CsourceNotificationProcessor {
+            target: target.clone(), // clone: the processor and its delivery half address the same branch.
+            sub_repo: Arc::clone(&sub_repo),
             csr_repo,
             cache: CsourceSubscriptionCache::new(),
-            transport,
-            tenant,
+            delivery: CsourceNotificationDelivery::new(target, sub_repo, engine, transport, tenant),
         }
     }
 
@@ -133,64 +130,47 @@ impl CsourceNotificationProcessor {
         }
     }
 
-    /// Send a notification with all currently matching CSRs for a subscription (spec 5.11.3).
+    /// Notify `compiled_sub` of every registration it currently selects
+    /// (clauses 5.11.2.4 and 5.11.3.4).
+    ///
+    /// Both bullets of clause 5.11.2.4 owe a notification "initially on
+    /// subscription", and clause 5.11.3.4 owes one after every update, so this
+    /// runs for a `timeInterval` subscription as well; what the cadence
+    /// settles is only whether an empty match set is still worth sending.
+    /// Clause 5.3.3 names the reason: `newlyMatching` "is used in the first
+    /// notification".
     async fn send_matching_csrs_for_subscription(&self, compiled_sub: &CompiledCsrSubscription) {
         let sub_id = &compiled_sub.id;
-
-        // Skip time-interval subscriptions — they have their own periodic worker
-        if compiled_sub.time_interval_secs.is_some() {
+        if !csource_subscription_is_live(compiled_sub) {
             return;
         }
 
-        // Fetch all CSRs and filter matching ones
-        let mut matching_csrs = Vec::new();
-        let page_size = 500;
-        let mut offset = 0;
-
-        loop {
-            let page = match self
-                .csr_repo
-                .list(Pagination {
-                    limit: page_size,
-                    offset,
-                    count: CountPolicy::Emit,
-                })
-                .await
-            {
-                Ok(page) => page,
-                Err(e) => {
-                    error!("Failed to fetch CSRs for subscription {} notification: {}", sub_id, e);
-                    return;
-                }
-            };
-
-            if page.registrations.is_empty() {
-                break;
+        let matching = match matching_registrations(self.csr_repo.as_ref(), compiled_sub).await {
+            Ok(matching) => matching,
+            Err(error) => {
+                error!("Failed to fetch CSRs for subscription {} notification: {}", sub_id, error);
+                return;
             }
+        };
 
-            for csr in &page.registrations {
-                if matches_csource_subscription(compiled_sub, csr) {
-                    match notified_registration(csr, compiled_sub) {
-                        Ok(notified) => matching_csrs.push(notified),
-                        Err(error) => {
-                            error!("Failed to serialize CSR {} for subscription {}: {}", csr.id, sub_id, error);
-                            return;
-                        }
-                    }
-                }
-            }
-
-            offset += page_size;
-            if u64::from(offset) >= page.total {
-                break;
-            }
-        }
-
-        if matching_csrs.is_empty() {
+        // Clause 5.11.2.4: a change-driven notification informs "about this
+        // change" to a matching registration, so while nothing matches there
+        // is no change to report; a periodic one is due on its schedule
+        // "independent of any changes to the set of Context Source
+        // registrations" and goes out carrying whatever there is.
+        if matching.is_empty() && CsourceNotificationCadence::of(compiled_sub).is_change_driven() {
             return;
         }
-        self.deliver_csr_notification(compiled_sub, matching_csrs, CsrTriggerReason::NewlyMatching)
-            .await;
+
+        let notified: Vec<&ContextSourceRegistration> = matching.iter().collect();
+        let data = match self.delivery.notified_registrations(&notified, compiled_sub).await {
+            Ok(data) => data,
+            Err(error) => {
+                error!("Failed to serialize CSRs for subscription {}: {}", sub_id, error);
+                return;
+            }
+        };
+        self.delivery.deliver(compiled_sub, data, CsrTriggerReason::NewlyMatching).await;
     }
 
     /// Evaluate and deliver notifications for one committed registration change.
@@ -312,13 +292,13 @@ impl CsourceNotificationProcessor {
     /// Notify `compiled_sub` of one registration, trimmed to the information
     /// it matches (clause 5.11.7).
     async fn send_csr_notification(&self, compiled_sub: &CompiledCsrSubscription, csr_data: &ContextSourceRegistration, trigger_reason: CsrTriggerReason) {
-        let filtered_csr = match notified_registration(csr_data, compiled_sub) {
-            Ok(filtered) => filtered,
-            Err(e) => {
-                error!("Failed to serialize CSR for subscription {}: {}", compiled_sub.id, e);
+        let data = match self.delivery.notified_registrations(&[csr_data], compiled_sub).await {
+            Ok(data) => data,
+            Err(error) => {
+                error!("Failed to serialize CSR for subscription {}: {}", compiled_sub.id, error);
                 return;
             }
         };
-        self.deliver_csr_notification(compiled_sub, vec![filtered_csr], trigger_reason).await;
+        self.delivery.deliver(compiled_sub, data, trigger_reason).await;
     }
 }

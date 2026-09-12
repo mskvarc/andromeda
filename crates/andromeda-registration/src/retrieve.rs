@@ -1,6 +1,11 @@
 //! Context-source registration retrieval policy.
 
-use crate::{RegistrationService, context_source_properties::compact_context_source_properties, error::RegistrationError};
+use crate::{
+    RegistrationService,
+    context_source_properties::compact_context_source_properties,
+    error::RegistrationError,
+    information_compaction::compact_information,
+};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use serde_json::Value;
@@ -20,7 +25,7 @@ impl RegistrationService {
         let additional_properties = registration.additional_properties.take();
         let mut value = serde_json::to_value(registration).map_err(|error| RegistrationError::internal(format!("Failed to serialize CSR: {error}")))?;
         if let Some(information) = value.get_mut("information") {
-            self.compact_information(information, context).await?;
+            compact_information(&self.engine, information, context).await;
         }
         if let Some(properties) = additional_properties
             && let Some(compacted) = compact_context_source_properties(&self.engine, properties, context).await?

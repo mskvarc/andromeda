@@ -1,11 +1,10 @@
-//! JSON-LD expansion and compaction of registration information entries.
+//! JSON-LD expansion of registration information entries.
+//!
+//! The reverse direction is `crate::information_compaction`, which every
+//! rendering of a registration shares.
 
 use crate::{RegistrationService, error::RegistrationError};
-use andromeda_jsonld::{
-    compaction::{compact_attr_iri, compact_type_iri},
-    context_spec::ContextSpec,
-    engine::term_lookup::PreparedTermContext,
-};
+use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext};
 use serde_json::Value;
 
 impl RegistrationService {
@@ -68,61 +67,5 @@ impl RegistrationService {
             object.insert(member.to_string(), Value::Array(expanded));
         }
         Ok(())
-    }
-
-    /// Compact entity types and attribute names in an `information` array.
-    pub(super) async fn compact_information(&self, information: &mut Value, context: &ContextSpec) -> Result<(), RegistrationError> {
-        let Some(entries) = information.as_array_mut() else {
-            return Ok(());
-        };
-
-        for entry in entries {
-            if let Some(entities) = entry.get_mut("entities").and_then(Value::as_array_mut) {
-                for entity in entities {
-                    self.compact_entity_type(entity, context).await;
-                }
-            }
-
-            self.compact_attribute_array(entry, "propertyNames", context).await;
-            self.compact_attribute_array(entry, "relationshipNames", context).await;
-        }
-        Ok(())
-    }
-
-    /// Compact an `EntityInfo` `type` in whichever of its two shapes it was
-    /// stored (Table 5.2.8-1), keeping that shape.
-    async fn compact_entity_type(&self, entity: &mut Value, context: &ContextSpec) {
-        let compacted = match entity.get("type") {
-            Some(Value::String(type_name)) => Value::String(compact_type_iri(&self.engine, type_name, context).await),
-            Some(Value::Array(type_names)) => {
-                let mut compacted = Vec::with_capacity(type_names.len());
-                for type_name in type_names {
-                    match type_name {
-                        Value::String(type_name) => compacted.push(Value::String(compact_type_iri(&self.engine, type_name, context).await)),
-                        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) => compacted.push(other.clone()), // clone: a stored member that is not a name is returned untouched
-                    }
-                }
-                Value::Array(compacted)
-            }
-            Some(Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_)) | None => return,
-        };
-        if let Some(object) = entity.as_object_mut() {
-            object.insert("type".to_string(), compacted);
-        }
-    }
-
-    async fn compact_attribute_array(&self, information: &mut Value, member: &str, context: &ContextSpec) {
-        let Some(names) = information.get(member).and_then(Value::as_array) else {
-            return;
-        };
-        let mut compacted = Vec::with_capacity(names.len());
-        for name in names {
-            if let Some(raw) = name.as_str() {
-                compacted.push(Value::String(compact_attr_iri(&self.engine, raw, context).await));
-            }
-        }
-        if let Some(object) = information.as_object_mut() {
-            object.insert(member.to_string(), Value::Array(compacted));
-        }
     }
 }

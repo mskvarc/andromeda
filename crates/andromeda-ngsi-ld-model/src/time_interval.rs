@@ -27,22 +27,34 @@ impl TimeInterval {
     /// Whether the interval meets a clause 4.11 temporal window, as clauses
     /// 5.10.2.4 and 5.11.2.4 read the match.
     ///
-    /// For `before` and `after` the window's instant must lie within the
-    /// interval or on one of its endpoints; for `between` the window and the
-    /// interval must overlap. An open-ended interval extends forever, and an
-    /// unbounded window narrows nothing.
+    /// Every relation is the same test: the period the temporal query
+    /// describes and the interval the registration declares must share at
+    /// least one instant. `before` describes everything up to its instant,
+    /// `after` everything from it onwards, `between` the span between its two,
+    /// and an absent window every instant there is; an interval without an
+    /// `endAt` is open-ended (Table 5.2.11-1) and so has no upper bound to
+    /// test.
+    ///
+    /// Clause 5.11.2.4 states the overlap outright for `between` and words the
+    /// other two as "the timeAt ... is contained in or is an endpoint of a time
+    /// period included in the specified time interval". Read as "the instant
+    /// itself lies inside the interval" that sentence answers the wrong
+    /// question: a source covering August 2020 to August 2021 plainly holds
+    /// observations made after June 2020, and a query for everything after the
+    /// epoch would reach no source at all. The official test material reads it
+    /// as the overlap from both directions -- `047_10`/`047_11` expect an
+    /// `after` whose instant precedes `startAt` to match, `037_09` a `before`
+    /// whose instant follows `endAt` -- and neither is satisfiable under the
+    /// containment reading, so the overlap is what is implemented.
     #[must_use]
     pub fn meets(&self, window: &QueryWindow) -> bool {
-        match window {
-            QueryWindow::Unbounded => true,
-            QueryWindow::Before(instant) | QueryWindow::After(instant) => self.contains(*instant),
-            QueryWindow::Between { from, to } => self.start_at <= *to && self.end_at.is_none_or(|end_at| *from <= end_at),
-        }
-    }
-
-    /// Whether `instant` lies within the interval or on one of its endpoints.
-    fn contains(&self, instant: DateTime<Utc>) -> bool {
-        self.start_at <= instant && self.end_at.is_none_or(|end_at| instant <= end_at)
+        let (from, to) = match window {
+            QueryWindow::Unbounded => (None, None),
+            QueryWindow::Before(instant) => (None, Some(*instant)),
+            QueryWindow::After(instant) => (Some(*instant), None),
+            QueryWindow::Between { from, to } => (Some(*from), Some(*to)),
+        };
+        to.is_none_or(|to| self.start_at <= to) && from.is_none_or(|from| self.end_at.is_none_or(|end_at| from <= end_at))
     }
 }
 
@@ -118,31 +130,50 @@ mod tests {
         chrono::DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&chrono::Utc)
     }
 
-    /// Clauses 5.10.2.4 and 5.11.2.4: for `before` and `after` the instant
-    /// must be contained in the interval or be one of its endpoints.
+    /// Clauses 5.10.2.4 and 5.11.2.4: `after` reaches every interval that
+    /// still holds instants at or beyond it, whether or not the instant itself
+    /// lies inside.
     #[test]
-    fn before_and_after_meet_an_interval_that_contains_the_instant() {
+    fn after_meets_every_interval_that_ends_at_or_beyond_the_instant() {
         let closed = interval("2020-01-01T00:00:00Z", Some("2021-01-01T00:00:00Z"));
-        for window in [QueryWindow::After(at("2020-06-01T00:00:00Z")), QueryWindow::Before(at("2020-06-01T00:00:00Z"))] {
-            assert!(closed.meets(&window), "{window:?} lies inside the interval");
-        }
+        assert!(closed.meets(&QueryWindow::After(at("2020-06-01T00:00:00Z"))), "an instant inside the interval");
         assert!(closed.meets(&QueryWindow::After(at("2020-01-01T00:00:00Z"))), "the start endpoint counts");
         assert!(closed.meets(&QueryWindow::After(at("2021-01-01T00:00:00Z"))), "the end endpoint counts");
         assert!(
-            !closed.meets(&QueryWindow::After(at("2022-06-01T00:00:00Z"))),
-            "an instant past the end does not"
+            closed.meets(&QueryWindow::After(at("2019-06-01T00:00:00Z"))),
+            "an instant before the start still leaves the whole interval to answer with"
         );
         assert!(
-            !closed.meets(&QueryWindow::Before(at("2019-01-01T00:00:00Z"))),
-            "an instant before the start does not"
+            !closed.meets(&QueryWindow::After(at("2022-06-01T00:00:00Z"))),
+            "an instant past the end leaves nothing"
         );
     }
 
+    /// Clauses 5.10.2.4 and 5.11.2.4: `before` reaches every interval that
+    /// starts at or before it.
     #[test]
-    fn an_open_ended_interval_contains_every_later_instant() {
+    fn before_meets_every_interval_that_starts_at_or_before_the_instant() {
+        let closed = interval("2020-01-01T00:00:00Z", Some("2021-01-01T00:00:00Z"));
+        assert!(closed.meets(&QueryWindow::Before(at("2020-06-01T00:00:00Z"))), "an instant inside the interval");
+        assert!(closed.meets(&QueryWindow::Before(at("2020-01-01T00:00:00Z"))), "the start endpoint counts");
+        assert!(
+            closed.meets(&QueryWindow::Before(at("2022-06-01T00:00:00Z"))),
+            "an instant past the end still leaves the whole interval to answer with"
+        );
+        assert!(
+            !closed.meets(&QueryWindow::Before(at("2019-01-01T00:00:00Z"))),
+            "an instant before the start leaves nothing"
+        );
+    }
+
+    /// Table 5.2.11-1: an interval without an `endAt` is open-ended, so no
+    /// `after` instant can fall past it.
+    #[test]
+    fn an_open_ended_interval_meets_every_after_window() {
         let open = interval("2020-01-01T00:00:00Z", None);
         assert!(open.meets(&QueryWindow::After(at("2030-01-01T00:00:00Z"))));
-        assert!(!open.meets(&QueryWindow::After(at("2019-01-01T00:00:00Z"))));
+        assert!(open.meets(&QueryWindow::After(at("2019-01-01T00:00:00Z"))));
+        assert!(!open.meets(&QueryWindow::Before(at("2019-01-01T00:00:00Z"))), "it still starts when it starts");
     }
 
     /// Clauses 5.10.2.4 and 5.11.2.4: `between` matches on overlap.

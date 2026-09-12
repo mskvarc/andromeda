@@ -25,7 +25,12 @@ use andromeda_jsonld::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, notification::NotificationTrigger};
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
-use andromeda_ngsi_ld_render::{notification_conformance::amend_notification_entities, snapshot::SnapshotRenderer, uri_decoding::decode_percent_encoded_uris};
+use andromeda_ngsi_ld_render::{
+    notification_conformance::amend_notification_entities,
+    snapshot::SnapshotRenderer,
+    structural_projection::StructuralProjection,
+    uri_decoding::decode_percent_encoded_uris,
+};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_subscription::compiled::CompiledSubscription;
@@ -111,6 +116,12 @@ pub(super) async fn build_notification_data(params: &NotificationBuildParams<'_>
     let Ok(mut compacted) = compact_for_notification(params.engine, &entity, &context, params.compaction_cache).await else {
         return vec![];
     };
+    // Clause 4.21, the `id` / `type` / `scope` half: the attribute half of the
+    // projection ran above on the expanded entity, keyed by attribute IRI; the
+    // three structural members only exist as such once compaction has turned
+    // `@id` and `@type` into them, so their half of the rule runs here -- the
+    // same rule, and the same code, a query response applies.
+    StructuralProjection::from(&params.sub.notification_projection).prune(&mut compacted);
     apply_show_changes(&mut compacted, params, &context).await;
 
     let payload = apply_join(compacted, params, &context).await;
@@ -214,10 +225,11 @@ fn apply_notification_selection(entity: &mut Value, sub: &CompiledSubscription) 
         let selected = filter_entity_attributes(entity, attributes);
         *entity = selected;
     }
-    // Clause 5.8.6: `pick` and `omit` reduce every entity in the payload to
-    // the listed members. `id` and `type` are never among what goes: clause
-    // 5.3.1 carries Entities in `data`, and Table 5.2.4-1 makes both mandatory
-    // (cardinality 1), so a notified entity that lost them would not be one.
+    // Clause 5.8.6 reduces "every Entity within the payload body ... down to
+    // only contain the defined entity members listed", which is clause
+    // 5.7.1.5's sentence for a query response. Only the attribute half is
+    // answerable here, on the expanded entity; `id`, `type` and `scope` are
+    // pruned after compaction.
     apply_notification_projection(entity, &sub.notification_projection);
 }
 

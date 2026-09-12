@@ -165,24 +165,6 @@ pub struct CsourceNotification {
     pub trigger_reason: Option<CsrTriggerReason>,
 }
 
-/// Signals subscription CRUD changes for cache invalidation.
-#[derive(Clone, Debug)]
-pub enum SubscriptionChange {
-    /// The subscription with this id was created or replaced.
-    Upserted(Uri),
-    /// The subscription with this id was deleted.
-    Deleted(Uri),
-}
-
-/// Signals CSR subscription CRUD changes for cache invalidation.
-#[derive(Clone, Debug)]
-pub enum CsourceSubscriptionChange {
-    /// The CSR subscription with this id was created or replaced.
-    Upserted(Uri),
-    /// The CSR subscription with this id was deleted.
-    Deleted(Uri),
-}
-
 #[cfg(test)]
 mod tests {
     use crate::notification::{CsourceNotification, CsrTriggerReason, Notification, NotificationTrigger, effective_notification_triggers};

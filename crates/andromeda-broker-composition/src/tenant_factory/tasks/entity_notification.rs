@@ -1,35 +1,36 @@
-//! Notification task registration and runtime failure classification.
+//! The workers turning entity changes and elapsed intervals into clause 5.8
+//! notifications, and the drain that delivers what they queued.
+//!
+//! Clause 5.11's context source notifications are registered separately, in
+//! `crate::tenant_factory::tasks::csource_notification`: they watch a
+//! different change stream, carry registrations rather than entities, and
+//! share nothing with these beyond the schedule helper.
 
 use crate::{
     linked_entity_forwarding::ForwardedLinkedEntitySource,
     tenant_factory::{
         error::TenantAssemblyError,
         storage::TenantStorage,
-        tasks::{EntityNotificationDelivery, retention::retention_duration},
+        tasks::{
+            EntityNotificationDelivery,
+            notification_schedule::{classify_notification_failure, register_notification_schedule},
+            retention::retention_duration,
+        },
     },
 };
 use andromeda_context_commit::context_change_event::ContextChangeEvent;
-use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_entity::query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource};
 use andromeda_federation::FederationService;
-use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use andromeda_notification::{
-    csource_interval::CsourceIntervalNotificationOperation,
-    csource_processor::CsourceNotificationProcessor,
     delivery_config::DeliveryConfig,
     delivery_drain::{NotificationDeliveryDrain, NotificationDeliveryTransport},
     delivery_store::DeliveryStore,
-    error::NotificationError,
     interval::IntervalNotificationOperation,
     processor::{NotificationProcessor, NotificationProcessorDeps},
 };
 use andromeda_postgresql_context_store::notification_delivery::queue::NotificationDeliveryQueue;
-use andromeda_registration::store::RegistrationStore;
-use andromeda_subscription::{
-    change::{CsourceSubscriptionChange, SubscriptionChange},
-    store::SubscriptionStore,
-};
+use andromeda_subscription::{change::SubscriptionChange, store::SubscriptionStore};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     drain_task::{DrainPassOutcome, DrainTask},
@@ -44,10 +45,9 @@ use andromeda_task_runtime::{
     task_name::TaskName,
     wake_trigger::{DrainFallbackCadence, WakeHandle},
 };
-use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio::sync::{
     broadcast,
     broadcast::error::{RecvError, TryRecvError},
@@ -129,63 +129,31 @@ pub(super) fn register_notification_workers(
     register_notification_delivery(supervisor, Arc::new(drain), config).map(Some)
 }
 
-/// The change streams a context-source notification worker reacts to.
-///
-/// The two travel together because one resident worker selects over both:
-/// clause 5.11 notifications are produced from registration changes, evaluated
-/// against the context-source subscriptions the second stream keeps current.
-pub(super) struct CsourceNotificationStreams {
-    /// Registration lifecycle changes evaluated against context-source subscriptions.
-    pub(super) registrations: broadcast::Sender<CsrChangeEvent>,
-    /// Context-source subscription changes keeping the evaluated set current.
-    pub(super) subscriptions: broadcast::Sender<CsourceSubscriptionChange>,
-}
-
-/// Register the time-interval notification workers and the resident processor
-/// that turns registration changes into clause 5.11 notifications.
+/// Register the sweep delivering one tenant's `timeInterval` entity
+/// subscriptions.
 ///
 /// # Errors
 ///
-/// Returns [`TenantAssemblyError`] when the supervisor refuses a registration.
-pub(super) fn register_interval_workers(
+/// Returns [`TenantAssemblyError`] when the supervisor refuses the registration.
+pub(super) fn register_interval_notification(
     supervisor: &TaskSupervisor,
     storage: &TenantStorage,
     transport: &Arc<TransportDispatcher>,
     subscriptions: Arc<dyn SubscriptionStore>,
-    csource_subscriptions: Arc<dyn SubscriptionStore>,
-    streams: CsourceNotificationStreams,
 ) -> Result<(), TenantAssemblyError> {
-    register_interval_notification(
-        supervisor,
-        Arc::new(IntervalNotificationOperation::new(
-            storage.live_target.clone(), // clone: interval delivery and expiry both operate on the tenant's live branch.
-            subscriptions,
-            Arc::clone(&storage.entity_ports.reader),
-            Arc::clone(&storage.entity_ports.discovery),
-            storage.engine.clone(), // clone: interval policy owns its engine handle.
-            Arc::clone(transport),  // clone: every worker delivers through one dispatcher.
-            storage.tenant.clone(), // clone: interval policy owns its tenant partition.
-        )),
-    )?;
-    register_csource_notification_processor(
-        supervisor,
-        storage.live_target.clone(), // clone: the resident processor owns the live branch it evaluates.
-        streams,
-        Arc::clone(&csource_subscriptions),      // clone: the processor and the interval worker share one store.
-        Arc::clone(&storage.registration_store), // clone: every registration worker shares one store.
-        Arc::clone(transport),                   // clone: every worker delivers through one dispatcher.
-        storage.tenant.clone(),                  // clone: notification policy owns its tenant partition.
-    )?;
-    register_csource_interval_notification(
-        supervisor,
-        Arc::new(CsourceIntervalNotificationOperation::new(
-            storage.live_target.clone(), // clone: interval delivery operates on the tenant's live branch.
-            csource_subscriptions,
-            Arc::clone(&storage.registration_store), // clone: every registration worker shares one store.
-            Arc::clone(transport),                   // clone: every worker delivers through one dispatcher.
-            storage.tenant.clone(),                  // clone: interval policy owns its tenant partition.
-        )),
-    )
+    let operation = Arc::new(IntervalNotificationOperation::new(
+        storage.live_target.clone(), // clone: interval delivery and expiry both operate on the tenant's live branch.
+        subscriptions,
+        Arc::clone(&storage.entity_ports.reader),
+        Arc::clone(&storage.entity_ports.discovery),
+        storage.engine.clone(), // clone: interval policy owns its engine handle.
+        Arc::clone(transport),  // clone: every worker delivers through one dispatcher.
+        storage.tenant.clone(), // clone: interval policy owns its tenant partition.
+    ));
+    register_notification_schedule(supervisor, "notification-interval", move || {
+        let operation = Arc::clone(&operation); // clone: each bounded execution owns the shared notification operation.
+        async move { operation.execute().await }
+    })
 }
 
 fn register_notification_processor(
@@ -246,139 +214,6 @@ fn register_notification_processor(
         .register_resident(task)
         .map(drop)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
-}
-
-fn register_csource_notification_processor(
-    supervisor: &TaskSupervisor,
-    target: ContextTarget,
-    streams: CsourceNotificationStreams,
-    subscription_store: Arc<dyn SubscriptionStore>,
-    registration_store: Arc<dyn RegistrationStore>,
-    transport: Arc<TransportDispatcher>,
-    tenant: TenantRef,
-) -> Result<(), TenantAssemblyError> {
-    let CsourceNotificationStreams {
-        registrations: registration_changes,
-        subscriptions: subscription_changes,
-    } = streams;
-    let restart_delay = Duration::from_secs(1);
-    let name = TaskName::try_from("csource-notification-events").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let registration = TaskRegistration::new(
-        name,
-        TaskCriticality::TenantDegrading,
-        RestartPolicy::transient(u32::MAX, restart_delay, restart_delay),
-        ShutdownPolicy::new(restart_delay),
-    );
-    let task = ResidentTask::new(registration, move |execution| {
-        let mut registration_receiver = registration_changes.subscribe();
-        let mut subscription_receiver = subscription_changes.subscribe();
-        let processor = CsourceNotificationProcessor::new(
-            target.clone(), // clone: each resident restart owns the same immutable live branch target.
-            Arc::clone(&subscription_store),
-            Arc::clone(&registration_store),
-            Arc::clone(&transport),
-            tenant.clone(),
-        );
-        async move {
-            processor.reload_cache().await.map_err(|error| classify_notification_failure(&error))?;
-            execution.mark_running();
-            loop {
-                tokio::select! {
-                    () = execution.cancellation().cancelled() => return Ok(()),
-                    received = subscription_receiver.recv() => match received {
-                        Ok(change) => processor.apply_subscription_change(change).await,
-                        Err(RecvError::Lagged(skipped)) => {
-                            tracing::debug!(skipped, "context-source subscription stream lagged; reloading policy cache");
-                            processor.reload_cache().await.map_err(|error| classify_notification_failure(&error))?;
-                        }
-                        Err(RecvError::Closed) => return Err(TaskFailure::transient("context-source subscription channel closed")),
-                    },
-                    received = registration_receiver.recv() => match received {
-                        Ok(event) => {
-                            loop {
-                                match subscription_receiver.try_recv() {
-                                    Ok(change) => processor.apply_subscription_change(change).await,
-                                    Err(TryRecvError::Lagged(skipped)) => {
-                                        tracing::debug!(skipped, "context-source subscription stream lagged before registration evaluation; reloading policy cache");
-                                        processor.reload_cache().await.map_err(|error| classify_notification_failure(&error))?;
-                                    }
-                                    Err(TryRecvError::Empty | TryRecvError::Closed) => break,
-                                }
-                            }
-                            processor.apply_registration_change(event).await;
-                        }
-                        Err(RecvError::Lagged(skipped)) => tracing::debug!(skipped, "registration stream lagged"),
-                        Err(RecvError::Closed) => return Err(TaskFailure::transient("registration channel closed")),
-                    },
-                }
-            }
-        }
-    });
-    supervisor
-        .register_resident(task)
-        .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
-}
-
-fn register_interval_notification(supervisor: &TaskSupervisor, operation: Arc<IntervalNotificationOperation>) -> Result<(), TenantAssemblyError> {
-    register_notification_schedule(supervisor, "notification-interval", move || {
-        let operation = Arc::clone(&operation); // clone: each bounded execution owns the shared notification operation.
-        async move { operation.execute().await }
-    })
-}
-
-fn register_csource_interval_notification(
-    supervisor: &TaskSupervisor,
-    operation: Arc<CsourceIntervalNotificationOperation>,
-) -> Result<(), TenantAssemblyError> {
-    register_notification_schedule(supervisor, "csource-notification-interval", move || {
-        let operation = Arc::clone(&operation); // clone: each bounded execution owns the shared notification operation.
-        async move { operation.execute().await }
-    })
-}
-
-fn register_notification_schedule<F, Fut>(supervisor: &TaskSupervisor, task_name: &'static str, operation: F) -> Result<(), TenantAssemblyError>
-where
-    F: Fn() -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<usize, NotificationError>> + Send + 'static,
-{
-    let cadence = Duration::from_secs(1);
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from(task_name).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let registration = TaskRegistration::new(
-        name,
-        TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, cadence, cadence),
-        ShutdownPolicy::new(cadence),
-    );
-    let operation = Arc::new(operation);
-    let task = ScheduledTask::new(registration, schedule, move |_execution| {
-        let operation = Arc::clone(&operation); // clone: scheduled execution owns its operation factory.
-        async move {
-            let due = operation().await.map_err(|error| classify_notification_failure(&error))?;
-            tracing::debug!(task = task_name, due, "interval notification evaluation completed");
-            Ok(())
-        }
-    });
-    supervisor
-        .register_scheduled(task)
-        .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
-}
-
-/// Convert a configured retention in seconds into a [`chrono::Duration`],
-/// naming the offending setting in the error rather than the raw number.
-fn classify_notification_failure(error: &NotificationError) -> TaskFailure {
-    let summary = error.to_string();
-    match error {
-        NotificationError::Entity(_) | NotificationError::Subscription(_) | NotificationError::Registration(_) | NotificationError::JsonLd(_) => {
-            TaskFailure::transient(summary)
-        }
-        NotificationError::Persistence { .. } => TaskFailure::transient(summary),
-        NotificationError::Representation { .. } => TaskFailure::permanent(summary),
-        NotificationError::Invariant { .. } => TaskFailure::invariant_violation(summary),
-    }
 }
 
 fn register_notification_delivery(

@@ -21,6 +21,7 @@ mod fixed_probe;
 mod fixed_store;
 mod geometry;
 mod identifier;
+pub mod information_compaction;
 mod information_expansion;
 mod mode_rules;
 pub mod nullable_member;

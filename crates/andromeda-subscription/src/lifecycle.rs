@@ -1,17 +1,21 @@
-//! Unified subscription service core.
+//! The subscription lifecycle both kinds of subscription share (ETSI GS CIM
+//! 009 clauses 5.8.1 to 5.8.5 and 5.11.2 to 5.11.6).
 //!
-//! `SubscriptionService<V>` holds the CRUD logic shared by entity
-//! subscriptions and CSR subscriptions.  Variant-specific behaviour is
-//! delegated to the [`SubscriptionVariant`] trait.
+//! `SubscriptionService<V>` owns create, retrieve, list, update, delete and
+//! expiry for entity subscriptions and Context Source Registration
+//! Subscriptions alike; what the two do differently is declared by
+//! `crate::variant::SubscriptionVariant` and nothing else.
 
 use crate::{
     change::SubscriptionChangeSink,
+    endpoint_admission::{SubscriptionEndpointValidator, validate_endpoint},
     error::SubscriptionError,
     fields,
     forwarding_hook::SubscriptionForwardingHook,
     status::compute_updated_status,
     store::{StatusUpdateFields, SubscriptionStore},
     validation,
+    variant::SubscriptionVariant,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{
@@ -23,130 +27,19 @@ use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonym,
     uri::{NGSI_LD_URN_NID, Uri},
 };
-use andromeda_ngsi_ld_model::{
-    key_value_pair::KeyValuePair,
-    subscription::{Subscription, SubscriptionStatus},
-};
+use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
-use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 use url::Url;
 use urn_rs::UrnBuilder;
 use uuid::Uuid;
 
-/// Reject a subscription whose endpoint names a transport this broker cannot
-/// deliver over, or a `notifierInfo` it cannot read.
-///
-/// Runs against the raw payload rather than a parsed [`Subscription`] because
-/// an update carries a fragment, and the same check has to hold for a create
-/// and for a patch that touches only the endpoint.
-fn validate_endpoint(payload: &Value, validator: &dyn SubscriptionEndpointValidator) -> Result<(), SubscriptionError> {
-    let Some(endpoint) = payload.get("notification").and_then(|notification| notification.get("endpoint")) else {
-        return Ok(());
-    };
-    let Some(endpoint_uri) = endpoint.get("uri").and_then(Value::as_str) else {
-        return Ok(());
-    };
-    let endpoint_uri = Url::parse(endpoint_uri).map_err(|error| SubscriptionError::validation(error.to_string()))?;
-
-    let notifier_info = match endpoint.get("notifierInfo") {
-        Some(value) => Some(
-            Vec::<KeyValuePair>::deserialize(value)
-                .map_err(|error| SubscriptionError::validation(format!("notifierInfo must be an array of key-value pairs: {error}")))?,
-        ),
-        None => None,
-    };
-
-    validator.validate(&endpoint_uri, notifier_info.as_deref())
-}
-
-/// Validates whether endpoint configuration can be served by the selected delivery bindings.
-pub trait SubscriptionEndpointValidator: Send + Sync + 'static {
-    /// Validate one endpoint URL and its optional notifier metadata.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SubscriptionError::Validation`] when no delivery binding this
-    /// broker was built with serves the endpoint's scheme, or when the binding
-    /// that does cannot honour the `notifierInfo` the endpoint carries.
-    fn validate(&self, endpoint: &Url, notifier_info: Option<&[KeyValuePair]>) -> Result<(), SubscriptionError>;
-}
-
-/// Controls whether a subscription variant persists clause 5.8 `datasetId`
-/// filtering.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DatasetIdPolicy {
-    /// Retain validated dataset identifiers for entity subscriptions.
-    Retain,
-    /// Discard dataset identifiers for context-source subscriptions, whose
-    /// contract does not define this filter.
-    Discard,
-}
-
-// ---------------------------------------------------------------------------
-// Variant trait
-// ---------------------------------------------------------------------------
-
-/// Trait for variant-specific subscription behaviour (entity vs. CSR subscriptions).
-pub trait SubscriptionVariant: Send + Sync {
-    /// The change-event type emitted over the broadcast channel.
-    type Change: Clone + Send + 'static;
-
-    /// Expand subscription terms in-place (context hosting, IRI expansion).
-    fn expand_terms<'life0, 'life1, 'life2, 'life3, 'async_trait>(
-        &'life0 self,
-        payload: &'life1 mut Value,
-        context: &'life2 ContextSpec,
-        base_url: Option<&'life3 Url>,
-    ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        'life3: 'async_trait,
-        Self: 'async_trait;
-
-    /// Serialize a subscription for an HTTP response (compaction, fixups).
-    fn serialize_for_response<'life0, 'life1, 'life2, 'async_trait>(
-        &'life0 self,
-        subscription: &'life1 Subscription,
-        context: &'life2 ContextSpec,
-    ) -> BoxFuture<'async_trait, Result<Value, SubscriptionError>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        Self: 'async_trait;
-
-    /// Additional update-specific validation (e.g. `expiresAt` future check).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SubscriptionError::Validation`] when the fragment breaks a
-    /// rule that holds for this variant alone, such as an `expiresAt` that is
-    /// already in the past.
-    fn validate_update_extra(&self, payload: &Value) -> Result<(), SubscriptionError>;
-
-    /// Select how this subscription variant handles the `datasetId` field.
-    fn dataset_id_policy(&self) -> DatasetIdPolicy;
-
-    /// Build an "upserted" change event.
-    fn make_upserted(&self, target: ContextTarget, id: Uri) -> Self::Change;
-
-    /// Build a "deleted" change event.
-    fn make_deleted(&self, target: ContextTarget, id: Uri) -> Self::Change;
-}
-
 fn generate_id() -> Result<Uri, SubscriptionError> {
     let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Subscription:{}", Uuid::new_v4())).build()?;
     Ok(Uri::from(urn))
 }
-
-// ---------------------------------------------------------------------------
-// Core service
-// ---------------------------------------------------------------------------
 
 /// Generic subscription service providing CRUD operations shared by entity and CSR subscriptions.
 pub struct SubscriptionService<V: SubscriptionVariant> {
@@ -427,20 +320,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        error::SubscriptionError,
-        lifecycle::{SubscriptionEndpointValidator, generate_id, validate_endpoint},
-    };
-    use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
-    use url::Url;
-
-    struct RejectingEndpointValidator;
-
-    impl SubscriptionEndpointValidator for RejectingEndpointValidator {
-        fn validate(&self, _endpoint: &Url, _notifier_info: Option<&[KeyValuePair]>) -> Result<(), SubscriptionError> {
-            Err(SubscriptionError::validation("unsupported endpoint"))
-        }
-    }
+    use crate::lifecycle::generate_id;
 
     #[test]
     fn generated_subscription_identifiers_are_ngsi_ld_urns() {
@@ -449,21 +329,5 @@ mod tests {
             identifier,
             Ok(identifier) if identifier.as_str().starts_with("urn:ngsi-ld:Subscription:")
         ));
-    }
-
-    #[test]
-    fn endpoint_validation_rejects_an_invalid_url_before_calling_the_binding() {
-        let payload = serde_json::json!({"notification": {"endpoint": {"uri": "://invalid"}}});
-        assert!(matches!(
-            validate_endpoint(&payload, &RejectingEndpointValidator),
-            Err(SubscriptionError::Validation { .. })
-        ));
-    }
-
-    #[test]
-    fn endpoint_validation_propagates_the_selected_binding_refusal() {
-        let payload = serde_json::json!({"notification": {"endpoint": {"uri": "http://example.com/notify"}}});
-        let error = validate_endpoint(&payload, &RejectingEndpointValidator);
-        assert!(matches!(error, Err(SubscriptionError::Validation { detail }) if detail == "unsupported endpoint"));
     }
 }

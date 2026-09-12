@@ -1,6 +1,11 @@
 //! Context-source registration discovery policy (ETSI GS CIM 009 clause 5.10.2).
 
-use crate::{RegistrationService, context_source_properties::compact_context_source_properties, error::RegistrationError};
+use crate::{
+    RegistrationService,
+    context_source_properties::compact_context_source_properties,
+    error::RegistrationError,
+    information_compaction::compact_information,
+};
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::{
@@ -25,8 +30,9 @@ impl RegistrationService {
     /// Discover the registrations matching `params` (clause 5.10.2), excluding
     /// the sources the request already passed through (clause 5.12).
     ///
-    /// Each returned registration carries only the `RegistrationInfo` elements
-    /// that match (clause 5.10.2.5), compacted under `context`.
+    /// Each returned registration matches on at least one of its
+    /// `RegistrationInfo` elements (clause 5.12) and is compacted under
+    /// `context`.
     ///
     /// # Errors
     ///
@@ -50,13 +56,13 @@ impl RegistrationService {
         let page = self.repo.query_compiled(&compiled).await?;
         let mut values = Vec::with_capacity(page.registrations.len());
         for registration in page.registrations {
-            let Some(mut registration) = trim_to_matching_information(registration, &compiled)? else {
+            let Some(mut registration) = registration_matching_the_query(registration, &compiled)? else {
                 continue;
             };
             let additional_properties = registration.additional_properties.take();
             let mut value = serde_json::to_value(registration).map_err(|error| RegistrationError::internal(format!("Failed to serialize CSR: {error}")))?;
             if let Some(information) = value.get_mut("information") {
-                self.compact_information(information, context).await?;
+                compact_information(&self.engine, information, context).await;
             }
             if let Some(properties) = additional_properties
                 && let Some(compacted) = compact_context_source_properties(&self.engine, properties, context).await?
@@ -142,14 +148,23 @@ impl RegistrationService {
     }
 }
 
-/// Keep only the `RegistrationInfo` elements the compiled query matches
-/// (clause 5.10.2.5), or nothing when none does.
+/// The registration when the compiled query matches at least one of its
+/// `RegistrationInfo` elements (clause 5.12), or nothing when none does.
 ///
 /// The statement preselects on the same clause 5.12 reading, but it decides the
 /// two regular-expression cases in the database's dialect; the typed evaluation
-/// here is the authority, and it is what trims the response.
-fn trim_to_matching_information(
-    mut registration: ContextSourceRegistration,
+/// here is the authority, and it is what settles the response.
+///
+/// The surviving registration keeps its whole `information`. Clause 5.10.2.5
+/// only recommends the narrower answer -- implementations "should return
+/// filtered Context Source Registrations, which only contain context source
+/// registration information relevant for the query" -- and a discovery client
+/// asks what a source can provide, not merely which part of it matched the
+/// question it happened to ask. A Context Source Notification is the other
+/// case and does trim (clause 5.11.7), because there the subscriber is being
+/// told what changed rather than what exists.
+fn registration_matching_the_query(
+    registration: ContextSourceRegistration,
     compiled: &CompiledCsrQuery,
 ) -> Result<Option<ContextSourceRegistration>, RegistrationError> {
     let type_selector = compiled
@@ -177,6 +192,6 @@ fn trim_to_matching_information(
         entities: &entities,
         attributes: &attributes,
     };
-    registration.coverage.information.retain(|info| specification.matches_information(info));
-    Ok((!registration.coverage.information.is_empty()).then_some(registration))
+    let matches = registration.coverage.information.iter().any(|info| specification.matches_information(info));
+    Ok(matches.then_some(registration))
 }
