@@ -63,7 +63,7 @@ pub fn classify_attribute_changes(previous: &Value, current: &Value) -> Vec<Attr
                 key: key.clone(),
                 kind: AttributeChangeKind::Deleted,
             }),
-            Some(current_instance) if *current_instance != *previous_instance => changes.push(AttributeChange {
+            Some(current_instance) if instance_data_differs(current_instance, previous_instance) => changes.push(AttributeChange {
                 key: key.clone(),
                 kind: AttributeChangeKind::Updated,
             }),
@@ -78,6 +78,30 @@ pub fn classify_attribute_changes(previous: &Value, current: &Value) -> Vec<Attr
     }
     changes.sort_by(compare_changes);
     changes
+}
+
+/// Whether two instances of the same `(attribute, datasetId)` differ in their
+/// data, ignoring the clause 4.8 system times `createdAt`/`modifiedAt`.
+///
+/// A write stamps `modifiedAt` and preserves or sets `createdAt` on every
+/// instance it touches, and both members appear in the stored payload; neither
+/// is a change a Context Producer made, so a change classification that read
+/// them would raise an `attributeUpdated` for an instance whose data is
+/// unchanged -- and would raise one for every attribute of an entity stored
+/// before the broker began stamping, whose first update introduces the members.
+fn instance_data_differs(current: &Value, previous: &Value) -> bool {
+    let system_time = |key: &str| key == properties::CREATED_AT.as_str() || key == properties::MODIFIED_AT.as_str();
+    match (current.as_object(), previous.as_object()) {
+        (Some(current), Some(previous)) => {
+            let significant = |members: &serde_json::Map<String, Value>| members.keys().filter(|key| !system_time(key)).count();
+            significant(current) != significant(previous)
+                || current
+                    .iter()
+                    .filter(|(key, _)| !system_time(key))
+                    .any(|(key, value)| previous.get(key) != Some(value))
+        }
+        (Some(_) | None, _) => current != previous,
+    }
 }
 
 /// Index one expanded entity's attribute instances by their dataset-partitioned key.

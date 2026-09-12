@@ -8,7 +8,12 @@
 use crate::{
     context_cache::ContextCache,
     context_registry::ContextRegistry,
-    core_context::{NGSI_LD_CORE_CONTEXT_URL_LIST, embedded_core_context as embedded_core_context_payload, is_ngsi_ld_core_context_url},
+    core_context::{
+        NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL,
+        NGSI_LD_CORE_CONTEXT_URL_LIST,
+        embedded_core_context as embedded_core_context_payload,
+        is_ngsi_ld_core_context_url,
+    },
     engine::{options::RemoteContextFetch, processor::JsonLdEngine, term_lookup::TermCache, term_map::vocabulary::CoreVocabulary},
     error::JsonLdError,
     hit_counter::HitCounter,
@@ -207,9 +212,7 @@ impl JsonLdEngineBuilder {
 
         // The pin defaults to the versionless core context, which the registry
         // resolves to whatever version this deployment embedded.
-        let default_core_url = self
-            .default_core_url
-            .unwrap_or_else(|| IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld")));
+        let default_core_url = self.default_core_url.unwrap_or_else(|| IriBuf::from(NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL));
         let core_vocabulary = CoreVocabulary::try_from_generated()?;
         Ok(JsonLdEngine::assembled(
             loader,
@@ -275,11 +278,10 @@ fn register_preloaded(entries: Option<&HashMap<Url, PathBuf>>, registry: &Contex
 mod tests {
     use crate::{
         context_spec::ContextSpec,
-        core_context::{NGSI_LD_CORE_CONTEXT_V16_URL, NGSI_LD_CORE_CONTEXT_V19_URL},
+        core_context::{NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL, NGSI_LD_CORE_CONTEXT_V16_URL, NGSI_LD_CORE_CONTEXT_V19_URL},
         engine::processor::JsonLdEngine,
         error::JsonLdError,
     };
-    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriBuf;
     use serde_json::json;
     use std::{
@@ -498,6 +500,6 @@ mod tests {
     #[test]
     fn an_engine_without_a_pin_defaults_to_the_versionless_core_context() {
         let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
-        pretty_assertions::assert_eq!(engine.default_core_url().as_str(), NGSI_LD_CORE_CONTEXT_URL.as_str());
+        pretty_assertions::assert_eq!(engine.default_core_url().as_str(), NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL.as_str());
     }
 }

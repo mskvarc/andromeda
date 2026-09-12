@@ -6,6 +6,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::entity::Entity;
+use chrono::Utc;
 use std::collections::HashSet;
 
 impl EntityService {
@@ -50,11 +51,12 @@ impl EntityService {
         let lock_ids: Vec<Uri> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: guards outlive the borrowed preparation view
         let _id_guards = self.acquire_id_locks(target, &lock_ids).await;
 
+        let now = Utc::now();
         let mut seen: HashSet<Uri> = HashSet::with_capacity(prepared.len());
         let mut writes = Vec::with_capacity(prepared.len());
         for entity in prepared {
             if seen.insert(entity.id.clone()) {
-                writes.push(self.chunk_insert(target, entity, Precondition::MustNotExist));
+                writes.push(self.chunk_insert(target, entity, Precondition::MustNotExist, now));
             } else {
                 errors.push((entity.id.clone(), EntityError::already_exists(&entity.id))); // clone: error result owns the entity ID
             }

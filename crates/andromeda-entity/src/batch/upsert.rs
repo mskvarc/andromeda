@@ -38,7 +38,7 @@ use crate::{
 use andromeda_context_commit::{precondition::Precondition, write_retry::WRITE_ATTEMPTS};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     entity::Entity,
     expanded::{
@@ -89,6 +89,7 @@ impl EntityService {
 
         let chunk_ids: Vec<Uri> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
         let _id_guards = self.acquire_id_locks(target, &chunk_ids).await;
+        let now = Utc::now();
 
         let snapshots = self.reader.get_snapshot_batch(target, &chunk_ids).await?;
         let mut payloads: HashMap<Uri, Arc<Value>> = HashMap::with_capacity(prepared.len());
@@ -97,9 +98,9 @@ impl EntityService {
             let write = match snapshots.get(&entity.id) {
                 Some(snapshot) => {
                     let payload = Arc::new(entity.expanded);
-                    self.replacement_write(target, entity.id, &payload, &snapshot.payload, snapshot.modified_at, entity.changed_attributes)
+                    self.replacement_write(target, entity.id, &payload, &snapshot.payload, snapshot.modified_at, now)
                 }
-                None => self.chunk_insert(target, entity, Precondition::MustNotExist),
+                None => self.chunk_insert(target, entity, Precondition::MustNotExist, now),
             };
             // clone: an `Arc` handle kept for a possible retry, which must not
             // re-expand the request payload.
@@ -138,8 +139,8 @@ impl EntityService {
                 // clone: `Arc` ref-count bumps; the payload is reused for every
                 // attempt this entity needs.
                 let write = match snapshots.get(&id) {
-                    Some(snapshot) => self.replacement_write(target, id, payload, &snapshot.payload, snapshot.modified_at, changed),
-                    None => self.chunk_insert_payload(target, id, Arc::clone(payload), changed, Precondition::MustNotExist),
+                    Some(snapshot) => self.replacement_write(target, id, payload, &snapshot.payload, snapshot.modified_at, now),
+                    None => self.chunk_insert_payload(target, id, Arc::clone(payload), changed, Precondition::MustNotExist, now),
                 };
                 retry_writes.push(write);
             }
@@ -191,6 +192,7 @@ impl EntityService {
         // the merge, and the write.
         let _id_guards = self.acquire_id_locks(target, &prepared_ids).await;
         let existing_map = self.reader.get_batch(target, &prepared_ids).await?;
+        let now = Utc::now();
 
         let mut writes = Vec::with_capacity(prepared.len());
         for entity in prepared {
@@ -199,7 +201,7 @@ impl EntityService {
                 // created by someone else, and this request has nothing to add
                 // to it. Reported as neither a success nor a failure, which is
                 // what this path has always done.
-                writes.push(self.chunk_insert_created(target, entity));
+                writes.push(self.chunk_insert_created(target, entity, now));
                 continue;
             };
 
@@ -226,6 +228,7 @@ impl EntityService {
                 },
                 &groups,
                 Precondition::MustExist,
+                now,
             ));
         }
 
@@ -249,14 +252,14 @@ impl EntityService {
     /// where the deletions the update branch admits have nothing to delete:
     /// they are dropped, and only a payload that carried one is re-derived,
     /// so an ordinary create keeps the columns the preparation pass computed.
-    fn chunk_insert_created(&self, target: &ContextTarget, prepared: PreparedEntity) -> ChunkWrite {
+    fn chunk_insert_created(&self, target: &ContextTarget, prepared: PreparedEntity, now: DateTime<Utc>) -> ChunkWrite {
         let mut prepared = prepared;
         match drop_deletion_sentinels(&mut prepared.expanded) {
-            DroppedSentinels::Unchanged => self.chunk_insert(target, prepared, Precondition::None),
+            DroppedSentinels::Unchanged => self.chunk_insert(target, prepared, Precondition::None, now),
             DroppedSentinels::Dropped => {
                 let payload = Arc::new(prepared.expanded);
                 let changed_attributes = extract_attribute_names(&payload);
-                self.chunk_insert_payload(target, prepared.id, payload, changed_attributes, Precondition::None)
+                self.chunk_insert_payload(target, prepared.id, payload, changed_attributes, Precondition::None, now)
             }
         }
     }
@@ -273,7 +276,7 @@ impl EntityService {
         payload: &Arc<Value>,
         previous: &Value,
         modified_at: DateTime<Utc>,
-        _changed_attributes: Vec<AttributeName>,
+        now: DateTime<Utc>,
     ) -> ChunkWrite {
         let groups = attribute_change_groups(previous, payload);
         self.chunk_update(
@@ -287,6 +290,7 @@ impl EntityService {
             },
             &groups,
             Precondition::UnchangedSince(modified_at),
+            now,
         )
     }
 }

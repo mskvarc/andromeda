@@ -211,7 +211,7 @@ impl EntityQueryService {
             let Some(expanded) = payloads.remove(&candidate.id) else {
                 continue;
             };
-            match self.compact_to_entity(expanded, context, Some(candidate.id.as_str())).await {
+            match self.compact_to_entity(expanded, context, Some(candidate.id.as_str()), sys_attrs).await {
                 Ok(mut entity) => {
                     if let Some(snapshot) = sys_attr_snapshots.get(&candidate.id) {
                         entity = entity.with_sys_attrs(snapshot);

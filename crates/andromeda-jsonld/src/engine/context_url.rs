@@ -157,7 +157,7 @@ pub(crate) fn strip_context(value: &mut Value) {
 #[cfg(test)]
 mod tests {
     use crate::{
-        core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
+        core_context::{NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
         engine::context_url::{canonical_context_urls, context_urls_of, is_absolute_iri, is_full_iri, resolve_relative_context_urls, strip_context},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
@@ -217,7 +217,7 @@ mod tests {
         pretty_assertions::assert_eq!(
             canonical_context_urls(&urls),
             vec![
-                IriBuf::new(NGSI_LD_CORE_CONTEXT_URL.to_string()).expect("valid URL"),
+                IriBuf::new(NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL.to_string()).expect("valid URL"),
                 IriBuf::new("https://example.com/user.jsonld".to_string()).expect("valid URL"),
             ]
         );

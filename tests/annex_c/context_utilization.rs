@@ -97,11 +97,10 @@ async fn annex_c_7_an_unmatched_context_renders_user_names_as_fully_qualified_na
     );
     // Clause 4.4 names the Core @context of this edition
     // `...ngsi-ld-core-context-v1.9.jsonld` and clause C.7 prints that; the
-    // broker renders the unversioned always-latest alias, which is recorded in
-    // `docs/annex-c-corpus.md`.
+    // broker renders that exact versioned IRI.
     assert_eq!(
         flattened_context(&actual),
-        vec!["https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld".to_owned()],
+        vec!["https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld".to_owned()],
         "clause C.7 renders the Core @context in the answer even when none was supplied"
     );
 

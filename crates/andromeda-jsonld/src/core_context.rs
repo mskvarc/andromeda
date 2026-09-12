@@ -7,7 +7,6 @@
 //! The embedded payloads are compiled into the binary via [`include_str!`] so
 //! they are available without any network access.
 
-use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::{Iri, iri};
 use std::ptr;
 
@@ -46,9 +45,17 @@ pub const NGSI_LD_CORE_CONTEXT_V19_URL: Iri<&'static str> = iri!("https://uri.et
 /// Core Context v1.9 embedded payload.
 pub const NGSI_LD_CORE_CONTEXT_V19: &str = include_str!("context/ngsi-ld-core-context-v1.9.jsonld");
 
+/// The version-less core context alias Andromeda accepts on inbound documents.
+///
+/// Clause 4.4 lets a document name the core `@context` by the version-less
+/// `ngsi-ld-core-context.jsonld` URL. Andromeda now emits the versioned v1.9
+/// URL ([`andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL`]) but keeps
+/// recognising this alias, which resolves to the v1.9 payload.
+pub const NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld");
+
 /// All known NGSI-LD core context URLs (aliases + versioned).
 pub const NGSI_LD_CORE_CONTEXT_URL_LIST: [Iri<&'static str>; 8] = [
-    NGSI_LD_CORE_CONTEXT_URL,
+    NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL,
     NGSI_LD_CORE_CONTEXT_V13_URL,
     NGSI_LD_CORE_CONTEXT_V14_URL,
     NGSI_LD_CORE_CONTEXT_V15_URL,
@@ -70,7 +77,7 @@ pub const NGSI_LD_CORE_CONTEXT_MAP: [(Iri<&'static str>, &str); 8] = [
     (NGSI_LD_CORE_CONTEXT_V17_URL, NGSI_LD_CORE_CONTEXT_V17),
     (NGSI_LD_CORE_CONTEXT_V18_URL, NGSI_LD_CORE_CONTEXT_V18),
     (NGSI_LD_CORE_CONTEXT_V19_URL, NGSI_LD_CORE_CONTEXT_V19),
-    (NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V19),
+    (NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL, NGSI_LD_CORE_CONTEXT_V19),
 ];
 
 /// Returns `true` if `url` matches any known NGSI-LD core context version.
@@ -114,8 +121,8 @@ mod tests {
     }
 
     #[test]
-    fn recognises_alias() {
-        assert!(is_ngsi_ld_core_context_url(NGSI_LD_CORE_CONTEXT_URL.as_ref()));
+    fn recognises_the_versionless_alias() {
+        assert!(is_ngsi_ld_core_context_url(NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL.as_ref()));
     }
 
     #[test]

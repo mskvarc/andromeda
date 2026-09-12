@@ -29,6 +29,7 @@ use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
     expanded::{
         attribute_change::classify_attribute_changes,
+        attribute_system_time::stamp_attribute_instants,
         entity_member::{extract_attribute_names, extract_types},
         mutation::entity::merge_entity,
         node::expanded_object_ref,
@@ -87,6 +88,10 @@ impl EntityService {
         // it again here on whatever the forwarding phase left behind.
         admit_expanded_entity(&expanded, EntityWrite::Create.null_sentinel_admission())?;
 
+        // Clause 4.8: a created entity's attribute instances carry the write
+        // instant as both createdAt and modifiedAt.
+        let mut expanded = expanded;
+        stamp_attribute_instants(&mut expanded, &Value::Null, Utc::now());
         let payload = Arc::new(expanded);
         let types = extract_types(&payload);
         let changed_attrs = extract_attribute_names(&payload);
@@ -158,6 +163,7 @@ impl EntityService {
         // member.
         admit_expanded_entity(&patch_expanded, EntityWrite::MergeEntity.null_sentinel_admission())?;
 
+        let now = Utc::now();
         let MergedEntity { events } = self
             .commit_computed_write(target, &entity_uri, |previous| {
                 // Clause 5.6.17.4: the target is the entity with this id "and,
@@ -168,6 +174,9 @@ impl EntityService {
                 let mut existing = previous.clone(); // clone: the merge mutates its own copy of the stored payload
                 merge_entity(&mut existing, &patch_expanded, options.observed_at)?;
 
+                // Clause 4.8: a merged instance keeps its createdAt and, when its
+                // content changed, takes `now` for modifiedAt.
+                stamp_attribute_instants(&mut existing, previous, now);
                 let merged = Arc::new(existing);
                 let types = extract_types(&merged);
                 let groups = attribute_change_groups(previous, &merged);
@@ -259,14 +268,22 @@ impl EntityService {
         // Clause 5.6.18.4: Replace Entity does not support null values.
         admit_expanded_entity(&expanded, EntityWrite::ReplaceEntity.null_sentinel_admission())?;
 
-        let payload = Arc::new(expanded);
         let entity_id = Arc::new(entity_uri.clone()); // clone: repeated computed-write attempts share the validated identifier.
+        let now = Utc::now();
 
         // The types the notification carries are the stored ones, read off the
         // payload the replacement actually superseded rather than off an earlier
         // attempt's.
         let events = self
             .commit_computed_write(target, &entity_uri, |previous| {
+                // Clause 4.8: an attribute the replacement keeps (same datasetId)
+                // keeps its createdAt, matching the Entity-level createdAt column
+                // that a replace does not rewrite; every instance takes `now` for
+                // modifiedAt. Stamped per attempt against that attempt's stored
+                // payload, so createdAt survives the replace.
+                let mut replaced = expanded.clone(); // clone: each attempt stamps its own copy against the payload it superseded
+                stamp_attribute_instants(&mut replaced, previous, now);
+                let payload = Arc::new(replaced);
                 let types = extract_types(&payload);
                 let history = mutation_history(&payload, previous, &payload);
                 let groups = attribute_change_groups(previous, &payload);

@@ -31,12 +31,16 @@ jsonld::vocab! {
     contexts: ["context/ngsi-ld-core-context-v1.9.jsonld"]
 }
 
-/// Andromeda's stable identifier for the NGSI-LD core context.
+/// The core `@context` URL Andromeda emits.
 ///
-/// Clause 4.4 (ETSI GS CIM 009) defines the core `@context` URL; this
-/// version-less `.jsonld` alias is Andromeda's own stable identifier that
-/// resolves to the latest released core context.
-pub const NGSI_LD_CORE_CONTEXT_URL: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld");
+/// Clause 4.4 (ETSI GS CIM 009) names the core `@context`, and every Annex C
+/// example prints it as the versioned `-v1.9.jsonld` URL. Andromeda emits that
+/// exact identifier so a client sees the precise core context version its
+/// responses were produced against. The version-less
+/// `ngsi-ld-core-context.jsonld` alias
+/// (`andromeda_jsonld::core_context::NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL`) is
+/// still accepted on inbound documents and resolves to the same v1.9 payload.
+pub const NGSI_LD_CORE_CONTEXT_URL: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld");
 
 /// The NGSI-LD null sentinel, `urn:ngsi-ld:null` (clause 5.5.12).
 ///

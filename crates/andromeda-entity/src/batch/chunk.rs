@@ -33,9 +33,15 @@ use andromeda_context_commit::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
-    expanded::{entity_member::extract_types, null_sentinel::without_null_sentinels, removed_instance::removed_attribute_instances},
+    expanded::{
+        attribute_system_time::stamp_attribute_instants,
+        entity_member::extract_types,
+        null_sentinel::without_null_sentinels,
+        removed_instance::removed_attribute_instances,
+    },
     notification::NotificationTrigger,
 };
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -107,15 +113,18 @@ impl EntityService {
     ///
     /// Mirrors the single create (clause 5.6.1): one `entityCreated` over the
     /// whole payload.
-    pub(super) fn chunk_insert(&self, target: &ContextTarget, prepared: PreparedEntity, precondition: Precondition) -> ChunkWrite {
+    pub(super) fn chunk_insert(&self, target: &ContextTarget, prepared: PreparedEntity, precondition: Precondition, now: DateTime<Utc>) -> ChunkWrite {
         let PreparedEntity {
             id,
-            expanded,
+            mut expanded,
             projection,
             changed_attributes,
             expires_at,
             min_attribute_expires_at,
         } = prepared;
+        // Clause 4.8: a created entity's attribute instances carry the write
+        // instant as both createdAt and modifiedAt.
+        stamp_attribute_instants(&mut expanded, &Value::Null, now);
         let payload = Arc::new(expanded);
         let types = projection.types.clone(); // clone: the plan carries the names after the record has taken them
         let mut groups = vec![NotificationGroup::entity(NotificationTrigger::EntityCreated, changed_attributes)];
@@ -145,7 +154,13 @@ impl EntityService {
         payload: Arc<Value>,
         changed_attributes: Vec<AttributeName>,
         precondition: Precondition,
+        now: DateTime<Utc>,
     ) -> ChunkWrite {
+        // Clause 4.8: stamp the created entity's attribute instances before the
+        // record derives its columns from the payload.
+        let mut payload_value = Arc::try_unwrap(payload).unwrap_or_else(|shared| (*shared).clone()); // clone: only when another reference still holds the payload
+        stamp_attribute_instants(&mut payload_value, &Value::Null, now);
+        let payload = Arc::new(payload_value);
         let record = EntityRecord::from_expanded(Arc::clone(&payload)); // clone: Arc ref-count bump; the same payload is the observation
         let types = record.projection.types.clone(); // clone: the plan carries the names the record holds
         let mut groups = vec![NotificationGroup::entity(NotificationTrigger::EntityCreated, changed_attributes)];
@@ -172,8 +187,15 @@ impl EntityService {
         payloads: UpdatedPayloads<'_>,
         groups: &[NotificationGroup],
         precondition: Precondition,
+        now: DateTime<Utc>,
     ) -> ChunkWrite {
         let UpdatedPayloads { previous, merged, observed } = payloads;
+        // Clause 4.8: an updated instance takes `now` for modifiedAt and keeps
+        // its createdAt; an untouched one keeps both. Stamped before the columns
+        // and the notification plan read the payload, so both see it.
+        let mut merged_value = Arc::try_unwrap(merged).unwrap_or_else(|shared| (*shared).clone()); // clone: only when another reference still holds the merged payload
+        stamp_attribute_instants(&mut merged_value, previous, now);
+        let merged = Arc::new(merged_value);
         // Clause 4.5.0 makes an NGSI-LD Null an encoding of `null` rather than a
         // value, so it is an instruction to this write and not something the
         // Temporal Evolution observed; what it removed is recorded by the

@@ -211,11 +211,12 @@ async fn regression_r2_55_stored_scope_query_conjunction_renders_parenthesised()
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R2-73: the deployment core-context pin (clause 4.3.6.8) governs only
-/// expansion; a response advertises the stable versionless core context, not
-/// the version the deployment pinned, so a client is never tied to it.
+/// R2-73: a response advertises the versioned core `@context` clause 4.4 and
+/// Annex C name (`...ngsi-ld-core-context-v1.9.jsonld`), so a client sees the
+/// precise core context version its response was produced against. The
+/// versionless alias stays accepted on inbound documents.
 #[tokio::test]
-async fn regression_r2_73_response_advertises_the_versionless_core_context() {
+async fn regression_r2_73_response_advertises_the_versioned_core_context() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
     let id = scope.id("Device:r2-73");
@@ -231,12 +232,8 @@ async fn regression_r2_73_response_advertises_the_versionless_core_context() {
     assert!(
         context
             .iter()
-            .any(|c| c.as_str() == Some("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld")),
-        "the response must advertise the versionless core context: {context:?}"
-    );
-    assert!(
-        !context.iter().any(|c| c.as_str().is_some_and(|s| s.contains("core-context-v1.9"))),
-        "the response must not leak the pinned v1.9 core context: {context:?}"
+            .any(|c| c.as_str() == Some("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld")),
+        "the response must advertise the versioned core context: {context:?}"
     );
     scope.finish().await.expect("cleanup failed");
 }

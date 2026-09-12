@@ -13,10 +13,12 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
+    attribute_system_time::stamp_attribute_instants,
     entity_member::{extract_attribute_names, extract_types},
     mutation::entity::update_entity_attrs,
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
+use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -70,8 +72,15 @@ impl EntityService {
         let requested = extract_attribute_names(unwrap_expanded_ref(&expanded));
         let (events, not_updated): (Vec<ChangeEvent>, Vec<AttributeName>) = self
             .commit_computed_write(target, &entity_uri, |previous| {
+                let now = Utc::now();
                 let mut existing = previous.clone(); // clone: the update mutates its own copy of the stored payload
                 let not_updated = update_entity_attrs(&mut existing, unwrap_expanded_ref(&expanded))?;
+
+                // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps
+
+                // its createdAt across the read-modify-write.
+
+                stamp_attribute_instants(&mut existing, previous, now);
 
                 let merged = Arc::new(existing);
                 let types = extract_types(&merged);

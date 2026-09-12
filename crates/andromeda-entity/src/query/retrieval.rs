@@ -56,7 +56,7 @@ impl EntityQueryService {
             return Err(EntityError::not_found(id));
         };
 
-        let mut entity = self.compact_to_entity(expanded_entity, context, Some(id.as_str())).await?;
+        let mut entity = self.compact_to_entity(expanded_entity, context, Some(id.as_str()), narrowing.sys_attrs).await?;
 
         if narrowing.sys_attrs == SysAttrsInclusion::Include
             && let Some(snapshot) = self.reader.get_sys_attrs(target, id).await?
@@ -164,7 +164,7 @@ impl EntityQueryService {
                 .and_then(Value::as_str)
                 .and_then(|id| id.parse::<Uri>().ok());
 
-            let mut entity = self.compact_to_entity(value, context, None).await?;
+            let mut entity = self.compact_to_entity(value, context, None, sys_attrs).await?;
 
             if sys_attrs == SysAttrsInclusion::Include
                 && let Some(ref id) = id

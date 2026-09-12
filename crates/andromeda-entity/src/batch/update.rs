@@ -31,6 +31,7 @@ use andromeda_ngsi_ld_model::{
         selection::OverwritePolicy,
     },
 };
+use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -88,6 +89,7 @@ impl EntityService {
         // concurrent updates for the same id can't lose each other's writes.
         let _id_guards = self.acquire_id_locks(target, &prepared_ids).await;
         let existing_map = self.reader.get_batch(target, &prepared_ids).await?;
+        let now = Utc::now();
 
         let mut writes = Vec::with_capacity(prepared.len());
         for prepared_entity in prepared {
@@ -137,6 +139,7 @@ impl EntityService {
                 },
                 &groups,
                 Precondition::MustExist,
+                now,
             ));
         }
 

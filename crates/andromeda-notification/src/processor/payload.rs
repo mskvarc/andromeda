@@ -23,7 +23,7 @@ use andromeda_jsonld::{
     },
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::{entity::Entity, notification::NotificationTrigger};
+use andromeda_ngsi_ld_model::{entity::Entity, expanded::attribute_system_time::strip_attribute_instants, notification::NotificationTrigger};
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use andromeda_ngsi_ld_render::{
     notification_conformance::amend_notification_entities,
@@ -111,6 +111,13 @@ pub(super) async fn build_notification_data(params: &NotificationBuildParams<'_>
 
     apply_deletion_shape(&mut entity, params);
     apply_notification_selection(&mut entity, params.sub);
+
+    // Clause 4.8 with Table 5.2.14-1: the change payload carries every attribute
+    // instance's createdAt/modifiedAt, so a subscription that did not ask for
+    // `sysAttrs` has them removed before the entity is compacted and rendered.
+    if params.sub.notification_sys_attrs == SysAttrsInclusion::Strip {
+        strip_attribute_instants(&mut entity);
+    }
 
     let context = ContextSpec::for_subscription_context(params.sub.jsonld_context.as_ref());
     let Ok(mut compacted) = compact_for_notification(params.engine, &entity, &context, params.compaction_cache).await else {

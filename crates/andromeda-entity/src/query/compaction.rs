@@ -4,9 +4,10 @@
 
 use crate::{error::EntityError, query::EntityQueryService};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::options::CompactOptions, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_model::{entity::Entity, expanded::attribute_system_time::strip_attribute_instants};
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use andromeda_ngsi_ld_query::term_expander::TermExpander;
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use iri_rs::IriBuf;
 use serde_json::Value;
 
@@ -17,7 +18,21 @@ impl EntityQueryService {
     /// `id_override` names the entity when the payload's own `@id` is not the
     /// one the caller asked about, which happens on a batch read keyed by
     /// identifier.
-    pub(super) async fn compact_to_entity(&self, expanded: Value, context: &ContextSpec, id_override: Option<&str>) -> Result<Entity, EntityError> {
+    pub(super) async fn compact_to_entity(
+        &self,
+        expanded: Value,
+        context: &ContextSpec,
+        id_override: Option<&str>,
+        sys_attrs: SysAttrsInclusion,
+    ) -> Result<Entity, EntityError> {
+        // Clause 4.8 with Table 5.2.14-1: attribute-instance createdAt/modifiedAt
+        // live in the stored payload, so a representation the request did not ask
+        // to carry `sysAttrs` has them removed before compaction. The Entity-level
+        // pair is injected separately from the store columns only under `Include`.
+        let mut expanded = expanded;
+        if sys_attrs == SysAttrsInclusion::Strip {
+            strip_attribute_instants(&mut expanded);
+        }
         let compacted = self.engine().compact(expanded, context, CompactOptions::default()).await?;
 
         let mut obj = match compacted {

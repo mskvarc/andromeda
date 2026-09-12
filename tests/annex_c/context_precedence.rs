@@ -31,12 +31,8 @@ const SCHEMA_LOCATION: &str = "https://schema.org/location";
 ///
 /// Clause 4.4 names the Core `@context` of this edition
 /// `https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld`, and every
-/// annex C example prints that. The broker renders the unversioned
-/// always-latest alias instead; the divergence is recorded in
-/// `docs/annex-c-corpus.md` and pinned here so a change to it is noticed.
-const RENDERED_CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld";
-/// The Core `@context` IRI clause 4.4 and annex C print.
-const PRINTED_CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
+/// annex C example prints that; the broker renders that exact versioned IRI.
+const RENDERED_CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
 
 /// Create one Entity under a hosted `@context` and answer the outcome.
 async fn create_under(context_document: &str, entity: &Value) -> (StatusCode, String) {
@@ -157,10 +153,6 @@ async fn annex_c_9_the_rendered_context_array_ends_with_the_core_context() {
         Some(RENDERED_CORE_CONTEXT),
         "clause C.9 puts the Core @context in the final position, got {:?}",
         actual["@context"]
-    );
-    assert_ne!(
-        RENDERED_CORE_CONTEXT, PRINTED_CORE_CONTEXT,
-        "the rendered Core @context IRI is the unversioned alias, not the versioned IRI clause 4.4 names"
     );
 
     environment.reset_and_finish().await.expect("tenant reset");

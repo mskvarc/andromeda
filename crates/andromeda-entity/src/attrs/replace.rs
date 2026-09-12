@@ -12,9 +12,10 @@ use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{attribute_fragment::expand_attribute_fragment, context_spec::ContextSpec};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::expanded::{entity_member::extract_types, mutation::attribute::replace_attr};
+use andromeda_ngsi_ld_model::expanded::{attribute_system_time::stamp_attribute_instants, entity_member::extract_types, mutation::attribute::replace_attr};
 use andromeda_ngsi_ld_representation::normalization::normalize_attribute_node;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -72,8 +73,15 @@ impl EntityService {
 
         let MutatedEntity { events } = self
             .commit_computed_write(target, &entity_uri, |previous| {
+                let now = Utc::now();
                 let mut existing = previous.clone(); // clone: the replacement mutates its own copy of the stored payload
                 replace_attr(&mut existing, &attr_iri, dataset_id, unwrap_expanded_ref(&expanded))?;
+
+                // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps
+
+                // its createdAt across the read-modify-write.
+
+                stamp_attribute_instants(&mut existing, previous, now);
 
                 let merged = Arc::new(existing);
                 let types = extract_types(&merged);

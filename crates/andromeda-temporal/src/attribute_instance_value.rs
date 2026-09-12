@@ -52,6 +52,13 @@ fn is_dedicated_key(key: &str) -> bool {
         || key == expanded_properties::VOCABS.as_str()
         || key == expanded_properties::INSTANCE_ID.as_str()
         || key == expanded_properties::OBSERVED_AT.as_str()
+        // Clause 4.8: an instance's createdAt/modifiedAt are stamped into the
+        // current-state payload and carried on the temporal row's own columns
+        // (from the write clock); keeping them out of the metadata blob stops
+        // the observation from echoing a current-state system time back as a
+        // dated sub-Property of a past observation.
+        || key == expanded_properties::CREATED_AT.as_str()
+        || key == expanded_properties::MODIFIED_AT.as_str()
         || key == expanded_properties::LANGUAGE_MAPS.as_str()
         || key == expanded_properties::JSONS.as_str()
 }

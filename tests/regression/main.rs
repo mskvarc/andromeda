@@ -11,6 +11,7 @@
 mod array_valued_property_history;
 mod attribute_discovery_type_spelling;
 mod attribute_member_validation;
+mod attribute_system_timestamps;
 mod attrs_scope_admission;
 mod batch_context_expansion;
 mod batch_upsert_duplicates;

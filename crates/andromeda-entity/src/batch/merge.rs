@@ -23,6 +23,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{entity::Entity, expanded::mutation::entity::merge_entity};
+use chrono::Utc;
 use std::sync::Arc;
 
 impl EntityService {
@@ -45,6 +46,7 @@ impl EntityService {
         // concurrent merges for the same id can't lose each other's writes.
         let _id_guards = self.acquire_id_locks(target, &prepared_ids).await;
         let existing_map = self.reader.get_batch(target, &prepared_ids).await?;
+        let now = Utc::now();
 
         let mut writes = Vec::with_capacity(prepared.len());
         for prepared_entity in prepared {
@@ -73,6 +75,7 @@ impl EntityService {
                 },
                 &groups,
                 Precondition::MustExist,
+                now,
             ));
         }
 
