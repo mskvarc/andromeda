@@ -47,6 +47,7 @@ mod tests {
         match id {
             Uri::Urn(value) => format!("urn:{value}"),
             Uri::Url(value) => format!("url:{value}"),
+            Uri::Iri(value) => format!("iri:{value}"),
         }
     }
 

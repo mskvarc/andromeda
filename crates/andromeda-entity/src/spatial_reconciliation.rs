@@ -50,6 +50,10 @@ pub async fn reconcile_location(
                 warn!(entity = %entity_url, "spatial warmup skipped a URL identifier unsupported by the current spatial index");
                 continue;
             }
+            Uri::Iri(entity_iri) => {
+                warn!(entity = %entity_iri, "spatial warmup skipped an IRI identifier unsupported by the current spatial index");
+                continue;
+            }
         };
         for entity_type in snapshot.entity_types {
             let type_iri = match IriBuf::new(entity_type.to_string()) {
