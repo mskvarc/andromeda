@@ -32,6 +32,8 @@ pub mod forwarded_query;
 pub mod forwarding_url;
 /// NGSI-LD operation capability matching.
 pub mod operation;
+/// Whether a read's answer may be ordered (clauses 4.23.1, 5.7.2.4, 5.7.4.4).
+pub mod ordering_admission;
 /// Typed forwarding outcomes.
 pub mod outcome;
 /// Single-entity provision forwarding.

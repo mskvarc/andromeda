@@ -81,9 +81,7 @@ impl EntityQueryParameters {
     /// Entity member, [`ParameterError::WildcardTypeWithLocalFalse`] when
     /// `type=*` is combined with `local=false`,
     /// [`ParameterError::DropKeepExclusive`] when `drop` and `keep` are both
-    /// present, [`ParameterError::OrderingRequiresLocalScope`] when `orderBy`
-    /// is sent on a query that is not confined to the local scope,
-    /// [`ParameterError::Projection`] for the clause 4.21 selector
+    /// present, [`ParameterError::Projection`] for the clause 4.21 selector
     /// conflicts, [`ParameterError::LimitZeroWithoutCount`] for `limit=0`
     /// without the `count` option, and the clause 5.7.2.4 depth errors when a
     /// nested projection term or a `q` hop names a Linked Entity the requested
@@ -109,10 +107,6 @@ impl EntityQueryParameters {
         }
         if self.drop.is_some() && self.keep.is_some() {
             return Err(ParameterError::DropKeepExclusive);
-        }
-        // Clause 5.7.2.4: ordering is defined over the local result only.
-        if !self.ordering.order_by.is_empty() && !self.is_local() {
-            return Err(ParameterError::OrderingRequiresLocalScope);
         }
         check_projection_exclusivity(ProjectionSelectors {
             pick: Presence::of(self.pick.as_deref()),

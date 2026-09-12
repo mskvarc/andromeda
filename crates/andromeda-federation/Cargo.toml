@@ -25,6 +25,7 @@ andromeda-registration.workspace = true
 chrono = { version = "0.4.45", features = ["serde"] }
 confique = "0.4.0"
 dashmap = { version = "6.2.1", features = ["inline"] }
+derive_more = { version = "2.1.1", features = ["is_variant"] }
 futures = "0.3.34"
 headers = "0.4.1"
 http = "1.5.0"

@@ -4,11 +4,12 @@
 //! georel measures, so co-located entities at different altitudes tie at zero
 //! and an altitude never reorders a result set.
 //!
-//! Every query here carries `local=true`: clause 5.7.2.4 raises `BadRequestData`
-//! for an `orderBy` whose execution is not limited to the local scope (clause
-//! 5.5.13), which clause 6.3.18 Table 6.3.18-1 binds to the `local` parameter,
-//! and clause 4.23.1 restates it as "Sort ordering is never applied to
-//! distributed operations".
+//! Every query here carries `local=true`, which keeps each assertion about the
+//! distance ordering alone: clause 5.7.2.4 raises `BadRequestData` for an
+//! `orderBy` whose execution is not limited to the local scope (clause 5.5.13)
+//! -- decided by whether a registered Context Source takes part in the answer,
+//! as `docs/entity-ordering-local-scope.md` records -- and clause 4.23.1
+//! restates it as "Sort ordering is never applied to distributed operations".
 
 use crate::fixtures::{building_point_3d, create, encode_json, id_filter, ids_of, p_2d, query};
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;

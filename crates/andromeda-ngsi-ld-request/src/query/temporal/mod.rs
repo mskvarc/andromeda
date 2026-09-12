@@ -470,15 +470,14 @@ mod tests {
         assert!(serde_urlencoded::from_str::<TemporalQueryParameters>("csf=%20").is_err());
     }
 
-    /// Clause 5.7.4.4: `orderBy` needs the local scope, and only `id` orders
-    /// a temporal query.
+    /// Clause 5.7.4.4 admits only `id` as a temporal ordering member, which
+    /// these parameters do settle. Whether the execution is limited to the
+    /// local scope is not: that turns on the Context Registry, so an `orderBy`
+    /// passes validation with or without `local=true`.
     #[test]
-    fn ordering_needs_the_local_scope_and_only_id_orders_a_temporal_query() {
+    fn only_id_orders_a_temporal_query_whatever_scope_it_asked_for() {
         let window = "type=Vehicle&timerel=before&timeAt=2030-01-01T00:00:00Z";
-        assert!(matches!(
-            params_from_query(&format!("{window}&orderBy=id")).validate(true),
-            Err(ParameterError::OrderingRequiresLocalScope)
-        ));
+        assert!(params_from_query(&format!("{window}&orderBy=id")).validate(true).is_ok());
         assert!(matches!(
             params_from_query(&format!("{window}&local=true&orderBy=speed")).validate(true),
             Err(ParameterError::Query(QueryError::TemporalOrderingMember(member))) if member == "speed"

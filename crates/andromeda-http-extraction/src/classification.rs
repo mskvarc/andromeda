@@ -65,7 +65,7 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::EntityQueryTemporalMembers
         | ParameterError::TemporalQueryMissing
         | ParameterError::TemporalAggregationConflict
-        | ParameterError::OrderingRequiresLocalScope => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
+        | ParameterError::OrderingWithParticipatingSource => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
     }
 }
 

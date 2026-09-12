@@ -11,12 +11,13 @@
 //! then the JSON-LD array returned shall be ordered according to the member
 //! names specified", so neither could be answered by ignoring it.
 //!
-//! Every ordering query here carries local scope. Clause 5.7.4.4: "If the
+//! Every ordering query here carries local scope, which keeps each assertion
+//! about the collation alone. Clause 5.7.4.4 raises `BadRequestData` when "the
 //! ordering parameter is present and the execution of the operation is not
-//! limited to the local scope (see clause 5.5.13) then an error of type
-//! `BadRequestData` shall be raised", so an `orderBy` without it is a request
-//! the broker is required to refuse and no ordering assertion could be made
-//! about it.
+//! limited to the local scope (see clause 5.5.13)"; that condition is decided by
+//! whether a registered Context Source takes part in the answer, which
+//! `tests/regression/ordering_local_scope.rs` covers and
+//! `docs/entity-ordering-local-scope.md` records.
 //!
 //! The discriminating collation here is numeric ordering (`und-u-kn-true`,
 //! RFC 6067 keyword `kn`) rather than the German phonebook order the entity
@@ -414,19 +415,30 @@ async fn regression_temporal_collation_a_distance_sorting_style_is_bad_request_d
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.7.4.4: "If the ordering parameter is present and the execution of
-/// the operation is not limited to the local scope (see clause 5.5.13) then an
-/// error of type `BadRequestData` shall be raised."
+/// Clause 5.7.4.4's local-scope condition is about the answer being assembled
+/// from this broker alone, which clause 5.5.13 defines as the Context Registry
+/// not being used. No registration covers these fixtures, so both bindings order
+/// the answer without the request having to ask for the local scope.
 #[tokio::test]
-async fn regression_temporal_collation_an_order_by_without_local_scope_is_bad_request_data() {
+async fn regression_temporal_collation_an_order_by_without_local_scope_still_orders_the_answer() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
     let ids = create_numbered(&scope, client).await;
 
-    let (status, body) = get_query(client, &format!("{WHOLE_WINDOW}&type={FIXTURE_TYPE}&orderBy=id")).await;
-    assert_bad_request_data(status, &body, "orderBy without local scope");
+    let selected = id_filter(&ids);
+    let (status, body) = get_query(client, &format!("{WHOLE_WINDOW}&type={FIXTURE_TYPE}&id={selected}&orderBy=id")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let ascending = ids_from_response(&body);
+    assert_eq!(ascending.len(), ids.len(), "every fixture is in the answer: {body}");
 
-    let (status, body) = post_query(client, "", &query_body(&ids, &json!({"orderBy": "id"}))).await;
-    assert_bad_request_data(status, &body, "orderBy without local scope");
+    let (status, body) = get_query(client, &format!("{WHOLE_WINDOW}&type={FIXTURE_TYPE}&id={selected}&orderBy=id%3Bdesc")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let mut descending = ascending.clone(); // clone: the ascending answer is asserted against the body binding below too.
+    descending.reverse();
+    assert_eq!(ids_from_response(&body), descending, "a descending ordering reverses the ascending one: {body}");
+
+    let (status, body) = post_query(client, "", &query_body(&ids, &json!({"orderBy": "id;desc"}))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(ids_from_response(&body), descending, "{body}");
     scope.finish().await.expect("cleanup failed");
 }

@@ -47,10 +47,13 @@ async fn distop_query_entities_too_wide_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `orderBy` requires `local=true`: without it the query is rejected `400`; with
-/// it the same `orderBy` succeeds (clause 5.7.2.4). Confirms REQ-CONS-20.
+/// `orderBy` is refused where a registered Context Source takes part in the
+/// answer -- clause 4.23.1's "Sort ordering is never applied to distributed
+/// operations" -- and the same `orderBy` succeeds under `local=true`, which
+/// clause 5.5.13 says leaves the Context Registry unused (clause 5.7.2.4).
+/// Confirms REQ-CONS-20.
 #[tokio::test]
-async fn distop_query_entities_orderby_without_local_returns_400() {
+async fn distop_query_entities_orderby_with_a_participating_source_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;

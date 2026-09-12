@@ -34,12 +34,19 @@ use crate::{
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_federation::request::TriggeringRequest;
-use andromeda_http_extraction::context_target;
-use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_entity_map::reuse::EntityMapUse;
+use andromeda_federation::{
+    FederationService,
+    forwarded_query::client_query::ClientQuery,
+    operation::ForwardingOperation,
+    ordering_admission::{OrderedRead, OrderingAdmission},
+    request::{EntityMapInUse, TriggeringRequest},
+};
+use andromeda_http_extraction::{context_target, prefer::PreferHeader};
+use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, via::Via};
 use andromeda_http_response::pagination::PagePointers;
 use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
-use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
+use andromeda_ngsi_ld_request::{error::ParameterError, join_traversal::RetrievingJoin};
 use andromeda_temporal::{error::TemporalError, linked::candidates::TemporalLinkedCandidate, service::TemporalQueryWarning};
 use axum::http::{HeaderMap, Uri};
 use serde_json::Value;
@@ -123,6 +130,95 @@ pub async fn query(
     .await
 }
 
+/// One temporal query, decoded and admitted: what the protocol headers
+/// contributed to it, and the Entity Map it runs under.
+struct AdmittedQuery {
+    /// The `Prefer` header the response honours (clause 6.3.21).
+    prefer: PreferHeader,
+    /// The `Via` chain the request arrived with, replayed onto every forwarded
+    /// copy so a forwarding loop is detected rather than followed.
+    incoming_via: Option<Via>,
+    /// The Entity Map the query runs under (clause 5.5.14).
+    map_use: EntityMapUse,
+}
+
+/// Decode `protocol` into the query, hold the query to every rule that can be
+/// decided before it runs, and resolve the Entity Map it runs under.
+///
+/// The extension headers add to the query before it is validated, so a value a
+/// header supplied is held to the same rules as one the query string carried.
+/// A branch that cannot federate is confined to the local scope first: clause
+/// 5.5.15 makes a Snapshot "implicitly limited to a local scope ... overriding
+/// setting a local scope to false".
+///
+/// # Errors
+///
+/// The classified failure of an extension header the query cannot take, of
+/// resolving the Entity Map, of the clause 5.7.4.4 validation, and of the
+/// clause 5.7.4.4 ordering rule.
+async fn admit_request(
+    state: &TemporalRouteServices,
+    target: &ContextTarget,
+    context: &ContextSpec,
+    protocol: NgsiLdProtocolHeaders,
+    params: &mut TemporalQueryParameters,
+    instance: &Uri,
+) -> Result<AdmittedQuery, ProblemResponse> {
+    protocol.extensions().apply_to_temporal_query(params).with_instance(instance)?;
+    let map_use = resolve_query_map(&state.entity_maps, target, params, protocol.entity_map.as_ref(), instance).await?;
+    if !target.permits_federation() {
+        params.local = Some(true);
+    }
+    params.validate(true).with_instance(instance)?;
+    refuse_inadmissible_ordering(&state.forwarding, target, context, params, EntityMapInUse::from(&map_use), instance).await?;
+    Ok(AdmittedQuery {
+        prefer: protocol.prefer,
+        incoming_via: protocol.incoming_via,
+        map_use,
+    })
+}
+
+/// Refuse an ordering clause 5.7.4.4 does not admit.
+///
+/// The bullet raises `BadRequestData` for an `orderBy` on a query "not limited
+/// to the local scope", which `andromeda_federation::ordering_admission` reads
+/// as an answer a registered Context Source takes part in assembling. That is a
+/// question for the Context Registry rather than for the parameters, so it is
+/// asked here rather than during validation. Which member may order a temporal
+/// query is a separate rule the parameters do settle, and validation keeps it.
+///
+/// # Errors
+///
+/// The classified failure of reading the registrations that would take part,
+/// and the clause 5.7.4.4 refusal itself when one of them does.
+async fn refuse_inadmissible_ordering(
+    forwarding: &FederationService,
+    target: &ContextTarget,
+    context: &ContextSpec,
+    params: &TemporalQueryParameters,
+    entity_map: EntityMapInUse<'_>,
+    instance: &Uri,
+) -> Result<(), ProblemResponse> {
+    let admission = forwarding
+        .admit_ordering(
+            target,
+            context,
+            OrderedRead {
+                ordering: &params.ordering,
+                requested_scope: params.execution_scope(),
+                client_query: ClientQuery::Temporal(params),
+                operation: ForwardingOperation::QueryTemporalEntity,
+                entity_map,
+            },
+        )
+        .await
+        .with_instance(instance)?;
+    match admission {
+        OrderingAdmission::Admitted => Ok(()),
+        OrderingAdmission::Refused => Err(ParameterError::OrderingWithParticipatingSource).with_instance(instance),
+    }
+}
+
 /// Run "Query Temporal Evolution of Entities" (clause 5.7.4) over a decoded
 /// request, whichever binding decoded it.
 ///
@@ -146,17 +242,8 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         pointers,
     } = request;
     let service = &state.temporal;
-    protocol.extensions().apply_to_temporal_query(&mut params).with_instance(&uri)?;
-    let entity_map_header = protocol.entity_map;
-    let incoming_via = protocol.incoming_via;
+    let AdmittedQuery { prefer, incoming_via, map_use } = admit_request(&state, &target, &context, protocol, &mut params, &uri).await?;
     let key_values = params.is_simplified();
-
-    let map_use = resolve_query_map(&state.entity_maps, &target, &mut params, entity_map_header.as_ref(), &uri).await?;
-
-    if !target.permits_federation() {
-        params.local = Some(true);
-    }
-    params.validate(true).with_instance(&uri)?;
 
     // Clause 6.3.10: the page the client asked for, read before the merge
     // widens the local query below, so the links point at the client's own
@@ -164,6 +251,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     let page = QueriedPage::of(&params, pointers);
 
     let scope = QueryScope::of(&target, &params);
+
     let split = state.forwarding.split_entities(params.split_entities);
     let filtering = scope.splitting(split);
 
@@ -254,7 +342,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     // 4.3.6.8 reads an Attribute of the answer.
     query_response(
         accept,
-        protocol.prefer,
+        prefer,
         params.selected_format(),
         &context,
         values,

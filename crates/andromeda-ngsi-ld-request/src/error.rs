@@ -138,10 +138,17 @@ pub enum ParameterError {
     /// Aggregation parameters were specified in both supported spec members.
     #[error("aggregation parameters must not be duplicated in temporalQ and aggrParams")]
     TemporalAggregationConflict,
-    /// `orderBy` was sent on a query whose execution is not limited to the
-    /// local scope (clauses 5.7.2.4 and 5.7.4.4).
-    #[error("orderBy requires the execution of the query to be limited to the local scope (local=true)")]
-    OrderingRequiresLocalScope,
+    /// `orderBy` was sent on a query a registered Context Source takes part in
+    /// (clauses 4.23.1, 5.7.2.4 and 5.7.4.4).
+    ///
+    /// Raised by the operation rather than by parameter validation: whether a
+    /// registration takes part is what the Context Registry answers, not what
+    /// the parameters say. The reading of "limited to the local scope" this
+    /// rests on is recorded in `docs/entity-ordering-local-scope.md`.
+    #[error(
+        "orderBy is not applicable to a query a registered context source takes part in; limit the query to the local scope (local=true) or remove orderBy"
+    )]
+    OrderingWithParticipatingSource,
     /// An aggregated temporal representation named an attribute whose recorded
     /// values cannot be aggregated by one of the requested methods (clause
     /// 5.7.4.4, Table 4.5.19.1-1).

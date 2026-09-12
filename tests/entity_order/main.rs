@@ -1,13 +1,15 @@
 //! Entity ordering integration tests (ETSI GS CIM 009 clause 4.23, 5.2.43, 6.4.3.2).
 //!
-//! Every query here carries `local=true`. Clause 5.7.2.4 states that "if the
-//! ordering parameter is present and the execution of the operation is not
-//! limited to the local scope (see clause 5.5.13) then an error of type
-//! `BadRequestData` shall be raised", and clause 4.23.1 says the same thing from
-//! the other side: "Sort ordering is never applied to distributed operations".
-//! Clause 6.3.18 Table 6.3.18-1 binds the local scope to the `local` query
-//! parameter, so an `orderBy` request that omits it is a request the broker is
-//! required to reject and no ordering assertion could be made about it.
+//! Every query here carries `local=true`, which keeps each assertion about the
+//! ordering itself. Clause 5.7.2.4 states that "if the ordering parameter is
+//! present and the execution of the operation is not limited to the local scope
+//! (see clause 5.5.13) then an error of type `BadRequestData` shall be raised",
+//! and clause 4.23.1 says the same thing from the other side: "Sort ordering is
+//! never applied to distributed operations". That condition is decided by
+//! whether a registered Context Source takes part in the answer rather than by
+//! the `local` parameter alone -- `tests/regression/ordering_local_scope.rs`
+//! covers it and `docs/entity-ordering-local-scope.md` records the reading --
+//! and `local=true` settles it here whatever the Context Registry holds.
 //!
 //! Naming convention: `entity_order_<scenario>_<expected_outcome>`.
 
@@ -54,9 +56,10 @@ fn detail_of(body: &Value) -> &str {
 /// Asserts a rejection is the one the test is about and not the clause 5.7.2.4
 /// local-scope refusal standing in for it.
 ///
-/// Every negative test here sends `orderBy`, so without `local=true` each one
-/// would be answered by the local-scope refusal before the broker ever reached
-/// the condition under test, and the assertion would hold for the wrong reason.
+/// Every negative test here sends `orderBy`, and a registration covering the
+/// queried type would have the local-scope refusal answer it before the broker
+/// reached the condition under test, leaving the assertion to hold for the wrong
+/// reason.
 fn assert_not_the_local_scope_refusal(body: &Value) {
     assert_eq!(
         body["type"].as_str().expect("a problem detail body must carry a type member"),

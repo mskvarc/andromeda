@@ -392,6 +392,7 @@ dependencies = [
  "chrono",
  "confique",
  "dashmap",
+ "derive_more",
  "futures",
  "headers",
  "http",

@@ -365,14 +365,13 @@ mod tests {
         }
     }
 
-    /// Clause 5.7.2.4: `orderBy` is rejected unless the execution is limited to
-    /// the local scope, where it is accepted.
+    /// Clause 5.7.2.4's ordering rule turns on whether a registered Context
+    /// Source takes part, which the Context Registry answers and these
+    /// parameters cannot, so validation passes an `orderBy` either way and
+    /// `andromeda_federation::ordering_admission` decides it.
     #[test]
-    fn validate_requires_the_local_scope_for_ordering() {
-        assert!(matches!(
-            params_from_query("type=Vehicle&orderBy=speed").validate(),
-            Err(ParameterError::OrderingRequiresLocalScope)
-        ));
+    fn validate_leaves_the_ordering_rule_to_the_operation() {
+        assert!(params_from_query("type=Vehicle&orderBy=speed").validate().is_ok());
         assert!(params_from_query("type=Vehicle&orderBy=speed&local=true").validate().is_ok());
     }
 

@@ -1,12 +1,13 @@
 //! Regression tests for entity ordering and its collation (ETSI GS CIM 009
 //! v1.9.1 clauses 4.23.1, 4.23.2, 4.23.3, 5.7.2.4).
 //!
-//! Every query here carries `local=true`. Clause 5.7.2.4 states that "if the
-//! ordering parameter is present and the execution of the operation is not
-//! limited to the local scope (see clause 5.5.13) then an error of type
-//! `BadRequestData` shall be raised", so an `orderBy` request that omits it is
-//! one the broker is required to reject and no ordering assertion could be made
-//! about it.
+//! Every query here carries `local=true`, which keeps each assertion about the
+//! collation alone. Clause 5.7.2.4 states that "if the ordering parameter is
+//! present and the execution of the operation is not limited to the local scope
+//! (see clause 5.5.13) then an error of type `BadRequestData` shall be raised";
+//! that condition is decided by whether a registered Context Source takes part
+//! in the answer, which `tests/regression/ordering_local_scope.rs` covers and
+//! `docs/entity-ordering-local-scope.md` records.
 //!
 //! Naming convention: `regression_<finding>_<scenario>`.
 

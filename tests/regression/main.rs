@@ -40,6 +40,7 @@ mod null_sentinel_deletion;
 mod operation_group_expansion;
 mod ordering_attribute_paths;
 mod ordering_collation;
+mod ordering_local_scope;
 mod prefer_version_representation;
 mod prior_findings;
 mod projection_linked_entities;

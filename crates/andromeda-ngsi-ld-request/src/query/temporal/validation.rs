@@ -146,7 +146,6 @@ impl TemporalQueryParameters {
     /// term or a `q` hop names a Linked Entity the requested traversal does
     /// not reach, [`ParameterError::InlineJoinWithoutInstances`] when
     /// `join=inline` meets a representation with no instance to nest under,
-    /// [`ParameterError::OrderingRequiresLocalScope`] and
     /// [`ParameterError::Query`] carrying a temporal-ordering failure for an
     /// ordering clause 5.7.4.3 does not admit,
     /// [`ParameterError::TimerelTimeatRequired`] and
@@ -191,13 +190,6 @@ impl TemporalQueryParameters {
                 }
                 TemporalFormat::Normalized => {}
             }
-        }
-        // Clause 5.7.4.4: "If the ordering parameter is present and the
-        // execution of the operation is not limited to the local scope (see
-        // clause 5.5.13) then an error of type BadRequestData shall be
-        // raised."
-        if !self.ordering.order_by.is_empty() && !self.is_local() {
-            return Err(ParameterError::OrderingRequiresLocalScope);
         }
         // Which orderings clause 5.7.4.3 admits is a property of the ordering
         // itself; the request seam asks the compiled form rather than

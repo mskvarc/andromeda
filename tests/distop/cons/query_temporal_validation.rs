@@ -1,11 +1,13 @@
 //! Query Temporal request validation (clause 5.7.4.4/.5): a temporal query is
-//! required, the request must not be too wide, `orderBy` requires `local=true` and
-//! is restricted to `id`, and an aggregation over an ineligible attribute is
-//! rejected. All `T-LOCAL`. Forwarding and merge rows live in
-//! `crate::cons::query_temporal`.
+//! required, the request must not be too wide, `orderBy` is refused where a
+//! registered Context Source takes part in the answer and is restricted to `id`,
+//! and an aggregation over an ineligible attribute is rejected. All `T-LOCAL`.
+//! Forwarding and merge rows live in `crate::cons::query_temporal`.
 
 use crate::{
+    context_source_adapter::ContextSourceAdapter,
     oracle::{assert_problem_details, assert_status},
+    registration::CsrBuilder,
     topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::{BAD_REQUEST_DATA, INVALID_REQUEST};
@@ -47,20 +49,43 @@ async fn distop_query_temporal_too_wide_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A temporal `orderBy` without `local=true` is rejected `400` (clause 5.7.4.5).
-/// Confirms REQ-CONS-54.
+/// A temporal `orderBy` is rejected `400` where a registered Context Source
+/// takes part in the answer, and accepted where none does -- clause 4.23.1's
+/// "Sort ordering is never applied to distributed operations", read through
+/// clause 5.5.13 as `docs/entity-ordering-local-scope.md` records. Confirms
+/// REQ-CONS-54.
 #[tokio::test]
-async fn distop_query_temporal_orderby_non_local_returns_400() {
+async fn distop_query_temporal_orderby_with_a_participating_source_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
-    let response = topology
-        .broker(BrokerRole::A)
-        .expect("topology broker A")
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let mock = ContextSourceAdapter::start().await;
+    let ordered = format!("type=Vehicle&{BEFORE_2030}&orderBy=id");
+
+    // With nothing registered the answer is this broker's alone, which clause
+    // 5.5.13 makes a local execution however the request was written.
+    let accepted = front.client().query_temporal_entities(&ordered, None).await.expect("query");
+    assert_status(&accepted, 200);
+
+    let registration_id = topology.id("registration:cons54");
+    let registration = CsrBuilder::new(&registration_id, &mock.url(""))
+        .mode("inclusive")
+        .operations(&["queryTemporal"])
+        .build();
+    assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
+
+    let rejected = front.client().query_temporal_entities(&ordered, None).await.expect("query");
+    assert_status(&rejected, 400);
+    assert_problem_details(&rejected, BAD_REQUEST_DATA);
+    assert_eq!(mock.get_total_count(), 0, "the rejected query forwards nothing");
+
+    let local = front
         .client()
-        .query_temporal_entities(&format!("type=Vehicle&{BEFORE_2030}&orderBy=id"), None)
+        .query_temporal_entities(&format!("{ordered}&local=true"), None)
         .await
         .expect("query");
-    assert_status(&response, 400);
-    assert_problem_details(&response, BAD_REQUEST_DATA);
+    assert_status(&local, 200);
+
+    mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
 }
 
