@@ -1,8 +1,9 @@
 //! Assembly of named state-complete fragments under the public API root.
 
 use crate::routes::ApiRoutes;
+use andromeda_http_extraction::operation_hit_scope::scope_operation_hits;
 use andromeda_http_stack::stack::HttpStack;
-use axum::Router;
+use axum::{Router, middleware::from_fn};
 use tower_http::normalize_path::NormalizePath;
 
 /// Fully assembled, state-complete public HTTP API.
@@ -31,6 +32,10 @@ impl HttpApi {
             .merge(routes.tenancy.into_router())
             .merge(routes.health.into_router())
             .merge(routes.component_report.into_router());
+        // Clause 5.13.3.5: one NGSI-LD request resolves the same `@context`
+        // several times internally (write screening, then the write itself);
+        // an operation scope makes those internal resolutions count as one use.
+        let v1 = v1.layer(from_fn(scope_operation_hits));
         let api_root = Router::new().nest("/ngsi-ld/v1", stack.apply_api(v1));
         let process_root = match routes.telemetry {
             Some(telemetry) => api_root.merge(telemetry.into_router()),

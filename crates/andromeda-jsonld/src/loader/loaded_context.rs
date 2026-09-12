@@ -29,6 +29,15 @@ pub(crate) struct LoadedContext {
     pub(crate) durability: ContextDurability,
     /// How long the in-process cache may keep this entry.
     pub(crate) lifetime: EntryLifetime,
+    /// The URL clause 5.13.3.5 hit accounting is attributed to, when it differs
+    /// from the URL the request resolved the entry by.
+    ///
+    /// A durable row is reachable by either of its identities, so a hosted
+    /// `@context` echoed back as a relative path resolves by its local id while
+    /// its `numberOfHits` keys on the serving URL; this carries that serving URL
+    /// so the access is counted under the same key the metadata is read under.
+    /// `None` attributes the access to the resolved URL itself.
+    pub(crate) canonical_url: Option<IriBuf>,
 }
 
 /// Durability and hit-accounting ownership of one in-process entry.
@@ -91,6 +100,7 @@ pub(crate) const fn registry_context(value: Arc<jsonld_syntax::Value>) -> Loaded
         value,
         durability: ContextDurability::Registry,
         lifetime: EntryLifetime::Unbounded,
+        canonical_url: None,
     }
 }
 
@@ -131,6 +141,7 @@ mod tests {
             value: Arc::new(jsonld_syntax::Value::from_serde_json(json!({ "@context": {} }))),
             durability: ContextDurability::Registry,
             lifetime,
+            canonical_url: None,
         };
         ResponseDrivenExpiry.expire_after_create(&url, &loaded, Instant::now())
     }

@@ -36,6 +36,7 @@ use crate::{
         pending_persistence::PersistenceRetryLease,
         remote_document::{fetch_and_parse, ld_json_media_type},
     },
+    operation_hit_scope::{HitAccounting, record_access},
 };
 use iri_rs::{Iri, IriBuf};
 use jsonld::{LoadError, Loader, RemoteDocument};
@@ -205,11 +206,26 @@ impl HttpContextLoader {
         } else if matches!(loaded.durability, ContextDurability::Durable) {
             // A durable L2 read is a cache hit; the first successful remote
             // fetch and persistence is not.
-            if let Some(ref counter) = self.hit_counter {
-                counter.bump(url);
-            }
+            self.count_access(loaded.canonical_url.as_ref().unwrap_or(url));
         }
         Ok(loaded.value)
+    }
+
+    /// Count one context access under clause 5.13.3.5, unless the current
+    /// operation scope has already counted this URL.
+    ///
+    /// Deduplication is per operation ([`crate::operation_hit_scope`]): one HTTP
+    /// request or one notification-processing pass that resolves the same
+    /// context several times internally counts it once, which is the
+    /// client-visible "number of times the @context was found". Outside a scope
+    /// every access counts.
+    fn count_access(&self, url: &IriBuf) {
+        let Some(ref counter) = self.hit_counter else {
+            return;
+        };
+        if matches!(record_access(url), HitAccounting::Count) {
+            counter.bump(url);
+        }
     }
 
     /// Record one in-process access and retry pending persistence when necessary.
@@ -222,17 +238,17 @@ impl HttpContextLoader {
     /// documents counts, which is why a single Entity creation shows as several
     /// finds.
     async fn record_cached_access(&self, url: &IriBuf, loaded: &LoadedContext) {
+        // Clause 5.13.3.5: attribute the access to the URL the stored row keys
+        // its `numberOfHits` on, which is the serving URL for a hosted row a
+        // request reached by its local id.
+        let accounting_url = loaded.canonical_url.as_ref().unwrap_or(url);
         match &loaded.durability {
             ContextDurability::Registry => {}
             ContextDurability::Durable => {
-                if let Some(ref counter) = self.hit_counter {
-                    counter.bump(url);
-                }
+                self.count_access(accounting_url);
             }
             ContextDurability::Pending(pending) if pending.durable.load(Ordering::Acquire) => {
-                if let Some(ref counter) = self.hit_counter {
-                    counter.bump(url);
-                }
+                self.count_access(accounting_url);
             }
             ContextDurability::Pending(pending) => {
                 pending.hits.fetch_add(1, Ordering::Relaxed);
@@ -331,6 +347,7 @@ mod tests {
             Ok(Some(CachedContext {
                 payload: self.payload.clone(), // clone: the fixture keeps its payload for the next read
                 residual: self.residual,
+                canonical_url: None,
             }))
         }
         async fn put(&self, _url: &IriBuf, _payload: &serde_json::Value, _lifetime: CacheLifetime) -> Result<(), ContextCacheError> {

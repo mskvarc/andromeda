@@ -22,6 +22,7 @@ use andromeda_context_commit::context_change_event::ContextChangeEvent;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_entity::query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource};
 use andromeda_federation::FederationService;
+use andromeda_jsonld::operation_hit_scope::run_in_operation_scope;
 use andromeda_notification::{
     delivery_config::DeliveryConfig,
     delivery_drain::{NotificationDeliveryDrain, NotificationDeliveryTransport},
@@ -201,7 +202,11 @@ fn register_notification_processor(
                                     Err(TryRecvError::Empty | TryRecvError::Closed) => break,
                                 }
                             }
-                            processor.apply_entity_change(event).await;
+                            // Clause 5.13.3.5: counting one hit per context per
+                            // operation means the notification's own context
+                            // resolutions count once for this change, distinct
+                            // from the write that produced it.
+                            run_in_operation_scope(processor.apply_entity_change(event)).await;
                         }
                         Err(RecvError::Lagged(skipped)) => tracing::debug!(skipped, "notification entity stream lagged"),
                         Err(RecvError::Closed) => return Err(TaskFailure::transient("notification entity channel closed")),

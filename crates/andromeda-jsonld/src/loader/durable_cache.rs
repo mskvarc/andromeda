@@ -58,6 +58,7 @@ pub(crate) async fn load_from_durable_cache(
                 value: Arc::new(without_embedded_core_context(url, parsed)),
                 durability: ContextDurability::Durable,
                 lifetime: EntryLifetime::of_residual(hit.residual),
+                canonical_url: hit.canonical_url,
             }))
         }
         Ok(None) => Ok(None),
@@ -96,6 +97,7 @@ pub(crate) async fn fetch_and_persist(
             value: Arc::new(normalized),
             durability: ContextDurability::Registry,
             lifetime,
+            canonical_url: None,
         });
     };
     // Written to L2 only here, on the first remote-fetch success: the row
@@ -108,6 +110,7 @@ pub(crate) async fn fetch_and_persist(
         value: Arc::new(normalized),
         durability,
         lifetime,
+        canonical_url: None,
     })
 }
 

@@ -436,6 +436,7 @@ dependencies = [
  "andromeda-http-context-registry",
  "andromeda-http-entity",
  "andromeda-http-entity-map",
+ "andromeda-http-extraction",
  "andromeda-http-headers",
  "andromeda-http-health",
  "andromeda-http-notification-receiver",

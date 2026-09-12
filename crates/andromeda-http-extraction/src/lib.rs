@@ -15,6 +15,7 @@ pub mod entity_query;
 pub mod json_body;
 pub mod jsonld;
 pub mod language;
+pub mod operation_hit_scope;
 pub mod origin;
 pub mod prefer;
 pub mod profile;

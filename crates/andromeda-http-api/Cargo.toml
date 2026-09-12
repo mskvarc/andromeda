@@ -14,6 +14,7 @@ andromeda-http-component-report.workspace = true
 andromeda-http-context-registry.workspace = true
 andromeda-http-entity.workspace = true
 andromeda-http-entity-map.workspace = true
+andromeda-http-extraction.workspace = true
 andromeda-http-health.workspace = true
 andromeda-http-notification-receiver.workspace = true
 andromeda-http-registration.workspace = true

@@ -37,15 +37,20 @@ use uuid::Uuid;
 impl ContextCache for JsonLdContextRepository {
     async fn get(&self, url: &IriBuf) -> Result<Option<CachedContext>, ContextCacheError> {
         let (sql, values) = fresh_cached_context_query(url.as_str()).build_sqlx(PostgresQueryBuilder);
-        let row: Option<(Json<Value>, Option<DateTime<Utc>>, DateTime<Utc>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        let row: Option<(Json<Value>, Option<DateTime<Utc>>, Option<String>, DateTime<Utc>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| ContextCacheError::Read(error.to_string()))?;
-        Ok(
-            row.and_then(|(payload, expires_at, read_at)| {
-                residual_lifetime(expires_at, read_at).map(|residual| CachedContext { payload: payload.0, residual })
-            }),
-        )
+        Ok(row.and_then(|(payload, expires_at, serving_url, read_at)| {
+            residual_lifetime(expires_at, read_at).map(|residual| CachedContext {
+                payload: payload.0,
+                residual,
+                // Clause 5.13.3.5 keys `numberOfHits` on the stored URL; a row
+                // reached by its local id carries the serving URL here so the
+                // access is attributed to the same key the metadata reports.
+                canonical_url: serving_url.and_then(|url| IriBuf::new(url).ok()),
+            })
+        }))
     }
 
     async fn put(&self, url: &IriBuf, payload: &Value, lifetime: CacheLifetime) -> Result<(), ContextCacheError> {

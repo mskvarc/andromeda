@@ -25,10 +25,19 @@
 //! reader is now told the accesses that have happened rather than the ones
 //! already written down.
 //!
-//! How many finds *one* request counts is a question the clause does not
-//! settle, and this module does not assert one: a request that expands several
-//! documents resolves the same @context several times, and each is a find in
-//! the storage on the clause's own words.
+//! One NGSI-LD operation resolves the same @context several times internally --
+//! a write is screened (clause 5.5.4) and then expanded again for storage -- and
+//! the count now folds those internal resolutions into one find per operation.
+//! Clause 5.13.3.5's "number of times the @context was found in the storage" is
+//! read as the client-visible use of the context, not the broker's internal
+//! plumbing, so one request that uses a context reports one find and two
+//! requests report two (`crate::operation scope` in `andromeda_jsonld`).
+//!
+//! A @context a client echoes back as the relative path clause 5.13.2.5 handed
+//! it (`/ngsi-ld/v1/jsonldContexts/{id}`) resolves by its local id, while its
+//! `numberOfHits` and the durable flush key on the serving URL; the resolver
+//! attributes the find to that serving URL so a relative use is counted, where
+//! before it was silently attributed to the bare identifier and lost.
 //!
 //! Naming convention: `regression_<finding>_<scenario>`.
 
@@ -221,10 +230,68 @@ async fn regression_hosted_context_a_use_is_counted_before_the_flush_runs() {
         .expect("create entity request");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
-    assert!(
-        hits(client, &id).await > 0,
-        "a request that resolved the context found it in the storage, and the count says so at once"
+    assert_eq!(
+        hits(client, &id).await,
+        1,
+        "a request that resolved the context found it once, and the count says so at once"
     );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.13.2.5 hands the client a relative path for the stored `@context`;
+/// echoing it back as a request's `@context` must count as a find. Before, the
+/// relative path was reduced to the bare identifier and the find was attributed
+/// to a key `numberOfHits` never reads, so a genuine use reported zero.
+#[tokio::test]
+async fn regression_hosted_context_a_relative_reference_is_resolved_and_counted() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = create_hosted_context(client).await;
+    assert_eq!(hits(client, &id).await, 0, "a freshly stored context has been found nowhere");
+
+    // The path clause 5.13.2.5 hands back, exactly as a client would echo it.
+    let relative = format!("/ngsi-ld/v1/jsonldContexts/{id}");
+    let entity_id = scope.id("Testing:relative-context-use");
+    let created = client
+        .post_entity(&json!({"id": entity_id, "type": "Testing", "A1": "a value", "@context": [relative]}))
+        .with_ld_json()
+        .send()
+        .await
+        .expect("create entity request");
+    assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
+
+    assert_eq!(
+        hits(client, &id).await,
+        1,
+        "a relative reference to a hosted context is resolved and its use counted exactly once"
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.13.3.5, one find per operation: a single request that resolves a
+/// context several times internally counts one, and a second request counts a
+/// second, so the number tracks client-visible uses rather than internal
+/// resolutions.
+#[tokio::test]
+async fn regression_hosted_context_each_request_counts_a_single_find() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = create_hosted_context(client).await;
+    let relative = format!("/ngsi-ld/v1/jsonldContexts/{id}");
+
+    for (index, expected) in [(1u64, 1u64), (2, 2)] {
+        let entity_id = scope.id(&format!("Testing:one-find-per-request-{index}"));
+        let created = client
+            .post_entity(&json!({"id": entity_id, "type": "Testing", "A1": "a value", "@context": [relative]}))
+            .with_ld_json()
+            .send()
+            .await
+            .expect("create entity request");
+        assert_eq!(created.status, StatusCode::CREATED, "create {index}: {:?}", created.body);
+        assert_eq!(hits(client, &id).await, expected, "request {index} adds exactly one find");
+    }
 
     scope.finish().await.expect("cleanup failed");
 }

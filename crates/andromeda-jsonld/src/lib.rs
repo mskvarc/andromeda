@@ -51,6 +51,7 @@ pub mod engine;
 pub mod error;
 pub mod hit_counter;
 pub mod loader;
+pub mod operation_hit_scope;
 pub mod scoped_context_admission;
 pub mod term_compaction;
 pub mod term_expansion;
@@ -66,7 +67,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-representation",
     ],
-    allow_production_dependencies: ["confique", "reqwest"],
+    allow_production_dependencies: ["confique", "reqwest", "tokio"],
 }
 
 #[cfg(test)]

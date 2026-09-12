@@ -216,7 +216,9 @@ impl SnapshotPreparation {
                     .await?;
                 Ok(())
             } else {
-                self.executor.execute(job.snapshot, job.query_context, self.worker_id).await
+                // Box the large execution future so it does not inflate the
+                // enclosing select's state machine (clippy::large_futures).
+                Box::pin(self.executor.execute(job.snapshot, job.query_context, self.worker_id)).await
             }
         };
         tokio::pin!(execution);

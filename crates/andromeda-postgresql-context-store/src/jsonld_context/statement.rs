@@ -80,6 +80,7 @@ pub fn fresh_cached_context_query(identifier: &str) -> SelectStatement {
     Query::select()
         .column(JsonldContexts::Payload)
         .column(JsonldContexts::ExpiresAt)
+        .column(JsonldContexts::Url)
         .expr_as(Expr::current_timestamp(), Alias::new("read_at"))
         .from(JsonldContexts::Table)
         .cond_where(Condition::all().add(identity_matches(identifier)).add(unexpired()))
@@ -388,9 +389,11 @@ mod tests {
 
         assert!(sql.contains("\"payload\""), "{sql}");
         assert!(
-            sql.contains("\"expires_at\", CURRENT_TIMESTAMP AS \"read_at\""),
-            "both instants come from one clock: {sql}"
+            sql.contains("CURRENT_TIMESTAMP AS \"read_at\""),
+            "the residual lifetime is judged on one clock: {sql}"
         );
+        assert!(sql.contains("\"expires_at\""), "the granted expiry is read alongside the clock: {sql}");
+        assert!(sql.contains("\"url\""), "the serving URL is read so clause 5.13.3.5 hits key on it: {sql}");
     }
 
     /// Clause 6.3.16: the entry's expiry is the lifetime the response granted,
