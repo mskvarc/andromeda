@@ -14,7 +14,7 @@
 use crate::{
     error::TemporalError,
     linked::candidates::{TemporalLinkedCandidate, collect_candidates},
-    service::{TemporalService, has_explicit_context, normalize_temporal_payload_without_context},
+    service::TemporalService,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::options::CompactOptions};
@@ -131,11 +131,14 @@ impl TemporalService {
         let presence = presence_of(rows.is_empty());
 
         let built = TemporalEntityRenderer::new(entity_id, entity_types, &rows, compiled).render();
+        // Clause 5.7.3 / 5.5.7: the representation is compacted against the
+        // request @context, which is the core context alone when the client
+        // supplies none. A term the resolved context does not declare stays a
+        // full IRI; it is not truncated to a bare fragment, since a fragment is
+        // not a term the client could expand back (clause 5.7.6 renders type
+        // and attribute discovery the same way).
         let compacted = self.engine.compact(built.entity, context, CompactOptions::default()).await?;
         let mut compacted = TemporalArrayNormalizer::new(compacted).render();
-        if !has_explicit_context(context) {
-            normalize_temporal_payload_without_context(&mut compacted);
-        }
         // Clause 4.21, `id` / `type` half: the attribute half of the
         // projection already ran inside `TemporalEntityRenderer` on the
         // expanded representation, keyed by attribute IRI; `id` and `type`

@@ -7,12 +7,12 @@ use crate::{
 };
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_entity::port::reader::EntityReader;
-use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::temporal::{last_n::LastNOrigin, window::TimeInterval};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
 /// Return short IRI token from fragment or last path segment.
 pub(crate) fn iri_short_name(iri: &str) -> Option<String> {
@@ -20,64 +20,6 @@ pub(crate) fn iri_short_name(iri: &str) -> Option<String> {
         return Some(iri[pos + 1..].to_string());
     }
     iri.rfind('/').map(|pos| iri[pos + 1..].to_string())
-}
-
-/// Return whether a context spec contains explicit (client-provided) context.
-pub(crate) fn has_explicit_context(context: &ContextSpec) -> bool {
-    !context.link_contexts().is_empty() || context.body_context().is_some()
-}
-
-/// Normalize compacted temporal payload when no explicit context was provided.
-///
-/// This keeps top-level keys and `type` values readable by collapsing expanded IRIs
-/// to their fragment/last-path short names.
-pub(crate) fn normalize_temporal_payload_without_context(value: &mut Value) {
-    let reserved: HashSet<&str> = ["id", "type", "@context", "createdAt", "modifiedAt", "deletedAt"].into_iter().collect();
-
-    let Some(obj) = value.as_object_mut() else {
-        return;
-    };
-
-    if let Some(type_value) = obj.get_mut("type") {
-        match type_value {
-            Value::String(type_name) => {
-                if type_name.starts_with("http")
-                    && let Some(short) = iri_short_name(type_name)
-                {
-                    *type_name = short;
-                }
-            }
-            Value::Array(types) => {
-                for t in types {
-                    if let Some(type_name) = t.as_str()
-                        && type_name.starts_with("http")
-                        && let Some(short) = iri_short_name(type_name)
-                    {
-                        *t = Value::String(short);
-                    }
-                }
-            }
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => {}
-        }
-    }
-
-    let keys_to_rename: Vec<(String, String)> = obj
-        .keys()
-        .filter(|k| !reserved.contains(k.as_str()))
-        .filter_map(|key| {
-            if !key.starts_with("http") && !key.starts_with("urn:") {
-                return None;
-            }
-            iri_short_name(key).map(|short| (key.clone(), short)) // clone: keys are borrowed from map iterator
-        })
-        .filter(|(old_key, new_key)| old_key != new_key && !obj.contains_key(new_key))
-        .collect();
-
-    for (old_key, new_key) in keys_to_rename {
-        if let Some(value) = obj.remove(&old_key) {
-            obj.insert(new_key, value);
-        }
-    }
 }
 
 /// Service layer for NGSI-LD Temporal Entity operations (read and write).

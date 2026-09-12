@@ -209,7 +209,7 @@ async fn regression_non_ascii_identifier_a_plain_retrieval_keeps_it_verbatim() {
 
 /// Clause 4.6.2 NOTE 2 with clause 4.5.5: a keyValues notification of a
 /// multi-instance Relationship keeps the non-ASCII target verbatim in the
-/// dataset-map rendering. This is the path ETSI case 046_22_07 exercises, where
+/// dataset-map rendering. This is the path ETSI case `046_22_07` exercises, where
 /// `urn:ngsi-ld:Ciudad:Par\u{00ed}s` came back double-encoded as
 /// `urn:ngsi-ld:Ciudad:ParÃ­s`.
 #[tokio::test]

@@ -7,7 +7,7 @@ use crate::{
     port::history_reader::TemporalHistoryReader,
     read::rendered_entity::HistoryPresence,
     requested_identifiers::RequestedIdentifiers,
-    service::{TemporalQueryResult, TemporalQueryWarning, TemporalRange, TemporalReadResult, TemporalService, has_explicit_context, iri_short_name},
+    service::{TemporalQueryResult, TemporalQueryWarning, TemporalRange, TemporalReadResult, TemporalService},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::compact_attr_iri, context_spec::ContextSpec, engine::options::CompactOptions};
@@ -244,58 +244,27 @@ impl TemporalService {
                 }
             }
             if !iri_to_short.contains_key(attr_iri) {
+                // `compact_attr_iri` returns the term the resolved context
+                // declares, or the full IRI verbatim when none does (clause
+                // 5.7.3): an undeclared attribute is not truncated to a bare
+                // fragment the client could not expand back.
                 let short = compact_attr_iri(&self.engine, attr_iri.as_str(), context).await;
                 if short != attr_iri.as_str()
                     && let Ok(short) = short.parse()
                 {
                     iri_to_short.insert(attr_iri.clone(), short); // clone: the index owns its attribute key.
-                } else if !has_explicit_context(context)
-                    && let Some(short_name) = iri_short_name(attr_iri.as_str())
-                    && short_name != attr_iri.as_str()
-                    && let Ok(short_name) = short_name.parse()
-                {
-                    iri_to_short.insert(attr_iri.clone(), short_name); // clone: the index owns its attribute key.
                 }
             }
         }
 
         // Compact entity type by compacting a minimal type skeleton
         let type_skeleton = json!({"@id": entity_id, "@type": entity_types});
+        // The type is compacted against the request @context; an undeclared
+        // type stays a full IRI rather than a bare fragment (clause 5.7.3).
         let compacted_type = if let Ok(compacted) = self.engine.compact(type_skeleton, context, CompactOptions::default()).await {
-            let mut compacted_type = compacted.as_object().and_then(|o| o.get("type")).cloned().unwrap_or(json!(entity_types)); // clone: need owned Value from borrowed compacted object
-            if !has_explicit_context(context) {
-                match &mut compacted_type {
-                    Value::String(type_name) => {
-                        if type_name.starts_with("http")
-                            && let Some(short) = iri_short_name(type_name)
-                        {
-                            *type_name = short;
-                        }
-                    }
-                    Value::Array(types) => {
-                        for type_value in types {
-                            if let Some(type_name) = type_value.as_str()
-                                && type_name.starts_with("http")
-                                && let Some(short) = iri_short_name(type_name)
-                            {
-                                *type_value = Value::String(short);
-                            }
-                        }
-                    }
-                    Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => {}
-                }
-            }
-            compacted_type
+            compacted.as_object().and_then(|o| o.get("type")).cloned().unwrap_or(json!(entity_types)) // clone: need owned Value from borrowed compacted object
         } else {
-            let type_values: Vec<String> = if has_explicit_context(context) {
-                entity_types.iter().map(ToString::to_string).collect()
-            } else {
-                entity_types
-                    .iter()
-                    .map(|type_name| iri_short_name(type_name.as_str()).unwrap_or_else(|| type_name.to_string()))
-                    .collect()
-            };
-            json!(type_values)
+            json!(entity_types)
         };
 
         // Build the final result

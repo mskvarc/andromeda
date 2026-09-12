@@ -67,6 +67,7 @@ mod temporal_entity_map;
 mod temporal_entity_map_narrowing;
 mod temporal_evolution_delete_order;
 mod temporal_prefer_version;
+mod temporal_retrieve_term_expansion;
 mod temporal_scope_evolution;
 mod term_declaration_prefix_resolution;
 mod time_value_restrictions;
