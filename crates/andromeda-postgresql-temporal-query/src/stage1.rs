@@ -10,7 +10,7 @@
 //! than "history disappears".
 
 use crate::{
-    alias::{Ah, An, Ce, Cs, EntityIdColumn, S},
+    alias::{Ah, Ahg, An, Ang, Ce, Cs, EntityIdColumn, S, Sg},
     axis::axis_column,
 };
 use andromeda_context_space::context_space_key::ContextSpaceKey;
@@ -26,20 +26,21 @@ use andromeda_postgresql_query::{
     entity_ordering::{order_by_entity_identifier, ordering_collation},
     entity_row_refs::{DocumentsRef, EntityRowRefs},
     error::RenderError,
-    geo_predicate as geo_sql,
-    geo_predicate::GeometrySource,
+    geo_predicate::relation_expression,
     q_predicate::projection as q_filter,
     scope_predicate::{ScopeTarget, condition as scope_condition},
     type_predicate::condition as type_condition,
 };
 use andromeda_postgresql_schema::{
-    current::{E, Entities, EntitySearch},
+    current::{E, Entities},
     name_dictionary::AttributeNames,
     temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
 };
 use andromeda_postgresql_seaquery::{
+    cast::cast,
     literal::{false_literal, int_literal},
     operator::regex_match,
+    pg_type::PostgresType,
 };
 use iri_rs::IriBuf;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Func, JoinType, Order, SelectStatement};
@@ -177,59 +178,117 @@ fn build_entity_conditions_for_temporal(
         ConsideredEntities::NoEntity => condition = condition.add(false_literal()),
     }
 
-    if let Some(probe) = current_state_probe(context_space_key, compiled, names)? {
+    if let Some(probe) = current_state_probe(context_space_key, compiled, names) {
+        condition = condition.add(SeaExpr::exists(probe));
+    }
+
+    if let Some(probe) = temporal_geo_existential(context_space_key, compiled)? {
         condition = condition.add(SeaExpr::exists(probe));
     }
 
     Ok(condition)
 }
 
-/// The correlated `EXISTS` over the current-state relations carrying the
-/// current-state filters.
+/// The correlated `EXISTS` over the current-state relations carrying the `q`
+/// filter (clause 4.9).
 ///
-/// `q` (clause 4.9) reads the `current_attribute_values` projection and, for
-/// paths the projection cannot answer, the entity's JSONB payload, which the
-/// probe reads by key lookup rather than by joining `entity_documents`; a geo
-/// query (clause 4.10) reads the default `location` columns of the
-/// `entity_search` row - joined as `cs` only then - or the instance rows of a
-/// named `GeoProperty`. Both are statements about current state, so they are
-/// evaluated inside one probe correlated to the temporal entity's URI. `None`
-/// when the query carries neither filter, so an unfiltered temporal query never
-/// touches current state.
-fn current_state_probe(
-    context_space_key: ContextSpaceKey,
-    compiled: &CompiledTemporalQuery,
-    names: &QueryNames,
-) -> Result<Option<SelectStatement>, RenderError> {
-    if compiled.entities.q_expr.is_none() && compiled.entities.geo.is_none() {
-        return Ok(None);
-    }
+/// `q` reads the `current_attribute_values` projection and, for paths the
+/// projection cannot answer, the entity's JSONB payload, which the probe reads
+/// by key lookup rather than by joining `entity_documents`. It is a statement
+/// about current state, evaluated inside a probe correlated to the temporal
+/// entity's URI. `None` when the query carries no `q`, so a temporal query with
+/// no `q` never touches current state.
+///
+/// A geo query (clause 4.10) is deliberately *not* here: clause 5.7.4.4 step S3
+/// checks its restriction against the `GeoProperty` instances "within the
+/// interval defined by the temporal query", which are the `attribute_history`
+/// rows, not current state. [`temporal_geo_existential`] carries it.
+fn current_state_probe(context_space_key: ContextSpaceKey, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Option<SelectStatement> {
+    let q_expr = compiled.entities.q_expr.as_ref()?;
 
     let rows = EntityRowRefs::aliased(Ce, Cs, DocumentsRef::ByKeyLookup);
-    let mut current_conditions = Condition::all();
-
-    if let Some(q_expr) = &compiled.entities.q_expr {
-        current_conditions = current_conditions.add(q_filter::compile(q_expr, &rows, names));
-    }
 
     let mut probe = SelectStatement::new();
-    probe.expr(int_literal(1)).from_as(Entities::Table, Ce);
-
-    if let Some(geo) = &compiled.entities.geo {
-        probe.join_as(
-            JoinType::Join,
-            EntitySearch::Table,
-            Cs,
-            SeaExpr::col((Cs, EntitySearch::EntityKey)).equals((Ce, Entities::EntityKey)),
-        );
-        current_conditions = current_conditions.add(geo_sql::condition(geo, GeometrySource::Entity { rows: &rows }, &names.attributes)?);
-    }
-
     probe
+        .expr(int_literal(1))
+        .from_as(Entities::Table, Ce)
         .cond_where(SeaExpr::col((Ce, Entities::Id)).equals((E, TemporalEntities::Id)))
         .cond_where(SeaExpr::col((Ce, Entities::ContextSpaceKey)).eq(context_space_key.as_i64()))
-        .cond_where(current_conditions);
+        .cond_where(q_filter::compile(q_expr, &rows, names));
+    Some(probe.take())
+}
+
+/// The correlated `EXISTS` over the `attribute_history` rows a temporal geo
+/// query (clause 4.10) filters, restricted to the temporal window.
+///
+/// Clause 5.7.4.4 step S3: the geospatial restriction "shall be checked against
+/// the `GeoProperty` instances that are within the interval defined by the
+/// temporal query". Every instance of the target `GeoProperty` - the default
+/// `location` and any named one alike - is an `attribute_history` row carrying a
+/// `value_geo`, so the probe reaches them uniformly through the stream rather
+/// than through the single hoisted current-state `location` column, which holds
+/// only one instant and answers a different question. Clause 4.10 makes one
+/// in-window instance meeting the restriction enough, which is exactly this
+/// existential. `None` when the query carries no geo restriction.
+///
+/// # Errors
+///
+/// Returns [`RenderError::ReferenceGeometryEncoding`] or [`RenderError::Query`]
+/// exactly as the shared relation rendering does.
+fn temporal_geo_existential(context_space_key: ContextSpaceKey, compiled: &CompiledTemporalQuery) -> Result<Option<SelectStatement>, RenderError> {
+    let Some(geo) = &compiled.entities.geo else {
+        return Ok(None);
+    };
+
+    let planar = SeaExpr::col((Ahg, AttributeHistory::ValueGeo));
+    let geographic = cast(SeaExpr::col((Ahg, AttributeHistory::ValueGeo)), PostgresType::Geography);
+    let spatial = relation_expression(&geo.georel, planar, geographic, &geo.geometry)?;
+
+    let mut probe = SelectStatement::new();
+    probe
+        .expr(int_literal(1))
+        .from_as(TemporalAttributeStreams::Table, Sg)
+        .join_as(
+            JoinType::Join,
+            AttributeNames::Table,
+            Ang,
+            SeaExpr::col((Ang, AttributeNames::Id)).equals((Sg, TemporalAttributeStreams::AttributeNameId)),
+        )
+        .join_as(
+            JoinType::Join,
+            AttributeHistory::Table,
+            Ahg,
+            SeaExpr::col((Ahg, AttributeHistory::StreamKey)).equals((Sg, TemporalAttributeStreams::StreamKey)),
+        )
+        .cond_where(SeaExpr::col((Sg, TemporalAttributeStreams::TemporalEntityKey)).equals((E, TemporalEntities::EntityKey)))
+        .cond_where(SeaExpr::col((Sg, TemporalAttributeStreams::ContextSpaceKey)).eq(context_space_key.as_i64()))
+        .cond_where(SeaExpr::col((Ahg, AttributeHistory::ContextSpaceKey)).eq(context_space_key.as_i64()))
+        .cond_where(SeaExpr::col((Ang, AttributeNames::Name)).eq(geo.geoproperty.as_str()))
+        .cond_where(SeaExpr::col((Ahg, AttributeHistory::ValueGeo)).is_not_null())
+        .cond_where(geo_window_condition(compiled))
+        .cond_where(spatial);
     Ok(Some(probe.take()))
+}
+
+/// The temporal window as a predicate on the geo existential's own
+/// `attribute_history` axis column.
+///
+/// The same interval the stream match applies (clause 5.2.21), restated against
+/// the `ahg` alias so a `GeoProperty` instance counts only when it falls within
+/// the window (clause 5.7.4.4 S3). The axis is the query's `timeproperty`,
+/// defaulting to `observedAt` (clause 4.11).
+fn geo_window_condition(compiled: &CompiledTemporalQuery) -> Condition {
+    let axis = axis_column(compiled.window.timeproperty);
+    let mut condition = Condition::all();
+    match &compiled.window.interval {
+        TimeInterval::Unbounded => {}
+        TimeInterval::Before(instant) => condition = condition.add(SeaExpr::col((Ahg, axis)).lt(*instant)),
+        TimeInterval::After(instant) => condition = condition.add(SeaExpr::col((Ahg, axis)).gte(*instant)),
+        TimeInterval::Between { from, to } => {
+            condition = condition.add(SeaExpr::col((Ahg, axis)).gte(*from)).add(SeaExpr::col((Ahg, axis)).lt(*to));
+        }
+    }
+    condition
 }
 
 /// Render one selector's identifier, pattern and type predicates against the
@@ -614,10 +673,14 @@ mod tests {
         assert!(!sql.contains("entity_search"), "a q filter alone joins no search row: {sql}");
     }
 
-    /// The default `location` columns live on the search row, which the probe
-    /// joins as `cs` only for a geo query.
+    /// Clause 5.7.4.4 S3: the geospatial restriction is checked against the
+    /// `GeoProperty` instances "within the interval defined by the temporal
+    /// query", which are `attribute_history` rows -- not the single hoisted
+    /// current-state `location` column, which holds one instant and answers a
+    /// different question. The default `location` reaches its history rows
+    /// through the stream just as any named `GeoProperty` does.
     #[test]
-    fn a_geo_query_joins_the_search_row_into_the_probe() {
+    fn a_default_location_geo_query_reads_the_windowed_history_instances() {
         let mut compiled = minimal_compiled();
         compiled.entities.geo = Some(GeoQuery {
             georel: GeoRel::Within,
@@ -625,11 +688,34 @@ mod tests {
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         });
         let (sql, _) = built(&compiled, &QueryNames::default());
+        assert!(sql.contains(r#"FROM "temporal_attribute_streams" AS "sg""#), "{sql}");
+        assert!(sql.contains(r#"JOIN "attribute_history" AS "ahg""#), "{sql}");
+        assert!(sql.contains(r#""ahg"."value_geo""#), "{sql}");
         assert!(
-            sql.contains(r#"FROM "entities" AS "ce" JOIN "entity_search" AS "cs" ON "cs"."entity_key" = "ce"."entity_key" WHERE "ce"."id" = "e"."id""#),
-            "{sql}"
+            sql.contains(r#""sg"."temporal_entity_key" = "e"."entity_key""#),
+            "correlated to the temporal entity: {sql}"
         );
-        assert!(sql.contains(r#""cs"."location""#), "{sql}");
+        assert!(!sql.contains("entity_search"), "the geo restriction no longer reads current state: {sql}");
+    }
+
+    /// Clause 5.7.4.4 S3 restricts the geo instances to the temporal window, so
+    /// the geo existential restates the window predicate on its own
+    /// `attribute_history` axis rather than trusting the stream match alone.
+    #[test]
+    fn a_temporal_geo_query_restricts_the_geo_instances_to_the_window() {
+        let mut compiled = minimal_compiled();
+        compiled.window.interval = TimeInterval::After(instant("2020-07-01T12:05:00Z"));
+        compiled.entities.geo = Some(GeoQuery {
+            georel: GeoRel::Near {
+                max_distance: Some(2000.0),
+                min_distance: None,
+            },
+            geometry: point(&serde_json::json!([-8.503, 41.202])),
+            geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
+        });
+        let (sql, _) = built(&compiled, &QueryNames::default());
+        assert!(sql.contains(r#""ahg"."observed_at""#), "the window is applied to the geo instances: {sql}");
+        assert!(sql.contains("ST_DWithin"), "near renders a distance relation on the geo instances: {sql}");
     }
 
     #[test]
@@ -639,30 +725,29 @@ mod tests {
         assert!(!sql.contains("scope_history"), "No scope_history reference without scopeQ: {sql}");
     }
 
-    /// Clause 4.10 applies to a temporal query exactly as it does to a current-
-    /// state one: a named `GeoProperty` is read from its `current_attribute_values`
-    /// instance rows, correlated through the current-state probe.
+    /// Clause 5.7.4.4 S3 applies to a named `GeoProperty` exactly as to the
+    /// default `location`: its instances are the `attribute_history` rows of the
+    /// stream carrying that name, restricted to the window, so a named property
+    /// reaches the same history rows the default one does rather than the
+    /// current-state projection.
     #[test]
-    fn a_temporal_geo_query_on_a_named_geoproperty_reads_its_attribute_instance_rows() {
+    fn a_temporal_geo_query_on_a_named_geoproperty_reads_the_windowed_history_instances() {
         let mut compiled = minimal_compiled();
         compiled.entities.geo = Some(GeoQuery {
             georel: GeoRel::Within,
             geometry: point(&serde_json::json!([1.0, 2.0])),
             geoproperty: "https://example.com/customGeo".parse().expect("valid attribute name"),
         });
-        let names = QueryNames {
-            attributes: ResolvedNames::from_pairs([(
-                "https://example.com/customGeo".parse().expect("valid attribute name"),
-                AttributeNameId::from(42_i32),
-            )]),
-            types: ResolvedNames::default(),
-        };
-        let (sql, _) = built(&compiled, &names);
-        assert!(sql.contains("FROM \"current_attribute_values\""), "{sql}");
-        assert!(sql.contains("\"geo_instance\".\"attribute_name_id\" = $"), "the dictionary id is bound: {sql}");
+        let (sql, _) = built(&compiled, &QueryNames::default());
+        assert!(sql.contains(r#"FROM "temporal_attribute_streams" AS "sg""#), "{sql}");
         assert!(
-            sql.contains("\"geo_instance\".\"entity_key\" = \"ce\".\"entity_key\""),
-            "correlated through the current-state probe: {sql}"
+            sql.contains(r#"JOIN "attribute_names" AS "ang""#),
+            "the target GeoProperty is named through the dictionary: {sql}"
+        );
+        assert!(sql.contains(r#""ahg"."value_geo""#), "{sql}");
+        assert!(
+            !sql.contains("current_attribute_values"),
+            "a temporal geo query reads history, not the current-state projection: {sql}"
         );
     }
 

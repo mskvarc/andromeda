@@ -21,7 +21,7 @@ use crate::{
     entity_row_refs::EntityRowRefs,
     error::RenderError,
 };
-use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
+use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{error::QueryError, geo::query::GeoQuery};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
@@ -95,25 +95,9 @@ pub fn condition(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names: &R
         // named column that always exists, so it never lands here.
         return Ok(Condition::all().add(false_literal()));
     };
-    let reference = encode(&geo.geometry)?;
-    // Built fresh per relation so the EWKB it binds is not shared as an owned
-    // value between the two operands a `near` relation carries.
-    let reference_geom = || validated_geom_from_ewkb(SeaExpr::val(reference.to_vec()));
     let SubjectGeometry { planar, geographic, envelope } = subject;
-
-    let spatial = match &geo.georel {
-        GeoRel::Within => st_within(planar.clone(), reference_geom()), // clone: a registration also reads the planar column for its null guard
-        GeoRel::Contains => st_contains(planar.clone(), reference_geom()),
-        GeoRel::Intersects => st_intersects(planar.clone(), reference_geom()),
-        GeoRel::Disjoint => st_disjoint(planar.clone(), reference_geom()),
-        GeoRel::Equals => st_equals(planar.clone(), reference_geom()),
-        GeoRel::Overlaps => st_overlaps(planar.clone(), reference_geom()),
-        // `near` measures on the spheroid, so both operands become `geography`.
-        GeoRel::Near { max_distance, min_distance } => {
-            let reference_geography = cast(reference_geom(), PostgresType::Geography);
-            near_expression(geographic, reference_geography, *max_distance, *min_distance)?
-        }
-    };
+    // clone: a registration also reads the planar column for its null guard.
+    let spatial = relation_expression(&geo.georel, planar.clone(), geographic, &geo.geometry)?;
 
     Ok(match envelope {
         // Clause 5.10.2: a registration that declares no location is not
@@ -130,6 +114,45 @@ pub fn condition(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names: &R
             Condition::all().add(SeaExpr::exists(probe))
         }
     })
+}
+
+/// The topological or distance relation of a geo query as a boolean SQL
+/// expression over a subject geometry (clause 4.10).
+///
+/// `planar` is the subject read as a `PostGIS` `geometry`, which the six
+/// topological relations evaluate; `geographic` is the same subject cast to
+/// `geography`, which the spheroidal `near` relation measures on. Exactly one of
+/// the two is read, whichever the relation names. The relation semantics live
+/// here rather than inside [`condition`] so a caller that reads its subject
+/// geometry from rows this module does not model -- the `attribute_history`
+/// instances a clause 5.7.4.4 temporal geo query filters -- applies the
+/// identical relation rather than a second, drifting copy of it.
+///
+/// # Errors
+///
+/// Returns [`RenderError::ReferenceGeometryEncoding`] when the reference
+/// geometry has no EWKB spelling the store can bind, and [`RenderError::Query`]
+/// carrying [`QueryError::NearWithoutDistance`] when `georel=near` names neither
+/// `maxDistance` nor `minDistance`.
+pub fn relation_expression(georel: &GeoRel, planar: SimpleExpr, geographic: SimpleExpr, geometry: &Geometry) -> Result<SimpleExpr, RenderError> {
+    let reference = encode(geometry)?;
+    // Built fresh per relation so the EWKB it binds is not shared as an owned
+    // value between the two operands a `near` relation carries.
+    let reference_geom = || validated_geom_from_ewkb(SeaExpr::val(reference.to_vec()));
+    let spatial = match georel {
+        GeoRel::Within => st_within(planar, reference_geom()),
+        GeoRel::Contains => st_contains(planar, reference_geom()),
+        GeoRel::Intersects => st_intersects(planar, reference_geom()),
+        GeoRel::Disjoint => st_disjoint(planar, reference_geom()),
+        GeoRel::Equals => st_equals(planar, reference_geom()),
+        GeoRel::Overlaps => st_overlaps(planar, reference_geom()),
+        // `near` measures on the spheroid, so both operands become `geography`.
+        GeoRel::Near { max_distance, min_distance } => {
+            let reference_geography = cast(reference_geom(), PostgresType::Geography);
+            near_expression(geographic, reference_geography, *max_distance, *min_distance)?
+        }
+    };
+    Ok(spatial)
 }
 
 /// The two operand expressions a geo predicate reads its subject geometry
@@ -247,7 +270,7 @@ fn location_expiry_guard(location_expires_at: SimpleExpr) -> SimpleExpr {
 mod tests {
     use super::*;
     use crate::{attribute_name_id::AttributeNameId, entity_row_refs::DocumentsRef};
-    use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geometry::Geometry};
+    use andromeda_ngsi_ld_geometry::dimension::GeometryDimension;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_postgresql_schema::current::Entities;
     use sea_query::{PostgresQueryBuilder, Query, Value, Values};

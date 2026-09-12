@@ -49,6 +49,7 @@ mod projection_selector_exclusivity;
 mod proof_seal_representation;
 mod query_language_evaluator;
 mod query_language_targets;
+mod query_narrowing_and_geo;
 mod query_pattern_dialect;
 mod query_string_escapes;
 mod registration_discovery_information;

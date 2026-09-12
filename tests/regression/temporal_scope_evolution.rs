@@ -465,6 +465,19 @@ async fn regression_temporal_scope_removal_renders_the_null_beside_its_deleted_a
         removal.get("deletedAt").is_some(),
         "clause 4.5.7 sets deletedAt on a deleted instance: {removal}"
     );
+    // Clause 4.5.6 restricts a Scope's temporal representation to the four
+    // Temporal Properties as sub-Properties, so no instance of it -- the
+    // removal included -- carries an instanceId or a datasetId.
+    for instance in &scope_instances {
+        assert!(
+            instance.get("instanceId").is_none(),
+            "clause 4.5.6 excludes instanceId from a Scope's temporal representation: {instance}"
+        );
+        assert!(
+            instance.get("datasetId").is_none(),
+            "clause 4.5.4 gives a Scope no dataset dimension: {instance}"
+        );
+    }
 
     scope.finish().await.expect("cleanup failed");
 }

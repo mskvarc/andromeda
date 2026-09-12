@@ -46,6 +46,25 @@ pub struct Ce;
 #[iden = "cs"]
 pub struct Cs;
 
+/// Alias `sg` for the `temporal_attribute_streams` row the geo existential
+/// reads, kept distinct from [`S`] so the clause 5.7.4.4 geo probe nested beside
+/// the main stream match cannot capture its rows.
+#[derive(Iden, Clone, Copy)]
+#[iden = "sg"]
+pub struct Sg;
+
+/// Alias `ang` for the `attribute_names` row the geo existential joins to name
+/// the target `GeoProperty`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "ang"]
+pub struct Ang;
+
+/// Alias `ahg` for the `attribute_history` rows the geo existential filters:
+/// the `GeoProperty` instances within the temporal window (clause 5.7.4.4 S3).
+#[derive(Iden, Clone, Copy)]
+#[iden = "ahg"]
+pub struct Ahg;
+
 /// The `entity_id` name stage 1 projects the selected entity URI under.
 #[derive(Iden, Clone, Copy)]
 #[iden = "entity_id"]
@@ -53,7 +72,7 @@ pub struct EntityIdColumn;
 
 #[cfg(test)]
 mod tests {
-    use crate::alias::{Ah, An, Ce, Cs, EntityIdColumn, S, Te};
+    use crate::alias::{Ah, Ahg, An, Ang, Ce, Cs, EntityIdColumn, S, Sg, Te};
     use sea_query::Iden;
 
     #[test]
@@ -64,6 +83,9 @@ mod tests {
         pretty_assertions::assert_eq!(Te.to_string(), "te");
         pretty_assertions::assert_eq!(Ce.to_string(), "ce");
         pretty_assertions::assert_eq!(Cs.to_string(), "cs");
+        pretty_assertions::assert_eq!(Sg.to_string(), "sg");
+        pretty_assertions::assert_eq!(Ang.to_string(), "ang");
+        pretty_assertions::assert_eq!(Ahg.to_string(), "ahg");
         pretty_assertions::assert_eq!(EntityIdColumn.to_string(), "entity_id");
     }
 }

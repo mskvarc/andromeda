@@ -196,8 +196,17 @@ fn insert_temporal_properties(instance: &mut Map<String, Value>, row: &TemporalH
 
 /// Insert the members that identify the instance: the `instanceId` clause 4.5.7
 /// hands back, and the `datasetId` it belongs to when it names one.
+///
+/// A Scope carries neither. Clause 4.5.6 restricts the temporal representation
+/// of a Scope to "the non-reified Temporal Properties createdAt, modifiedAt,
+/// deletedAt and observedAt as sub-Properties" -- `instanceId` is none of those
+/// and so has no place on it -- and clause 4.5.4 gives a Scope no dataset
+/// dimension, so no `datasetId` either.
 fn insert_identity_members(instance: &mut Map<String, Value>, row: &TemporalHistoryRow) {
     let family = InstanceFamily::of_attribute_name(&row.attribute_name);
+    if family == InstanceFamily::Scope {
+        return;
+    }
     instance.insert(
         expanded_properties::INSTANCE_ID.as_str().to_string(),
         json!([{"@id": row.instance.rendered(family).to_string()}]),
