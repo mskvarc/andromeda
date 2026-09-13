@@ -20,7 +20,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 thiserror = "2.0.20"
 typed-builder = "0.23.2"
-uuid = { version = "1.26.0", features = ["serde", "std", "v7"] }
+uuid = { version = "1.26.1", features = ["serde", "std", "v7"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

@@ -23,7 +23,7 @@ ip_network = "0.4.1"
 iri-rs = "3.4.1"
 mediatype = "0.23.0"
 moka = { version = "0.12.16", features = ["future"] }
-reqwest = { version = "0.13.4", features = ["json"] }
+reqwest = { version = "0.13.5", features = ["json"] }
 rumqttc = { version = "0.25.1", features = ["use-rustls"] }
 rustls = { version = "0.23.44", default-features = false, features = ["std"] }
 secrecy = "0.10.3"
@@ -34,7 +34,7 @@ tokio = { version = "1.53.1", features = ["macros", "net", "rt", "sync", "time"]
 tokio-util = "0.7.19"
 tracing = "0.1.44"
 url = { version = "2.5.8", features = ["serde"] }
-uuid = { version = "1.26.0", features = ["fast-rng", "v4"] }
+uuid = { version = "1.26.1", features = ["fast-rng", "v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

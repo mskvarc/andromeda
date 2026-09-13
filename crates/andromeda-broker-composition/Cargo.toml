@@ -72,11 +72,11 @@ sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres", "json", "ch
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["full"] }
-toml = "1.1.5"
+toml = "1.1.6"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
 url = { version = "2.5.8", features = ["serde"] }
-uuid = { version = "1.26.0", features = ["fast-rng", "serde", "v4"] }
+uuid = { version = "1.26.1", features = ["fast-rng", "serde", "v4"] }
 
 [build-dependencies]
 shadow-rs = "2.0.0"

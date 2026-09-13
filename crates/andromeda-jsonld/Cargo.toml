@@ -19,13 +19,13 @@ contextual = "0.1.6"
 dashmap = { version = "6.2.1", features = ["inline"] }
 headers = "0.4.1"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
-jsonld = { version = "0.22.0", features = ["expandable-serde-json", "expandable-chrono", "reqwest", "serde", "serde-json", "vocab"] }
-jsonld-core = "0.22.0"
-jsonld-syntax = { version = "0.22.0", features = ["serde-json"] }
+jsonld = { version = "0.22.1", features = ["expandable-serde-json", "expandable-chrono", "reqwest", "serde", "serde-json", "vocab"] }
+jsonld-core = "0.22.1"
+jsonld-syntax = { version = "0.22.1", features = ["serde-json"] }
 mediatype = "0.23.0"
 moka = { version = "0.12.16", features = ["future"] }
 rdfx = "0.24.0"
-reqwest = { version = "0.13.4", features = ["json"] }
+reqwest = { version = "0.13.5", features = ["json"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 strum = { version = "0.28.0", features = ["derive"] }

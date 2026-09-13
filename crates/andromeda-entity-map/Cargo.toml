@@ -18,7 +18,7 @@ iso8601-duration = { version = "0.2.0", features = ["chrono", "serde"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 sha2 = "0.11.0"
 thiserror = "2.0.20"
-uuid = { version = "1.26.0", features = ["v4"] }
+uuid = { version = "1.26.1", features = ["v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

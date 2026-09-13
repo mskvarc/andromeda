@@ -24,8 +24,8 @@ hex = "0.4.3"
 indexmap = { version = "2.14.2", features = ["serde"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 iso8601-duration = { version = "0.2.0", features = ["chrono", "serde"] }
-jsonld = { version = "0.22.0", features = ["expandable-serde-json", "expandable-chrono", "serde", "serde-json"] }
-jsonld-expandable-core = { version = "0.22.0", features = ["chrono", "serde-json"] }
+jsonld = { version = "0.22.1", features = ["expandable-serde-json", "expandable-chrono", "serde", "serde-json"] }
+jsonld-expandable-core = { version = "0.22.1", features = ["chrono", "serde-json"] }
 langtag = { version = "1.1.0", features = ["serde"] }
 mediatype = { version = "0.23.0", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -35,7 +35,7 @@ strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.20"
 typed-builder = "0.23.2"
 url = { version = "2.5.8", features = ["serde"] }
-uuid = { version = "1.26.0", features = ["fast-rng", "serde", "v4"] }
+uuid = { version = "1.26.1", features = ["fast-rng", "serde", "v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
