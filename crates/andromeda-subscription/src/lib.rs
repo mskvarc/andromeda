@@ -43,6 +43,8 @@ pub mod matching;
 /// The reverse map from a subscription to its index buckets.
 pub mod membership;
 mod normalization;
+/// Initialising a subscription's notification `@context` from its creation context.
+mod notification_context;
 /// What a subscription's stored delivery instants must satisfy to notify again.
 pub mod notification_slot;
 /// How selectors are placed into the candidate index.

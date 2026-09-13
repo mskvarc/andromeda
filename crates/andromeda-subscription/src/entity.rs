@@ -2,6 +2,7 @@ use crate::{
     change::SubscriptionChange,
     error::SubscriptionError,
     normalization,
+    notification_context,
     term_expansion,
     validation,
     variant::{DatasetIdPolicy, SubscriptionVariant},
@@ -14,7 +15,6 @@ use andromeda_ngsi_ld_model::subscription::Subscription;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
-use tracing::warn;
 use url::Url;
 
 /// Entity-subscription-specific behaviour.
@@ -36,45 +36,14 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
     type Change = SubscriptionChange;
 
     async fn expand_terms(&self, payload: &mut Value, context: &ContextSpec, base_url: Option<&Url>) -> Result<(), SubscriptionError> {
-        // Preserve body @context as jsonldContext — entity subs host compound contexts.
-        // The body context comes from ContextSpec (set by the JsonLd extractor), not
-        // from the payload directly, since the extractor strips @context before
-        // deserialisation.
-        if payload.get("jsonldContext").is_none()
-            && let Some(ctx_val) = context.body_context()
-        {
-            let stored = match ctx_val {
-                Value::String(s) => Some(Value::String(s.clone())), // clone: need owned String for new Value; s is borrowed from ctx_val
-                Value::Array(arr) if arr.len() == 1 && arr[0].is_string() => Some(arr[0].clone()), // clone: extracting single element from array as owned Value
-                Value::Array(_) | Value::Object(_) => {
-                    let hosted_payload = serde_json::json!({ "@context": ctx_val });
-                    match self.contexts.create_implicitly(hosted_payload, base_url).await {
-                        Ok(urn) => {
-                            let stored_value = match base_url {
-                                Some(base) => {
-                                    let mut hosted = base.clone(); // clone: the request origin remains reusable.
-                                    hosted.set_path(&format!("/ngsi-ld/v1/jsonldContexts/{urn}"));
-                                    hosted.to_string()
-                                }
-                                None => urn.to_string(),
-                            };
-                            Some(Value::String(stored_value))
-                        }
-                        Err(e) => {
-                            warn!("Failed to create hosted context for subscription @context: {}", e);
-                            None
-                        }
-                    }
-                }
-                _other @ (Value::Null | Value::Bool(_) | Value::Number(_)) => None,
-            };
-
-            if let Some(stored) = stored
-                && let Some(obj) = payload.as_object_mut()
-            {
-                obj.insert("jsonldContext".to_string(), stored);
-            }
-        }
+        // Clause 5.8.2.4: initialise `jsonldContext` from the `@context`
+        // applicable at creation when the request named none itself, hosting a
+        // compound applicable context as a broker-served Context so it reduces
+        // to the single URI the field holds. The applicable contexts come from
+        // the request's `ContextSpec` (the extractor strips `@context` from the
+        // body before deserialisation), which carries both the `Link` header
+        // contexts and the body context.
+        notification_context::initialize_notification_context(payload, context, base_url, Some(&self.contexts)).await;
 
         term_expansion::expand_common_subscription_terms(&self.engine, payload, context).await
     }

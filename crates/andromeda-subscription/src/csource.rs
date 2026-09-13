@@ -2,6 +2,7 @@ use crate::{
     change::CsourceSubscriptionChange,
     error::SubscriptionError,
     normalization,
+    notification_context,
     term_expansion,
     variant::{DatasetIdPolicy, SubscriptionVariant},
 };
@@ -30,30 +31,14 @@ impl CsrSubscriptionVariant {
 impl SubscriptionVariant for CsrSubscriptionVariant {
     type Change = CsourceSubscriptionChange;
 
-    async fn expand_terms(&self, payload: &mut Value, context: &ContextSpec, _base_url: Option<&Url>) -> Result<(), SubscriptionError> {
-        // Store body @context as jsonldContext (simplified -- no context hosting).
-        // The body context comes from ContextSpec (set by the JsonLd extractor), not
-        // from the payload directly, since the extractor strips @context before
-        // deserialisation.
-        if payload.get("jsonldContext").is_none()
-            && let Some(ctx_val) = context.body_context()
-        {
-            let jsonld_context_value = match ctx_val {
-                Value::String(s) => Value::String(s.clone()), // clone: need owned String for new Value; original is borrowed from ContextSpec
-                Value::Array(_) | Value::Object(_) => ctx_val.clone(), // clone: need owned copy to insert into payload as jsonldContext
-                _other @ (Value::Null | Value::Bool(_) | Value::Number(_)) => Value::Null,
-            };
-
-            if jsonld_context_value != Value::Null
-                && let Some(obj) = payload.as_object_mut()
-            {
-                let stored = match jsonld_context_value {
-                    Value::String(s) => Value::String(s),
-                    other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) => Value::String(other.to_string()),
-                };
-                obj.insert("jsonldContext".to_string(), stored);
-            }
-        }
+    async fn expand_terms(&self, payload: &mut Value, context: &ContextSpec, base_url: Option<&Url>) -> Result<(), SubscriptionError> {
+        // Clause 5.8.2.4: initialise `jsonldContext` from the `@context`
+        // applicable at creation when the request named none itself. A Context
+        // Source Registration Subscription hosts no compound Context (`None`
+        // host), so a request naming several contexts, or one inline, that
+        // cannot reduce to a single URI falls to the core context (clause 5.5.5)
+        // rather than storing an undereferenceable value.
+        notification_context::initialize_notification_context(payload, context, base_url, None).await;
 
         term_expansion::expand_common_subscription_terms(&self.engine, payload, context).await
     }

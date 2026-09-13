@@ -153,12 +153,12 @@ where
         }
         validate_context_spec(&self.engine, context).await?;
 
+        // Clause 5.8.2.4: `expand_terms` initialises `jsonldContext` from the
+        // `@context` applicable at creation when the request named none itself,
+        // so by the time the payload is parsed the member reflects that fallback.
         self.variant.expand_terms(&mut payload, context, base_url).await?;
 
-        // Clause 5.8.2.4: a subscription with no `jsonldContext` member is
-        // initialised with the `@context` applicable at creation, so the request
-        // context is threaded through as the fallback.
-        let values = fields::extract_create_fields(&payload, self.variant.dataset_id_policy(), context)?;
+        let values = fields::extract_create_fields(&payload, self.variant.dataset_id_policy())?;
         let fields = values.to_fields();
 
         let status = compute_updated_status(
