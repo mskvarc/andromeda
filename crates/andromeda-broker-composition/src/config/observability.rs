@@ -1,8 +1,8 @@
 //! Logging and metrics exposure configuration.
 
-use confique::Config;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
+use toml_comment::TomlComment;
 
 /// Broker log verbosity.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString)]
@@ -49,12 +49,12 @@ pub enum MetricsExposure {
 }
 
 /// Broker observability settings.
-#[derive(Config, Debug, Clone, Serialize)]
+#[derive(Deserialize, Serialize, Default, TomlComment, Debug, Clone)]
 pub struct ObservabilityConfig {
     /// Maximum emitted log verbosity.
-    #[config(env = "ANDROMEDA_OBSERVABILITY_LOG_LEVEL", default = "info")]
+    #[toml_comment(inline)]
     pub log_level: LogLevel,
     /// Metrics exposure mode.
-    #[config(env = "ANDROMEDA_OBSERVABILITY_METRICS", default = "disabled")]
+    #[toml_comment(inline)]
     pub metrics: MetricsExposure,
 }

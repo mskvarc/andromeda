@@ -1,11 +1,12 @@
 //! PostgreSQL connection and pool configuration.
 
 use crate::maintenance_config::MaintenanceConfig;
-use confique::Config;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 use thiserror::Error;
+use toml_comment::TomlComment;
 use url::Url;
+use url_macro::url;
 
 /// Invalid PostgreSQL pool or maintenance configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -51,27 +52,37 @@ impl SynchronousCommit {
 }
 
 /// PostgreSQL pool configuration.
-#[derive(Config, Debug, Clone, Serialize)]
+#[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct DatabaseConfig {
     /// Validated PostgreSQL connection URL.
-    #[config(env = "ANDROMEDA_DATABASE_URL", default = "postgres://postgres:postgres@localhost:5432/postgres")]
+    #[toml_comment(inline)]
     pub url: Url,
     /// Maximum connections in the main pool.
-    #[config(env = "ANDROMEDA_DATABASE_MAX_CONNECTIONS", default = 32)]
     pub max_connections: u32,
     /// Commit durability applied to each connection.
-    #[config(env = "ANDROMEDA_DATABASE_SYNCHRONOUS_COMMIT", default = "off")]
+    #[toml_comment(inline)]
     pub synchronous_commit: SynchronousCommit,
     /// Populate the attribute-name and entity-type-name caches at tenant
     /// startup.
-    #[config(env = "ANDROMEDA_DATABASE_PRELOAD_NAME_DICTIONARIES", default = true)]
     pub preload_name_dictionaries: bool,
     /// Interval between JSON-LD hit-counter flushes.
-    #[config(env = "ANDROMEDA_DATABASE_CONTEXT_HIT_FLUSH_SECS", default = 5)]
     pub context_hit_flush_secs: u64,
     /// Adaptive PostgreSQL inspection and maintenance policy.
-    #[config(nested)]
     pub maintenance: MaintenanceConfig,
+}
+
+impl Default for DatabaseConfig {
+    fn default() -> DatabaseConfig {
+        DatabaseConfig {
+            // Compile-time validated, so the built-in default carries no runtime parse or panic.
+            url: url!("postgres://postgres:postgres@localhost:5432/postgres"),
+            max_connections: 32,
+            synchronous_commit: SynchronousCommit::Off,
+            preload_name_dictionaries: true,
+            context_hit_flush_secs: 5,
+            maintenance: MaintenanceConfig::default(),
+        }
+    }
 }
 
 impl DatabaseConfig {
@@ -99,6 +110,11 @@ mod tests {
     use super::{DatabaseConfig, DatabaseConfigError, SynchronousCommit};
     use crate::maintenance_config::MaintenanceConfig;
     use std::str::FromStr;
+
+    #[test]
+    fn the_built_in_default_database_url_is_valid() {
+        pretty_assertions::assert_eq!(DatabaseConfig::default().url.as_str(), "postgres://postgres:postgres@localhost:5432/postgres");
+    }
 
     #[test]
     fn synchronous_commit_modes_parse_and_render_the_postgresql_setting() {

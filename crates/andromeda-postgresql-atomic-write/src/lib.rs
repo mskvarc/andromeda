@@ -49,7 +49,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-model",
     ],
-    allow_production_dependencies: ["confique", "sea-query", "sea-query-sqlx", "sqlx"],
+    allow_production_dependencies: ["sea-query", "sea-query-sqlx", "sqlx"],
 }
 
 #[cfg(test)]

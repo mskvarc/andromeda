@@ -53,6 +53,13 @@ pub struct ConfigArgs {
 pub enum ConfigCommand {
     Validate,
     PrintEffective(PrintEffectiveArgs),
+    Generate(GenerateArgs),
+}
+
+#[derive(Args)]
+pub struct GenerateArgs {
+    #[arg(short = 'o', long)]
+    pub output: Option<PathBuf>,
 }
 
 #[derive(Args)]

@@ -1,8 +1,8 @@
 //! Streaming subscription transport configuration.
 
-use confique::Config;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use toml_comment::TomlComment;
 
 /// Invalid streaming subscription transport configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -22,35 +22,47 @@ pub enum NotificationConfigError {
 }
 
 /// Server-Sent Events transport limits.
-#[derive(Config, Debug, Clone, Serialize)]
+#[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct SseConfig {
     /// Per-connection notification channel capacity.
-    #[config(env = "ANDROMEDA_NOTIFICATIONS_SSE_CHANNEL_BUFFER_SIZE", default = 64)]
     pub channel_buffer_size: usize,
     /// Keep-alive interval for idle connections.
-    #[config(env = "ANDROMEDA_NOTIFICATIONS_SSE_KEEP_ALIVE_INTERVAL_SECS", default = 15)]
     pub keep_alive_interval_secs: u64,
 }
 
+impl Default for SseConfig {
+    fn default() -> SseConfig {
+        SseConfig {
+            channel_buffer_size: 64,
+            keep_alive_interval_secs: 15,
+        }
+    }
+}
+
 /// WebSocket transport limits.
-#[derive(Config, Debug, Clone, Serialize)]
+#[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct WsConfig {
     /// Per-connection notification channel capacity.
-    #[config(env = "ANDROMEDA_NOTIFICATIONS_WS_CHANNEL_BUFFER_SIZE", default = 64)]
     pub channel_buffer_size: usize,
     /// Ping interval for idle connections.
-    #[config(env = "ANDROMEDA_NOTIFICATIONS_WS_PING_INTERVAL_SECS", default = 30)]
     pub ping_interval_secs: u64,
 }
 
+impl Default for WsConfig {
+    fn default() -> WsConfig {
+        WsConfig {
+            channel_buffer_size: 64,
+            ping_interval_secs: 30,
+        }
+    }
+}
+
 /// Streaming transport configuration.
-#[derive(Config, Debug, Clone, Serialize)]
+#[derive(Deserialize, Serialize, Default, TomlComment, Debug, Clone)]
 pub struct NotificationConfig {
     /// Server-Sent Events settings.
-    #[config(nested)]
     pub sse: SseConfig,
     /// WebSocket settings.
-    #[config(nested)]
     pub ws: WsConfig,
 }
 

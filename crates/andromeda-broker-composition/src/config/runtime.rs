@@ -19,86 +19,101 @@ use andromeda_postgresql_context_store::config::DatabaseConfig;
 use andromeda_snapshot::config::SnapshotConfig;
 use andromeda_temporal::config::TemporalConfig;
 use andromeda_tenancy::config::TenancyConfig;
-use confique::{Config, Layer};
-use serde::Serialize;
-use std::{net::IpAddr, path::Path};
+use figment2::{
+    Figment,
+    providers::{Env, Format, Serialized, Toml},
+    value::Value,
+};
+use serde::{Deserialize, Serialize};
+use std::{
+    fs,
+    net::IpAddr,
+    path::{Path, PathBuf},
+};
+use toml_comment::TomlComment;
 use url::Url;
 
 /// Default broker configuration path used by the CLI.
 pub const DEFAULT_CONFIG_PATH: &str = "config/andromeda.toml";
 
 /// Fully loaded broker construction configuration.
-#[derive(Config, Debug, Clone, Serialize)]
+#[derive(Deserialize, Serialize, Default, TomlComment, Debug, Clone)]
 pub struct RuntimeConfig {
     /// HTTP listener and graceful-drain configuration.
-    #[config(nested)]
     pub server: ServerConfig,
 
     /// Process-wide inbound HTTP stack configuration.
-    #[config(nested)]
     pub http: HttpStackConfig,
 
     /// Primary and tenant PostgreSQL connection configuration.
-    #[config(nested)]
     pub database: DatabaseConfig,
 
     /// JSON-LD processing and context-loading configuration.
-    #[config(nested)]
     pub jsonld: JsonLdConfig,
 
     /// Temporal policy and append-mode configuration.
-    #[config(nested)]
     pub temporal: TemporalConfig,
 
     /// Tenant creation and runtime-cache configuration.
-    #[config(nested)]
     pub tenancy: TenancyConfig,
 
     /// Context Source identity configuration.
-    #[config(nested)]
     pub info: InfoConfig,
 
     /// Entity batching, expiry, and durable side-effect configuration.
-    #[config(nested)]
     pub entity: EntityConfig,
 
     /// Distributed Context Source forwarding configuration.
-    #[config(nested)]
     pub federation: FederationConfig,
 
     /// PostgreSQL atomic-write strategy.
-    #[config(nested)]
     pub postgresql_write: AtomicWriteConfig,
 
     /// Snapshot operation configuration.
-    #[config(nested)]
     pub snapshot: SnapshotConfig,
 
     /// Durable notification event and delivery configuration.
-    #[config(nested)]
     pub notification_delivery: DeliveryConfig,
 
     /// Streaming notification transport configuration.
-    #[config(nested)]
     pub notifications: NotificationConfig,
 
     /// Spatial projection and reconciliation configuration.
-    #[config(nested)]
     pub spatial: SpatialConfig,
 
     /// Composition-owned tracing configuration.
-    #[config(nested)]
     pub observability: ObservabilityConfig,
 }
 
 impl RuntimeConfig {
     /// Load, normalize, and validate the configured broker resources.
+    ///
+    /// The layers, in increasing precedence, are the built-in defaults, the
+    /// TOML file (silently absent when the path does not exist), the
+    /// `ANDROMEDA__`-prefixed environment, and finally the CLI listener
+    /// overrides. Environment nesting uses `__` between every level, so
+    /// `ANDROMEDA__NOTIFICATIONS__WS__PING_INTERVAL_SECS` reaches
+    /// `notifications.ws.ping_interval_secs`; a single underscore separates the
+    /// words of one key and never nests.
     fn load(config_file: &Path, overrides: ServerOverrides) -> Result<RuntimeConfig, ConfigurationError> {
-        let mut cli_layer = <RuntimeConfig as Config>::Layer::empty();
-        cli_layer.server.host = overrides.host;
-        cli_layer.server.port = overrides.port;
-
-        let mut config = RuntimeConfig::builder().preloaded(cli_layer).env().file(config_file).load()?;
+        // A value is JSON-parsed first so that a map-valued or structured
+        // setting (the JSON-LD preload map, the raw `contextSourceExtras`) can
+        // be given as one environment value; anything that is not JSON stays
+        // the literal string it was, which is how scalars and enum tokens
+        // arrive.
+        let environment = Env::prefixed("ANDROMEDA__")
+            .split("__")
+            .parser(|value| serde_json::from_str::<Value>(value).unwrap_or_else(|_| Value::from(value)));
+        let mut figment = Figment::from(Serialized::defaults(RuntimeConfig::default()))
+            .merge(Toml::file(config_file))
+            .merge(environment);
+        if let Some(host) = overrides.host {
+            figment = figment.merge(Serialized::default("server.host", host));
+        }
+        if let Some(port) = overrides.port {
+            figment = figment.merge(Serialized::default("server.port", port));
+        }
+        let mut config: RuntimeConfig = figment.extract().map_err(|error| ConfigurationError::Load(Box::new(error)))?;
         normalize_preload_context_paths(&mut config, config_file);
         validate_config(&config)?;
 
@@ -214,28 +229,37 @@ pub fn print_effective_reported(config_file: &Path, format: ConfigurationOutputF
     }
 }
 
+/// Emit a fully commented default configuration and report write failures at their owner.
+///
+/// With `output` set the commented TOML is written to that file; without it the
+/// document is printed to standard output. Every emitted setting carries the
+/// rustdoc of the field it comes from as a leading comment, and every field
+/// left at its built-in default is shown with that default's value.
+#[must_use]
+pub fn generate_default_reported(output: Option<PathBuf>) -> ProcessExitOutcome {
+    let rendered = <RuntimeConfig as TomlComment>::default_toml();
+    let Some(path) = output else {
+        print!("{rendered}");
+        return ProcessExitOutcome::Success;
+    };
+    match fs::write(&path, rendered) {
+        Ok(()) => {
+            println!("Default configuration written to {}", path.display());
+            ProcessExitOutcome::Success
+        }
+        Err(error) => {
+            eprintln!("failed to write default configuration to {}: {error}", path.display());
+            ProcessExitOutcome::ConfigurationFailure
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::config::observability::{LogLevel, MetricsExposure};
-    use andromeda_entity::{config::EntityConfig, spatial_config::SpatialConfig};
-    use andromeda_federation::config::{FederationConfig, SplitEntitiesDefault};
-    use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
-    use andromeda_http_server::config::ServerConfig;
-    use andromeda_http_source_identity::config::InfoConfig;
-    use andromeda_http_stack::config::{CorsMode, HttpFeatureMode, HttpStackConfig};
-    use andromeda_http_subscription::config::{NotificationConfig, SseConfig, WsConfig};
-    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
-    use andromeda_notification::delivery_config::DeliveryConfig;
-    use andromeda_postgresql_atomic_write::config::{AtomicWriteConfig, BulkWriteMode};
-    use andromeda_postgresql_context_store::{
-        config::{DatabaseConfig, SynchronousCommit},
-        maintenance_config::MaintenanceConfig,
-    };
-    use andromeda_snapshot::config::SnapshotConfig;
-    use andromeda_temporal::config::TemporalAppendMode;
+    use super::*;
+    use andromeda_http_stack::config::{CorsMode, HttpFeatureMode};
     use serial_test::serial;
     use std::{
-        collections::HashMap,
         env,
         fs,
         net::IpAddr,
@@ -243,199 +267,21 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use super::*;
-    use andromeda_tenancy::db_name_prefix::DbNamePrefix;
-
+    /// A configuration built from the defaults with one preload context, for the
+    /// path-normalization, redaction and validation tests that vary one field.
     fn test_runtime_config_with_preload(path: &str) -> RuntimeConfig {
-        let mut preloads = HashMap::new();
-        preloads.insert("https://example.com/context.jsonld".parse().expect("test URL"), path.into());
-        RuntimeConfig {
-            server: test_server_config(),
-            http: test_http_stack_config(),
-            database: test_database_config(),
-            jsonld: test_jsonld_config(preloads),
-            temporal: test_temporal_config(),
-            tenancy: test_tenancy_config(),
-            info: test_info_config(),
-            entity: test_entity_config(),
-            federation: test_federation_config(),
-            postgresql_write: AtomicWriteConfig {
-                bulk_mode: BulkWriteMode::Unnest,
-            },
-            snapshot: test_snapshot_config(),
-            notification_delivery: test_delivery_config(),
-            notifications: test_notification_config(),
-            spatial: test_spatial_config(),
-            observability: test_observability_config(),
-        }
+        let mut config = RuntimeConfig::default();
+        config
+            .jsonld
+            .preload_contexts
+            .insert("https://example.com/context.jsonld".parse().expect("test URL"), path.into());
+        config
     }
 
-    fn test_server_config() -> ServerConfig {
-        ServerConfig {
-            host: "127.0.0.1".parse().expect("test host address"),
-            port: 1056,
-            graceful_drain_secs: 30,
-        }
-    }
-
-    fn test_http_stack_config() -> HttpStackConfig {
-        HttpStackConfig {
-            request_timeout_secs: 30,
-            response_compression: HttpFeatureMode::Enabled,
-            request_decompression: HttpFeatureMode::Enabled,
-            cors: CorsMode::Permissive,
-            max_request_body_bytes: 67_108_864,
-            forwarded_headers: ForwardedHeaderTrust::Untrusted,
-        }
-    }
-
-    fn test_database_config() -> DatabaseConfig {
-        DatabaseConfig {
-            url: "postgres://postgres:postgres@localhost:5432/postgres".parse().expect("database URL"),
-            max_connections: 32,
-            synchronous_commit: SynchronousCommit::Off,
-            preload_name_dictionaries: true,
-            context_hit_flush_secs: 5,
-            maintenance: MaintenanceConfig::default(),
-        }
-    }
-
-    fn test_jsonld_config(preload_contexts: HashMap<Url, PathBuf>) -> JsonLdConfig {
-        JsonLdConfig {
-            allow_remote_contexts: true,
-            timeout_seconds: 30,
-            max_redirects: 5,
-            max_context_bytes: 2_000_000,
-            cache_capacity: 1024,
-            cache_ttl_seconds: 3600,
-            preload_contexts,
-        }
-    }
-
-    fn test_temporal_config() -> TemporalConfig {
-        TemporalConfig {
-            append_mode: TemporalAppendMode::Native,
-            default_last_n: 19,
-            expiration_check_interval_secs: 30,
-            intent_fallback_secs: 1,
-            intent_batch_size: 64,
-            intent_lease_secs: 30,
-            intent_retry_secs: 2,
-            intent_retry_max_secs: 300,
-            intent_stuck_after_attempts: 10,
-            chunk_interval_days: None,
-            columnstore_after_days: None,
-            retention_horizon_days: None,
-            retention_sweep_interval_secs: 3600,
-        }
-    }
-
-    fn test_tenancy_config() -> TenancyConfig {
-        TenancyConfig {
-            enabled: true,
-            tenant_db_prefix: DbNamePrefix::try_from("andromeda_tenant").expect("valid default db name prefix"),
-            tenant_max_connections: 16,
-            runtime_idle_ttl_seconds: 900,
-            runtime_max_cached: 64,
-            janitor_interval_seconds: 30,
-        }
-    }
-
-    fn test_info_config() -> InfoConfig {
-        InfoConfig {
-            source_id: "urn:ngsi-ld:ContextSourceIdentity:andromeda".parse::<Uri>().expect("valid source ID"),
-            source_alias: "andromeda".parse::<ContextSourcePseudonym>().expect("valid source alias"),
-            source_extras: None,
-            advertised_url: None,
-        }
-    }
-
-    fn test_entity_config() -> EntityConfig {
-        EntityConfig {
-            batch_concurrency: None,
-            batch_chunk_concurrency: None,
-            batch_chunk_write_concurrency: None,
-            batch_chunk_size: 512,
-            batch_large_threshold: 512,
-            batch_prepare_blocking_threshold: 128,
-            batch_async_side_effect_threshold: None,
-            expiry_batch_size: 1_000,
-            pending_side_effects_poll_secs: 1,
-            pending_side_effects_lease_secs: 30,
-            pending_side_effects_batch_size: 32,
-            pending_side_effects_max_attempts: 5,
-            pending_side_effects_base_backoff_secs: 2,
-            pending_side_effects_dead_letter_after_secs: 604_800,
-            pending_side_effects_cleanup_interval_secs: 300,
-        }
-    }
-
-    fn test_federation_config() -> FederationConfig {
-        FederationConfig {
-            forward_concurrency: 16,
-            connect_timeout_ms: 3000,
-            request_timeout_ms: 5000,
-            cache_max_entries: 1024,
-            split_entities_default: SplitEntitiesDefault::Complete,
-        }
-    }
-
-    fn test_snapshot_config() -> SnapshotConfig {
-        SnapshotConfig {
-            default_lifetime_secs: 3_600,
-            maximum_lifetime_secs: 2_592_000,
-            capture_page_size: 250,
-            preparation_concurrency: 4,
-            scoped_operation_wait_secs: 30,
-            preparation_lease_secs: 30,
-            tenant_count_quota: None,
-            tenant_byte_quota: None,
-        }
-    }
-
-    fn test_delivery_config() -> DeliveryConfig {
-        DeliveryConfig {
-            enabled: false,
-            max_attempts: 5,
-            base_backoff_secs: 5,
-            poll_interval_secs: 1,
-            batch_size: 50,
-            concurrency: 20,
-            lease_secs: 30,
-            error_max_chars: 1024,
-            cleanup_after_secs: 86400,
-            cleanup_interval_secs: 300,
-            dead_letter_after_secs: 604_800,
-            orphan_event_after_secs: 86400,
-        }
-    }
-
-    fn test_notification_config() -> NotificationConfig {
-        NotificationConfig {
-            sse: SseConfig {
-                channel_buffer_size: 64,
-                keep_alive_interval_secs: 15,
-            },
-            ws: WsConfig {
-                channel_buffer_size: 64,
-                ping_interval_secs: 30,
-            },
-        }
-    }
-
-    fn test_spatial_config() -> SpatialConfig {
-        SpatialConfig {
-            rebuild_interval_secs: 1800,
-            change_channel_capacity: 65_536,
-            lag_log_interval_secs: 5,
-        }
-    }
-
-    fn test_observability_config() -> ObservabilityConfig {
-        ObservabilityConfig {
-            log_level: LogLevel::Info,
-            metrics: MetricsExposure::Disabled,
-        }
+    /// Load with only the built-in defaults and the environment, against a path
+    /// that does not exist so no file layer contributes.
+    fn load_env_only() -> RuntimeConfig {
+        RuntimeConfig::load(Path::new("/nonexistent-andromeda.toml"), ServerOverrides::default()).expect("config should load")
     }
 
     fn write_temp_config(contents: &str) -> PathBuf {
@@ -475,54 +321,54 @@ mod tests {
     #[test]
     #[serial]
     fn env_overrides_default_host() {
-        unsafe { env::set_var("ANDROMEDA_SERVER_HOST", "192.168.1.1") };
-        let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { env::remove_var("ANDROMEDA_SERVER_HOST") };
+        unsafe { env::set_var("ANDROMEDA__SERVER__HOST", "192.168.1.1") };
+        let config = load_env_only();
+        unsafe { env::remove_var("ANDROMEDA__SERVER__HOST") };
         pretty_assertions::assert_eq!(config.server.host, IpAddr::from([192, 168, 1, 1]));
     }
 
     #[test]
     #[serial]
     fn env_overrides_default_port() {
-        unsafe { env::set_var("ANDROMEDA_SERVER_PORT", "9999") };
-        let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { env::remove_var("ANDROMEDA_SERVER_PORT") };
+        unsafe { env::set_var("ANDROMEDA__SERVER__PORT", "9999") };
+        let config = load_env_only();
+        unsafe { env::remove_var("ANDROMEDA__SERVER__PORT") };
         pretty_assertions::assert_eq!(config.server.port, 9999);
     }
 
     #[test]
     #[serial]
     fn env_overrides_database_url() {
-        unsafe { env::set_var("ANDROMEDA_DATABASE_URL", "postgres://envhost/envdb") };
-        let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { env::remove_var("ANDROMEDA_DATABASE_URL") };
+        unsafe { env::set_var("ANDROMEDA__DATABASE__URL", "postgres://envhost/envdb") };
+        let config = load_env_only();
+        unsafe { env::remove_var("ANDROMEDA__DATABASE__URL") };
         pretty_assertions::assert_eq!(config.database.url.as_str(), "postgres://envhost/envdb");
     }
 
     #[test]
     #[serial]
     fn env_overrides_jsonld_cache_capacity() {
-        unsafe { env::set_var("ANDROMEDA_JSONLD_CACHE_CAPACITY", "9999") };
-        let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { env::remove_var("ANDROMEDA_JSONLD_CACHE_CAPACITY") };
+        unsafe { env::set_var("ANDROMEDA__JSONLD__CACHE_CAPACITY", "9999") };
+        let config = load_env_only();
+        unsafe { env::remove_var("ANDROMEDA__JSONLD__CACHE_CAPACITY") };
         pretty_assertions::assert_eq!(config.jsonld.cache_capacity, 9999);
     }
 
     #[test]
     #[serial]
     fn env_parses_http_response_compression_mode() {
-        unsafe { env::set_var("ANDROMEDA_HTTP_RESPONSE_COMPRESSION", "disabled") };
-        let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { env::remove_var("ANDROMEDA_HTTP_RESPONSE_COMPRESSION") };
+        unsafe { env::set_var("ANDROMEDA__HTTP__RESPONSE_COMPRESSION", "disabled") };
+        let config = load_env_only();
+        unsafe { env::remove_var("ANDROMEDA__HTTP__RESPONSE_COMPRESSION") };
         pretty_assertions::assert_eq!(config.http.response_compression, HttpFeatureMode::Disabled);
     }
 
     #[test]
     #[serial]
     fn env_parses_http_cors_mode() {
-        unsafe { env::set_var("ANDROMEDA_HTTP_CORS", "disabled") };
-        let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { env::remove_var("ANDROMEDA_HTTP_CORS") };
+        unsafe { env::set_var("ANDROMEDA__HTTP__CORS", "disabled") };
+        let config = load_env_only();
+        unsafe { env::remove_var("ANDROMEDA__HTTP__CORS") };
         pretty_assertions::assert_eq!(config.http.cors, CorsMode::Disabled);
     }
 
@@ -531,19 +377,19 @@ mod tests {
     fn env_parses_json_maps_for_hashmap_fields() {
         unsafe {
             env::set_var(
-                "ANDROMEDA_JSONLD_PRELOAD_CONTEXTS",
+                "ANDROMEDA__JSONLD__PRELOAD_CONTEXTS",
                 "{\"https://example.com/context.jsonld\":\"contexts/test.jsonld\"}",
             );
         };
-        let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { env::remove_var("ANDROMEDA_JSONLD_PRELOAD_CONTEXTS") };
-        pretty_assertions::assert_eq!(
-            config
-                .jsonld
-                .preload_contexts
-                .get(&"https://example.com/context.jsonld".parse().expect("test URL")),
-            Some(&"contexts/test.jsonld".into())
-        );
+        let config = load_env_only();
+        unsafe { env::remove_var("ANDROMEDA__JSONLD__PRELOAD_CONTEXTS") };
+        // The JSON object env value is parsed into the map; the stored path is then
+        // normalized against the config file's directory, so it is asserted by suffix.
+        let path = config
+            .jsonld
+            .preload_contexts
+            .get(&"https://example.com/context.jsonld".parse().expect("test URL"));
+        assert!(path.is_some_and(|path| path.ends_with("contexts/test.jsonld")), "{path:?}");
     }
 
     #[test]
@@ -609,9 +455,9 @@ port = 1600
 ",
         );
 
-        unsafe { env::set_var("ANDROMEDA_SERVER_PORT", "1700") };
+        unsafe { env::set_var("ANDROMEDA__SERVER__PORT", "1700") };
         let config = RuntimeConfig::load(&path, ServerOverrides::default()).expect("config should load");
-        unsafe { env::remove_var("ANDROMEDA_SERVER_PORT") };
+        unsafe { env::remove_var("ANDROMEDA__SERVER__PORT") };
         fs::remove_file(path).expect("temp config should be removed");
 
         pretty_assertions::assert_eq!(config.server.port, 1700);
@@ -620,9 +466,9 @@ port = 1600
     #[test]
     #[serial]
     fn cli_overrides_env() {
-        unsafe { env::set_var("ANDROMEDA_SERVER_PORT", "8888") };
+        unsafe { env::set_var("ANDROMEDA__SERVER__PORT", "8888") };
         let config = RuntimeConfig::load(Path::new(DEFAULT_CONFIG_PATH), ServerOverrides { host: None, port: Some(7777) }).expect("config should load");
-        unsafe { env::remove_var("ANDROMEDA_SERVER_PORT") };
+        unsafe { env::remove_var("ANDROMEDA__SERVER__PORT") };
 
         pretty_assertions::assert_eq!(config.server.port, 7777);
     }
@@ -630,11 +476,17 @@ port = 1600
     #[test]
     #[serial]
     fn legacy_env_names_are_ignored() {
+        // Only the double-underscore contract nests; a single-prefix name and a
+        // single underscore between section and key both fail to reach a field,
+        // so the built-in default stands.
         unsafe { env::set_var("ANDROMEDA_PORT", "8888") };
-        let config = RuntimeConfig::builder().env().load().expect("config should load");
+        unsafe { env::set_var("ANDROMEDA__SERVER_HOST", "203.0.113.1") };
+        let config = load_env_only();
         unsafe { env::remove_var("ANDROMEDA_PORT") };
+        unsafe { env::remove_var("ANDROMEDA__SERVER_HOST") };
 
         pretty_assertions::assert_eq!(config.server.port, 1056);
+        pretty_assertions::assert_eq!(config.server.host, IpAddr::from([0, 0, 0, 0]));
     }
 
     #[test]
@@ -678,9 +530,9 @@ port = 1600
     #[test]
     #[serial]
     fn env_overrides_spatial_change_channel_capacity() {
-        unsafe { env::set_var("ANDROMEDA_SPATIAL_CHANGE_CHANNEL_CAPACITY", "12345") };
-        let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { env::remove_var("ANDROMEDA_SPATIAL_CHANGE_CHANNEL_CAPACITY") };
+        unsafe { env::set_var("ANDROMEDA__SPATIAL__CHANGE_CHANNEL_CAPACITY", "12345") };
+        let config = load_env_only();
+        unsafe { env::remove_var("ANDROMEDA__SPATIAL__CHANGE_CHANNEL_CAPACITY") };
         pretty_assertions::assert_eq!(config.spatial.change_channel_capacity, 12345);
     }
 
@@ -711,9 +563,9 @@ port = 1600
     #[test]
     #[serial]
     fn env_overrides_batch_chunk_write_concurrency() {
-        unsafe { env::set_var("ANDROMEDA_ENTITY_BATCH_CHUNK_WRITE_CONCURRENCY", "9") };
-        let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { env::remove_var("ANDROMEDA_ENTITY_BATCH_CHUNK_WRITE_CONCURRENCY") };
+        unsafe { env::set_var("ANDROMEDA__ENTITY__BATCH_CHUNK_WRITE_CONCURRENCY", "9") };
+        let config = load_env_only();
+        unsafe { env::remove_var("ANDROMEDA__ENTITY__BATCH_CHUNK_WRITE_CONCURRENCY") };
         pretty_assertions::assert_eq!(config.entity.batch_chunk_write_concurrency, Some(9));
     }
 
@@ -723,9 +575,10 @@ port = 1600
     }
 
     #[test]
-    fn config_layer_default_is_empty() {
-        let layer = <RuntimeConfig as Config>::Layer::empty();
-        assert!(layer.server.host.is_none());
-        assert!(layer.server.port.is_none());
+    fn default_toml_renders_sections_and_commented_fields() {
+        let rendered = <RuntimeConfig as TomlComment>::default_toml();
+        assert!(rendered.contains("[server]"), "{rendered}");
+        assert!(rendered.contains("[database.maintenance]"), "{rendered}");
+        assert!(rendered.lines().any(|line| line.starts_with('#')), "{rendered}");
     }
 }

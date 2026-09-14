@@ -30,7 +30,6 @@ andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true
 async-trait = "0.1.92"
 chrono = { version = "0.4.45", features = ["serde"] }
-confique = "0.4.0"
 dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["display", "from"] }
 futures = "0.3.34"
@@ -39,6 +38,8 @@ iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 thiserror = "2.0.20"
+toml = "1.1.6"
+toml-comment = "0.3.0"
 tracing = "0.1.44"
 typed-builder = "0.23.2"
 url = { version = "2.5.8", features = ["serde"] }

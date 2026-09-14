@@ -67,7 +67,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-representation",
     ],
-    allow_production_dependencies: ["confique", "reqwest", "tokio"],
+    allow_production_dependencies: ["reqwest", "tokio"],
 }
 
 #[cfg(test)]

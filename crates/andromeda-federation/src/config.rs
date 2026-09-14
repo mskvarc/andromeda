@@ -1,9 +1,9 @@
 //! Federation operation configuration.
 
-use confique::Config;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
+use toml_comment::TomlComment;
 
 /// Whether a deployment assumes single entities may be split across context
 /// sources when a request leaves `splitEntities` unset (clauses 4.3.6.7 and
@@ -72,26 +72,34 @@ pub enum FederationConfigError {
 }
 
 /// Distributed Context Source forwarding limits.
-#[derive(Config, Debug, Clone, Serialize)]
+#[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct FederationConfig {
     /// Maximum parallel Context Source forwarding requests.
-    #[config(env = "ANDROMEDA_FEDERATION_FORWARD_CONCURRENCY", default = 16)]
     pub forward_concurrency: usize,
     /// Milliseconds allowed to establish a connection to a Context Source.
-    #[config(env = "ANDROMEDA_FEDERATION_CONNECT_TIMEOUT_MS", default = 3000)]
     pub connect_timeout_ms: u64,
     /// Milliseconds a forwarded request may take before it is assumed to have
     /// failed, unless the registration's `management.timeout` says otherwise
     /// (clause 5.2.34).
-    #[config(env = "ANDROMEDA_FEDERATION_REQUEST_TIMEOUT_MS", default = 5000)]
     pub request_timeout_ms: u64,
     /// Most cached forwarded GET responses held per tenant (clause 6.3.17).
-    #[config(env = "ANDROMEDA_FEDERATION_CACHE_MAX_ENTRIES", default = 1024)]
     pub cache_max_entries: usize,
     /// What `splitEntities` means when a request or subscription leaves it
     /// unset (clauses 4.3.6.7, 5.2.12, 5.8.6, 5.14.4.4).
-    #[config(env = "ANDROMEDA_FEDERATION_SPLIT_ENTITIES_DEFAULT", default = "complete")]
+    #[toml_comment(inline)]
     pub split_entities_default: SplitEntitiesDefault,
+}
+
+impl Default for FederationConfig {
+    fn default() -> FederationConfig {
+        FederationConfig {
+            forward_concurrency: 16,
+            connect_timeout_ms: 3000,
+            request_timeout_ms: 5000,
+            cache_max_entries: 1024,
+            split_entities_default: SplitEntitiesDefault::Complete,
+        }
+    }
 }
 
 impl FederationConfig {

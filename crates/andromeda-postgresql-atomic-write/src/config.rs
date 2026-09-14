@@ -1,8 +1,8 @@
 //! PostgreSQL atomic-write execution configuration.
 
-use confique::Config;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
+use toml_comment::TomlComment;
 
 /// Bulk-write execution mode for batch entity writes.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
@@ -17,9 +17,9 @@ pub enum BulkWriteMode {
 }
 
 /// PostgreSQL atomic-write strategy.
-#[derive(Config, Debug, Clone, Serialize)]
+#[derive(Deserialize, Serialize, Default, TomlComment, Debug, Clone)]
 pub struct AtomicWriteConfig {
     /// Database bulk-write strategy.
-    #[config(env = "ANDROMEDA_POSTGRESQL_WRITE_BULK_MODE", default = "unnest")]
+    #[toml_comment(inline)]
     pub bulk_mode: BulkWriteMode,
 }

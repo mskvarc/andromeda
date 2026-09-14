@@ -1,6 +1,6 @@
 //! Focused failures produced while loading, validating, or rendering configuration.
 
-use confique::Error as ConfiqueError;
+use figment2::Error as FigmentError;
 use serde_json::Error as JsonError;
 use thiserror::Error;
 use toml::ser::Error as TomlError;
@@ -10,8 +10,12 @@ use url::ParseError;
 #[derive(Debug, Error)]
 pub(crate) enum ConfigurationError {
     /// Layered configuration loading failed.
+    ///
+    /// The figment error is boxed: it is by far the largest variant, and an
+    /// unboxed copy would make every `Result<_, ConfigurationError>` in the
+    /// loader carry its full width.
     #[error("loading configuration failed: {0}")]
-    Load(#[from] ConfiqueError),
+    Load(#[source] Box<FigmentError>),
     /// One configured value violated its declared invariant.
     #[error("invalid configuration: {0}")]
     Invalid(String),

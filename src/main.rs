@@ -9,6 +9,7 @@ use andromeda_broker_composition::config::runtime::{
     BrokerRunOverrides,
     ConfigurationLoadOutcome,
     ConfigurationOutputFormat,
+    generate_default_reported,
     load_reported,
     print_effective_reported,
     validate_reported,
@@ -42,6 +43,7 @@ async fn main() -> ExitCode {
                 };
                 print_effective_reported(&config_args.common.config_file, format)
             }
+            ConfigCommand::Generate(generate_args) => generate_default_reported(generate_args.output),
         },
     };
     ExitCode::from(outcome)

@@ -30,7 +30,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [],
-    allow_production_dependencies: ["axum", "confique", "tokio"],
+    allow_production_dependencies: ["axum", "tokio"],
 }
 
 #[cfg(test)]

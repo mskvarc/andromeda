@@ -61,8 +61,8 @@ andromeda-temporal.workspace = true
 andromeda-tenancy.workspace = true
 async-trait = "0.1.92"
 chrono = { version = "0.4.45", features = ["serde"] }
-confique = { version = "0.4.0", features = ["toml"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "debug", "deref", "display", "from", "into", "is_variant"] }
+figment2 = { version = "0.11.5", features = ["env", "toml"] }
 futures = "0.3.34"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -73,6 +73,7 @@ strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["full"] }
 toml = "1.1.6"
+toml-comment = "0.3.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
 url = { version = "2.5.8", features = ["serde"] }

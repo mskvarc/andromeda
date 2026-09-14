@@ -1,11 +1,11 @@
 //! Temporal policy configuration.
 
 use crate::storage_policy::TemporalStoragePolicy;
-use confique::Config;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 use strum::{Display, EnumString};
 use thiserror::Error;
+use toml_comment::TomlComment;
 
 /// The chunk interval the tenant schema declares when no override is set.
 ///
@@ -77,13 +77,12 @@ pub enum TemporalAppendMode {
 }
 
 /// Defaults and reconciliation cadence for temporal history.
-#[derive(Config, Debug, Clone, Serialize)]
+#[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct TemporalConfig {
     /// Native or deferred append topology selected for this broker profile.
-    #[config(env = "ANDROMEDA_TEMPORAL_APPEND_MODE", default = "native")]
+    #[toml_comment(inline)]
     pub append_mode: TemporalAppendMode,
     /// System default `lastN` cap from clause 5.2.21.
-    #[config(env = "ANDROMEDA_TEMPORAL_DEFAULT_LAST_N", default = 19)]
     pub default_last_n: u32,
     /// Cadence, in seconds, of every `expiresAt` sweep the broker schedules
     /// per tenant: entities (clause 5.2.4), subscriptions (clause 5.8.1.4),
@@ -92,42 +91,33 @@ pub struct TemporalConfig {
     /// resource may outlive its `expiresAt` in storage by up to one cadence;
     /// the read paths hide an expired registration in the meantime, so the
     /// API never serves one. The conformance stacks run this at 5 s.
-    #[config(env = "ANDROMEDA_TEMPORAL_EXPIRATION_CHECK_INTERVAL_SECS", default = 30)]
     pub expiration_check_interval_secs: u64,
     /// Fallback poll cadence for committed temporal intents.
-    #[config(env = "ANDROMEDA_TEMPORAL_INTENT_FALLBACK_SECS", default = 1)]
     pub intent_fallback_secs: u64,
     /// Maximum intents claimed by one bounded drain pass.
-    #[config(env = "ANDROMEDA_TEMPORAL_INTENT_BATCH_SIZE", default = 64)]
     pub intent_batch_size: u32,
     /// Lease duration for one claimed intent batch.
-    #[config(env = "ANDROMEDA_TEMPORAL_INTENT_LEASE_SECS", default = 30)]
     pub intent_lease_secs: u64,
     /// Base retry delay for a sink rejection.
-    #[config(env = "ANDROMEDA_TEMPORAL_INTENT_RETRY_SECS", default = 2)]
     pub intent_retry_secs: u64,
     /// Ceiling the exponential retry delay is clamped to.
-    #[config(env = "ANDROMEDA_TEMPORAL_INTENT_RETRY_MAX_SECS", default = 300)]
     pub intent_retry_max_secs: u64,
     /// Attempt count from which an intent that keeps failing is reported as stuck.
     ///
     /// There is no dead-letter for a temporal append intent: the intent is the
     /// durable record of history the broker accepted, so it stays claimable
     /// forever and is only reported, never discarded.
-    #[config(env = "ANDROMEDA_TEMPORAL_INTENT_STUCK_AFTER_ATTEMPTS", default = 10)]
     pub intent_stuck_after_attempts: u32,
     /// Override of the span one write-side history partition covers, in days.
     ///
     /// Absent, the schema's own default stands. Reconciled against the stored
     /// hypertable dimension when a tenant is opened.
-    #[config(env = "ANDROMEDA_TEMPORAL_CHUNK_INTERVAL_DAYS")]
     pub chunk_interval_days: Option<u32>,
     /// Override of the age past which a history partition is converted to the
     /// columnstore, in days.
     ///
     /// Absent, the schema's own default stands. Must not fall below the chunk
     /// interval, or a partition still receiving rows would be converted.
-    #[config(env = "ANDROMEDA_TEMPORAL_COLUMNSTORE_AFTER_DAYS")]
     pub columnstore_after_days: Option<u32>,
     /// Operator retention horizon in days, absent while retention is off.
     ///
@@ -135,11 +125,29 @@ pub struct TemporalConfig {
     /// specification defines deletion of a Temporal Evolution (clause 5.6.16)
     /// and says nothing about storage an operator chooses not to keep. It is
     /// therefore absent unless an operator names a horizon.
-    #[config(env = "ANDROMEDA_TEMPORAL_RETENTION_HORIZON_DAYS")]
     pub retention_horizon_days: Option<u64>,
     /// Cadence of the operator retention sweep.
-    #[config(env = "ANDROMEDA_TEMPORAL_RETENTION_SWEEP_INTERVAL_SECS", default = 3600)]
     pub retention_sweep_interval_secs: u64,
+}
+
+impl Default for TemporalConfig {
+    fn default() -> TemporalConfig {
+        TemporalConfig {
+            append_mode: TemporalAppendMode::Native,
+            default_last_n: 19,
+            expiration_check_interval_secs: 30,
+            intent_fallback_secs: 1,
+            intent_batch_size: 64,
+            intent_lease_secs: 30,
+            intent_retry_secs: 2,
+            intent_retry_max_secs: 300,
+            intent_stuck_after_attempts: 10,
+            chunk_interval_days: None,
+            columnstore_after_days: None,
+            retention_horizon_days: None,
+            retention_sweep_interval_secs: 3600,
+        }
+    }
 }
 
 impl TemporalConfig {
@@ -327,40 +335,15 @@ mod config_tests {
     #[test]
     fn zero_intent_batch_size_is_rejected() {
         let config = TemporalConfig {
-            append_mode: TemporalAppendMode::Native,
-            default_last_n: 19,
-            expiration_check_interval_secs: 30,
-            intent_fallback_secs: 1,
             intent_batch_size: 0,
-            intent_lease_secs: 30,
-            intent_retry_secs: 2,
-            intent_retry_max_secs: 300,
-            intent_stuck_after_attempts: 10,
-            chunk_interval_days: None,
-            columnstore_after_days: None,
-            retention_horizon_days: None,
-            retention_sweep_interval_secs: 3600,
+            ..valid()
         };
         assert_eq!(config.validate(), Err(TemporalConfigError::ZeroIntentBatchSize));
     }
 
     #[test]
     fn retention_is_off_unless_an_operator_names_a_horizon() {
-        let config = TemporalConfig {
-            append_mode: TemporalAppendMode::Native,
-            default_last_n: 19,
-            expiration_check_interval_secs: 30,
-            intent_fallback_secs: 1,
-            intent_batch_size: 64,
-            intent_lease_secs: 30,
-            intent_retry_secs: 2,
-            intent_retry_max_secs: 300,
-            intent_stuck_after_attempts: 10,
-            chunk_interval_days: None,
-            columnstore_after_days: None,
-            retention_horizon_days: None,
-            retention_sweep_interval_secs: 3600,
-        };
+        let config = valid();
         assert_eq!(config.validate(), Ok(()));
         assert_eq!(config.retention_horizon_days, None);
     }
@@ -368,19 +351,8 @@ mod config_tests {
     #[test]
     fn a_retention_horizon_spanning_no_time_is_rejected() {
         let config = TemporalConfig {
-            append_mode: TemporalAppendMode::Native,
-            default_last_n: 19,
-            expiration_check_interval_secs: 30,
-            intent_fallback_secs: 1,
-            intent_batch_size: 64,
-            intent_lease_secs: 30,
-            intent_retry_secs: 2,
-            intent_retry_max_secs: 300,
-            intent_stuck_after_attempts: 10,
-            chunk_interval_days: None,
-            columnstore_after_days: None,
             retention_horizon_days: Some(0),
-            retention_sweep_interval_secs: 3600,
+            ..valid()
         };
         assert_eq!(config.validate(), Err(TemporalConfigError::ZeroRetentionHorizon));
     }

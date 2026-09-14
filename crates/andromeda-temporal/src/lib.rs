@@ -59,7 +59,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-telemetry",
     ],
     allow_workspace_dev_dependencies: ["andromeda-ngsi-ld-geometry"],
-    allow_production_dependencies: ["confique"],
+    allow_production_dependencies: [],
 }
 
 #[cfg(test)]

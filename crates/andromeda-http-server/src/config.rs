@@ -1,9 +1,12 @@
 //! Listener and graceful-drain configuration.
 
-use confique::Config;
-use serde::Serialize;
-use std::{net::IpAddr, time::Duration};
+use serde::{Deserialize, Serialize};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    time::Duration,
+};
 use thiserror::Error;
+use toml_comment::TomlComment;
 
 /// Invalid listener configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -23,17 +26,25 @@ pub struct ServerOverrides {
 }
 
 /// Address and graceful-drain policy for inbound HTTP execution.
-#[derive(Config, Debug, Clone, Serialize)]
+#[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct ServerConfig {
     /// Listener address.
-    #[config(env = "ANDROMEDA_SERVER_HOST", default = "0.0.0.0")]
+    #[toml_comment(inline)]
     pub host: IpAddr,
     /// Listener port.
-    #[config(env = "ANDROMEDA_SERVER_PORT", default = 1056)]
     pub port: u16,
     /// Maximum time allowed for accepted connections to drain after shutdown begins.
-    #[config(env = "ANDROMEDA_SERVER_GRACEFUL_DRAIN_SECS", default = 30)]
     pub graceful_drain_secs: u64,
+}
+
+impl Default for ServerConfig {
+    fn default() -> ServerConfig {
+        ServerConfig {
+            host: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            port: 1056,
+            graceful_drain_secs: 30,
+        }
+    }
 }
 
 impl ServerConfig {

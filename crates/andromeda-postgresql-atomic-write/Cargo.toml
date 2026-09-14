@@ -25,13 +25,14 @@ andromeda-telemetry.workspace = true
 andromeda-temporal.workspace = true
 async-trait = "0.1.92"
 chrono = { version = "0.4.45", features = ["serde"] }
-confique = "0.4.0"
 sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "with-bigdecimal", "with-chrono", "with-json", "with-uuid"] }
 sea-query-sqlx = { version = "0.9.1", features = ["postgres-array", "runtime-tokio", "sqlx-postgres", "with-bigdecimal", "with-chrono", "with-json", "with-uuid"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 sqlx = { version = "0.9.0", features = ["bigdecimal", "runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 strum = { version = "0.28.0", features = ["derive"] }
+toml = "1.1.6"
+toml-comment = "0.3.0"
 tracing = "0.1.44"
 uuid = { version = "1.26.1", features = ["v4"] }
 

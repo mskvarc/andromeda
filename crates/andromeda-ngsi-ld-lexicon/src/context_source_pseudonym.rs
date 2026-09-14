@@ -64,6 +64,19 @@ impl ContextSourcePseudonym {
         Ok(ContextSourcePseudonym(token))
     }
 
+    /// Build a pseudonym from a caller-authored static token, without routing
+    /// it back through validation.
+    ///
+    /// The token must already be a non-empty `received-by` token free of
+    /// whitespace and control characters; the caller passing a fixed literal it
+    /// wrote is the guarantor of that invariant. This exists for built-in
+    /// configuration defaults, where the literal is compile-time fixed and
+    /// covered by a test, so no fallible construction belongs on the path.
+    #[must_use]
+    pub fn from_static(token: &'static str) -> ContextSourcePseudonym {
+        ContextSourcePseudonym(token.to_owned())
+    }
+
     /// The pseudonym as a string slice.
     #[must_use]
     pub fn as_str(&self) -> &str {

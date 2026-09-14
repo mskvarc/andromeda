@@ -6,9 +6,9 @@ use crate::{
     delivery_error_bound::{DeliveryErrorBound, DeliveryErrorBoundError},
     delivery_lease::{LeaseTerm, LeaseTermError},
 };
-use confique::Config;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use toml_comment::TomlComment;
 
 /// Invalid notification delivery configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -49,10 +49,9 @@ pub enum DeliveryConfigError {
 }
 
 /// Retry, polling, retention and diagnostic policy for notification delivery.
-#[derive(Clone, Config, Debug, Serialize)]
+#[derive(Clone, Deserialize, Serialize, TomlComment, Debug)]
 pub struct DeliveryConfig {
     /// Enable recording notification events and deliveries during entity mutations.
-    #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_ENABLED", default = false)]
     pub enabled: bool,
     /// Maximum delivery attempts before dead-lettering.
     ///
@@ -60,22 +59,17 @@ pub struct DeliveryConfig {
     /// acknowledged as exhausted and the delivery leaves the claimable set for
     /// good. The queue schema does not repeat the number, so it may be changed
     /// without a migration; the only bound is that it is at least one.
-    #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_MAX_ATTEMPTS", default = 5)]
     pub max_attempts: i32,
     /// Base exponential retry backoff.
-    #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_BASE_BACKOFF_SECS", default = 5)]
     pub base_backoff_secs: u64,
     /// Poll interval for the delivery worker.
-    #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_POLL_INTERVAL_SECS", default = 1)]
     pub poll_interval_secs: u64,
     /// Deliveries claimed per poll.
-    #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_BATCH_SIZE", default = 50)]
     pub batch_size: i32,
     /// Claimed deliveries sent concurrently within one pass.
     ///
     /// Bounded by [`DeliveryConcurrency::MAXIMUM`]; a pass never keeps more
     /// than this many transport calls in flight at once.
-    #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_CONCURRENCY", default = 20)]
     pub concurrency: u32,
     /// How long a claimed delivery stays leased to its delivery worker.
     ///
@@ -83,19 +77,15 @@ pub struct DeliveryConfig {
     /// from sending the same notification, so this must exceed the longest
     /// single delivery attempt the transport can take; a crashed worker's
     /// deliveries stay unclaimable for the remainder of the term.
-    #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_LEASE_SECS", default = 30)]
     pub lease_secs: u32,
     /// Characters of a failure diagnostic kept when a failed attempt is recorded.
     ///
     /// The delivery schema constrains the stored column, so this may not exceed
     /// [`DeliveryErrorBound::SCHEMA_MAXIMUM_CHARACTERS`].
-    #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_ERROR_MAX_CHARS", default = 1024)]
     pub error_max_chars: u32,
     /// Age after which acknowledged deliveries are removed.
-    #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_CLEANUP_AFTER_SECS", default = 86400)]
     pub cleanup_after_secs: u64,
     /// Cadence for physical cleanup of acknowledged deliveries.
-    #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_CLEANUP_INTERVAL_SECS", default = 300)]
     pub cleanup_interval_secs: u64,
     /// Age after which a dead-lettered (exhausted) delivery is removed.
     ///
@@ -103,11 +93,28 @@ pub struct DeliveryConfig {
     /// delivery is retained specifically as evidence of a notification that
     /// never arrived, so it earns a longer look than a delivery that already
     /// succeeded.
-    #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_DEAD_LETTER_AFTER_SECS", default = 604_800)]
     pub dead_letter_after_secs: u64,
     /// Age after which an event with zero referencing deliveries is removed.
-    #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_ORPHAN_EVENT_AFTER_SECS", default = 86400)]
     pub orphan_event_after_secs: u64,
+}
+
+impl Default for DeliveryConfig {
+    fn default() -> DeliveryConfig {
+        DeliveryConfig {
+            enabled: false,
+            max_attempts: 5,
+            base_backoff_secs: 5,
+            poll_interval_secs: 1,
+            batch_size: 50,
+            concurrency: 20,
+            lease_secs: 30,
+            error_max_chars: 1024,
+            cleanup_after_secs: 86400,
+            cleanup_interval_secs: 300,
+            dead_letter_after_secs: 604_800,
+            orphan_event_after_secs: 86400,
+        }
+    }
 }
 
 impl DeliveryConfig {

@@ -14,7 +14,6 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 async-trait = "0.1.92"
-confique = { version = "0.4.0", features = ["toml"] }
 contextual = "0.1.6"
 dashmap = { version = "6.2.1", features = ["inline"] }
 headers = "0.4.1"
@@ -31,6 +30,8 @@ serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt"] }
+toml = "1.1.6"
+toml-comment = "0.3.0"
 tracing = "0.1.44"
 url = { version = "2.5.8", features = ["serde"] }
 

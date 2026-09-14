@@ -1,8 +1,8 @@
 //! Snapshot operation configuration.
 
-use confique::Config;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use toml_comment::TomlComment;
 
 /// Invalid snapshot operation configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -37,32 +37,39 @@ pub enum SnapshotConfigError {
 }
 
 /// Snapshot preparation execution limits.
-#[derive(Config, Debug, Clone, Serialize)]
+#[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct SnapshotConfig {
     /// Default lifetime used when `snapshotLifetime` is omitted.
-    #[config(env = "ANDROMEDA_SNAPSHOT_DEFAULT_LIFETIME_SECS", default = 3_600)]
     pub default_lifetime_secs: u64,
     /// Maximum accepted Snapshot lifetime.
-    #[config(env = "ANDROMEDA_SNAPSHOT_MAXIMUM_LIFETIME_SECS", default = 2_592_000)]
     pub maximum_lifetime_secs: u64,
     /// Number of results fetched in each capture page.
-    #[config(env = "ANDROMEDA_SNAPSHOT_CAPTURE_PAGE_SIZE", default = 250)]
     pub capture_page_size: usize,
     /// Maximum concurrent snapshot executions.
-    #[config(env = "ANDROMEDA_SNAPSHOT_PREPARATION_CONCURRENCY", default = 4)]
     pub preparation_concurrency: usize,
     /// Maximum time a scoped operation waits for capture or clone promotion.
-    #[config(env = "ANDROMEDA_SNAPSHOT_SCOPED_OPERATION_WAIT_SECS", default = 30)]
     pub scoped_operation_wait_secs: u64,
     /// Lease duration for a claimed preparation job.
-    #[config(env = "ANDROMEDA_SNAPSHOT_PREPARATION_LEASE_SECS", default = 30)]
     pub preparation_lease_secs: u64,
     /// Optional maximum number of Snapshots retained for a tenant.
-    #[config(env = "ANDROMEDA_SNAPSHOT_TENANT_COUNT_QUOTA")]
     pub tenant_count_quota: Option<usize>,
     /// Optional maximum number of Snapshot bytes retained for a tenant.
-    #[config(env = "ANDROMEDA_SNAPSHOT_TENANT_BYTE_QUOTA")]
     pub tenant_byte_quota: Option<u64>,
+}
+
+impl Default for SnapshotConfig {
+    fn default() -> SnapshotConfig {
+        SnapshotConfig {
+            default_lifetime_secs: 3_600,
+            maximum_lifetime_secs: 2_592_000,
+            capture_page_size: 250,
+            preparation_concurrency: 4,
+            scoped_operation_wait_secs: 30,
+            preparation_lease_secs: 30,
+            tenant_count_quota: None,
+            tenant_byte_quota: None,
+        }
+    }
 }
 
 impl SnapshotConfig {

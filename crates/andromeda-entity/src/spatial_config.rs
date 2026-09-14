@@ -1,8 +1,8 @@
 //! Entity spatial-index synchronization configuration.
 
-use confique::Config;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use toml_comment::TomlComment;
 
 /// Invalid spatial synchronization configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -19,17 +19,24 @@ pub enum SpatialConfigError {
 }
 
 /// Spatial-index rebuild and change-channel policy.
-#[derive(Config, Debug, Clone, Serialize)]
+#[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct SpatialConfig {
     /// Interval between full index rebuilds.
-    #[config(env = "ANDROMEDA_SPATIAL_REBUILD_INTERVAL_SECS", default = 1800)]
     pub rebuild_interval_secs: u64,
     /// Capacity of the internal entity-change channel.
-    #[config(env = "ANDROMEDA_SPATIAL_CHANGE_CHANNEL_CAPACITY", default = 65_536)]
     pub change_channel_capacity: usize,
     /// Minimum interval between aggregated lag warnings.
-    #[config(env = "ANDROMEDA_SPATIAL_LAG_LOG_INTERVAL_SECS", default = 5)]
     pub lag_log_interval_secs: u64,
+}
+
+impl Default for SpatialConfig {
+    fn default() -> SpatialConfig {
+        SpatialConfig {
+            rebuild_interval_secs: 1800,
+            change_channel_capacity: 65_536,
+            lag_log_interval_secs: 5,
+        }
+    }
 }
 
 impl SpatialConfig {

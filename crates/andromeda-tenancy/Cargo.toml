@@ -11,13 +11,14 @@ workspace = true
 [dependencies]
 andromeda-ngsi-ld-lexicon.workspace = true
 async-trait = "0.1.92"
-confique = { version = "0.4.0", features = ["toml"] }
 dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "display", "from", "into"] }
 serde = { version = "1.0.229", features = ["derive"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["macros", "rt", "sync", "time"] }
+toml = "1.1.6"
+toml-comment = "0.3.0"
 tracing = "0.1.44"
 
 [dev-dependencies]

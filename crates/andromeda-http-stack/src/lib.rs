@@ -14,7 +14,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-tenancy",
     ],
     allow_workspace_dev_dependencies: [],
-    allow_production_dependencies: ["axum", "confique"],
+    allow_production_dependencies: ["axum"],
 }
 
 #[cfg(test)]

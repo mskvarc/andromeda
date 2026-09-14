@@ -37,6 +37,17 @@ impl DbNamePrefix {
     }
 }
 
+impl Default for DbNamePrefix {
+    /// The built-in tenant database-name prefix.
+    ///
+    /// `andromeda_tenant` satisfies the `[A-Za-z_][A-Za-z0-9_]*` identifier
+    /// grammar this type enforces, so the invariant holds without routing the
+    /// literal back through the validating conversion.
+    fn default() -> DbNamePrefix {
+        DbNamePrefix(String::from("andromeda_tenant"))
+    }
+}
+
 impl TryFrom<String> for DbNamePrefix {
     type Error = DbNamePrefixError;
 

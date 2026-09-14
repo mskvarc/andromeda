@@ -61,7 +61,7 @@ impl DependencyKind {
 /// own, so no crate's can be quietly weaker than another's: the drivers and
 /// dialects (`sqlx`, `sea-query`, `sea-query-sqlx`, `geozero`), the transports
 /// and async runtime (`axum`, `reqwest`, `rumqttc`, `tokio`), the wire buffer
-/// (`bytes`), the configuration and CLI front ends (`confique`, `clap`), the
+/// (`bytes`), the configuration and CLI front ends (`figment2`, `clap`), the
 /// alternate JSON parser (`sonic-rs`) and the global allocator (`mimalloc`) are
 /// all things a specification or storage-neutral crate has no business shipping.
 /// A crate that legitimately ships one subtracts it through
@@ -70,7 +70,7 @@ pub const FORBIDDEN_PRODUCTION_DEPENDENCIES: &[&str] = &[
     "axum",
     "bytes",
     "clap",
-    "confique",
+    "figment2",
     "geozero",
     "mimalloc",
     "reqwest",

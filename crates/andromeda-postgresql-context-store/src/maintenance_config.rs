@@ -1,8 +1,8 @@
 //! Configuration selecting whether and how PostgreSQL maintenance runs.
 
-use confique::Config;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
+use toml_comment::TomlComment;
 
 /// Whether the maintenance controller is active and may mutate tenant databases.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Display, EnumString, Eq, PartialEq)]
@@ -31,24 +31,23 @@ pub enum MaintenanceProfile {
 }
 
 /// Adaptive PostgreSQL maintenance configuration.
-#[derive(Clone, Copy, Config, Debug, Default, Serialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Deserialize, Serialize, Default, TomlComment, Debug, Eq, PartialEq)]
 pub struct MaintenanceConfig {
     /// Whether inspection is disabled, observational, or automatic.
-    #[config(env = "ANDROMEDA_DATABASE_MAINTENANCE_MODE", default = "disabled")]
+    #[toml_comment(inline)]
     pub mode: MaintenanceMode,
     /// Fixed threshold and cadence profile.
-    #[config(env = "ANDROMEDA_DATABASE_MAINTENANCE_PROFILE", default = "conservative")]
+    #[toml_comment(inline)]
     pub profile: MaintenanceProfile,
 }
 
 #[cfg(test)]
 mod tests {
     use crate::maintenance_config::{MaintenanceConfig, MaintenanceMode, MaintenanceProfile};
-    use confique::Config;
 
     #[test]
     fn omitted_maintenance_configuration_is_disabled_and_conservative() {
-        let config = MaintenanceConfig::builder().load().expect("built-in defaults must load");
+        let config = MaintenanceConfig::default();
         assert_eq!(config.mode, MaintenanceMode::Disabled);
         assert_eq!(config.profile, MaintenanceProfile::Conservative);
     }

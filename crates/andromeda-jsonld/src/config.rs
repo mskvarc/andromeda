@@ -10,15 +10,15 @@ use crate::{
     engine::{builder::JsonLdEngineBuilder, processor::JsonLdEngine},
     error::JsonLdError,
 };
-use confique::Config;
 use iri_rs::{IriBuf, iri};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
 };
 use thiserror::Error;
+use toml_comment::TomlComment;
 use url::Url;
 
 /// A setting that must be positive and was not.
@@ -40,26 +40,21 @@ pub enum JsonLdConfigError {
 }
 
 /// Context resolution settings.
-#[derive(Config, Debug, Clone, Serialize)]
+#[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct JsonLdConfig {
     /// Whether a context that is neither embedded nor cached may be fetched.
-    #[config(env = "ANDROMEDA_JSONLD_ALLOW_REMOTE_CONTEXTS", default = true)]
     pub allow_remote_contexts: bool,
 
     /// How long a context fetch may take.
-    #[config(env = "ANDROMEDA_JSONLD_TIMEOUT_SECONDS", default = 30)]
     pub timeout_seconds: u64,
 
     /// How many redirects a context fetch may follow.
-    #[config(env = "ANDROMEDA_JSONLD_MAX_REDIRECTS", default = 5)]
     pub max_redirects: u32,
 
     /// The size beyond which a fetched context is refused.
-    #[config(env = "ANDROMEDA_JSONLD_MAX_CONTEXT_BYTES", default = 2_000_000)]
     pub max_context_bytes: u64,
 
     /// How many entries the in-process caches hold.
-    #[config(env = "ANDROMEDA_JSONLD_CACHE_CAPACITY", default = 1024)]
     pub cache_capacity: u64,
 
     /// How long a term-cache entry lives, and how long a downloaded `@context`
@@ -71,12 +66,24 @@ pub struct JsonLdConfig {
     /// its own lifetime and this setting never applies to it. It is the
     /// heuristic expiration time the same clause recommends assigning when the
     /// origin server specifies none.
-    #[config(env = "ANDROMEDA_JSONLD_CACHE_TTL_SECONDS", default = 3600)]
     pub cache_ttl_seconds: u64,
 
     /// Contexts to read from disk at startup, as URL to file path.
-    #[config(env = "ANDROMEDA_JSONLD_PRELOAD_CONTEXTS", parse_env = parse_url_to_path_map, default = {})]
     pub preload_contexts: HashMap<Url, PathBuf>,
+}
+
+impl Default for JsonLdConfig {
+    fn default() -> JsonLdConfig {
+        JsonLdConfig {
+            allow_remote_contexts: true,
+            timeout_seconds: 30,
+            max_redirects: 5,
+            max_context_bytes: 2_000_000,
+            cache_capacity: 1024,
+            cache_ttl_seconds: 3600,
+            preload_contexts: HashMap::new(),
+        }
+    }
 }
 
 impl JsonLdConfig {
@@ -148,14 +155,9 @@ impl JsonLdConfig {
     }
 }
 
-/// Read the preload map from an environment variable holding JSON.
-fn parse_url_to_path_map(input: &str) -> Result<HashMap<Url, PathBuf>, serde_json::Error> {
-    serde_json::from_str(input)
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::config::{JsonLdConfig, JsonLdConfigError, parse_url_to_path_map};
+    use crate::config::{JsonLdConfig, JsonLdConfigError};
     use std::{
         collections::HashMap,
         path::{Path, PathBuf},
@@ -224,17 +226,5 @@ mod tests {
         config.resolve_preload_paths(Path::new("/etc/andromeda"));
 
         pretty_assertions::assert_eq!(config.preload_contexts.get(&context_url()), Some(&PathBuf::from("/opt/contexts/test.jsonld")));
-    }
-
-    #[test]
-    fn the_preload_map_is_read_from_json_in_the_environment() {
-        let parsed = parse_url_to_path_map(r#"{"https://example.com/context.jsonld":"contexts/test.jsonld"}"#).expect("valid JSON");
-
-        pretty_assertions::assert_eq!(parsed.get(&context_url()), Some(&PathBuf::from("contexts/test.jsonld")));
-    }
-
-    #[test]
-    fn a_preload_map_with_a_malformed_context_url_is_rejected() {
-        assert!(parse_url_to_path_map(r#"{"not a URL":"contexts/test.jsonld"}"#).is_err());
     }
 }

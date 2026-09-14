@@ -96,5 +96,5 @@ andromeda_architecture_checks::dependency_boundary! {
     ],
     allow_workspace_dev_dependencies: [
     ],
-    allow_production_dependencies: ["confique", "sea-query", "sea-query-sqlx", "sqlx", "tokio"],
+    allow_production_dependencies: ["sea-query", "sea-query-sqlx", "sqlx", "tokio"],
 }

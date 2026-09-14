@@ -1,10 +1,10 @@
 //! Configuration for process-wide inbound HTTP mechanics.
 
 use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
-use confique::Config;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 use thiserror::Error;
+use toml_comment::TomlComment;
 
 /// Invalid process-wide HTTP stack configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -42,22 +42,20 @@ pub enum CorsMode {
 }
 
 /// Process-wide inbound HTTP stack configuration.
-#[derive(Config, Debug, Clone, Serialize)]
+#[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct HttpStackConfig {
     /// Maximum wall-clock time for one HTTP request.
-    #[config(env = "ANDROMEDA_HTTP_REQUEST_TIMEOUT_SECS", default = 30)]
     pub request_timeout_secs: u64,
     /// Whether eligible HTTP responses are compressed.
-    #[config(env = "ANDROMEDA_HTTP_RESPONSE_COMPRESSION", default = "enabled")]
+    #[toml_comment(inline)]
     pub response_compression: HttpFeatureMode,
     /// Whether compressed HTTP request bodies are accepted.
-    #[config(env = "ANDROMEDA_HTTP_REQUEST_DECOMPRESSION", default = "enabled")]
+    #[toml_comment(inline)]
     pub request_decompression: HttpFeatureMode,
     /// CORS policy for browser-facing clients.
-    #[config(env = "ANDROMEDA_HTTP_CORS", default = "permissive")]
+    #[toml_comment(inline)]
     pub cors: CorsMode,
     /// Maximum accepted HTTP request body size.
-    #[config(env = "ANDROMEDA_HTTP_MAX_REQUEST_BODY_BYTES", default = 67_108_864)]
     pub max_request_body_bytes: usize,
     /// Whether the `Forwarded` and `X-Forwarded-Proto` fields of an inbound
     /// request may decide the scheme of the URLs the broker mints from the
@@ -69,8 +67,21 @@ pub struct HttpStackConfig {
     /// the durably stored `@context` URL of clause 5.13. Turn it on only
     /// together with the proxy configuration `docs/tls-deployment.md`
     /// describes.
-    #[config(env = "ANDROMEDA_HTTP_FORWARDED_HEADERS", default = "untrusted")]
+    #[toml_comment(inline)]
     pub forwarded_headers: ForwardedHeaderTrust,
+}
+
+impl Default for HttpStackConfig {
+    fn default() -> HttpStackConfig {
+        HttpStackConfig {
+            request_timeout_secs: 30,
+            response_compression: HttpFeatureMode::Enabled,
+            request_decompression: HttpFeatureMode::Enabled,
+            cors: CorsMode::Permissive,
+            max_request_body_bytes: 67_108_864,
+            forwarded_headers: ForwardedHeaderTrust::Untrusted,
+        }
+    }
 }
 
 impl HttpStackConfig {
@@ -97,7 +108,6 @@ impl HttpStackConfig {
 mod config_tests {
     use super::{CorsMode, HttpFeatureMode, HttpStackConfig, HttpStackConfigError};
     use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
-    use confique::Config as _;
 
     fn valid_config() -> HttpStackConfig {
         HttpStackConfig {
@@ -113,10 +123,9 @@ mod config_tests {
     /// A broker that has not been told about a proxy must not believe one, so
     /// the declared default has to be the untrusted edge.
     #[test]
-    fn forwarded_fields_are_untrusted_in_the_default_configuration() -> Result<(), confique::Error> {
-        let config = HttpStackConfig::builder().load()?;
+    fn forwarded_fields_are_untrusted_in_the_default_configuration() {
+        let config = HttpStackConfig::default();
         pretty_assertions::assert_eq!(config.forwarded_headers, ForwardedHeaderTrust::Untrusted);
-        Ok(())
     }
 
     #[test]
