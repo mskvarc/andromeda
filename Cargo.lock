@@ -119,7 +119,6 @@ dependencies = [
  "serial_test",
  "shadow-rs",
  "sqlx",
- "thiserror 2.0.20",
  "tokio",
  "url",
  "urlencoding",
@@ -337,7 +336,6 @@ dependencies = [
  "geo",
  "indexmap 2.14.2",
  "iri-rs",
- "jsonld",
  "langtag",
  "moka",
  "pretty_assertions",
@@ -656,7 +654,6 @@ dependencies = [
  "andromeda-http-extraction",
  "andromeda-http-headers",
  "andromeda-http-response",
- "andromeda-jsonld",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-problem-details",
@@ -665,12 +662,10 @@ dependencies = [
  "futures",
  "headers",
  "pretty_assertions",
- "serde",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
  "tower",
- "tracing",
 ]
 
 [[package]]
@@ -834,7 +829,6 @@ dependencies = [
  "andromeda-tenancy",
  "axum",
  "futures",
- "iri-rs",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -890,7 +884,6 @@ dependencies = [
  "futures",
  "pretty_assertions",
  "serde_json",
- "thiserror 2.0.20",
  "tokio",
  "tower",
  "tracing",
@@ -1166,9 +1159,7 @@ dependencies = [
  "andromeda-context-space",
  "andromeda-delivery",
  "andromeda-entity",
- "andromeda-http-headers",
  "andromeda-jsonld",
- "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-number",
@@ -1177,7 +1168,6 @@ dependencies = [
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-registration",
- "andromeda-spatial-index",
  "andromeda-subscription",
  "andromeda-telemetry",
  "andromeda-tenancy",
@@ -1242,7 +1232,6 @@ dependencies = [
 name = "andromeda-postgresql-branch"
 version = "0.1.0"
 dependencies = [
- "andromeda-architecture-checks",
  "andromeda-context-space",
  "andromeda-postgresql-seaquery",
  "pretty_assertions",
@@ -1384,7 +1373,6 @@ dependencies = [
  "andromeda-telemetry",
  "andromeda-tenancy",
  "chrono",
- "pretty_assertions",
  "sea-query",
  "sea-query-sqlx",
  "sqlx",
@@ -1393,7 +1381,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "url",
 ]
 
 [[package]]
@@ -1542,7 +1529,6 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "typed-builder",
- "url",
  "urn-rs",
  "uuid",
 ]
@@ -1559,7 +1545,6 @@ dependencies = [
  "andromeda-jsonld",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
- "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-request",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-temporal",
@@ -1658,7 +1643,6 @@ dependencies = [
  "pretty_assertions",
  "serde_json",
  "thiserror 2.0.20",
- "tokio",
  "tracing",
  "typed-builder",
  "url",

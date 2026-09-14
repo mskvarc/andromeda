@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+# `toml` is used only through the `toml-comment` derive, which expands to
+# `toml::Value` at the call site; cargo-machete cannot see that macro-generated
+# use and would otherwise report the dependency as unused.
+[package.metadata.cargo-machete]
+ignored = ["toml"]
+
 [lints]
 workspace = true
 
@@ -13,9 +19,7 @@ andromeda-context-commit.workspace = true
 andromeda-context-space.workspace = true
 andromeda-delivery.workspace = true
 andromeda-entity.workspace = true
-andromeda-http-headers.workspace = true
 andromeda-jsonld.workspace = true
-andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-number.workspace = true
@@ -24,7 +28,6 @@ andromeda-ngsi-ld-render.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-registration.workspace = true
-andromeda-spatial-index.workspace = true
 andromeda-subscription.workspace = true
 andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true
