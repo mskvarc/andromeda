@@ -10,6 +10,7 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     entity_map::EntityMap,
     entity_map_fingerprint::{RequestComparison, RequestFingerprint},
+    lifetime_expiry::expiry,
 };
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
@@ -54,7 +55,10 @@ impl EntityMapService {
         fingerprint: RequestFingerprint,
     ) -> Result<EntityMap, EntityMapError> {
         let identifier = build_entity_map_identifier()?;
-        let expires_at = Utc::now() + lifetime.copied().unwrap_or_else(default_lifetime);
+        let lifetime = lifetime.copied().unwrap_or_else(default_lifetime);
+        let expires_at = expiry(Utc::now(), &lifetime).ok_or_else(|| EntityMapError::Invariant {
+            detail: "entity map lifetime is outside the representable time range".to_owned(),
+        })?;
         let mut map = EntityMap::local(identifier, expires_at, entity_ids);
         map.request_fingerprint = Some(fingerprint);
         Ok(map)

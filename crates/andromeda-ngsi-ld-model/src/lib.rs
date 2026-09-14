@@ -24,6 +24,7 @@ pub mod entity_type_list;
 pub mod expanded;
 pub mod jsonld_context;
 pub mod key_value_pair;
+pub mod lifetime_expiry;
 pub mod notification;
 pub mod query;
 pub mod registration;

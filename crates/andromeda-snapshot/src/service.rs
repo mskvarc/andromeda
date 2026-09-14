@@ -10,6 +10,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
+    lifetime_expiry::expiry,
     snapshot::{Snapshot, SnapshotStatus},
     snapshot_clone::SnapshotCloneInput,
     snapshot_filter::SnapshotPurgeFilter,
@@ -451,7 +452,7 @@ fn effective_snapshot_lifetime(
     lifetime: &Iso8601Duration,
     maximum_lifetime: Duration,
 ) -> Result<(Iso8601Duration, chrono::DateTime<Utc>), SnapshotError> {
-    let expires_at = starts_at + *lifetime;
+    let expires_at = expiry(starts_at, lifetime).ok_or_else(|| SnapshotError::validation("snapshotLifetime is outside the representable time range"))?;
     let maximum_expires_at = starts_at
         + chrono::Duration::from_std(maximum_lifetime)
             .map_err(|error| SnapshotError::internal(format!("Configured maximum Snapshot lifetime is invalid: {error}")))?;
