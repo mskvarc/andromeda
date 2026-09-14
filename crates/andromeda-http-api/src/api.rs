@@ -206,6 +206,7 @@ mod tests {
         let stack = HttpStack::new(HttpStackConfig {
             request_timeout_secs: 30,
             response_compression: HttpFeatureMode::Disabled,
+            server_timing: HttpFeatureMode::Disabled,
             request_decompression: HttpFeatureMode::Disabled,
             cors: CorsMode::Disabled,
             max_request_body_bytes: 1024 * 1024,

@@ -19,6 +19,7 @@ andromeda-http-headers.workspace = true
 andromeda-http-tenancy.workspace = true
 axum = "0.8.9"
 axum-prometheus = "0.10.1"
+axum-server-timing = "3.0.1"
 headers = "0.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
 strum = { version = "0.28.0", features = ["derive"] }

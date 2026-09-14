@@ -15,6 +15,7 @@ use axum::{
     response::Response,
 };
 use axum_prometheus::{PrometheusMetricLayer, PrometheusMetricLayerBuilder};
+use axum_server_timing::ServerTimingLayer;
 use headers::{Header, HeaderMapExt};
 use std::{
     sync::{Arc, OnceLock},
@@ -148,6 +149,9 @@ impl HttpStack {
                 Duration::from_secs(self.config.request_timeout_secs),
             ));
         let mut router = router.layer(middleware::from_fn(echo_tenant_header));
+        if let HttpFeatureMode::Enabled = self.config.server_timing {
+            router = router.layer(ServerTimingLayer::new("andromeda"));
+        }
         if let HttpFeatureMode::Enabled = self.config.response_compression {
             router = router.layer(CompressionLayer::new());
         }
@@ -188,6 +192,7 @@ mod tests {
         HttpStackConfig {
             request_timeout_secs: 30,
             response_compression: HttpFeatureMode::Disabled,
+            server_timing: HttpFeatureMode::Disabled,
             request_decompression: HttpFeatureMode::Disabled,
             cors: CorsMode::Disabled,
             max_request_body_bytes: 1024,

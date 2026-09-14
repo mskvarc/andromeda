@@ -49,6 +49,9 @@ pub struct HttpStackConfig {
     /// Whether eligible HTTP responses are compressed.
     #[toml_comment(inline)]
     pub response_compression: HttpFeatureMode,
+    /// Whether responses carry a `Server-Timing` header naming the broker.
+    #[toml_comment(inline)]
+    pub server_timing: HttpFeatureMode,
     /// Whether compressed HTTP request bodies are accepted.
     #[toml_comment(inline)]
     pub request_decompression: HttpFeatureMode,
@@ -76,6 +79,7 @@ impl Default for HttpStackConfig {
         HttpStackConfig {
             request_timeout_secs: 30,
             response_compression: HttpFeatureMode::Enabled,
+            server_timing: HttpFeatureMode::Enabled,
             request_decompression: HttpFeatureMode::Enabled,
             cors: CorsMode::Permissive,
             max_request_body_bytes: 67_108_864,
@@ -108,11 +112,13 @@ impl HttpStackConfig {
 mod config_tests {
     use super::{CorsMode, HttpFeatureMode, HttpStackConfig, HttpStackConfigError};
     use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
+    use toml_comment::TomlComment;
 
     fn valid_config() -> HttpStackConfig {
         HttpStackConfig {
             request_timeout_secs: 30,
             response_compression: HttpFeatureMode::Enabled,
+            server_timing: HttpFeatureMode::Enabled,
             request_decompression: HttpFeatureMode::Enabled,
             cors: CorsMode::Permissive,
             max_request_body_bytes: 1024,
@@ -133,5 +139,27 @@ mod config_tests {
         let mut config = valid_config();
         config.max_request_body_bytes = 0;
         assert_eq!(config.validate(), Err(HttpStackConfigError::ZeroRequestBodyLimit));
+    }
+
+    /// Responses should name the broker in a `Server-Timing` header unless an
+    /// operator opts out, so the declared default is on.
+    #[test]
+    fn server_timing_is_enabled_by_default() {
+        pretty_assertions::assert_eq!(HttpStackConfig::default().server_timing, HttpFeatureMode::Enabled);
+    }
+
+    #[test]
+    fn server_timing_round_trips_through_toml() {
+        let mut config = valid_config();
+        config.server_timing = HttpFeatureMode::Disabled;
+        let rendered = toml::to_string(&config).expect("config serialises to TOML");
+        let parsed: HttpStackConfig = toml::from_str(&rendered).expect("config parses from TOML");
+        pretty_assertions::assert_eq!(parsed.server_timing, HttpFeatureMode::Disabled);
+    }
+
+    #[test]
+    fn server_timing_appears_in_the_default_toml() {
+        let rendered = HttpStackConfig::default_toml();
+        assert!(rendered.contains("server_timing"), "{rendered}");
     }
 }
