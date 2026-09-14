@@ -15,6 +15,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
+use andromeda_telemetry::federation_ops::{self, FederationOperation};
 use chrono::Utc;
 use serde_json::Value;
 use std::slice::from_ref;
@@ -134,62 +135,68 @@ impl FederationService {
         target: &ContextTarget,
         request: ForwardQueryRequest<'_>,
     ) -> Result<ForwardReadOutcome<ForwardedEntities>, FederationError> {
-        if !target.permits_federation() {
-            return Ok(ForwardReadOutcome::empty());
-        }
-        let ForwardQueryRequest {
-            client_query,
-            split,
-            context,
-            operation,
-            triggering,
-            csf_expr,
-            mode_filter,
-            entity_map,
-            source_page,
-        } = request;
-        if self.is_loop_detected(triggering.via) {
-            return Ok(own_loop_outcome());
-        }
-        let registrations = self
-            .select_read_registrations(
+        let timer = federation_ops::start(FederationOperation::Query);
+        let result = async move {
+            if !target.permits_federation() {
+                return Ok(ForwardReadOutcome::empty());
+            }
+            let ForwardQueryRequest {
+                client_query,
+                split,
                 context,
-                ReadSelection {
-                    entity_type: client_query.entity_type(),
-                    entity_ids: client_query.entity_ids(),
-                    exclude_registration: None,
-                    csf: csf_expr,
-                    scope_q: client_query.scope_q(),
-                    operation,
-                    mode_filter,
-                    entity_map,
-                },
-            )
-            .await?;
-        let targets = registrations
-            .into_iter()
-            .filter_map(|registration| {
-                ForwardedQuery::for_registration_on_page(client_query, &registration, split, source_page).map(|query| (registration, query))
-            })
-            .collect::<Vec<_>>();
-        if targets.is_empty() {
-            return Ok(ForwardReadOutcome::empty());
-        }
-        let matched = targets.len();
-        let answers = self
-            .fan_out_get(
-                targets,
-                |registration, query| build_query_url(registration.access.endpoint.url(), &query.to_query_string()),
-                FederationService::entities_of,
-                ForwardedGetConditions {
+                operation,
+                triggering,
+                csf_expr,
+                mode_filter,
+                entity_map,
+                source_page,
+            } = request;
+            if self.is_loop_detected(triggering.via) {
+                return Ok(own_loop_outcome());
+            }
+            let registrations = self
+                .select_read_registrations(
                     context,
-                    triggering,
-                    cacheability: Cacheability::Cacheable,
-                    entity_map,
-                },
-            )
-            .await;
-        Ok(read_outcome(answers, matched, None))
+                    ReadSelection {
+                        entity_type: client_query.entity_type(),
+                        entity_ids: client_query.entity_ids(),
+                        exclude_registration: None,
+                        csf: csf_expr,
+                        scope_q: client_query.scope_q(),
+                        operation,
+                        mode_filter,
+                        entity_map,
+                    },
+                )
+                .await?;
+            let targets = registrations
+                .into_iter()
+                .filter_map(|registration| {
+                    ForwardedQuery::for_registration_on_page(client_query, &registration, split, source_page).map(|query| (registration, query))
+                })
+                .collect::<Vec<_>>();
+            if targets.is_empty() {
+                return Ok(ForwardReadOutcome::empty());
+            }
+            let matched = targets.len();
+            let answers = self
+                .fan_out_get(
+                    targets,
+                    |registration, query| build_query_url(registration.access.endpoint.url(), &query.to_query_string()),
+                    FederationService::entities_of,
+                    ForwardedGetConditions {
+                        context,
+                        triggering,
+                        cacheability: Cacheability::Cacheable,
+                        entity_map,
+                    },
+                )
+                .await;
+            Ok(read_outcome(answers, matched, None))
+        }
+        .await;
+        timer.finish_result(&result);
+        result
     }
 
     /// Forward an entity retrieval to the matching context sources (clause
@@ -207,63 +214,69 @@ impl FederationService {
         target: &ContextTarget,
         request: ForwardRetrieveRequest<'_>,
     ) -> Result<ForwardReadOutcome<ForwardedEntities>, FederationError> {
-        if !target.permits_federation() {
-            return Ok(ForwardReadOutcome::empty());
-        }
-        let ForwardRetrieveRequest {
-            entity_id,
-            exclude_registration,
-            client_query,
-            context,
-            operation,
-            triggering,
-            mode_filter,
-            entity_map,
-        } = request;
-        if self.is_loop_detected(triggering.via) {
-            return Ok(own_loop_outcome());
-        }
-        let registrations = self
-            .select_read_registrations(
+        let timer = federation_ops::start(FederationOperation::Retrieve);
+        let result = async move {
+            if !target.permits_federation() {
+                return Ok(ForwardReadOutcome::empty());
+            }
+            let ForwardRetrieveRequest {
+                entity_id,
+                exclude_registration,
+                client_query,
                 context,
-                ReadSelection {
-                    entity_type: None,
-                    entity_ids: Some(from_ref(entity_id)),
-                    exclude_registration,
-                    csf: None,
-                    scope_q: None,
-                    operation,
-                    mode_filter,
-                    entity_map,
-                },
-            )
-            .await?;
-        let registered_type = registered_type_of(&registrations, entity_id);
-        // A retrieval knows no split entities (clause 5.7.1.4), so every
-        // parameter that is not narrowed travels with the request.
-        let targets = registrations
-            .into_iter()
-            .filter_map(|registration| {
-                ForwardedQuery::for_registration(client_query, &registration, SplitEntities::Complete).map(|query| (registration, query))
-            })
-            .collect::<Vec<_>>();
-        if targets.is_empty() {
-            return Ok(ForwardReadOutcome::empty());
-        }
-        let matched = targets.len();
-        let answers = self
-            .fan_out_get(
-                targets,
-                |registration, query| build_retrieve_url(registration.access.endpoint.url(), entity_id, &query.to_query_string()),
-                FederationService::entities_of,
-                ForwardedGetConditions {
+                operation,
+                triggering,
+                mode_filter,
+                entity_map,
+            } = request;
+            if self.is_loop_detected(triggering.via) {
+                return Ok(own_loop_outcome());
+            }
+            let registrations = self
+                .select_read_registrations(
                     context,
-                    triggering,
-                    cacheability: Cacheability::Cacheable,
-                    entity_map,
-                },
-            )
-            .await;
-        Ok(read_outcome(answers, matched, registered_type))
+                    ReadSelection {
+                        entity_type: None,
+                        entity_ids: Some(from_ref(entity_id)),
+                        exclude_registration,
+                        csf: None,
+                        scope_q: None,
+                        operation,
+                        mode_filter,
+                        entity_map,
+                    },
+                )
+                .await?;
+            let registered_type = registered_type_of(&registrations, entity_id);
+            // A retrieval knows no split entities (clause 5.7.1.4), so every
+            // parameter that is not narrowed travels with the request.
+            let targets = registrations
+                .into_iter()
+                .filter_map(|registration| {
+                    ForwardedQuery::for_registration(client_query, &registration, SplitEntities::Complete).map(|query| (registration, query))
+                })
+                .collect::<Vec<_>>();
+            if targets.is_empty() {
+                return Ok(ForwardReadOutcome::empty());
+            }
+            let matched = targets.len();
+            let answers = self
+                .fan_out_get(
+                    targets,
+                    |registration, query| build_retrieve_url(registration.access.endpoint.url(), entity_id, &query.to_query_string()),
+                    FederationService::entities_of,
+                    ForwardedGetConditions {
+                        context,
+                        triggering,
+                        cacheability: Cacheability::Cacheable,
+                        entity_map,
+                    },
+                )
+                .await;
+            Ok(read_outcome(answers, matched, registered_type))
+        }
+        .await;
+        timer.finish_result(&result);
+        result
     }
 }

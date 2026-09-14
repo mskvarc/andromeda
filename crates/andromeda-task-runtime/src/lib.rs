@@ -47,6 +47,7 @@ pub mod wake_trigger;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-telemetry",
     ],
     allow_workspace_dev_dependencies: [
     ],

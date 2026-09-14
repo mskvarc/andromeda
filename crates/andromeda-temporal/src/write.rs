@@ -12,6 +12,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_family::InstanceFamily, instance_identity::InstanceIdentity, uri::Uri};
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
+use andromeda_telemetry::temporal::{self, TemporalOperation};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -27,7 +28,15 @@ impl TemporalService {
     /// payload cannot be expanded against `context`; and
     /// [`TemporalError::Commit`] or [`TemporalError::Persistence`] when the
     /// atomic write cannot be landed.
-    pub async fn create_or_update(&self, target: &ContextTarget, mut payload: Value, context: &ContextSpec) -> Result<CreateOrUpdateResult, TemporalError> {
+    pub async fn create_or_update(&self, target: &ContextTarget, payload: Value, context: &ContextSpec) -> Result<CreateOrUpdateResult, TemporalError> {
+        let timer = temporal::start(TemporalOperation::CreateOrUpdate);
+        let result = self.create_or_update_inner(target, payload, context).await;
+        timer.finish_result(&result);
+        result
+    }
+
+    /// The measured body of [`TemporalService::create_or_update`].
+    async fn create_or_update_inner(&self, target: &ContextTarget, mut payload: Value, context: &ContextSpec) -> Result<CreateOrUpdateResult, TemporalError> {
         normalize_entity_attributes(&mut payload);
         let expanded = self.engine.expand(payload, context).await?;
         validate_entity_unit_code_admission(&expanded)?;
@@ -91,7 +100,15 @@ impl TemporalService {
     /// [`TemporalError::JsonLd`] when the payload cannot be expanded against
     /// `context`, and [`TemporalError::Commit`] or
     /// [`TemporalError::Persistence`] when the append cannot be landed.
-    pub async fn add_attrs(&self, target: &ContextTarget, entity_id: &Uri, mut payload: Value, context: &ContextSpec) -> Result<(), TemporalError> {
+    pub async fn add_attrs(&self, target: &ContextTarget, entity_id: &Uri, payload: Value, context: &ContextSpec) -> Result<(), TemporalError> {
+        let timer = temporal::start(TemporalOperation::AddAttributes);
+        let result = self.add_attrs_inner(target, entity_id, payload, context).await;
+        timer.finish_result(&result);
+        result
+    }
+
+    /// The measured body of [`TemporalService::add_attrs`].
+    async fn add_attrs_inner(&self, target: &ContextTarget, entity_id: &Uri, mut payload: Value, context: &ContextSpec) -> Result<(), TemporalError> {
         if !self.reader.entity_exists(target, entity_id).await? {
             return Err(TemporalError::not_found(entity_id.to_string()));
         }
@@ -174,6 +191,14 @@ impl TemporalService {
     /// barrier cannot drain the entity's pending history or the deletion
     /// cannot be applied.
     pub async fn delete(&self, target: &ContextTarget, entity_id: &Uri) -> Result<(), TemporalError> {
+        let timer = temporal::start(TemporalOperation::Delete);
+        let result = self.delete_inner(target, entity_id).await;
+        timer.finish_result(&result);
+        result
+    }
+
+    /// The measured body of [`TemporalService::delete`].
+    async fn delete_inner(&self, target: &ContextTarget, entity_id: &Uri) -> Result<(), TemporalError> {
         self.mutation_barrier.synchronize(target, entity_id).await?;
         if !self.mutator.entity_exists(target, entity_id).await? {
             return Err(TemporalError::not_found(entity_id.to_string()));
@@ -194,6 +219,22 @@ impl TemporalService {
     /// barrier cannot drain the entity's pending history or the deletion
     /// cannot be applied.
     pub async fn delete_attr(
+        &self,
+        target: &ContextTarget,
+        entity_id: &Uri,
+        attr_id: &AttributeName,
+        dataset_id: Option<&DatasetSelector>,
+        scope: TemporalDeleteScope,
+        context: &ContextSpec,
+    ) -> Result<(), TemporalError> {
+        let timer = temporal::start(TemporalOperation::DeleteAttribute);
+        let result = self.delete_attr_inner(target, entity_id, attr_id, dataset_id, scope, context).await;
+        timer.finish_result(&result);
+        result
+    }
+
+    /// The measured body of [`TemporalService::delete_attr`].
+    async fn delete_attr_inner(
         &self,
         target: &ContextTarget,
         entity_id: &Uri,
@@ -249,6 +290,22 @@ impl TemporalService {
         payload: Value,
         context: &ContextSpec,
     ) -> Result<(), TemporalError> {
+        let timer = temporal::start(TemporalOperation::ModifyAttributeInstance);
+        let result = self.modify_attr_instance_inner(target, entity_id, attr_id, instance, payload, context).await;
+        timer.finish_result(&result);
+        result
+    }
+
+    /// The measured body of [`TemporalService::modify_attr_instance`].
+    async fn modify_attr_instance_inner(
+        &self,
+        target: &ContextTarget,
+        entity_id: &Uri,
+        attr_id: &AttributeName,
+        instance: &InstanceIdentity,
+        payload: Value,
+        context: &ContextSpec,
+    ) -> Result<(), TemporalError> {
         self.mutation_barrier.synchronize(target, entity_id).await?;
         let attr_iri = self.resolve_attr_iri_for_entity(target, entity_id, attr_id, context).await?;
 
@@ -284,6 +341,21 @@ impl TemporalService {
     /// [`TemporalError::Persistence`] when the delivery barrier cannot drain
     /// the entity's pending history or the deletion cannot be applied.
     pub async fn delete_attr_instance(
+        &self,
+        target: &ContextTarget,
+        entity_id: &Uri,
+        attr_id: &AttributeName,
+        instance: &InstanceIdentity,
+        context: &ContextSpec,
+    ) -> Result<(), TemporalError> {
+        let timer = temporal::start(TemporalOperation::DeleteAttributeInstance);
+        let result = self.delete_attr_instance_inner(target, entity_id, attr_id, instance, context).await;
+        timer.finish_result(&result);
+        result
+    }
+
+    /// The measured body of [`TemporalService::delete_attr_instance`].
+    async fn delete_attr_instance_inner(
         &self,
         target: &ContextTarget,
         entity_id: &Uri,

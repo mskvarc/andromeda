@@ -1,10 +1,12 @@
 //! Failure information classified by broker composition.
 
 use std::sync::Arc;
+use strum::IntoStaticStr;
 use thiserror::Error;
 
 /// Runtime action class assigned to a typed policy or operational failure.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoStaticStr)]
+#[strum(serialize_all = "kebab-case")]
 pub enum FailureClass {
     /// Re-execution can succeed without configuration or code changes.
     Transient,

@@ -19,6 +19,7 @@ use crate::{
     task_observer::{DriverTerminal, TerminatedTask, apply_criticality, emit, join_failure, observe_terminal},
     wake_trigger::{WakeHandle, wake_channel},
 };
+use andromeda_telemetry::task_failure::record_task_failure;
 use dashmap::{DashMap, mapref::entry::Entry};
 use std::{
     sync::{
@@ -389,6 +390,7 @@ impl TaskSupervisor {
         health.failed_attempt(SystemTime::now(), failure);
         health.terminal(TaskHealthState::Failed);
         drop(health);
+        record_task_failure(failure.class().into(), criticality.into());
         self.emit(TaskLifecycleEvent::new(
             name.clone(), // clone: the startup error retains its own task identity.
             LifecycleEventKind::Failed {

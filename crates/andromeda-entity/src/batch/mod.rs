@@ -47,6 +47,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{entity::Entity, expanded::mutation::selection::OverwritePolicy};
+use andromeda_telemetry::entity::{self, EntityOperation};
 use futures::{StreamExt, stream};
 use std::{collections::HashSet, slice::Chunks};
 
@@ -126,23 +127,29 @@ impl EntityService {
         context: &ContextSpec,
         mode: BatchSideEffectMode,
     ) -> Result<BatchResult, EntityError> {
-        self.batch_activity.record_activity();
-        // Clause 5.5.11.1: only the first instance of an identifier creates, so
-        // there is nothing left to order and no second round to run.
-        let (deduped, errors) = Self::dedupe_create_entities(entities);
-        let mut batch = BatchResult { success: Vec::new(), errors };
-        if deduped.is_empty() {
-            return Ok(batch);
+        let timer = entity::start(EntityOperation::BatchCreate);
+        let result: Result<BatchResult, EntityError> = async {
+            self.batch_activity.record_activity();
+            // Clause 5.5.11.1: only the first instance of an identifier creates, so
+            // there is nothing left to order and no second round to run.
+            let (deduped, errors) = Self::dedupe_create_entities(entities);
+            let mut batch = BatchResult { success: Vec::new(), errors };
+            if deduped.is_empty() {
+                return Ok(batch);
+            }
+
+            let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(&deduped))
+                .map(|chunk| async move { self.batch_create_chunk(target, chunk, context, mode).await })
+                .buffered(self.batch_execution.chunk_write_concurrency)
+                .collect()
+                .await;
+            collect_chunks(&mut batch, chunk_results)?;
+
+            Ok(batch)
         }
-
-        let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(&deduped))
-            .map(|chunk| async move { self.batch_create_chunk(target, chunk, context, mode).await })
-            .buffered(self.batch_execution.chunk_write_concurrency)
-            .collect()
-            .await;
-        collect_chunks(&mut batch, chunk_results)?;
-
-        Ok(batch)
+        .await;
+        timer.finish_result(&result);
+        result
     }
 
     /// Delete multiple entities by ID in a single batch operation (NGSI-LD 5.6.10).
@@ -154,35 +161,41 @@ impl EntityService {
     /// repeats, is carried in [`BatchResult::errors`] instead, because clause
     /// 5.6.10 reports batch results per entity.
     pub async fn batch_delete(&self, target: &ContextTarget, entity_ids: &[Uri], mode: BatchSideEffectMode) -> Result<BatchResult, EntityError> {
-        self.batch_activity.record_activity();
-        // Clause 5.5.11.4: the first occurrence deletes, every later one is
-        // answered as an entity that does not exist.
-        let mut seen = HashSet::new();
-        let mut unique_ids = Vec::new();
-        let mut errors = Vec::new();
-        for id in entity_ids {
-            if seen.insert(id.as_str()) {
-                unique_ids.push(id.clone()); // clone: the unique batch owns its identifiers
-            } else {
-                errors.push((id.clone(), EntityError::not_found(id))); // clone: reported alongside the error
+        let timer = entity::start(EntityOperation::BatchDelete);
+        let result: Result<BatchResult, EntityError> = async {
+            self.batch_activity.record_activity();
+            // Clause 5.5.11.4: the first occurrence deletes, every later one is
+            // answered as an entity that does not exist.
+            let mut seen = HashSet::new();
+            let mut unique_ids = Vec::new();
+            let mut errors = Vec::new();
+            for id in entity_ids {
+                if seen.insert(id.as_str()) {
+                    unique_ids.push(id.clone()); // clone: the unique batch owns its identifiers
+                } else {
+                    errors.push((id.clone(), EntityError::not_found(id))); // clone: reported alongside the error
+                }
             }
+
+            let chunk_len = self.batch_chunk_len(unique_ids.len());
+            let chunk_results: Vec<Result<DeleteChunkOutcome, EntityError>> = stream::iter(unique_ids.chunks(chunk_len))
+                .map(|chunk| async move { self.batch_delete_chunk(target, chunk, mode).await })
+                .buffered(self.batch_execution.chunk_write_concurrency)
+                .collect()
+                .await;
+
+            let mut success = Vec::new();
+            for result in chunk_results {
+                let (chunk_success, chunk_errors) = result?;
+                success.extend(chunk_success);
+                errors.extend(chunk_errors);
+            }
+
+            Ok(BatchResult { success, errors })
         }
-
-        let chunk_len = self.batch_chunk_len(unique_ids.len());
-        let chunk_results: Vec<Result<DeleteChunkOutcome, EntityError>> = stream::iter(unique_ids.chunks(chunk_len))
-            .map(|chunk| async move { self.batch_delete_chunk(target, chunk, mode).await })
-            .buffered(self.batch_execution.chunk_write_concurrency)
-            .collect()
-            .await;
-
-        let mut success = Vec::new();
-        for result in chunk_results {
-            let (chunk_success, chunk_errors) = result?;
-            success.extend(chunk_success);
-            errors.extend(chunk_errors);
-        }
-
-        Ok(BatchResult { success, errors })
+        .await;
+        timer.finish_result(&result);
+        result
     }
 
     /// Update attributes of multiple entities in a single batch operation (NGSI-LD 5.6.9).
@@ -208,18 +221,24 @@ impl EntityService {
         overwrite: OverwritePolicy,
         mode: BatchSideEffectMode,
     ) -> Result<BatchResult, EntityError> {
-        self.batch_activity.record_activity();
-        let rounds = SameIdRounds::from_entities(entities);
-        let mut batch = BatchResult::empty();
-        for round in rounds.rounds() {
-            let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(round))
-                .map(|chunk| async move { self.batch_update_chunk(target, chunk, context, overwrite, mode).await })
-                .buffered(self.batch_execution.chunk_write_concurrency)
-                .collect()
-                .await;
-            collect_chunks(&mut batch, chunk_results)?;
+        let timer = entity::start(EntityOperation::BatchUpdate);
+        let result: Result<BatchResult, EntityError> = async {
+            self.batch_activity.record_activity();
+            let rounds = SameIdRounds::from_entities(entities);
+            let mut batch = BatchResult::empty();
+            for round in rounds.rounds() {
+                let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(round))
+                    .map(|chunk| async move { self.batch_update_chunk(target, chunk, context, overwrite, mode).await })
+                    .buffered(self.batch_execution.chunk_write_concurrency)
+                    .collect()
+                    .await;
+                collect_chunks(&mut batch, chunk_results)?;
+            }
+            Ok(batch)
         }
-        Ok(batch)
+        .await;
+        timer.finish_result(&result);
+        result
     }
 
     /// Merge partial updates into multiple entities in a single batch operation.
@@ -244,18 +263,24 @@ impl EntityService {
         context: &ContextSpec,
         mode: BatchSideEffectMode,
     ) -> Result<BatchResult, EntityError> {
-        self.batch_activity.record_activity();
-        let rounds = SameIdRounds::from_entities(entities);
-        let mut batch = BatchResult::empty();
-        for round in rounds.rounds() {
-            let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(round))
-                .map(|chunk| async move { self.batch_merge_chunk(target, chunk, context, mode).await })
-                .buffered(self.batch_execution.chunk_write_concurrency)
-                .collect()
-                .await;
-            collect_chunks(&mut batch, chunk_results)?;
+        let timer = entity::start(EntityOperation::BatchMerge);
+        let result: Result<BatchResult, EntityError> = async {
+            self.batch_activity.record_activity();
+            let rounds = SameIdRounds::from_entities(entities);
+            let mut batch = BatchResult::empty();
+            for round in rounds.rounds() {
+                let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(round))
+                    .map(|chunk| async move { self.batch_merge_chunk(target, chunk, context, mode).await })
+                    .buffered(self.batch_execution.chunk_write_concurrency)
+                    .collect()
+                    .await;
+                collect_chunks(&mut batch, chunk_results)?;
+            }
+            Ok(batch)
         }
-        Ok(batch)
+        .await;
+        timer.finish_result(&result);
+        result
     }
 
     /// Create or update multiple entities in a single batch operation (NGSI-LD 5.6.8).
@@ -283,35 +308,41 @@ impl EntityService {
         policy: UpsertPolicy,
         mode: BatchSideEffectMode,
     ) -> Result<(BatchResult, Vec<Uri>), EntityError> {
-        self.batch_activity.record_activity();
-        let rounds = SameIdRounds::from_entities(entities);
-        let mut batch = BatchResult::empty();
-        let mut created = Vec::new();
+        let timer = entity::start(EntityOperation::BatchUpsert);
+        let result: Result<(BatchResult, Vec<Uri>), EntityError> = async {
+            self.batch_activity.record_activity();
+            let rounds = SameIdRounds::from_entities(entities);
+            let mut batch = BatchResult::empty();
+            let mut created = Vec::new();
 
-        for round in rounds.rounds() {
-            let chunk_results: Vec<Result<UpsertChunkOutcome, EntityError>> = stream::iter(self.round_chunks(round))
-                .map(|chunk| async move {
-                    let mut chunk_errors = Vec::new();
-                    let outcome = match policy {
-                        UpsertPolicy::Update => self.batch_upsert_update_chunk(target, chunk, context, &mut chunk_errors, mode).await,
-                        UpsertPolicy::Replace => self.batch_upsert_replace_chunk(target, chunk, context, &mut chunk_errors, mode).await,
-                    };
-                    outcome.map(|(result, chunk_created)| (result, chunk_errors, chunk_created))
-                })
-                .buffered(self.batch_execution.chunk_write_concurrency)
-                .collect()
-                .await;
+            for round in rounds.rounds() {
+                let chunk_results: Vec<Result<UpsertChunkOutcome, EntityError>> = stream::iter(self.round_chunks(round))
+                    .map(|chunk| async move {
+                        let mut chunk_errors = Vec::new();
+                        let outcome = match policy {
+                            UpsertPolicy::Update => self.batch_upsert_update_chunk(target, chunk, context, &mut chunk_errors, mode).await,
+                            UpsertPolicy::Replace => self.batch_upsert_replace_chunk(target, chunk, context, &mut chunk_errors, mode).await,
+                        };
+                        outcome.map(|(result, chunk_created)| (result, chunk_errors, chunk_created))
+                    })
+                    .buffered(self.batch_execution.chunk_write_concurrency)
+                    .collect()
+                    .await;
 
-            for result in chunk_results {
-                let (chunk_result, chunk_errors, mut chunk_created) = result?;
-                batch.success.extend(chunk_result.success);
-                batch.errors.extend(chunk_errors);
-                batch.errors.extend(chunk_result.errors);
-                created.append(&mut chunk_created);
+                for result in chunk_results {
+                    let (chunk_result, chunk_errors, mut chunk_created) = result?;
+                    batch.success.extend(chunk_result.success);
+                    batch.errors.extend(chunk_errors);
+                    batch.errors.extend(chunk_result.errors);
+                    created.append(&mut chunk_created);
+                }
             }
-        }
 
-        Ok((batch, created))
+            Ok((batch, created))
+        }
+        .await;
+        timer.finish_result(&result);
+        result
     }
 }
 

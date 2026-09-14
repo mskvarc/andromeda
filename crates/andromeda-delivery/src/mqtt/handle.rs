@@ -5,10 +5,11 @@ use crate::{
     endpoint::mqtt::{MqttEndpointConfig, MqttQoS},
     error::TransportError,
     mqtt::{ack::AckKind, connection::MqttClientVariant, envelope::build_envelope, metadata::transported_headers, pool::MqttTransportPool},
-    outcome::DeliveryOutcome,
+    outcome::{DeliveryOutcome, delivery_metric_outcome},
     request::DeliveryRequest,
     transport::NotificationTransport,
 };
+use andromeda_telemetry::delivery_ops::DeliveryTimer;
 use async_trait::async_trait;
 use rumqttc::{
     QoS,
@@ -84,6 +85,18 @@ impl MqttTransportHandle {
 #[async_trait]
 impl NotificationTransport for MqttTransportHandle {
     async fn deliver(&self, request: &DeliveryRequest) -> Result<DeliveryOutcome, TransportError> {
+        // One delivery attempt, timed and counted as a whole; for MQTT the
+        // measured span is connection acquisition, enqueue and acknowledgement.
+        let timer = DeliveryTimer::start();
+        let result = self.deliver_inner(request).await;
+        timer.finish(delivery_metric_outcome(&result));
+        result
+    }
+}
+
+impl MqttTransportHandle {
+    /// The delivery body itself, wrapped by [`MqttTransportHandle::deliver`] for timing.
+    async fn deliver_inner(&self, request: &DeliveryRequest) -> Result<DeliveryOutcome, TransportError> {
         let connection = self.pool.get_or_create_connection(&self.config).await?;
         let start = Instant::now();
         let envelope = build_envelope(request);

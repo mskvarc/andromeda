@@ -34,6 +34,28 @@ pub const DB_TABLE_BYTES: &str = "andromeda_db_table_bytes";
 pub const DB_TABLE_INDEX_BYTES: &str = "andromeda_db_table_index_bytes";
 /// Counter of durable-queue item outcomes.
 pub const QUEUE_OUTCOMES_TOTAL: &str = "andromeda_queue_outcomes_total";
+/// Counter of entity-service operations, labelled by operation and outcome.
+pub const ENTITY_OPERATIONS_TOTAL: &str = "andromeda_entity_operations_total";
+/// Histogram of entity-service operation durations in seconds, labelled by operation.
+pub const ENTITY_OPERATION_SECONDS: &str = "andromeda_entity_operation_seconds";
+/// Counter of temporal-service operations, labelled by operation and outcome.
+pub const TEMPORAL_OPERATIONS_TOTAL: &str = "andromeda_temporal_operations_total";
+/// Histogram of temporal-service operation durations in seconds, labelled by operation.
+pub const TEMPORAL_OPERATION_SECONDS: &str = "andromeda_temporal_operation_seconds";
+/// Counter of subscription lifecycle operations, labelled by operation and outcome.
+pub const SUBSCRIPTION_OPERATIONS_TOTAL: &str = "andromeda_subscription_operations_total";
+/// Counter of outbound federation requests, labelled by operation and outcome.
+pub const FEDERATION_REQUESTS_TOTAL: &str = "andromeda_federation_requests_total";
+/// Histogram of outbound federation request durations in seconds, labelled by operation.
+pub const FEDERATION_REQUEST_SECONDS: &str = "andromeda_federation_request_seconds";
+/// Counter of upstream HTTP status classes returned to federation requests.
+pub const FEDERATION_UPSTREAM_STATUS_TOTAL: &str = "andromeda_federation_upstream_status_total";
+/// Counter of notification deliveries, labelled by outcome.
+pub const NOTIFICATION_DELIVERIES_TOTAL: &str = "andromeda_notification_deliveries_total";
+/// Histogram of notification delivery durations in seconds.
+pub const NOTIFICATION_DELIVERY_SECONDS: &str = "andromeda_notification_delivery_seconds";
+/// Counter of background task failures, labelled by failure class and criticality.
+pub const TASK_FAILURES_TOTAL: &str = "andromeda_task_failures_total";
 /// Histogram of subscription candidates surviving each funnel stage per event.
 pub const SUBSCRIPTION_CANDIDATES: &str = "andromeda_subscription_candidates";
 /// Counter of adaptive PostgreSQL maintenance decisions.
@@ -55,6 +77,14 @@ pub const LABEL_TABLE: &str = "table";
 pub const LABEL_QUEUE: &str = "queue";
 /// The `outcome` label naming what happened to a queue item.
 pub const LABEL_OUTCOME: &str = "outcome";
+/// The `operation` label naming a domain operation.
+pub const LABEL_OPERATION: &str = "operation";
+/// The `status` label naming an upstream HTTP status class.
+pub const LABEL_STATUS: &str = "status";
+/// The `class` label naming a task-failure class.
+pub const LABEL_CLASS: &str = "class";
+/// The `criticality` label naming a task's operational criticality.
+pub const LABEL_CRITICALITY: &str = "criticality";
 /// The `stage` label naming a subscription funnel stage.
 pub const LABEL_STAGE: &str = "stage";
 /// The `decision` label naming a maintenance pass result.

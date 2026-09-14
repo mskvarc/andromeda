@@ -14,6 +14,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
+use andromeda_telemetry::federation_ops::{self, FederationOperation};
 use futures::{StreamExt, stream};
 use serde_json::Value;
 use std::time::Duration;
@@ -50,104 +51,110 @@ impl FederationService {
     /// call: its rejection is reported as one of the returned
     /// [`ForwardedWriteResult`]s.
     pub async fn forward_provision(&self, target: &ContextTarget, request: ForwardProvisionRequest<'_>) -> Result<Vec<ForwardedWriteResult>, FederationError> {
-        if !target.permits_federation() {
-            return Ok(Vec::new());
-        }
-        if self.is_loop_detected(request.triggering.via) {
-            debug!("Loop detected in Via header chain, skipping provision forwarding");
-            return Ok(Vec::new());
-        }
-
-        let prepared_context = self.engine.prepare_term_context(request.context);
-        let expanded_type = if let Some(t) = request.entity_type_compact {
-            Some(self.engine.expand_type(t.as_str(), &prepared_context).await?)
-        } else {
-            None
-        };
-
-        let csrs = self.csr_repo.find_matching(expanded_type.as_ref(), Some(request.entity_id)).await?;
-
-        // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
-        let mut matching_csrs = Vec::new();
-        let mut results = Vec::new();
-        for csr in csrs {
-            if csr.access.mode == Some(ForwardingMode::Auxiliary) {
-                continue;
+        let timer = federation_ops::start(FederationOperation::Provision);
+        let result = async move {
+            if !target.permits_federation() {
+                return Ok(Vec::new());
             }
-            if !csr_has_matching_information(&csr, expanded_type.as_ref(), Some(request.entity_id), request.attribute_name) {
-                continue;
+            if self.is_loop_detected(request.triggering.via) {
+                debug!("Loop detected in Via header chain, skipping provision forwarding");
+                return Ok(Vec::new());
             }
-            if request.operation.matches(&csr) {
-                matching_csrs.push(csr);
-            } else if is_proxied(&csr) {
-                // Clauses 5.6.1.4 and following: a proxied registration that
-                // does not support the operation still owns its attributes, so
-                // the write fails for them instead of landing here.
-                let proxied_attrs = collect_matching_attrs(&csr, expanded_type.as_ref(), Some(request.entity_id), request.attribute_name, request.body);
-                let mode = proxied_mode(&csr);
-                results.push(ForwardedWriteResult {
-                    registration_id: csr.id,
-                    mode,
-                    outcome: ForwardedWriteOutcome::NotAdvertised,
-                    proxied_attrs,
-                });
-            }
-        }
 
-        let request_ref = &request;
-        let expanded_type_ref = expanded_type.as_ref();
-        let planned: Vec<PlannedWrite<'_>> = matching_csrs
-            .into_iter()
-            .filter_map(|csr| {
-                // A POST below the bare resource creates (clauses 6.4.3.1 and
-                // 6.18.3.1); every other write addresses the entity itself.
-                let mut path = request_ref.resource.segments().to_vec();
-                if !(request_ref.method == reqwest::Method::POST && request_ref.path_suffix.is_none()) {
-                    path.push(request_ref.entity_id.as_str());
-                    path.extend(
-                        request_ref
-                            .path_suffix
-                            .into_iter()
-                            .flat_map(|suffix| suffix.split('/'))
-                            .filter(|segment| !segment.is_empty()),
-                    );
+            let prepared_context = self.engine.prepare_term_context(request.context);
+            let expanded_type = if let Some(t) = request.entity_type_compact {
+                Some(self.engine.expand_type(t.as_str(), &prepared_context).await?)
+            } else {
+                None
+            };
+
+            let csrs = self.csr_repo.find_matching(expanded_type.as_ref(), Some(request.entity_id)).await?;
+
+            // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
+            let mut matching_csrs = Vec::new();
+            let mut results = Vec::new();
+            for csr in csrs {
+                if csr.access.mode == Some(ForwardingMode::Auxiliary) {
+                    continue;
                 }
-                let url = forwarding_url(csr.access.endpoint.url(), &path, request_ref.query_string.unwrap_or(""));
-
-                let proxied_attrs = if is_proxied(&csr) {
-                    collect_matching_attrs(
-                        &csr,
-                        expanded_type_ref,
-                        Some(request_ref.entity_id),
-                        request_ref.attribute_name,
-                        request_ref.body,
-                    )
-                } else {
-                    Vec::new()
-                };
-
-                let body = if request_ref.attribute_name.is_none() {
-                    filter_fragment_for_registration(request_ref.body, &csr, expanded_type_ref, Some(request_ref.entity_id))
-                } else {
-                    request_ref.body.map(<[u8]>::to_vec)
-                };
-                if request_ref.body.is_some() && body.is_none() {
-                    return None;
+                if !csr_has_matching_information(&csr, expanded_type.as_ref(), Some(request.entity_id), request.attribute_name) {
+                    continue;
                 }
-                Some(PlannedWrite {
-                    registration: csr,
-                    url,
-                    method: request_ref.method.clone(),
-                    body,
-                    proxied_attrs,
-                    context: request_ref.context,
-                    triggering: request_ref.triggering,
+                if request.operation.matches(&csr) {
+                    matching_csrs.push(csr);
+                } else if is_proxied(&csr) {
+                    // Clauses 5.6.1.4 and following: a proxied registration that
+                    // does not support the operation still owns its attributes, so
+                    // the write fails for them instead of landing here.
+                    let proxied_attrs = collect_matching_attrs(&csr, expanded_type.as_ref(), Some(request.entity_id), request.attribute_name, request.body);
+                    let mode = proxied_mode(&csr);
+                    results.push(ForwardedWriteResult {
+                        registration_id: csr.id,
+                        mode,
+                        outcome: ForwardedWriteOutcome::NotAdvertised,
+                        proxied_attrs,
+                    });
+                }
+            }
+
+            let request_ref = &request;
+            let expanded_type_ref = expanded_type.as_ref();
+            let planned: Vec<PlannedWrite<'_>> = matching_csrs
+                .into_iter()
+                .filter_map(|csr| {
+                    // A POST below the bare resource creates (clauses 6.4.3.1 and
+                    // 6.18.3.1); every other write addresses the entity itself.
+                    let mut path = request_ref.resource.segments().to_vec();
+                    if !(request_ref.method == reqwest::Method::POST && request_ref.path_suffix.is_none()) {
+                        path.push(request_ref.entity_id.as_str());
+                        path.extend(
+                            request_ref
+                                .path_suffix
+                                .into_iter()
+                                .flat_map(|suffix| suffix.split('/'))
+                                .filter(|segment| !segment.is_empty()),
+                        );
+                    }
+                    let url = forwarding_url(csr.access.endpoint.url(), &path, request_ref.query_string.unwrap_or(""));
+
+                    let proxied_attrs = if is_proxied(&csr) {
+                        collect_matching_attrs(
+                            &csr,
+                            expanded_type_ref,
+                            Some(request_ref.entity_id),
+                            request_ref.attribute_name,
+                            request_ref.body,
+                        )
+                    } else {
+                        Vec::new()
+                    };
+
+                    let body = if request_ref.attribute_name.is_none() {
+                        filter_fragment_for_registration(request_ref.body, &csr, expanded_type_ref, Some(request_ref.entity_id))
+                    } else {
+                        request_ref.body.map(<[u8]>::to_vec)
+                    };
+                    if request_ref.body.is_some() && body.is_none() {
+                        return None;
+                    }
+                    Some(PlannedWrite {
+                        registration: csr,
+                        url,
+                        method: request_ref.method.clone(),
+                        body,
+                        proxied_attrs,
+                        context: request_ref.context,
+                        triggering: request_ref.triggering,
+                    })
                 })
-            })
-            .collect();
+                .collect();
 
-        results.extend(self.execute_writes(planned).await);
-        Ok(results)
+            results.extend(self.execute_writes(planned).await);
+            Ok(results)
+        }
+        .await;
+        timer.finish_result(&result);
+        result
     }
 
     /// Send every planned write, at most `csr_concurrency` at a time.

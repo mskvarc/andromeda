@@ -9,9 +9,11 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+andromeda-telemetry.workspace = true
 compact_str = "0.10.0"
 dashmap = "6.2.1"
 derive_more = { version = "2.1.1", features = ["display"] }
+strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt", "sync", "time"] }
 tokio-util = { version = "0.7.19", features = ["rt"] }

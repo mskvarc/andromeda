@@ -28,6 +28,7 @@ use andromeda_ngsi_ld_lexicon::{
     uri::{NGSI_LD_URN_NID, Uri},
 };
 use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
+use andromeda_telemetry::subscription_ops::{self, SubscriptionOperation};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use serde_json::Value;
@@ -131,51 +132,56 @@ where
         base_url: Option<&Url>,
         encountered_sources: &[ContextSourcePseudonym],
     ) -> Result<Uri, SubscriptionError> {
-        validation::validate_create_payload(&payload)?;
+        let result: Result<Uri, SubscriptionError> = async {
+            validation::validate_create_payload(&payload)?;
 
-        validate_endpoint(&payload, self.endpoint_validator.as_ref())?;
+            validate_endpoint(&payload, self.endpoint_validator.as_ref())?;
 
-        let id = match payload.get("id").and_then(|v| v.as_str()) {
-            Some(provided_id) => {
-                let provided_id = provided_id
-                    .parse::<Uri>()
-                    .map_err(|error| SubscriptionError::validation(format!("Subscription id must be a valid URI: {error}")))?;
-                if self.repo.exists(target, &provided_id).await? {
-                    return Err(SubscriptionError::already_exists(&provided_id));
+            let id = match payload.get("id").and_then(|v| v.as_str()) {
+                Some(provided_id) => {
+                    let provided_id = provided_id
+                        .parse::<Uri>()
+                        .map_err(|error| SubscriptionError::validation(format!("Subscription id must be a valid URI: {error}")))?;
+                    if self.repo.exists(target, &provided_id).await? {
+                        return Err(SubscriptionError::already_exists(&provided_id));
+                    }
+                    provided_id
                 }
-                provided_id
+                None => generate_id()?,
+            };
+
+            if let Some(ctx_value) = payload.get("jsonldContext") {
+                validate_jsonld_context_value(&self.engine, ctx_value).await?;
             }
-            None => generate_id()?,
-        };
+            validate_context_spec(&self.engine, context).await?;
 
-        if let Some(ctx_value) = payload.get("jsonldContext") {
-            validate_jsonld_context_value(&self.engine, ctx_value).await?;
+            // Clause 5.8.2.4: `expand_terms` initialises `jsonldContext` from the
+            // `@context` applicable at creation when the request named none itself,
+            // so by the time the payload is parsed the member reflects that fallback.
+            self.variant.expand_terms(&mut payload, context, base_url).await?;
+
+            let values = fields::extract_create_fields(&payload, self.variant.dataset_id_policy())?;
+            let fields = values.to_fields();
+
+            let status = compute_updated_status(
+                SubscriptionStatus::Active,
+                &StatusUpdateFields {
+                    is_active: if payload.get("isActive").is_some() { Some(fields.is_active) } else { None },
+                    expires_at: if fields.expires_at.is_some() { Some(fields.expires_at) } else { None },
+                },
+            );
+
+            self.repo.create_subscription(target, &id, &fields, status).await?;
+            self.emit_change(self.variant.make_upserted(target.clone(), id.clone())).await; // clone: the caller and change event each own the branch and identifier.
+            if self.forwarding_hook.is_some() && target.permits_federation() {
+                let created = self.get(target, &id).await?;
+                self.run_hook(&id, |hook| hook.created(&created, context, encountered_sources)).await;
+            }
+            Ok(id)
         }
-        validate_context_spec(&self.engine, context).await?;
-
-        // Clause 5.8.2.4: `expand_terms` initialises `jsonldContext` from the
-        // `@context` applicable at creation when the request named none itself,
-        // so by the time the payload is parsed the member reflects that fallback.
-        self.variant.expand_terms(&mut payload, context, base_url).await?;
-
-        let values = fields::extract_create_fields(&payload, self.variant.dataset_id_policy())?;
-        let fields = values.to_fields();
-
-        let status = compute_updated_status(
-            SubscriptionStatus::Active,
-            &StatusUpdateFields {
-                is_active: if payload.get("isActive").is_some() { Some(fields.is_active) } else { None },
-                expires_at: if fields.expires_at.is_some() { Some(fields.expires_at) } else { None },
-            },
-        );
-
-        self.repo.create_subscription(target, &id, &fields, status).await?;
-        self.emit_change(self.variant.make_upserted(target.clone(), id.clone())).await; // clone: the caller and change event each own the branch and identifier.
-        if self.forwarding_hook.is_some() && target.permits_federation() {
-            let created = self.get(target, &id).await?;
-            self.run_hook(&id, |hook| hook.created(&created, context, encountered_sources)).await;
-        }
-        Ok(id)
+        .await;
+        subscription_ops::record_result(SubscriptionOperation::Create, &result);
+        result
     }
 
     /// Retrieve a subscription by its identifier.
@@ -251,43 +257,48 @@ where
         context: &ContextSpec,
         base_url: Option<&Url>,
     ) -> Result<(), SubscriptionError> {
-        validate_endpoint(&payload, self.endpoint_validator.as_ref())?;
+        let result: Result<(), SubscriptionError> = async {
+            validate_endpoint(&payload, self.endpoint_validator.as_ref())?;
 
-        validation::validate_common_fields(&payload)?;
-        self.variant.validate_update_extra(&payload)?;
-        validation::validate_notification_fragment(&payload)?;
+            validation::validate_common_fields(&payload)?;
+            self.variant.validate_update_extra(&payload)?;
+            validation::validate_notification_fragment(&payload)?;
 
-        if let Some(ctx_value) = payload.get("jsonldContext") {
-            validate_jsonld_context_value(&self.engine, ctx_value).await?;
+            if let Some(ctx_value) = payload.get("jsonldContext") {
+                validate_jsonld_context_value(&self.engine, ctx_value).await?;
+            }
+            validate_context_spec(&self.engine, context).await?;
+
+            self.variant.expand_terms(&mut payload, context, base_url).await?;
+
+            let existing = self.get(target, id).await?;
+            let existing_status = existing.lifecycle.status;
+            let merged = fields::merge_update_fields(&payload, existing, self.variant.dataset_id_policy())?;
+            let fields = merged.to_fields();
+
+            let status = compute_updated_status(
+                existing_status,
+                &StatusUpdateFields {
+                    is_active: if payload.get("isActive").is_some() { Some(fields.is_active) } else { None },
+                    expires_at: if payload.get("expiresAt").is_some() { Some(fields.expires_at) } else { None },
+                },
+            );
+
+            let updated = self.repo.update_subscription(target, id, &fields, status).await?;
+            if updated == 0 {
+                return Err(SubscriptionError::not_found(id));
+            }
+
+            self.emit_change(self.variant.make_upserted(target.clone(), id.clone())).await; // clone: the change event owns the branch and identifier.
+            if self.forwarding_hook.is_some() && target.permits_federation() {
+                let merged = self.get(target, id).await?;
+                self.run_hook(id, |hook| hook.updated(&merged, context)).await;
+            }
+            Ok(())
         }
-        validate_context_spec(&self.engine, context).await?;
-
-        self.variant.expand_terms(&mut payload, context, base_url).await?;
-
-        let existing = self.get(target, id).await?;
-        let existing_status = existing.lifecycle.status;
-        let merged = fields::merge_update_fields(&payload, existing, self.variant.dataset_id_policy())?;
-        let fields = merged.to_fields();
-
-        let status = compute_updated_status(
-            existing_status,
-            &StatusUpdateFields {
-                is_active: if payload.get("isActive").is_some() { Some(fields.is_active) } else { None },
-                expires_at: if payload.get("expiresAt").is_some() { Some(fields.expires_at) } else { None },
-            },
-        );
-
-        let updated = self.repo.update_subscription(target, id, &fields, status).await?;
-        if updated == 0 {
-            return Err(SubscriptionError::not_found(id));
-        }
-
-        self.emit_change(self.variant.make_upserted(target.clone(), id.clone())).await; // clone: the change event owns the branch and identifier.
-        if self.forwarding_hook.is_some() && target.permits_federation() {
-            let merged = self.get(target, id).await?;
-            self.run_hook(id, |hook| hook.updated(&merged, context)).await;
-        }
-        Ok(())
+        .await;
+        subscription_ops::record_result(SubscriptionOperation::Update, &result);
+        result
     }
 
     /// Delete a subscription by its identifier.
@@ -299,16 +310,21 @@ where
     /// the store rejects the delete. A failing forwarding hook is logged
     /// rather than returned: the local subscription is deleted either way.
     pub async fn delete(&self, target: &ContextTarget, id: &Uri) -> Result<(), SubscriptionError> {
-        let deleted = self.repo.delete(target, id).await?;
-        if deleted == 0 {
-            return Err(SubscriptionError::not_found(id));
-        }
+        let result: Result<(), SubscriptionError> = async {
+            let deleted = self.repo.delete(target, id).await?;
+            if deleted == 0 {
+                return Err(SubscriptionError::not_found(id));
+            }
 
-        self.emit_change(self.variant.make_deleted(target.clone(), id.clone())).await; // clone: the change event owns the branch and identifier.
-        if target.permits_federation() {
-            self.run_hook(id, |hook| hook.deleted(id)).await;
+            self.emit_change(self.variant.make_deleted(target.clone(), id.clone())).await; // clone: the change event owns the branch and identifier.
+            if target.permits_federation() {
+                self.run_hook(id, |hook| hook.deleted(id)).await;
+            }
+            Ok(())
         }
-        Ok(())
+        .await;
+        subscription_ops::record_result(SubscriptionOperation::Delete, &result);
+        result
     }
 
     /// Transition subscriptions due at `cutoff` and publish one variant-owned deletion change for each.

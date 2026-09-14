@@ -45,6 +45,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-telemetry",
     ],
     allow_workspace_dev_dependencies: [
     ],

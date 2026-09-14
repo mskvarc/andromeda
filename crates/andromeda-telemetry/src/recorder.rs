@@ -4,10 +4,14 @@ use crate::{
     error::TelemetryError,
     names::{
         DB_STATEMENT_SECONDS,
+        ENTITY_OPERATION_SECONDS,
+        FEDERATION_REQUEST_SECONDS,
         HTTP_REQUEST_DURATION_SECONDS,
+        NOTIFICATION_DELIVERY_SECONDS,
         POSTGRESQL_MAINTENANCE_ACTION_SECONDS,
         POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES,
         SUBSCRIPTION_CANDIDATES,
+        TEMPORAL_OPERATION_SECONDS,
     },
 };
 use metrics::{Recorder, with_local_recorder};
@@ -18,6 +22,12 @@ use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle, 
 /// Mirrors `axum_prometheus::utils::SECONDS_DURATION_BUCKETS`, the bucket set
 /// the request-metric layer in `andromeda-http-stack` is documented against.
 const HTTP_REQUEST_SECONDS_BUCKETS: [f64; 11] = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0];
+
+/// Histogram bucket bounds, in seconds, for domain-operation latency.
+///
+/// Shared by the entity, temporal, federation and notification-delivery
+/// operation histograms.
+const OPERATION_SECONDS_BUCKETS: [f64; 12] = [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0];
 
 /// Histogram bucket bounds, in seconds, for statement latency.
 const STATEMENT_SECONDS_BUCKETS: [f64; 14] = [0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0];
@@ -108,6 +118,10 @@ impl TelemetryRecorder {
 fn builder() -> Result<PrometheusBuilder, TelemetryError> {
     let builder = PrometheusBuilder::new()
         .set_buckets_for_metric(Matcher::Full(HTTP_REQUEST_DURATION_SECONDS.to_owned()), &HTTP_REQUEST_SECONDS_BUCKETS)?
+        .set_buckets_for_metric(Matcher::Full(ENTITY_OPERATION_SECONDS.to_owned()), &OPERATION_SECONDS_BUCKETS)?
+        .set_buckets_for_metric(Matcher::Full(TEMPORAL_OPERATION_SECONDS.to_owned()), &OPERATION_SECONDS_BUCKETS)?
+        .set_buckets_for_metric(Matcher::Full(FEDERATION_REQUEST_SECONDS.to_owned()), &OPERATION_SECONDS_BUCKETS)?
+        .set_buckets_for_metric(Matcher::Full(NOTIFICATION_DELIVERY_SECONDS.to_owned()), &OPERATION_SECONDS_BUCKETS)?
         .set_buckets_for_metric(Matcher::Full(DB_STATEMENT_SECONDS.to_owned()), &STATEMENT_SECONDS_BUCKETS)?
         .set_buckets_for_metric(Matcher::Full(SUBSCRIPTION_CANDIDATES.to_owned()), &CANDIDATE_BUCKETS)?
         .set_buckets_for_metric(Matcher::Full(POSTGRESQL_MAINTENANCE_ACTION_SECONDS.to_owned()), &MAINTENANCE_SECONDS_BUCKETS)?

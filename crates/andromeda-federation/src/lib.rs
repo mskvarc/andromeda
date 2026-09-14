@@ -85,6 +85,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_registration::store::{RegistrationStore, forwarding_outcome::ForwardingOutcome};
+use andromeda_telemetry::federation_ops::record_upstream_status;
 use chrono::Utc;
 use std::{sync::Arc, time::Duration};
 use tracing::warn;
@@ -241,6 +242,7 @@ impl FederationService {
         let outcome = match request.timeout(timeout).send().await {
             Ok(response) => {
                 let status = response.status();
+                record_upstream_status(status.as_u16());
                 let warning = headers::HeaderMapExt::typed_get::<Warning>(response.headers());
                 let ngsild_warnings = headers::HeaderMapExt::typed_get::<NgsiLdWarningHeader>(response.headers())
                     .map(NgsiLdWarningHeader::into_warnings)
@@ -313,6 +315,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-request",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-registration",
+        "andromeda-telemetry",
     ],
     allow_workspace_dev_dependencies: [
     ],

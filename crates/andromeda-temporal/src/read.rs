@@ -29,6 +29,7 @@ use andromeda_ngsi_ld_render::{
 };
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
+use andromeda_telemetry::temporal::{self, TemporalOperation};
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use std::{collections::HashMap, slice::from_ref};
@@ -54,66 +55,72 @@ impl TemporalService {
         params: &TemporalQueryParameters,
         context: &ContextSpec,
     ) -> Result<TemporalReadResult, TemporalError> {
-        params.validate(false)?;
+        let timer = temporal::start(TemporalOperation::Retrieve);
+        let result = async {
+            params.validate(false)?;
 
-        let compiled = self.compile_temporal_query(params, context).await?;
-        ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
-        self.ensure_requested_attributes_aggregable(target, &compiled).await?;
+            let compiled = self.compile_temporal_query(params, context).await?;
+            ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
+            self.ensure_requested_attributes_aggregable(target, &compiled).await?;
 
-        if !self.reader.entity_exists(target, entity_id).await? {
-            return Err(TemporalError::not_found(entity_id.to_string()));
-        }
+            if !self.reader.entity_exists(target, entity_id).await? {
+                return Err(TemporalError::not_found(entity_id.to_string()));
+            }
 
-        // Clauses 4.5.1 and 4.5.6: the temporal catalogue is the authority for
-        // an entity's types, so the mandatory `type` member survives the clause
-        // 5.6.6 deletion that removes current state and leaves the Temporal
-        // Evolution standing.
-        let entity_types = self
-            .reader
-            .entity_types(target, from_ref(entity_id))
-            .await?
-            .remove(entity_id)
-            .unwrap_or_default();
+            // Clauses 4.5.1 and 4.5.6: the temporal catalogue is the authority for
+            // an entity's types, so the mandatory `type` member survives the clause
+            // 5.6.6 deletion that removes current state and leaves the Temporal
+            // Evolution standing.
+            let entity_types = self
+                .reader
+                .entity_types(target, from_ref(entity_id))
+                .await?
+                .remove(entity_id)
+                .unwrap_or_default();
 
-        let rendered = self.render_one_temporal_entity(target, entity_id, &entity_types, &compiled, context).await?;
+            let rendered = self.render_one_temporal_entity(target, entity_id, &entity_types, &compiled, context).await?;
 
-        // Clause 5.7.2: an `attrs` filter that selects nothing leaves no
-        // temporal representation to return, which is a 404 rather than an
-        // entity with no attributes.
-        if rendered.presence == HistoryPresence::Absent && !compiled.instances.attr_filter.is_empty() {
-            return Err(TemporalError::not_found(format!(
-                "No temporal data found for the specified attributes on entity {entity_id}"
-            )));
-        }
+            // Clause 5.7.2: an `attrs` filter that selects nothing leaves no
+            // temporal representation to return, which is a 404 rather than an
+            // entity with no attributes.
+            if rendered.presence == HistoryPresence::Absent && !compiled.instances.attr_filter.is_empty() {
+                return Err(TemporalError::not_found(format!(
+                    "No temporal data found for the specified attributes on entity {entity_id}"
+                )));
+            }
 
-        // Clause 5.7.3.5 reduces the Temporal Evolution "down to only contain
-        // the defined Entity members", and Tables 6.4.3.2-1 and 5.2.14.1-1 make
-        // `attrs` "a synonym for pick": a projection that leaves no member at
-        // all is the same `ResourceNotFound` the `attrs` rule above raises,
-        // which clause 5.7.1.4 states in full for the non-temporal twin.
-        let projected = !compiled.projection.pick.is_empty() || !compiled.projection.omit.is_empty();
-        if projected && rendered_entity_members(&rendered.value) == RenderedEntityMembers::None {
-            return Err(TemporalError::not_found(format!(
-                "No temporal representation of entity {entity_id} is left by the requested projection"
-            )));
-        }
+            // Clause 5.7.3.5 reduces the Temporal Evolution "down to only contain
+            // the defined Entity members", and Tables 6.4.3.2-1 and 5.2.14.1-1 make
+            // `attrs` "a synonym for pick": a projection that leaves no member at
+            // all is the same `ResourceNotFound` the `attrs` rule above raises,
+            // which clause 5.7.1.4 states in full for the non-temporal twin.
+            let projected = !compiled.projection.pick.is_empty() || !compiled.projection.omit.is_empty();
+            if projected && rendered_entity_members(&rendered.value) == RenderedEntityMembers::None {
+                return Err(TemporalError::not_found(format!(
+                    "No temporal representation of entity {entity_id} is left by the requested projection"
+                )));
+            }
 
-        let range = if rendered.truncated {
-            Some(TemporalRange {
-                interval: compiled.window.interval,
-                observed: rendered.time_range,
-                partition_total: rendered.max_partition_total,
-                last_n_origin: compiled.instances.last_n_origin,
+            let range = if rendered.truncated {
+                Some(TemporalRange {
+                    interval: compiled.window.interval,
+                    observed: rendered.time_range,
+                    partition_total: rendered.max_partition_total,
+                    last_n_origin: compiled.instances.last_n_origin,
+                })
+            } else {
+                None
+            };
+
+            Ok(TemporalReadResult {
+                value: rendered.value,
+                range,
+                linked_candidates: rendered.candidates,
             })
-        } else {
-            None
-        };
-
-        Ok(TemporalReadResult {
-            value: rendered.value,
-            range,
-            linked_candidates: rendered.candidates,
-        })
+        }
+        .await;
+        timer.finish_result(&result);
+        result
     }
 
     /// Query temporal entities matching the given filter and temporal parameters.
@@ -130,86 +137,92 @@ impl TemporalService {
     /// be read. A single entity that fails to render is reported as a warning
     /// on the result rather than failing the query.
     pub async fn query(&self, target: &ContextTarget, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<TemporalQueryResult, TemporalError> {
-        params.validate(true)?;
+        let timer = temporal::start(TemporalOperation::Query);
+        let result = async {
+            params.validate(true)?;
 
-        let compiled = self.compile_temporal_query(params, context).await?;
+            let compiled = self.compile_temporal_query(params, context).await?;
 
-        ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
-        self.ensure_requested_attributes_aggregable(target, &compiled).await?;
-        let id_outcome = self.reader.query_entity_ids(target, &compiled).await?;
-        let (entity_ids, total_count) = id_outcome
-            .complete(compiled.pagination)
-            .map_err(|error| TemporalError::internal(error.to_string()))?;
+            ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
+            self.ensure_requested_attributes_aggregable(target, &compiled).await?;
+            let id_outcome = self.reader.query_entity_ids(target, &compiled).await?;
+            let (entity_ids, total_count) = id_outcome
+                .complete(compiled.pagination)
+                .map_err(|error| TemporalError::internal(error.to_string()))?;
 
-        // One batch read of the temporal catalogue, which owns the entity types
-        // (clauses 4.5.1 and 4.5.6) and answers for entities whose current
-        // state a clause 5.6.6 deletion has already removed.
-        let entity_types_map: HashMap<Uri, Vec<EntityTypeName>> = self.reader.entity_types(target, &entity_ids).await?;
+            // One batch read of the temporal catalogue, which owns the entity types
+            // (clauses 4.5.1 and 4.5.6) and answers for entities whose current
+            // state a clause 5.6.6 deletion has already removed.
+            let entity_types_map: HashMap<Uri, Vec<EntityTypeName>> = self.reader.entity_types(target, &entity_ids).await?;
 
-        let projected = !compiled.projection.pick.is_empty() || !compiled.projection.omit.is_empty();
-        let mut entities = Vec::new();
-        let mut warnings = Vec::new();
-        let mut linked_candidates: Vec<TemporalLinkedCandidate> = Vec::new();
-        let mut any_truncated = false;
-        let mut overall_min: Option<DateTime<Utc>> = None;
-        let mut overall_max: Option<DateTime<Utc>> = None;
-        let mut overall_partition_total: Option<i64> = None;
-        for entity_id in entity_ids {
-            let entity_types = entity_types_map.get(&entity_id).map(Vec::as_slice).unwrap_or_default();
-            match self.render_one_temporal_entity(target, &entity_id, entity_types, &compiled, context).await {
-                // An entity the window selects no history for is simply not part
-                // of the result set.
-                Ok(rendered) if rendered.presence == HistoryPresence::Absent => {}
-                // Clause 5.7.4.5 reduces "every Entity within the payload body"
-                // to the members the projection defines, so an Entity reduced
-                // to none of them is not in the payload -- the query's answer to
-                // what a retrieval answers with `ResourceNotFound`.
-                Ok(rendered) if projected && rendered_entity_members(&rendered.value) == RenderedEntityMembers::None => {}
-                Ok(rendered) => {
-                    if rendered.truncated {
-                        any_truncated = true;
+            let projected = !compiled.projection.pick.is_empty() || !compiled.projection.omit.is_empty();
+            let mut entities = Vec::new();
+            let mut warnings = Vec::new();
+            let mut linked_candidates: Vec<TemporalLinkedCandidate> = Vec::new();
+            let mut any_truncated = false;
+            let mut overall_min: Option<DateTime<Utc>> = None;
+            let mut overall_max: Option<DateTime<Utc>> = None;
+            let mut overall_partition_total: Option<i64> = None;
+            for entity_id in entity_ids {
+                let entity_types = entity_types_map.get(&entity_id).map(Vec::as_slice).unwrap_or_default();
+                match self.render_one_temporal_entity(target, &entity_id, entity_types, &compiled, context).await {
+                    // An entity the window selects no history for is simply not part
+                    // of the result set.
+                    Ok(rendered) if rendered.presence == HistoryPresence::Absent => {}
+                    // Clause 5.7.4.5 reduces "every Entity within the payload body"
+                    // to the members the projection defines, so an Entity reduced
+                    // to none of them is not in the payload -- the query's answer to
+                    // what a retrieval answers with `ResourceNotFound`.
+                    Ok(rendered) if projected && rendered_entity_members(&rendered.value) == RenderedEntityMembers::None => {}
+                    Ok(rendered) => {
+                        if rendered.truncated {
+                            any_truncated = true;
+                        }
+                        if let Some((min_t, max_t)) = rendered.time_range {
+                            overall_min = Some(overall_min.map_or(min_t, |seen: DateTime<Utc>| seen.min(min_t)));
+                            overall_max = Some(overall_max.map_or(max_t, |seen: DateTime<Utc>| seen.max(max_t)));
+                        }
+                        if let Some(partition_total) = rendered.max_partition_total {
+                            overall_partition_total = Some(overall_partition_total.map_or(partition_total, |seen: i64| seen.max(partition_total)));
+                        }
+                        linked_candidates.extend(rendered.candidates);
+                        entities.push(rendered.value);
                     }
-                    if let Some((min_t, max_t)) = rendered.time_range {
-                        overall_min = Some(overall_min.map_or(min_t, |seen: DateTime<Utc>| seen.min(min_t)));
-                        overall_max = Some(overall_max.map_or(max_t, |seen: DateTime<Utc>| seen.max(max_t)));
+                    // One entity that cannot be rendered degrades the result set
+                    // rather than the query: the rest of the matches still answer.
+                    Err(error) => {
+                        tracing::warn!(error = %error, entity_id = %entity_id, "Failed to render the temporal evolution of an entity");
+                        warnings.push(TemporalQueryWarning {
+                            entity_id, // moved: the warning owns the identifier this iteration finished with
+                            message: error.to_string(),
+                        });
                     }
-                    if let Some(partition_total) = rendered.max_partition_total {
-                        overall_partition_total = Some(overall_partition_total.map_or(partition_total, |seen: i64| seen.max(partition_total)));
-                    }
-                    linked_candidates.extend(rendered.candidates);
-                    entities.push(rendered.value);
-                }
-                // One entity that cannot be rendered degrades the result set
-                // rather than the query: the rest of the matches still answer.
-                Err(error) => {
-                    tracing::warn!(error = %error, entity_id = %entity_id, "Failed to render the temporal evolution of an entity");
-                    warnings.push(TemporalQueryWarning {
-                        entity_id, // moved: the warning owns the identifier this iteration finished with
-                        message: error.to_string(),
-                    });
                 }
             }
-        }
 
-        let range = if any_truncated {
-            Some(TemporalRange {
-                interval: compiled.window.interval,
-                observed: overall_min.zip(overall_max),
-                partition_total: overall_partition_total,
-                last_n_origin: compiled.instances.last_n_origin,
+            let range = if any_truncated {
+                Some(TemporalRange {
+                    interval: compiled.window.interval,
+                    observed: overall_min.zip(overall_max),
+                    partition_total: overall_partition_total,
+                    last_n_origin: compiled.instances.last_n_origin,
+                })
+            } else {
+                None
+            };
+
+            Ok(TemporalQueryResult {
+                entities,
+                total_count,
+                any_truncated,
+                range,
+                warnings,
+                linked_candidates,
             })
-        } else {
-            None
-        };
-
-        Ok(TemporalQueryResult {
-            entities,
-            total_count,
-            any_truncated,
-            range,
-            warnings,
-            linked_candidates,
-        })
+        }
+        .await;
+        timer.finish_result(&result);
+        result
     }
 
     /// Build an aggregated temporal response in compacted form, bypassing JSON-LD compaction.
@@ -302,24 +315,30 @@ impl TemporalService {
         context: &ContextSpec,
         identifiers: RequestedIdentifiers,
     ) -> Result<Vec<Uri>, TemporalError> {
-        params.validate(true)?;
-        let compiled = self.compile_temporal_query(params, context).await?;
-        let mut unpaged = compiled.clone();
-        unpaged.pagination = Pagination {
-            limit: u32::MAX,
-            offset: 0,
-            count: CountPolicy::Omit,
-        };
-        match identifiers {
-            RequestedIdentifiers::Narrow => {}
-            RequestedIdentifiers::Ignore => unpaged.entities.without_identifier_narrowing(),
+        let timer = temporal::start(TemporalOperation::QueryIds);
+        let result = async {
+            params.validate(true)?;
+            let compiled = self.compile_temporal_query(params, context).await?;
+            let mut unpaged = compiled.clone();
+            unpaged.pagination = Pagination {
+                limit: u32::MAX,
+                offset: 0,
+                count: CountPolicy::Omit,
+            };
+            match identifiers {
+                RequestedIdentifiers::Narrow => {}
+                RequestedIdentifiers::Ignore => unpaged.entities.without_identifier_narrowing(),
+            }
+            ensure_aggregation_supported(self.reader.as_ref(), &unpaged.representation.aggr_methods)?;
+            let outcome = self.reader.query_entity_ids(target, &unpaged).await?;
+            let (identifiers, _total) = outcome
+                .complete(unpaged.pagination)
+                .map_err(|error| TemporalError::internal(error.to_string()))?;
+            Ok(identifiers)
         }
-        ensure_aggregation_supported(self.reader.as_ref(), &unpaged.representation.aggr_methods)?;
-        let outcome = self.reader.query_entity_ids(target, &unpaged).await?;
-        let (identifiers, _total) = outcome
-            .complete(unpaged.pagination)
-            .map_err(|error| TemporalError::internal(error.to_string()))?;
-        Ok(identifiers)
+        .await;
+        timer.finish_result(&result);
+        result
     }
 }
 

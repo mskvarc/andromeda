@@ -9,10 +9,11 @@ use crate::{
         private_ip::{PrivateIpCheck, resolve_private_ip_outcome},
         resolver::PrivateIpResolver,
     },
-    outcome::DeliveryOutcome,
+    outcome::{DeliveryOutcome, delivery_metric_outcome},
     request::DeliveryRequest,
     transport::NotificationTransport,
 };
+use andromeda_telemetry::delivery_ops::DeliveryTimer;
 use async_trait::async_trait;
 use headers::HeaderMapExt;
 use moka::future::Cache;
@@ -184,6 +185,19 @@ fn chain_mentions_tls_terms(error: &(dyn Error + 'static)) -> bool {
 #[async_trait]
 impl NotificationTransport for HttpTransport {
     async fn deliver(&self, req: &DeliveryRequest) -> Result<DeliveryOutcome, TransportError> {
+        // One delivery attempt, timed and counted as a whole: the bracket spans
+        // serialisation, the SSRF guard and the send, which is the latency a
+        // notification actually incurs.
+        let timer = DeliveryTimer::start();
+        let result = self.deliver_inner(req).await;
+        timer.finish(delivery_metric_outcome(&result));
+        result
+    }
+}
+
+impl HttpTransport {
+    /// The delivery body itself, wrapped by [`HttpTransport::deliver`] for timing.
+    async fn deliver_inner(&self, req: &DeliveryRequest) -> Result<DeliveryOutcome, TransportError> {
         // The body is serialised here, once, so the size limit is checked
         // against the bytes actually sent rather than an estimate.
         let body = serde_json::to_vec(req.payload.as_ref()).map_err(|source| TransportError::PayloadSerialization {

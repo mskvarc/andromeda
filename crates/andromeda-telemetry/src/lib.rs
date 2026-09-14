@@ -9,9 +9,13 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod delivery_ops;
+pub mod entity;
 pub mod error;
+pub mod federation_ops;
 pub mod maintenance;
 pub mod names;
+pub mod operation;
 pub mod pool;
 pub mod queue;
 pub mod recorder;
@@ -19,6 +23,9 @@ mod sample_value;
 pub mod statement;
 pub mod storage;
 pub mod subscription;
+pub mod subscription_ops;
+pub mod task_failure;
+pub mod temporal;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

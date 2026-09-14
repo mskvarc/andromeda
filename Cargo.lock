@@ -286,6 +286,7 @@ dependencies = [
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-vocabulary",
+ "andromeda-telemetry",
  "async-trait",
  "backon",
  "dashmap",
@@ -394,6 +395,7 @@ dependencies = [
  "andromeda-ngsi-ld-request",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-registration",
+ "andromeda-telemetry",
  "chrono",
  "dashmap",
  "derive_more",
@@ -1668,10 +1670,12 @@ name = "andromeda-task-runtime"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-telemetry",
  "compact_str",
  "dashmap",
  "derive_more",
  "pretty_assertions",
+ "strum",
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",

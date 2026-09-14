@@ -8,8 +8,10 @@ use tower_http::normalize_path::NormalizePath;
 
 /// Fully assembled, state-complete public HTTP API.
 ///
-/// The NGSI-LD families live under `/ngsi-ld/v1`; the metrics scrape route,
-/// when present, is served at the process root as scrapers expect.
+/// The NGSI-LD families and the metrics scrape route, when present, all live
+/// under `/ngsi-ld/v1`; a scraper therefore targets `/ngsi-ld/v1/metrics`. The
+/// scrape route is merged after the operation-hit scope so a scrape is never
+/// counted as an NGSI-LD operation.
 pub struct HttpApi {
     /// Process-stacked service with path normalization outside Axum routing.
     service: NormalizePath<Router>,
@@ -19,7 +21,7 @@ impl HttpApi {
     /// Merge every required route family under `/ngsi-ld/v1` and apply the configured stack.
     #[must_use]
     pub fn assemble(routes: ApiRoutes, stack: &HttpStack) -> HttpApi {
-        let v1 = Router::new()
+        let ngsi = Router::new()
             .merge(routes.entity.into_router())
             .nest("/temporal", routes.temporal.into_router())
             .merge(routes.context_registry.into_router())
@@ -35,14 +37,16 @@ impl HttpApi {
         // Clause 5.13.3.5: one NGSI-LD request resolves the same `@context`
         // several times internally (write screening, then the write itself);
         // an operation scope makes those internal resolutions count as one use.
-        let v1 = v1.layer(from_fn(scope_operation_hits));
-        let api_root = Router::new().nest("/ngsi-ld/v1", stack.apply_api(v1));
-        let process_root = match routes.telemetry {
-            Some(telemetry) => api_root.merge(telemetry.into_router()),
-            None => api_root,
+        let ngsi = ngsi.layer(from_fn(scope_operation_hits));
+        // The scrape route is merged after the operation-hit scope, so a metrics
+        // scrape at `/ngsi-ld/v1/metrics` is never counted as an NGSI-LD operation.
+        let v1 = match routes.telemetry {
+            Some(telemetry) => ngsi.merge(telemetry.into_router()),
+            None => ngsi,
         };
+        let api_root = Router::new().nest("/ngsi-ld/v1", stack.apply_api(v1));
         HttpApi {
-            service: stack.apply_process(process_root),
+            service: stack.apply_process(api_root),
         }
     }
 
@@ -315,20 +319,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_metrics_route_is_absent_unless_telemetry_is_supplied() -> Result<(), Box<dyn Error>> {
-        let response = test_api()?.into_service().oneshot(request(Method::GET, "/metrics")?).await?;
+    async fn the_metrics_route_is_absent_under_the_api_prefix_unless_telemetry_is_supplied() -> Result<(), Box<dyn Error>> {
+        let response = test_api()?.into_service().oneshot(request(Method::GET, "/ngsi-ld/v1/metrics")?).await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_FOUND);
         Ok(())
     }
 
     #[tokio::test]
-    async fn the_metrics_route_is_served_at_the_process_root_when_supplied() -> Result<(), Box<dyn Error>> {
+    async fn the_metrics_route_is_served_under_the_api_prefix_when_supplied() -> Result<(), Box<dyn Error>> {
+        let telemetry = TelemetryRoutes::new(Arc::new(TelemetryRecorder::detached()?))?;
+        let response = test_api_with_telemetry(Some(telemetry))?
+            .into_service()
+            .oneshot(request(Method::GET, "/ngsi-ld/v1/metrics")?)
+            .await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
+        Ok(())
+    }
+
+    /// The scrape must no longer answer at the process root now that it is nested.
+    #[tokio::test]
+    async fn the_metrics_route_is_not_served_at_the_process_root() -> Result<(), Box<dyn Error>> {
         let telemetry = TelemetryRoutes::new(Arc::new(TelemetryRecorder::detached()?))?;
         let response = test_api_with_telemetry(Some(telemetry))?
             .into_service()
             .oneshot(request(Method::GET, "/metrics")?)
             .await?;
-        pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
+        pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_FOUND);
         Ok(())
     }
 }

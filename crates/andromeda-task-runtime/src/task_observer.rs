@@ -7,6 +7,7 @@ use crate::{
     task_health::{TaskHealth, TaskHealthState},
     task_name::TaskName,
 };
+use andromeda_telemetry::task_failure::record_task_failure;
 use std::{
     sync::{
         Arc,
@@ -74,6 +75,7 @@ pub(crate) async fn observe_terminal(
                 }
                 record.terminal(TaskHealthState::Failed);
                 drop(record);
+                record_task_failure(failure.class().into(), criticality.into());
                 apply_criticality(scope_cancellation, process_cancellation, criticality);
                 LifecycleEventKind::Failed {
                     class: failure.class(),

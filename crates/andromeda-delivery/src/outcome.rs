@@ -1,5 +1,7 @@
 //! What an endpoint said when it was reached.
 
+use crate::error::TransportError;
+use andromeda_telemetry::operation::Outcome;
 use std::time::Duration;
 
 /// Outcome of a delivery attempt that reached the endpoint.
@@ -23,4 +25,16 @@ pub enum DeliveryOutcome {
         /// Whether attempting the same delivery again could succeed.
         retryable: bool,
     },
+}
+
+/// The telemetry [`Outcome`] one delivery attempt represents.
+///
+/// Only an accepted delivery counts as success; an endpoint rejection and a
+/// transport error are both failures, so a bare `Ok`/`Err` split would wrongly
+/// count a rejection as a success.
+pub(crate) const fn delivery_metric_outcome(result: &Result<DeliveryOutcome, TransportError>) -> Outcome {
+    match result {
+        Ok(DeliveryOutcome::Success { .. }) => Outcome::Ok,
+        Ok(DeliveryOutcome::Rejected { .. }) | Err(_) => Outcome::Error,
+    }
 }
