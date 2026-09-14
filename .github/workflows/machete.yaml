@@ -1,0 +1,29 @@
+name: machete
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: machete-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  machete:
+    name: cargo machete
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The action installs a prebuilt cargo-machete (picking the target triple
+      # via the runner's preinstalled rustc; no build runs, so the workspace's
+      # nightly pin is irrelevant) and fails the job on any unused dependency.
+      # `--with-metadata` resolves features through `cargo metadata` for accuracy;
+      # crates that pull `toml` in only through the `toml-comment` derive carry a
+      # `[package.metadata.cargo-machete] ignored` entry so it is not flagged.
+      - uses: bnjbvr/cargo-machete@main
+        with:
+          args: --with-metadata
