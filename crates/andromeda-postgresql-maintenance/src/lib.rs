@@ -19,6 +19,8 @@ mod inspection;
 /// Threshold and safety-gate decision policy.
 pub mod policy;
 mod state;
+/// Bounded on-disk size sampling of the live schema's base tables.
+pub mod table_size;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

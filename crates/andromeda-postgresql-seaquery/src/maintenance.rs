@@ -63,6 +63,12 @@ pub fn total_relation_size(relation: SimpleExpr) -> SimpleExpr {
     Func::cust(MaintenanceFunction::PgTotalRelationSize).args([relation]).into()
 }
 
+/// `pg_indexes_size(relation)` physical bytes of a relation's indexes.
+#[must_use]
+pub fn indexes_size(relation: SimpleExpr) -> SimpleExpr {
+    Func::cust(MaintenanceFunction::PgIndexesSize).args([relation]).into()
+}
+
 /// `to_regclass(name)` resolving a bound qualified relation name.
 #[must_use]
 pub fn to_regclass(name: SimpleExpr) -> SimpleExpr {
@@ -116,6 +122,8 @@ enum MaintenanceFunction {
     PgRelationSize,
     /// `pg_total_relation_size`.
     PgTotalRelationSize,
+    /// `pg_indexes_size`.
+    PgIndexesSize,
     /// `to_regclass`.
     ToRegclass,
     /// `to_regprocedure`.

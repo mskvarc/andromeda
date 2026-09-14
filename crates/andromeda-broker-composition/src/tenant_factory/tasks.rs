@@ -7,6 +7,7 @@ mod maintenance;
 mod notification_schedule;
 mod pool_gauges;
 mod retention;
+mod table_size_gauges;
 mod temporal_retention;
 
 use crate::tenant_factory::{
@@ -20,6 +21,7 @@ use crate::tenant_factory::{
         expiry::{register_expiry_workers, register_snapshot_workers},
         maintenance::{register_entity_side_effects, register_spatial_workers},
         pool_gauges::register_pool_gauges,
+        table_size_gauges::register_table_size_gauges,
         temporal_retention::register_temporal_retention,
     },
 };
@@ -101,6 +103,7 @@ pub(super) fn supervise_tasks(
     let mut handles: Vec<JoinHandle<()>> = Vec::new();
     let mut drain_wakes = Vec::new();
     register_pool_gauges(&task_supervisor, storage.pool.clone(), &storage.tenant)?; // clone: PgPool is a shared handle sampled by the gauge task.
+    register_table_size_gauges(&task_supervisor, storage.pool.clone(), &storage.tenant)?; // clone: PgPool is a shared handle sampled by the size-gauge task.
     drain_wakes.push(register_entity_side_effects(&task_supervisor, config, storage, writes, &entity)?);
     let health_shutdown = if storage.tenant.is_unnamed_default() {
         let (shutdown, receiver) = watch::channel(false);

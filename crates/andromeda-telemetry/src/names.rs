@@ -28,6 +28,10 @@ pub const DB_STATEMENT_FAILURES_TOTAL: &str = "andromeda_db_statement_failures_t
 pub const DB_POOL_CONNECTIONS: &str = "andromeda_db_pool_connections";
 /// Gauge of idle connections in one tenant's pool.
 pub const DB_POOL_IDLE_CONNECTIONS: &str = "andromeda_db_pool_idle_connections";
+/// Gauge of total on-disk bytes for one live-schema base table, indexes and TOAST included.
+pub const DB_TABLE_BYTES: &str = "andromeda_db_table_bytes";
+/// Gauge of on-disk bytes held by one live-schema base table's indexes.
+pub const DB_TABLE_INDEX_BYTES: &str = "andromeda_db_table_index_bytes";
 /// Counter of durable-queue item outcomes.
 pub const QUEUE_OUTCOMES_TOTAL: &str = "andromeda_queue_outcomes_total";
 /// Histogram of subscription candidates surviving each funnel stage per event.
@@ -45,6 +49,8 @@ pub const POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES: &str = "andromeda_postgresql_m
 pub const LABEL_STATEMENT: &str = "statement";
 /// The `tenant` label naming the tenant a pool serves.
 pub const LABEL_TENANT: &str = "tenant";
+/// The `table` label naming a database base table.
+pub const LABEL_TABLE: &str = "table";
 /// The `queue` label naming a durable queue.
 pub const LABEL_QUEUE: &str = "queue";
 /// The `outcome` label naming what happened to a queue item.

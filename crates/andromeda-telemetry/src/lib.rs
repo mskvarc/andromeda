@@ -17,6 +17,7 @@ pub mod queue;
 pub mod recorder;
 mod sample_value;
 pub mod statement;
+pub mod storage;
 pub mod subscription;
 
 #[cfg(test)]
