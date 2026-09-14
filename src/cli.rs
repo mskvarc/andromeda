@@ -1,6 +1,5 @@
 #![expect(clippy::absolute_paths, reason = "shadow generates absolute standard-library paths")]
 
-use andromeda_broker_composition::config::runtime::DEFAULT_CONFIG_PATH;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use shadow_rs::shadow;
 use std::{net::IpAddr, path::PathBuf};
@@ -24,8 +23,11 @@ pub enum Command {
 
 #[derive(Args)]
 pub struct CommonConfigArgs {
-    #[arg(short = 'c', long = "config", default_value = DEFAULT_CONFIG_PATH)]
-    pub config_file: PathBuf,
+    /// Path to a configuration file. When omitted, the broker reads the default
+    /// file under the platform configuration directory if it is present, and
+    /// otherwise runs from defaults and environment alone.
+    #[arg(short = 'c', long = "config")]
+    pub config_file: Option<PathBuf>,
 }
 
 #[derive(Args)]

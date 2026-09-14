@@ -84,13 +84,11 @@ pub struct TemporalConfig {
     pub append_mode: TemporalAppendMode,
     /// System default `lastN` cap applied when a temporal query omits `lastN`.
     ///
-    /// Clause 5.2.21 leaves the default implementation-defined. It is kept at 19
-    /// so it sits just under the ETSI conformance suite's precondition of
-    /// pagination at 20 instances per attribute: the suite expects a default
-    /// query to page rather than return every instance. Raising it is sound for
-    /// production, but must first be reconciled with that suite precondition and
-    /// with the `SYSTEM_LAST_N_CAP` regression tests, which assert the 206 and
-    /// `Content-Range` that only appear when a result is actually cut by this cap.
+    /// Clause 5.2.21 leaves the default implementation-defined; it defaults to
+    /// 100, a generous page for production use. The ETSI conformance suite has a
+    /// precondition of pagination at 20 instances per attribute (a default query
+    /// must page rather than return every instance), so a conformance run sets
+    /// `ANDROMEDA__TEMPORAL__DEFAULT_LAST_N=19` to sit just under that threshold.
     pub default_last_n: u32,
     /// Cadence, in seconds, of every `expiresAt` sweep the broker schedules
     /// per tenant: entities (clause 5.2.4), subscriptions (clause 5.8.1.4),
@@ -142,7 +140,7 @@ impl Default for TemporalConfig {
     fn default() -> TemporalConfig {
         TemporalConfig {
             append_mode: TemporalAppendMode::Native,
-            default_last_n: 19,
+            default_last_n: 100,
             expiration_check_interval_secs: 30,
             intent_fallback_secs: 1,
             intent_batch_size: 64,

@@ -18,6 +18,7 @@ use andromeda_postgresql_context_store::config::DatabaseConfig;
 use andromeda_snapshot::config::SnapshotConfig;
 use andromeda_temporal::config::TemporalConfig;
 use andromeda_tenancy::config::TenancyConfig;
+use etcetera::{BaseStrategy, choose_base_strategy};
 use figment2::{
     Figment,
     providers::{Env, Format, Serialized, Toml},
@@ -32,8 +33,40 @@ use std::{
 use toml_comment::TomlComment;
 use url::Url;
 
-/// Default broker configuration path used by the CLI.
-pub const DEFAULT_CONFIG_PATH: &str = "config/andromeda.toml";
+/// Application subdirectory holding Andromeda's files under a base directory.
+const CONFIG_SUBDIR: &str = "andromeda";
+
+/// Basename of the broker configuration file within the configuration directory.
+const CONFIG_FILE_NAME: &str = "andromeda.toml";
+
+/// Resolve the default broker configuration file under the platform
+/// configuration directory.
+///
+/// The location follows platform convention through the XDG base-directory
+/// strategy: `$XDG_CONFIG_HOME/andromeda/andromeda.toml` (falling back to
+/// `~/.config/andromeda/andromeda.toml`) on Unix, `~/Library/Application
+/// Support` on macOS, and `%APPDATA%` on Windows. No file is shipped, so the
+/// resolved path is loaded only when it exists. `None` is returned when no home
+/// directory can be determined, in which case the broker runs from defaults and
+/// environment alone.
+#[must_use]
+pub fn default_config_file() -> Option<PathBuf> {
+    let strategy = choose_base_strategy().ok()?;
+    Some(strategy.config_dir().join(CONFIG_SUBDIR).join(CONFIG_FILE_NAME))
+}
+
+/// Decide which configuration file, if any, contributes a file layer.
+///
+/// An explicit `--config` path is honored verbatim and must exist. Without one,
+/// the default file is used only when it is present; its absence is not an
+/// error, leaving defaults and environment as the sole layers.
+fn resolve_config_file(explicit: Option<PathBuf>) -> Result<Option<PathBuf>, ConfigurationError> {
+    match explicit {
+        Some(path) if path.exists() => Ok(Some(path)),
+        Some(path) => Err(ConfigurationError::MissingFile(path)),
+        None => Ok(default_config_file().filter(|path| path.exists())),
+    }
+}
 
 /// Fully loaded broker construction configuration.
 #[derive(Deserialize, Serialize, Default, TomlComment, Debug, Clone)]
@@ -91,7 +124,10 @@ impl RuntimeConfig {
     /// `ANDROMEDA__NOTIFICATIONS__STREAMING__WS__PING_INTERVAL_SECS` reaches
     /// `notifications.streaming.ws.ping_interval_secs`; a single underscore separates the
     /// words of one key and never nests.
-    fn load(config_file: &Path, overrides: ServerOverrides) -> Result<RuntimeConfig, ConfigurationError> {
+    ///
+    /// A `None` file means no TOML layer contributes: the broker loads from
+    /// defaults and environment alone.
+    fn load(config_file: Option<&Path>, overrides: ServerOverrides) -> Result<RuntimeConfig, ConfigurationError> {
         // A value is JSON-parsed first so that a map-valued or structured
         // setting (the JSON-LD preload map, the raw `contextSourceExtras`) can
         // be given as one environment value; anything that is not JSON stays
@@ -100,9 +136,11 @@ impl RuntimeConfig {
         let environment = Env::prefixed("ANDROMEDA__")
             .split("__")
             .parser(|value| serde_json::from_str::<Value>(value).unwrap_or_else(|_| Value::from(value)));
-        let mut figment = Figment::from(Serialized::defaults(RuntimeConfig::default()))
-            .merge(Toml::file(config_file))
-            .merge(environment);
+        let mut figment = Figment::from(Serialized::defaults(RuntimeConfig::default()));
+        if let Some(path) = config_file {
+            figment = figment.merge(Toml::file(path));
+        }
+        figment = figment.merge(environment);
         if let Some(host) = overrides.host {
             figment = figment.merge(Serialized::default("server.host", host));
         }
@@ -168,9 +206,16 @@ pub enum ConfigurationLoadOutcome {
 
 /// Load configuration for broker execution and report a typed failure at this boundary.
 #[must_use]
-pub fn load_reported(config_file: &Path, overrides: BrokerRunOverrides) -> ConfigurationLoadOutcome {
+pub fn load_reported(config_file: Option<PathBuf>, overrides: BrokerRunOverrides) -> ConfigurationLoadOutcome {
+    let config_file = match resolve_config_file(config_file) {
+        Ok(config_file) => config_file,
+        Err(error) => {
+            eprintln!("{error}");
+            return ConfigurationLoadOutcome::Failed(ProcessExitOutcome::ConfigurationFailure);
+        }
+    };
     match RuntimeConfig::load(
-        config_file,
+        config_file.as_deref(),
         ServerOverrides {
             host: overrides.host,
             port: overrides.port,
@@ -186,10 +231,20 @@ pub fn load_reported(config_file: &Path, overrides: BrokerRunOverrides) -> Confi
 
 /// Validate configuration and report the result at the configuration boundary.
 #[must_use]
-pub fn validate_reported(config_file: &Path) -> ProcessExitOutcome {
-    match RuntimeConfig::load(config_file, ServerOverrides::default()) {
+pub fn validate_reported(config_file: Option<PathBuf>) -> ProcessExitOutcome {
+    let config_file = match resolve_config_file(config_file) {
+        Ok(config_file) => config_file,
+        Err(error) => {
+            eprintln!("{error}");
+            return ProcessExitOutcome::ConfigurationFailure;
+        }
+    };
+    match RuntimeConfig::load(config_file.as_deref(), ServerOverrides::default()) {
         Ok(_) => {
-            println!("Configuration valid: {}", config_file.display());
+            match config_file {
+                Some(path) => println!("Configuration valid: {}", path.display()),
+                None => println!("Configuration valid: defaults and environment (no configuration file present)"),
+            }
             ProcessExitOutcome::Success
         }
         Err(error) => {
@@ -201,8 +256,15 @@ pub fn validate_reported(config_file: &Path) -> ProcessExitOutcome {
 
 /// Print the effective redacted configuration and report rendering failures at their owner.
 #[must_use]
-pub fn print_effective_reported(config_file: &Path, format: ConfigurationOutputFormat) -> ProcessExitOutcome {
-    let config = match RuntimeConfig::load(config_file, ServerOverrides::default()) {
+pub fn print_effective_reported(config_file: Option<PathBuf>, format: ConfigurationOutputFormat) -> ProcessExitOutcome {
+    let config_file = match resolve_config_file(config_file) {
+        Ok(config_file) => config_file,
+        Err(error) => {
+            eprintln!("{error}");
+            return ProcessExitOutcome::ConfigurationFailure;
+        }
+    };
+    let config = match RuntimeConfig::load(config_file.as_deref(), ServerOverrides::default()) {
         Ok(config) => config,
         Err(error) => {
             eprintln!("{error}");
@@ -277,7 +339,7 @@ mod tests {
     /// Load with only the built-in defaults and the environment, against a path
     /// that does not exist so no file layer contributes.
     fn load_env_only() -> RuntimeConfig {
-        RuntimeConfig::load(Path::new("/nonexistent-andromeda.toml"), ServerOverrides::default()).expect("config should load")
+        RuntimeConfig::load(None, ServerOverrides::default()).expect("config should load")
     }
 
     fn write_temp_config(contents: &str) -> PathBuf {
@@ -293,7 +355,7 @@ mod tests {
     #[test]
     fn normalize_preload_paths_against_config_file_dir() {
         let mut config = test_runtime_config_with_preload("contexts/test.jsonld");
-        normalize_preload_context_paths(&mut config, &PathBuf::from("/tmp/andromeda/config/andromeda.toml"));
+        normalize_preload_context_paths(&mut config, Some(Path::new("/tmp/andromeda/config/andromeda.toml")));
         let path = config
             .jsonld
             .preload_contexts
@@ -305,7 +367,7 @@ mod tests {
     #[test]
     fn normalize_preload_paths_keeps_absolute_path() {
         let mut config = test_runtime_config_with_preload("/opt/contexts/test.jsonld");
-        normalize_preload_context_paths(&mut config, &PathBuf::from("/tmp/andromeda/config/andromeda.toml"));
+        normalize_preload_context_paths(&mut config, Some(Path::new("/tmp/andromeda/config/andromeda.toml")));
         let path = config
             .jsonld
             .preload_contexts
@@ -401,7 +463,7 @@ ping_interval_secs = 45
 ",
         );
 
-        let config = RuntimeConfig::load(&path, ServerOverrides::default()).expect("config should load");
+        let config = RuntimeConfig::load(Some(&path), ServerOverrides::default()).expect("config should load");
         fs::remove_file(path).expect("temp config should be removed");
 
         pretty_assertions::assert_eq!(config.server.port, 1600);
@@ -420,7 +482,7 @@ ping_interval_secs = 45
             ("automatic", "responsive"),
         ] {
             let path = write_temp_config(&format!("[database.maintenance]\nmode = \"{mode}\"\nprofile = \"{profile}\"\n"));
-            let config = RuntimeConfig::load(&path, ServerOverrides::default()).expect("maintenance config should load");
+            let config = RuntimeConfig::load(Some(&path), ServerOverrides::default()).expect("maintenance config should load");
             fs::remove_file(path).expect("temp config should be removed");
             assert_eq!(config.database.maintenance.mode.to_string(), mode);
             assert_eq!(config.database.maintenance.profile.to_string(), profile);
@@ -435,7 +497,7 @@ ping_interval_secs = 45
             "[database.maintenance]\nprofile = \"aggressive\"\n",
         ] {
             let path = write_temp_config(body);
-            let result = RuntimeConfig::load(&path, ServerOverrides::default());
+            let result = RuntimeConfig::load(Some(&path), ServerOverrides::default());
             fs::remove_file(path).expect("temp config should be removed");
             assert!(result.is_err(), "{body}");
         }
@@ -452,7 +514,7 @@ port = 1600
         );
 
         unsafe { env::set_var("ANDROMEDA__SERVER__PORT", "1700") };
-        let config = RuntimeConfig::load(&path, ServerOverrides::default()).expect("config should load");
+        let config = RuntimeConfig::load(Some(&path), ServerOverrides::default()).expect("config should load");
         unsafe { env::remove_var("ANDROMEDA__SERVER__PORT") };
         fs::remove_file(path).expect("temp config should be removed");
 
@@ -463,7 +525,7 @@ port = 1600
     #[serial]
     fn cli_overrides_env() {
         unsafe { env::set_var("ANDROMEDA__SERVER__PORT", "8888") };
-        let config = RuntimeConfig::load(Path::new(DEFAULT_CONFIG_PATH), ServerOverrides { host: None, port: Some(7777) }).expect("config should load");
+        let config = RuntimeConfig::load(None, ServerOverrides { host: None, port: Some(7777) }).expect("config should load");
         unsafe { env::remove_var("ANDROMEDA__SERVER__PORT") };
 
         pretty_assertions::assert_eq!(config.server.port, 7777);
@@ -568,6 +630,32 @@ port = 1600
     #[test]
     fn default_precedence_summary_matches_contract() {
         pretty_assertions::assert_eq!(RuntimeConfig::precedence_summary(), "CLI host/port > environment > config file > defaults");
+    }
+
+    #[test]
+    fn an_explicit_missing_config_file_is_rejected() {
+        let path = PathBuf::from("/nonexistent-andromeda-explicit-check.toml");
+        let resolved = resolve_config_file(Some(path.clone()));
+        assert!(
+            matches!(&resolved, Err(ConfigurationError::MissingFile(missing)) if *missing == path),
+            "{resolved:?}"
+        );
+    }
+
+    #[test]
+    fn an_absent_default_config_file_is_not_an_error() {
+        // Without an explicit path the default file contributes only when it
+        // exists; its absence leaves defaults and environment as the only layers.
+        assert!(resolve_config_file(None).is_ok());
+    }
+
+    #[test]
+    fn the_default_config_file_lives_under_the_application_subdir() {
+        // Skipped where no home directory is available (some CI containers), in
+        // which case the broker runs from defaults and environment alone.
+        if let Some(path) = default_config_file() {
+            assert!(path.ends_with("andromeda/andromeda.toml"), "{}", path.display());
+        }
     }
 
     #[test]

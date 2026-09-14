@@ -2,6 +2,7 @@
 
 use figment2::Error as FigmentError;
 use serde_json::Error as JsonError;
+use std::path::PathBuf;
 use thiserror::Error;
 use toml::ser::Error as TomlError;
 use url::ParseError;
@@ -16,6 +17,13 @@ pub(crate) enum ConfigurationError {
     /// loader carry its full width.
     #[error("loading configuration failed: {0}")]
     Load(#[source] Box<FigmentError>),
+    /// An explicitly requested configuration file does not exist.
+    ///
+    /// A `--config` path names a file the operator expects to be read, so a
+    /// missing one is a hard error; the default configuration file, by
+    /// contrast, is loaded only when present.
+    #[error("configuration file not found: {0}")]
+    MissingFile(PathBuf),
     /// One configured value violated its declared invariant.
     #[error("invalid configuration: {0}")]
     Invalid(String),

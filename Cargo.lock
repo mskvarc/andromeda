@@ -192,6 +192,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "derive_more",
+ "etcetera",
  "figment2",
  "futures",
  "iri-rs",

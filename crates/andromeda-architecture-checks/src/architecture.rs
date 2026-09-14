@@ -53,18 +53,15 @@ pub fn assert_retired_architecture_invariants(workspace_root: &str) {
         "crates/andromeda-workers",
         "src/service/temporal.rs",
         "src/repository/temporal/repo.rs",
+        // No configuration file is shipped: the broker reads a default file from
+        // the platform configuration directory, generated on demand.
+        "config/andromeda.toml",
+        "config",
     ];
     for path in retired_paths {
         if root.join(path).exists() {
             violations.push(format!("retired path exists: {path}"));
         }
-    }
-
-    let config_path = root.join("config/andromeda.toml");
-    match fs::read_to_string(&config_path) {
-        Ok(config) if config.contains("source_identity") => violations.push("config/andromeda.toml contains retired source_identity key".to_owned()),
-        Ok(_) => {}
-        Err(error) => violations.push(format!("{} could not be read: {error}", config_path.display())),
     }
 
     let violations = violations.into_iter().collect::<BTreeSet<_>>();

@@ -29,19 +29,19 @@ async fn main() -> ExitCode {
                 host: run_args.host,
                 port: run_args.port,
             };
-            match load_reported(&run_args.common.config_file, overrides) {
+            match load_reported(run_args.common.config_file, overrides) {
                 ConfigurationLoadOutcome::Ready(config) => andromeda_broker_composition::run(*config).await,
                 ConfigurationLoadOutcome::Failed(outcome) => outcome,
             }
         }
         Command::Config(config_args) => match config_args.command {
-            ConfigCommand::Validate => validate_reported(&config_args.common.config_file),
+            ConfigCommand::Validate => validate_reported(config_args.common.config_file),
             ConfigCommand::PrintEffective(print_args) => {
                 let format = match print_args.format {
                     OutputFormat::Json => ConfigurationOutputFormat::Json,
                     OutputFormat::Toml => ConfigurationOutputFormat::Toml,
                 };
-                print_effective_reported(&config_args.common.config_file, format)
+                print_effective_reported(config_args.common.config_file, format)
             }
             ConfigCommand::Generate(generate_args) => generate_default_reported(generate_args.output),
         },
