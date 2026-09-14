@@ -133,6 +133,7 @@ andromeda-http-subscription = { path = "crates/andromeda-http-subscription" }
 andromeda-http-telemetry = { path = "crates/andromeda-http-telemetry" }
 andromeda-http-temporal = { path = "crates/andromeda-http-temporal" }
 andromeda-http-tenancy = { path = "crates/andromeda-http-tenancy" }
+andromeda-http3-server = { path = "crates/andromeda-http3-server" }
 andromeda-jsonld = { path = "crates/andromeda-jsonld" }
 andromeda-ngsi-ld-geometry = { path = "crates/andromeda-ngsi-ld-geometry" }
 andromeda-ngsi-ld-lexicon = { path = "crates/andromeda-ngsi-ld-lexicon" }

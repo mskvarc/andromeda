@@ -12,6 +12,7 @@ use andromeda_federation::config::FederationConfig;
 use andromeda_http_server::config::{ServerConfig, ServerOverrides};
 use andromeda_http_source_identity::config::InfoConfig;
 use andromeda_http_stack::config::HttpStackConfig;
+use andromeda_http3_server::config::Http3Config;
 use andromeda_jsonld::config::JsonLdConfig;
 use andromeda_postgresql_atomic_write::config::AtomicWriteConfig;
 use andromeda_postgresql_context_store::config::DatabaseConfig;
@@ -76,6 +77,9 @@ pub struct RuntimeConfig {
 
     /// Process-wide inbound HTTP stack configuration.
     pub http: HttpStackConfig,
+
+    /// Opt-in HTTP/3 (QUIC) listener configuration, sharing the TCP port.
+    pub http3: Http3Config,
 
     /// Primary and tenant PostgreSQL connection configuration.
     pub database: DatabaseConfig,

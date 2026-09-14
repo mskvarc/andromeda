@@ -9,6 +9,7 @@ use std::{
 pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), ConfigurationError> {
     config.server.validate().map_err(owner_configuration_error)?;
     config.http.validate().map_err(owner_configuration_error)?;
+    config.http3.activation().map_err(owner_configuration_error)?;
     config.database.validate().map_err(owner_configuration_error)?;
     config.jsonld.validate().map_err(owner_configuration_error)?;
     config.temporal.validate().map_err(owner_configuration_error)?;

@@ -3,6 +3,7 @@
 use crate::{
     component_report::{ComponentReportError, collect as collect_component_reports},
     config::{observability::MetricsExposure, runtime::RuntimeConfig},
+    listeners,
     logging,
     outcome::ProcessExitOutcome,
     postgresql_maintenance::{MaintenanceRegistrationError, register_postgresql_maintenance},
@@ -28,7 +29,6 @@ use andromeda_http_entity_map::routes::EntityMapRoutes;
 use andromeda_http_health::routes::HealthRoutes;
 use andromeda_http_notification_receiver::routes::NotificationReceiverRoutes;
 use andromeda_http_registration::routes::RegistrationRoutes;
-use andromeda_http_server::execution;
 use andromeda_http_snapshot::routes::SnapshotRoutes;
 use andromeda_http_source_identity::{routes::SourceIdentityRoutes, state::SourceIdentityState};
 use andromeda_http_stack::stack::HttpStack;
@@ -126,7 +126,7 @@ pub async fn run(config: RuntimeConfig) -> ProcessExitOutcome {
             return ProcessExitOutcome::StartupFailure;
         }
     };
-    let serve_result = execution::serve(&config.server, api.into_service(), shutdown_signal()).await;
+    let serve_result = listeners::serve(config.as_ref(), api, shutdown_signal()).await;
     match &serve_result {
         Ok(()) => info!(event = "http_traffic_drained", "HTTP listener stopped after draining accepted requests"),
         Err(server_error) => error!(error = %server_error, event = "http_server_failed"),

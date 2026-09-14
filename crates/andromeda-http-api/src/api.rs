@@ -55,6 +55,22 @@ impl HttpApi {
     pub fn into_service(self) -> NormalizePath<Router> {
         self.service
     }
+
+    /// Return a bare router serving the same state-complete API, for a transport
+    /// that drives an [`axum::Router`] directly rather than a tower service.
+    ///
+    /// axum's HTTP/3 adapter accepts a [`Router`], not the process-stacked
+    /// [`NormalizePath<Router>`] the TCP listener serves, because trailing-slash
+    /// normalization is applied outside axum routing. Wrapping the normalized
+    /// service as the fallback of an otherwise empty router preserves that step:
+    /// every request misses the empty router's (absent) routes and is handled by
+    /// the normalized inner service, so HTTP/3 trims trailing slashes exactly as
+    /// the TCP path does.
+    pub fn h3_router(&self) -> Router {
+        // A shallow, Arc-backed clone of the shared route table, not a deep copy
+        // of the assembled API; the TCP listener still consumes the original.
+        Router::new().fallback_service(self.service.clone())
+    }
 }
 
 #[cfg(test)]
@@ -333,6 +349,17 @@ mod tests {
             .oneshot(request(Method::GET, "/ngsi-ld/v1/metrics")?)
             .await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
+        Ok(())
+    }
+
+    /// The HTTP/3 router must serve the same paths as the TCP service, trailing-
+    /// slash normalization included, so a client sees identical routing on either
+    /// transport.
+    #[tokio::test]
+    async fn the_http3_router_normalizes_a_trailing_slash_before_routing() -> Result<(), Box<dyn Error>> {
+        let router = test_api()?.h3_router();
+        let response = router.oneshot(request(Method::GET, "/ngsi-ld/v1/health/")?).await?;
+        assert_ne!(response.status(), StatusCode::NOT_FOUND, "trailing slash was not trimmed for HTTP/3");
         Ok(())
     }
 
