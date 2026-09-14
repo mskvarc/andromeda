@@ -48,19 +48,19 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      ANDROMEDA_SERVER_HOST: "0.0.0.0"
-      ANDROMEDA_SERVER_PORT: "1056"
-      ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@postgres:5432/postgres"
-      ANDROMEDA_TENANCY_ENABLED: "true"
-      ANDROMEDA_OBSERVABILITY_LOG_LEVEL: "info"
+      ANDROMEDA__SERVER__HOST: "0.0.0.0"
+      ANDROMEDA__SERVER__PORT: "1056"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres:5432/postgres"
+      ANDROMEDA__TENANCY__ENABLED: "true"
+      ANDROMEDA__OBSERVABILITY__LOG_LEVEL: "info"
       # Safe here only because this service publishes no host port, so nothing
       # but the terminator can set these fields, and because nginx.conf REPLACES
       # them rather than appending to whatever a client sent.
-      ANDROMEDA_HTTP_FORWARDED_HEADERS: "trusted"
+      ANDROMEDA__HTTP__FORWARDED_HEADERS: "trusted"
       # The origin peers reach this broker at, which is the terminator's.
-      ANDROMEDA_INFO_ADVERTISED_URL: "https://127.0.0.1:8443"
-      ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:tls-broker"
-      ANDROMEDA_INFO_SOURCE_ALIAS: "tls-broker"
+      ANDROMEDA__IDENTITY__ADVERTISED_URL: "https://127.0.0.1:8443"
+      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:tls-broker"
+      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "tls-broker"
 
   terminator:
     image: nginx:1.29-alpine

@@ -115,7 +115,7 @@ pub(super) fn supervise_tasks(
     drain_wakes.extend(register_notification_workers(
         &task_supervisor,
         &storage.pool,
-        &config.notification_delivery,
+        &config.notifications.delivery,
         notification_processor,
         &entity,
         subscription,
@@ -138,7 +138,7 @@ pub(super) fn supervise_tasks(
         &storage.pool,
         Arc::clone(&services.snapshot_preparation), // clone: the worker drives the same preparation the snapshot service schedules.
         transport,
-        &config.notification_delivery,
+        &config.notifications.delivery,
     )?;
     register_spatial_workers(&task_supervisor, config, storage, entity)?;
     Ok(TaskSupervision {

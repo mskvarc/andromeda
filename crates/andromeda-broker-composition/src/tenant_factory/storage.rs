@@ -150,7 +150,7 @@ pub(super) async fn initialize_storage(config: &TenantFactoryConfig, database_ur
             tracing::warn!(%error, event = "entity_type_names_preload_failed");
         }
     }
-    let bulk_write_mode = match config.postgresql_write.bulk_mode {
+    let bulk_write_mode = match config.atomic_write.bulk_mode {
         BulkWriteMode::Unnest => TemporalBulkWriteMode::Unnest,
         BulkWriteMode::CopyStaging => TemporalBulkWriteMode::CopyStaging,
     };

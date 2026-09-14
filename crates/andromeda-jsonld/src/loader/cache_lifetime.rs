@@ -12,7 +12,7 @@
 //!
 //! Clause 6.3.16 also recommends assigning a heuristic expiration time when the
 //! origin server states none. The heuristic here is the deployment's configured
-//! `jsonld.cache_ttl_seconds`, which is why that setting is a fallback rather
+//! `jsonld.cache_ttl_secs`, which is why that setting is a fallback rather
 //! than the lifetime of every entry.
 //!
 //! The heuristic applies only where the origin server genuinely stated nothing.
@@ -37,7 +37,7 @@ impl CacheLifetime {
     /// The lifetime assigned when neither the response nor the deployment
     /// states one.
     ///
-    /// One hour, matching the `jsonld.cache_ttl_seconds` default, so a builder
+    /// One hour, matching the `jsonld.cache_ttl_secs` default, so a builder
     /// driven without a configuration behaves as a configured deployment does.
     pub const DEFAULT: CacheLifetime = CacheLifetime(Duration::from_secs(3600));
 

@@ -50,14 +50,14 @@ pub struct JsonLdEngineBuilder {
     /// Whether the engine may fetch a context it does not hold.
     allow_remote: RemoteContextFetch,
     /// HTTP request timeout, in seconds.
-    timeout_seconds: u64,
+    timeout_secs: u64,
     /// How many redirects a context fetch may follow.
     max_redirects: u32,
     /// Entry bound shared by the context cache and the term cache.
     cache_capacity: u64,
     /// The term cache's entry lifetime, and the heuristic lifetime a context
     /// falls back to when its response states no expiration time.
-    cache_ttl_seconds: u64,
+    cache_ttl_secs: u64,
     /// The size beyond which a remote context is refused.
     max_context_bytes: u64,
     /// Contexts to read from disk at build time, by URL.
@@ -75,10 +75,10 @@ impl JsonLdEngineBuilder {
             registry: Arc::new(ContextRegistry::new()),
             l2_cache: None,
             allow_remote: RemoteContextFetch::Allow,
-            timeout_seconds: 30,
+            timeout_secs: 30,
             max_redirects: 5,
             cache_capacity: 1024,
-            cache_ttl_seconds: 3600,
+            cache_ttl_secs: 3600,
             max_context_bytes: 2_000_000,
             preload_contexts: None,
             default_core_url: None,
@@ -105,8 +105,8 @@ impl JsonLdEngineBuilder {
 
     /// The HTTP request timeout, in seconds.
     #[must_use]
-    pub const fn timeout_seconds(mut self, seconds: u64) -> JsonLdEngineBuilder {
-        self.timeout_seconds = seconds;
+    pub const fn timeout_secs(mut self, seconds: u64) -> JsonLdEngineBuilder {
+        self.timeout_secs = seconds;
         self
     }
 
@@ -131,8 +131,8 @@ impl JsonLdEngineBuilder {
     /// `s-maxage` directives authoritative over how long the `@context` it
     /// carries may be reused, so this is a fallback rather than a cap.
     #[must_use]
-    pub const fn cache_ttl_seconds(mut self, ttl: u64) -> JsonLdEngineBuilder {
-        self.cache_ttl_seconds = ttl;
+    pub const fn cache_ttl_secs(mut self, ttl: u64) -> JsonLdEngineBuilder {
+        self.cache_ttl_secs = ttl;
         self
     }
 
@@ -189,11 +189,11 @@ impl JsonLdEngineBuilder {
         // assigned when a response states none, not the lifetime of every
         // entry. `JsonLdConfig::validate` refuses a zero setting; a builder
         // driven without a configuration falls back to the same default.
-        let default_lifetime = CacheLifetime::from_seconds(self.cache_ttl_seconds).unwrap_or(CacheLifetime::DEFAULT);
+        let default_lifetime = CacheLifetime::from_seconds(self.cache_ttl_secs).unwrap_or(CacheLifetime::DEFAULT);
         let mut loader = HttpContextLoader::new(
             Arc::clone(&self.registry), // clone: Arc ref-count bump
             self.allow_remote,
-            self.timeout_seconds,
+            self.timeout_secs,
             self.max_redirects,
             self.cache_capacity,
             default_lifetime,
@@ -216,7 +216,7 @@ impl JsonLdEngineBuilder {
         let core_vocabulary = CoreVocabulary::try_from_generated()?;
         Ok(JsonLdEngine::assembled(
             loader,
-            TermCache::new(self.cache_capacity, self.cache_ttl_seconds),
+            TermCache::new(self.cache_capacity, self.cache_ttl_secs),
             hit_counter,
             default_core_url,
             core_vocabulary,

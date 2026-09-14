@@ -273,7 +273,7 @@ impl NotificationDeliveryDrain {
 #[cfg(test)]
 mod tests {
     use crate::{
-        delivery_config::DeliveryConfig,
+        delivery_config::{DeliveryConfig, DeliveryMode},
         delivery_drain::{DeliveryDisposition, NotificationDeliveryDrain, NotificationDeliveryTransport},
         delivery_entry::{DeliveryEntry, DeliveryId},
         delivery_lease::{DeliveryLeaseError, LeaseTerm},
@@ -443,7 +443,8 @@ mod tests {
 
     fn config() -> DeliveryConfig {
         DeliveryConfig {
-            enabled: true,
+            mode: DeliveryMode::Durable,
+            request_timeout_secs: 10,
             max_attempts: 5,
             base_backoff_secs: 5,
             poll_interval_secs: 1,

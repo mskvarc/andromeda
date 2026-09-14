@@ -8,16 +8,16 @@ use toml_comment::TomlComment;
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum NotificationConfigError {
     /// SSE channel capacity was configured as zero.
-    #[error("notifications.sse.channel_buffer_size must be at least 1")]
+    #[error("notifications.streaming.sse.channel_buffer_size must be at least 1")]
     ZeroSseChannelCapacity,
     /// SSE keep-alive cadence was configured as zero.
-    #[error("notifications.sse.keep_alive_interval_secs must be at least 1")]
+    #[error("notifications.streaming.sse.keep_alive_interval_secs must be at least 1")]
     ZeroSseKeepAliveInterval,
     /// WebSocket channel capacity was configured as zero.
-    #[error("notifications.ws.channel_buffer_size must be at least 1")]
+    #[error("notifications.streaming.ws.channel_buffer_size must be at least 1")]
     ZeroWebSocketChannelCapacity,
     /// WebSocket ping cadence was configured as zero.
-    #[error("notifications.ws.ping_interval_secs must be at least 1")]
+    #[error("notifications.streaming.ws.ping_interval_secs must be at least 1")]
     ZeroWebSocketPingInterval,
 }
 

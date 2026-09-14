@@ -1,6 +1,7 @@
 use crate::{
     config::{
         error::ConfigurationError,
+        notifications::NotificationsConfig,
         observability::ObservabilityConfig,
         validation::{normalize_preload_context_paths, validate_config},
     },
@@ -11,9 +12,7 @@ use andromeda_federation::config::FederationConfig;
 use andromeda_http_server::config::{ServerConfig, ServerOverrides};
 use andromeda_http_source_identity::config::InfoConfig;
 use andromeda_http_stack::config::HttpStackConfig;
-use andromeda_http_subscription::config::NotificationConfig;
 use andromeda_jsonld::config::JsonLdConfig;
-use andromeda_notification::delivery_config::DeliveryConfig;
 use andromeda_postgresql_atomic_write::config::AtomicWriteConfig;
 use andromeda_postgresql_context_store::config::DatabaseConfig;
 use andromeda_snapshot::config::SnapshotConfig;
@@ -58,7 +57,7 @@ pub struct RuntimeConfig {
     pub tenancy: TenancyConfig,
 
     /// Context Source identity configuration.
-    pub info: InfoConfig,
+    pub identity: InfoConfig,
 
     /// Entity batching, expiry, and durable side-effect configuration.
     pub entity: EntityConfig,
@@ -66,17 +65,14 @@ pub struct RuntimeConfig {
     /// Distributed Context Source forwarding configuration.
     pub federation: FederationConfig,
 
-    /// PostgreSQL atomic-write strategy.
-    pub postgresql_write: AtomicWriteConfig,
+    /// Atomic-write strategy.
+    pub atomic_write: AtomicWriteConfig,
 
     /// Snapshot operation configuration.
     pub snapshot: SnapshotConfig,
 
-    /// Durable notification event and delivery configuration.
-    pub notification_delivery: DeliveryConfig,
-
-    /// Streaming notification transport configuration.
-    pub notifications: NotificationConfig,
+    /// Durable-delivery and streaming notification configuration.
+    pub notifications: NotificationsConfig,
 
     /// Spatial projection and reconciliation configuration.
     pub spatial: SpatialConfig,
@@ -92,8 +88,8 @@ impl RuntimeConfig {
     /// TOML file (silently absent when the path does not exist), the
     /// `ANDROMEDA__`-prefixed environment, and finally the CLI listener
     /// overrides. Environment nesting uses `__` between every level, so
-    /// `ANDROMEDA__NOTIFICATIONS__WS__PING_INTERVAL_SECS` reaches
-    /// `notifications.ws.ping_interval_secs`; a single underscore separates the
+    /// `ANDROMEDA__NOTIFICATIONS__STREAMING__WS__PING_INTERVAL_SECS` reaches
+    /// `notifications.streaming.ws.ping_interval_secs`; a single underscore separates the
     /// words of one key and never nests.
     fn load(config_file: &Path, overrides: ServerOverrides) -> Result<RuntimeConfig, ConfigurationError> {
         // A value is JSON-parsed first so that a map-valued or structured
@@ -400,7 +396,7 @@ mod tests {
 [server]
 port = 1600
 
-[notifications.ws]
+[notifications.streaming.ws]
 ping_interval_secs = 45
 ",
         );
@@ -409,7 +405,7 @@ ping_interval_secs = 45
         fs::remove_file(path).expect("temp config should be removed");
 
         pretty_assertions::assert_eq!(config.server.port, 1600);
-        pretty_assertions::assert_eq!(config.notifications.ws.ping_interval_secs, 45);
+        pretty_assertions::assert_eq!(config.notifications.streaming.ws.ping_interval_secs, 45);
     }
 
     #[test]

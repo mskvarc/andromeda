@@ -73,7 +73,7 @@ pub(super) fn construct_services(
     // chain identifies the tenant within this context source, so a request that
     // has traversed one tenant is not mistaken for a loop at another (clause
     // 4.3.6.4 considers each Tenant of a registered Context Source separately).
-    let aliases = ContextSourceAliases::new(config.info.source_alias.clone()); // clone: the alias family owns the configured default-tenant alias.
+    let aliases = ContextSourceAliases::new(config.identity.source_alias.clone()); // clone: the alias family owns the configured default-tenant alias.
     // Forwarding is constructed ahead of the services that join through it:
     // both the entity and the temporal join resolve an `objectType`-annotated
     // Linked Entity this broker does not hold through the same registrations.
@@ -91,7 +91,7 @@ pub(super) fn construct_services(
     let context_store = Arc::new(JsonLdContextRepository::new(&storage.pool)) as Arc<dyn ContextRegistryStore>;
     let contexts = Arc::new(ContextRegistryService::new(context_store, storage.engine.clone()));
     let (snapshot_preparation, snapshots) = compose_snapshot_services(&config.snapshot, storage, writes, &entity_query, &temporal, &forwarding);
-    let edge = DistributedSubscriptionEdge::resolve(&config.info, subscription_router, &forwarding, &storage.tenant);
+    let edge = DistributedSubscriptionEdge::resolve(&config.identity, subscription_router, &forwarding, &storage.tenant);
     let subscriptions = compose_subscription_services(storage, signals, transports, edge, &entity_query, &contexts);
     let state = AndromedaState {
         live_target: storage.live_target.clone(), // clone: request state owns the immutable typed live-branch selection.
@@ -112,11 +112,11 @@ pub(super) fn construct_services(
         subscription_forwarding: subscriptions.forwarding,
         snapshots,
         sse_registry: Arc::clone(&transports.sse_registry),
-        sse_channel_buffer_size: config.notifications.sse.channel_buffer_size,
-        sse_keep_alive_interval_secs: config.notifications.sse.keep_alive_interval_secs,
+        sse_channel_buffer_size: config.notifications.streaming.sse.channel_buffer_size,
+        sse_keep_alive_interval_secs: config.notifications.streaming.sse.keep_alive_interval_secs,
         ws_registry: Arc::clone(&transports.ws_registry),
-        ws_channel_buffer_size: config.notifications.ws.channel_buffer_size,
-        ws_ping_interval_secs: config.notifications.ws.ping_interval_secs,
+        ws_channel_buffer_size: config.notifications.streaming.ws.channel_buffer_size,
+        ws_ping_interval_secs: config.notifications.streaming.ws.ping_interval_secs,
     };
     Ok(ConstructedServices { state, snapshot_preparation })
 }
@@ -158,7 +158,7 @@ fn compose_entity_service(
             async_side_effect_threshold: config.entity.batch_async_side_effect_threshold,
         },
         BatchActivityTracker::new(),
-        config.notification_delivery.enabled.then(|| NotificationWriteConfig {
+        config.notifications.delivery.is_durable().then(|| NotificationWriteConfig {
             subscription_cache: Arc::clone(&storage.subscription_cache),
         }),
     ))

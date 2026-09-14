@@ -13,13 +13,13 @@ pub enum TenancyConfigError {
     #[error("tenancy.tenant_max_connections must be at least 1")]
     ZeroTenantMaxConnections,
     /// Runtime idle retention was configured as zero.
-    #[error("tenancy.runtime_idle_ttl_seconds must be at least 1")]
+    #[error("tenancy.runtime_idle_ttl_secs must be at least 1")]
     ZeroRuntimeIdleTtl,
     /// Runtime cache capacity was configured as zero.
     #[error("tenancy.runtime_max_cached must be at least 1")]
     ZeroRuntimeMaxCached,
     /// Runtime janitor cadence was configured as zero.
-    #[error("tenancy.janitor_interval_seconds must be at least 1")]
+    #[error("tenancy.janitor_interval_secs must be at least 1")]
     ZeroJanitorInterval,
 }
 
@@ -46,13 +46,13 @@ pub struct TenancyConfig {
     pub tenant_max_connections: u32,
 
     /// How long an unused tenant runtime is held open before eviction.
-    pub runtime_idle_ttl_seconds: u64,
+    pub runtime_idle_ttl_secs: u64,
 
     /// How many tenant runtimes may be held open at once.
     pub runtime_max_cached: usize,
 
     /// How often the janitor sweeps for idle and orphaned runtimes.
-    pub janitor_interval_seconds: u64,
+    pub janitor_interval_secs: u64,
 }
 
 impl Default for TenancyConfig {
@@ -61,9 +61,9 @@ impl Default for TenancyConfig {
             enabled: true,
             tenant_db_prefix: DbNamePrefix::default(),
             tenant_max_connections: 16,
-            runtime_idle_ttl_seconds: 900,
+            runtime_idle_ttl_secs: 900,
             runtime_max_cached: 64,
-            janitor_interval_seconds: 30,
+            janitor_interval_secs: 30,
         }
     }
 }
@@ -80,13 +80,13 @@ impl TenancyConfig {
         if self.tenant_max_connections == 0 {
             return Err(TenancyConfigError::ZeroTenantMaxConnections);
         }
-        if self.runtime_idle_ttl_seconds == 0 {
+        if self.runtime_idle_ttl_secs == 0 {
             return Err(TenancyConfigError::ZeroRuntimeIdleTtl);
         }
         if self.runtime_max_cached == 0 {
             return Err(TenancyConfigError::ZeroRuntimeMaxCached);
         }
-        if self.janitor_interval_seconds == 0 {
+        if self.janitor_interval_secs == 0 {
             return Err(TenancyConfigError::ZeroJanitorInterval);
         }
         Ok(())
@@ -104,9 +104,9 @@ mod config_tests {
             enabled: true,
             tenant_db_prefix: DbNamePrefix::try_from("andromeda_tenant").expect("database prefix"),
             tenant_max_connections: 16,
-            runtime_idle_ttl_seconds: 900,
+            runtime_idle_ttl_secs: 900,
             runtime_max_cached: 0,
-            janitor_interval_seconds: 30,
+            janitor_interval_secs: 30,
         };
         assert_eq!(config.validate(), Err(TenancyConfigError::ZeroRuntimeMaxCached));
     }

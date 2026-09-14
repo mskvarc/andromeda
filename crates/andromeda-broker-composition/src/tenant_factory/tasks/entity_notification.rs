@@ -109,7 +109,7 @@ pub(super) fn register_notification_workers(
     entity_changes: &broadcast::Sender<ContextChangeEvent>,
     subscription_changes: broadcast::Sender<SubscriptionChange>,
 ) -> Result<Option<WakeHandle>, TenantAssemblyError> {
-    let delivery = if config.enabled {
+    let delivery = if config.is_durable() {
         EntityNotificationDelivery::Durable
     } else {
         EntityNotificationDelivery::Live
@@ -121,7 +121,7 @@ pub(super) fn register_notification_workers(
         Arc::clone(&processor), // clone: the resident processor is also the durable delivery transport.
         delivery,
     )?;
-    if !config.enabled {
+    if !config.is_durable() {
         return Ok(None);
     }
     let store = Arc::new(NotificationDeliveryQueue::new(pool)) as Arc<dyn DeliveryStore>;

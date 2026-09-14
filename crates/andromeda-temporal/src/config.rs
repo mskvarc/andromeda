@@ -82,7 +82,15 @@ pub struct TemporalConfig {
     /// Native or deferred append topology selected for this broker profile.
     #[toml_comment(inline)]
     pub append_mode: TemporalAppendMode,
-    /// System default `lastN` cap from clause 5.2.21.
+    /// System default `lastN` cap applied when a temporal query omits `lastN`.
+    ///
+    /// Clause 5.2.21 leaves the default implementation-defined. It is kept at 19
+    /// so it sits just under the ETSI conformance suite's precondition of
+    /// pagination at 20 instances per attribute: the suite expects a default
+    /// query to page rather than return every instance. Raising it is sound for
+    /// production, but must first be reconciled with that suite precondition and
+    /// with the `SYSTEM_LAST_N_CAP` regression tests, which assert the 206 and
+    /// `Content-Range` that only appear when a result is actually cut by this cap.
     pub default_last_n: u32,
     /// Cadence, in seconds, of every `expiresAt` sweep the broker schedules
     /// per tenant: entities (clause 5.2.4), subscriptions (clause 5.8.1.4),

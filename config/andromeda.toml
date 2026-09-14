@@ -26,11 +26,11 @@ profile = "conservative"
 
 [jsonld]
 allow_remote_contexts = true
-timeout_seconds = 30
+timeout_secs = 30
 max_redirects = 5
 max_context_bytes = 2000000
 cache_capacity = 1024
-cache_ttl_seconds = 3600
+cache_ttl_secs = 3600
 preload_contexts = {}
 
 [temporal]
@@ -47,15 +47,15 @@ intent_stuck_after_attempts = 10
 enabled = true
 tenant_db_prefix = "andromeda_tenant"
 tenant_max_connections = 32
-runtime_idle_ttl_seconds = 900
+runtime_idle_ttl_secs = 900
 runtime_max_cached = 64
-janitor_interval_seconds = 30
+janitor_interval_secs = 30
 
-[info]
+[identity]
 source_id = "urn:ngsi-ld:ContextSourceIdentity:andromeda"
 source_alias = "andromeda"
 # Raw JSON returned verbatim as `contextSourceExtras` (Table 5.2.40-1); never
-# interpreted as JSON-LD. Environment: ANDROMEDA_INFO_SOURCE_EXTRAS='{"region":"eu"}'
+# interpreted as JSON-LD. Environment: ANDROMEDA__IDENTITY__SOURCE_EXTRAS='{"region":"eu"}'
 # source_extras = { region = "eu-west" }
 # The origin other brokers reach this one at. Required for subscription
 # forwarding (clauses 5.8.1.4, 5.8.6): forwarded subscriptions notify back here.
@@ -75,7 +75,7 @@ pending_side_effects_cleanup_interval_secs = 300
 [federation]
 forward_concurrency = 16
 
-[postgresql_write]
+[atomic_write]
 bulk_mode = "unnest"
 
 [snapshot]
@@ -86,8 +86,13 @@ preparation_concurrency = 4
 scoped_operation_wait_secs = 30
 preparation_lease_secs = 30
 
-[notification_delivery]
-enabled = false
+[notifications.delivery]
+# "live" delivers notifications in-process (no persistence or retry); "durable"
+# records every notification in a queue with retry, leasing and dead-lettering.
+mode = "live"
+# Outbound notification POST timeout, in seconds. A subscription's own timeout
+# may only shorten this, never lengthen it.
+request_timeout_secs = 10
 max_attempts = 5
 base_backoff_secs = 5
 poll_interval_secs = 1
@@ -100,11 +105,11 @@ cleanup_interval_secs = 300
 dead_letter_after_secs = 604800
 orphan_event_after_secs = 86400
 
-[notifications.sse]
+[notifications.streaming.sse]
 channel_buffer_size = 64
 keep_alive_interval_secs = 15
 
-[notifications.ws]
+[notifications.streaming.ws]
 channel_buffer_size = 64
 ping_interval_secs = 30
 

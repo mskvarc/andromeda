@@ -7,7 +7,7 @@ use andromeda_delivery::{
     mqtt::config::MqttPoolConfig,
     stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage},
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 /// Notification transports and connection registries owned by one tenant.
 pub(super) struct TenantTransports {
@@ -17,12 +17,18 @@ pub(super) struct TenantTransports {
 }
 
 /// Construct all transports for one tenant.
-pub(super) fn construct_transports() -> Result<TenantTransports, TenantAssemblyError> {
+///
+/// `request_timeout` bounds every outbound notification POST; a subscription's
+/// own Table 5.2.15-1 `timeout` may only shorten it.
+pub(super) fn construct_transports(request_timeout: Duration) -> Result<TenantTransports, TenantAssemblyError> {
     let sse_registry = Arc::new(ConnectionRegistry::new());
     let ws_registry = Arc::new(ConnectionRegistry::new());
     let dispatcher = Arc::new(
         TransportDispatcher::new(
-            HttpTransportConfig::default(),
+            HttpTransportConfig {
+                timeout: request_timeout,
+                ..HttpTransportConfig::default()
+            },
             MqttPoolConfig::default(),
             Arc::clone(&sse_registry),
             Arc::clone(&ws_registry),

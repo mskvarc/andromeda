@@ -21,7 +21,7 @@ The two URL families matter: the test client on the host reaches brokers via pub
 
 ## Connection budget
 
-Each Postgres server keeps the image default `max_connections = 100`. The brokers run with `ANDROMEDA_DATABASE_MAX_CONNECTIONS=16` and `ANDROMEDA_TENANCY_TENANT_MAX_CONNECTIONS=8`, idle connections are reclaimed after 30 s, and the harness opens at most two connections per broker. The busiest server (`postgres-a`, two instances) therefore peaks well under half of its limit even with several tenants provisioned at once.
+Each Postgres server keeps the image default `max_connections = 100`. The brokers run with `ANDROMEDA__DATABASE__MAX_CONNECTIONS=16` and `ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS=8`, idle connections are reclaimed after 30 s, and the harness opens at most two connections per broker. The busiest server (`postgres-a`, two instances) therefore peaks well under half of its limit even with several tenants provisioned at once.
 
 ## Bring up / tear down
 
@@ -45,4 +45,4 @@ The broker image (`docker/andromeda/Dockerfile`) builds a debug binary and ships
 
 - **Fault injection** (timeouts, `403`, malformed payloads, loops, unsupported operations) is not driven from these real peers - a real Andromeda peer answers correctly by construction. Those cases use the in-process `ContextSourceServer` mock as the registered peer, per the plan. This stack is for genuine broker-to-broker federation semantics; the mock is for controllable adversarial peers.
 - **Mock reachability**: brokers reach the test process's mock servers via `host.docker.internal` (mapped through `host-gateway` on Linux), the same mechanism the existing suites use via `ANDROMEDA_TEST_CALLBACK_HOST`.
-- **Source identity extras**: every broker sets `ANDROMEDA_INFO_SOURCE_EXTRAS='{"deployment":"distop"}'` so `/info/sourceIdentity` carries a deployment-specific member (clause 5.2.37).
+- **Source identity extras**: every broker sets `ANDROMEDA__IDENTITY__SOURCE_EXTRAS='{"deployment":"distop"}'` so `/info/sourceIdentity` carries a deployment-specific member (clause 5.2.37).

@@ -7,6 +7,8 @@ use crate::{
     delivery_lease::{LeaseTerm, LeaseTermError},
 };
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
+use strum::{Display, EnumString};
 use thiserror::Error;
 use toml_comment::TomlComment;
 
@@ -14,45 +16,73 @@ use toml_comment::TomlComment;
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum DeliveryConfigError {
     /// The attempt ceiling was outside the accepted range.
-    #[error("notification_delivery.max_attempts is invalid: {0}")]
+    #[error("notifications.delivery.max_attempts is invalid: {0}")]
     AttemptCeiling(#[from] DeliveryAttemptCeilingError),
     /// Retry backoff was configured as zero.
-    #[error("notification_delivery.base_backoff_secs must be at least 1")]
+    #[error("notifications.delivery.base_backoff_secs must be at least 1")]
     ZeroBaseBackoff,
     /// Polling cadence was configured as zero.
-    #[error("notification_delivery.poll_interval_secs must be at least 1")]
+    #[error("notifications.delivery.poll_interval_secs must be at least 1")]
     ZeroPollInterval,
+    /// The outbound notification request timeout was configured as zero.
+    #[error("notifications.delivery.request_timeout_secs must be at least 1")]
+    ZeroRequestTimeout,
     /// Delivery batch size was configured as zero or less.
-    #[error("notification_delivery.batch_size must be at least 1")]
+    #[error("notifications.delivery.batch_size must be at least 1")]
     NonPositiveBatchSize,
     /// Acknowledged-delivery retention was configured as zero.
-    #[error("notification_delivery.cleanup_after_secs must be at least 1")]
+    #[error("notifications.delivery.cleanup_after_secs must be at least 1")]
     ZeroCleanupRetention,
     /// Cleanup cadence was configured as zero.
-    #[error("notification_delivery.cleanup_interval_secs must be at least 1")]
+    #[error("notifications.delivery.cleanup_interval_secs must be at least 1")]
     ZeroCleanupInterval,
     /// Dead-lettered (exhausted) delivery retention was configured as zero.
-    #[error("notification_delivery.dead_letter_after_secs must be at least 1")]
+    #[error("notifications.delivery.dead_letter_after_secs must be at least 1")]
     ZeroDeadLetterRetention,
     /// Orphaned-event retention was configured as zero.
-    #[error("notification_delivery.orphan_event_after_secs must be at least 1")]
+    #[error("notifications.delivery.orphan_event_after_secs must be at least 1")]
     ZeroOrphanEventRetention,
     /// The claim lease term was outside the accepted range.
-    #[error("notification_delivery.lease_secs is invalid: {0}")]
+    #[error("notifications.delivery.lease_secs is invalid: {0}")]
     LeaseTerm(#[from] LeaseTermError),
     /// The stored-diagnostic bound was outside the accepted range.
-    #[error("notification_delivery.error_max_chars is invalid: {0}")]
+    #[error("notifications.delivery.error_max_chars is invalid: {0}")]
     ErrorBound(#[from] DeliveryErrorBoundError),
     /// The in-flight delivery bound was outside the accepted range.
-    #[error("notification_delivery.concurrency is invalid: {0}")]
+    #[error("notifications.delivery.concurrency is invalid: {0}")]
     Concurrency(#[from] DeliveryConcurrencyError),
+}
+
+/// How notifications are delivered to HTTP and MQTT subscribers.
+///
+/// Both variants deliver notifications; they differ only in durability. The
+/// choice is not a boolean on/off switch, so it is a named mode rather than an
+/// `enabled` flag.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+pub enum DeliveryMode {
+    /// Evaluate subscriptions and deliver notifications in-process, without
+    /// persistence, retry, or dead-lettering. A crashed broker loses only the
+    /// notifications still in flight.
+    #[default]
+    Live,
+    /// Record every notification in a durable queue and deliver it through the
+    /// delivery worker, with retry, leasing, dead-lettering, and retention.
+    Durable,
 }
 
 /// Retry, polling, retention and diagnostic policy for notification delivery.
 #[derive(Clone, Deserialize, Serialize, TomlComment, Debug)]
 pub struct DeliveryConfig {
-    /// Enable recording notification events and deliveries during entity mutations.
-    pub enabled: bool,
+    /// Whether notifications are delivered live (in-process) or durably (queued).
+    #[toml_comment(inline)]
+    pub mode: DeliveryMode,
+    /// How long an outbound notification POST may take before it is abandoned.
+    ///
+    /// A subscription's own Table 5.2.15-1 `timeout` may only shorten this
+    /// system bound, never lengthen it. Applies to both delivery modes.
+    pub request_timeout_secs: u64,
     /// Maximum delivery attempts before dead-lettering.
     ///
     /// The worker owns this ceiling: the attempt that reaches it is
@@ -101,7 +131,8 @@ pub struct DeliveryConfig {
 impl Default for DeliveryConfig {
     fn default() -> DeliveryConfig {
         DeliveryConfig {
-            enabled: false,
+            mode: DeliveryMode::Live,
+            request_timeout_secs: 10,
             max_attempts: 5,
             base_backoff_secs: 5,
             poll_interval_secs: 1,
@@ -142,6 +173,9 @@ impl DeliveryConfig {
         if self.poll_interval_secs == 0 {
             return Err(DeliveryConfigError::ZeroPollInterval);
         }
+        if self.request_timeout_secs == 0 {
+            return Err(DeliveryConfigError::ZeroRequestTimeout);
+        }
         if self.cleanup_after_secs == 0 {
             return Err(DeliveryConfigError::ZeroCleanupRetention);
         }
@@ -166,6 +200,18 @@ impl DeliveryConfig {
             Ok(_) => Ok(()),
             Err(error) => Err(DeliveryConfigError::Concurrency(error)),
         }
+    }
+
+    /// Whether notifications are recorded and delivered through the durable queue.
+    #[must_use]
+    pub const fn is_durable(&self) -> bool {
+        matches!(self.mode, DeliveryMode::Durable)
+    }
+
+    /// The outbound notification request timeout.
+    #[must_use]
+    pub const fn request_timeout(&self) -> Duration {
+        Duration::from_secs(self.request_timeout_secs)
     }
 
     /// The configured in-flight delivery bound.
@@ -214,14 +260,15 @@ mod tests {
     use crate::{
         delivery_attempt_ceiling::DeliveryAttemptCeilingError,
         delivery_concurrency::DeliveryConcurrencyError,
-        delivery_config::{DeliveryConfig, DeliveryConfigError},
+        delivery_config::{DeliveryConfig, DeliveryConfigError, DeliveryMode},
         delivery_error_bound::DeliveryErrorBoundError,
         delivery_lease::LeaseTermError,
     };
 
     fn valid_config() -> DeliveryConfig {
         DeliveryConfig {
-            enabled: true,
+            mode: DeliveryMode::Durable,
+            request_timeout_secs: 10,
             max_attempts: 5,
             base_backoff_secs: 5,
             poll_interval_secs: 1,
@@ -302,5 +349,20 @@ mod tests {
     #[test]
     fn default_shaped_configuration_is_accepted() {
         assert_eq!(valid_config().validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_zero_request_timeout_is_rejected() {
+        let config = DeliveryConfig {
+            request_timeout_secs: 0,
+            ..valid_config()
+        };
+        assert_eq!(config.validate(), Err(DeliveryConfigError::ZeroRequestTimeout));
+    }
+
+    #[test]
+    fn the_delivery_mode_default_is_live() {
+        assert_eq!(DeliveryMode::default(), DeliveryMode::Live);
+        assert!(!DeliveryConfig::default().is_durable());
     }
 }

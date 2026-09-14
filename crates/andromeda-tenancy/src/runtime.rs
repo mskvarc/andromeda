@@ -225,8 +225,8 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
 
     /// Sweep for orphaned, excess and idle runtimes until the process ends.
     async fn run_janitor(self: Arc<TenantRuntimeManager<D, F>>) {
-        let interval = Duration::from_secs(self.config.janitor_interval_seconds.max(1));
-        let ttl = Duration::from_secs(self.config.runtime_idle_ttl_seconds.max(1));
+        let interval = Duration::from_secs(self.config.janitor_interval_secs.max(1));
+        let ttl = Duration::from_secs(self.config.runtime_idle_ttl_secs.max(1));
         let mut ticker = tokio_interval(interval);
         loop {
             ticker.tick().await;
@@ -378,9 +378,9 @@ mod tests {
             enabled,
             tenant_db_prefix: DbNamePrefix::try_from("andromeda_tenant").expect("valid default db name prefix"),
             tenant_max_connections: 16,
-            runtime_idle_ttl_seconds: 900,
+            runtime_idle_ttl_secs: 900,
             runtime_max_cached: max_cached,
-            janitor_interval_seconds: 30,
+            janitor_interval_secs: 30,
         }
     }
 

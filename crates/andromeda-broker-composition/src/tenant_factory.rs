@@ -5,7 +5,7 @@
 //! broker has, which is exactly what `andromeda-tenancy` must not see.
 
 use crate::{
-    config::runtime::RuntimeConfig,
+    config::{notifications::NotificationsConfig, runtime::RuntimeConfig},
     tenant_factory::{
         error::TenantAssemblyError,
         runtime::BrokerTenantRuntime,
@@ -22,9 +22,7 @@ use andromeda_delivery::mqtt::pool::MqttTransportPool;
 use andromeda_entity::{config::EntityConfig, spatial_config::SpatialConfig};
 use andromeda_federation::config::FederationConfig;
 use andromeda_http_source_identity::config::InfoConfig;
-use andromeda_http_subscription::config::NotificationConfig;
 use andromeda_jsonld::config::JsonLdConfig;
-use andromeda_notification::delivery_config::DeliveryConfig;
 use andromeda_postgresql_atomic_write::{
     committer::{EntityInsertMode, PostgresAtomicCommitter},
     config::{AtomicWriteConfig, BulkWriteMode},
@@ -80,11 +78,10 @@ struct TenantFactoryConfig {
     database: DatabaseConfig,
     entity: EntityConfig,
     federation: FederationConfig,
-    info: InfoConfig,
+    identity: InfoConfig,
     jsonld: JsonLdConfig,
-    notifications: NotificationConfig,
-    notification_delivery: DeliveryConfig,
-    postgresql_write: AtomicWriteConfig,
+    notifications: NotificationsConfig,
+    atomic_write: AtomicWriteConfig,
     snapshot: SnapshotConfig,
     spatial: SpatialConfig,
     temporal: TemporalConfig,
@@ -97,11 +94,10 @@ impl From<&RuntimeConfig> for TenantFactoryConfig {
             database: config.database.clone(),
             entity: config.entity.clone(),
             federation: config.federation.clone(),
-            info: config.info.clone(),
+            identity: config.identity.clone(),
             jsonld: config.jsonld.clone(),
             notifications: config.notifications.clone(),
-            notification_delivery: config.notification_delivery.clone(),
-            postgresql_write: config.postgresql_write.clone(),
+            atomic_write: config.atomic_write.clone(),
             snapshot: config.snapshot.clone(),
             spatial: config.spatial.clone(),
             temporal: config.temporal.clone(),
@@ -172,7 +168,7 @@ async fn build_tenant_state(
     // Every write path reaches the `current_attribute_values` projection
     // through this complete atomic commit implementation, which writes it in
     // the transaction that mutates the entity.
-    let entity_insert_mode = match config.postgresql_write.bulk_mode {
+    let entity_insert_mode = match config.atomic_write.bulk_mode {
         BulkWriteMode::Unnest => EntityInsertMode::Unnest,
         BulkWriteMode::CopyStaging => EntityInsertMode::CopyStaging,
     };
@@ -183,7 +179,7 @@ async fn build_tenant_state(
         Arc::clone(&storage.attribute_names),   // clone: the commit interns names through the tenant's one dictionary.
         Arc::clone(&storage.entity_type_names), // clone: the same dictionary, for entity types.
     ));
-    let transports = construct_transports()?;
+    let transports = construct_transports(config.notifications.delivery.request_timeout())?;
     let services = construct_services(config, &storage, &signals, &transports, &temporal.ports, &writes, subscription_router)?;
     let supervision = supervise_tasks(config, &storage, &services, signals, &writes, &transports.dispatcher, task_supervisor)?;
     Ok((

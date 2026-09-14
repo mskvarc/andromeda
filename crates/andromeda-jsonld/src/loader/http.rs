@@ -85,14 +85,14 @@ impl HttpContextLoader {
     pub(crate) fn new(
         registry: Arc<ContextRegistry>,
         allow_remote: RemoteContextFetch,
-        timeout_seconds: u64,
+        timeout_secs: u64,
         max_redirects: u32,
         cache_capacity: u64,
         default_lifetime: CacheLifetime,
         max_context_bytes: usize,
     ) -> Result<HttpContextLoader, JsonLdError> {
         let client = Client::builder()
-            .timeout(Duration::from_secs(timeout_seconds))
+            .timeout(Duration::from_secs(timeout_secs))
             .redirect(Policy::limited(max_redirects as usize))
             .build()
             .map_err(JsonLdError::ClientBuild)?;

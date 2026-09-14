@@ -68,7 +68,7 @@ pub(super) fn register_entity_side_effects(
             batch_size: i32::try_from(entity_config.pending_side_effects_batch_size).unwrap_or(i32::MAX),
             max_attempts: entity_config.pending_side_effects_max_attempts,
             base_backoff: Duration::from_secs(entity_config.pending_side_effects_base_backoff_secs),
-            lease_owner: SideEffectLeaseOwner::for_tenant(&config.info.source_id, Uuid::new_v4()),
+            lease_owner: SideEffectLeaseOwner::for_tenant(&config.identity.source_id, Uuid::new_v4()),
         },
     ));
     let wake = register_entity_side_effect_drain(

@@ -16,7 +16,6 @@ pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), Configuratio
     config.entity.validate().map_err(owner_configuration_error)?;
     config.federation.validate().map_err(owner_configuration_error)?;
     config.snapshot.validate().map_err(owner_configuration_error)?;
-    config.notification_delivery.validate().map_err(owner_configuration_error)?;
     config.notifications.validate().map_err(owner_configuration_error)?;
     config.spatial.validate().map_err(owner_configuration_error)?;
     Ok(())
