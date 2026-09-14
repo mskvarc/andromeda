@@ -41,6 +41,7 @@ mod tests {
         http::{Method, Request, StatusCode},
     };
     use futures::future::BoxFuture;
+    use pretty_assertions::assert_ne;
     use std::{error::Error, sync::Arc};
     use tower::ServiceExt;
 

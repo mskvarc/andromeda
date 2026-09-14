@@ -63,6 +63,7 @@ mod tests {
     use crate::notification_context_placement::{NotificationContextPlacement, notification_context_placement};
     use andromeda_http_headers::media_type::ResponseMediaType;
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
+    use pretty_assertions::assert_eq;
 
     fn receiver_info(key: &str, value: &str) -> Vec<KeyValuePair> {
         vec![KeyValuePair {

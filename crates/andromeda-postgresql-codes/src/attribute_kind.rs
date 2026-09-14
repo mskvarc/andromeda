@@ -44,6 +44,7 @@ compact_code_registry! {
 #[cfg(test)]
 mod tests {
     use crate::attribute_kind::AttributeKind;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn the_registry_covers_every_attribute_family_the_specification_defines() {

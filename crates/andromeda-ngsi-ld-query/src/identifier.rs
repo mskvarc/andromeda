@@ -48,6 +48,7 @@ pub fn parse_id(raw: &str) -> Result<Uri, QueryError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn an_empty_parameter_is_no_filter() {

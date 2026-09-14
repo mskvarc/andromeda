@@ -21,6 +21,7 @@ pub enum LeaseAcknowledgement {
 #[cfg(test)]
 mod tests {
     use crate::lease_acknowledgement::LeaseAcknowledgement;
+    use pretty_assertions::{assert_eq, assert_ne};
 
     #[test]
     fn applied_and_lost_are_distinct_outcomes() {

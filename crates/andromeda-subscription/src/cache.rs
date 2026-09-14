@@ -219,6 +219,7 @@ mod tests {
     use andromeda_ngsi_ld_query::projection::compiled::Projection;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use chrono::{DateTime, Utc};
+    use pretty_assertions::assert_eq;
     use std::num::NonZeroU32;
     use url::Url;
 

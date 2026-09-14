@@ -2,6 +2,7 @@
 
 use crate::fixtures::{FedRole, assert_status, body, broker, entity, registration, topology};
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
+use pretty_assertions::assert_eq;
 use serde_json::json;
 use serial_test::serial;
 

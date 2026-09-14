@@ -35,6 +35,7 @@ pub enum EntityTypeNames {
 #[cfg(test)]
 mod tests {
     use crate::name_dictionary::{AttributeNames, EntityTypeNames};
+    use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
     #[test]

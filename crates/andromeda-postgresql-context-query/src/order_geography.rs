@@ -96,6 +96,7 @@ mod tests {
         dictionary::resolved_names::ResolvedNames,
         entity_row_refs::{DocumentsRef, EntityRowRefs},
     };
+    use pretty_assertions::assert_eq;
     use sea_query::{Alias, PostgresQueryBuilder, Query, SimpleExpr};
 
     const CUSTOM_GEOPROPERTY: &str = "https://example.com/customGeo";

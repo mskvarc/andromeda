@@ -220,6 +220,7 @@ impl OrderDirection {
 #[cfg(test)]
 mod tests {
     use crate::ordering::term::{OrderDirection, OrderTerm, OrderTermError, RawOrderTarget};
+    use pretty_assertions::assert_eq;
 
     /// The path of a term that parses.
     fn term(text: &str) -> OrderTerm {

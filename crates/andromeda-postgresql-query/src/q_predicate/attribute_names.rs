@@ -40,6 +40,7 @@ mod tests {
     use crate::q_predicate::attribute_names::referenced_attribute_names;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::filter::parser;
+    use pretty_assertions::assert_eq;
 
     fn collected(q: &str) -> Vec<String> {
         let expr = parser::parse(q).expect("parse q");

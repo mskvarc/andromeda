@@ -255,6 +255,7 @@ impl BranchForeignKey {
 #[cfg(test)]
 mod tests {
     use crate::snapshot::branch_schema::{BRANCH_FOREIGN_KEYS, BRANCH_TABLES, BranchForeignKey, Referenced};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn every_foreign_key_names_a_branch_table_on_both_ends_it_should() {

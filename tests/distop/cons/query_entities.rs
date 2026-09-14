@@ -13,6 +13,7 @@ use crate::{
 };
 use andromeda_test_fixtures::problem_detail::BAD_REQUEST_DATA;
 use axum::http::Method;
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
 /// The `id` strings of every entity in an Entity Array response body.

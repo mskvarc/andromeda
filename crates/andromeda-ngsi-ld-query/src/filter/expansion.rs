@@ -287,6 +287,7 @@ mod tests {
     use super::*;
     use crate::filter::{predicate::OrderingOp, serialize::serialize};
     use iri_rs::IriBuf;
+    use pretty_assertions::assert_eq;
     use std::future::ready;
 
     /// An expander that prefixes every term, so a test can see exactly which

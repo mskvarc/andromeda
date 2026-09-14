@@ -72,6 +72,7 @@ impl AdaptedPayload {
 mod tests {
     use crate::version::adapted_payload::AdaptedPayload;
     use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn an_entity_payload_reads_both_rows_as_the_tables_write_them() {

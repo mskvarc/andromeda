@@ -416,6 +416,7 @@ impl CatalogColumn {
 #[cfg(test)]
 mod tests {
     use crate::inspection::{index_sizes_statement, invalid_indexes_statement, percent};
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
     #[test]

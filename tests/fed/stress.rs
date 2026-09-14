@@ -4,6 +4,7 @@ use crate::fixtures::{FedRole, assert_status, body, broker, entity, entity_with_
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use futures::future::join_all;
+use pretty_assertions::assert_eq;
 use serde_json::json;
 use serial_test::serial;
 use std::time::Duration;

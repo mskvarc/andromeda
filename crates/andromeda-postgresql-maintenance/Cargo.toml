@@ -27,3 +27,4 @@ tracing = "0.1.44"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+pretty_assertions = "1.4.1"

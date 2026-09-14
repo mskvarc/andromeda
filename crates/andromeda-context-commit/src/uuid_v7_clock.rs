@@ -24,6 +24,7 @@ pub(crate) fn mint() -> Uuid {
 #[cfg(test)]
 mod tests {
     use crate::uuid_v7_clock;
+    use pretty_assertions::assert_eq;
     use std::{collections::HashSet, iter, thread};
     use uuid::{ContextV7, Timestamp, Uuid};
 

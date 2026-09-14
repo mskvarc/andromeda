@@ -150,6 +150,7 @@ pub enum IcuCollationError {
 #[cfg(test)]
 mod tests {
     use crate::ordering::collation::{IcuCollation, IcuCollationError};
+    use pretty_assertions::assert_eq;
 
     /// The identifier renders as the tag it parsed, which is what an error
     /// message and a `CREATE COLLATION` both name it by.

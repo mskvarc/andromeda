@@ -69,6 +69,7 @@ mod tests {
         params::PreparedEntityColumns,
         types_present::{EntityTypesMissing, types_present},
     };
+    use pretty_assertions::assert_eq;
     use serde_json::json;
 
     /// Build a one-row column set carrying the given type array.

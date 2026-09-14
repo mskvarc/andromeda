@@ -126,6 +126,7 @@ pub struct DictionaryGrowthExceeded {
 #[cfg(test)]
 mod tests {
     use crate::{dictionary_growth::DictionaryNameLimit, dictionary_relation::DictionaryKind};
+    use pretty_assertions::assert_eq;
     use std::num::NonZeroU32;
 
     const KIND: DictionaryKind = DictionaryKind::AttributeNames;

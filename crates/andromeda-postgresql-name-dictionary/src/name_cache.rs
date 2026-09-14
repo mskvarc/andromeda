@@ -559,6 +559,7 @@ mod tests {
         ($module:ident, $name:ty, $key:ty, $first:literal, $second:literal, $table:literal) => {
             mod $module {
                 use super::*;
+                use pretty_assertions::assert_eq;
 
                 /// The one interned name these tests resolve.
                 fn first() -> $name {

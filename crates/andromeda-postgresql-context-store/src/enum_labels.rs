@@ -19,6 +19,7 @@ mod tests {
         snapshot::SnapshotStatus,
         subscription::SubscriptionStatus,
     };
+    use pretty_assertions::assert_eq;
     use std::{
         fmt::{Debug, Display},
         fs,

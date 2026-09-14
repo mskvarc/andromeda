@@ -59,6 +59,7 @@ impl CsourceSubscriptionCache {
 #[cfg(test)]
 mod tests {
     use crate::csource_cache::CsourceSubscriptionCache;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn a_new_csource_subscription_cache_is_empty() {

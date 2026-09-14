@@ -24,6 +24,7 @@ use andromeda_test_fixtures::{
     problem_detail::{CONFLICT, RESOURCE_NOT_FOUND},
 };
 use axum::http::Method;
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
 /// A temporal `Vehicle` holding only a `speed` instance, for the wholly-owned

@@ -43,6 +43,7 @@ pub enum ForwardedSubscriptionRoutes {
 #[cfg(test)]
 mod tests {
     use crate::subscription_forwarding::{ForwardedSubscriptionRoutes, ForwardedSubscriptions, SubscriptionCompanions};
+    use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
     #[test]

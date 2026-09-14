@@ -9,6 +9,7 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::{context::COMPOUND_CONTEXT, problem_detail::BAD_REQUEST_DATA};
+use pretty_assertions::assert_eq;
 use reqwest::Method;
 use urlencoding::encode;
 

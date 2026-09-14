@@ -103,6 +103,7 @@ impl AckTracker {
 #[cfg(test)]
 mod tests {
     use crate::mqtt::ack::{AckKind, AckTracker};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn a_qos1_publish_resolves_on_its_puback() {

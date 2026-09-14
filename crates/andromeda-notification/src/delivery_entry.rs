@@ -46,6 +46,7 @@ pub struct DeliveryEntry {
 #[cfg(test)]
 mod tests {
     use crate::delivery_entry::DeliveryId;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn a_delivery_id_reports_its_raw_value() {

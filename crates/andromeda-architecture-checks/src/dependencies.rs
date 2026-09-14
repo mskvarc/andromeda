@@ -344,6 +344,7 @@ fn declarations(manifest: &str) -> Vec<(DependencyKind, &str)> {
 #[cfg(test)]
 mod tests {
     use crate::dependencies::{DependencyKind, FORBIDDEN_PRODUCTION_DEPENDENCIES, assert_permitted, declarations, forbidden_production_dependencies_except};
+    use pretty_assertions::assert_eq;
 
     /// The layer a specification crate sits at, for the rejection tests below.
     const FORBIDDEN: &[&str] = &["sqlx", "sea-query", "tokio"];

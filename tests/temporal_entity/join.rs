@@ -11,6 +11,7 @@
 //! temporal operations accept.
 
 use crate::{COMPOUND_CONTEXT, TEST_SUITE_CONTEXT, clean_database, client, create_temporal_entity, post_temporal_query, query_temporal_entities, unique_id};
+use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use serial_test::serial;

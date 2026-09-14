@@ -31,6 +31,7 @@ impl From<OrderDirection> for SortDirection {
 #[cfg(test)]
 mod tests {
     use crate::ordering::{sort_direction::SortDirection, term::OrderDirection};
+    use pretty_assertions::assert_eq;
 
     /// Clause 4.23.1's four sort orders differ in what they measure, not in how
     /// many directions there are.

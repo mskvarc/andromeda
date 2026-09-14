@@ -213,6 +213,7 @@ fn technical_http_trait_owner(trait_name: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use crate::architecture::ArchitectureVisitor;
+    use pretty_assertions::assert_eq;
     use syn::visit::Visit;
 
     fn violations(source: &str) -> Vec<String> {

@@ -39,6 +39,7 @@ mod tests {
     use crate::{subscription_key::SubscriptionKey, subscription_match::SubscriptionMatch};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn the_builder_defaults_optional_notification_data() {

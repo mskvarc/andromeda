@@ -210,6 +210,7 @@ mod tests {
     };
     use andromeda_postgresql_seaquery::timescale::drop_chunks;
     use chrono::{DateTime, TimeDelta, Utc};
+    use pretty_assertions::assert_eq;
     use sea_query::{Expr, PostgresQueryBuilder, Query};
 
     /// The fixed instant the cutoff cases are measured from.

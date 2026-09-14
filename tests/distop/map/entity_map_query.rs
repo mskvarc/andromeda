@@ -10,6 +10,7 @@ use crate::{
 use andromeda_test_fixtures::problem_detail::BAD_REQUEST_DATA;
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
+use pretty_assertions::assert_eq;
 
 /// Create a `Vehicle` on the front broker.
 async fn seed_vehicle(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -> String {

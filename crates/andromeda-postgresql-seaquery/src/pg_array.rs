@@ -88,6 +88,7 @@ pub fn text_array(values: &[&str]) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::pg_array::{any, array_append, array_position, array_subquery};
+    use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr};
 
     fn render_expr(expr: SimpleExpr) -> String {

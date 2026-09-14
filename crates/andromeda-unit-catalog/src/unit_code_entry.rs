@@ -70,6 +70,7 @@ impl UnitCodeEntry {
 #[cfg(test)]
 mod tests {
     use crate::{rec20_revision::Rec20Revision, unit_code_entry::UnitCodeEntry, unit_code_id::UnitCodeId, unit_code_token::UnitCodeToken};
+    use pretty_assertions::assert_eq;
 
     /// Build one registration for a code the linked artifact defines.
     fn kilogram() -> Option<UnitCodeEntry> {

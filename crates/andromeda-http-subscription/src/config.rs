@@ -95,6 +95,7 @@ impl NotificationConfig {
 #[cfg(test)]
 mod tests {
     use super::{NotificationConfig, NotificationConfigError, SseConfig, WsConfig};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn zero_websocket_ping_interval_is_rejected() {

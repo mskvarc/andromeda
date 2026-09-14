@@ -26,6 +26,7 @@ use crate::{
 use andromeda_context_commit::atomic_write::AtomicWrite;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::{entity::Entity, expanded::mutation::selection::OverwritePolicy, notification::NotificationTrigger};
+use pretty_assertions::assert_eq;
 use serde_json::json;
 
 /// A single-entity batch input carrying one `category` Property, in the compact

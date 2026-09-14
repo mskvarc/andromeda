@@ -22,3 +22,4 @@ urlencoding = "2.1.3"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+pretty_assertions = "1.4.1"

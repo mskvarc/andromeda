@@ -56,6 +56,7 @@ fn andromeda_report() -> ComponentReport {
 mod tests {
     use crate::component_report::{andromeda_report, build};
     use andromeda_component_report::ComponentReport;
+    use pretty_assertions::assert_ne;
 
     #[test]
     fn andromeda_report_uses_build_constants() {

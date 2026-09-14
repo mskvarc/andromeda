@@ -161,6 +161,7 @@ mod tests {
     use crate::entity_map::lifecycle::{map_key_of, mutation_outcome};
     use andromeda_entity_map::store::EntityMapMutation;
     use andromeda_postgresql_seaquery::placeholder::external_placeholder;
+    use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query};
 
     #[test]

@@ -127,6 +127,7 @@ pub enum FixtureError {
 #[cfg(test)]
 mod tests {
     use crate::fixture_document::{FixtureDocument, FixtureError, JsonPointer};
+    use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
 
     #[test]

@@ -13,6 +13,7 @@ use crate::{
 };
 use andromeda_test_client::response::TestResponse;
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
+use pretty_assertions::assert_eq;
 use reqwest::Method;
 use serde_json::{Value, json};
 use std::time::Duration;

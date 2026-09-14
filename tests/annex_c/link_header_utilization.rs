@@ -17,6 +17,7 @@ use crate::{
     get_json,
     get_with_headers,
 };
+use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 use serial_test::serial;

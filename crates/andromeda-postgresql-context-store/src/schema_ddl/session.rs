@@ -19,6 +19,7 @@ pub fn set_synchronous_commit(setting: &str) -> String {
 #[cfg(test)]
 mod tests {
     use crate::schema_ddl::session::set_synchronous_commit;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn the_setting_value_is_quoted() {

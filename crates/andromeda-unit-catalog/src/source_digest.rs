@@ -56,6 +56,7 @@ pub const SOURCE_SHA256: SourceDigest = SourceDigest([
 #[cfg(test)]
 mod tests {
     use crate::source_digest::{SOURCE_SHA256, SourceDigest, SourceDigestMalformed};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn the_release_digest_renders_as_the_workbook_checksum() {

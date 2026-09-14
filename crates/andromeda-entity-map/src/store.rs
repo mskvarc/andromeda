@@ -59,6 +59,7 @@ pub trait EntityMapStore: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use crate::store::EntityMapMutation;
+    use pretty_assertions::assert_ne;
 
     #[test]
     fn mutation_outcomes_distinguish_applied_from_missing() {

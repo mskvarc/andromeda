@@ -53,6 +53,7 @@ impl WriteRecord {
 mod tests {
     use crate::{write_id::WriteId, write_record::WriteRecord};
     use chrono::{TimeZone, Utc};
+    use pretty_assertions::{assert_eq, assert_ne};
 
     #[test]
     fn minting_a_record_gives_each_write_its_own_identity() {

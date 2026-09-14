@@ -142,6 +142,7 @@ impl Eq for Pattern {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::{assert_eq, assert_ne};
 
     #[test]
     fn a_pattern_keeps_the_text_the_client_wrote() {

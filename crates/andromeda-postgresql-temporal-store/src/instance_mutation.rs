@@ -422,6 +422,7 @@ mod tests {
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::value_kind::ValueKind;
+    use pretty_assertions::assert_eq;
 
     /// The six identity-column statements, rendered.
     fn all_statements() -> Vec<String> {

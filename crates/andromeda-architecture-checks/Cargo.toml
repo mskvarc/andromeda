@@ -16,3 +16,6 @@ toml_edit = "0.25.15"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"

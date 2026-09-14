@@ -80,6 +80,7 @@ impl DeliveryErrorBound {
 #[cfg(test)]
 mod tests {
     use crate::delivery_error_bound::{DeliveryErrorBound, DeliveryErrorBoundError};
+    use pretty_assertions::assert_eq;
     use std::borrow::Cow;
 
     #[test]

@@ -23,6 +23,7 @@ use andromeda_test_fixtures::{
 };
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
 /// A single `speed` Property node carrying the compound context, for `PUT` of one

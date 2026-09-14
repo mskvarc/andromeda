@@ -11,6 +11,7 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use axum::http::Method;
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::time::Duration;
 use urlencoding::encode;

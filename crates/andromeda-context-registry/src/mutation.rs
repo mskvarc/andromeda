@@ -12,6 +12,7 @@ pub enum ContextMutation {
 #[cfg(test)]
 mod tests {
     use crate::mutation::ContextMutation;
+    use pretty_assertions::assert_ne;
 
     #[test]
     fn mutation_outcomes_are_not_interchangeable() {

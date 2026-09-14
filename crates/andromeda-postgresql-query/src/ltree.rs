@@ -75,6 +75,7 @@ pub fn pattern_to_lquery(pattern: &ScopePattern) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     fn lquery(raw: &str) -> String {
         pattern_to_lquery(&ScopePattern::parse(raw).expect("valid pattern"))

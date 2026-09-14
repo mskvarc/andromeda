@@ -66,6 +66,7 @@ pub fn grow_lonlat_bounds_metres(min: [f64; 2], max: [f64; 2], metres: f64) -> (
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn haversine_zero_for_identical_points() {

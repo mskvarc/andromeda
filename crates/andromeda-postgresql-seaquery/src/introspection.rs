@@ -96,6 +96,7 @@ struct PgColumnSize;
 #[cfg(test)]
 mod tests {
     use crate::introspection::{current_setting, current_setting_missing_ok, extension_version, transaction_has_not_written};
+    use pretty_assertions::assert_eq;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
 
     #[test]

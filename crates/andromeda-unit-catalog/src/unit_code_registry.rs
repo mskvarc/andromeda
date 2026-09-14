@@ -249,6 +249,7 @@ mod tests {
         unit_code_registry::{UnitCodeRegistry, UnitCodeSnapshotMalformed, UnitCodeUnknown, registry},
         unit_code_token::UnitCodeToken,
     };
+    use pretty_assertions::assert_eq;
 
     /// A two-registration snapshot in the committed format.
     const SAMPLE: &str = "# generated - never hand-edited\n1\tKGM\t17\t-\n2\tMTR\t17\t-\n";

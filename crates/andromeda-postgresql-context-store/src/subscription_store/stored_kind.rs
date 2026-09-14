@@ -38,6 +38,7 @@ pub fn of_kind(kind: StoredKind) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::subscription_store::stored_kind::{StoredKind, of_kind};
+    use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
 
     #[test]

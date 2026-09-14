@@ -16,6 +16,7 @@ use crate::{
     task_name::{TaskName, TaskNameError},
     wake_trigger::{DrainFallbackCadence, DrainFallbackCadenceError, WakeRequest},
 };
+use pretty_assertions::assert_eq;
 use std::{
     future,
     sync::{

@@ -14,6 +14,7 @@ use crate::{
 };
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::time::Duration;
 

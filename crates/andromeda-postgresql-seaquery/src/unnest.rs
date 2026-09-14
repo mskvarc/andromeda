@@ -114,6 +114,7 @@ mod tests {
         pg_type::PostgresType,
         unnest::{UnnestColumn, apply_column_alias, apply_with_ordinality, unnest_call},
     };
+    use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
 
     /// The projection set-write's fourteen columns, in the order the upsert

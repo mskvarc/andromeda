@@ -25,6 +25,7 @@ impl DictionaryRelation for EntityTypeName {
 mod tests {
     use crate::dictionary_relation::{DictionaryKind, DictionaryRelation};
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn entity_type_names_are_interned_in_the_entity_type_names_relation() {

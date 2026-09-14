@@ -18,6 +18,7 @@ use andromeda_test_harness::environment::TestEnvironment;
 use andromeda_test_mocks::{jsonld_context_server::JsonLdContextServer, server_config::MockServerConfig};
 use axum::http::HeaderMap;
 use http::Method;
+use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use std::slice::from_ref;

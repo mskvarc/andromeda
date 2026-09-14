@@ -40,6 +40,7 @@ pub fn create_icu_collation(collation: &IcuCollation) -> String {
 mod tests {
     use crate::schema_ddl::icu_collation::create_icu_collation;
     use andromeda_ngsi_ld_query::ordering::collation::IcuCollation;
+    use pretty_assertions::assert_eq;
 
     fn collation(raw: &str) -> IcuCollation {
         IcuCollation::parse(raw).expect("the fixture is a valid ICU collation")

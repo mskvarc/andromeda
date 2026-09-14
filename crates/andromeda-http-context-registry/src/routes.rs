@@ -42,6 +42,7 @@ mod tests {
         http::{Error as HttpError, Method, Request, StatusCode, header::CONTENT_LENGTH},
     };
     use futures::future::BoxFuture;
+    use pretty_assertions::{assert_eq, assert_ne};
     use std::sync::Arc;
     use tower::ServiceExt;
 

@@ -157,6 +157,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, attribute_type::AttributeType};
     use andromeda_ngsi_ld_request::error::ParameterError;
+    use pretty_assertions::assert_eq;
     use std::collections::{HashMap, HashSet};
 
     /// Every method clause 4.5.19 defines, in the order the tables list them.

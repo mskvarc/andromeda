@@ -16,6 +16,7 @@ use andromeda_unit_catalog::{
     unit_code_token::UnitCodeToken,
 };
 use cefact_units::UnitOfMeasure;
+use pretty_assertions::assert_eq;
 use std::{
     collections::HashSet,
     env,

@@ -32,6 +32,7 @@ mod tests {
     use crate::cooldown::ceiling_for_cooldown;
     use andromeda_ngsi_ld_lexicon::positive_milliseconds::PositiveMilliseconds;
     use chrono::{Duration, TimeZone, Utc};
+    use pretty_assertions::assert_eq;
 
     fn milliseconds(value: i64) -> PositiveMilliseconds {
         PositiveMilliseconds::try_from(value).expect("a positive millisecond count")

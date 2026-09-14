@@ -45,6 +45,7 @@ pub fn validate_preparing_transition(status: SnapshotStatus) -> Result<(), Snaps
 mod tests {
     use super::{ScopingEligibility, scoping_eligibility, validate_preparing_transition};
     use andromeda_ngsi_ld_model::snapshot::SnapshotStatus;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn empty_partial_and_success_snapshots_can_scope_a_request() {

@@ -155,6 +155,7 @@ mod tests {
         schema_ddl::timescale_policy::HypertableName,
         storage_policy::{HypertableReconciliation, PolicyReconciliation, TemporalStoragePolicyOutcome, day_seconds, interval_seconds},
     };
+    use pretty_assertions::assert_eq;
     use sqlx::postgres::types::PgInterval;
     use std::num::NonZeroU32;
 

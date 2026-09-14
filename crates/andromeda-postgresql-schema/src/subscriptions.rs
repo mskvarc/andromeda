@@ -101,6 +101,7 @@ pub enum SubscriptionDeliveryState {
 #[cfg(test)]
 mod tests {
     use crate::subscriptions::{SubscriptionDeliveryState, Subscriptions};
+    use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
     #[test]

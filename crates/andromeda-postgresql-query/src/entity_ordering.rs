@@ -47,6 +47,7 @@ pub fn order_by_entity_identifier(select: &mut SelectStatement, identifier: Simp
 mod tests {
     use crate::entity_ordering::{order_by_entity_identifier, ordering_collation, sql_order};
     use andromeda_ngsi_ld_query::ordering::{collation::IcuCollation, sort_direction::SortDirection};
+    use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, Order, PostgresQueryBuilder, Query};
 
     fn ordered_by_identifier(collation: Option<&IcuCollation>, direction: SortDirection) -> String {

@@ -11,6 +11,7 @@ use andromeda_test_harness::{
     multi_broker::{BrokerEnvironmentKey, BrokerHandle, BrokerNodeDefaults, BrokerNodeSpec, MultiBrokerTopology},
     readiness::ReadinessPolicy,
 };
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::{net::SocketAddr, time::Duration};
 

@@ -48,6 +48,7 @@ pub fn advisory_xact_lock(key: SimpleExpr) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::advisory_lock::{advisory_unlock, advisory_xact_lock, try_advisory_lock};
+    use pretty_assertions::assert_eq;
     use sea_query::{Expr, PostgresQueryBuilder, Query};
 
     #[test]

@@ -67,6 +67,7 @@ pub enum NotificationDeliveries {
 #[cfg(test)]
 mod tests {
     use crate::notification::{NotificationDeliveries, NotificationEvents};
+    use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
     #[test]

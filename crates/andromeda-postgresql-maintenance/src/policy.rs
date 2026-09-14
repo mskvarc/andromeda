@@ -224,6 +224,7 @@ mod tests {
     use crate::policy::{DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, SafetyGates, TargetState, decide};
     use andromeda_postgresql_context_store::maintenance_config::{MaintenanceMode, MaintenanceProfile};
     use chrono::{Duration as ChronoDuration, Utc};
+    use pretty_assertions::assert_eq;
 
     fn qualifying(profile: PolicyProfile) -> DegradationSample {
         DegradationSample {

@@ -16,6 +16,7 @@ use crate::{
 use andromeda_test_client::response::TestResponse;
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
+use pretty_assertions::assert_eq;
 use std::time::Duration;
 use urlencoding::encode;
 

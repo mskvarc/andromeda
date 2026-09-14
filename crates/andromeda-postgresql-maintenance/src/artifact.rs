@@ -78,6 +78,7 @@ impl RecoveryArtifact {
 #[cfg(test)]
 mod tests {
     use crate::artifact::{ArtifactKind, RecoveryArtifact};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn documented_artifacts_for_allowlisted_indexes_are_recognized() {

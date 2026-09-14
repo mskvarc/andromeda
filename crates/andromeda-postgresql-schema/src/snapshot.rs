@@ -103,6 +103,7 @@ pub enum SnapshotNotificationOutbox {
 #[cfg(test)]
 mod tests {
     use crate::snapshot::{SnapshotNotificationOutbox, SnapshotPreparation, Snapshots};
+    use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
     #[test]

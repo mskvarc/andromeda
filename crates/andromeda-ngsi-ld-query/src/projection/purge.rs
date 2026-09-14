@@ -42,6 +42,7 @@ pub fn parse_attribute_list(raw: &str) -> Result<Vec<AttributeName>, QueryError>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn a_comma_separated_list_yields_one_name_per_entry() {

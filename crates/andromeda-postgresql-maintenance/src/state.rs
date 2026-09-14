@@ -445,6 +445,7 @@ const fn decision_label(decision: PolicyDecision) -> &'static str {
 mod tests {
     use crate::state::{RegisteredTenant, TenantId, least_recently_inspected_statement};
     use andromeda_tenancy::database_name::TenantDatabaseName;
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
     #[test]

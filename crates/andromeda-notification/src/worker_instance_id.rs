@@ -19,6 +19,7 @@ impl WorkerInstanceId {
 #[cfg(test)]
 mod tests {
     use crate::worker_instance_id::WorkerInstanceId;
+    use pretty_assertions::assert_eq;
     use uuid::Uuid;
 
     #[test]

@@ -78,6 +78,7 @@ mod value_type_utilization;
 mod vehicle_entity;
 
 use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
+use pretty_assertions::assert_eq;
 use reqwest::{Client, RequestBuilder, StatusCode, header::HeaderMap};
 use serde_json::Value;
 

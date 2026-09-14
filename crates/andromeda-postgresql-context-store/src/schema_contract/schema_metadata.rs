@@ -310,6 +310,7 @@ mod tests {
         migrations_digest::MigrationsDigest,
         schema_metadata::{StampedContract, applied_migrations_digest_statement, read_stamp_statement, refuse_on_mismatch, restamp_statement, stamp_statement},
     };
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
     use sqlx::migrate::{Migration, MigrationType, Migrator};
     use std::borrow::Cow;

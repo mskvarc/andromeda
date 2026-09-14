@@ -127,6 +127,7 @@ mod tests {
     use crate::entity::expiry::{entities_due_for_expiry_statement, entities_with_expired_attributes_statement};
     use andromeda_context_space::context_target::ContextTarget;
     use chrono::{TimeZone, Utc};
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
     use sea_query_sqlx::SqlxBinder;
 

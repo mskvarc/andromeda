@@ -97,6 +97,7 @@ fn no_reference_from(table: impl IntoTableRef, identity: impl IntoIden + Copy + 
 mod tests {
     use crate::write_record_release::{Ah, base_release, no_reference_from};
     use andromeda_postgresql_schema::temporal::AttributeHistory;
+    use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
 
     #[test]

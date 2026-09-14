@@ -182,6 +182,7 @@ impl EntityConfig {
 #[cfg(test)]
 mod tests {
     use super::{EntityConfig, EntityConfigError};
+    use pretty_assertions::assert_eq;
 
     fn valid_config() -> EntityConfig {
         EntityConfig {

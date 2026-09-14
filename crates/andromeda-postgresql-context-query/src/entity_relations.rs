@@ -156,6 +156,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
     use iri_rs::IriBuf;
+    use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
 
     fn empty_query() -> CompiledEntityQuery {

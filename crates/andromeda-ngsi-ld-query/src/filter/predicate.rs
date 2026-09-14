@@ -209,6 +209,7 @@ pub enum PatternPolarity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn set_membership_maps_to_the_equality_comparison_primitive() {

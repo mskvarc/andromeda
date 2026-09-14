@@ -42,6 +42,7 @@ impl WriteId {
 #[cfg(test)]
 mod tests {
     use crate::write_id::WriteId;
+    use pretty_assertions::assert_eq;
     use std::collections::HashSet;
 
     #[test]

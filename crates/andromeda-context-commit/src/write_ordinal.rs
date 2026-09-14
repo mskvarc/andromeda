@@ -91,6 +91,7 @@ pub struct WriteOrdinalOutOfRange;
 #[cfg(test)]
 mod tests {
     use crate::write_ordinal::{WriteOrdinal, WriteOrdinalOutOfRange};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn ordinals_follow_consequence_positions() {

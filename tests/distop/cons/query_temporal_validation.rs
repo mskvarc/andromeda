@@ -11,6 +11,7 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::{BAD_REQUEST_DATA, INVALID_REQUEST};
+use pretty_assertions::assert_eq;
 
 /// The whole-history temporal query window.
 const BEFORE_2030: &str = "timerel=before&timeAt=2030-01-01T00:00:00Z";

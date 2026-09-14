@@ -59,6 +59,7 @@ pub enum PostgresqlMaintenanceTargets {
 #[cfg(test)]
 mod tests {
     use crate::maintenance::{PostgresqlMaintenanceTargets, PostgresqlMaintenanceTenants};
+    use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
     #[test]

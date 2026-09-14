@@ -242,6 +242,7 @@ impl TemporalConfig {
 mod config_tests {
     use super::{TemporalAppendMode, TemporalConfig, TemporalConfigError};
     use crate::storage_policy::TemporalStoragePolicy;
+    use pretty_assertions::assert_eq;
     use std::num::NonZeroU32;
 
     fn valid() -> TemporalConfig {

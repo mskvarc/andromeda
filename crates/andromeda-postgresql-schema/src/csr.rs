@@ -117,6 +117,7 @@ pub enum RegistrationInformation {
 #[cfg(test)]
 mod tests {
     use crate::csr::{Csr, RegistrationInformation};
+    use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
     #[test]

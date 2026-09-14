@@ -212,6 +212,7 @@ mod tests {
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_ngsi_ld_query::filter::scalar::{Scalar, parse_date_time};
     use andromeda_postgresql_seaquery::literal::int_literal;
+    use pretty_assertions::assert_eq;
     use sea_query::{Alias, Condition, Expr as SeaExpr, PostgresQueryBuilder, Query, SimpleExpr, Value};
 
     /// A stand-in for the probe's `"cav"."value_object"` reference.

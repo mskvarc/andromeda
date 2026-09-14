@@ -221,6 +221,7 @@ impl EntityRepository {
 mod tests {
     use crate::entity::discovery::attribute_discovery::{attribute_info_statement, attribute_summary_statement};
     use andromeda_context_space::context_target::ContextTarget;
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
     use sea_query_sqlx::SqlxBinder;
 

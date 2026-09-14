@@ -140,6 +140,7 @@ impl headers::Header for NgsiLdContentRange {
 mod tests {
     use crate::ngsild_content_range::{NgsiLdContentRange, NgsiLdContentRangeError};
     use chrono::{DateTime, Utc};
+    use pretty_assertions::assert_eq;
     use std::str::FromStr;
 
     fn instant(raw: &str) -> DateTime<Utc> {

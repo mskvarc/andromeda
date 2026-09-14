@@ -86,6 +86,7 @@ pub enum TemporalAppendIntents {
 #[cfg(test)]
 mod tests {
     use crate::queue::{PendingSideEffects, TemporalAppendIntents, WriteRecords};
+    use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
     #[test]

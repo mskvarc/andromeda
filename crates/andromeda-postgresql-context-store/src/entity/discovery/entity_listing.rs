@@ -82,6 +82,7 @@ impl EntityRepository {
 #[cfg(test)]
 mod tests {
     use crate::entity::discovery::entity_listing::page_bound;
+    use pretty_assertions::assert_eq;
 
     /// A negative bound names no page at all, and clamping rather than wrapping
     /// is what keeps it from becoming an enormous unsigned one.

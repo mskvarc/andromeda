@@ -78,6 +78,7 @@ mod tests {
     use crate::join_traversal::{RetrievingJoin, traversal_bounds};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
+    use pretty_assertions::assert_eq;
     use std::num::NonZeroU32;
 
     /// Clause 4.5.23: `join=@none` is the absence of a join. It must not

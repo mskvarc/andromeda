@@ -58,6 +58,7 @@ pub enum EntityMapLinks {
 #[cfg(test)]
 mod tests {
     use crate::entity_map::{EntityMapEntries, EntityMapLinks, EntityMaps};
+    use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
     #[test]

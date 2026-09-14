@@ -11,6 +11,7 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use chrono::{Duration as ChronoDuration, Utc};
+use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::time::Duration;
 use tokio::time::sleep;

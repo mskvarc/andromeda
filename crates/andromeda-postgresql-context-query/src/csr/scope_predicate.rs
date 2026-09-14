@@ -74,6 +74,7 @@ fn pattern_regex(pattern: &ScopePattern) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
     fn render(raw: &str) -> String {

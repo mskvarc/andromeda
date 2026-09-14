@@ -43,6 +43,7 @@ pub trait DictionaryRelation: InternedName + FromStr<Err = NgsiLdReferenceError>
 #[cfg(test)]
 mod tests {
     use crate::dictionary_relation::DictionaryKind;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn dictionary_kinds_render_in_kebab_case() {

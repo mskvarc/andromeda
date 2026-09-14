@@ -26,6 +26,7 @@ pub(crate) fn window_ceiling(now: DateTime<Utc>, width: Option<TimeDelta>) -> Da
 mod tests {
     use crate::suppression_window::window_ceiling;
     use chrono::{DateTime, Duration, TimeDelta, TimeZone, Utc};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn the_ceiling_is_the_window_subtracted_from_the_current_instant() -> Result<(), &'static str> {

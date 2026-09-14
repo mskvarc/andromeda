@@ -120,6 +120,7 @@ pub fn rendered_entity_members(value: &Value) -> RenderedEntityMembers {
 mod tests {
     use super::*;
     use iri_rs::IriBuf;
+    use pretty_assertions::assert_eq;
     use serde_json::json;
 
     fn iri(value: &str) -> IriBuf {

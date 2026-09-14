@@ -14,6 +14,7 @@ use crate::{
     registration::CsrBuilder,
     topology::{self, BrokerRole},
 };
+use pretty_assertions::assert_eq;
 use std::time::Duration;
 use urlencoding::encode;
 

@@ -58,6 +58,7 @@ impl DeliveryAttemptCeiling {
 #[cfg(test)]
 mod tests {
     use crate::delivery_attempt_ceiling::{DeliveryAttemptCeiling, DeliveryAttemptCeilingError};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn a_non_positive_ceiling_is_rejected() {

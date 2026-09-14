@@ -374,6 +374,7 @@ mod tests {
     };
     use bytes::Bytes;
     use http::{Method, StatusCode};
+    use pretty_assertions::assert_eq;
     use std::{net::SocketAddr, time::Duration};
     use url::Host;
 

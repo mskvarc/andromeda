@@ -141,6 +141,7 @@ pub enum PeriodicScheduleError {
 #[cfg(test)]
 mod tests {
     use crate::periodic_trigger::{InitialExecution, MissedTickPolicy, PeriodicSchedule, PeriodicScheduleError};
+    use pretty_assertions::assert_eq;
     use std::time::Duration;
 
     #[test]

@@ -203,6 +203,7 @@ fn matching_scope_events(
 mod tests {
     use super::*;
     use andromeda_postgresql_schema::current::{Entities, EntitySearch};
+    use pretty_assertions::assert_eq;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
 
     fn scope(raw: &str) -> ScopeQuery {

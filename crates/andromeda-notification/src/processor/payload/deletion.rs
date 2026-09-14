@@ -196,6 +196,7 @@ mod tests {
     use super::{inject_deleted_attributes, nullify_attribute_instance};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+    use pretty_assertions::assert_eq;
     use serde_json::json;
     use std::slice;
 

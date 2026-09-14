@@ -256,6 +256,7 @@ mod tests {
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use chrono::TimeZone;
     use iri_rs::IriBuf;
+    use pretty_assertions::assert_eq;
     use uuid::Uuid;
 
     fn instant() -> DateTime<Utc> {

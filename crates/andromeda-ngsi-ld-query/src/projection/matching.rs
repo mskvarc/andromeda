@@ -32,6 +32,7 @@ mod tests {
     use super::*;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use iri_rs::IriBuf;
+    use pretty_assertions::assert_eq;
 
     fn iri(name: &str) -> IriBuf {
         IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI")

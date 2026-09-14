@@ -17,6 +17,7 @@ use crate::{
     registration::{CsrBuilder, csr_basic},
     topology::{self, BrokerRole},
 };
+use pretty_assertions::{assert_eq, assert_ne};
 use reqwest::Method;
 use serde_json::json;
 

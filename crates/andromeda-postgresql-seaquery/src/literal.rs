@@ -53,6 +53,7 @@ pub fn int_literal(value: i64) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn an_apostrophe_is_doubled() {

@@ -18,6 +18,7 @@ use andromeda_test_client::{tenant_name::TenantName, test_client::TestClient};
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;

@@ -41,6 +41,7 @@ impl SideEffectJobId {
 #[cfg(test)]
 mod tests {
     use crate::side_effect_job_id::SideEffectJobId;
+    use pretty_assertions::assert_eq;
     use std::collections::HashSet;
 
     #[test]

@@ -288,6 +288,7 @@ mod tests {
         registered_tenants_query,
         tenant_insert,
     };
+    use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, SelectStatement};
 
     fn select_sql(statement: &SelectStatement) -> String {

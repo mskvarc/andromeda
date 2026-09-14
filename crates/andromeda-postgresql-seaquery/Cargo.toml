@@ -13,3 +13,4 @@ sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+pretty_assertions = "1.4.1"

@@ -133,6 +133,7 @@ enum MaintenanceFunction {
 #[cfg(test)]
 mod tests {
     use crate::maintenance::{drop_index_concurrently, reindex_index_concurrently, session_settings, vacuum_non_truncating};
+    use pretty_assertions::assert_eq;
     use sea_query::Alias;
 
     #[test]

@@ -44,6 +44,7 @@ pub struct MaintenanceConfig {
 #[cfg(test)]
 mod tests {
     use crate::maintenance_config::{MaintenanceConfig, MaintenanceMode, MaintenanceProfile};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn omitted_maintenance_configuration_is_disabled_and_conservative() {

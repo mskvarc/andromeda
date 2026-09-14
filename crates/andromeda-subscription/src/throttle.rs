@@ -31,6 +31,7 @@ pub fn ceiling_for_throttle(now: DateTime<Utc>, throttling_secs: Option<f64>) ->
 mod tests {
     use crate::throttle::ceiling_for_throttle;
     use chrono::{Duration, TimeZone, Utc};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn absent_or_non_positive_throttling_has_no_ceiling() -> Result<(), &'static str> {

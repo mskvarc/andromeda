@@ -17,6 +17,7 @@ use crate::{
     unique_id,
     vehicle_temporal_representation,
 };
+use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 use serde_json::{Number, json};
 use serial_test::serial;

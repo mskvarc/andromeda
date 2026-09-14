@@ -10,6 +10,7 @@ use crate::{
 };
 use andromeda_test_client::tenant_name::TenantName;
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
 /// Create the registration and return its retrieved representation.

@@ -31,6 +31,7 @@ compact_code_registry! {
 #[cfg(test)]
 mod tests {
     use crate::scope_value_kind::ScopeValueKind;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn the_tombstone_is_permanently_reserved_at_zero() {

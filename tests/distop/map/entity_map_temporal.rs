@@ -12,6 +12,7 @@ use crate::{
 };
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::problem_detail::BAD_REQUEST_DATA;
+use pretty_assertions::assert_eq;
 
 /// Create a temporal `Vehicle` on the front broker.
 async fn seed_temporal(client: &TestClient, id: &str, speed: i64) {

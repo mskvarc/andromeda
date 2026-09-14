@@ -353,6 +353,7 @@ fn sys_attrs_by_ids_query(target: &ContextTarget, ids: &[&str]) -> SelectStateme
 mod tests {
     use crate::entity::read::{payload_by_id_query, payloads_by_ids_query, snapshot_by_id_query, sys_attrs_by_id_query, sys_attrs_by_ids_query};
     use andromeda_context_space::context_target::ContextTarget;
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
     fn target() -> ContextTarget {

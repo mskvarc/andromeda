@@ -15,6 +15,7 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::{BAD_REQUEST_DATA, RESOURCE_NOT_FOUND};
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::time::Duration;
 

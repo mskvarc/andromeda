@@ -347,6 +347,7 @@ mod tests {
     use crate::{candidate::IndexTarget, controller::highest_priority_probe_candidate, inspection::IndexSize, policy::PolicyProfile, state::IndexProbeState};
     use andromeda_postgresql_context_store::maintenance_config::MaintenanceProfile;
     use chrono::{Duration, Utc};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn the_trigram_gin_is_never_selected_for_direct_probe() {

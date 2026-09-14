@@ -25,6 +25,7 @@ impl DictionaryRelation for AttributeName {
 mod tests {
     use crate::dictionary_relation::{DictionaryKind, DictionaryRelation};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn attribute_names_are_interned_in_the_attribute_names_relation() {

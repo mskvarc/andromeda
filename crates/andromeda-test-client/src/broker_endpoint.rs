@@ -104,6 +104,7 @@ impl BrokerEndpoint {
 #[cfg(test)]
 mod tests {
     use crate::broker_endpoint::BrokerEndpoint;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn endpoint_normalizes_trailing_slash_and_joins_relative_paths() {

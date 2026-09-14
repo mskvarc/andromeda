@@ -14,6 +14,7 @@ use crate::{
 };
 use andromeda_test_fixtures::problem_detail::{BAD_REQUEST_DATA, CONFLICT};
 use axum::http::Method;
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::time::Duration;
 

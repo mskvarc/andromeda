@@ -42,6 +42,7 @@ pub struct StreamKeyOutOfRange;
 #[cfg(test)]
 mod tests {
     use crate::stream_key::{StreamKey, StreamKeyOutOfRange};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn a_stored_key_round_trips() {

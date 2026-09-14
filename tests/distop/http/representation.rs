@@ -12,6 +12,7 @@ use crate::{
     oracle::{assert_status, json_body},
     topology::{self, BrokerRole},
 };
+use pretty_assertions::assert_eq;
 use reqwest::Method;
 use serde_json::json;
 use std::time::Duration;

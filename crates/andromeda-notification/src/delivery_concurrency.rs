@@ -65,6 +65,7 @@ impl DeliveryConcurrency {
 #[cfg(test)]
 mod tests {
     use crate::delivery_concurrency::{DeliveryConcurrency, DeliveryConcurrencyError};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn zero_concurrency_is_rejected() {

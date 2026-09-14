@@ -195,6 +195,7 @@ pub fn escape_jsonpath(jsonpath: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
 
     #[test]

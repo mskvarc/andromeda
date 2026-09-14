@@ -109,6 +109,7 @@ impl SnapshotConfig {
 #[cfg(test)]
 mod tests {
     use super::{SnapshotConfig, SnapshotConfigError};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn zero_preparation_concurrency_is_rejected() {

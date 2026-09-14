@@ -99,6 +99,7 @@ pub struct SnapshotPatch {
 #[cfg(test)]
 mod tests {
     use crate::snapshot_patch::{MergePatchValue, SnapshotPatch};
+    use pretty_assertions::assert_eq;
     use serde_json::json;
 
     #[test]

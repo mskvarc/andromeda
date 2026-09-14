@@ -42,6 +42,7 @@ mod tests {
         temporal::TemporalEntities,
     };
     use iri_rs::IriBuf;
+    use pretty_assertions::assert_eq;
     use sea_query::{Condition, Expr, PostgresQueryBuilder, Query, SimpleExpr};
 
     fn iri(value: &str) -> IriBuf {

@@ -130,6 +130,7 @@ mod tests {
         worker_instance_id::WorkerInstanceId,
     };
     use chrono::{DateTime, Utc};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn zero_second_lease_term_is_rejected() {

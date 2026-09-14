@@ -65,6 +65,7 @@ pub struct NotificationEvent {
 #[cfg(test)]
 mod tests {
     use crate::notification_event::NotificationEventId;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn a_notification_event_id_reports_its_raw_value() {

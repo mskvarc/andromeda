@@ -15,6 +15,7 @@ use crate::{
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
 /// Create a subscription against a source and drain the initial forwarded create,

@@ -303,6 +303,7 @@ fn scope_history_insert_sql(target: &ContextTarget) -> Result<String, TemporalSt
 mod tests {
     use crate::scope_history_write::{scope_history_dedup_sql, scope_history_insert_sql};
     use andromeda_context_space::context_target::ContextTarget;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn a_scope_row_hangs_off_the_temporal_catalogue_and_never_off_current_state() {

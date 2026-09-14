@@ -191,6 +191,7 @@ macro_rules! compact_code_registry {
         #[cfg(test)]
         /// The invariants that make this registry's numbers safe to persist.
         mod registry_stability {
+            use pretty_assertions::assert_eq;
             use super::$name;
             use $crate::registry::frozen_prefix_digest;
 
@@ -247,6 +248,7 @@ macro_rules! compact_code_registry {
 #[cfg(test)]
 mod tests {
     use crate::registry::{UnknownCompactCode, frozen_prefix_digest};
+    use pretty_assertions::{assert_eq, assert_ne};
 
     #[test]
     fn an_unknown_code_names_the_registry_that_refused_it() {

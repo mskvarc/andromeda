@@ -14,6 +14,7 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
+use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::time::Duration;
 

@@ -68,6 +68,7 @@ impl ServerConfig {
 #[cfg(test)]
 mod tests {
     use super::{ServerConfig, ServerConfigError};
+    use pretty_assertions::assert_eq;
     use std::net::IpAddr;
 
     #[test]

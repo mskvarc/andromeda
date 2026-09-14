@@ -207,6 +207,7 @@ mod tests {
     };
     use chrono::{DateTime, Utc};
     use iri_rs::IriBuf;
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
     /// A built CSR discovery rendered with its values inlined: the paginated

@@ -10,6 +10,7 @@ use crate::{
     oracle::{assert_status, entity_map_header, json_body},
     topology::{self, BrokerRole},
 };
+use pretty_assertions::assert_eq;
 use reqwest::Method;
 use serde_json::json;
 

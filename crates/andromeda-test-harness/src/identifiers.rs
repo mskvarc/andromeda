@@ -145,6 +145,7 @@ pub enum IdentifierError {
 #[cfg(test)]
 mod tests {
     use crate::identifiers::{ResourceKind, ResourceLabel, TestIdentifiers, TestSuiteName};
+    use pretty_assertions::assert_ne;
 
     #[test]
     fn allocators_are_unique_and_resource_namespaces_are_explicit() {

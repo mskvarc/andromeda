@@ -12,6 +12,7 @@ use crate::{
 };
 use andromeda_test_client::{response::TestResponse, tenant_name::TenantName};
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
+use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::time::Duration;
 

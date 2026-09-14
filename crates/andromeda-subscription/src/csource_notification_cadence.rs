@@ -44,6 +44,7 @@ impl CsourceNotificationCadence {
 mod tests {
     use crate::{compiled::CompiledCsrSubscription, csource_notification_cadence::CsourceNotificationCadence};
     use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
+    use pretty_assertions::assert_eq;
     use url::Url;
 
     fn subscription(time_interval_secs: Option<f64>) -> CompiledCsrSubscription {

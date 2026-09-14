@@ -82,6 +82,7 @@ impl TemporalIntentRetryPolicy {
 mod tests {
     use crate::intent_retry_policy::{ERROR_SUMMARY_LIMIT, RetryCeilingBelowBase, TemporalIntentRetryPolicy};
     use chrono::{TimeDelta, TimeZone, Utc};
+    use pretty_assertions::assert_eq;
     use std::{num::NonZeroU32, time::Duration};
 
     fn policy() -> TemporalIntentRetryPolicy {

@@ -32,6 +32,7 @@ use crate::{
     vehicle_temporal_vocab_property,
     vehicle_temporal_with_scope,
 };
+use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serial_test::serial;
 

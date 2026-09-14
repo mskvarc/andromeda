@@ -270,6 +270,7 @@ pub fn write_null(buf: &mut Vec<u8>) {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn header_layout_matches_pgcopy_spec() {

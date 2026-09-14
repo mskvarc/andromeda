@@ -154,6 +154,7 @@ mod tests {
         error::QueryError,
         filter::value_path::{MAX_SUB_ATTRIBUTE_DEPTH, parse_attribute_path},
     };
+    use pretty_assertions::assert_eq;
 
     /// The names of a parsed path, as the client spelled them.
     fn spelled(text: &str) -> (String, Vec<String>, Vec<String>) {

@@ -18,6 +18,7 @@ pub fn create_database(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use crate::schema_ddl::database::create_database;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn the_name_is_quoted_as_an_identifier() {

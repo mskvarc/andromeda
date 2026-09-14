@@ -36,6 +36,7 @@ use crate::{
     vehicle_temporal_twenty_instances,
     vehicle_temporal_with_location,
 };
+use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 use serial_test::serial;

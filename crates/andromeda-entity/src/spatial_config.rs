@@ -65,6 +65,7 @@ impl SpatialConfig {
 #[cfg(test)]
 mod tests {
     use super::{SpatialConfig, SpatialConfigError};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn zero_capacity_is_rejected_by_the_owner() {

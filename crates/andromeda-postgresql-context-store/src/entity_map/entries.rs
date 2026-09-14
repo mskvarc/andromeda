@@ -256,6 +256,7 @@ pub(crate) async fn read_links(pool: &PgPool, id: &Uri) -> Result<Vec<(String, S
 #[cfg(test)]
 mod tests {
     use crate::entity_map::entries::{entries_delete, entries_insert_sql, link_upsert, links_insert_sql};
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
     #[test]

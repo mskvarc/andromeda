@@ -48,6 +48,7 @@ pub enum SchemaMetadata {
 #[cfg(test)]
 mod tests {
     use crate::tenancy::{SchemaMetadata, Tenants};
+    use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
     #[test]

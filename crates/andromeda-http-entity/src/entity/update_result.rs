@@ -62,6 +62,7 @@ fn body(requested: &[AttributeName], not_updated: &[AttributeName], reason: NotU
 mod tests {
     use crate::entity::update_result::{NotUpdatedReason, body};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use pretty_assertions::assert_eq;
     use serde_json::json;
 
     fn attribute(iri: &str) -> AttributeName {

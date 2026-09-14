@@ -53,6 +53,7 @@ pub fn min_attribute_expires_at(expanded: &Value) -> Option<DateTime<Utc>> {
 mod tests {
     use crate::expanded::attribute_expiry::{instance_expires_at, min_attribute_expires_at};
     use chrono::{DateTime, Utc};
+    use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
 
     fn instant(raw: &str) -> DateTime<Utc> {

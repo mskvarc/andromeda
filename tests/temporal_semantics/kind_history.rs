@@ -17,6 +17,7 @@ use crate::{
     unique_id,
     update_entity_attributes,
 };
+use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 use serial_test::serial;

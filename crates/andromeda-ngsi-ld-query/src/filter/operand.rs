@@ -165,6 +165,7 @@ mod tests {
         predicate::Predicate,
         scalar::{CompareValue, Scalar},
     };
+    use pretty_assertions::assert_eq;
 
     /// The equality operand of a filter holding one predicate.
     fn equality_operand(q: &str) -> CompareValue {

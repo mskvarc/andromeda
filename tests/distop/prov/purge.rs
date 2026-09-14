@@ -17,6 +17,7 @@ use crate::{
 };
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use axum::http::Method;
+use pretty_assertions::assert_eq;
 use serde_json::json;
 
 /// The JSON-LD `Link` header carrying the compound test context for a purge

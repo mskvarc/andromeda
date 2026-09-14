@@ -19,6 +19,7 @@ use crate::{
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::problem_detail::RESOURCE_NOT_FOUND;
 use axum::http::Method;
+use pretty_assertions::assert_eq;
 use serde_json::Value;
 
 /// Seed a purely-local temporal entity, bypassing forwarding.

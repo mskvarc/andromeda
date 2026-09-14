@@ -97,6 +97,7 @@ impl TenancyConfig {
 mod config_tests {
     use super::{TenancyConfig, TenancyConfigError};
     use crate::db_name_prefix::DbNamePrefix;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn zero_runtime_cache_capacity_is_rejected() {

@@ -12,6 +12,7 @@ pub enum ContextRemoval {
 #[cfg(test)]
 mod tests {
     use crate::removal::ContextRemoval;
+    use pretty_assertions::assert_ne;
 
     #[test]
     fn delete_and_reload_are_distinct_commands() {

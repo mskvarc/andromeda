@@ -43,6 +43,7 @@ fn expand_children<'a, E: TermExpander>(
 mod tests {
     use super::*;
     use iri_rs::IriBuf;
+    use pretty_assertions::assert_eq;
     use std::future::ready;
 
     struct PrefixExpander;

@@ -14,6 +14,7 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::{BAD_REQUEST_DATA, INVALID_REQUEST};
+use pretty_assertions::assert_eq;
 use reqwest::Method;
 use serde_json::json;
 use std::time::Duration;

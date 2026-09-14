@@ -132,6 +132,7 @@ pub fn set_chunk_time_interval(hypertable: &str, days: SimpleExpr) -> SimpleExpr
 #[cfg(test)]
 mod tests {
     use crate::timescale::{chunk_interval_statement, columnstore_policy_statement, drop_chunks, set_chunk_time_interval};
+    use pretty_assertions::assert_eq;
     use sea_query::{Expr, PostgresQueryBuilder, Query};
 
     #[test]

@@ -37,6 +37,7 @@ pub fn external_placeholder(index: usize) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::placeholder::external_placeholder;
+    use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
 
     fn render(expr: sea_query::SimpleExpr) -> String {

@@ -34,6 +34,7 @@ pub enum JsonldContexts {
 #[cfg(test)]
 mod tests {
     use crate::jsonld::JsonldContexts;
+    use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
     #[test]

@@ -11,6 +11,7 @@ use crate::{
 };
 use andromeda_test_fixtures::problem_detail::{BAD_REQUEST_DATA, RESOURCE_NOT_FOUND};
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
+use pretty_assertions::assert_eq;
 use serde_json::json;
 
 /// Create a `Vehicle` under the topology's own prefix and an `EntityMap` over

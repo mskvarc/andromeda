@@ -153,6 +153,7 @@ impl RegistrationStore for PostgresRegistrationStore {
 mod tests {
     use crate::csource_registration::registration_store::mutation_outcome;
     use andromeda_registration::store::mutation::RegistrationMutation;
+    use pretty_assertions::assert_eq;
 
     /// Zero affected rows preserve the policy-level missing outcome.
     #[test]

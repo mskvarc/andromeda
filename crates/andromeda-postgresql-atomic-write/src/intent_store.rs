@@ -410,6 +410,7 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_postgresql_seaquery::unnest::apply_column_alias;
     use chrono::Utc;
+    use pretty_assertions::assert_eq;
     use sea_query::{Alias, PostgresQueryBuilder};
     use serde_json::json;
     use uuid::Uuid;

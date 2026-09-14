@@ -108,6 +108,7 @@ fn is_zero(duration: &Duration) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn a_period_of_one_hour_renders_as_an_iso_8601_interval() {

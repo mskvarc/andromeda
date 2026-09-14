@@ -53,6 +53,7 @@ pub fn collate(expr: SimpleExpr, collation: &PostgresCollation) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::collation::{PostgresCollation, collate};
+    use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
 
     fn render(expr: SimpleExpr) -> String {

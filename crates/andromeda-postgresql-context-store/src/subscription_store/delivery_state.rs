@@ -190,6 +190,7 @@ mod tests {
     use andromeda_postgresql_schema::subscriptions::Subscriptions;
     use andromeda_subscription::notification_slot::NotificationSlotGate;
     use chrono::{TimeZone, Utc};
+    use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
 
     fn subscription() -> Uri {

@@ -3,6 +3,7 @@
 use crate::fixtures::{FedRole, assert_status, body, broker, entity, registration, topology};
 use andromeda_test_client::{header::jsonld_link_header, tenant_name::TenantName};
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
+use pretty_assertions::assert_eq;
 use serial_test::serial;
 
 #[tokio::test]

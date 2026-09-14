@@ -53,6 +53,7 @@ fn keys_by_ids_query(target: &ContextTarget, ids: &[&str]) -> SelectStatement {
 mod tests {
     use crate::entity::keys::keys_by_ids_query;
     use andromeda_context_space::context_target::ContextTarget;
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
     #[test]

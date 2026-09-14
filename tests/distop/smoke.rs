@@ -8,6 +8,7 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
+use pretty_assertions::assert_eq;
 
 /// Each broker in the compose stack answers `GET /info/sourceIdentity` with its
 /// own distinct `contextSourceAlias` — a direct check that the three federation

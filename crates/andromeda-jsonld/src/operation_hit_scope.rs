@@ -72,6 +72,7 @@ pub(crate) fn record_access(url: &IriBuf) -> HitAccounting {
 mod tests {
     use crate::operation_hit_scope::{HitAccounting, record_access, run_in_operation_scope};
     use iri_rs::IriBuf;
+    use pretty_assertions::assert_eq;
 
     fn url(text: &str) -> IriBuf {
         IriBuf::new(text.to_string()).expect("valid URL")

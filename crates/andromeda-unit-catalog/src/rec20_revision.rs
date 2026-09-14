@@ -51,6 +51,7 @@ pub const REC20_REVISION: Rec20Revision = Rec20Revision(17);
 #[cfg(test)]
 mod tests {
     use crate::rec20_revision::{REC20_REVISION, Rec20Revision, Rec20RevisionOutOfRange};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn the_catalog_release_records_the_revision_of_its_source_artifact() {

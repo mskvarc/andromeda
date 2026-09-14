@@ -190,6 +190,7 @@ impl MaintenanceTarget {
 #[cfg(test)]
 mod tests {
     use crate::candidate::{HeapTarget, IndexTarget};
+    use pretty_assertions::assert_eq;
     use std::collections::HashSet;
 
     #[test]

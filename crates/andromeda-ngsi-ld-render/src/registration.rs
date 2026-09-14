@@ -168,6 +168,7 @@ mod tests {
     use andromeda_http_headers::language::LanguageFilter;
     use andromeda_ngsi_ld_query::projection::grammar::parse_projection_list;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+    use pretty_assertions::assert_eq;
     use serde_json::json;
 
     fn registration() -> serde_json::Value {

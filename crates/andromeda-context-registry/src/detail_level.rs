@@ -12,6 +12,7 @@ pub enum ContextDetailLevel {
 #[cfg(test)]
 mod tests {
     use crate::detail_level::ContextDetailLevel;
+    use pretty_assertions::assert_ne;
 
     #[test]
     fn summary_and_full_are_distinct_projections() {

@@ -7,6 +7,7 @@
 //! - Non-existent entity
 
 use crate::{building_simple_attributes, clean_database, client, create_entity, delete_entity, get_entity, request_method_on_collection, unique_id};
+use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 use serial_test::serial;
 

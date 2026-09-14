@@ -13,6 +13,7 @@ use andromeda_test_fixtures::{
 };
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
 /// A never-contacted notification sink for validation rows.

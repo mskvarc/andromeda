@@ -7,6 +7,7 @@
 //! - Update with different attribute types
 
 use crate::{TEST_SUITE_CONTEXT, clean_database, client, create_temporal_entity, get_temporal_entity, unique_id};
+use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 use serial_test::serial;

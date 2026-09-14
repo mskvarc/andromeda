@@ -126,6 +126,7 @@ compact_code_registry! {
 #[cfg(test)]
 mod tests {
     use crate::csr_operation::CsrOperationCode;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn the_registry_covers_every_operation_and_group_the_specification_defines() {

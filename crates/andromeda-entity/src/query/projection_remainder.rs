@@ -70,6 +70,7 @@ mod tests {
     use andromeda_ngsi_ld_model::entity::Entity;
     use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
     use iri_rs::IriBuf;
+    use pretty_assertions::assert_eq;
     use serde_json::json;
 
     fn iri(value: &str) -> IriBuf {

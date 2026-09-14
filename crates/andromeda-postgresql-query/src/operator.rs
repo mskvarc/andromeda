@@ -51,6 +51,7 @@ pub fn pattern(lhs: SimpleExpr, polarity: PatternPolarity, rhs: SimpleExpr) -> S
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_query::filter::predicate::{OrderingOp, SetMembership};
+    use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
 
     fn render(expr: SimpleExpr) -> String {

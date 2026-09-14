@@ -11,6 +11,7 @@ use andromeda_test_fixtures::{
     context::COMPOUND_CONTEXT,
     problem_detail::{BAD_REQUEST_DATA, RESOURCE_NOT_FOUND},
 };
+use pretty_assertions::assert_eq;
 
 /// A malformed registration id is rejected with `400 BadRequestData` before any
 /// lookup (clause 5.10.1). Confirms REQ-DISC-13.

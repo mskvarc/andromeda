@@ -36,6 +36,7 @@ pub fn remove_columnstore_policy(hypertable: HypertableName) -> String {
 #[cfg(test)]
 mod tests {
     use crate::schema_ddl::timescale_policy::{HypertableName, add_columnstore_policy, remove_columnstore_policy};
+    use pretty_assertions::assert_eq;
     use std::num::NonZeroU32;
 
     #[test]

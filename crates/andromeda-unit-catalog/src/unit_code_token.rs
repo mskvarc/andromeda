@@ -52,6 +52,7 @@ pub struct UnitCodeTokenMalformed;
 #[cfg(test)]
 mod tests {
     use crate::unit_code_token::{UnitCodeToken, UnitCodeTokenMalformed};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn a_three_character_code_is_accepted() {

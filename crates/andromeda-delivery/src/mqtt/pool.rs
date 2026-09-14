@@ -299,6 +299,7 @@ mod tests {
         },
     };
     use backon::ExponentialBuilder;
+    use pretty_assertions::assert_eq;
     use std::{
         future::pending,
         str::FromStr,

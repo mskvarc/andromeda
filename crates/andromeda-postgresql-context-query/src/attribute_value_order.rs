@@ -388,6 +388,7 @@ mod tests {
         ordering::sort_direction::SortDirection,
     };
     use andromeda_postgresql_seaquery::collation::PostgresCollation;
+    use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
 
     const SPEED: &str = "https://example.com/speed";

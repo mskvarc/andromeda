@@ -92,6 +92,7 @@ mod tests {
         ordering::{collation::IcuCollation, parameters::OrderingParameters, sort_direction::SortDirection},
         temporal::ordering::TemporalEntityOrdering,
     };
+    use pretty_assertions::assert_eq;
 
     fn parameters(order_by: &str) -> OrderingParameters {
         serde_json::from_value(serde_json::json!({"orderBy": order_by})).expect("a well-formed orderBy")

@@ -308,6 +308,7 @@ mod tests {
         lock_temporal_entity_statement,
     };
     use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
     fn key() -> TemporalEntityKey {

@@ -8,6 +8,7 @@ use crate::{
     registration::CsrBuilder,
     topology::{self, BrokerRole},
 };
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use urlencoding::encode;
 

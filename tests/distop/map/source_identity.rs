@@ -8,6 +8,7 @@ use crate::{
 };
 use andromeda_test_client::tenant_name::TenantName;
 use axum::http::Method;
+use pretty_assertions::assert_eq;
 
 /// Retrieving the source identity returns a `ContextSourceIdentity` (clause 5.15.1).
 /// Confirms REQ-MAP-157.

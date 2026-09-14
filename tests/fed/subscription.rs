@@ -5,6 +5,7 @@ use crate::{
     notification_adapter::NotificationAdapter,
 };
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
+use pretty_assertions::assert_eq;
 use serde_json::json;
 use serial_test::serial;
 use std::time::Duration;

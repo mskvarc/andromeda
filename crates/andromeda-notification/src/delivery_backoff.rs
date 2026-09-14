@@ -17,6 +17,7 @@ pub fn backoff_seconds(base_backoff_secs: i64, attempt_count: i32, max_attempts:
 #[cfg(test)]
 mod tests {
     use crate::delivery_backoff::backoff_seconds;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn the_first_attempt_waits_exactly_the_base_backoff() {

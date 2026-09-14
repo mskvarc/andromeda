@@ -81,6 +81,7 @@ impl EntitySpatialSnapshotSource for EntityRepository {
 mod tests {
     use crate::entity::{port::spatial_snapshot::location_snapshots_statement, repo::EntityRepository};
     use andromeda_entity::port::spatial_snapshot::EntitySpatialSnapshotSource;
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
     use sea_query_sqlx::SqlxBinder;
 

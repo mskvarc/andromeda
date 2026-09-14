@@ -16,6 +16,7 @@ use crate::{
 };
 use andromeda_test_client::header::jsonld_link_header;
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
+use pretty_assertions::assert_eq;
 use reqwest::Method;
 use serde_json::json;
 

@@ -76,6 +76,7 @@ fn operand(value: &SnapshotValue) -> SimpleExpr {
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_model::snapshot_filter::parse_snapshot_q;
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
     fn sql_of(raw: &str) -> String {

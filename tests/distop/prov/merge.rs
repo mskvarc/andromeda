@@ -17,6 +17,7 @@ use crate::{
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::problem_detail::{CONFLICT, RESOURCE_NOT_FOUND};
 use axum::http::Method;
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
 /// A `Vehicle` carrying a `brandName` and a `speed`.

@@ -55,6 +55,7 @@ pub struct SubscriptionKeyOutOfRange;
 #[cfg(test)]
 mod tests {
     use crate::subscription_key::{SubscriptionKey, SubscriptionKeyOutOfRange};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn a_stored_key_round_trips() {

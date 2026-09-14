@@ -15,6 +15,7 @@ use crate::{
     example_context::{HostedExampleContexts, hosted_contexts},
     get_json,
 };
+use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::Value;
 use serial_test::serial;

@@ -13,6 +13,7 @@ use crate::{
     registration::CsrBuilder,
     topology,
 };
+use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::time::Duration;
 

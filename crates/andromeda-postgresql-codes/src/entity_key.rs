@@ -48,6 +48,7 @@ pub struct EntityKeyOutOfRange;
 #[cfg(test)]
 mod tests {
     use crate::entity_key::{EntityKey, EntityKeyOutOfRange};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn a_stored_key_round_trips() {

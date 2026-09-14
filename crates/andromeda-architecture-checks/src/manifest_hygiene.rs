@@ -178,6 +178,7 @@ fn is_full_semver(version: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::manifest_hygiene::{check_document, is_full_semver};
+    use pretty_assertions::assert_eq;
     use toml_edit::DocumentMut;
 
     fn violations(manifest: &str) -> Vec<String> {

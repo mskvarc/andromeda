@@ -158,6 +158,7 @@ fn looks_like_media_type(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::raw_constant::{raw_constant, scan_items};
+    use pretty_assertions::assert_eq;
     use syn::Item;
 
     /// Parse one fixture declaration.

@@ -10,6 +10,7 @@
 //! it, and a non-empty `omit` drops whichever of them it lists.
 
 use crate::{TEST_SUITE_CONTEXT, clean_database, client, create_temporal_entity, query_temporal_entities, unique_id, vehicle_temporal_august};
+use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::Value;
 use serial_test::serial;

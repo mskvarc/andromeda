@@ -212,6 +212,7 @@ mod tests {
         q_predicate::projection::compile,
     };
     use andromeda_postgresql_schema::current::Entities;
+    use pretty_assertions::assert_eq;
     use sea_query::{Alias, Condition, PostgresQueryBuilder, Query};
 
     fn render(q: &str) -> String {

@@ -275,6 +275,7 @@ fn first_string_literal(mac: &Macro) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use crate::raw_sql::{RawSqlVisitor, is_sanctioned};
+    use pretty_assertions::assert_eq;
     use syn::visit::Visit;
 
     fn details(source: &str) -> Vec<String> {

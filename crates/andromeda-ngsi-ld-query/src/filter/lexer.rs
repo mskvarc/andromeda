@@ -287,6 +287,7 @@ fn is_identifier_char(current: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     fn lex(input: &str) -> Vec<Token> {
         tokenize(input).expect("tokenises")

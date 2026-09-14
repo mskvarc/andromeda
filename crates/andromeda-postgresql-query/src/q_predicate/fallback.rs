@@ -184,6 +184,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::filter::{expression::Expr, parser, path::QueryPath, predicate::Predicate, scalar::Scalar};
     use andromeda_postgresql_schema::current::Entities;
+    use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
 
     const SPEED: &str = "https://example.com/speed";

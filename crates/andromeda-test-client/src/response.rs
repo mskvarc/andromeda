@@ -105,6 +105,7 @@ mod tests {
     use crate::response::{JsonBodyError, TestResponse};
     use bytes::Bytes;
     use http::{HeaderMap, StatusCode};
+    use pretty_assertions::assert_eq;
     use serde_json::Value;
 
     #[test]

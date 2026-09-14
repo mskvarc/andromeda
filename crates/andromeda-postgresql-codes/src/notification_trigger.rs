@@ -35,6 +35,7 @@ compact_code_registry! {
 #[cfg(test)]
 mod tests {
     use crate::notification_trigger::NotificationTriggerCode;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn the_registry_covers_every_trigger_condition_the_specification_defines() {

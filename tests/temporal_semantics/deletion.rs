@@ -23,6 +23,7 @@ use crate::{
     stored_history::{current_projection_rows, orphaned_temporal_rows, stored_attribute_history, stored_history, temporal_catalog_rows},
     unique_id,
 };
+use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use serial_test::serial;

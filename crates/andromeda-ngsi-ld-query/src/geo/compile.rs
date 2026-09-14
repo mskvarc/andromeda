@@ -37,6 +37,7 @@ pub async fn compile_geo_query(input: Option<&GeoQueryInput>, expander: &impl Te
 mod tests {
     use super::*;
     use iri_rs::IriBuf;
+    use pretty_assertions::assert_eq;
     use std::future::{Future, ready};
 
     struct PrefixExpander;

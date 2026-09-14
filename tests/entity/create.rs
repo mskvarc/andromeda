@@ -34,6 +34,7 @@ use crate::{
     get_entity,
     unique_id,
 };
+use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 use serial_test::serial;

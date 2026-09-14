@@ -12,6 +12,7 @@ use andromeda_test_fixtures::{
     context::COMPOUND_CONTEXT,
     problem_detail::{ALREADY_EXISTS, BAD_REQUEST_DATA, LD_CONTEXT_NOT_AVAILABLE},
 };
+use pretty_assertions::assert_eq;
 use serde_json::json;
 
 /// A never-contacted notification sink for creation rows that only assert on the

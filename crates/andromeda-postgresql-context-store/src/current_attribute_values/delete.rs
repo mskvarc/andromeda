@@ -164,6 +164,7 @@ fn delete_instances_sql(target: &ContextTarget) -> String {
 mod tests {
     use crate::current_attribute_values::delete::{delete_instances_sql, entity_delete_statement};
     use andromeda_context_space::context_target::ContextTarget;
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
     use sea_query_sqlx::SqlxBinder;
 

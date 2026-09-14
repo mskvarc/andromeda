@@ -149,6 +149,7 @@ mod tests {
     use crate::ordering_admission::{OrderingAdmission, admission_of_participation, admission_without_the_registry};
     use andromeda_ngsi_ld_query::ordering::{parameters::OrderingParameters, term::OrderTerm};
     use andromeda_ngsi_ld_request::query_narrowing::ExecutionScope;
+    use pretty_assertions::assert_eq;
 
     fn ordered_by(raw: &str) -> OrderingParameters {
         OrderingParameters {

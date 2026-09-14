@@ -13,6 +13,7 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use axum::http::Method;
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
 /// A single temporal `Property` instance at the given `observedAt`.

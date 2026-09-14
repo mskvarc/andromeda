@@ -14,6 +14,7 @@ use crate::{
 };
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::time::Duration;
 

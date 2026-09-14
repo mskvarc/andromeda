@@ -301,6 +301,7 @@ impl Default for CompiledQueryCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::{assert_eq, assert_ne};
 
     fn params(query: &str) -> EntityQueryParameters {
         serde_urlencoded::from_str(query).expect("valid query string")

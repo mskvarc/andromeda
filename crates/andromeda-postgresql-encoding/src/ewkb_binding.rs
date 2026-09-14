@@ -27,6 +27,7 @@ pub fn geometry_bytes(geometry: Option<&Geometry>) -> Result<Option<Vec<u8>>, Ew
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn an_absent_geometry_binds_as_null() {

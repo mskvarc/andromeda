@@ -55,6 +55,7 @@ impl RestartPolicy {
 #[cfg(test)]
 mod tests {
     use crate::{failure::FailureClass, restart_policy::RestartPolicy};
+    use pretty_assertions::assert_eq;
     use std::time::Duration;
 
     #[test]

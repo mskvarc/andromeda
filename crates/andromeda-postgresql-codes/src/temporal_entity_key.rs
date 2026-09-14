@@ -48,6 +48,7 @@ pub struct TemporalEntityKeyOutOfRange;
 #[cfg(test)]
 mod tests {
     use crate::temporal_entity_key::{TemporalEntityKey, TemporalEntityKeyOutOfRange};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn a_stored_key_round_trips() {

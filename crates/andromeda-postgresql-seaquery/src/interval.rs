@@ -21,6 +21,7 @@ pub fn make_interval_secs(seconds: SimpleExpr) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::interval::make_interval_secs;
+    use pretty_assertions::assert_eq;
     use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query};
 
     #[test]

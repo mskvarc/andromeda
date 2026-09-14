@@ -16,6 +16,7 @@ use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
+use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
 /// Create a `Vehicle` with the given speed on the front broker.

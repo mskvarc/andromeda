@@ -7,6 +7,7 @@
 //! Temporal Query's `timeproperty` may name.
 
 use crate::{BASE_URL, clean_tenant, client, comparison::corpus, context_link, create_entity, example_context::hosted_contexts, get_json};
+use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use serial_test::serial;

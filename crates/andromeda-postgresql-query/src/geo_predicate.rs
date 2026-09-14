@@ -273,6 +273,7 @@ mod tests {
     use andromeda_ngsi_ld_geometry::dimension::GeometryDimension;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_postgresql_schema::current::Entities;
+    use pretty_assertions::{assert_eq, assert_ne};
     use sea_query::{PostgresQueryBuilder, Query, Value, Values};
     use std::sync::LazyLock;
 

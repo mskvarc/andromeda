@@ -144,6 +144,7 @@ fn production_line_count(source: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use crate::god_file::production_line_count;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn a_file_is_measured_to_its_first_cfg_test() {

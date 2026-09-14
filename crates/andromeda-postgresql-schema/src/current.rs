@@ -132,6 +132,7 @@ pub struct E;
 #[cfg(test)]
 mod tests {
     use crate::current::{CurrentAttributeValues, E, Entities, EntityDocuments, EntitySearch};
+    use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
     #[test]

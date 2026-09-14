@@ -65,6 +65,7 @@ pub struct UnitCodeIdOutOfRange;
 #[cfg(test)]
 mod tests {
     use crate::unit_code_id::{UnitCodeId, UnitCodeIdOutOfRange};
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn the_registry_starts_at_one() {

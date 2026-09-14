@@ -28,6 +28,7 @@ use crate::{
     request_method_on_collection,
     unique_id,
 };
+use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 use serde_json::{Number, json};
 use serial_test::serial;

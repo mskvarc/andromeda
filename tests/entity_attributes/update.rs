@@ -27,6 +27,7 @@ use crate::{
     vehicle_speed_two_datasetid,
     vehicle_two_datasetid_attributes,
 };
+use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 use serde_json::{Number, json};
 use serial_test::serial;

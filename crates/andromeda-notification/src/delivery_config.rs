@@ -264,6 +264,7 @@ mod tests {
         delivery_error_bound::DeliveryErrorBoundError,
         delivery_lease::LeaseTermError,
     };
+    use pretty_assertions::assert_eq;
 
     fn valid_config() -> DeliveryConfig {
         DeliveryConfig {

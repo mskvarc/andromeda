@@ -58,6 +58,7 @@ fn module_concept_name(path: &Path) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use crate::module_naming::{DUMPING_GROUND_NAMES, module_concept_name};
+    use pretty_assertions::assert_eq;
     use std::path::Path;
 
     #[test]

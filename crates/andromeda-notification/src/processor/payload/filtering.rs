@@ -210,6 +210,7 @@ fn extract_previous_value(previous: &Value, attribute_type: AttributeType) -> Op
 mod tests {
     use super::inject_previous_for_dataset;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use pretty_assertions::assert_eq;
     use serde_json::json;
 
     #[test]

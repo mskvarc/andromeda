@@ -262,6 +262,7 @@ mod tests {
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
     use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, entity_type_id::EntityTypeId};
     use iri_rs::IriBuf;
+    use pretty_assertions::{assert_eq, assert_ne};
     use sea_query::{PostgresQueryBuilder, Value};
 
     /// A built entity query rendered with `$N` placeholders and its bound
