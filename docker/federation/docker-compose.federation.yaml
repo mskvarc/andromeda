@@ -25,7 +25,6 @@ x-broker-base: &broker-base
     context: ../..
     dockerfile: docker/andromeda/Dockerfile
   image: andromeda-fed:latest
-  command: ["run"]
   restart: unless-stopped
   extra_hosts:
     - "host.docker.internal:host-gateway"

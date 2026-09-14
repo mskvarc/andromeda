@@ -23,25 +23,27 @@ static GLOBAL: MiMalloc = MiMalloc;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let outcome = match Cli::parse().command {
-        Command::Run(run_args) => {
+    let cli = Cli::parse();
+    let config_file = cli.config_file;
+    let outcome = match cli.command {
+        None => {
             let overrides = BrokerRunOverrides {
-                host: run_args.host,
-                port: run_args.port,
+                host: cli.host,
+                port: cli.port,
             };
-            match load_reported(run_args.common.config_file, overrides) {
+            match load_reported(config_file, overrides) {
                 ConfigurationLoadOutcome::Ready(config) => andromeda_broker_composition::run(*config).await,
                 ConfigurationLoadOutcome::Failed(outcome) => outcome,
             }
         }
-        Command::Config(config_args) => match config_args.command {
-            ConfigCommand::Validate => validate_reported(config_args.common.config_file),
-            ConfigCommand::PrintEffective(print_args) => {
-                let format = match print_args.format {
+        Some(Command::Config(config_args)) => match config_args.command {
+            ConfigCommand::Validate => validate_reported(config_file),
+            ConfigCommand::Show(show_args) => {
+                let format = match show_args.format {
                     OutputFormat::Json => ConfigurationOutputFormat::Json,
                     OutputFormat::Toml => ConfigurationOutputFormat::Toml,
                 };
-                print_effective_reported(config_args.common.config_file, format)
+                print_effective_reported(config_file, format)
             }
             ConfigCommand::Generate(generate_args) => generate_default_reported(generate_args.output),
         },

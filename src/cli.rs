@@ -6,68 +6,71 @@ use std::{net::IpAddr, path::PathBuf};
 
 shadow!(build);
 
+/// Andromeda NGSI-LD context broker.
+///
+/// With no subcommand the broker starts and serves requests. The `config`
+/// subcommand inspects, validates, or generates configuration without starting
+/// the broker.
 #[derive(Parser)]
 #[command(version = build::CLAP_LONG_VERSION, about, long_about = None)]
 #[command(disable_help_subcommand = true)]
 #[clap(styles = clap_themes::CLAP_V3)]
 pub struct Cli {
+    /// Configuration file to load. When omitted, the default file under the
+    /// platform configuration directory is read if present; otherwise the
+    /// broker runs from built-in defaults and the environment alone.
+    #[arg(short = 'c', long = "config", value_name = "FILE", global = true)]
+    pub config_file: Option<PathBuf>,
+
+    /// Address the HTTP listener binds to, overriding the file and environment.
+    #[arg(short = 'H', long, value_name = "ADDR")]
+    pub host: Option<IpAddr>,
+
+    /// Port the HTTP listener binds to, overriding the file and environment.
+    #[arg(short = 'p', long, value_name = "PORT")]
+    pub port: Option<u16>,
+
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 #[derive(Subcommand)]
 pub enum Command {
-    Run(RunArgs),
+    /// Inspect, validate, or generate broker configuration.
     Config(ConfigArgs),
 }
 
 #[derive(Args)]
-pub struct CommonConfigArgs {
-    /// Path to a configuration file. When omitted, the broker reads the default
-    /// file under the platform configuration directory if it is present, and
-    /// otherwise runs from defaults and environment alone.
-    #[arg(short = 'c', long = "config")]
-    pub config_file: Option<PathBuf>,
-}
-
-#[derive(Args)]
-pub struct RunArgs {
-    #[command(flatten)]
-    pub common: CommonConfigArgs,
-
-    #[arg(short = 'H', long)]
-    pub host: Option<IpAddr>,
-
-    #[arg(short = 'p', long)]
-    pub port: Option<u16>,
-}
-
-#[derive(Args)]
 pub struct ConfigArgs {
-    #[command(flatten)]
-    pub common: CommonConfigArgs,
-
     #[command(subcommand)]
     pub command: ConfigCommand,
 }
 
 #[derive(Subcommand)]
 pub enum ConfigCommand {
+    /// Load and validate the effective configuration, then report and exit.
     Validate,
-    PrintEffective(PrintEffectiveArgs),
+
+    /// Print the effective configuration with secrets redacted.
+    Show(ShowArgs),
+
+    /// Write a fully commented configuration file populated with the defaults.
     Generate(GenerateArgs),
 }
 
 #[derive(Args)]
-pub struct GenerateArgs {
-    #[arg(short = 'o', long)]
-    pub output: Option<PathBuf>,
+pub struct ShowArgs {
+    /// Output format for the redacted effective configuration.
+    #[arg(short = 'f', long, value_enum, default_value_t = OutputFormat::Toml)]
+    pub format: OutputFormat,
 }
 
 #[derive(Args)]
-pub struct PrintEffectiveArgs {
-    #[arg(long, value_enum, default_value_t = OutputFormat::Toml)]
-    pub format: OutputFormat,
+pub struct GenerateArgs {
+    /// File to write the commented configuration to. Printed to standard output
+    /// when omitted.
+    #[arg(short = 'o', long, value_name = "FILE")]
+    pub output: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]

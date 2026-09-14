@@ -45,7 +45,6 @@ x-broker-base: &broker-base
     context: ../..
     dockerfile: docker/andromeda/Dockerfile
   image: andromeda-distributed:latest
-  command: ["run"]
   restart: unless-stopped
   # Lets each broker reach mock Context Sources / notification receivers that the
   # test process runs on the host (ANDROMEDA_TEST_CALLBACK_HOST=host.docker.internal).

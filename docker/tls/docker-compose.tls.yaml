@@ -42,7 +42,6 @@ services:
       context: ../..
       dockerfile: docker/andromeda/Dockerfile
     image: andromeda-tls:latest
-    command: ["run"]
     restart: unless-stopped
     depends_on:
       postgres:
