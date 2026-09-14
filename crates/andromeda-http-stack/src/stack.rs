@@ -14,8 +14,12 @@ use axum::{
     middleware,
     response::Response,
 };
+use axum_prometheus::{PrometheusMetricLayer, PrometheusMetricLayerBuilder};
 use headers::{Header, HeaderMapExt};
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 use tower::{Layer, ServiceBuilder};
 use tower_helmet::HelmetLayer;
 use tower_http::{
@@ -28,6 +32,30 @@ use tower_http::{
     timeout::TimeoutLayer,
     trace::TraceLayer,
 };
+
+/// The process-wide axum request-metric layer, built at most once.
+///
+/// [`PrometheusMetricLayerBuilder::with_prefix`] sets a global prefix that may be
+/// configured only once per process and panics on a second call, so the built
+/// layer is memoised here and cloned into every stack the process assembles.
+static HTTP_METRIC_LAYER: OnceLock<PrometheusMetricLayer<'static>> = OnceLock::new();
+
+/// Build (once) and clone the axum request-metric layer.
+///
+/// The layer emits `andromeda_http_requests_*` through the `metrics` facade into
+/// whichever recorder the process installed; it registers no route and installs
+/// no recorder of its own. Its ignore pattern excludes the scrape endpoint so a
+/// scrape does not instrument itself.
+fn http_metric_layer() -> PrometheusMetricLayer<'static> {
+    HTTP_METRIC_LAYER
+        .get_or_init(|| {
+            PrometheusMetricLayerBuilder::new()
+                .with_prefix("andromeda")
+                .with_ignore_pattern("/ngsi-ld/v1/metrics")
+                .build()
+        })
+        .clone()
+}
 
 /// Explicitly ordered inbound HTTP stack.
 #[derive(Clone)]
@@ -106,6 +134,10 @@ impl HttpStack {
                 tracing::info!(request_id = %request_id, status = %response.status(), latency_us = latency.as_micros(), "finished request");
             });
         let core = ServiceBuilder::new()
+            // Outermost so the matched route is populated by the time the layer
+            // records the response, giving the `endpoint` label its low-cardinality
+            // `MatchedPath` value rather than the raw URI.
+            .layer(http_metric_layer())
             .layer(SetSensitiveRequestHeadersLayer::from_shared(sensitive_request_headers))
             .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
             .layer(trace_layer)

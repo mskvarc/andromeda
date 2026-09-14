@@ -797,6 +797,7 @@ dependencies = [
  "andromeda-http-headers",
  "andromeda-http-tenancy",
  "axum",
+ "axum-prometheus",
  "headers",
  "pretty_assertions",
  "serde",
@@ -2072,6 +2073,26 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "axum-prometheus"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27e29a21d8a876465c009f1a69883fdfdf428a3ea42719a0c96021076c34cdf0"
+dependencies = [
+ "axum",
+ "bytes",
+ "futures-core",
+ "http",
+ "http-body",
+ "matchit",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "pin-project-lite",
+ "tokio",
+ "tower",
+ "tower-http 0.7.1",
 ]
 
 [[package]]

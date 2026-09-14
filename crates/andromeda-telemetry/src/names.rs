@@ -5,6 +5,21 @@
 //! and come from the enums in the sibling modules, so no free-form string
 //! ever becomes a series dimension.
 
+/// Counter of HTTP requests handled, labelled by endpoint, method and status.
+///
+/// Emitted by the `axum-prometheus` layer in `andromeda-http-stack`, whose
+/// `with_prefix("andromeda")` supplies the `andromeda_` half of this literal.
+/// The string is duplicated here deliberately so this crate owns the rendered
+/// name; there is no shared symbol and therefore no dependency edge.
+pub const HTTP_REQUESTS_TOTAL: &str = "andromeda_http_requests_total";
+/// Histogram of HTTP request durations in seconds, labelled by endpoint, method and status.
+///
+/// See [`HTTP_REQUESTS_TOTAL`] for the prefix-coupling note.
+pub const HTTP_REQUEST_DURATION_SECONDS: &str = "andromeda_http_requests_duration_seconds";
+/// Gauge of in-flight HTTP requests, labelled by endpoint and method.
+///
+/// See [`HTTP_REQUESTS_TOTAL`] for the prefix-coupling note.
+pub const HTTP_REQUESTS_PENDING: &str = "andromeda_http_requests_pending";
 /// Histogram of wall-clock seconds spent awaiting one database statement.
 pub const DB_STATEMENT_SECONDS: &str = "andromeda_db_statement_seconds";
 /// Counter of database statements that returned an error.

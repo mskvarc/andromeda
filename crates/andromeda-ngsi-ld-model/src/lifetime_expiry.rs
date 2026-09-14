@@ -30,6 +30,7 @@ const MAX_WHOLE_MONTHS: u32 = 4_000_000;
 /// Returns [`None`] when the lifetime is not finite or the result would fall
 /// outside the representable `DateTime<Utc>` range, leaving the caller to decide
 /// how to treat an unusable lifetime instead of inheriting a panic.
+#[must_use]
 pub fn expiry(start: DateTime<Utc>, lifetime: &Iso8601Duration) -> Option<DateTime<Utc>> {
     let total_months = f64::from(lifetime.year) * 12.0 + f64::from(lifetime.month);
     if !total_months.is_finite() || total_months < 0.0 {
@@ -74,8 +75,10 @@ mod tests {
     use chrono::{DateTime, TimeZone, Utc};
     use iso8601_duration::Duration as Iso8601Duration;
 
-    fn at(y: i32, m: u32, d: u32, h: u32, min: u32, s: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(y, m, d, h, min, s).single().expect("valid test instant")
+    fn at(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(year, month, day, hour, minute, second)
+            .single()
+            .expect("valid test instant")
     }
 
     #[test]
