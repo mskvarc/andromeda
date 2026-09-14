@@ -77,13 +77,11 @@ pub fn assert_retired_architecture_invariants(workspace_root: &str) {
 /// # Panics
 ///
 /// Panics when root tests contain direct global truncation, when the retired
-/// umbrella crate name returns, when a focused test crate introduces a generic
-/// dumping-ground module, or when a test source cannot be read or parsed.
+/// umbrella crate name returns, or when a test source cannot be read or parsed.
 pub fn assert_test_infrastructure_invariants(workspace_root: &str) {
     let root = Path::new(workspace_root);
     let mut violations = Vec::new();
     scan_test_sources(root, &mut violations);
-    scan_test_crate_modules(root, &mut violations);
     let retired_manifest = root.join("lib/andromeda-test-common/Cargo.toml");
     if retired_manifest.exists() {
         violations.push("retired lib/andromeda-test-common manifest exists".to_owned());
@@ -129,28 +127,6 @@ fn scan_test_sources(root: &Path, violations: &mut Vec<String>) {
         };
         visitor.visit_file(&syntax);
         violations.extend(visitor.violations);
-    }
-}
-
-/// Reject generic module names inside the four focused test crates.
-fn scan_test_crate_modules(root: &Path, violations: &mut Vec<String>) {
-    let crates = root.join("crates");
-    for crate_name in [
-        "andromeda-test-client",
-        "andromeda-test-fixtures",
-        "andromeda-test-harness",
-        "andromeda-test-mocks",
-    ] {
-        let source_root = crates.join(crate_name).join("src");
-        for path in rust_file_paths(&source_root) {
-            let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or_default();
-            let parent = path.parent().and_then(Path::file_name).and_then(|value| value.to_str()).unwrap_or_default();
-            if ["common", "utils", "helpers", "shared", "misc"].contains(&stem)
-                || (stem == "mod" && ["common", "utils", "helpers", "shared", "misc"].contains(&parent))
-            {
-                violations.push(format!("{} uses a generic shared-infrastructure module name", path.display()));
-            }
-        }
     }
 }
 

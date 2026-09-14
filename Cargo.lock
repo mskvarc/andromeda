@@ -132,6 +132,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.5",
+ "toml_edit",
 ]
 
 [[package]]
@@ -6865,6 +6866,7 @@ dependencies = [
  "serde_spanned",
  "toml_datetime",
  "toml_parser",
+ "toml_writer",
  "winnow",
 ]
 

@@ -62,11 +62,14 @@ impl DependencyKind {
 /// dialects (`sqlx`, `sea-query`, `sea-query-sqlx`, `geozero`), the transports
 /// and async runtime (`axum`, `reqwest`, `rumqttc`, `tokio`), the wire buffer
 /// (`bytes`), the configuration and CLI front ends (`figment2`, `clap`), the
-/// alternate JSON parser (`sonic-rs`) and the global allocator (`mimalloc`) are
-/// all things a specification or storage-neutral crate has no business shipping.
+/// alternate JSON parser (`sonic-rs`), the type-erased error crate (`anyhow`,
+/// whose `Error` the workspace bans in favour of typed enums) and the global
+/// allocator (`mimalloc`) are all things a specification or storage-neutral
+/// crate has no business shipping.
 /// A crate that legitimately ships one subtracts it through
 /// [`forbidden_production_dependencies_except`]; nothing adds to the list.
 pub const FORBIDDEN_PRODUCTION_DEPENDENCIES: &[&str] = &[
+    "anyhow",
     "axum",
     "bytes",
     "clap",
@@ -199,7 +202,7 @@ pub fn assert_test_infrastructure_is_development_only(workspace_root: &str) {
 /// # Panics
 ///
 /// Panics when an existing package directory cannot be listed.
-fn workspace_manifest_paths(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn workspace_manifest_paths(root: &Path) -> Vec<PathBuf> {
     let mut paths = vec![root.join("Cargo.toml")];
     let mut unreadable = Vec::new();
     for parent in [root.join("crates"), root.join("lib")] {
@@ -463,7 +466,7 @@ workspace = true
     fn the_baseline_forbids_the_runtime_transport_dialect_and_allocator_gaps() {
         // The four the per-crate template omitted, which is what let an async
         // runtime into a passive crate and a dialect binder past every guard.
-        for gap in ["rumqttc", "sea-query-sqlx", "sonic-rs", "mimalloc"] {
+        for gap in ["anyhow", "rumqttc", "sea-query-sqlx", "sonic-rs", "mimalloc"] {
             assert!(FORBIDDEN_PRODUCTION_DEPENDENCIES.contains(&gap), "{gap} must be forbidden by default");
         }
     }

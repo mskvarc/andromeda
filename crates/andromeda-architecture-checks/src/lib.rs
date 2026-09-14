@@ -11,10 +11,14 @@
 
 pub mod architecture;
 pub mod dependencies;
+pub mod god_file;
+pub mod manifest_hygiene;
+pub mod module_naming;
 pub mod raw_constant;
 pub mod raw_sql;
 mod source_scan;
 pub mod sql;
+pub mod type_erased_error;
 
 /// Declarative macros that generate caller-side architecture tests.
 #[macro_use]

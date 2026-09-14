@@ -103,6 +103,36 @@ macro_rules! workspace_architecture {
                 $crate::architecture::assert_test_infrastructure_invariants(workspace_root);
                 $crate::dependencies::assert_test_infrastructure_is_development_only(workspace_root);
             }
+
+            /// No module is named after a dumping ground.
+            #[test]
+            fn module_names_describe_a_concept() {
+                $crate::module_naming::assert_no_dumping_ground_modules(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
+            /// No production source names a `dyn Error` trait object off the baseline.
+            #[test]
+            fn errors_are_typed_not_erased() {
+                $crate::type_erased_error::assert_no_type_erased_errors(
+                    concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root),
+                    $crate::type_erased_error::TYPE_ERASED_ERROR_BASELINE,
+                );
+            }
+
+            /// No production file crosses the length ceiling off the baseline.
+            #[test]
+            fn no_production_file_is_a_god_file() {
+                $crate::god_file::assert_no_god_files(
+                    concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root),
+                    $crate::god_file::GOD_FILE_BASELINE,
+                );
+            }
+
+            /// Every manifest pins full versions, stays ordered, and places each dependency kind correctly.
+            #[test]
+            fn manifests_follow_dependency_hygiene() {
+                $crate::manifest_hygiene::assert_manifest_hygiene(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
         }
     };
 }
