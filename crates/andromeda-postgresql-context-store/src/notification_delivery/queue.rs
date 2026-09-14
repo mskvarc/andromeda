@@ -7,6 +7,7 @@
 
 use crate::notification_delivery::{acknowledge, claim, cleanup, rows::ClaimedDelivery};
 use andromeda_context_commit::lease_acknowledgement::LeaseAcknowledgement;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_notification::{
     delivery_entry::{DeliveryEntry, DeliveryId},
     delivery_lease::{DeliveryLeaseError, LeaseTerm},
@@ -45,22 +46,29 @@ impl DeliveryStore for NotificationDeliveryQueue {
         Ok(claimed.into_iter().filter_map(readable).collect())
     }
 
-    async fn mark_delivered(&self, id: DeliveryId, worker_id: &WorkerInstanceId) -> Result<(), DeliveryLeaseError> {
-        let outcome = acknowledge::mark_delivered(&self.pool, id.into_inner(), worker_id.as_ref())
+    async fn mark_delivered(&self, id: DeliveryId, worker_id: &WorkerInstanceId, target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
+        let outcome = acknowledge::mark_delivered(&self.pool, id.into_inner(), worker_id.as_ref(), target)
             .await
             .map_err(|error| DeliveryLeaseError::persistence(error.to_string()))?;
         held(outcome, id, worker_id)
     }
 
-    async fn mark_failed(&self, id: DeliveryId, worker_id: &WorkerInstanceId, failure: &str, next_attempt_at: DateTime<Utc>) -> Result<(), DeliveryLeaseError> {
-        let outcome = acknowledge::mark_failed(&self.pool, id.into_inner(), worker_id.as_ref(), failure, next_attempt_at)
+    async fn mark_failed(
+        &self,
+        id: DeliveryId,
+        worker_id: &WorkerInstanceId,
+        failure: &str,
+        next_attempt_at: DateTime<Utc>,
+        target: &ContextTarget,
+    ) -> Result<(), DeliveryLeaseError> {
+        let outcome = acknowledge::mark_failed(&self.pool, id.into_inner(), worker_id.as_ref(), failure, next_attempt_at, target)
             .await
             .map_err(|error| DeliveryLeaseError::persistence(error.to_string()))?;
         held(outcome, id, worker_id)
     }
 
-    async fn mark_terminal(&self, id: DeliveryId, worker_id: &WorkerInstanceId, failure: &str) -> Result<(), DeliveryLeaseError> {
-        let outcome = acknowledge::mark_exhausted(&self.pool, id.into_inner(), worker_id.as_ref(), failure)
+    async fn mark_terminal(&self, id: DeliveryId, worker_id: &WorkerInstanceId, failure: &str, target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
+        let outcome = acknowledge::mark_exhausted(&self.pool, id.into_inner(), worker_id.as_ref(), failure, target)
             .await
             .map_err(|error| DeliveryLeaseError::persistence(error.to_string()))?;
         held(outcome, id, worker_id)
@@ -141,11 +149,7 @@ mod tests {
         rows::ClaimedDelivery,
     };
     use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, write_id::WriteId, write_ordinal::WriteOrdinal};
-    use andromeda_context_space::{
-        context_space::{ContextSpace, ContextSpaceKind},
-        context_space_key::ContextSpaceKey,
-        context_target::ContextTarget,
-    };
+    use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
     use andromeda_notification::{
         delivery_entry::DeliveryId,
@@ -158,11 +162,7 @@ mod tests {
 
     fn delivery() -> ClaimedDelivery {
         ClaimedDelivery {
-            target: ContextTarget::live(ContextSpace::new(
-                ContextSpaceKey::try_from(1).expect("positive context-space key"),
-                ContextSpaceKind::Live,
-            ))
-            .expect("live context target"),
+            target: ContextTarget::Live,
             id: 11,
             subscription_id: "urn:ngsi-ld:Subscription:1".parse().expect("a valid subscription URI"),
             attempt_count: 1,

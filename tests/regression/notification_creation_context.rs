@@ -189,7 +189,9 @@ async fn regression_notification_creation_context_hosts_a_compound_context_from_
         .expect("retrieve subscription");
     assert_eq!(retrieved.status, StatusCode::OK, "retrieve subscription: {:?}", retrieved.body);
     let subscription = retrieved.json_value().expect("a subscription retrieval answers JSON");
-    let stored = subscription["jsonldContext"].as_str().expect("a compound creation context is stored as a served URL");
+    let stored = subscription["jsonldContext"]
+        .as_str()
+        .expect("a compound creation context is stored as a served URL");
     assert!(
         stored.contains(HOSTED_CONTEXT_PATH),
         "several creation contexts are hosted as a broker-served Context, not dropped to core: {subscription}"

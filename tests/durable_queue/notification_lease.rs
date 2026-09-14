@@ -10,6 +10,7 @@ use crate::{
     queue_database::queue_database,
     queue_workers::{delivery_worker, expiring_lease, holding_lease},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_notification::{
     delivery_entry::DeliveryId,
     delivery_lease::DeliveryLeaseError,
@@ -59,7 +60,7 @@ async fn durable_queue_a_due_delivery_is_leased_to_exactly_one_worker() {
     assert!(lease_until.is_some_and(|until| until > Utc::now()), "a claim takes a live lease");
 
     queue
-        .mark_delivered(DeliveryId::from(delivery), &first)
+        .mark_delivered(DeliveryId::from(delivery), &first, &ContextTarget::Live)
         .await
         .expect("the lease holder acknowledges");
     pool.close().await;
@@ -89,13 +90,23 @@ async fn durable_queue_a_stale_worker_cannot_acknowledge_a_reclaimed_delivery() 
     assert_eq!(reclaimed.len(), 1, "an expired lease makes the delivery claimable again");
     assert_eq!(reclaimed[0].id, DeliveryId::from(delivery));
 
-    assert_lease_lost(queue.mark_delivered(DeliveryId::from(delivery), &stale).await, delivery, &stale);
     assert_lease_lost(
-        queue.mark_failed(DeliveryId::from(delivery), &stale, "stale", Utc::now()).await,
+        queue.mark_delivered(DeliveryId::from(delivery), &stale, &ContextTarget::Live).await,
         delivery,
         &stale,
     );
-    assert_lease_lost(queue.mark_terminal(DeliveryId::from(delivery), &stale, "stale").await, delivery, &stale);
+    assert_lease_lost(
+        queue
+            .mark_failed(DeliveryId::from(delivery), &stale, "stale", Utc::now(), &ContextTarget::Live)
+            .await,
+        delivery,
+        &stale,
+    );
+    assert_lease_lost(
+        queue.mark_terminal(DeliveryId::from(delivery), &stale, "stale", &ContextTarget::Live).await,
+        delivery,
+        &stale,
+    );
 
     let (_, claimed_by, _) = claim_triple(&pool, delivery).await;
     assert_eq!(
@@ -105,7 +116,7 @@ async fn durable_queue_a_stale_worker_cannot_acknowledge_a_reclaimed_delivery() 
     );
 
     queue
-        .mark_delivered(DeliveryId::from(delivery), &reclaiming)
+        .mark_delivered(DeliveryId::from(delivery), &reclaiming, &ContextTarget::Live)
         .await
         .expect("the reclaiming worker acknowledges");
     let delivered: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT delivered_at FROM notification_deliveries WHERE id = $1")

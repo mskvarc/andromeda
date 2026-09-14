@@ -20,11 +20,7 @@ pub struct BatchSideEffectJob {
 #[cfg(test)]
 mod tests {
     use crate::batch_side_effect_job::BatchSideEffectJob;
-    use andromeda_context_space::{
-        context_space::{ContextSpace, ContextSpaceKind},
-        context_space_key::ContextSpaceKey,
-        context_target::ContextTarget,
-    };
+    use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use serde_json::json;
     use std::sync::Arc;
@@ -33,7 +29,7 @@ mod tests {
     fn a_job_keeps_shared_temporal_payloads_without_copying_them() {
         let payload = Arc::new(json!([{"@id": "urn:ngsi-ld:A"}]));
         let job = BatchSideEffectJob {
-            target: ContextTarget::live(ContextSpace::new(ContextSpaceKey::try_from(1).expect("positive key"), ContextSpaceKind::Live)).expect("live target"),
+            target: ContextTarget::Live,
             temporal_entities: vec![(Arc::new("urn:ngsi-ld:A".parse::<Uri>().expect("valid entity URI")), Arc::clone(&payload))],
             change_events: Vec::new(),
         };

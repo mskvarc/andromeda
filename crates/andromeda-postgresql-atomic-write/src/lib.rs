@@ -34,6 +34,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-context-commit",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-number",
+        "andromeda-postgresql-branch",
         "andromeda-postgresql-name-dictionary",
         "andromeda-postgresql-codes",
         "andromeda-postgresql-context-store",

@@ -222,19 +222,24 @@ async fn snapshot_stress_capture_20000_temporal_observations_and_64_clients() {
         let pool = PgPool::connect(&env::var("ANDROMEDA_TEST_DATABASE_URL").expect("Snapshot database URL"))
             .await
             .expect("Snapshot database connection");
-        let observations: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM attribute_history history JOIN snapshots snapshot ON snapshot.context_space_key = history.context_space_key WHERE snapshot.id = $1",
-        )
-        .bind(snapshot)
-        .fetch_one(&pool)
-        .await
-        .expect("captured observation count");
+        let snapshot_key: i64 = sqlx::query_scalar("SELECT snapshot_key FROM snapshots WHERE id = $1")
+            .bind(snapshot)
+            .fetch_one(&pool)
+            .await
+            .expect("captured snapshot key");
+        // Each published Snapshot branch owns its history in schema `snap_<key>`.
+        let observations: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM snap_{snapshot_key}.attribute_history")))
+            .fetch_one(&pool)
+            .await
+            .expect("captured observation count");
         pretty_assertions::assert_eq!(observations, 20_000);
         let clients = (0..64).map(|index| async move {
             let origin = if index % 2 == 0 { "local" } else { "remote" };
             let id = format!("urn:ngsi-ld:StressTemporalVehicle:{origin}-{:04}", index % 500);
             client()
-                .get(broker_url(&format!("/temporal/entities/{id}?timerel=after&timeAt=2024-01-01T00%3A00%3A00Z&attrs=speed&lastN=20")))
+                .get(broker_url(&format!(
+                    "/temporal/entities/{id}?timerel=after&timeAt=2024-01-01T00%3A00%3A00Z&attrs=speed&lastN=20"
+                )))
                 .header("NGSILD-Snapshot", snapshot)
                 .send()
                 .await
@@ -255,7 +260,9 @@ async fn snapshot_stress_clone_large_mixed_branch_is_complete_and_independent() 
         let source = "urn:ngsi-ld:Snapshot:stress-clone-source";
         let target = "urn:ngsi-ld:Snapshot:stress-clone-target";
         pretty_assertions::assert_eq!(
-            create_snapshot_raw(&client(), &json!({"id": source, "type": "Snapshot", "snapshotQueries": []})).await.0,
+            create_snapshot_raw(&client(), &json!({"id": source, "type": "Snapshot", "snapshotQueries": []}))
+                .await
+                .0,
             StatusCode::CREATED
         );
         wait_for_snapshot_terminal(&client(), source, Duration::from_secs(10)).await;
@@ -312,13 +319,26 @@ async fn snapshot_stress_clone_large_mixed_branch_is_complete_and_independent() 
         let pool = PgPool::connect(&env::var("ANDROMEDA_TEST_DATABASE_URL").expect("Snapshot database URL"))
             .await
             .expect("Snapshot database connection");
-        let counts = sqlx::query_as::<_, (String, i64, i64)>(
-            "SELECT snapshot.id, (SELECT COUNT(*) FROM entities entity WHERE entity.context_space_key = snapshot.context_space_key), (SELECT COUNT(*) FROM attribute_history history WHERE history.context_space_key = snapshot.context_space_key) FROM snapshots snapshot WHERE snapshot.id = ANY($1) ORDER BY snapshot.id",
-        )
-        .bind([source, target])
-        .fetch_all(&pool)
-        .await
-        .expect("mixed branch counts");
+        // Each Snapshot branch owns its rows in its own schema `snap_<key>`, so the
+        // clone's completeness is read from the source and target branch schemas
+        // directly rather than through a shared partition column.
+        let mut counts: Vec<(String, i64, i64)> = Vec::new();
+        for id in [source, target] {
+            let key: i64 = sqlx::query_scalar("SELECT snapshot_key FROM snapshots WHERE id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("mixed branch snapshot key");
+            let current_count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM snap_{key}.entities")))
+                .fetch_one(&pool)
+                .await
+                .expect("mixed branch entity count");
+            let temporal_count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM snap_{key}.attribute_history")))
+                .fetch_one(&pool)
+                .await
+                .expect("mixed branch history count");
+            counts.push((id.to_string(), current_count, temporal_count));
+        }
         pretty_assertions::assert_eq!(counts.len(), 2);
         for (_, current_count, temporal_count) in counts {
             // Integrated Core creates contribute one temporal side effect each,

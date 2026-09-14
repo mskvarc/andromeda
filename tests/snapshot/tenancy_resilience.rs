@@ -509,7 +509,7 @@ async fn snapshot_orphaned_preparation_claim_is_reclaimed_after_lease() {
     let pool = PgPool::connect(&env::var("ANDROMEDA_TEST_DATABASE_URL").expect("Snapshot database URL"))
         .await
         .expect("Snapshot database connection");
-    sqlx::query("UPDATE snapshots SET claimed_by = $2, claimed_at = NOW() - INTERVAL '1 minute', lease_until = NOW() - INTERVAL '1 second' WHERE id = $1")
+    sqlx::query("UPDATE snapshot_preparation SET claimed_by = $2, claimed_at = NOW() - INTERVAL '1 minute', lease_until = NOW() - INTERVAL '1 second' WHERE snapshot_key = (SELECT snapshot_key FROM snapshots WHERE id = $1)")
         .bind(id)
         .bind(uuid::Uuid::new_v4())
         .execute(&pool)
@@ -523,11 +523,13 @@ async fn snapshot_orphaned_preparation_claim_is_reclaimed_after_lease() {
     let terminal = wait_for_snapshot_terminal(&client(), id, Duration::from_secs(8)).await;
     pretty_assertions::assert_eq!(terminal["snapshotStatus"], "empty");
     pretty_assertions::assert_eq!(terminal["snapshotQueriesDetails"].as_array().expect("one detail").len(), 1);
-    let published: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM snapshots WHERE id = $1 AND claimed_by IS NULL AND lease_until IS NULL")
-        .bind(id)
-        .fetch_one(&pool)
-        .await
-        .expect("one fenced promotion");
+    let published: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM snapshot_preparation p JOIN snapshots s ON s.snapshot_key = p.snapshot_key WHERE s.id = $1 AND p.claimed_by IS NULL AND p.lease_until IS NULL",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .expect("one fenced promotion");
     pretty_assertions::assert_eq!(published, 1);
     callback.shutdown().await.expect("orphan context source shuts down");
 }

@@ -1,9 +1,6 @@
 //! Direct PostgreSQL implementation of the entity side-effect queue port.
 
-use crate::{
-    context_space::resolve_context_target,
-    pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository},
-};
+use crate::pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository};
 use andromeda_context_commit::{
     batch_side_effect_job::BatchSideEffectJob,
     change_event::ChangeEvent,
@@ -13,7 +10,7 @@ use andromeda_context_commit::{
     write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
 };
-use andromeda_context_space::{context_space_key::ContextSpaceKey, context_target::ContextTarget};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     error::EntityError,
     side_effect_queue::{LeasedSideEffect, SideEffectLeaseOwner, SideEffectQueue},
@@ -48,26 +45,13 @@ impl SideEffectQueue for PendingSideEffectsRepository {
         .await
         .map_err(|error| persistence(&error))?;
 
+        // The side-effect queue is drained on the live branch: a Snapshot branch
+        // captures synchronously and enqueues no deferred jobs, so every job
+        // replays into the live branch it was enqueued from.
         let mut leased = Vec::with_capacity(rows.len());
         for row in rows {
             let id = SideEffectJobId::from_uuid(row.get("id"));
-            let raw_context_key: i64 = row.get("context_space_key");
-            let decoded = match ContextSpaceKey::try_from(raw_context_key) {
-                Ok(key) => resolve_context_target(self.pool(), key)
-                    .await
-                    .map_err(|error| EntityError::persistence(error.to_string())),
-                Err(error) => Err(EntityError::persistence(error.to_string())),
-            };
-            let target = match decoded {
-                Ok(target) => target,
-                Err(error) => {
-                    let detail = error.to_string();
-                    error!(error = %detail, job_id = %id, event = "pending_side_effect_target_unreadable");
-                    self.retire_unreadable(id, worker_id, &detail).await;
-                    continue;
-                }
-            };
-            match leased_effect(id, target, &row) {
+            match leased_effect(id, ContextTarget::Live, &row) {
                 Ok(effect) => leased.push(effect),
                 Err(err) => {
                     let detail = err.to_string();
@@ -169,7 +153,7 @@ fn leased_effect(id: SideEffectJobId, target: ContextTarget, row: &PgRow) -> Res
         WriteOrdinal::try_from(stored_base).map_err(|error| EntityError::internal(format!("pending side-effect consequence base is unreadable: {error}")))?;
     Ok(LeasedSideEffect {
         id,
-        attempts: row.get("attempts"),
+        attempts: row.get("attempt_count"),
         job,
         record,
         consequence_base,
@@ -192,12 +176,12 @@ fn lease_batch_statement(owner: &str, batch_size: i32, lease_seconds: f64) -> Up
     let candidates = Query::select()
         .column(PendingSideEffects::Id)
         .from(PendingSideEffects::Table)
-        .and_where(Expr::col(PendingSideEffects::Dead).eq(false))
+        .and_where(Expr::col(PendingSideEffects::ExhaustedAt).is_null())
         .and_where(Expr::col(PendingSideEffects::NextAttemptAt).lte(Expr::current_timestamp()))
         .and_where(
-            Expr::col(PendingSideEffects::LockedUntil)
+            Expr::col(PendingSideEffects::LeaseUntil)
                 .is_null()
-                .or(Expr::col(PendingSideEffects::LockedUntil).lte(Expr::current_timestamp())),
+                .or(Expr::col(PendingSideEffects::LeaseUntil).lte(Expr::current_timestamp())),
         )
         .order_by(PendingSideEffects::NextAttemptAt, Order::Asc)
         // A negative batch size is an absent bound, not a narrower one, so it
@@ -208,16 +192,16 @@ fn lease_batch_statement(owner: &str, batch_size: i32, lease_seconds: f64) -> Up
 
     Query::update()
         .table(PendingSideEffects::Table)
+        .value(PendingSideEffects::ClaimedAt, Expr::current_timestamp())
         .value(
-            PendingSideEffects::LockedUntil,
+            PendingSideEffects::LeaseUntil,
             Expr::current_timestamp().add(make_interval_secs(Expr::val(lease_seconds))),
         )
-        .value(PendingSideEffects::LockedBy, owner)
+        .value(PendingSideEffects::ClaimedBy, owner)
         .and_where(Expr::col(PendingSideEffects::Id).in_subquery(candidates))
         .returning(Query::returning().columns([
             PendingSideEffects::Id,
-            PendingSideEffects::ContextSpaceKey,
-            PendingSideEffects::Attempts,
+            PendingSideEffects::AttemptCount,
             PendingSideEffects::Payload,
             PendingSideEffects::WriteId,
             PendingSideEffects::RecordedAt,
@@ -231,8 +215,8 @@ fn lease_batch_statement(owner: &str, batch_size: i32, lease_seconds: f64) -> Up
 fn lease_guard(id: Uuid, owner: &str) -> SimpleExpr {
     Expr::col(PendingSideEffects::Id)
         .eq(id)
-        .and(Expr::col(PendingSideEffects::LockedBy).eq(owner))
-        .and(Expr::col(PendingSideEffects::LockedUntil).gt(Expr::current_timestamp()))
+        .and(Expr::col(PendingSideEffects::ClaimedBy).eq(owner))
+        .and(Expr::col(PendingSideEffects::LeaseUntil).gt(Expr::current_timestamp()))
 }
 
 /// Remove the acknowledged job under the lease this worker holds.
@@ -245,46 +229,50 @@ fn ack_statement(id: Uuid, owner: &str) -> DeleteStatement {
 
 /// Count the attempt, record its diagnostic, and release the lease for a retry.
 ///
-/// Both lease columns are released together: `chk_pse_lock_coherent` rejects a
-/// row that holds one of `locked_until` and `locked_by`.
+/// All three claim columns are released together: `chk_pse_claim_coherent`
+/// rejects a row that holds some but not all of `claimed_at`, `lease_until` and
+/// `claimed_by`.
 fn nack_statement(id: Uuid, owner: &str, error: &str, next_attempt_at: DateTime<Utc>) -> UpdateStatement {
     Query::update()
         .table(PendingSideEffects::Table)
-        .value(PendingSideEffects::Attempts, Expr::col(PendingSideEffects::Attempts).add(1))
+        .value(PendingSideEffects::AttemptCount, Expr::col(PendingSideEffects::AttemptCount).add(1))
         .value(PendingSideEffects::LastError, error)
         .value(PendingSideEffects::NextAttemptAt, next_attempt_at)
-        .value(PendingSideEffects::LockedUntil, SimpleExpr::Keyword(Keyword::Null))
-        .value(PendingSideEffects::LockedBy, SimpleExpr::Keyword(Keyword::Null))
+        .value(PendingSideEffects::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
+        .value(PendingSideEffects::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
+        .value(PendingSideEffects::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
         .and_where(lease_guard(id, owner))
         .to_owned()
 }
 
 /// Retire the job permanently, releasing the lease in the same statement.
 ///
-/// A dead row holds no lease: `chk_pse_dead_state` rejects `dead = TRUE`
-/// together with either lock column, so the lease is released here rather than
-/// in a later statement.
+/// An exhausted row holds no lease: `chk_pse_exhausted_state` rejects a row that
+/// carries `exhausted_at` together with any claim column, so the lease is
+/// released here rather than in a later statement.
 fn mark_dead_statement(id: Uuid, owner: &str, error: &str) -> UpdateStatement {
     Query::update()
         .table(PendingSideEffects::Table)
-        .value(PendingSideEffects::Attempts, Expr::col(PendingSideEffects::Attempts).add(1))
-        .value(PendingSideEffects::Dead, true)
+        .value(PendingSideEffects::AttemptCount, Expr::col(PendingSideEffects::AttemptCount).add(1))
+        .value(PendingSideEffects::ExhaustedAt, Expr::current_timestamp())
         .value(PendingSideEffects::LastError, error)
-        .value(PendingSideEffects::LockedUntil, SimpleExpr::Keyword(Keyword::Null))
-        .value(PendingSideEffects::LockedBy, SimpleExpr::Keyword(Keyword::Null))
+        .value(PendingSideEffects::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
+        .value(PendingSideEffects::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
+        .value(PendingSideEffects::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
         .and_where(lease_guard(id, owner))
         .to_owned()
 }
 
 /// Remove dead-lettered jobs created before `cutoff`.
 ///
-/// `idx_pse_dead` is the partial index on `created_at WHERE dead` this range
-/// scan runs on; a dead row holds no lease (`chk_pse_dead_state`), so no
-/// worker can be mid-flight on a row this removes.
+/// `idx_pse_exhausted` is the partial index on `created_at WHERE exhausted_at IS
+/// NOT NULL` this range scan runs on; an exhausted row holds no lease
+/// (`chk_pse_exhausted_state`), so no worker can be mid-flight on a row this
+/// removes.
 fn purge_dead_statement(cutoff: DateTime<Utc>) -> DeleteStatement {
     Query::delete()
         .from_table(PendingSideEffects::Table)
-        .and_where(Expr::col(PendingSideEffects::Dead).eq(true))
+        .and_where(Expr::col(PendingSideEffects::ExhaustedAt).is_not_null())
         .and_where(Expr::col(PendingSideEffects::CreatedAt).lt(cutoff))
         .to_owned()
 }
@@ -352,10 +340,10 @@ mod tests {
     fn the_lease_claims_a_due_batch_stepping_over_rows_other_workers_hold() {
         let sql = lease_batch_statement("w", 10, 30.0).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"UPDATE "pending_side_effects""#), "{sql}");
-        assert!(sql.contains(r#""dead" = FALSE"#), "{sql}");
+        assert!(sql.contains(r#""exhausted_at" IS NULL"#), "{sql}");
         assert!(sql.contains("FOR UPDATE SKIP LOCKED"), "{sql}");
         assert!(sql.contains("make_interval(secs =>"), "{sql}");
-        assert!(sql.contains(r#""locked_by" = 'w'"#), "{sql}");
+        assert!(sql.contains(r#""claimed_by" = 'w'"#), "{sql}");
     }
 
     #[test]
@@ -365,33 +353,33 @@ mod tests {
             nack_statement(Uuid::nil(), "w", "boom", Utc::now()).to_string(PostgresQueryBuilder),
             mark_dead_statement(Uuid::nil(), "w", "boom").to_string(PostgresQueryBuilder),
         ] {
-            assert!(sql.contains(r#""locked_by" = 'w'"#), "{sql}");
-            assert!(sql.contains(r#""locked_until" > CURRENT_TIMESTAMP"#), "{sql}");
+            assert!(sql.contains(r#""claimed_by" = 'w'"#), "{sql}");
+            assert!(sql.contains(r#""lease_until" > CURRENT_TIMESTAMP"#), "{sql}");
         }
     }
 
     #[test]
-    fn a_nack_counts_the_attempt_and_releases_both_lease_columns() {
+    fn a_nack_counts_the_attempt_and_releases_the_claim() {
         let sql = nack_statement(Uuid::nil(), "w", "boom", Utc::now()).to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#""attempts" = "attempts" + 1"#), "{sql}");
-        assert!(sql.contains(r#""locked_until" = NULL"#), "{sql}");
-        assert!(sql.contains(r#""locked_by" = NULL"#), "{sql}");
+        assert!(sql.contains(r#""attempt_count" = "attempt_count" + 1"#), "{sql}");
+        assert!(sql.contains(r#""lease_until" = NULL"#), "{sql}");
+        assert!(sql.contains(r#""claimed_by" = NULL"#), "{sql}");
     }
 
     #[test]
     fn marking_dead_retires_the_row_and_releases_the_lease() {
         let sql = mark_dead_statement(Uuid::nil(), "w", "boom").to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#""dead" = TRUE"#), "{sql}");
-        assert!(sql.contains(r#""locked_until" = NULL"#), "{sql}");
+        assert!(sql.contains(r#""exhausted_at" = CURRENT_TIMESTAMP"#), "{sql}");
+        assert!(sql.contains(r#""lease_until" = NULL"#), "{sql}");
     }
 
     #[test]
-    fn the_dead_letter_reap_removes_only_dead_rows_older_than_the_cutoff() {
+    fn the_dead_letter_reap_removes_only_exhausted_rows_older_than_the_cutoff() {
         let sql = purge_dead_statement(Utc::now()).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"DELETE FROM "pending_side_effects""#), "{sql}");
-        assert!(sql.contains(r#""dead" = TRUE"#), "{sql}");
+        assert!(sql.contains(r#""exhausted_at" IS NOT NULL"#), "{sql}");
         assert!(sql.contains(r#""created_at" <"#), "{sql}");
-        assert!(!sql.contains("locked_by"), "the reap must not be lease-guarded: {sql}");
+        assert!(!sql.contains("claimed_by"), "the reap must not be lease-guarded: {sql}");
     }
 
     #[test]

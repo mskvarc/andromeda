@@ -18,7 +18,8 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_query::entity_row_refs::{DocumentsRef, EntityRowRefs};
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
-use sea_query::{Expr, ExprTrait, JoinType, SelectStatement};
+use andromeda_postgresql_seaquery::branch::qualified;
+use sea_query::{DynIden, Expr, ExprTrait, JoinType, SelectStatement};
 
 /// Whether a relation takes part in the statement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,25 +78,26 @@ impl EntityRelations {
         }
     }
 
-    /// How the statement's fragments reach the three rows: the joined
-    /// `entity_documents` column when the document row is joined, a scalar
-    /// lookup by `entity_key` when it is not.
+    /// How the statement's fragments reach the three rows, in the given branch
+    /// schema: the joined `entity_documents` column when the document row is
+    /// joined, a scalar lookup by `entity_key` when it is not.
     #[must_use]
-    pub fn rows(&self) -> EntityRowRefs {
+    pub fn rows(&self, schema: Option<DynIden>) -> EntityRowRefs {
         match self.documents {
-            Demand::Joined => EntityRowRefs::unaliased(),
-            Demand::NotJoined => EntityRowRefs::unaliased_with(DocumentsRef::ByKeyLookup),
+            Demand::Joined => EntityRowRefs::unaliased(schema),
+            Demand::NotJoined => EntityRowRefs::unaliased_with(schema, DocumentsRef::ByKeyLookup),
         }
     }
 
-    /// Add `FROM entities` and the joins this demand asks for to `select`.
-    pub fn apply_from(&self, select: &mut SelectStatement) {
-        select.from(Entities::Table);
+    /// Add `FROM entities` and the joins this demand asks for to `select`, every
+    /// relation qualified by the branch schema (`None` for the live branch).
+    pub fn apply_from(&self, select: &mut SelectStatement, schema: Option<&DynIden>) {
+        select.from(qualified(schema, Entities::Table));
         match self.search {
             Demand::Joined => {
                 select.join(
                     JoinType::Join,
-                    EntitySearch::Table,
+                    qualified(schema, EntitySearch::Table),
                     Expr::col((EntitySearch::Table, EntitySearch::EntityKey)).equals((Entities::Table, Entities::EntityKey)),
                 );
             }
@@ -105,7 +107,7 @@ impl EntityRelations {
             Demand::Joined => {
                 select.join(
                     JoinType::Join,
-                    EntityDocuments::Table,
+                    qualified(schema, EntityDocuments::Table),
                     Expr::col((EntityDocuments::Table, EntityDocuments::EntityKey)).equals((Entities::Table, Entities::EntityKey)),
                 );
             }
@@ -177,7 +179,7 @@ mod tests {
         assert_eq!(EntityRelations::for_query(&empty_query()), joined(Demand::NotJoined, Demand::NotJoined));
         let mut select = Query::select();
         select.column(("entities", "id"));
-        EntityRelations::for_query(&empty_query()).apply_from(&mut select);
+        EntityRelations::for_query(&empty_query()).apply_from(&mut select, None);
         let sql = select.to_string(PostgresQueryBuilder);
         assert!(!sql.contains("JOIN"), "{sql}");
     }
@@ -187,7 +189,7 @@ mod tests {
         let relations = EntityRelations::for_query(&empty_query());
         assert_eq!(relations, joined(Demand::NotJoined, Demand::NotJoined));
         let sql = Query::select()
-            .expr(relations.rows().payload_column())
+            .expr(relations.rows(None).payload_column())
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert!(
@@ -202,7 +204,7 @@ mod tests {
         filtered.selection.q_expr = Some(parser::parse("\"https://example.com/speed\">1").expect("valid q"));
         let relations = EntityRelations::for_query(&filtered);
         let sql = Query::select()
-            .expr(relations.rows().payload_column())
+            .expr(relations.rows(None).payload_column())
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert!(
@@ -272,7 +274,7 @@ mod tests {
     fn the_joins_are_on_the_surrogate_key() {
         let mut select = Query::select();
         select.column(("entities", "id"));
-        joined(Demand::Joined, Demand::Joined).apply_from(&mut select);
+        joined(Demand::Joined, Demand::Joined).apply_from(&mut select, None);
         let sql = select.to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"FROM "entities" JOIN "entity_search" ON "entity_search"."entity_key" = "entities"."entity_key" JOIN "entity_documents" ON "entity_documents"."entity_key" = "entities"."entity_key""#), "{sql}");
     }

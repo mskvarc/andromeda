@@ -41,12 +41,20 @@ use syn::{
 /// The sea-query extension and the iden catalogue are the backend itself; the
 /// COPY modules speak the binary wire protocol sea-query has no form for; a
 /// `schema_ddl` module holds the `CREATE`/`TimescaleDB` DDL `SeaQuery` cannot
-/// express. Everything else builds statements through sea-query.
+/// express. The Snapshot branch modules are that same category: a branch is a
+/// per-Snapshot PostgreSQL schema, and `CREATE SCHEMA`, `CREATE TABLE ... (LIKE
+/// ... INCLUDING ALL)`, `ALTER SCHEMA ... RENAME`, `DROP SCHEMA`, the
+/// cross-schema `INSERT ... SELECT` clone over dynamically named schemas, and
+/// the `pg_total_relation_size` branch-size sum have no sea-query form.
+/// Everything else builds statements through sea-query.
 const SANCTIONED_PREFIXES: &[&str] = &[
     "crates/andromeda-postgresql-seaquery/",
     "crates/andromeda-postgresql-schema/",
     "crates/andromeda-postgresql-encoding/src/copy.rs",
     "crates/andromeda-postgresql-context-store/src/entity/copy.rs",
+    "crates/andromeda-postgresql-context-store/src/snapshot/branch_schema.rs",
+    "crates/andromeda-postgresql-context-store/src/snapshot/clone/",
+    "crates/andromeda-postgresql-context-store/src/snapshot/quota.rs",
     "crates/andromeda-postgresql-temporal-store/src/copy.rs",
 ];
 

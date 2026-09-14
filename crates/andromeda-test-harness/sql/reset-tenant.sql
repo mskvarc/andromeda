@@ -26,6 +26,7 @@ TRUNCATE
     notification_deliveries,
     notification_events,
     scope_history,
+    snapshot_preparation,
     snapshots,
     registration_information,
     context_source_registrations,
@@ -41,8 +42,15 @@ TRUNCATE
     jsonld_contexts
 RESTART IDENTITY CASCADE;
 
--- The live context space is migration-owned tenant state. Snapshot context
--- spaces are test-owned branch parents and cannot be reached by truncating the
--- child control table, so remove them explicitly after every dependent table
--- is empty.
-DELETE FROM context_spaces WHERE kind = 'snapshot';
+-- The live branch is the default schema, reset by the truncation above. Each
+-- Snapshot branch is its own schema `snap_<key>` (and `snap_<key>_stg` while
+-- preparing), test-owned and unreachable from the control tables, so every such
+-- schema is dropped after the control rows that named them are gone.
+DO $$
+DECLARE
+    branch text;
+BEGIN
+    FOR branch IN SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE 'snap\_%' LOOP
+        EXECUTE format('DROP SCHEMA %I CASCADE', branch);
+    END LOOP;
+END $$;

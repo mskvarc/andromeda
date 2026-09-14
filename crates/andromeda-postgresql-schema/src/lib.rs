@@ -15,7 +15,6 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
-pub mod context_space;
 pub mod csr;
 pub mod current;
 pub mod entity_map;

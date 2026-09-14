@@ -36,7 +36,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     timescale::time_bucket,
 };
-use sea_query::{Alias, Condition, Expr, ExprTrait, Func, Iden, JoinType, Order, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Condition, DynIden, Expr, ExprTrait, Func, Iden, JoinType, Order, Query, SelectStatement, SimpleExpr};
 
 /// Lateral projection that computes one bucket boundary per history row.
 #[derive(Iden, Clone, Copy)]
@@ -162,7 +162,7 @@ fn bucket_subquery(axis: AttributeHistory, width: SimpleExpr, origin: SimpleExpr
 
 /// Build the aggregation query with `time_bucket` windows.
 #[must_use]
-pub fn build_aggregation_query(compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
+pub fn build_aggregation_query(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
     // Clause 4.5.19: an absent period aggregates the whole range into one
     // bucket rather than bucketing at all. A zero period is absent by
     // construction, so there is nothing to test for here.
@@ -177,7 +177,7 @@ pub fn build_aggregation_query(compiled: &CompiledTemporalQuery, condition: Cond
     select.expr_as(Expr::col((An, AttributeNames::Name)), Alias::new("attribute_name"));
     select.expr(Expr::col((S, TemporalAttributeStreams::DatasetId)));
     project_group_span(&mut select);
-    base_history_source(&mut select);
+    base_history_source(&mut select, schema);
 
     if let Some(period) = period {
         let iso = period.as_iso8601();
@@ -270,11 +270,11 @@ mod tests {
     }
 
     fn sql_of(compiled: &CompiledTemporalQuery) -> String {
-        build_aggregation_query(compiled, entity_filter()).to_string(PostgresQueryBuilder)
+        build_aggregation_query(None, compiled, entity_filter()).to_string(PostgresQueryBuilder)
     }
 
     fn bound_sql_of(compiled: &CompiledTemporalQuery) -> (String, sea_query::Values) {
-        build_aggregation_query(compiled, entity_filter()).build(PostgresQueryBuilder)
+        build_aggregation_query(None, compiled, entity_filter()).build(PostgresQueryBuilder)
     }
 
     #[test]

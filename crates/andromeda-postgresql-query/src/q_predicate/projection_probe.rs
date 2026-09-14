@@ -45,7 +45,7 @@ pub fn exists_on_projection(id: AttributeNameId, value: Condition, rows: &Entity
     let mut probe = Query::select();
     probe
         .expr(int_literal(1))
-        .from_as(CurrentAttributeValues::Table, Cav)
+        .from(rows.table(CurrentAttributeValues::Table).alias(Cav))
         .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::AttributeNameId)).eq(id.get()))
         .cond_where(value)
         .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::EntityKey)).eq(rows.entity_key_column()));
@@ -76,7 +76,7 @@ mod tests {
     #[test]
     fn a_presence_probe_tests_the_attribute_key_and_the_correlation_and_nothing_else() {
         pretty_assertions::assert_eq!(
-            render(attribute_row_exists(AttributeNameId::from(7), &EntityRowRefs::unaliased())),
+            render(attribute_row_exists(AttributeNameId::from(7), &EntityRowRefs::unaliased(None))),
             concat!(
                 r#"SELECT "id" FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav" "#,
                 r#"WHERE "cav"."attribute_name_id" = $1 AND "cav"."entity_key" = "entities"."entity_key")"#,
@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn a_value_probe_places_its_condition_between_the_attribute_key_and_the_correlation() {
         let value = Condition::all().add(probe_column(CurrentAttributeValues::ValueString).eq("red"));
-        let sql = render(exists_on_projection(AttributeNameId::from(7), value, &EntityRowRefs::unaliased()));
+        let sql = render(exists_on_projection(AttributeNameId::from(7), value, &EntityRowRefs::unaliased(None)));
         assert!(
             sql.contains(r#""cav"."attribute_name_id" = $1 AND "cav"."value_string" = $2 AND "cav"."entity_key""#),
             "{sql}"

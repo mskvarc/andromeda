@@ -20,8 +20,8 @@ use andromeda_ngsi_ld_query::{
     temporal::window::TimeInterval,
 };
 use andromeda_postgresql_schema::temporal::ScopeHistory;
-use andromeda_postgresql_seaquery::{column_reference::ColumnReference, ltree::ltree_matches};
-use sea_query::{Condition, Expr as SeaExpr, ExprTrait, IntoIden, Query, SelectStatement, SimpleExpr};
+use andromeda_postgresql_seaquery::{branch::qualified, column_reference::ColumnReference, ltree::ltree_matches};
+use sea_query::{Condition, DynIden, Expr as SeaExpr, ExprTrait, IntoIden, Query, SelectStatement, SimpleExpr};
 
 /// Which relation a scope predicate is evaluated against.
 #[derive(Debug, Clone)]
@@ -49,6 +49,9 @@ pub enum ScopeTarget {
         timeproperty: TimeProp,
         /// The window a validity interval has to overlap.
         interval: TimeInterval,
+        /// The branch schema the `scope_history` probe is read in, or `None` for
+        /// the live branch.
+        schema: Option<DynIden>,
     },
     /// `scope_history`, read as the scope that was valid at one instant.
     ///
@@ -64,6 +67,9 @@ pub enum ScopeTarget {
         timeproperty: TimeProp,
         /// The instant the scope has to have been valid at.
         instant: SimpleExpr,
+        /// The branch schema the `scope_history` probe is read in, or `None` for
+        /// the live branch.
+        schema: Option<DynIden>,
     },
 }
 
@@ -84,22 +90,24 @@ impl ScopeTarget {
     /// The scope-history target correlating on the `(alias, column)` temporal
     /// entity key, asking whether a validity interval overlaps `interval` on
     /// the `timeproperty` axis.
-    pub fn history(entity_key_column: (impl IntoIden, impl IntoIden), timeproperty: TimeProp, interval: TimeInterval) -> ScopeTarget {
+    pub fn history(entity_key_column: (impl IntoIden, impl IntoIden), timeproperty: TimeProp, interval: TimeInterval, schema: Option<DynIden>) -> ScopeTarget {
         ScopeTarget::History {
             entity_key_column: ColumnReference::qualified(entity_key_column.0, entity_key_column.1),
             timeproperty,
             interval,
+            schema,
         }
     }
 
     /// The scope-history target correlating on the `(alias, column)` temporal
     /// entity key, asking whether the scope was valid at `instant` on the
-    /// `timeproperty` axis.
-    pub fn valid_at(entity_key_column: (impl IntoIden, impl IntoIden), timeproperty: TimeProp, instant: SimpleExpr) -> ScopeTarget {
+    /// `timeproperty` axis, reading `scope_history` in the given branch schema.
+    pub fn valid_at(entity_key_column: (impl IntoIden, impl IntoIden), timeproperty: TimeProp, instant: SimpleExpr, schema: Option<DynIden>) -> ScopeTarget {
         ScopeTarget::ValidAt {
             entity_key_column: ColumnReference::qualified(entity_key_column.0, entity_key_column.1),
             timeproperty,
             instant,
+            schema,
         }
     }
 }
@@ -132,17 +140,31 @@ fn pattern_predicate(pattern: &ScopePattern, target: &ScopeTarget) -> SimpleExpr
             entity_key_column,
             timeproperty,
             interval,
+            schema,
         } => {
             let axis = scope_history_axis(*timeproperty);
-            SeaExpr::exists(matching_scope_events(&lquery, entity_key_column, axis, overlaps_window(axis, *interval)))
+            SeaExpr::exists(matching_scope_events(
+                &lquery,
+                entity_key_column,
+                axis,
+                overlaps_window(axis, *interval, schema.as_ref()),
+                schema.as_ref(),
+            ))
         }
         ScopeTarget::ValidAt {
             entity_key_column,
             timeproperty,
             instant,
+            schema,
         } => {
             let axis = scope_history_axis(*timeproperty);
-            SeaExpr::exists(matching_scope_events(&lquery, entity_key_column, axis, valid_at(axis, instant)))
+            SeaExpr::exists(matching_scope_events(
+                &lquery,
+                entity_key_column,
+                axis,
+                valid_at(axis, instant, schema.as_ref()),
+                schema.as_ref(),
+            ))
         }
     }
 }
@@ -156,11 +178,17 @@ fn pattern_predicate(pattern: &ScopePattern, target: &ScopeTarget) -> SimpleExpr
 /// that ends someone else's interval. That is also what makes a `scopeQ`
 /// measured on the `deletedAt` axis select nothing at all: `deletedAt` is
 /// carried by removals alone, and a removal names no scope to match.
-fn matching_scope_events(lquery: &str, entity_key_column: &ColumnReference, axis: ScopeHistory, validity: Condition) -> SelectStatement {
+fn matching_scope_events(
+    lquery: &str,
+    entity_key_column: &ColumnReference,
+    axis: ScopeHistory,
+    validity: Condition,
+    schema: Option<&DynIden>,
+) -> SelectStatement {
     let mut probe = Query::select();
     probe
         .expr(SeaExpr::val(1))
-        .from_as(ScopeHistory::Table, ScopeEvent)
+        .from(qualified(schema, ScopeHistory::Table).alias(ScopeEvent))
         .and_where(SeaExpr::col((ScopeEvent, ScopeHistory::TemporalEntityKey)).eq(entity_key_column.column_expr()))
         .and_where(positioned_on_axis(axis))
         .and_where(ltree_matches(
@@ -186,7 +214,7 @@ mod tests {
     }
 
     fn history(interval: TimeInterval) -> ScopeTarget {
-        ScopeTarget::history((Alias::new("e"), Alias::new("entity_key")), TimeProp::Observed, interval)
+        ScopeTarget::history((Alias::new("e"), Alias::new("entity_key")), TimeProp::Observed, interval, None)
     }
 
     fn instant_valid_at() -> ScopeTarget {
@@ -194,6 +222,7 @@ mod tests {
             (Alias::new("te"), Alias::new("entity_key")),
             TimeProp::Observed,
             SeaExpr::col((Alias::new("ah"), Alias::new("observed_at"))),
+            None,
         )
     }
 
@@ -292,6 +321,7 @@ mod tests {
                 (Alias::new("e"), Alias::new("entity_key")),
                 timeproperty,
                 TimeInterval::After(instant("2024-01-01T00:00:00Z")),
+                None,
             );
             let sql = render(condition(&scope("/A"), &target));
             assert!(sql.contains(&format!("\"sh\".\"{column}\" IS NOT NULL")), "{sql}");

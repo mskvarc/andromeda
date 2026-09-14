@@ -187,6 +187,7 @@ mod tests {
             "context_source_registrations",
             "registration_information",
             "snapshots",
+            "snapshot_preparation",
             "scope_history",
             "notification_deliveries",
             "notification_events",
@@ -246,9 +247,12 @@ mod tests {
     }
 
     #[test]
-    fn reset_script_removes_snapshot_context_spaces_and_preserves_the_live_space() {
-        assert!(RESET_TENANT_SQL.contains("DELETE FROM context_spaces WHERE kind = 'snapshot'"));
-        assert!(!RESET_TENANT_SQL.contains("TRUNCATE context_spaces"));
+    fn reset_script_drops_every_snapshot_branch_schema_and_keeps_the_live_default_schema() {
+        // Each Snapshot branch is a `snap_<key>` schema; the reset drops them all
+        // and never references the removed `context_spaces` table.
+        assert!(RESET_TENANT_SQL.contains("DROP SCHEMA"));
+        assert!(RESET_TENANT_SQL.contains(r"snap\_%"));
+        assert!(!RESET_TENANT_SQL.contains("context_spaces"));
     }
 
     #[test]

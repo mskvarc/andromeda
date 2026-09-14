@@ -32,11 +32,7 @@ use andromeda_context_commit::{
     subscription_key::SubscriptionKey,
     write_outcome::WriteOutcome,
 };
-use andromeda_context_space::{
-    context_space::{ContextSpace, ContextSpaceKind},
-    context_space_key::ContextSpaceKey,
-    context_target::ContextTarget,
-};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
@@ -368,8 +364,7 @@ pub(crate) async fn recording_service() -> (EntityService, Arc<Mutex<Vec<AtomicW
 
 /// The ordinary branch target used by the recording fixtures.
 pub(crate) fn live_target() -> ContextTarget {
-    let key = ContextSpaceKey::try_from(1).expect("the fixture context-space key is positive");
-    ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("the fixture context space is live")
+    ContextTarget::Live
 }
 
 /// The fixture entity identifier as a [`Uri`].

@@ -34,7 +34,7 @@ use sea_query::{Alias, Expr as SeaExpr, ExprTrait, Query, SelectStatement, Simpl
 pub fn geometry_instances_of(outer: &EntityRowRefs, subquery_alias: &str, attribute_id: AttributeNameId) -> SelectStatement {
     let alias = Alias::new(subquery_alias);
     let mut scan = Query::select();
-    scan.from_as(CurrentAttributeValues::Table, alias.clone())
+    scan.from(outer.table(CurrentAttributeValues::Table).alias(alias.clone()))
         .and_where(SeaExpr::col((alias.clone(), CurrentAttributeValues::EntityKey)).eq(outer.entity_key_column()))
         .and_where(SeaExpr::col((alias.clone(), CurrentAttributeValues::AttributeNameId)).eq(attribute_id.get()))
         .and_where(SeaExpr::col((alias, CurrentAttributeValues::ValueGeo)).is_not_null());
@@ -78,7 +78,7 @@ mod tests {
     }
 
     fn aliased() -> EntityRowRefs {
-        EntityRowRefs::aliased(Alias::new("e"), Alias::new("s"), DocumentsRef::ByKeyLookup)
+        EntityRowRefs::aliased(None, Alias::new("e"), Alias::new("s"), DocumentsRef::ByKeyLookup)
     }
 
     /// The correlation names the outer relation explicitly, so a join added to
@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn the_correlation_binds_the_outer_row_it_was_given() {
         let bare = render(geometry_instances_of(
-            &EntityRowRefs::unaliased(),
+            &EntityRowRefs::unaliased(None),
             "geo_instance",
             AttributeNameId::from(42_i32),
         ));
@@ -103,7 +103,7 @@ mod tests {
     /// correlating.
     #[test]
     fn no_correlation_leaves_the_outer_reference_unqualified() {
-        for rows in [EntityRowRefs::unaliased(), aliased()] {
+        for rows in [EntityRowRefs::unaliased(None), aliased()] {
             let sql = render(geometry_instances_of(&rows, "geo_instance", AttributeNameId::from(42_i32)));
             assert!(!sql.contains("= \"entity_key\""), "{sql}");
         }
@@ -123,7 +123,11 @@ mod tests {
     /// populated — the two halves the supporting partial index is built on.
     #[test]
     fn the_correlation_restricts_to_the_geometry_instances_of_one_attribute() {
-        let sql = render(geometry_instances_of(&EntityRowRefs::unaliased(), "geo_order", AttributeNameId::from(7_i32)));
+        let sql = render(geometry_instances_of(
+            &EntityRowRefs::unaliased(None),
+            "geo_order",
+            AttributeNameId::from(7_i32),
+        ));
         assert!(sql.contains("FROM \"current_attribute_values\" AS \"geo_order\""), "{sql}");
         assert!(sql.contains("\"geo_order\".\"attribute_name_id\" = 7"), "{sql}");
         assert!(sql.contains("\"geo_order\".\"value_geo\" IS NOT NULL"), "{sql}");
@@ -133,8 +137,16 @@ mod tests {
     /// neither can capture the other's rows.
     #[test]
     fn each_caller_names_its_own_subquery_alias() {
-        let first = render(geometry_instances_of(&EntityRowRefs::unaliased(), "geo_instance", AttributeNameId::from(1_i32)));
-        let second = render(geometry_instances_of(&EntityRowRefs::unaliased(), "geo_order", AttributeNameId::from(1_i32)));
+        let first = render(geometry_instances_of(
+            &EntityRowRefs::unaliased(None),
+            "geo_instance",
+            AttributeNameId::from(1_i32),
+        ));
+        let second = render(geometry_instances_of(
+            &EntityRowRefs::unaliased(None),
+            "geo_order",
+            AttributeNameId::from(1_i32),
+        ));
         assert!(!first.contains("geo_order"), "{first}");
         assert!(!second.contains("geo_instance"), "{second}");
         assert!(render_column(instance_geometry_column("geo_order")).contains("\"geo_order\".\"value_geo\""));

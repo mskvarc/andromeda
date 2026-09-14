@@ -7,6 +7,7 @@ use crate::{
     stored_instance_columns::{generated_instance_uuid, verbatim_instance_id},
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::scope_value_kind::ScopeValueKind;
 use andromeda_postgresql_query::ltree::scope_to_ltree;
 use andromeda_postgresql_schema::temporal::{ScopeHistory, TemporalEntities};
@@ -87,15 +88,14 @@ impl TemporalRepository {
             return Ok(());
         }
         let binds = scope_history_binds(entries)?;
-        let dedup_sql = scope_history_dedup_sql();
+        let dedup_sql = scope_history_dedup_sql(target);
         sqlx::query(AssertSqlSafe(dedup_sql))
             .bind(&binds.entity_ids)
             .bind(&binds.generated_instance_uuids)
             .bind(&binds.verbatim_instance_ids)
-            .bind(target.key().as_i64())
             .execute(&mut **tx)
             .await?;
-        let insert_sql = scope_history_insert_sql()?;
+        let insert_sql = scope_history_insert_sql(target)?;
         sqlx::query(AssertSqlSafe(insert_sql))
             .bind(&binds.recorded_ats)
             .bind(&binds.entity_ids)
@@ -109,7 +109,6 @@ impl TemporalRepository {
             .bind(&binds.generated_instance_uuids)
             .bind(&binds.verbatim_instance_ids)
             .bind(&binds.scope_paths)
-            .bind(target.key().as_i64())
             .execute(&mut **tx)
             .await?;
         Ok(())
@@ -190,7 +189,7 @@ fn scope_history_binds(entries: &[ScopeHistoryEntry]) -> Result<ScopeHistoryBind
 /// no `USING`. The three staging arrays carry NULLs and bind through `sqlx`; the
 /// `datasetId`-style `IS NOT DISTINCT FROM` matches a NULL instance identifier
 /// to a NULL one.
-fn scope_history_dedup_sql() -> String {
+fn scope_history_dedup_sql(target: &ContextTarget) -> String {
     let columns = [
         UnnestColumn::new(Staged::EntityId, PostgresType::TextArray),
         UnnestColumn::new(Staged::GeneratedInstanceUuid, PostgresType::UuidArray),
@@ -204,12 +203,10 @@ fn scope_history_dedup_sql() -> String {
         .from_function(call, D)
         .join_as(
             JoinType::InnerJoin,
-            TemporalEntities::Table,
+            table_of(target, TemporalEntities::Table),
             Te,
             Expr::col((Te, TemporalEntities::Id)).equals((D, Staged::EntityId)),
         )
-        .and_where(Expr::col((Te, TemporalEntities::ContextSpaceKey)).eq(external_placeholder(4)))
-        .and_where(Expr::col((ScopeHistory::Table, ScopeHistory::ContextSpaceKey)).eq(external_placeholder(4)))
         .and_where(Expr::col((ScopeHistory::Table, ScopeHistory::TemporalEntityKey)).equals((Te, TemporalEntities::EntityKey)))
         .and_where(
             SimpleExpr::from(Expr::col((ScopeHistory::Table, ScopeHistory::GeneratedInstanceUuid)))
@@ -221,7 +218,7 @@ fn scope_history_dedup_sql() -> String {
     let matches = matches;
 
     let sql = Query::delete()
-        .from_table(ScopeHistory::Table)
+        .from_table(table_of(target, ScopeHistory::Table))
         .and_where(Expr::exists(matches))
         .to_owned()
         .to_string(PostgresQueryBuilder);
@@ -234,7 +231,7 @@ fn scope_history_dedup_sql() -> String {
 /// The twelve staging arrays carry NULLs and bind through `sqlx`. The conflict
 /// target names the columns `uq_scope_history_write` covers, so a row replayed
 /// under its original write identity is a no-op rather than a duplicate.
-fn scope_history_insert_sql() -> Result<String, TemporalStoreError> {
+fn scope_history_insert_sql(target: &ContextTarget) -> Result<String, TemporalStoreError> {
     let columns = [
         UnnestColumn::new(Staged::RecordedAt, PostgresType::TimestamptzArray),
         UnnestColumn::new(Staged::EntityId, PostgresType::TextArray),
@@ -254,7 +251,6 @@ fn scope_history_insert_sql() -> Result<String, TemporalStoreError> {
     let mut select = Query::select();
     select
         .expr(Expr::col((D, Staged::RecordedAt)))
-        .expr(external_placeholder(13))
         .expr(Expr::col((Te, TemporalEntities::EntityKey)))
         .expr(Expr::col((D, Staged::WriteId)))
         .expr(Expr::col((D, Staged::WriteOrdinal)))
@@ -269,17 +265,15 @@ fn scope_history_insert_sql() -> Result<String, TemporalStoreError> {
         .from_function(call, D)
         .join_as(
             JoinType::InnerJoin,
-            TemporalEntities::Table,
+            table_of(target, TemporalEntities::Table),
             Te,
             Expr::col((Te, TemporalEntities::Id)).equals((D, Staged::EntityId)),
-        )
-        .and_where(Expr::col((Te, TemporalEntities::ContextSpaceKey)).eq(external_placeholder(13)));
+        );
     let select = select;
 
     let mut insert = Query::insert();
-    insert.into_table(ScopeHistory::Table).columns([
+    insert.into_table(table_of(target, ScopeHistory::Table)).columns([
         ScopeHistory::RecordedAt,
-        ScopeHistory::ContextSpaceKey,
         ScopeHistory::TemporalEntityKey,
         ScopeHistory::WriteId,
         ScopeHistory::WriteOrdinal,
@@ -296,14 +290,9 @@ fn scope_history_insert_sql() -> Result<String, TemporalStoreError> {
         .select_from(select)
         .map_err(|error| TemporalStoreError::Validation(error.to_string()))?
         .on_conflict(
-            OnConflict::columns([
-                ScopeHistory::RecordedAt,
-                ScopeHistory::ContextSpaceKey,
-                ScopeHistory::WriteId,
-                ScopeHistory::WriteOrdinal,
-            ])
-            .do_nothing()
-            .to_owned(),
+            OnConflict::columns([ScopeHistory::RecordedAt, ScopeHistory::WriteId, ScopeHistory::WriteOrdinal])
+                .do_nothing()
+                .to_owned(),
         );
 
     let sql = insert.to_string(PostgresQueryBuilder);
@@ -313,11 +302,12 @@ fn scope_history_insert_sql() -> Result<String, TemporalStoreError> {
 #[cfg(test)]
 mod tests {
     use crate::scope_history_write::{scope_history_dedup_sql, scope_history_insert_sql};
+    use andromeda_context_space::context_target::ContextTarget;
 
     #[test]
     fn a_scope_row_hangs_off_the_temporal_catalogue_and_never_off_current_state() {
-        let insert = scope_history_insert_sql().expect("the fixed scope-history insert builds");
-        for statement in [scope_history_dedup_sql(), insert] {
+        let insert = scope_history_insert_sql(&ContextTarget::Live).expect("the fixed scope-history insert builds");
+        for statement in [scope_history_dedup_sql(&ContextTarget::Live), insert] {
             assert!(
                 statement.contains(r#"INNER JOIN "temporal_entities" AS "te" ON "te"."id" = "d"."entity_id""#),
                 "{statement}"
@@ -328,9 +318,9 @@ mod tests {
 
     #[test]
     fn the_insert_carries_the_partition_column_and_the_whole_write_identity() {
-        let insert = scope_history_insert_sql().expect("the fixed scope-history insert builds");
+        let insert = scope_history_insert_sql(&ContextTarget::Live).expect("the fixed scope-history insert builds");
         assert!(
-            insert.contains(r#""recorded_at", "context_space_key", "temporal_entity_key", "write_id", "write_ordinal""#),
+            insert.contains(r#""recorded_at", "temporal_entity_key", "write_id", "write_ordinal""#),
             "{insert}"
         );
         assert!(insert.contains(r#""d"."scope_path"::ltree"#), "{insert}");
@@ -341,16 +331,16 @@ mod tests {
     /// insert a no-op instead of a duplicate or an error.
     #[test]
     fn a_row_replayed_under_its_original_write_identity_is_not_duplicated() {
-        let insert = scope_history_insert_sql().expect("the fixed scope-history insert builds");
+        let insert = scope_history_insert_sql(&ContextTarget::Live).expect("the fixed scope-history insert builds");
         assert!(
-            insert.contains(r#"ON CONFLICT ("recorded_at", "context_space_key", "write_id", "write_ordinal") DO NOTHING"#),
+            insert.contains(r#"ON CONFLICT ("recorded_at", "write_id", "write_ordinal") DO NOTHING"#),
             "{insert}"
         );
     }
 
     #[test]
     fn the_dedup_matches_a_null_instance_identity_to_a_null_one() {
-        let sql = scope_history_dedup_sql();
+        let sql = scope_history_dedup_sql(&ContextTarget::Live);
         assert!(sql.contains(r#"DELETE FROM "scope_history" WHERE EXISTS"#), "{sql}");
         assert_eq!(sql.matches("IS NOT DISTINCT FROM").count(), 2, "{sql}");
         assert!(sql.contains("AS d(entity_id, generated_instance_uuid, verbatim_instance_id)"), "{sql}");

@@ -29,7 +29,14 @@ CREATE TABLE entity_maps (
     expires_at TIMESTAMPTZ NOT NULL,
 
     -- EntityMap URI, e.g. "urn:ngsi-ld:EntityMap:<uuid>".
-    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL UNIQUE
+    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL UNIQUE,
+
+    -- Clause 5.5.14: a subsequent request referencing an EntityMap shall reuse
+    -- the creating request's parameters (bar entity ids, pagination and, for
+    -- temporal requests, the temporal query). This opaque `<operation>:<sha256
+    -- hex>` digest of those filter parameters is written once at creation and
+    -- compared for equality only, hence `COLLATE "C"`.
+    request_fingerprint TEXT COMPRESSION lz4 COLLATE "C"
 );
 
 -- The expiry sweep reads maps due at or before its cutoff.

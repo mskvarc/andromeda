@@ -18,8 +18,6 @@ pub enum Entities {
     Table,
     /// Surrogate primary key every owned child relation references
     EntityKey,
-    /// Context-space partition that owns this entity.
-    ContextSpaceKey,
     /// Entity URN identifier, the external identity of the row
     Id,
     /// Instant the entity was created (clause 4.8 `createdAt`).
@@ -40,8 +38,6 @@ pub enum Entities {
 pub enum EntityDocuments {
     /// Table name: `entity_documents`
     Table,
-    /// Context-space partition inherited from the owning entity.
-    ContextSpaceKey,
     /// Foreign key to `entities`, cascading on entity deletion; also the primary key
     EntityKey,
     /// Instant the payload was last written (clause 4.8 `modifiedAt`), the
@@ -59,8 +55,6 @@ pub enum EntityDocuments {
 pub enum EntitySearch {
     /// Table name: `entity_search`
     Table,
-    /// Context-space partition inherited from the owning entity.
-    ContextSpaceKey,
     /// Foreign key to `entities`, cascading on entity deletion; also the primary key
     EntityKey,
     /// Latest `expiresAt` among the payload's `location` instances, NULL when
@@ -99,8 +93,6 @@ pub enum EntitySearch {
 pub enum CurrentAttributeValues {
     /// Table name: `current_attribute_values`
     Table,
-    /// Context-space partition inherited from the owning entity.
-    ContextSpaceKey,
     /// Foreign key to `entities`, cascading on entity deletion
     EntityKey,
     /// Foreign key to `attribute_names`
@@ -150,7 +142,6 @@ mod tests {
     #[test]
     fn entities_column_names() {
         assert_eq!(Entities::EntityKey.to_string(), "entity_key");
-        assert_eq!(Entities::ContextSpaceKey.to_string(), "context_space_key");
         assert_eq!(Entities::Id.to_string(), "id");
         assert_eq!(Entities::CreatedAt.to_string(), "created_at");
         assert_eq!(Entities::ExpiresAt.to_string(), "expires_at");
@@ -160,7 +151,6 @@ mod tests {
     #[test]
     fn entity_documents_names() {
         assert_eq!(EntityDocuments::Table.to_string(), "entity_documents");
-        assert_eq!(EntityDocuments::ContextSpaceKey.to_string(), "context_space_key");
         assert_eq!(EntityDocuments::EntityKey.to_string(), "entity_key");
         assert_eq!(EntityDocuments::ModifiedAt.to_string(), "modified_at");
         assert_eq!(EntityDocuments::Payload.to_string(), "payload");
@@ -169,7 +159,6 @@ mod tests {
     #[test]
     fn entity_search_names() {
         assert_eq!(EntitySearch::Table.to_string(), "entity_search");
-        assert_eq!(EntitySearch::ContextSpaceKey.to_string(), "context_space_key");
         assert_eq!(EntitySearch::EntityKey.to_string(), "entity_key");
         assert_eq!(EntitySearch::LocationExpiresAt.to_string(), "location_expires_at");
         assert_eq!(EntitySearch::TypeIds.to_string(), "type_ids");
@@ -189,7 +178,6 @@ mod tests {
     #[test]
     fn current_attribute_values_grain_column_names() {
         assert_eq!(CurrentAttributeValues::EntityKey.to_string(), "entity_key");
-        assert_eq!(CurrentAttributeValues::ContextSpaceKey.to_string(), "context_space_key");
         assert_eq!(CurrentAttributeValues::AttributeNameId.to_string(), "attribute_name_id");
         assert_eq!(CurrentAttributeValues::DatasetId.to_string(), "dataset_id");
         assert_eq!(CurrentAttributeValues::AttributeKind.to_string(), "attribute_kind");

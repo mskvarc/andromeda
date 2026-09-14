@@ -16,7 +16,8 @@
 //! so the outer row is always stated.
 
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
-use sea_query::{DynIden, Expr, ExprTrait, IntoIden, Query, SimpleExpr};
+use andromeda_postgresql_seaquery::branch::qualified;
+use sea_query::{DynIden, Expr, ExprTrait, IntoIden, Query, SimpleExpr, TableRef};
 
 /// How the enclosing statement reaches the payload of the entity.
 #[derive(Debug, Clone, PartialEq)]
@@ -40,6 +41,11 @@ impl DocumentsRef {
 /// The names the enclosing statement knows one entity's three relations by.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EntityRowRefs {
+    /// The context branch schema every relation the statement names is
+    /// qualified with, or `None` for the live branch's default schema. Column
+    /// references stay bare `"table"."column"` and resolve against the range
+    /// table entry the schema-qualified `FROM`/`JOIN` introduced.
+    schema: Option<DynIden>,
     /// The `entities` relation, as the statement names it.
     identity: DynIden,
     /// The `entity_search` relation, as the statement names it.
@@ -53,35 +59,53 @@ pub struct EntityRowRefs {
 
 impl EntityRowRefs {
     /// The three relations used unaliased, under their own table names, with
-    /// `entity_documents` joined.
+    /// `entity_documents` joined, in the given branch schema.
     #[must_use]
-    pub fn unaliased() -> EntityRowRefs {
-        EntityRowRefs::unaliased_with(DocumentsRef::Joined(EntityDocuments::Table.into_iden()))
+    pub fn unaliased(schema: Option<DynIden>) -> EntityRowRefs {
+        EntityRowRefs::unaliased_with(schema, DocumentsRef::Joined(EntityDocuments::Table.into_iden()))
     }
 
     /// The identity and search relations used unaliased, under their own table
-    /// names, with the payload reached as `documents` says.
+    /// names, in the given branch schema, with the payload reached as
+    /// `documents` says.
     ///
     /// A statement that projects the payload but neither filters nor sorts on
     /// it reads it [`DocumentsRef::ByKeyLookup`]: the planner then defers the
     /// lookup past the sort and the limit, so a page of a hundred entities
     /// fetches a hundred documents instead of joining every candidate's.
     #[must_use]
-    pub fn unaliased_with(documents: DocumentsRef) -> EntityRowRefs {
+    pub fn unaliased_with(schema: Option<DynIden>, documents: DocumentsRef) -> EntityRowRefs {
         EntityRowRefs {
+            schema,
             identity: Entities::Table.into_iden(),
             search: EntitySearch::Table.into_iden(),
             documents,
         }
     }
 
-    /// The three relations as the statement aliases them.
-    pub fn aliased(identity: impl IntoIden, search: impl IntoIden, documents: DocumentsRef) -> EntityRowRefs {
+    /// The three relations as the statement aliases them, in the given branch
+    /// schema.
+    pub fn aliased(schema: Option<DynIden>, identity: impl IntoIden, search: impl IntoIden, documents: DocumentsRef) -> EntityRowRefs {
         EntityRowRefs {
+            schema,
             identity: identity.into_iden(),
             search: search.into_iden(),
             documents,
         }
+    }
+
+    /// The branch schema this statement's relations are qualified with, for a
+    /// fragment that reaches a further relation of its own.
+    #[must_use]
+    pub const fn schema(&self) -> Option<&DynIden> {
+        self.schema.as_ref()
+    }
+
+    /// Qualify `table` with this statement's branch schema, for a `FROM` or
+    /// `JOIN` a fragment introduces.
+    #[must_use]
+    pub fn table(&self, table: impl IntoIden) -> TableRef {
+        qualified(self.schema.as_ref(), table)
     }
 
     /// A column of the `entities` row, qualified by the name the statement
@@ -124,7 +148,7 @@ impl EntityRowRefs {
             DocumentsRef::Joined(documents) => Expr::col((documents.clone(), EntityDocuments::Payload.into_iden())),
             DocumentsRef::ByKeyLookup => Query::select()
                 .column(EntityDocuments::Payload)
-                .from(EntityDocuments::Table)
+                .from(qualified(self.schema.as_ref(), EntityDocuments::Table))
                 .and_where(Expr::col(EntityDocuments::EntityKey).eq(self.entity_key_column()))
                 .take()
                 .into(),
@@ -136,7 +160,7 @@ impl EntityRowRefs {
 mod tests {
     use crate::entity_row_refs::{DocumentsRef, EntityRowRefs};
     use andromeda_postgresql_schema::current::{Entities, EntitySearch};
-    use sea_query::{Alias, PostgresQueryBuilder, Query, SimpleExpr};
+    use sea_query::{Alias, IntoIden, PostgresQueryBuilder, Query, SimpleExpr};
 
     fn render(expr: SimpleExpr) -> String {
         Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
@@ -144,7 +168,7 @@ mod tests {
 
     #[test]
     fn unaliased_references_qualify_by_the_table_names() {
-        let rows = EntityRowRefs::unaliased();
+        let rows = EntityRowRefs::unaliased(None);
         assert!(render(rows.entity_key_column()).contains(r#""entities"."entity_key""#));
         assert!(render(rows.identity_column(Entities::Id)).contains(r#""entities"."id""#));
         assert!(render(rows.search_column(EntitySearch::TypeIds)).contains(r#""entity_search"."type_ids""#));
@@ -153,7 +177,7 @@ mod tests {
 
     #[test]
     fn aliased_references_qualify_by_the_aliases() {
-        let rows = EntityRowRefs::aliased(Alias::new("ce"), Alias::new("cs"), DocumentsRef::joined(Alias::new("cd")));
+        let rows = EntityRowRefs::aliased(None, Alias::new("ce"), Alias::new("cs"), DocumentsRef::joined(Alias::new("cd")));
         assert!(render(rows.entity_key_column()).contains(r#""ce"."entity_key""#));
         assert!(render(rows.search_column(EntitySearch::Location)).contains(r#""cs"."location""#));
         assert!(render(rows.payload_column()).contains(r#""cd"."payload""#));
@@ -161,7 +185,7 @@ mod tests {
 
     #[test]
     fn a_payload_read_by_key_lookup_is_a_scalar_subquery_correlated_on_the_identity_row() {
-        let rows = EntityRowRefs::aliased(Alias::new("ce"), Alias::new("cs"), DocumentsRef::ByKeyLookup);
+        let rows = EntityRowRefs::aliased(None, Alias::new("ce"), Alias::new("cs"), DocumentsRef::ByKeyLookup);
         let sql = render(rows.payload_column());
         assert!(
             sql.contains(r#"(SELECT "payload" FROM "entity_documents" WHERE "entity_key" = "ce"."entity_key")"#),
@@ -169,11 +193,31 @@ mod tests {
         );
     }
 
+    /// A Snapshot branch schema qualifies the tables a fragment reaches -- the
+    /// key-lookup subquery's `FROM` and any table introduced through `table` --
+    /// while column references stay bare and resolve against them.
+    #[test]
+    fn a_branch_schema_qualifies_the_tables_a_fragment_reaches() {
+        let schema = Alias::new("snap_5").into_iden();
+        let rows = EntityRowRefs::unaliased_with(Some(schema), DocumentsRef::ByKeyLookup);
+        assert!(
+            render(rows.payload_column()).contains(r#"FROM "snap_5"."entity_documents""#),
+            "{}",
+            render(rows.payload_column())
+        );
+        let from = Query::select()
+            .column(Entities::Id)
+            .from(rows.table(Entities::Table))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert!(from.contains(r#"FROM "snap_5"."entities""#), "{from}");
+    }
+
     #[test]
     fn no_reference_is_left_unqualified() {
         for rows in [
-            EntityRowRefs::unaliased(),
-            EntityRowRefs::aliased(Alias::new("e"), Alias::new("s"), DocumentsRef::ByKeyLookup),
+            EntityRowRefs::unaliased(None),
+            EntityRowRefs::aliased(None, Alias::new("e"), Alias::new("s"), DocumentsRef::ByKeyLookup),
         ] {
             let sql = render(rows.entity_key_column());
             assert!(!sql.contains(r#"SELECT "entity_key""#), "{sql}");

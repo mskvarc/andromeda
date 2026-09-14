@@ -16,8 +16,9 @@ use crate::{
     },
     error::ContextStoreError,
 };
-use andromeda_context_space::{context_space_key::ContextSpaceKey, context_target::ContextTarget};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::{
     current::{EntityDocuments, EntitySearch},
     name_dictionary::EntityTypeNames,
@@ -50,17 +51,13 @@ struct AttrKeys;
 
 /// Every dictionary type at least one entity carries, in name order:
 /// `SELECT n.name FROM entity_type_names n WHERE EXISTS (SELECT 1 FROM entity_search WHERE type_ids @> ARRAY(SELECT n.id::integer)) ORDER BY n.name`.
-fn types_in_use_statement(context_space_key: ContextSpaceKey) -> SelectStatement {
+fn types_in_use_statement(target: &ContextTarget) -> SelectStatement {
     let mut carried = Query::select();
-    carried
-        .expr(Expr::val(1))
-        .from(EntitySearch::Table)
-        .and_where(Expr::col(EntitySearch::ContextSpaceKey).eq(context_space_key.as_i64()))
-        .and_where(array_contains(
-            Expr::col((EntitySearch::Table, EntitySearch::TypeIds)),
-            Expr::col((N, EntityTypeNames::Id)),
-            PostgresType::Integer,
-        ));
+    carried.expr(Expr::val(1)).from(table_of(target, EntitySearch::Table)).and_where(array_contains(
+        Expr::col((EntitySearch::Table, EntitySearch::TypeIds)),
+        Expr::col((N, EntityTypeNames::Id)),
+        PostgresType::Integer,
+    ));
     let mut statement = Query::select();
     statement
         .expr(type_name())
@@ -75,7 +72,7 @@ fn types_in_use_statement(context_space_key: ContextSpaceKey) -> SelectStatement
 /// Each entity contributes one row per type it carries and per top-level
 /// non-keyword attribute key it holds; the aggregate collects the distinct
 /// attribute keys of each type into an array, empty when a type has none.
-fn entity_type_summaries_statement(context_space_key: ContextSpaceKey, after: Option<&str>, limit: u64) -> SelectStatement {
+fn entity_type_summaries_statement(target: &ContextTarget, after: Option<&str>, limit: u64) -> SelectStatement {
     let keys = Query::select()
         .expr_as(
             SimpleExpr::from(jsonb_object_keys(attribute_container(&|| Expr::col((D, EntityDocuments::Payload))))),
@@ -91,7 +88,7 @@ fn entity_type_summaries_statement(context_space_key: ContextSpaceKey, after: Op
         ]),
         AttrKeys,
     );
-    search_with_documents(&mut statement, context_space_key);
+    search_with_documents(&mut statement, target);
     unnest_type_ids(&mut statement);
     join_type_names(&mut statement)
         .join_lateral(JoinType::InnerJoin, keys, Ak, SimpleExpr::from(Expr::val(true)))
@@ -115,7 +112,7 @@ impl EntityRepository {
     /// Returns [`ContextStoreError`] when the aggregation fails, or when a
     /// dictionary row holds text that is no longer a valid entity type name.
     pub async fn types(&self, target: &ContextTarget) -> Result<Vec<EntityTypeName>, ContextStoreError> {
-        let (sql, values) = types_in_use_statement(target.key()).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = types_in_use_statement(target).build_sqlx(PostgresQueryBuilder);
         let raw: Vec<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
         raw.iter().map(String::as_str).map(stored_type_name).collect()
     }
@@ -132,8 +129,7 @@ impl EntityRepository {
         };
         let statement = Query::select()
             .expr(count_all())
-            .from(EntitySearch::Table)
-            .and_where(Expr::col(EntitySearch::ContextSpaceKey).eq(target.key().as_i64()))
+            .from(table_of(target, EntitySearch::Table))
             .and_where(array_contains_key(Expr::col(EntitySearch::TypeIds), type_id.get()))
             .to_owned();
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
@@ -152,7 +148,7 @@ impl EntityRepository {
         after: Option<&EntityTypeName>,
         limit: u32,
     ) -> Result<Vec<(EntityTypeName, Vec<AttributeName>)>, ContextStoreError> {
-        let (sql, values) = entity_type_summaries_statement(target.key(), after.map(EntityTypeName::as_str), u64::from(limit)).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = entity_type_summaries_statement(target, after.map(EntityTypeName::as_str), u64::from(limit)).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 
         rows.into_iter()
@@ -169,17 +165,13 @@ impl EntityRepository {
 #[cfg(test)]
 mod tests {
     use crate::entity::discovery::entity_type_discovery::{entity_type_summaries_statement, types_in_use_statement};
-    use andromeda_context_space::context_space_key::ContextSpaceKey;
+    use andromeda_context_space::context_target::ContextTarget;
     use sea_query::PostgresQueryBuilder;
     use sea_query_sqlx::SqlxBinder;
 
-    fn context_space_key() -> ContextSpaceKey {
-        ContextSpaceKey::try_from(1).expect("positive context-space key")
-    }
-
     #[test]
     fn the_type_summary_walks_the_keys_laterally_and_coalesces_to_an_empty_array() {
-        let (sql, _) = entity_type_summaries_statement(context_space_key(), None, 10).build_sqlx(PostgresQueryBuilder);
+        let (sql, _) = entity_type_summaries_statement(&ContextTarget::Live, None, 10).build_sqlx(PostgresQueryBuilder);
         assert!(sql.contains("jsonb_object_keys"), "{sql}");
         assert!(sql.contains("JOIN LATERAL"), "{sql}");
         assert!(
@@ -201,8 +193,7 @@ mod tests {
     /// index-served containment probe, so it never unnests the whole table.
     #[test]
     fn the_types_in_use_are_the_dictionary_rows_some_entity_carries() {
-        let sql = types_in_use_statement(context_space_key()).to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#""context_space_key" = 1"#), "{sql}");
+        let sql = types_in_use_statement(&ContextTarget::Live).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""entity_search"."type_ids" @> ARRAY(SELECT "n"."id"::integer)"#), "{sql}");
     }
 }

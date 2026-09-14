@@ -210,7 +210,7 @@ impl NotificationDeliveryDrain {
     async fn advance(&self, entry: &DeliveryEntry, now: DateTime<Utc>) -> Result<LeaseAcknowledgement, NotificationError> {
         let (acknowledgement, outcome) = match self.transport.deliver(entry).await? {
             DeliveryDisposition::Delivered | DeliveryDisposition::Obsolete => (
-                classify_acknowledgement(self.store.mark_delivered(entry.id, &self.worker_id).await)?,
+                classify_acknowledgement(self.store.mark_delivered(entry.id, &self.worker_id, &entry.target).await)?,
                 QueueOutcome::Completed,
             ),
             DeliveryDisposition::RetryableFailure { detail } if !self.attempt_ceiling.is_final_attempt(entry.attempt_count) => {
@@ -218,14 +218,14 @@ impl NotificationDeliveryDrain {
                 let next_attempt = now + Duration::seconds(backoff);
                 let detail = self.error_bound.truncate(&detail);
                 (
-                    classify_acknowledgement(self.store.mark_failed(entry.id, &self.worker_id, &detail, next_attempt).await)?,
+                    classify_acknowledgement(self.store.mark_failed(entry.id, &self.worker_id, &detail, next_attempt, &entry.target).await)?,
                     QueueOutcome::Retried,
                 )
             }
             DeliveryDisposition::RetryableFailure { detail } | DeliveryDisposition::TerminalFailure { detail } => {
                 let detail = self.error_bound.truncate(&detail);
                 (
-                    classify_acknowledgement(self.store.mark_terminal(entry.id, &self.worker_id, &detail).await)?,
+                    classify_acknowledgement(self.store.mark_terminal(entry.id, &self.worker_id, &detail, &entry.target).await)?,
                     QueueOutcome::Exhausted,
                 )
             }
@@ -283,11 +283,7 @@ mod tests {
         worker_instance_id::WorkerInstanceId,
     };
     use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
-    use andromeda_context_space::{
-        context_space::{ContextSpace, ContextSpaceKind},
-        context_space_key::ContextSpaceKey,
-        context_target::ContextTarget,
-    };
+    use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
     use async_trait::async_trait;
@@ -368,7 +364,7 @@ mod tests {
             Ok(entries.drain(..).collect())
         }
 
-        async fn mark_delivered(&self, id: DeliveryId, worker_id: &WorkerInstanceId) -> Result<(), DeliveryLeaseError> {
+        async fn mark_delivered(&self, id: DeliveryId, worker_id: &WorkerInstanceId, _target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
             self.lease_check(id, worker_id)?;
             self.delivered.lock().map_err(poisoned)?.push(id);
             Ok(())
@@ -380,13 +376,14 @@ mod tests {
             worker_id: &WorkerInstanceId,
             error: &str,
             next_attempt_at: DateTime<Utc>,
+            _target: &ContextTarget,
         ) -> Result<(), DeliveryLeaseError> {
             self.lease_check(id, worker_id)?;
             self.failed.lock().map_err(poisoned)?.push((id, error.to_owned(), next_attempt_at));
             Ok(())
         }
 
-        async fn mark_terminal(&self, id: DeliveryId, worker_id: &WorkerInstanceId, error: &str) -> Result<(), DeliveryLeaseError> {
+        async fn mark_terminal(&self, id: DeliveryId, worker_id: &WorkerInstanceId, error: &str, _target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
             self.lease_check(id, worker_id)?;
             self.terminal.lock().map_err(poisoned)?.push((id, error.to_owned()));
             Ok(())
@@ -482,8 +479,7 @@ mod tests {
     }
 
     fn live_target() -> ContextTarget {
-        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+        ContextTarget::Live
     }
 
     fn drain(store: Arc<RecordingStore>, disposition: DeliveryDisposition) -> Result<NotificationDeliveryDrain, NotificationError> {

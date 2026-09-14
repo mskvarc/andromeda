@@ -30,7 +30,7 @@ use andromeda_postgresql_seaquery::{
     literal::{false_literal, int_literal},
     operator::array_contains_key,
 };
-use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, JoinType, Query, SimpleExpr};
+use sea_query::{Alias, Condition, DynIden, Expr as SeaExpr, ExprTrait, JoinType, Query, SimpleExpr};
 
 /// One hop of a traversal: the relations its probe introduces, and the probe
 /// itself.
@@ -61,8 +61,13 @@ impl LinkedHop {
 
     /// Where a predicate compiled *inside* this hop reads its entity: the
     /// linked identity row, and the payload by key lookup.
-    pub(crate) fn inner_rows(&self) -> EntityRowRefs {
+    ///
+    /// `schema` is the branch schema of the statement this hop is nested in, so
+    /// the linked entity is read in the same branch the traversal started from
+    /// rather than falling back to the live default schema.
+    pub(crate) fn inner_rows(&self, schema: Option<DynIden>) -> EntityRowRefs {
         EntityRowRefs::aliased(
+            schema,
             Alias::new(self.linked_entity.as_str()),
             Alias::new(self.linked_search.as_str()),
             DocumentsRef::ByKeyLookup,
@@ -99,8 +104,8 @@ impl LinkedHop {
         let mut probe = Query::select();
         probe
             .expr(int_literal(1))
-            .from_as(CurrentAttributeValues::Table, hop())
-            .join_as(JoinType::Join, Entities::Table, linked(), join_on)
+            .from(outer.table(CurrentAttributeValues::Table).alias(hop()))
+            .join_as(JoinType::Join, outer.table(Entities::Table), linked(), join_on)
             // The correlation is added first — it binds nothing, so the
             // Relationship's dictionary key is still the probe's first bound
             // value, ahead of the guard's types and the inner predicate's operands.
@@ -116,7 +121,7 @@ impl LinkedHop {
             probe
                 .join_as(
                     JoinType::Join,
-                    EntitySearch::Table,
+                    outer.table(EntitySearch::Table),
                     search(),
                     SeaExpr::col((search(), EntitySearch::EntityKey)).equals((linked(), Entities::EntityKey)),
                 )

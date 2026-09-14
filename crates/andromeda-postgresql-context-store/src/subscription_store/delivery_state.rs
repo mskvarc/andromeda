@@ -13,6 +13,7 @@ use crate::subscription_store::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
 use andromeda_postgresql_seaquery::{clock::now, interval::make_interval_secs, literal::text_literal, placeholder::external_placeholder};
 use andromeda_subscription::{error::SubscriptionError, notification_slot::NotificationSlotGate};
@@ -47,13 +48,13 @@ enum OwnerStatus {
 }
 
 /// The insert of the state row that completes a freshly created subscription;
-/// binds the context-space key as `$1` and surrogate key as `$2`.
-pub fn state_insert_sql() -> Result<String, SubscriptionError> {
+/// binds the surrogate key as `$1` into the subscription's branch schema.
+pub fn state_insert_sql(target: &ContextTarget) -> Result<String, SubscriptionError> {
     let mut insert = Query::insert();
     insert
-        .into_table(SubscriptionDeliveryState::Table)
-        .columns([SubscriptionDeliveryState::ContextSpaceKey, SubscriptionDeliveryState::SubscriptionKey])
-        .values([external_placeholder(1), external_placeholder(2)])
+        .into_table(table_of(target, SubscriptionDeliveryState::Table))
+        .columns([SubscriptionDeliveryState::SubscriptionKey])
+        .values([external_placeholder(1)])
         .map_err(persistence_error)?;
     Ok(insert.to_string(PostgresQueryBuilder))
 }
@@ -64,9 +65,8 @@ fn owner_key(target: &ContextTarget, id: &Uri, kind: StoredKind, status: OwnerSt
     let mut owner = Query::select();
     owner
         .column((Subscriptions::Table, Subscriptions::SubscriptionKey))
-        .from(Subscriptions::Table)
+        .from(table_of(target, Subscriptions::Table))
         .and_where(Expr::col((Subscriptions::Table, Subscriptions::Id)).eq(id.as_str()))
-        .and_where(Expr::col((Subscriptions::Table, Subscriptions::ContextSpaceKey)).eq(target.key().as_i64()))
         .and_where(of_kind(kind));
     match status {
         OwnerStatus::ActiveOnly => {
@@ -85,10 +85,9 @@ fn owner_key(target: &ContextTarget, id: &Uri, kind: StoredKind, status: OwnerSt
 pub fn claim_statement(target: &ContextTarget, id: &Uri, kind: StoredKind, gate: NotificationSlotGate) -> UpdateStatement {
     let mut statement = Query::update();
     statement
-        .table(SubscriptionDeliveryState::Table)
+        .table(table_of(target, SubscriptionDeliveryState::Table))
         .value(SubscriptionDeliveryState::TimesSent, Expr::col(SubscriptionDeliveryState::TimesSent).add(1))
         .value(SubscriptionDeliveryState::LastNotification, now())
-        .and_where(Expr::col(SubscriptionDeliveryState::ContextSpaceKey).eq(target.key().as_i64()))
         .and_where(Expr::col(SubscriptionDeliveryState::SubscriptionKey).eq(owner_key(target, id, kind, OwnerStatus::ActiveOnly)));
     for (column, ceiling) in [
         (SubscriptionDeliveryState::LastNotification, gate.last_notification),
@@ -111,9 +110,8 @@ pub fn claim_statement(target: &ContextTarget, id: &Uri, kind: StoredKind, gate:
 pub fn mark_statement(outcome: DeliveryOutcome, target: &ContextTarget, id: &Uri, kind: StoredKind) -> UpdateStatement {
     let mut statement = Query::update();
     statement
-        .table(SubscriptionDeliveryState::Table)
+        .table(table_of(target, SubscriptionDeliveryState::Table))
         .value(outcome.column(), now())
-        .and_where(Expr::col(SubscriptionDeliveryState::ContextSpaceKey).eq(target.key().as_i64()))
         .and_where(Expr::col(SubscriptionDeliveryState::SubscriptionKey).eq(owner_key(target, id, kind, OwnerStatus::Any)));
     match outcome {
         DeliveryOutcome::Success => {}
@@ -130,17 +128,13 @@ pub fn mark_statement(outcome: DeliveryOutcome, target: &ContextTarget, id: &Uri
 /// The join is outer so a subscription whose state row is missing still reads;
 /// `times_sent` and `times_failed` then coalesce to zero, the instants to NULL,
 /// which is exactly what a never-notified subscription reports.
-pub fn join_delivery_state(select: &mut SelectStatement) {
+pub fn join_delivery_state(select: &mut SelectStatement, target: &ContextTarget) {
     select
         .join(
             JoinType::LeftJoin,
-            SubscriptionDeliveryState::Table,
+            table_of(target, SubscriptionDeliveryState::Table),
             Expr::col((SubscriptionDeliveryState::Table, SubscriptionDeliveryState::SubscriptionKey))
-                .equals((Subscriptions::Table, Subscriptions::SubscriptionKey))
-                .and(
-                    Expr::col((SubscriptionDeliveryState::Table, SubscriptionDeliveryState::ContextSpaceKey))
-                        .equals((Subscriptions::Table, Subscriptions::ContextSpaceKey)),
-                ),
+                .equals((Subscriptions::Table, Subscriptions::SubscriptionKey)),
         )
         .expr_as(
             Func::coalesce([
@@ -191,11 +185,7 @@ mod tests {
         delivery_state::{DeliveryOutcome, claim_statement, interval_elapsed, join_delivery_state, mark_statement, state_insert_sql},
         stored_kind::StoredKind,
     };
-    use andromeda_context_space::{
-        context_space::{ContextSpace, ContextSpaceKind},
-        context_space_key::ContextSpaceKey,
-        context_target::ContextTarget,
-    };
+    use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::{positive_milliseconds::PositiveMilliseconds, uri::Uri};
     use andromeda_postgresql_schema::subscriptions::Subscriptions;
     use andromeda_subscription::notification_slot::NotificationSlotGate;
@@ -207,15 +197,14 @@ mod tests {
     }
 
     fn target() -> ContextTarget {
-        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+        ContextTarget::Live
     }
 
     #[test]
-    fn the_state_row_is_inserted_under_the_returned_surrogate_key_and_context_space() {
+    fn the_state_row_is_inserted_under_the_returned_surrogate_key() {
         assert_eq!(
-            state_insert_sql().expect("builds"),
-            r#"INSERT INTO "subscription_delivery_state" ("context_space_key", "subscription_key") VALUES ($1, $2)"#
+            state_insert_sql(&ContextTarget::Live).expect("builds"),
+            r#"INSERT INTO "subscription_delivery_state" ("subscription_key") VALUES ($1)"#
         );
     }
 
@@ -228,7 +217,7 @@ mod tests {
         );
         assert!(
             sql.contains(
-                r#"WHERE "context_space_key" = 1 AND "subscription_key" = (SELECT "subscriptions"."subscription_key" FROM "subscriptions" WHERE "subscriptions"."id" = 'urn:ngsi-ld:Subscription:one' AND "subscriptions"."context_space_key" = 1 AND "subscriptions"."kind" = ('entity') AND "subscriptions"."status" = ('active'))"#
+                r#"WHERE "subscription_key" = (SELECT "subscriptions"."subscription_key" FROM "subscriptions" WHERE "subscriptions"."id" = 'urn:ngsi-ld:Subscription:one' AND "subscriptions"."kind" = ('entity') AND "subscriptions"."status" = ('active'))"#
             ),
             "{sql}"
         );
@@ -308,7 +297,7 @@ mod tests {
     fn a_projection_outer_joins_the_state_row_and_coalesces_the_counter() {
         let mut select = Query::select();
         select.column((Subscriptions::Table, Subscriptions::Id)).from(Subscriptions::Table);
-        join_delivery_state(&mut select);
+        join_delivery_state(&mut select, &ContextTarget::Live);
         let sql = select.to_string(PostgresQueryBuilder);
         assert!(
             sql.contains(r#"LEFT JOIN "subscription_delivery_state" ON "subscription_delivery_state"."subscription_key" = "subscriptions"."subscription_key""#),

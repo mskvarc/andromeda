@@ -7,6 +7,7 @@ use crate::{
 use andromeda_context_commit::write_record::WriteRecord;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::{
     notification::{NotificationDeliveries, NotificationEvents},
     subscriptions::Subscriptions,
@@ -115,8 +116,7 @@ fn insert_events_statement(
     events: &[NewNotificationEvent<'_>],
 ) -> Result<InsertStatement, ContextStoreError> {
     let mut statement = Query::insert();
-    statement.into_table(NotificationEvents::Table).columns([
-        NotificationEvents::ContextSpaceKey,
+    statement.into_table(table_of(target, NotificationEvents::Table)).columns([
         NotificationEvents::CreatedAt,
         NotificationEvents::WriteId,
         NotificationEvents::EventOrdinal,
@@ -135,7 +135,6 @@ fn insert_events_statement(
         let changed_attribute_name_ids: Vec<i32> = event.changed_attribute_name_ids.iter().map(|id| id.get()).collect();
         statement
             .values([
-                target.key().as_i64().into(),
                 recorded_at.into(),
                 Expr::val(write_id),
                 event_ordinal.into(),
@@ -153,13 +152,9 @@ fn insert_events_statement(
     }
     statement
         .on_conflict(
-            OnConflict::columns([
-                NotificationEvents::ContextSpaceKey,
-                NotificationEvents::WriteId,
-                NotificationEvents::EventOrdinal,
-            ])
-            .do_nothing()
-            .to_owned(),
+            OnConflict::columns([NotificationEvents::WriteId, NotificationEvents::EventOrdinal])
+                .do_nothing()
+                .to_owned(),
         )
         .returning(Query::returning().columns([NotificationEvents::Id, NotificationEvents::EventOrdinal]));
     Ok(statement.clone())
@@ -203,7 +198,6 @@ fn insert_deliveries_statement(
     let (pairs, columns) = pair_source();
     let subscription = Alias::new("s");
     let source = Query::select()
-        .expr(Expr::val(target.key().as_i64()))
         .column((pairs.clone(), NotificationDeliveries::EventId))
         .column((subscription.clone(), Subscriptions::SubscriptionKey))
         .expr(Expr::val(next_attempt_at))
@@ -213,18 +207,15 @@ fn insert_deliveries_statement(
         )
         .join_as(
             JoinType::InnerJoin,
-            Subscriptions::Table,
+            table_of(target, Subscriptions::Table),
             subscription.clone(),
-            Expr::col((subscription.clone(), Subscriptions::SubscriptionKey))
-                .equals((pairs, NotificationDeliveries::SubscriptionKey))
-                .and(Expr::col((subscription, Subscriptions::ContextSpaceKey)).eq(target.key().as_i64())),
+            Expr::col((subscription, Subscriptions::SubscriptionKey)).equals((pairs, NotificationDeliveries::SubscriptionKey)),
         )
         .to_owned();
     let mut statement = Query::insert();
     statement
-        .into_table(NotificationDeliveries::Table)
+        .into_table(table_of(target, NotificationDeliveries::Table))
         .columns([
-            NotificationDeliveries::ContextSpaceKey,
             NotificationDeliveries::EventId,
             NotificationDeliveries::SubscriptionKey,
             NotificationDeliveries::NextAttemptAt,
@@ -241,11 +232,7 @@ mod tests {
         rows::NewNotificationEvent,
     };
     use andromeda_context_commit::{subscription_key::SubscriptionKey, write_ordinal::WriteOrdinal};
-    use andromeda_context_space::{
-        context_space::{ContextSpace, ContextSpaceKind},
-        context_space_key::ContextSpaceKey,
-        context_target::ContextTarget,
-    };
+    use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
     use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
@@ -256,8 +243,7 @@ mod tests {
     use uuid::Uuid;
 
     fn target() -> ContextTarget {
-        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+        ContextTarget::Live
     }
 
     fn entity() -> Uri {
@@ -289,10 +275,7 @@ mod tests {
         let sql = insert_events_statement(&target(), Utc::now(), Uuid::nil(), &events)
             .expect("a representable event")
             .to_string(PostgresQueryBuilder);
-        assert!(
-            sql.contains(r#"ON CONFLICT ("context_space_key", "write_id", "event_ordinal") DO NOTHING"#),
-            "{sql}"
-        );
+        assert!(sql.contains(r#"ON CONFLICT ("write_id", "event_ordinal") DO NOTHING"#), "{sql}");
         assert!(sql.contains(r#"RETURNING "id", "event_ordinal""#), "{sql}");
     }
 
@@ -326,7 +309,7 @@ mod tests {
         let (alias, columns) = pair_source();
         let sql = apply_column_alias(sql, &alias, &columns);
         assert!(
-            sql.contains(r#"INSERT INTO "notification_deliveries" ("context_space_key", "event_id", "subscription_key", "next_attempt_at")"#),
+            sql.contains(r#"INSERT INTO "notification_deliveries" ("event_id", "subscription_key", "next_attempt_at")"#),
             "{sql}"
         );
         assert!(
@@ -334,10 +317,10 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#"INNER JOIN "subscriptions" AS "s" ON "s"."subscription_key" = "p"."subscription_key" AND "s"."context_space_key" = 1"#),
+            sql.contains(r#"INNER JOIN "subscriptions" AS "s" ON "s"."subscription_key" = "p"."subscription_key""#),
             "{sql}"
         );
-        assert!(sql.contains(r#"SELECT 1, "p"."event_id", "s"."subscription_key""#), "{sql}");
+        assert!(sql.contains(r#"SELECT "p"."event_id", "s"."subscription_key""#), "{sql}");
     }
 
     #[test]

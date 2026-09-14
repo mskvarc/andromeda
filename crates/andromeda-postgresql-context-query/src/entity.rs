@@ -8,6 +8,7 @@ use andromeda_ngsi_ld_query::{
     entity_selection::{ConsideredEntities, EntitySelector},
     pagination::CountPolicy,
 };
+use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     entity_row_refs::EntityRowRefs,
@@ -57,16 +58,17 @@ pub struct EntityQuery {
 /// at least one of, and an `orderBy` distance term with no reference geometry
 /// anywhere in the query to measure from (clause 4.23).
 pub fn build_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &QueryNames) -> Result<EntityQuery, RenderError> {
+    let schema = schema_iden(target);
     let relations = EntityRelations::for_query(query);
-    let rows = relations.rows();
-    let condition = build_entity_conditions(target, query, names, &rows)?;
+    let rows = relations.rows(schema.clone());
+    let condition = build_entity_conditions(query, names, &rows)?;
 
     let mut select = Query::select();
     // The payload is projected under the document column's own name whether it
     // is read from the joined row or looked up by key, so the repository reads
     // one column name in both shapes.
     select.expr_as(rows.payload_column(), EntityDocuments::Payload);
-    relations.apply_from(&mut select);
+    relations.apply_from(&mut select, schema.as_ref());
     // clone: the fallback count statement filters on the same condition. The
     // count joins the document row only when a `q` filter reads it, and that
     // is the only way the condition can reference the payload, so a condition
@@ -91,7 +93,7 @@ pub fn build_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &
     let count = if query.pagination.count == CountPolicy::Emit {
         let mut count_select = Query::select();
         count_select.expr(Func::count(SeaExpr::col(Asterisk)));
-        EntityRelations::for_count(query).apply_from(&mut count_select);
+        EntityRelations::for_count(query).apply_from(&mut count_select, schema.as_ref());
         count_select.cond_where(condition);
         Some(count_select.take())
     } else {
@@ -123,13 +125,14 @@ pub const TOTAL_COUNT_COLUMN: &str = "total_count";
 /// relation naming no distance (clause 4.10) or a distance ordering with no
 /// reference geometry (clause 4.23).
 pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &QueryNames) -> Result<SelectStatement, RenderError> {
+    let schema = schema_iden(target);
     let relations = EntityRelations::for_query(query);
-    let rows = relations.rows();
-    let condition = build_entity_conditions(target, query, names, &rows)?;
+    let rows = relations.rows(schema.clone());
+    let condition = build_entity_conditions(query, names, &rows)?;
 
     let mut select = Query::select();
     select.column((Entities::Table, Entities::Id));
-    relations.apply_from(&mut select);
+    relations.apply_from(&mut select, schema.as_ref());
     select.cond_where(condition);
 
     result_ordering::apply(&mut select, &rows, &query.ordering, query.selection.geo.as_ref(), &names.attributes)?;
@@ -140,8 +143,12 @@ pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, name
 }
 
 /// Builds sea-query `Condition` from compiled entity query filters.
-fn build_entity_conditions(target: &ContextTarget, query: &CompiledEntityQuery, names: &QueryNames, rows: &EntityRowRefs) -> Result<Condition, RenderError> {
-    let mut condition = Condition::all().add(rows.identity_column(Entities::ContextSpaceKey).eq(target.key().as_i64()));
+///
+/// The branch a statement runs against is chosen by the schema its relations
+/// are qualified with, not by a predicate, so no branch term appears here; the
+/// `rows` carry that schema to any subquery a filter opens.
+fn build_entity_conditions(query: &CompiledEntityQuery, names: &QueryNames, rows: &EntityRowRefs) -> Result<Condition, RenderError> {
+    let mut condition = Condition::all();
 
     // Clause 5.5.14: a request narrowed to an empty identifier set considers no
     // entity, so nothing can match it whatever the selectors and filters admit.
@@ -230,10 +237,6 @@ fn selector_condition(rows: &EntityRowRefs, selector: &EntitySelector, types: &R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_context_space::{
-        context_space::{ContextSpace, ContextSpaceKind},
-        context_space_key::ContextSpaceKey,
-    };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
     use andromeda_ngsi_ld_query::{
@@ -273,8 +276,7 @@ mod tests {
     /// statement and, when requested, its separate count, each with its own
     /// placeholder sequence.
     fn build(query: &CompiledEntityQuery, names: &QueryNames) -> Built {
-        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-        let target = ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target");
+        let target = ContextTarget::Live;
         let entity_query = build_query(&target, query, names).expect("valid entity query");
         let (sql, values) = entity_query.select.build(PostgresQueryBuilder);
         let count_sql = entity_query.count.map(|count| count.build(PostgresQueryBuilder).0);
@@ -357,7 +359,7 @@ mod tests {
         let built = build(&empty_query(), &known_types());
         assert!(
             built.sql.starts_with(
-                r#"SELECT (SELECT "payload" FROM "entity_documents" WHERE "entity_key" = "entities"."entity_key") AS "payload" FROM "entities" WHERE "entities"."context_space_key" = $1 ORDER BY"#
+                r#"SELECT (SELECT "payload" FROM "entity_documents" WHERE "entity_key" = "entities"."entity_key") AS "payload" FROM "entities" WHERE TRUE ORDER BY"#
             ),
             "{}",
             built.sql
@@ -528,7 +530,7 @@ mod tests {
                 .build(),
         ];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("AND (FALSE)"), "{}", built.sql);
+        assert!(built.sql.contains("WHERE FALSE"), "{}", built.sql);
         assert!(!built.sql.contains("type_ids"), "no probe is rendered for an unresolved type: {}", built.sql);
     }
 
@@ -675,11 +677,7 @@ mod tests {
         let main = placeholders(&built.sql);
         let counted = placeholders(&count_sql);
         assert_eq!(counted, main[..counted.len()], "count query must reuse the leading binds verbatim");
-        assert_eq!(
-            counted,
-            vec!["1".to_string(), "2".to_string(), "3".to_string()],
-            "context space, attribute id, then value: {count_sql}"
-        );
+        assert_eq!(counted, vec!["1".to_string(), "2".to_string()], "attribute id, then value: {count_sql}");
     }
 
     #[test]
@@ -755,8 +753,7 @@ mod tests {
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
-        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-        let target = ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target");
+        let target = ContextTarget::Live;
         let result = build_query(&target, &q, &known_types());
         assert!(result.is_err());
     }

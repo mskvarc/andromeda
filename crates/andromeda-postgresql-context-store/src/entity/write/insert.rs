@@ -14,8 +14,9 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
-use andromeda_postgresql_seaquery::{placeholder::external_placeholder, unnest::apply_column_alias};
+use andromeda_postgresql_seaquery::unnest::apply_column_alias;
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use sea_query::{CommonTableExpression, Expr, ExprTrait, JoinType, OnConflict, PostgresQueryBuilder, Query, SelectStatement, WithClause};
 use sqlx::{Postgres, Transaction};
@@ -49,16 +50,15 @@ const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 ///
 /// Returns [`ContextStoreError::Internal`] if a child projection ever stops
 /// matching its column list, which the fixed shapes here make unreachable.
-pub(super) fn entity_insert_sql() -> Result<String, ContextStoreError> {
+pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
     let columns = insert_staging_columns();
 
     let mut identity = Query::insert();
     identity
-        .into_table(Entities::Table)
-        .columns([Entities::ContextSpaceKey, Entities::Id, Entities::ExpiresAt, Entities::MinAttributeExpiresAt])
+        .into_table(table_of(target, Entities::Table))
+        .columns([Entities::Id, Entities::ExpiresAt, Entities::MinAttributeExpiresAt])
         .select_from(
             Query::select()
-                .expr(external_placeholder(12))
                 .expr(projected(Entities::Id))
                 .expr(projected(Entities::ExpiresAt))
                 .expr(projected(Entities::MinAttributeExpiresAt))
@@ -67,16 +67,15 @@ pub(super) fn entity_insert_sql() -> Result<String, ContextStoreError> {
         )
         .map_err(|error| ContextStoreError::Internal(error.to_string()))?;
     identity
-        .on_conflict(OnConflict::columns([Entities::ContextSpaceKey, Entities::Id]).do_nothing().to_owned())
+        .on_conflict(OnConflict::column(Entities::Id).do_nothing().to_owned())
         .returning(Query::returning().columns([Entities::EntityKey, Entities::Id]));
 
     let mut documents = Query::insert();
     documents
-        .into_table(EntityDocuments::Table)
-        .columns([EntityDocuments::ContextSpaceKey, EntityDocuments::EntityKey, EntityDocuments::Payload])
+        .into_table(table_of(target, EntityDocuments::Table))
+        .columns([EntityDocuments::EntityKey, EntityDocuments::Payload])
         .select_from(
             from_inserted()
-                .expr(external_placeholder(12))
                 .expr(Expr::col((Ins, Entities::EntityKey)))
                 .expr(projected(EntityDocuments::Payload))
                 .take(),
@@ -85,9 +84,8 @@ pub(super) fn entity_insert_sql() -> Result<String, ContextStoreError> {
 
     let mut search = Query::insert();
     search
-        .into_table(EntitySearch::Table)
+        .into_table(table_of(target, EntitySearch::Table))
         .columns([
-            EntitySearch::ContextSpaceKey,
             EntitySearch::EntityKey,
             EntitySearch::LocationExpiresAt,
             EntitySearch::TypeIds,
@@ -99,7 +97,6 @@ pub(super) fn entity_insert_sql() -> Result<String, ContextStoreError> {
         ])
         .select_from(
             from_inserted()
-                .expr(external_placeholder(12))
                 .expr(Expr::col((Ins, Entities::EntityKey)))
                 .expr(projected(EntitySearch::LocationExpiresAt))
                 .expr(projected(EntitySearch::TypeIds))
@@ -154,7 +151,7 @@ impl EntityRepository {
         types_present(entities)?;
 
         let ids = entities.ids.iter().map(Uri::as_str).collect::<Vec<_>>();
-        let sql = entity_insert_sql()?;
+        let sql = entity_insert_sql(target)?;
         let rows = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(&ids)
             .bind(&entities.type_ids_json)
@@ -167,7 +164,6 @@ impl EntityRepository {
             .bind(&entities.location_expires_ats)
             .bind(&entities.expires_ats)
             .bind(&entities.min_attribute_expires_ats)
-            .bind(target.key().as_i64())
             .fetch_all(&mut **tx);
         let rows: Vec<(i64, String)> = observe_statement(ENTITY_INSERT, rows).await.map_err(entity_write_failure)?;
 
@@ -178,17 +174,18 @@ impl EntityRepository {
 #[cfg(test)]
 mod tests {
     use crate::entity::write::{insert::entity_insert_sql, placeholders};
+    use andromeda_context_space::context_target::ContextTarget;
     use std::collections::BTreeSet;
 
     /// The rendered insert, unwrapped for assertion.
     fn insert() -> String {
-        entity_insert_sql().expect("the fixed eleven-wide insert builds")
+        entity_insert_sql(&ContextTarget::Live).expect("the fixed eleven-wide insert builds")
     }
 
     #[test]
     fn the_insert_binds_contiguous_placeholders_and_names_its_staging_columns() {
         let sql = insert();
-        pretty_assertions::assert_eq!(placeholders(&sql), (1..=12).collect::<BTreeSet<u32>>());
+        pretty_assertions::assert_eq!(placeholders(&sql), (1..=11).collect::<BTreeSet<u32>>());
         assert!(
             sql.contains(
                 "AS d(id, type_ids_json, attribute_name_ids_json, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at)"
@@ -202,14 +199,11 @@ mod tests {
         let sql = insert();
         assert!(sql.starts_with(r#"WITH "proj" AS ("#), "{sql}");
         assert!(
-            sql.contains(r#""ins" AS (INSERT INTO "entities" ("context_space_key", "id", "expires_at", "min_attribute_expires_at")"#),
+            sql.contains(r#""ins" AS (INSERT INTO "entities" ("id", "expires_at", "min_attribute_expires_at")"#),
             "{sql}"
         );
-        assert!(
-            sql.contains(r#""docs" AS (INSERT INTO "entity_documents" ("context_space_key", "entity_key", "payload")"#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#""srch" AS (INSERT INTO "entity_search" ("context_space_key", "entity_key", "location_expires_at", "type_ids", "attribute_name_ids", "scope_paths", "location", "observation_space", "operation_space")"#), "{sql}");
+        assert!(sql.contains(r#""docs" AS (INSERT INTO "entity_documents" ("entity_key", "payload")"#), "{sql}");
+        assert!(sql.contains(r#""srch" AS (INSERT INTO "entity_search" ("entity_key", "location_expires_at", "type_ids", "attribute_name_ids", "scope_paths", "location", "observation_space", "operation_space")"#), "{sql}");
         assert!(sql.ends_with(r#"SELECT "entity_key", "id" FROM "ins""#), "{sql}");
         pretty_assertions::assert_eq!(
             sql.matches("ST_MakeValid").count(),
@@ -247,10 +241,7 @@ mod tests {
     #[test]
     fn the_insert_keeps_its_conflict_clause_and_writes_no_version_token() {
         let sql = insert();
-        assert!(
-            sql.contains(r#"ON CONFLICT ("context_space_key", "id") DO NOTHING RETURNING "entity_key", "id""#),
-            "{sql}"
-        );
+        assert!(sql.contains(r#"ON CONFLICT ("id") DO NOTHING RETURNING "entity_key", "id""#), "{sql}");
         assert!(!sql.contains("modified_at"), "the token defaults in the database: {sql}");
         assert!(!sql.contains("location_geo"), "the geography is generated: {sql}");
     }
@@ -259,5 +250,19 @@ mod tests {
     fn the_child_inserts_read_the_minted_key_beside_the_projected_row() {
         let sql = insert();
         pretty_assertions::assert_eq!(sql.matches(r#"FROM "ins" JOIN "proj" ON "proj"."id" = "ins"."id""#).count(), 2, "{sql}");
+    }
+
+    /// A Snapshot branch lands its rows in the Snapshot's own schema, so every
+    /// target relation of the insert is schema-qualified.
+    #[test]
+    fn a_snapshot_branch_lands_in_the_branch_schema() {
+        use andromeda_context_space::{snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
+        let key = SnapshotKey::try_from(5).expect("positive key");
+        let id = "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri");
+        let target = ContextTarget::Snapshot(SnapshotTarget::staging(key, id));
+        let sql = entity_insert_sql(&target).expect("insert builds");
+        assert!(sql.contains(r#"INSERT INTO "snap_5_stg"."entities""#), "{sql}");
+        assert!(sql.contains(r#"INSERT INTO "snap_5_stg"."entity_documents""#), "{sql}");
+        assert!(sql.contains(r#"INSERT INTO "snap_5_stg"."entity_search""#), "{sql}");
     }
 }

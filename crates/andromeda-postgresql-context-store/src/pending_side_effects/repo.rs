@@ -7,6 +7,7 @@
 use crate::{error::ContextStoreError, pending_side_effects::payload::PersistedBatchSideEffectJob};
 use andromeda_context_commit::{side_effect_job_id::SideEffectJobId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::queue::PendingSideEffects;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query, error::Error as SeaQueryError};
@@ -38,10 +39,9 @@ fn enqueue_statement(
 ) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
-        .into_table(PendingSideEffects::Table)
+        .into_table(table_of(target, PendingSideEffects::Table))
         .columns([
             PendingSideEffects::Id,
-            PendingSideEffects::ContextSpaceKey,
             PendingSideEffects::WriteId,
             PendingSideEffects::RecordedAt,
             PendingSideEffects::ConsequenceBase,
@@ -49,17 +49,12 @@ fn enqueue_statement(
         ])
         .values([
             Expr::val(id),
-            Expr::val(target.key().as_i64()),
             Expr::val(write_id),
             recorded_at.into(),
             consequence_base.into(),
             Expr::val(payload),
         ])?
-        .on_conflict(
-            OnConflict::columns([PendingSideEffects::ContextSpaceKey, PendingSideEffects::WriteId])
-                .do_nothing()
-                .to_owned(),
-        );
+        .on_conflict(OnConflict::column(PendingSideEffects::WriteId).do_nothing().to_owned());
     Ok(statement.clone())
 }
 
@@ -129,23 +124,14 @@ impl PendingSideEffectsRepository {
 #[cfg(test)]
 mod tests {
     use crate::pending_side_effects::repo::enqueue_statement;
-    use andromeda_context_space::{
-        context_space::{ContextSpace, ContextSpaceKind},
-        context_space_key::ContextSpaceKey,
-        context_target::ContextTarget,
-    };
+    use andromeda_context_space::context_target::ContextTarget;
     use chrono::Utc;
     use sea_query::PostgresQueryBuilder;
     use serde_json::json;
     use uuid::Uuid;
 
-    fn target() -> ContextTarget {
-        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
-    }
-
     fn rendered() -> String {
-        enqueue_statement(&target(), Uuid::nil(), Uuid::nil(), Utc::now(), 0, json!({}))
+        enqueue_statement(&ContextTarget::Live, Uuid::nil(), Uuid::nil(), Utc::now(), 0, json!({}))
             .expect("arity")
             .to_string(PostgresQueryBuilder)
     }
@@ -166,6 +152,6 @@ mod tests {
     #[test]
     fn a_replayed_write_enqueues_no_second_job() {
         let sql = rendered();
-        assert!(sql.contains(r#"ON CONFLICT ("context_space_key", "write_id") DO NOTHING"#), "{sql}");
+        assert!(sql.contains(r#"ON CONFLICT ("write_id") DO NOTHING"#), "{sql}");
     }
 }

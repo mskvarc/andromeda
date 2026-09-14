@@ -14,6 +14,7 @@
 use crate::{error::TemporalStoreError, repo::TemporalRepository, temporal_stream::TemporalCatalogUpsert};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
 use andromeda_postgresql_query::entity_type_id::EntityTypeId;
 use andromeda_postgresql_schema::temporal::TemporalEntities;
@@ -99,24 +100,19 @@ impl TemporalRepository {
                 .await
                 .map_err(|error| TemporalStoreError::NameLookup(error.to_string()))?;
             let binds = entity_upsert_binds(&creating, recorded_at, &type_keys)?;
-            let sql = temporal_entity_upsert_batch_sql()?;
+            let sql = temporal_entity_upsert_batch_sql(target)?;
             let rows: Vec<(i64, String)> = sqlx::query_as(AssertSqlSafe(sql))
                 .bind(&binds.ids)
                 .bind(&binds.recorded_ats)
                 .bind(&binds.type_ids_json)
-                .bind(target.key().as_i64())
                 .fetch_all(&mut **tx)
                 .await?;
             harvest_keys(&mut entity_keys, rows)?;
         }
         if !resolving.is_empty() {
             let ids: Vec<&str> = resolving.iter().map(|upsert| upsert.entity_id.as_str()).collect();
-            let sql = temporal_entity_keys_lookup_sql();
-            let rows: Vec<(i64, String)> = sqlx::query_as(AssertSqlSafe(sql))
-                .bind(&ids)
-                .bind(target.key().as_i64())
-                .fetch_all(&mut **tx)
-                .await?;
+            let sql = temporal_entity_keys_lookup_sql(target);
+            let rows: Vec<(i64, String)> = sqlx::query_as(AssertSqlSafe(sql)).bind(&ids).fetch_all(&mut **tx).await?;
             harvest_keys(&mut entity_keys, rows)?;
             if let Some(missing) = first_missing_typeless_observation(&resolving, &entity_keys) {
                 return Err(TemporalStoreError::NotFound(format!(
@@ -263,7 +259,7 @@ fn entity_staging_columns() -> [UnnestColumn; 3] {
 /// type keys arrive as a JSONB array per entity and are expanded to `integer[]`
 /// in the insert, the same interning `temporal_entities.type_ids` carries. Every
 /// minted key is harvested with `RETURNING`, so no read-back is needed.
-fn temporal_entity_upsert_batch_sql() -> Result<String, TemporalStoreError> {
+fn temporal_entity_upsert_batch_sql(target: &ContextTarget) -> Result<String, TemporalStoreError> {
     let columns = entity_staging_columns();
     let call = unnest_call([
         (&columns[0], external_placeholder(1)),
@@ -281,7 +277,6 @@ fn temporal_entity_upsert_batch_sql() -> Result<String, TemporalStoreError> {
 
     let mut select = Query::select();
     select
-        .expr(external_placeholder(4))
         .expr(Expr::col((D, EntityStaged::Id)))
         .expr(Expr::col((D, EntityStaged::RecordedAt)))
         .expr(Expr::col((D, EntityStaged::RecordedAt)))
@@ -290,8 +285,7 @@ fn temporal_entity_upsert_batch_sql() -> Result<String, TemporalStoreError> {
     let select = select;
 
     let mut insert = Query::insert();
-    insert.into_table(TemporalEntities::Table).columns([
-        TemporalEntities::ContextSpaceKey,
+    insert.into_table(table_of(target, TemporalEntities::Table)).columns([
         TemporalEntities::Id,
         TemporalEntities::CreatedAt,
         TemporalEntities::ModifiedAt,
@@ -301,7 +295,7 @@ fn temporal_entity_upsert_batch_sql() -> Result<String, TemporalStoreError> {
         .select_from(select)
         .map_err(|error| TemporalStoreError::Validation(error.to_string()))?
         .on_conflict(
-            OnConflict::columns([TemporalEntities::ContextSpaceKey, TemporalEntities::Id])
+            OnConflict::column(TemporalEntities::Id)
                 .update_columns([TemporalEntities::ModifiedAt, TemporalEntities::TypeIds])
                 .to_owned(),
         )
@@ -315,11 +309,10 @@ fn temporal_entity_upsert_batch_sql() -> Result<String, TemporalStoreError> {
 ///
 /// `$1` is the requested identifiers as a `text[]`; a requested identifier the
 /// read does not return has no temporal evolution to extend.
-fn temporal_entity_keys_lookup_sql() -> String {
+fn temporal_entity_keys_lookup_sql(target: &ContextTarget) -> String {
     Query::select()
         .columns([TemporalEntities::EntityKey, TemporalEntities::Id])
-        .from(TemporalEntities::Table)
-        .and_where(Expr::col(TemporalEntities::ContextSpaceKey).eq(external_placeholder(2)))
+        .from(table_of(target, TemporalEntities::Table))
         .and_where(Expr::col(TemporalEntities::Id).eq(any(cast(external_placeholder(1), PostgresType::TextArray))))
         .to_owned()
         .to_string(PostgresQueryBuilder)
@@ -338,6 +331,7 @@ mod tests {
         },
         temporal_stream::TemporalCatalogUpsert,
     };
+    use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
     use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
     use andromeda_postgresql_query::entity_type_id::EntityTypeId;
@@ -378,10 +372,10 @@ mod tests {
 
     #[test]
     fn the_batched_entity_upsert_returns_every_chunk_key() {
-        let sql = temporal_entity_upsert_batch_sql().expect("the batched entity upsert builds");
+        let sql = temporal_entity_upsert_batch_sql(&ContextTarget::Live).expect("the batched entity upsert builds");
         assert!(sql.contains(r#"RETURNING "entity_key", "id""#), "{sql}");
         assert!(
-            sql.contains("$1::text[]") && sql.contains("$2::timestamptz[]") && sql.contains("$3::jsonb[]") && sql.contains("$4"),
+            sql.contains("$1::text[]") && sql.contains("$2::timestamptz[]") && sql.contains("$3::jsonb[]"),
             "{sql}"
         );
         assert!(sql.contains("AS d(id, recorded_at, type_ids_json)"), "{sql}");
@@ -389,7 +383,7 @@ mod tests {
 
     #[test]
     fn the_batched_entity_upsert_expands_the_type_keys_to_an_integer_array() {
-        let sql = temporal_entity_upsert_batch_sql().expect("the batched entity upsert builds");
+        let sql = temporal_entity_upsert_batch_sql(&ContextTarget::Live).expect("the batched entity upsert builds");
         assert!(
             sql.contains(r#"ARRAY(SELECT jsonb_array_elements_text("d"."type_ids_json")::integer)"#),
             "{sql}"
@@ -399,11 +393,9 @@ mod tests {
 
     #[test]
     fn a_repeated_write_never_moves_the_instant_the_evolution_began() {
-        let sql = temporal_entity_upsert_batch_sql().expect("the batched entity upsert builds");
+        let sql = temporal_entity_upsert_batch_sql(&ContextTarget::Live).expect("the batched entity upsert builds");
         assert!(
-            sql.contains(
-                r#"ON CONFLICT ("context_space_key", "id") DO UPDATE SET "modified_at" = "excluded"."modified_at", "type_ids" = "excluded"."type_ids""#
-            ),
+            sql.contains(r#"ON CONFLICT ("id") DO UPDATE SET "modified_at" = "excluded"."modified_at", "type_ids" = "excluded"."type_ids""#),
             "{sql}"
         );
         assert!(!sql.contains(r#""created_at" = "excluded""#), "{sql}");
@@ -411,11 +403,21 @@ mod tests {
 
     #[test]
     fn the_typeless_lookup_matches_every_requested_identifier_in_one_array() {
-        let sql = temporal_entity_keys_lookup_sql();
+        let sql = temporal_entity_keys_lookup_sql(&ContextTarget::Live);
         assert!(
-            sql.starts_with(r#"SELECT "entity_key", "id" FROM "temporal_entities" WHERE "context_space_key" = ($2) AND "id" = ANY($1::text[])"#),
+            sql.starts_with(r#"SELECT "entity_key", "id" FROM "temporal_entities" WHERE "id" = ANY($1::text[])"#),
             "{sql}"
         );
+    }
+
+    /// A Snapshot branch qualifies the temporal catalogue table with its schema.
+    #[test]
+    fn a_snapshot_branch_qualifies_the_temporal_entities_table() {
+        use andromeda_context_space::{snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
+        let key = SnapshotKey::try_from(4).expect("positive key");
+        let id = "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri");
+        let target = ContextTarget::Snapshot(SnapshotTarget::published(key, id));
+        assert!(temporal_entity_keys_lookup_sql(&target).contains(r#"FROM "snap_4"."temporal_entities""#));
     }
 
     /// Clause 4.5.6 makes the Temporal Evolution "the Entity [...] as mandated
@@ -519,8 +521,8 @@ mod tests {
     #[test]
     fn the_entity_catalogue_names_no_current_state_relation() {
         for statement in [
-            temporal_entity_upsert_batch_sql().expect("the batched entity upsert builds"),
-            temporal_entity_keys_lookup_sql(),
+            temporal_entity_upsert_batch_sql(&ContextTarget::Live).expect("the batched entity upsert builds"),
+            temporal_entity_keys_lookup_sql(&ContextTarget::Live),
         ] {
             assert!(!statement.contains(r#""entities""#), "{statement}");
         }

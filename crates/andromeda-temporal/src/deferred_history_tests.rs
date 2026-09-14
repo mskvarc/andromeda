@@ -22,11 +22,7 @@ use crate::{
     },
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
-use andromeda_context_space::{
-    context_space::{ContextSpace, ContextSpaceKind},
-    context_space_key::ContextSpaceKey,
-    context_target::ContextTarget,
-};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
@@ -373,8 +369,7 @@ fn instant() -> DateTime<Utc> {
 }
 
 fn live_target() -> ContextTarget {
-    let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-    ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+    ContextTarget::Live
 }
 
 fn query() -> CompiledTemporalQuery {

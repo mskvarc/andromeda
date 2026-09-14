@@ -20,6 +20,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_postgresql_branch::schema_prefix;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
 use andromeda_postgresql_encoding::{
     copy::{
@@ -77,15 +78,23 @@ const COPY_INTO_STAGE_SQL: &str = "COPY stage_attribute_history (recorded_at, wr
      value_bool, verbatim_instance_id, value_number, value_string, value_geo, value_object, value_uri, metadata) \
      FROM STDIN WITH (FORMAT binary)";
 
-const INSERT_FROM_STAGE_SQL: &str = r"
-INSERT INTO attribute_history (
-    recorded_at, context_space_key, write_id, stream_key, write_ordinal, attribute_kind, value_kind,
+/// Materialise the staged history rows into the target branch's
+/// `attribute_history`. The branch is selected by qualifying the target table
+/// with `schema` (`""` for the live branch, `"snap_<key>."` for a Snapshot
+/// branch); the session-scoped staging table needs no qualifier. The conflict
+/// target names the write-identity columns rather than the constraint, because a
+/// branch table's `LIKE`-copied unique index carries an auto-generated name.
+fn insert_from_stage_sql(schema: &str) -> String {
+    format!(
+        r"
+INSERT INTO {schema}attribute_history (
+    recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind,
     observed_at, created_at, modified_at, deleted_at, value_datetime,
     generated_instance_uuid, unit_code_id, value_bool, verbatim_instance_id,
     value_number, value_string, value_geo, value_object, value_uri, metadata
 )
 SELECT
-    s.recorded_at, $1, s.write_id, s.stream_key, s.write_ordinal, s.attribute_kind, s.value_kind,
+    s.recorded_at, s.write_id, s.stream_key, s.write_ordinal, s.attribute_kind, s.value_kind,
     s.observed_at, s.created_at, s.modified_at, s.deleted_at, s.value_datetime,
     s.generated_instance_uuid, s.unit_code_id, s.value_bool, s.verbatim_instance_id,
     s.value_number::numeric, s.value_string,
@@ -94,8 +103,10 @@ SELECT
          ELSE NULL END,
     s.value_object, s.value_uri, s.metadata
 FROM stage_attribute_history s
-ON CONFLICT ON CONSTRAINT uq_attribute_history_write DO NOTHING
-";
+ON CONFLICT (recorded_at, write_id, write_ordinal) DO NOTHING
+"
+    )
+}
 
 /// Bulk-insert via binary COPY into a per-transaction staging table, then
 /// materialise into `attribute_history`.
@@ -121,7 +132,8 @@ pub(crate) async fn insert_history_batch_via_copy_in_tx(
         copy.finish().await?;
     }
 
-    sqlx::query(INSERT_FROM_STAGE_SQL).bind(target.key().as_i64()).execute(&mut **tx).await?;
+    let insert_sql = insert_from_stage_sql(&schema_prefix(target));
+    sqlx::query(sqlx::AssertSqlSafe(insert_sql.as_str())).execute(&mut **tx).await?;
     Ok(())
 }
 
@@ -177,7 +189,7 @@ mod tests {
     use crate::{
         attribute_history_row::AttributeHistoryRow,
         attribute_history_value::AttributeHistoryValue,
-        copy::{INSERT_FROM_STAGE_SQL, STAGE_ATTRIBUTE_HISTORY_FIELD_COUNT, encode_history_copy_stream},
+        copy::{STAGE_ATTRIBUTE_HISTORY_FIELD_COUNT, encode_history_copy_stream, insert_from_stage_sql},
         semantic_time_axes::SemanticTimeAxes,
     };
     use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
@@ -237,7 +249,16 @@ mod tests {
     /// insert is what makes that second insert a no-op instead of a duplicate.
     #[test]
     fn a_row_replayed_under_its_original_write_identity_is_not_duplicated() {
-        assert!(INSERT_FROM_STAGE_SQL.contains("ON CONFLICT ON CONSTRAINT uq_attribute_history_write DO NOTHING"));
+        assert!(insert_from_stage_sql("").contains("ON CONFLICT (recorded_at, write_id, write_ordinal) DO NOTHING"));
+    }
+
+    /// A Snapshot branch qualifies the target relation with its schema while the
+    /// session-scoped staging table stays unqualified.
+    #[test]
+    fn a_branch_prefix_qualifies_the_history_table() {
+        let sql = insert_from_stage_sql("snap_3.");
+        assert!(sql.contains("INSERT INTO snap_3.attribute_history ("), "{sql}");
+        assert!(sql.contains("FROM stage_attribute_history s"), "{sql}");
     }
 
     #[test]

@@ -3,8 +3,11 @@
 use andromeda_snapshot::error::SnapshotError;
 use std::fmt::Display;
 
+/// Per-Snapshot branch schema creation, promotion and teardown.
+mod branch_schema;
+/// Cross-schema copying of a Snapshot branch into another (clone preparation).
+mod clone;
 mod clone_context;
-mod clone_statements;
 /// The statements over the `snapshots` control record.
 pub mod lifecycle;
 /// Row-to-domain conversions for snapshot records.

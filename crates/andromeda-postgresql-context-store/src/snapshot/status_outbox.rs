@@ -1,6 +1,6 @@
 //! Durable delivery queue for Snapshot lifecycle notifications.
 
-use crate::snapshot::{lifecycle::apply_snapshot_projection, mapper::row_to_snapshot, persistence_error};
+use crate::snapshot::{lifecycle::snapshot_select, mapper::row_to_snapshot, persistence_error};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, snapshot::SnapshotStatus};
 use andromeda_postgresql_schema::snapshot::{SnapshotNotificationOutbox, Snapshots};
@@ -211,12 +211,10 @@ impl SnapshotStatusOutbox {
 
 /// Queue the current terminal representation inside its lifecycle transaction.
 pub(crate) async fn enqueue_terminal_notification(transaction: &mut Transaction<'_, Postgres>, snapshot_id: &Uri) -> Result<(), SnapshotError> {
-    let mut statement = Query::select();
-    apply_snapshot_projection(&mut statement);
+    let mut statement = snapshot_select();
     statement
-        .column(Snapshots::SnapshotKey)
-        .from(Snapshots::Table)
-        .and_where(Expr::col(Snapshots::Id).eq(snapshot_id.as_str()));
+        .column((Snapshots::Table, Snapshots::SnapshotKey))
+        .and_where(Expr::col((Snapshots::Table, Snapshots::Id)).eq(snapshot_id.as_str()));
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_one(&mut **transaction)

@@ -43,27 +43,24 @@
 
 CREATE TABLE temporal_entities (
     entity_key BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    context_space_key BIGINT NOT NULL REFERENCES context_spaces(context_space_key) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL,
     modified_at TIMESTAMPTZ NOT NULL,
     id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
     type_ids INTEGER[] NOT NULL,
-    CONSTRAINT uq_temporal_entities_context_id UNIQUE (context_space_key, id),
-    CONSTRAINT uq_temporal_entities_context_key UNIQUE (context_space_key, entity_key),
+    CONSTRAINT uq_temporal_entities_id UNIQUE (id),
     CONSTRAINT chk_temporal_entities_types_present CHECK (cardinality(type_ids) > 0)
 );
 
-CREATE INDEX idx_temporal_entities_type_ids ON temporal_entities USING GIN (context_space_key int8_ops, type_ids);
+CREATE INDEX idx_temporal_entities_type_ids ON temporal_entities USING GIN (type_ids);
 
 CREATE TABLE temporal_attribute_streams (
     stream_key BIGINT GENERATED ALWAYS AS IDENTITY (CACHE 32) PRIMARY KEY,
-    context_space_key BIGINT NOT NULL,
     temporal_entity_key BIGINT NOT NULL,
     attribute_name_id INTEGER NOT NULL REFERENCES attribute_names(id),
     dataset_id TEXT COMPRESSION lz4 COLLATE "C",
     CONSTRAINT uq_temporal_attribute_streams_grain
-        UNIQUE NULLS NOT DISTINCT (context_space_key, temporal_entity_key, attribute_name_id, dataset_id) INCLUDE (stream_key),
+        UNIQUE NULLS NOT DISTINCT (temporal_entity_key, attribute_name_id, dataset_id) INCLUDE (stream_key),
     CONSTRAINT fk_temporal_attribute_streams_entity
-        FOREIGN KEY (context_space_key, temporal_entity_key)
-        REFERENCES temporal_entities(context_space_key, entity_key) ON DELETE CASCADE
+        FOREIGN KEY (temporal_entity_key)
+        REFERENCES temporal_entities(entity_key) ON DELETE CASCADE
 );

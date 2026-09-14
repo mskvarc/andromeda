@@ -1201,6 +1201,7 @@ dependencies = [
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-number",
+ "andromeda-postgresql-branch",
  "andromeda-postgresql-codes",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-name-dictionary",
@@ -1222,6 +1223,17 @@ dependencies = [
  "strum",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "andromeda-postgresql-branch"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-context-space",
+ "andromeda-postgresql-seaquery",
+ "pretty_assertions",
+ "sea-query",
 ]
 
 [[package]]
@@ -1255,6 +1267,7 @@ dependencies = [
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
+ "andromeda-postgresql-branch",
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
@@ -1285,6 +1298,7 @@ dependencies = [
  "andromeda-ngsi-ld-number",
  "andromeda-ngsi-ld-query",
  "andromeda-notification",
+ "andromeda-postgresql-branch",
  "andromeda-postgresql-codes",
  "andromeda-postgresql-collation",
  "andromeda-postgresql-context-query",
@@ -1432,7 +1446,6 @@ name = "andromeda-postgresql-temporal-query"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
- "andromeda-context-space",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-query",
@@ -1466,6 +1479,7 @@ dependencies = [
  "andromeda-ngsi-ld-number",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
+ "andromeda-postgresql-branch",
  "andromeda-postgresql-codes",
  "andromeda-postgresql-collation",
  "andromeda-postgresql-encoding",

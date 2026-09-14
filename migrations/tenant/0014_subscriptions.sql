@@ -65,10 +65,6 @@ CREATE TABLE subscriptions (
     -- primary key.
     subscription_key BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 
-    -- Context branch that owns this subscription. Snapshot deletion cascades
-    -- through the subscription and every delivery-state row below.
-    context_space_key BIGINT NOT NULL REFERENCES context_spaces(context_space_key) ON DELETE CASCADE,
-
     -- System-managed temporal properties (clause 4.8).
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -83,6 +79,12 @@ CREATE TABLE subscriptions (
 
     -- When true, match only local entities (no distributed federation match).
     local_only BOOLEAN NOT NULL DEFAULT FALSE,
+
+    -- Table 5.2.12-1 `splitEntities`: when true, single entities are assumed
+    -- distributed across context sources, so the filters can only be applied
+    -- after re-assembly (clause 5.8.6). Tri-state on the wire -- an absent value
+    -- defers to the deployment default -- so the column is nullable, not defaulted.
+    split_entities BOOLEAN,
 
     -- Subscription expiry. NULL means perpetual.
     -- When NOW() > expires_at, status transitions to "expired".
@@ -125,8 +127,12 @@ CREATE TABLE subscriptions (
     -- attributeCreated=4, attributeUpdated=5, attributeDeleted=6. Clause 5.2.12
     -- defaults an absent member to attributeCreated plus attributeUpdated.
     -- The codes are the same registry the notification queue's `trigger`
-    -- column is numbered from.
-    notification_trigger SMALLINT[] COMPRESSION lz4 NOT NULL DEFAULT ARRAY[4, 5]::SMALLINT[],
+    -- column is numbered from. Cardinality 0..1 (Table 5.2.12-1): the column
+    -- records what the Context Subscriber wrote and nothing else -- NULL is the
+    -- absent member, which `effective_notification_triggers` reads as the clause
+    -- 5.2.12 default (attributeCreated plus attributeUpdated) wherever a match is
+    -- decided, rather than materialising a selection the writer never made.
+    notification_trigger SMALLINT[] COMPRESSION lz4,
 
     -- NGSI-LD query string (clause 4.9) that entities must satisfy.
     q TEXT,
@@ -162,10 +168,16 @@ CREATE TABLE subscriptions (
     -- compacting notification payloads.
     jsonld_context TEXT,
 
+    -- Table 5.2.12-1 `ngsildConformance`: a `major.minor` version string that,
+    -- when set, has the notification undergo the clause 4.3.6.8 backwards
+    -- compatibility operation before it is sent (clause 5.8.6). Stored as the
+    -- text the client wrote -- the form a retrieve echoes -- never compared in
+    -- SQL. Nullable: an absent member means no amendment, with no default version.
+    ngsild_conformance TEXT,
+
     -- `id` is the external identity a client registers and matches under; the
     -- surrogate key is the primary key, so `id` carries its own unique index.
-    CONSTRAINT uq_subscriptions_context_id UNIQUE (context_space_key, id),
-    CONSTRAINT uq_subscriptions_context_key UNIQUE (context_space_key, subscription_key),
+    CONSTRAINT uq_subscriptions_id UNIQUE (id),
 
     -- Every stored trigger is one of the six clause-5.2.12 registry codes;
     -- mirrors the notification queue's `trigger` bound (0018).
@@ -180,12 +192,12 @@ CREATE TABLE subscriptions (
 );
 
 -- Lookup active subscriptions for notification matching (partitioned by kind)
-CREATE INDEX idx_subscriptions_kind_status ON subscriptions(context_space_key, kind, status);
+CREATE INDEX idx_subscriptions_kind_status ON subscriptions(kind, status);
 
 -- Efficiently find and expire subscriptions past their expiry. Perpetual
 -- subscriptions carry NULL and are never candidates, so they are kept out of
 -- the index.
-CREATE INDEX idx_subscriptions_expires_at ON subscriptions(context_space_key, expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX idx_subscriptions_expires_at ON subscriptions(expires_at) WHERE expires_at IS NOT NULL;
 
 -- Notification delivery statistics (spec clauses 5.2.14.2 and 5.2.15), one row
 -- per subscription, created together with the subscription in the same
@@ -201,16 +213,15 @@ CREATE INDEX idx_subscriptions_expires_at ON subscriptions(context_space_key, ex
 -- is the delivery rate, so the default scale factors would let dead tuples
 -- outnumber live rows many times over before a vacuum ran.
 CREATE TABLE subscription_delivery_state (
-    context_space_key BIGINT NOT NULL,
     subscription_key BIGINT PRIMARY KEY,
     times_sent INTEGER NOT NULL DEFAULT 0,
     times_failed INTEGER NOT NULL DEFAULT 0,
     last_notification TIMESTAMPTZ,
     last_success TIMESTAMPTZ,
     last_failure TIMESTAMPTZ,
-    CONSTRAINT fk_subscription_delivery_state_context_subscription
-        FOREIGN KEY (context_space_key, subscription_key)
-        REFERENCES subscriptions(context_space_key, subscription_key) ON DELETE CASCADE,
+    CONSTRAINT fk_subscription_delivery_state_subscription
+        FOREIGN KEY (subscription_key)
+        REFERENCES subscriptions(subscription_key) ON DELETE CASCADE,
     -- The floor is zero, not one, and that is not the "Greater than 0" of
     -- Table 5.2.14.2-1: the table restricts the `timesSent` and `timesFailed`
     -- *members* of a rendered NotificationParams, which are 0..1, so a counter
@@ -226,4 +237,33 @@ CREATE TABLE subscription_delivery_state (
     autovacuum_analyze_scale_factor = 0.02,
     autovacuum_analyze_threshold = 100,
     autovacuum_vacuum_cost_delay = 0
+);
+
+-- Subscription forwarding mappings (clause 5.8.1.4). A broker keeps two mappings
+-- for each local subscription that takes part in distributed operations: the
+-- companion context source registration subscription that mirrors it, and the
+-- identifier of the reduced copy placed at each matching registration's context
+-- source. A deletion tears both down (clause 5.8.5.4); an inbound notification
+-- is routed by the copy's identifier (clause 5.8.6). These mappings are tenant
+-- global, not branch state: identifiers are `COLLATE "C"`, compared for equality
+-- only.
+CREATE TABLE subscription_companions (
+    -- The local entity subscription.
+    local_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL PRIMARY KEY,
+
+    -- The companion context source registration subscription this broker minted.
+    companion_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL UNIQUE
+);
+
+CREATE TABLE forwarded_subscriptions (
+    -- The local entity subscription the copy reduces.
+    local_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
+
+    -- The registration whose context source holds the copy.
+    registration_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
+
+    -- The identifier the copy carries at the context source.
+    remote_subscription_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL UNIQUE,
+
+    PRIMARY KEY (local_subscription_id, registration_id)
 );

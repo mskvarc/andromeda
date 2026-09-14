@@ -6,7 +6,7 @@
 //! on a row lock holds a connection for the whole wait, and a burst of
 //! overlapping batches would exhaust the pool waiting for itself.
 
-use andromeda_context_space::{context_space_key::ContextSpaceKey, context_target::ContextTarget};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use async_lock::{Mutex, MutexGuardArc};
 use dashmap::DashMap;
@@ -15,10 +15,13 @@ use std::sync::Arc;
 /// Map used to coordinate writes by entity id.
 pub(crate) type IdLockMap = DashMap<IdLockKey, Arc<Mutex<()>>>;
 
-/// Identity of one mutable entity inside one context-space partition.
+/// Identity of one mutable entity inside one context branch.
+///
+/// The branch is the live branch (`0`) or a Snapshot branch (its positive
+/// `snapshot_key`), so the two never collide.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct IdLockKey {
-    context_space_key: ContextSpaceKey,
+    branch_key: i64,
     entity_id: Uri,
 }
 
@@ -38,7 +41,7 @@ pub(crate) async fn acquire_id_locks_in(map: &IdLockMap, target: &ContextTarget,
     for id in sorted {
         // The map owns its key independently of the caller's input slice.
         let key = IdLockKey {
-            context_space_key: target.key(),
+            branch_key: target.snapshot().map_or(0_i64, |snapshot| snapshot.key().as_i64()),
             entity_id: id.clone(), // clone: the lock map owns the identifier after the request ends.
         };
         let lock = map.entry(key).or_insert_with(|| Arc::new(Mutex::new(()))).value().clone();
@@ -62,17 +65,12 @@ pub(crate) fn gc_id_locks(map: &IdLockMap) {
 #[cfg(test)]
 mod tests {
     use super::{IdLockMap, acquire_id_locks_in, gc_id_locks};
-    use andromeda_context_space::{
-        context_space::{ContextSpace, ContextSpaceKind},
-        context_space_key::ContextSpaceKey,
-        context_target::ContextTarget,
-    };
+    use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use std::sync::Arc;
 
     fn live_target() -> ContextTarget {
-        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+        ContextTarget::Live
     }
 
     #[tokio::test]

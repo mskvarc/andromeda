@@ -108,9 +108,7 @@ pub(super) async fn initialize_storage(config: &TenantFactoryConfig, database_ur
         .connect(database_url.as_str())
         .await?;
     migrate_tenant_db(&pool).await?;
-    let live_target = resolve_live_target(&pool)
-        .await
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let live_target = resolve_live_target();
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
     let engine = config.jsonld.build_engine(Arc::clone(&context_repo))?;
     let context_workers = TenantContextWorkers {

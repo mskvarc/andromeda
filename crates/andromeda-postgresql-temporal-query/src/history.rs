@@ -14,7 +14,6 @@ use crate::{
     alias::{Ah, An, S, Te},
     axis::axis_column,
 };
-use andromeda_context_space::context_space_key::ContextSpaceKey;
 use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
@@ -27,9 +26,10 @@ use andromeda_postgresql_schema::{
 };
 use andromeda_postgresql_seaquery::{
     aggregate::{count_all, row_number},
+    branch::qualified,
     postgis::st_as_ewkb,
 };
-use sea_query::{Alias, Asterisk, Condition, Expr, ExprTrait, JoinType, Order, Query, SelectStatement, WindowStatement};
+use sea_query::{Alias, Asterisk, Condition, DynIden, Expr, ExprTrait, JoinType, Order, Query, SelectStatement, WindowStatement};
 
 /// Build Stage 2 query: temporal history for a single entity.
 ///
@@ -37,11 +37,11 @@ use sea_query::{Alias, Asterisk, Condition, Expr, ExprTrait, JoinType, Order, Qu
 /// its whole placeholder sequence and no two functions have to agree on where
 /// it starts.
 #[must_use]
-pub fn build_temporal_history_query(context_space_key: ContextSpaceKey, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> SelectStatement {
-    let condition = stage2_conditions(context_space_key, entity_id, compiled);
+pub fn build_temporal_history_query(schema: Option<&DynIden>, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> SelectStatement {
+    let condition = stage2_conditions(schema, entity_id, compiled);
     match compiled.representation.format {
-        TemporalFormat::AggregatedValues => build_aggregation_query(compiled, condition),
-        TemporalFormat::Normalized | TemporalFormat::TemporalValues => build_history_query(compiled, condition),
+        TemporalFormat::AggregatedValues => build_aggregation_query(schema, compiled, condition),
+        TemporalFormat::Normalized | TemporalFormat::TemporalValues => build_history_query(schema, compiled, condition),
     }
 }
 
@@ -52,12 +52,8 @@ pub fn build_temporal_history_query(context_space_key: ContextSpaceKey, entity_i
 /// holds it. `deletedAt` exists only on a row that records a deletion, so asking
 /// for that axis asks for those rows and no others; the deletion is recognised
 /// by the axis itself rather than by a sentinel value.
-fn stage2_conditions(context_space_key: ContextSpaceKey, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Condition {
-    let mut condition = Condition::all()
-        .add(Expr::col((Te, TemporalEntities::ContextSpaceKey)).eq(context_space_key.as_i64()))
-        .add(Expr::col((S, TemporalAttributeStreams::ContextSpaceKey)).eq(context_space_key.as_i64()))
-        .add(Expr::col((Ah, AttributeHistory::ContextSpaceKey)).eq(context_space_key.as_i64()))
-        .add(Expr::col((Te, TemporalEntities::Id)).eq(entity_id.to_string()));
+fn stage2_conditions(schema: Option<&DynIden>, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Condition {
+    let mut condition = Condition::all().add(Expr::col((Te, TemporalEntities::Id)).eq(entity_id.to_string()));
 
     if compiled.window.timeproperty == TimeProp::Deleted {
         condition = condition.add(Expr::col((Ah, AttributeHistory::DeletedAt)).is_not_null());
@@ -99,7 +95,12 @@ fn stage2_conditions(context_space_key: ContextSpaceKey, entity_id: &Uri, compil
     // the instance is positioned on, which clause 4.18 answers from the scope
     // event in force there.
     if let Some(scope_q) = &compiled.entities.scope_q {
-        let target = ScopeTarget::valid_at((Te, TemporalEntities::EntityKey), compiled.window.timeproperty, Expr::col((Ah, axis)));
+        let target = ScopeTarget::valid_at(
+            (Te, TemporalEntities::EntityKey),
+            compiled.window.timeproperty,
+            Expr::col((Ah, axis)),
+            schema.cloned(),
+        );
         condition = condition.add(scope_condition(scope_q, &target));
     }
 
@@ -109,18 +110,18 @@ fn stage2_conditions(context_space_key: ContextSpaceKey, entity_id: &Uri, compil
 /// The catalogue path from the hypertable to the entity grain, shared by the
 /// ranked and unranked shapes and the aggregation so none can reach a row the
 /// others cannot.
-pub(crate) fn base_history_source(select: &mut SelectStatement) {
+pub(crate) fn base_history_source(select: &mut SelectStatement, schema: Option<&DynIden>) {
     select
-        .from_as(AttributeHistory::Table, Ah)
+        .from(qualified(schema, AttributeHistory::Table).alias(Ah))
         .join_as(
             JoinType::Join,
-            TemporalAttributeStreams::Table,
+            qualified(schema, TemporalAttributeStreams::Table),
             S,
             Expr::col((S, TemporalAttributeStreams::StreamKey)).equals((Ah, AttributeHistory::StreamKey)),
         )
         .join_as(
             JoinType::Join,
-            TemporalEntities::Table,
+            qualified(schema, TemporalEntities::Table),
             Te,
             Expr::col((Te, TemporalEntities::EntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
         )
@@ -172,7 +173,7 @@ fn project_base_columns(select: &mut SelectStatement) {
 }
 
 /// Build the history query, with the optional `lastN` ranking.
-fn build_history_query(compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
+fn build_history_query(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
     let axis = axis_column(compiled.window.timeproperty);
 
     if let Some(last_n) = compiled.instances.last_n {
@@ -196,7 +197,7 @@ fn build_history_query(compiled: &CompiledTemporalQuery, condition: Condition) -
             WindowStatement::partition_by((Ah, AttributeHistory::StreamKey)),
             Alias::new("partition_total"),
         );
-        base_history_source(&mut ranked);
+        base_history_source(&mut ranked, schema);
         ranked.cond_where(condition);
 
         let ranked_alias = Alias::new("ranked");
@@ -214,7 +215,7 @@ fn build_history_query(compiled: &CompiledTemporalQuery, condition: Condition) -
     } else {
         let mut select = Query::select();
         project_base_columns(&mut select);
-        base_history_source(&mut select);
+        base_history_source(&mut select, schema);
         select.cond_where(condition);
         select
             .order_by((An, AttributeNames::Name), Order::Asc)
@@ -262,8 +263,7 @@ mod tests {
     /// The stage-2 statement rendered as SQL with its values inlined, which is
     /// what the shape assertions read.
     fn sql_of(compiled: &CompiledTemporalQuery) -> String {
-        let context_space_key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-        build_temporal_history_query(context_space_key, &vehicle_id(), compiled).to_string(PostgresQueryBuilder)
+        build_temporal_history_query(None, &vehicle_id(), compiled).to_string(PostgresQueryBuilder)
     }
 
     #[test]

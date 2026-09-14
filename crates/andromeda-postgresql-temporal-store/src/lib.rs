@@ -88,6 +88,8 @@ pub mod temporal_stream_catalog_write;
 pub mod unit_code_audit;
 /// Moving the NGSI-LD `unitCode` member between stored metadata and its column.
 pub mod unit_code_metadata;
+/// The clause 4.5.7 verbatim-`instanceId` uniqueness pass a history batch runs.
+pub(crate) mod verbatim_instance_claim;
 /// The write's own idempotency bookkeeping record.
 pub(crate) mod write_record_persist;
 /// When one write's idempotency record may be released.
@@ -105,6 +107,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-postgresql-branch",
         "andromeda-postgresql-name-dictionary",
         "andromeda-postgresql-codes",
         "andromeda-postgresql-collation",

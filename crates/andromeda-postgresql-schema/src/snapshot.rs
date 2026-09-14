@@ -1,21 +1,20 @@
 //! The relations a distributed-operation snapshot occupies.
 //!
-//! A `snapshots` row is the Snapshot control record. Captured data is stored in
-//! ordinary current and temporal relations partitioned by its context space.
+//! A Snapshot's control record is split by write pattern: `snapshots` holds the
+//! immutable identity and query definition, `snapshot_preparation` holds the
+//! lifecycle status and the renewable worker lease that every preparation tick
+//! rewrites. Captured data lives in the Snapshot's own branch schema named after
+//! its `snapshot_key`, not in these tables.
 
 use sea_query::Iden;
 
-/// The `snapshots` table - one control record per distributed-operation snapshot.
+/// The `snapshots` table - the immutable control record of one Snapshot.
 #[derive(Iden, Clone, Copy)]
 pub enum Snapshots {
     /// Table name: `snapshots`
     Table,
-    /// The database-issued surrogate the child tables reference.
+    /// The database-issued surrogate the branch schema and children are named from.
     SnapshotKey,
-    /// The role-neutral branch containing this Snapshot's data.
-    ContextSpaceKey,
-    /// Private context branch populated before atomic capture promotion.
-    StagingContextSpaceKey,
     /// The snapshot's URI identifier.
     Id,
     /// The entity queries the snapshot materialised.
@@ -32,28 +31,38 @@ pub enum Snapshots {
     Endpoint,
     /// The receiver's callback metadata.
     ReceiverInfo,
-    /// The snapshot's lifecycle status enum.
-    Status,
     /// Source Snapshot URI for an asynchronous clone preparation.
     CloneSourceId,
-    /// Instant a preparer claimed this control record; `NULL` while unclaimed.
+    /// Creation instant (clause 4.8 system attribute).
+    CreatedAt,
+    /// Expiry instant, after which the snapshot is reaped.
+    ExpiresAt,
+}
+
+/// The `snapshot_preparation` table - the mutable lifecycle and lease state of
+/// one Snapshot, keyed by `snapshot_key`.
+#[derive(Iden, Clone, Copy)]
+pub enum SnapshotPreparation {
+    /// Table name: `snapshot_preparation`
+    Table,
+    /// Foreign key to `snapshots`, cascading on deletion; also the primary key.
+    SnapshotKey,
+    /// Last-modification instant (clause 4.8 system attribute).
+    ModifiedAt,
+    /// Instant the snapshot was last read.
+    LastUsedAt,
+    /// Instant a preparer claimed this record; `NULL` while unclaimed.
     ClaimedAt,
-    /// Identity of the replica currently preparing this Snapshot.
-    ClaimedBy,
     /// Instant after which another replica may reclaim preparation.
     LeaseUntil,
+    /// Identity of the replica currently preparing this Snapshot.
+    ClaimedBy,
+    /// The snapshot's lifecycle status enum.
+    Status,
     /// Per-query execution details for the entity queries.
     QueriesDetails,
     /// Per-query execution details for the temporal queries.
     TemporalQueriesDetails,
-    /// Creation instant (clause 4.8 system attribute).
-    CreatedAt,
-    /// Last-modification instant (clause 4.8 system attribute).
-    ModifiedAt,
-    /// Expiry instant, after which the snapshot is reaped.
-    ExpiresAt,
-    /// Instant the snapshot was last read.
-    LastUsedAt,
 }
 
 /// The durable Snapshot lifecycle-notification delivery queue.
@@ -93,19 +102,27 @@ pub enum SnapshotNotificationOutbox {
 
 #[cfg(test)]
 mod tests {
-    use crate::snapshot::{SnapshotNotificationOutbox, Snapshots};
+    use crate::snapshot::{SnapshotNotificationOutbox, SnapshotPreparation, Snapshots};
     use sea_query::Iden;
 
     #[test]
     fn snapshot_relation_names() {
         assert_eq!(Snapshots::Table.to_string(), "snapshots");
         assert_eq!(Snapshots::SnapshotKey.to_string(), "snapshot_key");
-        assert_eq!(Snapshots::ContextSpaceKey.to_string(), "context_space_key");
-        assert_eq!(Snapshots::StagingContextSpaceKey.to_string(), "staging_context_space_key");
-        assert_eq!(Snapshots::LastUsedAt.to_string(), "last_used_at");
-        assert_eq!(Snapshots::ClaimedAt.to_string(), "claimed_at");
-        assert_eq!(Snapshots::ClaimedBy.to_string(), "claimed_by");
-        assert_eq!(Snapshots::LeaseUntil.to_string(), "lease_until");
+        assert_eq!(Snapshots::Id.to_string(), "id");
+        assert_eq!(Snapshots::CloneSourceId.to_string(), "clone_source_id");
+        assert_eq!(Snapshots::ExpiresAt.to_string(), "expires_at");
         assert_eq!(SnapshotNotificationOutbox::Table.to_string(), "snapshot_notification_outbox");
+    }
+
+    #[test]
+    fn snapshot_preparation_relation_names() {
+        assert_eq!(SnapshotPreparation::Table.to_string(), "snapshot_preparation");
+        assert_eq!(SnapshotPreparation::SnapshotKey.to_string(), "snapshot_key");
+        assert_eq!(SnapshotPreparation::LastUsedAt.to_string(), "last_used_at");
+        assert_eq!(SnapshotPreparation::ClaimedAt.to_string(), "claimed_at");
+        assert_eq!(SnapshotPreparation::ClaimedBy.to_string(), "claimed_by");
+        assert_eq!(SnapshotPreparation::LeaseUntil.to_string(), "lease_until");
+        assert_eq!(SnapshotPreparation::Status.to_string(), "status");
     }
 }

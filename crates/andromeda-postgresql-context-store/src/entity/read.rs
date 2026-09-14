@@ -13,6 +13,7 @@ use andromeda_entity::{entity_snapshot::EntitySnapshot, query_outcome::QueryOutc
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
+use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_context_query::entity as entity_sql;
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
@@ -280,12 +281,12 @@ fn extract_payloads(rows: Vec<PgRow>, read_total_count: bool) -> Result<(Vec<Val
 
 /// `FROM entities JOIN entity_documents ON entity_documents.entity_key = entities.entity_key`,
 /// the source every read of a payload or version token starts from.
-pub(super) fn identity_with_documents() -> SelectStatement {
+pub(super) fn identity_with_documents(target: &ContextTarget) -> SelectStatement {
     Query::select()
-        .from(Entities::Table)
+        .from(table_of(target, Entities::Table))
         .join(
             JoinType::Join,
-            EntityDocuments::Table,
+            table_of(target, EntityDocuments::Table),
             Expr::col((EntityDocuments::Table, EntityDocuments::EntityKey)).equals((Entities::Table, Entities::EntityKey)),
         )
         .take()
@@ -293,63 +294,57 @@ pub(super) fn identity_with_documents() -> SelectStatement {
 
 /// The payload of the entity identified by `id`.
 fn payload_by_id_query(target: &ContextTarget, id: &str) -> SelectStatement {
-    identity_with_documents()
+    identity_with_documents(target)
         .column((EntityDocuments::Table, EntityDocuments::Payload))
-        .and_where(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(target.key().as_i64()))
         .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id))
         .take()
 }
 
 /// The identifier and payload of every entity in `ids`.
 fn payloads_by_ids_query(target: &ContextTarget, ids: &[&str]) -> SelectStatement {
-    identity_with_documents()
+    identity_with_documents(target)
         .column((Entities::Table, Entities::Id))
         .column((EntityDocuments::Table, EntityDocuments::Payload))
-        .and_where(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(target.key().as_i64()))
         .and_where(Expr::col((Entities::Table, Entities::Id)).eq(any(text_array(ids))))
         .take()
 }
 
 /// The payload and version token of the entity identified by `id`.
 fn snapshot_by_id_query(target: &ContextTarget, id: &str) -> SelectStatement {
-    identity_with_documents()
+    identity_with_documents(target)
         .column((EntityDocuments::Table, EntityDocuments::Payload))
         .column((EntityDocuments::Table, EntityDocuments::ModifiedAt))
-        .and_where(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(target.key().as_i64()))
         .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id))
         .take()
 }
 
 /// The identifier, payload and version token of every entity in `ids`.
 fn snapshots_by_ids_query(target: &ContextTarget, ids: &[&str]) -> SelectStatement {
-    identity_with_documents()
+    identity_with_documents(target)
         .column((Entities::Table, Entities::Id))
         .column((EntityDocuments::Table, EntityDocuments::Payload))
         .column((EntityDocuments::Table, EntityDocuments::ModifiedAt))
-        .and_where(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(target.key().as_i64()))
         .and_where(Expr::col((Entities::Table, Entities::Id)).eq(any(text_array(ids))))
         .take()
 }
 
 /// The system attributes of the entity identified by `id`.
 fn sys_attrs_by_id_query(target: &ContextTarget, id: &str) -> SelectStatement {
-    identity_with_documents()
+    identity_with_documents(target)
         .column((Entities::Table, Entities::CreatedAt))
         .column((EntityDocuments::Table, EntityDocuments::ModifiedAt))
         .column((Entities::Table, Entities::ExpiresAt))
-        .and_where(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(target.key().as_i64()))
         .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id))
         .take()
 }
 
 /// The identifier and system attributes of every entity in `ids`.
 fn sys_attrs_by_ids_query(target: &ContextTarget, ids: &[&str]) -> SelectStatement {
-    identity_with_documents()
+    identity_with_documents(target)
         .column((Entities::Table, Entities::Id))
         .column((Entities::Table, Entities::CreatedAt))
         .column((EntityDocuments::Table, EntityDocuments::ModifiedAt))
         .column((Entities::Table, Entities::ExpiresAt))
-        .and_where(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(target.key().as_i64()))
         .and_where(Expr::col((Entities::Table, Entities::Id)).eq(any(text_array(ids))))
         .take()
 }
@@ -357,16 +352,11 @@ fn sys_attrs_by_ids_query(target: &ContextTarget, ids: &[&str]) -> SelectStateme
 #[cfg(test)]
 mod tests {
     use crate::entity::read::{payload_by_id_query, payloads_by_ids_query, snapshot_by_id_query, sys_attrs_by_id_query, sys_attrs_by_ids_query};
-    use andromeda_context_space::{
-        context_space::{ContextSpace, ContextSpaceKind},
-        context_space_key::ContextSpaceKey,
-        context_target::ContextTarget,
-    };
+    use andromeda_context_space::context_target::ContextTarget;
     use sea_query::PostgresQueryBuilder;
 
     fn target() -> ContextTarget {
-        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+        ContextTarget::Live
     }
 
     const JOIN: &str = r#"FROM "entities" JOIN "entity_documents" ON "entity_documents"."entity_key" = "entities"."entity_key""#;
@@ -375,7 +365,7 @@ mod tests {
     fn a_single_payload_reads_by_id_through_the_document_join() {
         assert_eq!(
             payload_by_id_query(&target(), "urn:x").to_string(PostgresQueryBuilder),
-            format!(r#"SELECT "entity_documents"."payload" {JOIN} WHERE "entities"."context_space_key" = 1 AND "entities"."id" = 'urn:x'"#)
+            format!(r#"SELECT "entity_documents"."payload" {JOIN} WHERE "entities"."id" = 'urn:x'"#)
         );
     }
 

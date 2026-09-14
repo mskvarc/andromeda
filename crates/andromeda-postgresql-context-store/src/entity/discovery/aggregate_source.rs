@@ -6,7 +6,8 @@
 //! once here, so the type aggregates and the attribute aggregates cannot drift
 //! apart on either.
 
-use andromeda_context_space::context_space_key::ContextSpaceKey;
+use andromeda_context_space::context_target::ContextTarget;
+use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{EntityDocuments, EntitySearch};
 use andromeda_postgresql_seaquery::{cast::cast, jsonb::jsonb_typeof, pg_operator::PgBinaryOperator, pg_type::PostgresType};
 use sea_query::{CaseStatement, Cond, Expr, ExprTrait, Iden, JoinType, SelectStatement, SimpleExpr};
@@ -45,18 +46,13 @@ pub(super) fn attribute_container(payload: &dyn Fn() -> SimpleExpr) -> SimpleExp
 /// `FROM entity_search s JOIN entity_documents d ON d.entity_key = s.entity_key`,
 /// the source every payload-walking aggregate reads: the type keys from the
 /// search row, the attribute members from the document row.
-pub(super) fn search_with_documents(statement: &mut SelectStatement, context_space_key: ContextSpaceKey) -> &mut SelectStatement {
-    statement
-        .from_as(EntitySearch::Table, S)
-        .join_as(
-            JoinType::Join,
-            EntityDocuments::Table,
-            D,
-            Expr::col((D, EntityDocuments::EntityKey))
-                .equals((S, EntitySearch::EntityKey))
-                .and(Expr::col((D, EntityDocuments::ContextSpaceKey)).equals((S, EntitySearch::ContextSpaceKey))),
-        )
-        .and_where(Expr::col((S, EntitySearch::ContextSpaceKey)).eq(context_space_key.as_i64()))
+pub(super) fn search_with_documents<'a>(statement: &'a mut SelectStatement, target: &ContextTarget) -> &'a mut SelectStatement {
+    statement.from(table_of(target, EntitySearch::Table).alias(S)).join_as(
+        JoinType::Join,
+        table_of(target, EntityDocuments::Table),
+        D,
+        Expr::col((D, EntityDocuments::EntityKey)).equals((S, EntitySearch::EntityKey)),
+    )
 }
 
 /// The keyset guard `$after::text IS NULL OR key > $after`: an absent cursor

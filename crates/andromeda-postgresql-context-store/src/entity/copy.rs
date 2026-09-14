@@ -23,6 +23,7 @@ use crate::{
     error::ContextStoreError,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_postgresql_branch::schema_prefix;
 use andromeda_postgresql_encoding::copy::{
     write_bytea_opt,
     write_field_count,
@@ -60,10 +61,15 @@ CREATE TEMP TABLE stage_entities (
 /// Binary COPY statement targeting the staging table.
 const COPY_INTO_STAGE_SQL: &str = "COPY stage_entities (id, type_ids_json, attribute_name_ids_json, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at) FROM STDIN WITH (FORMAT binary)";
 
-/// Materialise staged rows into the three entity relations: the same
-/// projection and the same three inserts the `UNNEST` path performs, read from
-/// the staging table instead of parallel arrays.
-const INSERT_FROM_STAGE_CREATE_SQL: &str = r"
+/// Materialise staged rows into the three entity relations of the target
+/// branch: the same projection and the same three inserts the `UNNEST` path
+/// performs, read from the staging table instead of parallel arrays. The branch
+/// is selected by qualifying the three relations with `schema` (`""` for the
+/// live branch, `"snap_<key>."` for a Snapshot branch); the temporary staging
+/// table is session-scoped and needs no qualifier.
+fn insert_from_stage_sql(schema: &str) -> String {
+    format!(
+        r"
 WITH proj AS (
     SELECT
         s.id,
@@ -80,22 +86,24 @@ WITH proj AS (
     FROM stage_entities s
 ),
 ins AS (
-    INSERT INTO entities (context_space_key, id, expires_at, min_attribute_expires_at)
-    SELECT $1, proj.id, proj.expires_at, proj.min_attribute_expires_at FROM proj
-    ON CONFLICT (context_space_key, id) DO NOTHING
+    INSERT INTO {schema}entities (id, expires_at, min_attribute_expires_at)
+    SELECT proj.id, proj.expires_at, proj.min_attribute_expires_at FROM proj
+    ON CONFLICT (id) DO NOTHING
     RETURNING entity_key, id
 ),
 docs AS (
-    INSERT INTO entity_documents (context_space_key, entity_key, payload)
-    SELECT $1, ins.entity_key, proj.payload FROM ins JOIN proj ON proj.id = ins.id
+    INSERT INTO {schema}entity_documents (entity_key, payload)
+    SELECT ins.entity_key, proj.payload FROM ins JOIN proj ON proj.id = ins.id
 ),
 srch AS (
-    INSERT INTO entity_search (context_space_key, entity_key, location_expires_at, type_ids, attribute_name_ids, scope_paths, location, observation_space, operation_space)
-    SELECT $1, ins.entity_key, proj.location_expires_at, proj.type_ids, proj.attribute_name_ids, proj.scope_paths, proj.location, proj.observation_space, proj.operation_space
+    INSERT INTO {schema}entity_search (entity_key, location_expires_at, type_ids, attribute_name_ids, scope_paths, location, observation_space, operation_space)
+    SELECT ins.entity_key, proj.location_expires_at, proj.type_ids, proj.attribute_name_ids, proj.scope_paths, proj.location, proj.observation_space, proj.operation_space
     FROM ins JOIN proj ON proj.id = ins.id
 )
 SELECT entity_key, id FROM ins
-";
+"
+    )
+}
 
 /// Bulk-insert via binary COPY into a staging table, then materialise into
 /// the entity relations inside the provided transaction. Returns the rows
@@ -133,8 +141,8 @@ pub async fn create_batch_via_copy_in_tx(
         copy.finish().await?;
     }
 
-    let rows: Vec<(i64, String)> = sqlx::query_as(INSERT_FROM_STAGE_CREATE_SQL)
-        .bind(target.key().as_i64())
+    let insert_sql = insert_from_stage_sql(&schema_prefix(target));
+    let rows: Vec<(i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(insert_sql.as_str()))
         .fetch_all(&mut **tx)
         .await
         .map_err(entity_write_failure)?;
@@ -259,11 +267,21 @@ mod tests {
             assert!(CREATE_STAGE_ENTITIES_SQL.contains(column), "{column}");
             assert!(COPY_INTO_STAGE_SQL.contains(column), "{column}");
         }
-        assert!(INSERT_FROM_STAGE_CREATE_SQL.contains("INSERT INTO entities (context_space_key, id, expires_at, min_attribute_expires_at)"));
-        assert!(INSERT_FROM_STAGE_CREATE_SQL.contains("INSERT INTO entity_documents (context_space_key, entity_key, payload)"));
-        assert!(
-            INSERT_FROM_STAGE_CREATE_SQL
-                .contains("INSERT INTO entity_search (context_space_key, entity_key, location_expires_at, type_ids, attribute_name_ids")
-        );
+        let live = insert_from_stage_sql("");
+        assert!(live.contains("INSERT INTO entities (id, expires_at, min_attribute_expires_at)"));
+        assert!(live.contains("INSERT INTO entity_documents (entity_key, payload)"));
+        assert!(live.contains("INSERT INTO entity_search (entity_key, location_expires_at, type_ids, attribute_name_ids"));
+        assert!(live.contains("ON CONFLICT (id) DO NOTHING"));
+    }
+
+    /// A Snapshot branch qualifies the three target relations with its schema
+    /// while the session-scoped staging table stays unqualified.
+    #[test]
+    fn a_branch_prefix_qualifies_the_target_relations() {
+        let branch = insert_from_stage_sql("snap_9.");
+        assert!(branch.contains("INSERT INTO snap_9.entities (id"), "{branch}");
+        assert!(branch.contains("INSERT INTO snap_9.entity_documents (entity_key"), "{branch}");
+        assert!(branch.contains("INSERT INTO snap_9.entity_search (entity_key"), "{branch}");
+        assert!(branch.contains("FROM stage_entities s"), "{branch}");
     }
 }

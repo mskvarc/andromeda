@@ -20,6 +20,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::{pagination::CountPolicy, temporal::compiled::CompiledTemporalQuery};
+use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     projected_attribute_names::projected_attribute_names,
@@ -104,7 +105,7 @@ impl TemporalRepository {
         if !scope_is_selected(compiled) {
             return Ok(Vec::new());
         }
-        let statement = build_scope_history_query(target.key(), entity_id, compiled);
+        let statement = build_scope_history_query(schema_iden(target).as_ref(), entity_id, compiled);
         let pg_rows = self
             .execute_temporal_query(TemporalStatement::ScopeHistory, statement)
             .await
@@ -183,7 +184,7 @@ impl TemporalHistoryReader for TemporalRepository {
             self.collations.ensure(collation).await.map_err(TemporalStoreError::from)?;
         }
 
-        let stage1 = build_stage1_entity_ids(target.key(), compiled, &names).map_err(|e| TemporalStoreError::Query(e.to_string()))?;
+        let stage1 = build_stage1_entity_ids(schema_iden(target).as_ref(), compiled, &names).map_err(|e| TemporalStoreError::Query(e.to_string()))?;
 
         let entity_id_rows = self
             .execute_temporal_query(TemporalStatement::Stage1, stage1.select)
@@ -229,7 +230,7 @@ impl TemporalHistoryReader for TemporalRepository {
         entity_id: &Uri,
         compiled: &CompiledTemporalQuery,
     ) -> Result<TemporalHistoryOutcome, TemporalError> {
-        let stage2 = build_temporal_history_query(target.key(), entity_id, compiled);
+        let stage2 = build_temporal_history_query(schema_iden(target).as_ref(), entity_id, compiled);
         let pg_rows = self
             .execute_temporal_query(TemporalStatement::History, stage2)
             .await
@@ -255,7 +256,7 @@ impl TemporalHistoryReader for TemporalRepository {
         entity_id: &Uri,
         compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
-        let stage2 = build_temporal_history_query(target.key(), entity_id, compiled);
+        let stage2 = build_temporal_history_query(schema_iden(target).as_ref(), entity_id, compiled);
         let pg_rows = self
             .execute_temporal_query(TemporalStatement::Aggregation, stage2)
             .await

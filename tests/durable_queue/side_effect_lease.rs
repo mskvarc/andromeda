@@ -2,7 +2,7 @@
 //!
 //! Verification-matrix row "Side-effect exclusive lease": two workers run
 //! against one due row, the owner crashes, and the clock advances past
-//! `locked_until`. Only one initial lease exists, the row is reclaimed after
+//! `lease_until`. Only one initial lease exists, the row is reclaimed after
 //! expiry, acknowledgement removes it once, a payload that cannot be decoded
 //! reaches a coherent dead state, and a dead row is reaped once its retention
 //! has passed while a live row is not.
@@ -42,7 +42,7 @@ async fn enqueue(pool: &PgPool) -> WriteId {
         change_events: Vec::new(),
     };
     let mut transaction = pool.begin().await.expect("enqueue transaction");
-    PendingSideEffectsRepository::enqueue_in_tx(&mut transaction, &live_target(pool).await, &record, WriteOrdinal::at(0), &payload)
+    PendingSideEffectsRepository::enqueue_in_tx(&mut transaction, &live_target(), &record, WriteOrdinal::at(0), &payload)
         .await
         .expect("enqueue the job");
     transaction.commit().await.expect("commit the enqueue");
@@ -113,7 +113,7 @@ async fn durable_queue_a_replayed_commit_enqueues_no_second_side_effect_job() {
     };
     for _ in 0..2 {
         let mut transaction = pool.begin().await.expect("enqueue transaction");
-        PendingSideEffectsRepository::enqueue_in_tx(&mut transaction, &live_target(&pool).await, &record, WriteOrdinal::at(0), &payload)
+        PendingSideEffectsRepository::enqueue_in_tx(&mut transaction, &live_target(), &record, WriteOrdinal::at(0), &payload)
             .await
             .expect("enqueue under the same write identity");
         transaction.commit().await.expect("commit the enqueue");
@@ -132,9 +132,7 @@ async fn durable_queue_a_replayed_commit_enqueues_no_second_side_effect_job() {
 #[serial(durable_queue)]
 async fn durable_queue_a_side_effect_payload_that_cannot_be_decoded_reaches_a_coherent_dead_state() {
     let pool = queue_database().await;
-    let target = live_target(&pool).await;
-    sqlx::query("INSERT INTO pending_side_effects (context_space_key, id, write_id, recorded_at, consequence_base, payload) VALUES ($1, $2, $3, $4, $5, $6)")
-        .bind(target.key().as_i64())
+    sqlx::query("INSERT INTO pending_side_effects (id, write_id, recorded_at, consequence_base, payload) VALUES ($1, $2, $3, $4, $5)")
         .bind(SideEffectJobId::mint().as_uuid())
         .bind(WriteId::mint().as_uuid())
         .bind(Utc::now())
@@ -153,7 +151,7 @@ async fn durable_queue_a_side_effect_payload_that_cannot_be_decoded_reaches_a_co
     assert!(leased.is_empty(), "a job nobody can decode is not handed to a worker");
 
     let (dead, lock_columns, last_error): (bool, i32, Option<String>) =
-        sqlx::query_as("SELECT dead, num_nonnulls(locked_until, locked_by), last_error FROM pending_side_effects WHERE id = $1")
+        sqlx::query_as("SELECT exhausted_at IS NOT NULL, num_nonnulls(lease_until, claimed_by), last_error FROM pending_side_effects WHERE id = $1")
             .bind(job.as_uuid())
             .fetch_one(&pool)
             .await
@@ -176,9 +174,7 @@ async fn durable_queue_a_side_effect_payload_that_cannot_be_decoded_reaches_a_co
 #[serial(durable_queue)]
 async fn durable_queue_the_dead_letter_reap_removes_only_dead_jobs_older_than_the_cutoff() {
     let pool = queue_database().await;
-    let target = live_target(&pool).await;
-    sqlx::query("INSERT INTO pending_side_effects (context_space_key, id, write_id, recorded_at, consequence_base, payload) VALUES ($1, $2, $3, $4, $5, $6)")
-        .bind(target.key().as_i64())
+    sqlx::query("INSERT INTO pending_side_effects (id, write_id, recorded_at, consequence_base, payload) VALUES ($1, $2, $3, $4, $5)")
         .bind(SideEffectJobId::mint().as_uuid())
         .bind(WriteId::mint().as_uuid())
         .bind(Utc::now())
@@ -197,7 +193,7 @@ async fn durable_queue_the_dead_letter_reap_removes_only_dead_jobs_older_than_th
         .await
         .expect("lease the batch");
     assert_eq!(leased.len(), 1, "only the decodable job is handed to the worker");
-    let dead_before: i64 = sqlx::query_scalar("SELECT count(*) FROM pending_side_effects WHERE dead")
+    let dead_before: i64 = sqlx::query_scalar("SELECT count(*) FROM pending_side_effects WHERE exhausted_at IS NOT NULL")
         .fetch_one(&pool)
         .await
         .expect("dead job count");

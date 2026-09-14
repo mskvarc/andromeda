@@ -30,11 +30,7 @@ use andromeda_context_commit::{
     committer::{CommitFuture, ContextCommitter},
     error::CommitError,
 };
-use andromeda_context_space::{
-    context_space::{ContextSpace, ContextSpaceKind},
-    context_space_key::ContextSpaceKey,
-    context_target::ContextTarget,
-};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{entity_snapshot::EntitySnapshot, error::EntityError, port::reader::EntityReader};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{
@@ -70,8 +66,7 @@ fn uri(value: &str) -> Uri {
 }
 
 fn live_target() -> ContextTarget {
-    let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-    ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+    ContextTarget::Live
 }
 
 fn attribute_name(value: &str) -> AttributeName {

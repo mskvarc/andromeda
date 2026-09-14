@@ -7,6 +7,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_seaquery::pg_array::{any, text_array};
 use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query, SelectStatement};
@@ -43,8 +44,7 @@ impl EntityRepository {
 fn keys_by_ids_query(target: &ContextTarget, ids: &[&str]) -> SelectStatement {
     Query::select()
         .columns([Entities::EntityKey, Entities::Id])
-        .from(Entities::Table)
-        .and_where(Expr::col(Entities::ContextSpaceKey).eq(target.key().as_i64()))
+        .from(table_of(target, Entities::Table))
         .and_where(Expr::col(Entities::Id).eq(any(text_array(ids))))
         .to_owned()
 }
@@ -52,25 +52,23 @@ fn keys_by_ids_query(target: &ContextTarget, ids: &[&str]) -> SelectStatement {
 #[cfg(test)]
 mod tests {
     use crate::entity::keys::keys_by_ids_query;
-    use andromeda_context_space::{
-        context_space::{ContextSpace, ContextSpaceKind},
-        context_space_key::ContextSpaceKey,
-        context_target::ContextTarget,
-    };
+    use andromeda_context_space::context_target::ContextTarget;
     use sea_query::PostgresQueryBuilder;
-
-    fn target() -> ContextTarget {
-        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
-    }
 
     #[test]
     fn surrogate_keys_resolve_through_one_array_membership_test() {
-        let (sql, values) = keys_by_ids_query(&target(), &["urn:a", "urn:b"]).build(PostgresQueryBuilder);
-        assert_eq!(
-            sql,
-            "SELECT \"entity_key\", \"id\" FROM \"entities\" WHERE \"context_space_key\" = $1 AND \"id\" = ANY($2)"
-        );
-        assert_eq!(values.0.len(), 2, "the branch and whole batch array are bound: {sql}");
+        let (sql, values) = keys_by_ids_query(&ContextTarget::Live, &["urn:a", "urn:b"]).build(PostgresQueryBuilder);
+        assert_eq!(sql, "SELECT \"entity_key\", \"id\" FROM \"entities\" WHERE \"id\" = ANY($1)");
+        assert_eq!(values.0.len(), 1, "the whole batch binds as one array: {sql}");
+    }
+
+    #[test]
+    fn a_snapshot_branch_qualifies_the_entities_table() {
+        use andromeda_context_space::{snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
+        let key = SnapshotKey::try_from(5).expect("positive key");
+        let id = "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri");
+        let target = ContextTarget::Snapshot(SnapshotTarget::published(key, id));
+        let (sql, _) = keys_by_ids_query(&target, &["urn:a"]).build(PostgresQueryBuilder);
+        assert!(sql.contains("FROM \"snap_5\".\"entities\""), "{sql}");
     }
 }

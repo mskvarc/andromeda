@@ -16,7 +16,7 @@ use crate::{
     store::SubscriptionStore,
 };
 use andromeda_context_commit::change_event::ChangeEvent;
-use andromeda_context_space::{context_space::ContextSpaceKind, context_space_key::ContextSpaceKey, context_target::ContextTarget};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_spatial_index::{
@@ -36,7 +36,7 @@ use tracing::debug;
 /// lifecycle changes) and take it exclusively.
 #[derive(Debug)]
 pub struct SubscriptionCache {
-    indices: RwLock<HashMap<ContextSpaceKey, CandidateIndex>>,
+    indices: RwLock<HashMap<ContextTarget, CandidateIndex>>,
     spatial: Arc<SpatialSubscriptionIndex>,
     tenant: TenantRef,
 }
@@ -74,7 +74,7 @@ impl SubscriptionCache {
         let subscriptions = repo.list_active(target).await?;
         let compiled: Vec<CompiledSubscription> = subscriptions.iter().map(compile_subscription).collect();
         let mut indices = self.indices.write();
-        let index = indices.entry(target.key()).or_default();
+        let index = indices.entry(target.clone()).or_default();
         index.clear();
         for compiled in compiled {
             self.spatial_insert(target, &compiled);
@@ -106,19 +106,19 @@ impl SubscriptionCache {
     /// Index one compiled subscription, replacing any earlier entry with the
     /// same identifier in both the candidate and the spatial index.
     pub fn insert(&self, target: &ContextTarget, compiled: CompiledSubscription) {
-        if target.kind() == ContextSpaceKind::Live {
+        if target.snapshot().is_none() {
             self.spatial.remove(&compiled.id);
             self.spatial_insert(target, &compiled);
         }
-        self.indices.write().entry(target.key()).or_default().insert(Arc::new(compiled));
+        self.indices.write().entry(target.clone()).or_default().insert(Arc::new(compiled));
     }
 
     /// Drop the subscription with this identifier from both indexes.
     pub fn remove(&self, target: &ContextTarget, id: &Uri) {
-        if target.kind() == ContextSpaceKind::Live {
+        if target.snapshot().is_none() {
             self.spatial.remove(id);
         }
-        if let Some(index) = self.indices.write().get_mut(&target.key()) {
+        if let Some(index) = self.indices.write().get_mut(target) {
             index.remove(id);
         }
     }
@@ -132,13 +132,13 @@ impl SubscriptionCache {
     pub fn find_matching(&self, target: &ContextTarget, event: &ChangeEvent) -> MatchOutcome {
         self.indices
             .read()
-            .get(&target.key())
+            .get(target)
             .map_or_else(MatchOutcome::default, |index| index.find_matching(event))
     }
 
     /// Look up a single compiled subscription by ID.
     pub fn get(&self, target: &ContextTarget, id: &Uri) -> Option<Arc<CompiledSubscription>> {
-        self.indices.read().get(&target.key()).and_then(|index| index.get(id).map(Arc::clone))
+        self.indices.read().get(target).and_then(|index| index.get(id).map(Arc::clone))
     }
 
     /// Tenant scope of this cache (used by callers building [`SpatialKey`]s
@@ -154,7 +154,7 @@ impl SubscriptionCache {
 
     /// Returns the number of cached subscriptions.
     pub fn len(&self, target: &ContextTarget) -> usize {
-        self.indices.read().get(&target.key()).map_or(0, CandidateIndex::len)
+        self.indices.read().get(target).map_or(0, CandidateIndex::len)
     }
 
     /// Whether the cache contains no compiled subscriptions.
@@ -163,7 +163,7 @@ impl SubscriptionCache {
     }
 
     fn spatial_insert(&self, target: &ContextTarget, compiled: &CompiledSubscription) {
-        if target.kind() != ContextSpaceKind::Live {
+        if target.snapshot().is_some() {
             return;
         }
         let Some(geo_q) = compiled.compiled_geo_q.as_ref() else {
@@ -215,7 +215,6 @@ mod tests {
     use super::*;
     use crate::error::SubscriptionError;
     use andromeda_context_commit::subscription_key::SubscriptionKey;
-    use andromeda_context_space::context_space::ContextSpace;
     use andromeda_ngsi_ld_model::subscription::{EntitySelector, SubscriptionStatus};
     use andromeda_ngsi_ld_query::projection::compiled::Projection;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -224,8 +223,7 @@ mod tests {
     use url::Url;
 
     fn live_target() -> ContextTarget {
-        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+        ContextTarget::Live
     }
 
     fn make_compiled_sub(id: &str, key: i64, type_: &str, triggers: Vec<&str>) -> Result<CompiledSubscription, SubscriptionError> {

@@ -14,8 +14,9 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
-use andromeda_postgresql_seaquery::{clock::now, pg_operator::PgBinaryOperator, placeholder::external_placeholder, unnest::apply_column_alias};
+use andromeda_postgresql_seaquery::{clock::now, pg_operator::PgBinaryOperator, unnest::apply_column_alias};
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use chrono::{DateTime, Utc};
 use sea_query::{CommonTableExpression, Cond, Expr, ExprTrait, Func, PostgresQueryBuilder, Query, SimpleExpr, WithClause};
@@ -60,21 +61,19 @@ const ENTITY_UPDATE: StatementName = StatementName("entity-update");
 /// coalesced so an update that omits it keeps the stored value rather than
 /// clearing it; the earliest attribute expiry is replaced, because it is
 /// derived from the payload that was just replaced.
-pub(super) fn entity_update_sql() -> String {
+pub(super) fn entity_update_sql(target: &ContextTarget) -> String {
     let columns = update_staging_columns();
 
     let mut documents = Query::update();
     documents
-        .table(EntityDocuments::Table)
+        .table(table_of(target, EntityDocuments::Table))
         .value(EntityDocuments::Payload, projected(EntityDocuments::Payload))
         .value(EntityDocuments::ModifiedAt, now())
         .from(Proj)
-        .from(Entities::Table)
+        .from(table_of(target, Entities::Table))
         .cond_where(
             Cond::all()
                 .add(Expr::col((Entities::Table, Entities::Id)).equals((Proj, Entities::Id)))
-                .add(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(external_placeholder(13)))
-                .add(Expr::col((EntityDocuments::Table, EntityDocuments::ContextSpaceKey)).eq(external_placeholder(13)))
                 .add(Expr::col((EntityDocuments::Table, EntityDocuments::EntityKey)).equals((Entities::Table, Entities::EntityKey)))
                 .add(expectation(projected(StagedColumn::ExpectedModifiedAt), EntityDocuments::Table)),
         )
@@ -84,7 +83,7 @@ pub(super) fn entity_update_sql() -> String {
         ]));
 
     let mut search = Query::update();
-    search.table(EntitySearch::Table);
+    search.table(table_of(target, EntitySearch::Table));
     for column in SEARCH_COLUMNS {
         search.value(column, projected(column));
     }
@@ -92,7 +91,6 @@ pub(super) fn entity_update_sql() -> String {
         Cond::all()
             .add(Expr::col((Proj, Entities::Id)).equals((Docs, Entities::Id)))
             .add(Expr::col((EntitySearch::Table, EntitySearch::EntityKey)).equals((Docs, EntityDocuments::EntityKey)))
-            .add(Expr::col((EntitySearch::Table, EntitySearch::ContextSpaceKey)).eq(external_placeholder(13)))
             .add(SEARCH_COLUMNS.into_iter().fold(Cond::any(), |changed, column| {
                 changed.add(SimpleExpr::from(Expr::col((EntitySearch::Table, column))).distinct_from(projected(column)))
             })),
@@ -106,7 +104,7 @@ pub(super) fn entity_update_sql() -> String {
     };
     let mut lifecycle = Query::update();
     lifecycle
-        .table(Entities::Table)
+        .table(table_of(target, Entities::Table))
         .value(Entities::ExpiresAt, coalesced_expiry())
         .value(Entities::MinAttributeExpiresAt, projected(Entities::MinAttributeExpiresAt))
         .from(Docs)
@@ -115,7 +113,6 @@ pub(super) fn entity_update_sql() -> String {
             Cond::all()
                 .add(Expr::col((Proj, Entities::Id)).equals((Docs, Entities::Id)))
                 .add(Expr::col((Entities::Table, Entities::EntityKey)).equals((Docs, EntityDocuments::EntityKey)))
-                .add(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(external_placeholder(13)))
                 .add(
                     Cond::any()
                         .add(SimpleExpr::from(Expr::col((Entities::Table, Entities::ExpiresAt))).distinct_from(coalesced_expiry()))
@@ -183,7 +180,7 @@ impl EntityRepository {
         types_present(entities)?;
 
         let ids = entities.ids.iter().map(Uri::as_str).collect::<Vec<_>>();
-        let sql = entity_update_sql();
+        let sql = entity_update_sql(target);
         let rows = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(&ids)
             .bind(&entities.type_ids_json)
@@ -197,7 +194,6 @@ impl EntityRepository {
             .bind(&entities.expires_ats)
             .bind(&entities.min_attribute_expires_ats)
             .bind(expected_modified_at)
-            .bind(target.key().as_i64())
             .fetch_all(&mut **tx);
         let rows: Vec<(i64, String)> = observe_statement(ENTITY_UPDATE, rows).await.map_err(entity_write_failure)?;
 
@@ -208,12 +204,13 @@ impl EntityRepository {
 #[cfg(test)]
 mod tests {
     use crate::entity::write::{placeholders, update::entity_update_sql};
+    use andromeda_context_space::context_target::ContextTarget;
     use std::collections::BTreeSet;
 
     #[test]
     fn the_update_binds_twelve_placeholders_and_names_its_staging_columns() {
-        let sql = entity_update_sql();
-        pretty_assertions::assert_eq!(placeholders(&sql), (1..=13).collect::<BTreeSet<u32>>());
+        let sql = entity_update_sql(&ContextTarget::Live);
+        pretty_assertions::assert_eq!(placeholders(&sql), (1..=12).collect::<BTreeSet<u32>>());
         assert!(
             sql.contains(
                 "AS d(id, type_ids_json, attribute_name_ids_json, scope_paths_json, payload, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at, expected_modified_at)"
@@ -224,7 +221,7 @@ mod tests {
 
     #[test]
     fn the_document_write_is_the_compare_and_set_anchor_and_names_only_heap_neutral_columns() {
-        let sql = entity_update_sql();
+        let sql = entity_update_sql(&ContextTarget::Live);
         assert!(
             sql.contains(r#""docs" AS (UPDATE "entity_documents" SET "payload" = "proj"."payload", "modified_at" = NOW() FROM "proj", "entities" WHERE"#),
             "{sql}"
@@ -239,7 +236,7 @@ mod tests {
 
     #[test]
     fn the_search_row_is_rewritten_only_where_a_projected_column_differs() {
-        let sql = entity_update_sql();
+        let sql = entity_update_sql(&ContextTarget::Live);
         assert!(sql.contains(r#""srch" AS (UPDATE "entity_search" SET "type_ids" = "proj"."type_ids""#), "{sql}");
         pretty_assertions::assert_eq!(
             sql.matches("IS DISTINCT FROM").count(),
@@ -265,7 +262,7 @@ mod tests {
 
     #[test]
     fn the_lifecycle_row_coalesces_the_expiry_and_replaces_the_attribute_expiry() {
-        let sql = entity_update_sql();
+        let sql = entity_update_sql(&ContextTarget::Live);
         assert!(sql.contains(r#""ents" AS (UPDATE "entities" SET "expires_at" = COALESCE("proj"."expires_at", "entities"."expires_at"), "min_attribute_expires_at" = "proj"."min_attribute_expires_at""#), "{sql}");
         assert!(
             sql.contains(r#""entities"."expires_at" IS DISTINCT FROM COALESCE("proj"."expires_at", "entities"."expires_at")"#),
@@ -276,7 +273,7 @@ mod tests {
 
     #[test]
     fn the_projection_validates_each_geometry_once() {
-        let sql = entity_update_sql();
+        let sql = entity_update_sql(&ContextTarget::Live);
         pretty_assertions::assert_eq!(sql.matches("ST_MakeValid").count(), 3, "{sql}");
         assert!(sql.starts_with(r#"WITH "proj" AS ("#), "{sql}");
     }

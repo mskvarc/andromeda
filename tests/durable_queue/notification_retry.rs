@@ -11,6 +11,7 @@ use crate::{
     queue_database::queue_database,
     queue_workers::{delivery_worker, holding_lease},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_notification::{delivery_entry::DeliveryId, delivery_store::DeliveryStore};
 use andromeda_postgresql_context_store::notification_delivery::queue::NotificationDeliveryQueue;
 use chrono::{Duration, Utc};
@@ -62,7 +63,13 @@ async fn durable_queue_a_delivery_stays_claimable_through_repeated_failures_unti
         // about the backoff schedule.
         let next_attempt_at = Utc::now() - Duration::seconds(1);
         queue
-            .mark_failed(DeliveryId::from(delivery), &worker, "endpoint refused the notification", next_attempt_at)
+            .mark_failed(
+                DeliveryId::from(delivery),
+                &worker,
+                "endpoint refused the notification",
+                next_attempt_at,
+                &ContextTarget::Live,
+            )
             .await
             .expect("record the failed attempt");
 
@@ -78,7 +85,7 @@ async fn durable_queue_a_delivery_stays_claimable_through_repeated_failures_unti
     assert_eq!(still_offered.len(), 1, "the queue keeps offering a delivery the worker has not exhausted");
     assert_eq!(still_offered[0].attempt_count, MAX_ATTEMPTS);
     queue
-        .mark_terminal(DeliveryId::from(delivery), &worker, "attempt ceiling reached")
+        .mark_terminal(DeliveryId::from(delivery), &worker, "attempt ceiling reached", &ContextTarget::Live)
         .await
         .expect("record the exhausting attempt");
     assert!(is_exhausted(&pool, delivery).await, "the worker's decision is recorded as exhausted_at");
@@ -104,7 +111,7 @@ async fn durable_queue_a_terminal_failure_retires_the_delivery_and_releases_its_
     assert_eq!(claimed.len(), 1);
 
     queue
-        .mark_terminal(DeliveryId::from(delivery), &worker, "the endpoint rejected the payload")
+        .mark_terminal(DeliveryId::from(delivery), &worker, "the endpoint rejected the payload", &ContextTarget::Live)
         .await
         .expect("record the terminal failure");
 

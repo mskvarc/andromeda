@@ -137,12 +137,12 @@ async fn snapshot_purge_partial_and_all_failed_return_exact_207_results() {
         .await
         .expect("Snapshot database connection");
     sqlx::query(
-        "CREATE OR REPLACE FUNCTION snapshot_purge_failure_injection() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF EXISTS (SELECT 1 FROM snapshots WHERE context_space_key = OLD.context_space_key AND id LIKE '%:fault') THEN RAISE EXCEPTION 'deterministic purge fault'; END IF; RETURN OLD; END $$",
+        "CREATE OR REPLACE FUNCTION snapshot_purge_failure_injection() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF OLD.id LIKE '%:fault' THEN RAISE EXCEPTION 'deterministic purge fault'; END IF; RETURN OLD; END $$",
     )
     .execute(&pool)
     .await
     .expect("purge failure function");
-    sqlx::query("CREATE TRIGGER snapshot_purge_failure BEFORE DELETE ON context_spaces FOR EACH ROW EXECUTE FUNCTION snapshot_purge_failure_injection()")
+    sqlx::query("CREATE TRIGGER snapshot_purge_failure BEFORE DELETE ON snapshots FOR EACH ROW EXECUTE FUNCTION snapshot_purge_failure_injection()")
         .execute(&pool)
         .await
         .expect("purge failure trigger");
@@ -167,7 +167,7 @@ async fn snapshot_purge_partial_and_all_failed_return_exact_207_results() {
     pretty_assertions::assert_eq!(all_failed_body["success"], json!([]));
     pretty_assertions::assert_eq!(all_failed_body["errors"].as_array().expect("all-failed errors").len(), 2);
 
-    sqlx::query("DROP TRIGGER snapshot_purge_failure ON context_spaces")
+    sqlx::query("DROP TRIGGER snapshot_purge_failure ON snapshots")
         .execute(&pool)
         .await
         .expect("drop purge failure trigger");

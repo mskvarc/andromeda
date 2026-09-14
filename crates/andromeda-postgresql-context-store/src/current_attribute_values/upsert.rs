@@ -5,6 +5,7 @@ use crate::{
     error::ContextStoreError,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::CurrentAttributeValues;
 use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
@@ -106,8 +107,7 @@ const REFRESHED_COLUMNS: [CurrentAttributeValues; 10] = [
 ];
 
 /// All persisted projection columns, in table order.
-const PROJECTION_COLUMNS: [CurrentAttributeValues; 14] = [
-    CurrentAttributeValues::ContextSpaceKey,
+const PROJECTION_COLUMNS: [CurrentAttributeValues; 13] = [
     CurrentAttributeValues::EntityKey,
     CurrentAttributeValues::AttributeNameId,
     CurrentAttributeValues::AttributeKind,
@@ -171,7 +171,7 @@ pub async fn upsert_projection_in_tx(
     }
 
     let binds = ProjectionBinds::from_rows(rows)?;
-    let sql = projection_upsert_sql()?;
+    let sql = projection_upsert_sql(target)?;
     let statement = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(&binds.entity_keys)
         .bind(&binds.attribute_name_ids)
@@ -186,7 +186,6 @@ pub async fn upsert_projection_in_tx(
         .bind(&binds.value_geos)
         .bind(&binds.value_objects)
         .bind(&binds.value_uris)
-        .bind(target.key().as_i64())
         .execute(&mut **tx);
     observe_statement(CAV_UPSERT, statement).await?;
 
@@ -270,7 +269,6 @@ fn input_cte(columns: &[UnnestColumn]) -> CommonTableExpression {
             (Staging, CurrentAttributeValues::AttributeNameId),
             (Staging, CurrentAttributeValues::DatasetId),
         ])
-        .expr(external_placeholder(14))
         .expr(staged(CurrentAttributeValues::EntityKey))
         .expr(staged(CurrentAttributeValues::AttributeNameId))
         .expr(staged(CurrentAttributeValues::AttributeKind))
@@ -307,7 +305,7 @@ fn input_cte(columns: &[UnnestColumn]) -> CommonTableExpression {
 /// The join uses NULL-safe equality for `datasetId` because absent dataset IDs
 /// identify the single default attribute instance. Locking here is what lets the
 /// update stage change rows by `ctid` without racing a concurrent writer.
-fn matched_cte() -> CommonTableExpression {
+fn matched_cte(target: &ContextTarget) -> CommonTableExpression {
     let mut select = Query::select();
     select
         .columns(PROJECTION_COLUMNS.map(|column| (Input, column)))
@@ -315,12 +313,8 @@ fn matched_cte() -> CommonTableExpression {
         .expr_as(Expr::col((CurrentAttributeValues::Table, Ctid)), TargetTid)
         .from(Input)
         .inner_join(
-            CurrentAttributeValues::Table,
+            table_of(target, CurrentAttributeValues::Table),
             Condition::all()
-                .add(
-                    Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::ContextSpaceKey))
-                        .equals((Input, CurrentAttributeValues::ContextSpaceKey)),
-                )
                 .add(Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::EntityKey)).equals((Input, CurrentAttributeValues::EntityKey)))
                 .add(
                     Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::AttributeNameId))
@@ -346,10 +340,10 @@ fn matched_cte() -> CommonTableExpression {
 
 /// The `updated` common table expression: the direct update of every matched row
 /// whose refreshed columns differ, addressed by its physical tuple ID.
-fn updated_cte() -> CommonTableExpression {
+fn updated_cte(target: &ContextTarget) -> CommonTableExpression {
     let mut update = Query::update();
     update
-        .table(CurrentAttributeValues::Table)
+        .table(table_of(target, CurrentAttributeValues::Table))
         .values(REFRESHED_COLUMNS.map(|column| (column, Expr::col((Matched, column)))))
         .from(Matched)
         .and_where(Expr::col((CurrentAttributeValues::Table, Ctid)).equals((Matched, TargetTid)))
@@ -380,7 +374,6 @@ fn unmatched_input_select() -> SelectStatement {
 /// concurrent transaction that created the same missing grain in between.
 fn concurrent_insert_conflict() -> OnConflict {
     OnConflict::columns([
-        CurrentAttributeValues::ContextSpaceKey,
         CurrentAttributeValues::EntityKey,
         CurrentAttributeValues::AttributeNameId,
         CurrentAttributeValues::DatasetId,
@@ -397,12 +390,16 @@ fn concurrent_insert_conflict() -> OnConflict {
 /// Returns [`ContextStoreError::Internal`] if the projection's expression count
 /// ever stops matching the insert's fourteen-wide column list, which the fixed
 /// shapes of the stages make unreachable.
-fn projection_upsert_sql() -> Result<String, ContextStoreError> {
+fn projection_upsert_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
     let columns = staging_columns();
-    let stages = WithClause::new().cte(input_cte(&columns)).cte(matched_cte()).cte(updated_cte()).to_owned();
+    let stages = WithClause::new()
+        .cte(input_cte(&columns))
+        .cte(matched_cte(target))
+        .cte(updated_cte(target))
+        .to_owned();
 
     let mut insert = Query::insert();
-    insert.into_table(CurrentAttributeValues::Table).columns(PROJECTION_COLUMNS);
+    insert.into_table(table_of(target, CurrentAttributeValues::Table)).columns(PROJECTION_COLUMNS);
     // `select_from` fails only on a column/expression arity mismatch, which the
     // fixed fourteen-wide column list and projection above make unreachable.
     insert
@@ -417,11 +414,12 @@ fn projection_upsert_sql() -> Result<String, ContextStoreError> {
 #[cfg(test)]
 mod tests {
     use crate::current_attribute_values::upsert::projection_upsert_sql;
+    use andromeda_context_space::context_target::ContextTarget;
     use std::collections::BTreeSet;
 
     /// The rendered upsert statement, unwrapped for assertion.
     fn rendered() -> String {
-        projection_upsert_sql().expect("the fixed thirteen-wide projection builds")
+        projection_upsert_sql(&ContextTarget::Live).expect("the fixed thirteen-wide projection builds")
     }
 
     /// Every `$n` placeholder in `sql`, as numbers.
@@ -436,7 +434,7 @@ mod tests {
 
     #[test]
     fn the_upsert_binds_one_contiguous_array_per_column() {
-        pretty_assertions::assert_eq!(placeholders(&rendered()), (1..=14).collect::<BTreeSet<u32>>());
+        pretty_assertions::assert_eq!(placeholders(&rendered()), (1..=13).collect::<BTreeSet<u32>>());
     }
 
     #[test]
@@ -474,7 +472,7 @@ mod tests {
     fn the_upsert_conflicts_on_the_instance_grain() {
         let sql = rendered();
         assert!(
-            sql.contains(r#"ON CONFLICT ("context_space_key", "entity_key", "attribute_name_id", "dataset_id") DO UPDATE SET"#),
+            sql.contains(r#"ON CONFLICT ("entity_key", "attribute_name_id", "dataset_id") DO UPDATE SET"#),
             "{sql}"
         );
     }
@@ -523,7 +521,7 @@ mod tests {
             "matched changes and matched no-ops must both bypass insertion: {sql}"
         );
         assert!(
-            sql.contains(r#"ON CONFLICT ("context_space_key", "entity_key", "attribute_name_id", "dataset_id") DO UPDATE SET"#),
+            sql.contains(r#"ON CONFLICT ("entity_key", "attribute_name_id", "dataset_id") DO UPDATE SET"#),
             "a concurrent creator of an unmatched grain still requires an atomic fallback: {sql}"
         );
     }

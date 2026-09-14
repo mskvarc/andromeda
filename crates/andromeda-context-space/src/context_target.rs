@@ -1,103 +1,56 @@
 //! Typed selection of live or Snapshot context state.
 
-use crate::{
-    context_space::{ContextSpace, ContextSpaceKind},
-    context_space_key::ContextSpaceKey,
-    snapshot_target::SnapshotTarget,
-};
-use thiserror::Error;
+use crate::snapshot_target::SnapshotTarget;
 
 /// Context branch selected for one Core, Temporal, or subscription operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Hash`/`Eq` make the target a branch-keyed map key directly, which the
+/// subscription cache and other per-branch indices rely on now that a branch is
+/// no longer named by an integer key.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ContextTarget {
-    /// The tenant's ordinary live branch.
-    Live(ContextSpace),
-    /// An isolated Snapshot branch.
+    /// The tenant's ordinary live branch, held in the default schema.
+    Live,
+    /// An isolated Snapshot branch, held in its own schema.
     Snapshot(SnapshotTarget),
 }
 
 impl ContextTarget {
-    /// Construct a live target from the tenant's persisted live space.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ContextTargetError::SnapshotSpace`] when the persisted space is Snapshot-owned,
-    /// which cannot serve as the tenant's live branch.
-    pub const fn live(space: ContextSpace) -> Result<ContextTarget, ContextTargetError> {
-        match space.kind() {
-            ContextSpaceKind::Live => Ok(ContextTarget::Live(space)),
-            ContextSpaceKind::Snapshot => Err(ContextTargetError::SnapshotSpace),
-        }
-    }
-
-    /// Return the selected durable branch key.
-    #[must_use]
-    pub const fn key(&self) -> ContextSpaceKey {
-        match self {
-            ContextTarget::Live(space) => space.key(),
-            ContextTarget::Snapshot(target) => target.space().key(),
-        }
-    }
-
-    /// Return the selected branch role.
-    #[must_use]
-    pub const fn kind(&self) -> ContextSpaceKind {
-        match self {
-            ContextTarget::Live(space) => space.kind(),
-            ContextTarget::Snapshot(target) => target.space().kind(),
-        }
-    }
-
     /// Return whether distributed discovery and forwarding are allowed.
+    ///
+    /// A Snapshot is an isolated point-in-time branch (clause 5.2.22): it never
+    /// forwards to context sources, so only the live branch permits federation.
     #[must_use]
     pub const fn permits_federation(&self) -> bool {
-        match self {
-            ContextTarget::Live(_) => true,
-            ContextTarget::Snapshot(_) => false,
-        }
+        matches!(self, ContextTarget::Live)
     }
 
     /// Return the Snapshot target when the selected branch is Snapshot-owned.
     #[must_use]
     pub const fn snapshot(&self) -> Option<&SnapshotTarget> {
         match self {
-            ContextTarget::Live(_) => None,
+            ContextTarget::Live => None,
             ContextTarget::Snapshot(target) => Some(target),
         }
     }
 }
 
-/// Failure to construct a live target from incompatible persisted state.
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum ContextTargetError {
-    /// A Snapshot space cannot serve as the tenant's live target.
-    #[error("a live target requires a live context space")]
-    SnapshotSpace,
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::{
-        context_space::{ContextSpace, ContextSpaceKind},
-        context_space_key::ContextSpaceKey,
-        context_target::{ContextTarget, ContextTargetError},
-    };
+    use crate::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
 
     #[test]
-    fn live_target_preserves_key_and_federation_policy() {
-        let key = ContextSpaceKey::try_from(3).expect("positive key");
-        let target = ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live space");
-        pretty_assertions::assert_eq!(target.key(), key);
-        assert!(target.permits_federation());
-        assert!(target.snapshot().is_none());
+    fn the_live_branch_permits_federation_and_owns_no_snapshot() {
+        assert!(ContextTarget::Live.permits_federation());
+        assert!(ContextTarget::Live.snapshot().is_none());
     }
 
     #[test]
-    fn snapshot_space_cannot_be_constructed_as_live() {
-        let key = ContextSpaceKey::try_from(4).expect("positive key");
-        pretty_assertions::assert_eq!(
-            ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Snapshot)),
-            Err(ContextTargetError::SnapshotSpace)
-        );
+    fn a_snapshot_branch_forbids_federation_and_exposes_its_target() {
+        let key = SnapshotKey::try_from(3).expect("positive key");
+        let id = "urn:ngsi-ld:Snapshot:abc".parse().expect("valid snapshot uri");
+        let target = ContextTarget::Snapshot(SnapshotTarget::published(key, id));
+        assert!(!target.permits_federation());
+        pretty_assertions::assert_eq!(target.snapshot().map(SnapshotTarget::key), Some(key));
     }
 }

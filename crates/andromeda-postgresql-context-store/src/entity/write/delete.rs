@@ -12,8 +12,9 @@ use crate::{
 use andromeda_context_commit::deleted_entity::DeletedEntity;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{E, Entities, EntityDocuments};
-use andromeda_postgresql_seaquery::{placeholder::external_placeholder, unnest::apply_column_alias};
+use andromeda_postgresql_seaquery::unnest::apply_column_alias;
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use chrono::{DateTime, Utc};
 use sea_query::{CommonTableExpression, Expr, ExprTrait, Iden, IntoIden, JoinType, LockType, PostgresQueryBuilder, Query, WithClause};
@@ -59,7 +60,7 @@ struct Gone;
 /// so no history relation is touched. The payload and system attributes come
 /// back because the clause 5.6.10 notification carries both and cannot read
 /// them once the rows are gone.
-pub(super) fn entity_delete_sql() -> String {
+pub(super) fn entity_delete_sql(target: &ContextTarget) -> String {
     let columns = delete_staging_columns();
 
     let mut doomed = Query::select();
@@ -73,23 +74,21 @@ pub(super) fn entity_delete_sql() -> String {
         .from_function(staging_source(&columns), Staged)
         .join_as(
             JoinType::Join,
-            Entities::Table,
+            table_of(target, Entities::Table),
             E,
             Expr::col((E, Entities::Id)).equals((Staged, StagedColumn::Id)),
         )
         .join_as(
             JoinType::Join,
-            EntityDocuments::Table,
+            table_of(target, EntityDocuments::Table),
             Doc,
             Expr::col((Doc, EntityDocuments::EntityKey)).equals((E, Entities::EntityKey)),
         )
-        .and_where(Expr::col((E, Entities::ContextSpaceKey)).eq(external_placeholder(3)))
-        .and_where(Expr::col((Doc, EntityDocuments::ContextSpaceKey)).eq(external_placeholder(3)))
         .cond_where(expectation(staged(StagedColumn::ExpectedModifiedAt), Doc))
         .lock_with_tables(LockType::Update, [E.into_iden(), Doc.into_iden()]);
 
     let gone = Query::delete()
-        .from_table(Entities::Table)
+        .from_table(table_of(target, Entities::Table))
         .and_where(Expr::col(Entities::EntityKey).in_subquery(Query::select().column(Entities::EntityKey).from(Doomed).take()))
         .take();
 
@@ -150,11 +149,10 @@ impl EntityRepository {
         }
 
         let ids = ids.iter().map(Uri::as_str).collect::<Vec<_>>();
-        let sql = entity_delete_sql();
+        let sql = entity_delete_sql(target);
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(ids)
             .bind(expected_modified_at)
-            .bind(target.key().as_i64())
             .fetch_all(&mut **tx);
         let rows = observe_statement(ENTITY_DELETE, rows).await?;
 
@@ -175,12 +173,13 @@ impl EntityRepository {
 #[cfg(test)]
 mod tests {
     use crate::entity::write::{delete::entity_delete_sql, placeholders};
+    use andromeda_context_space::context_target::ContextTarget;
     use std::collections::BTreeSet;
 
     #[test]
     fn the_delete_locks_its_candidates_and_honours_the_expectation() {
-        let sql = entity_delete_sql();
-        pretty_assertions::assert_eq!(placeholders(&sql), (1..=3).collect::<BTreeSet<u32>>());
+        let sql = entity_delete_sql(&ContextTarget::Live);
+        pretty_assertions::assert_eq!(placeholders(&sql), (1..=2).collect::<BTreeSet<u32>>());
         assert!(
             sql.starts_with(
                 r#"WITH "doomed" AS (SELECT "e"."entity_key", "e"."id", "doc"."payload", "e"."created_at", "doc"."modified_at", "e"."expires_at" FROM UNNEST("#
@@ -201,7 +200,7 @@ mod tests {
 
     #[test]
     fn the_delete_removes_identity_rows_by_key_and_returns_what_the_notification_needs() {
-        let sql = entity_delete_sql();
+        let sql = entity_delete_sql(&ContextTarget::Live);
         assert!(
             sql.contains(r#""gone" AS (DELETE FROM "entities" WHERE "entity_key" IN (SELECT "entity_key" FROM "doomed"))"#),
             "{sql}"
@@ -214,7 +213,7 @@ mod tests {
 
     #[test]
     fn the_delete_touches_no_other_relation() {
-        let sql = entity_delete_sql();
+        let sql = entity_delete_sql(&ContextTarget::Live);
         for relation in [
             "current_attribute_values",
             "attribute_history",

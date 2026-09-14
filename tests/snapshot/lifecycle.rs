@@ -320,12 +320,12 @@ async fn snapshot_clone_failure_is_atomic_and_terminal_failure() {
         .await
         .expect("Snapshot database connection");
     sqlx::query(
-        "CREATE OR REPLACE FUNCTION snapshot_clone_failure_injection() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF EXISTS (SELECT 1 FROM snapshots WHERE (context_space_key = NEW.context_space_key OR staging_context_space_key = NEW.context_space_key) AND id LIKE '%:fault') THEN RAISE EXCEPTION 'deterministic clone fault'; END IF; RETURN NEW; END $$",
+        "CREATE OR REPLACE FUNCTION snapshot_clone_failure_injection() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.status = 'success' AND EXISTS (SELECT 1 FROM snapshots WHERE snapshot_key = NEW.snapshot_key AND id LIKE '%:fault') THEN RAISE EXCEPTION 'deterministic clone fault'; END IF; RETURN NEW; END $$",
     )
     .execute(&pool)
     .await
     .expect("clone failure function");
-    sqlx::query("CREATE TRIGGER snapshot_clone_failure BEFORE INSERT ON entities FOR EACH ROW EXECUTE FUNCTION snapshot_clone_failure_injection()")
+    sqlx::query("CREATE TRIGGER snapshot_clone_failure BEFORE UPDATE ON snapshot_preparation FOR EACH ROW EXECUTE FUNCTION snapshot_clone_failure_injection()")
         .execute(&pool)
         .await
         .expect("clone failure trigger");
@@ -345,7 +345,7 @@ async fn snapshot_clone_failure_is_atomic_and_terminal_failure() {
             .len(),
         1
     );
-    sqlx::query("DROP TRIGGER snapshot_clone_failure ON entities")
+    sqlx::query("DROP TRIGGER snapshot_clone_failure ON snapshot_preparation")
         .execute(&pool)
         .await
         .expect("drop clone failure trigger");

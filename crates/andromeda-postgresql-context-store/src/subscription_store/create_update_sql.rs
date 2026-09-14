@@ -22,6 +22,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
+use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::{cast::cast, clock::now, literal::text_literal, pg_type::PostgresType, placeholder::external_placeholder};
 use andromeda_subscription::{error::SubscriptionError, store::SubscriptionFields};
@@ -56,7 +57,6 @@ fn expanded_names(names: Option<&[AttributeName]>) -> Option<Vec<&str>> {
 /// Bind an entity-subscription create command in statement order.
 pub fn bind_entity_create<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
-    target: &'q ContextTarget,
     id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
     status: SubscriptionStatus,
@@ -90,13 +90,11 @@ pub fn bind_entity_create<'q>(
         .bind(fields.local_only)
         .bind(fields.split_entities)
         .bind(stored_conformance(fields))
-        .bind(target.key().as_i64())
 }
 
 /// Bind an entity-subscription update command in statement order.
 pub fn bind_entity_update<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
-    target: &'q ContextTarget,
     id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
     status: SubscriptionStatus,
@@ -129,13 +127,11 @@ pub fn bind_entity_update<'q>(
         .bind(fields.local_only)
         .bind(fields.split_entities)
         .bind(stored_conformance(fields))
-        .bind(target.key().as_i64())
 }
 
 /// Bind a context-source-subscription create command in statement order.
 pub fn bind_csource_create<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
-    target: &'q ContextTarget,
     id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
     status: SubscriptionStatus,
@@ -166,13 +162,11 @@ pub fn bind_csource_create<'q>(
         .bind(fields.lang.map(ToString::to_string))
         .bind(fields.jsonld_context.map(Url::as_str))
         .bind(stored_conformance(fields))
-        .bind(target.key().as_i64())
 }
 
 /// Bind a context-source-subscription update command in statement order.
 pub fn bind_csource_update<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
-    target: &'q ContextTarget,
     id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
     status: SubscriptionStatus,
@@ -202,14 +196,13 @@ pub fn bind_csource_update<'q>(
         .bind(fields.lang.map(ToString::to_string))
         .bind(fields.jsonld_context.map(Url::as_str))
         .bind(stored_conformance(fields))
-        .bind(target.key().as_i64())
 }
 
 /// The entity-subscription insert, its field values bound by
 /// [`bind_entity_create`] in the marker order this emits.
-pub fn entity_create_sql() -> Result<String, SubscriptionError> {
+pub fn entity_create_sql(target: &ContextTarget) -> Result<String, SubscriptionError> {
     let mut insert = Query::insert();
-    insert.into_table(Subscriptions::Table).columns([
+    insert.into_table(table_of(target, Subscriptions::Table)).columns([
         Subscriptions::Id,
         Subscriptions::Kind,
         Subscriptions::SubscriptionName,
@@ -235,7 +228,6 @@ pub fn entity_create_sql() -> Result<String, SubscriptionError> {
         Subscriptions::LocalOnly,
         Subscriptions::SplitEntities,
         Subscriptions::NgsildConformance,
-        Subscriptions::ContextSpaceKey,
         Subscriptions::CreatedAt,
         Subscriptions::ModifiedAt,
     ]);
@@ -266,7 +258,6 @@ pub fn entity_create_sql() -> Result<String, SubscriptionError> {
             external_placeholder(22),
             external_placeholder(23),
             external_placeholder(24),
-            external_placeholder(25),
             now(),
             now(),
         ])
@@ -276,10 +267,10 @@ pub fn entity_create_sql() -> Result<String, SubscriptionError> {
 }
 
 /// The entity-subscription replacement, bound by [`bind_entity_update`].
-pub fn entity_update_sql() -> String {
+pub fn entity_update_sql(target: &ContextTarget) -> String {
     let mut update = Query::update();
     update
-        .table(Subscriptions::Table)
+        .table(table_of(target, Subscriptions::Table))
         .values([
             (Subscriptions::SubscriptionName, external_placeholder(2)),
             (Subscriptions::Description, external_placeholder(3)),
@@ -306,15 +297,14 @@ pub fn entity_update_sql() -> String {
             (Subscriptions::ModifiedAt, now()),
         ])
         .and_where(Expr::col(Subscriptions::Id).eq(external_placeholder(1)))
-        .and_where(Expr::col(Subscriptions::ContextSpaceKey).eq(external_placeholder(24)))
         .and_where(of_kind(StoredKind::Entity));
     update.to_string(PostgresQueryBuilder)
 }
 
 /// The context-source-subscription insert, bound by [`bind_csource_create`].
-pub fn csource_create_sql() -> Result<String, SubscriptionError> {
+pub fn csource_create_sql(target: &ContextTarget) -> Result<String, SubscriptionError> {
     let mut insert = Query::insert();
-    insert.into_table(Subscriptions::Table).columns([
+    insert.into_table(table_of(target, Subscriptions::Table)).columns([
         Subscriptions::Id,
         Subscriptions::Kind,
         Subscriptions::SubscriptionName,
@@ -337,7 +327,6 @@ pub fn csource_create_sql() -> Result<String, SubscriptionError> {
         Subscriptions::Lang,
         Subscriptions::JsonldContext,
         Subscriptions::NgsildConformance,
-        Subscriptions::ContextSpaceKey,
         Subscriptions::CreatedAt,
         Subscriptions::ModifiedAt,
     ]);
@@ -365,7 +354,6 @@ pub fn csource_create_sql() -> Result<String, SubscriptionError> {
             external_placeholder(19),
             external_placeholder(20),
             external_placeholder(21),
-            external_placeholder(22),
             now(),
             now(),
         ])
@@ -375,10 +363,10 @@ pub fn csource_create_sql() -> Result<String, SubscriptionError> {
 }
 
 /// The context-source-subscription replacement, bound by [`bind_csource_update`].
-pub fn csource_update_sql() -> String {
+pub fn csource_update_sql(target: &ContextTarget) -> String {
     let mut update = Query::update();
     update
-        .table(Subscriptions::Table)
+        .table(table_of(target, Subscriptions::Table))
         .values([
             (Subscriptions::SubscriptionName, external_placeholder(2)),
             (Subscriptions::Description, external_placeholder(3)),
@@ -402,7 +390,6 @@ pub fn csource_update_sql() -> String {
             (Subscriptions::ModifiedAt, now()),
         ])
         .and_where(Expr::col(Subscriptions::Id).eq(external_placeholder(1)))
-        .and_where(Expr::col(Subscriptions::ContextSpaceKey).eq(external_placeholder(21)))
         .and_where(of_kind(StoredKind::Csource));
     update.to_string(PostgresQueryBuilder)
 }
@@ -410,24 +397,28 @@ pub fn csource_update_sql() -> String {
 #[cfg(test)]
 mod tests {
     use crate::subscription_store::create_update_sql::{csource_create_sql, csource_update_sql, entity_create_sql, entity_update_sql};
+    use andromeda_context_space::context_target::ContextTarget;
 
     #[test]
     fn the_entity_create_carries_its_kind_and_status_cast_with_contiguous_markers() {
-        let sql = entity_create_sql().expect("the fixed entity insert builds");
+        let sql = entity_create_sql(&ContextTarget::Live).expect("the fixed entity insert builds");
         assert!(sql.contains("'entity'"), "{sql}");
         assert!(!sql.contains("'Subscription'"), "the constant type token is no longer a column: {sql}");
         assert!(sql.contains("$18::subscription_status"), "{sql}");
         assert!(sql.contains("NOW()"), "created_at and modified_at stamp the transaction clock: {sql}");
-        for marker in 1..=25 {
+        for marker in 1..=24 {
             assert!(sql.contains(&format!("${marker}")), "missing ${marker}: {sql}");
         }
-        assert!(!sql.contains("$26"), "the create binds exactly twenty-five values: {sql}");
+        assert!(!sql.contains("$25"), "the create binds exactly twenty-four values: {sql}");
         assert!(!sql.contains("is_active"), "the redundant is_active column is gone: {sql}");
     }
 
     #[test]
     fn every_create_returns_the_surrogate_key_the_delivery_state_row_is_inserted_under() {
-        for sql in [entity_create_sql().expect("builds"), csource_create_sql().expect("builds")] {
+        for sql in [
+            entity_create_sql(&ContextTarget::Live).expect("builds"),
+            csource_create_sql(&ContextTarget::Live).expect("builds"),
+        ] {
             assert!(sql.ends_with(r#"RETURNING "subscription_key""#), "{sql}");
         }
     }
@@ -435,10 +426,10 @@ mod tests {
     #[test]
     fn every_statement_carries_the_clause_5_2_12_opt_in_lists() {
         for sql in [
-            entity_create_sql().expect("builds"),
-            csource_create_sql().expect("builds"),
-            entity_update_sql(),
-            csource_update_sql(),
+            entity_create_sql(&ContextTarget::Live).expect("builds"),
+            csource_create_sql(&ContextTarget::Live).expect("builds"),
+            entity_update_sql(&ContextTarget::Live),
+            csource_update_sql(&ContextTarget::Live),
         ] {
             assert!(sql.contains("expand_values") && sql.contains("json_keys"), "{sql}");
         }
@@ -446,10 +437,10 @@ mod tests {
 
     #[test]
     fn the_csource_create_omits_the_dataset_and_local_only_columns() {
-        let sql = csource_create_sql().expect("the fixed context-source insert builds");
+        let sql = csource_create_sql(&ContextTarget::Live).expect("the fixed context-source insert builds");
         assert!(sql.contains("'csource'"), "{sql}");
         assert!(sql.contains("$17::subscription_status"), "{sql}");
-        assert!(!sql.contains("$23"), "the context-source create binds twenty-two values: {sql}");
+        assert!(!sql.contains("$22"), "the context-source create binds twenty-one values: {sql}");
         assert!(!sql.contains("dataset_id"), "a context-source subscription stores no datasetId: {sql}");
     }
 
@@ -460,10 +451,10 @@ mod tests {
     #[test]
     fn every_statement_carries_the_clause_5_2_12_conformance_version() {
         for sql in [
-            entity_create_sql().expect("builds"),
-            csource_create_sql().expect("builds"),
-            entity_update_sql(),
-            csource_update_sql(),
+            entity_create_sql(&ContextTarget::Live).expect("builds"),
+            csource_create_sql(&ContextTarget::Live).expect("builds"),
+            entity_update_sql(&ContextTarget::Live),
+            csource_update_sql(&ContextTarget::Live),
         ] {
             assert!(sql.contains("ngsild_conformance"), "{sql}");
         }
@@ -471,7 +462,7 @@ mod tests {
 
     #[test]
     fn the_entity_update_pins_the_row_by_id_and_kind() {
-        let sql = entity_update_sql();
+        let sql = entity_update_sql(&ContextTarget::Live);
         assert!(sql.contains(r#""id" = ($1)"#), "{sql}");
         assert!(sql.contains("'entity'"), "{sql}");
         assert!(sql.contains("$18::subscription_status"), "{sql}");
@@ -480,7 +471,7 @@ mod tests {
 
     #[test]
     fn no_replacement_touches_a_delivery_counter_or_the_dropped_columns() {
-        for sql in [entity_update_sql(), csource_update_sql()] {
+        for sql in [entity_update_sql(&ContextTarget::Live), csource_update_sql(&ContextTarget::Live)] {
             for counter in ["times_sent", "times_failed", "last_notification", "last_success", "last_failure"] {
                 assert!(!sql.contains(counter), "a client update must not move {counter}: {sql}");
             }

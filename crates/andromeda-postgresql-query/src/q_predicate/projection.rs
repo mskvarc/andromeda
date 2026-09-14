@@ -68,7 +68,7 @@ fn compile_along_path(pred: &Predicate, path: &QueryPath, rows: &EntityRowRefs, 
                 return unsatisfiable();
             };
             let hop = LinkedHop::at_depth(depth + 1);
-            let inner_condition = compile_along_path(pred, inner, &hop.inner_rows(), names, depth + 1);
+            let inner_condition = compile_along_path(pred, inner, &hop.inner_rows(rows.schema().cloned()), names, depth + 1);
             hop.probe(relationship_id, guard_types, &names.types, rows, inner_condition)
         }
     }
@@ -378,7 +378,7 @@ mod tests {
     /// Render a compiled condition the way a real query would, so the assertions
     /// see the final placeholder numbering.
     fn render(q: &str) -> (String, Vec<Value>) {
-        render_with(q, &names(), &EntityRowRefs::unaliased())
+        render_with(q, &names(), &EntityRowRefs::unaliased(None))
     }
 
     fn render_with(q: &str, names: &QueryNames, rows: &EntityRowRefs) -> (String, Vec<Value>) {
@@ -823,7 +823,11 @@ mod tests {
 
     #[test]
     fn unknown_attribute_iri_compiles_to_a_constant_false() {
-        let (sql, _) = render_with(&format!("\"{}\">1", "https://example.com/never-written"), &names(), &EntityRowRefs::unaliased());
+        let (sql, _) = render_with(
+            &format!("\"{}\">1", "https://example.com/never-written"),
+            &names(),
+            &EntityRowRefs::unaliased(None),
+        );
         assert!(sql.contains("FALSE"), "{sql}");
         assert!(!sql.contains("current_attribute_values"), "no probe is emitted when no row can exist: {sql}");
     }
@@ -872,7 +876,7 @@ mod tests {
         let (sql, _) = render_with(
             &format!("{}>50", quoted(SPEED)),
             &names(),
-            &EntityRowRefs::aliased(Alias::new("ce"), Alias::new("cs"), DocumentsRef::ByKeyLookup),
+            &EntityRowRefs::aliased(None, Alias::new("ce"), Alias::new("cs"), DocumentsRef::ByKeyLookup),
         );
         assert!(sql.contains("\"cav\".\"entity_key\" = \"ce\".\"entity_key\""), "{sql}");
     }

@@ -113,7 +113,6 @@
 
 CREATE TABLE attribute_history (
     recorded_at TIMESTAMPTZ NOT NULL,
-    context_space_key BIGINT NOT NULL REFERENCES context_spaces(context_space_key) ON DELETE CASCADE,
     write_id UUID NOT NULL,
     stream_key BIGINT NOT NULL,
     write_ordinal INTEGER NOT NULL,
@@ -134,7 +133,7 @@ CREATE TABLE attribute_history (
     value_object JSONB COMPRESSION lz4,
     value_uri TEXT COMPRESSION lz4 COLLATE "C",
     metadata JSONB COMPRESSION lz4,
-    CONSTRAINT uq_attribute_history_write UNIQUE (recorded_at, context_space_key, write_id, write_ordinal),
+    CONSTRAINT uq_attribute_history_write UNIQUE (recorded_at, write_id, write_ordinal),
     CONSTRAINT chk_attribute_history_write_ordinal CHECK (write_ordinal >= 0),
     CONSTRAINT chk_attribute_history_attribute_kind CHECK (attribute_kind BETWEEN 1 AND 8),
     CONSTRAINT chk_attribute_history_instance_identity
@@ -168,22 +167,22 @@ CREATE TABLE attribute_history (
 SELECT create_hypertable('attribute_history', by_range('recorded_at', INTERVAL '7 days'));
 
 CREATE INDEX idx_attribute_history_stream_recorded_at
-    ON attribute_history (context_space_key, stream_key, recorded_at DESC);
+    ON attribute_history (stream_key, recorded_at DESC);
 
 CREATE INDEX idx_attribute_history_stream_observed_at
-    ON attribute_history (context_space_key, stream_key, observed_at DESC)
+    ON attribute_history (stream_key, observed_at DESC)
     WHERE observed_at IS NOT NULL;
 
 CREATE INDEX idx_attribute_history_stream_generated_instance
-    ON attribute_history (context_space_key, stream_key, generated_instance_uuid)
+    ON attribute_history (stream_key, generated_instance_uuid)
     WHERE generated_instance_uuid IS NOT NULL;
 
 CREATE INDEX idx_attribute_history_stream_verbatim_instance
-    ON attribute_history (context_space_key, stream_key, verbatim_instance_id)
+    ON attribute_history (stream_key, verbatim_instance_id)
     WHERE verbatim_instance_id IS NOT NULL;
 
 CREATE INDEX idx_attribute_history_value_geo
-    ON attribute_history USING GIST (context_space_key, value_geo)
+    ON attribute_history USING GIST (value_geo)
     WHERE value_geo IS NOT NULL;
 
 -- ----------------------------------------------------------------------------
@@ -249,7 +248,7 @@ CREATE INDEX idx_attribute_history_deleted_at_brin
 -- lag is what the broker's temporal configuration overrides at startup.
 ALTER TABLE attribute_history SET (
     timescaledb.enable_columnstore,
-    timescaledb.segmentby = 'context_space_key,stream_key',
+    timescaledb.segmentby = 'stream_key',
     timescaledb.orderby = 'recorded_at DESC, write_id, write_ordinal',
     timescaledb.compress_chunk_time_interval = '28 days'
 );
@@ -284,13 +283,12 @@ CALL add_columnstore_policy('attribute_history', after => INTERVAL '30 days', if
 -- path touches this table for a broker-minted identifier, which is unique by
 -- construction and never claims a row.
 CREATE TABLE attribute_history_instance_claims (
-    context_space_key BIGINT NOT NULL,
     temporal_entity_key BIGINT NOT NULL,
     attribute_name_id INTEGER NOT NULL REFERENCES attribute_names(id),
     verbatim_instance_id TEXT COLLATE "C" NOT NULL,
     CONSTRAINT pk_attribute_history_instance_claims
-        PRIMARY KEY (context_space_key, temporal_entity_key, attribute_name_id, verbatim_instance_id),
+        PRIMARY KEY (temporal_entity_key, attribute_name_id, verbatim_instance_id),
     CONSTRAINT fk_attribute_history_instance_claims_entity
-        FOREIGN KEY (context_space_key, temporal_entity_key)
-        REFERENCES temporal_entities(context_space_key, entity_key) ON DELETE CASCADE
+        FOREIGN KEY (temporal_entity_key)
+        REFERENCES temporal_entities(entity_key) ON DELETE CASCADE
 );

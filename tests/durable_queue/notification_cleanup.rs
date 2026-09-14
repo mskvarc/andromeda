@@ -11,6 +11,7 @@ use crate::{
     queue_database::{deliveries_of, queue_database},
     queue_workers::{delivery_worker, holding_lease},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_notification::{delivery_entry::DeliveryId, delivery_store::DeliveryStore};
 use andromeda_postgresql_context_store::notification_delivery::queue::NotificationDeliveryQueue;
 use chrono::{Duration, Utc};
@@ -64,12 +65,20 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
     // Four dispositions over one shared event: delivered, obsolete (which the
     // drain acknowledges the same way), retry-exhausted, and retained pending.
     queue
-        .mark_delivered(DeliveryId::from(deliveries[0]), &worker)
+        .mark_delivered(DeliveryId::from(deliveries[0]), &worker, &ContextTarget::Live)
         .await
         .expect("completed delivery");
-    queue.mark_delivered(DeliveryId::from(deliveries[1]), &worker).await.expect("obsolete delivery");
     queue
-        .mark_terminal(DeliveryId::from(deliveries[2]), &worker, "the endpoint rejected the payload")
+        .mark_delivered(DeliveryId::from(deliveries[1]), &worker, &ContextTarget::Live)
+        .await
+        .expect("obsolete delivery");
+    queue
+        .mark_terminal(
+            DeliveryId::from(deliveries[2]),
+            &worker,
+            "the endpoint rejected the payload",
+            &ContextTarget::Live,
+        )
         .await
         .expect("retry-exhausted delivery");
     queue
@@ -78,6 +87,7 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
             &worker,
             "endpoint unavailable",
             Utc::now() + Duration::hours(1),
+            &ContextTarget::Live,
         )
         .await
         .expect("retained delivery");
@@ -122,7 +132,10 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
         payload,
         "the last delivery still carries the shared payload"
     );
-    queue.mark_delivered(DeliveryId::from(deliveries[3]), &worker).await.expect("last delivery");
+    queue
+        .mark_delivered(DeliveryId::from(deliveries[3]), &worker, &ContextTarget::Live)
+        .await
+        .expect("last delivery");
 
     let final_removal = queue.delete_delivered_before(Utc::now() + Duration::minutes(1)).await.expect("final reap");
     assert_eq!(final_removal, 1);
@@ -161,12 +174,13 @@ async fn durable_queue_a_delivery_exhausted_by_repeated_retries_is_reaped() {
                     &worker,
                     "endpoint unavailable",
                     Utc::now() - Duration::seconds(1),
+                    &ContextTarget::Live,
                 )
                 .await
                 .unwrap_or_else(|_| panic!("retry failure {attempt}"));
         } else {
             queue
-                .mark_terminal(DeliveryId::from(deliveries[0]), &worker, "endpoint unavailable")
+                .mark_terminal(DeliveryId::from(deliveries[0]), &worker, "endpoint unavailable", &ContextTarget::Live)
                 .await
                 .unwrap_or_else(|_| panic!("exhausting failure {attempt}"));
         }

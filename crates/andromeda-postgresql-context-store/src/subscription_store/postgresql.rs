@@ -31,6 +31,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
+use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::{aggregate::count_all, cast::cast, literal::text_literal, pg_type::PostgresType};
 use andromeda_subscription::{
@@ -51,7 +52,7 @@ fn status_as_text() -> SimpleExpr {
 /// Add the stored-subscription projection to `select`, in the column set the
 /// mapper reads by name; `dataset_id` only for the family that stores it. The
 /// delivery counters come from the joined state row.
-fn project_subscription(select: &mut SelectStatement, kind: StoredKind) {
+fn project_subscription(select: &mut SelectStatement, kind: StoredKind, target: &ContextTarget) {
     select
         .column((Subscriptions::Table, Subscriptions::Id))
         .column((Subscriptions::Table, Subscriptions::SubscriptionKey))
@@ -82,22 +83,22 @@ fn project_subscription(select: &mut SelectStatement, kind: StoredKind) {
     if kind.has_dataset_id() {
         select.column((Subscriptions::Table, Subscriptions::DatasetId));
     }
-    join_delivery_state(select);
+    join_delivery_state(select, target);
 }
 
 /// A projecting select of one family with its state row joined, ready for a
-/// caller's `WHERE`.
-fn projected_select(kind: StoredKind) -> SelectStatement {
+/// caller's `WHERE`, in the target's branch schema.
+fn projected_select(kind: StoredKind, target: &ContextTarget) -> SelectStatement {
     let mut select = Query::select();
-    select.from(Subscriptions::Table);
-    project_subscription(&mut select, kind);
+    select.from(table_of(target, Subscriptions::Table));
+    project_subscription(&mut select, kind, target);
     select
 }
 
-/// The `WHERE id = $id AND kind` pin of one subscription.
-fn one_of(target: &ContextTarget, id: &Uri, kind: StoredKind) -> sea_query::Cond {
+/// The `WHERE id = $id AND kind` pin of one subscription. The branch is chosen
+/// by the schema its relations are qualified with, not by a predicate.
+fn one_of(id: &Uri, kind: StoredKind) -> sea_query::Cond {
     sea_query::Cond::all()
-        .add(Expr::col((Subscriptions::Table, Subscriptions::ContextSpaceKey)).eq(target.key().as_i64()))
         .add(Expr::col((Subscriptions::Table, Subscriptions::Id)).eq(id.as_str()))
         .add(of_kind(kind))
 }
@@ -110,8 +111,8 @@ macro_rules! impl_subscription_store {
         #[async_trait::async_trait]
         impl SubscriptionStore for $type {
             async fn get(&self, target: &ContextTarget, id: &Uri) -> Result<Option<StoredSubscription>, SubscriptionError> {
-                let mut select = projected_select($kind);
-                select.cond_where(one_of(target, id, $kind));
+                let mut select = projected_select($kind, target);
+                select.cond_where(one_of(id, $kind));
                 let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
                 let pg_row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .fetch_optional(&self.pool)
@@ -131,8 +132,7 @@ macro_rules! impl_subscription_store {
                 let offset = offset.unwrap_or(0);
                 let count = Query::select()
                     .expr(count_all())
-                    .from(Subscriptions::Table)
-                    .and_where(Expr::col((Subscriptions::Table, Subscriptions::ContextSpaceKey)).eq(target.key().as_i64()))
+                    .from(table_of(target, Subscriptions::Table))
                     .and_where(of_kind($kind))
                     .to_owned();
                 let (count_sql, count_values) = count.build_sqlx(PostgresQueryBuilder);
@@ -141,9 +141,8 @@ macro_rules! impl_subscription_store {
                     .await
                     .map_err(persistence_error)?;
 
-                let mut select = projected_select($kind);
+                let mut select = projected_select($kind, target);
                 select
-                    .and_where(Expr::col((Subscriptions::Table, Subscriptions::ContextSpaceKey)).eq(target.key().as_i64()))
                     .and_where(of_kind($kind))
                     .order_by((Subscriptions::Table, Subscriptions::CreatedAt), Order::Asc)
                     // A negative window bound is an absent one, not a
@@ -168,8 +167,8 @@ macro_rules! impl_subscription_store {
 
             async fn delete(&self, target: &ContextTarget, id: &Uri) -> Result<u64, SubscriptionError> {
                 let statement = Query::delete()
-                    .from_table(Subscriptions::Table)
-                    .cond_where(one_of(target, id, $kind))
+                    .from_table(table_of(target, Subscriptions::Table))
+                    .cond_where(one_of(id, $kind))
                     .to_owned();
                 let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
                 let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -182,8 +181,8 @@ macro_rules! impl_subscription_store {
             async fn exists(&self, target: &ContextTarget, id: &Uri) -> Result<bool, SubscriptionError> {
                 let inner = Query::select()
                     .expr(Expr::val(1))
-                    .from(Subscriptions::Table)
-                    .cond_where(one_of(target, id, $kind))
+                    .from(table_of(target, Subscriptions::Table))
+                    .cond_where(one_of(id, $kind))
                     .to_owned();
                 let statement = Query::select().expr(Expr::exists(inner)).to_owned();
                 let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
@@ -195,9 +194,8 @@ macro_rules! impl_subscription_store {
             }
 
             async fn list_active(&self, target: &ContextTarget) -> Result<Vec<StoredSubscription>, SubscriptionError> {
-                let mut select = projected_select($kind);
+                let mut select = projected_select($kind, target);
                 select
-                    .and_where(Expr::col((Subscriptions::Table, Subscriptions::ContextSpaceKey)).eq(target.key().as_i64()))
                     .and_where(Expr::col((Subscriptions::Table, Subscriptions::Status)).eq(text_literal("active")))
                     .and_where(of_kind($kind));
                 let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
@@ -248,10 +246,9 @@ macro_rules! impl_subscription_store {
 
             async fn expire_due(&self, target: &ContextTarget, cutoff: chrono::DateTime<chrono::Utc>) -> Result<Vec<Uri>, SubscriptionError> {
                 let statement = Query::update()
-                    .table(Subscriptions::Table)
+                    .table(table_of(target, Subscriptions::Table))
                     .value(Subscriptions::Status, cast(text_literal("expired"), PostgresType::SubscriptionStatus))
                     .value(Subscriptions::ModifiedAt, Expr::val(cutoff))
-                    .and_where(Expr::col((Subscriptions::Table, Subscriptions::ContextSpaceKey)).eq(target.key().as_i64()))
                     .and_where(Expr::col((Subscriptions::Table, Subscriptions::Status)).ne(text_literal("expired")))
                     .and_where(Expr::col((Subscriptions::Table, Subscriptions::ExpiresAt)).is_not_null())
                     .and_where(Expr::col((Subscriptions::Table, Subscriptions::ExpiresAt)).lte(cutoff))
@@ -282,14 +279,13 @@ macro_rules! impl_subscription_store {
                 fields: &SubscriptionFields<'_>,
                 status: SubscriptionStatus,
             ) -> Result<(), SubscriptionError> {
-                let sql = $create()?;
-                let state_sql = state_insert_sql()?;
+                let sql = $create(target)?;
+                let state_sql = state_insert_sql(target)?;
                 let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
-                let query = ($create_fn)(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), target, id, fields, status);
+                let query = ($create_fn)(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), id, fields, status);
                 let created = query.fetch_one(&mut *transaction).await.map_err(|error| create_error(error, id))?;
                 let subscription_key: i64 = created.try_get("subscription_key").map_err(persistence_error)?;
                 sqlx::query(sqlx::AssertSqlSafe(state_sql.as_str()))
-                    .bind(target.key().as_i64())
                     .bind(subscription_key)
                     .execute(&mut *transaction)
                     .await
@@ -306,16 +302,15 @@ macro_rules! impl_subscription_store {
                 fields: &SubscriptionFields<'_>,
                 status: SubscriptionStatus,
             ) -> Result<u64, SubscriptionError> {
-                let sql = $update();
-                let query = ($update_fn)(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), target, id, fields, status);
+                let sql = $update(target);
+                let query = ($update_fn)(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), id, fields, status);
                 let result = query.execute(&self.pool).await.map_err(persistence_error)?;
                 Ok(result.rows_affected())
             }
 
             async fn find_due_interval_subscriptions(&self, target: &ContextTarget) -> Result<Vec<Subscription>, SubscriptionError> {
-                let mut select = projected_select($kind);
+                let mut select = projected_select($kind, target);
                 select
-                    .and_where(Expr::col((Subscriptions::Table, Subscriptions::ContextSpaceKey)).eq(target.key().as_i64()))
                     .and_where(Expr::col((Subscriptions::Table, Subscriptions::Status)).eq(text_literal("active")))
                     .and_where(of_kind($kind))
                     .and_where(Expr::col((Subscriptions::Table, Subscriptions::TimeInterval)).is_not_null())
@@ -364,6 +359,7 @@ mod tests {
         subscription::repo::SubscriptionRepository,
         subscription_store::{postgresql::projected_select, stored_kind::StoredKind},
     };
+    use andromeda_context_space::context_target::ContextTarget;
     use andromeda_subscription::store::SubscriptionStore;
     use sea_query::PostgresQueryBuilder;
 
@@ -381,7 +377,7 @@ mod tests {
 
     #[test]
     fn every_projection_reads_the_delivery_counters_from_the_joined_state_row() {
-        let sql = projected_select(StoredKind::Entity).to_string(PostgresQueryBuilder);
+        let sql = projected_select(StoredKind::Entity, &ContextTarget::Live).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"LEFT JOIN "subscription_delivery_state""#), "{sql}");
         assert!(sql.contains(r#""subscriptions"."dataset_id""#), "{sql}");
         for counter in ["times_sent", "last_notification", "last_success", "last_failure"] {
@@ -390,7 +386,7 @@ mod tests {
                 "the subscription row carries no {counter}: {sql}"
             );
         }
-        let csource = projected_select(StoredKind::Csource).to_string(PostgresQueryBuilder);
+        let csource = projected_select(StoredKind::Csource, &ContextTarget::Live).to_string(PostgresQueryBuilder);
         assert!(!csource.contains("dataset_id"), "{csource}");
     }
 }

@@ -42,7 +42,6 @@
 
 CREATE TABLE scope_history (
     recorded_at TIMESTAMPTZ NOT NULL,
-    context_space_key BIGINT NOT NULL REFERENCES context_spaces(context_space_key) ON DELETE CASCADE,
     temporal_entity_key BIGINT NOT NULL,
     write_id UUID NOT NULL,
     write_ordinal INTEGER NOT NULL,
@@ -54,7 +53,7 @@ CREATE TABLE scope_history (
     generated_instance_uuid UUID,
     verbatim_instance_id TEXT COMPRESSION lz4 COLLATE "C",
     scope_path ltree COMPRESSION lz4,
-    CONSTRAINT uq_scope_history_write UNIQUE (recorded_at, context_space_key, write_id, write_ordinal),
+    CONSTRAINT uq_scope_history_write UNIQUE (recorded_at, write_id, write_ordinal),
     CONSTRAINT chk_scope_history_write_ordinal CHECK (write_ordinal >= 0),
     CONSTRAINT chk_scope_history_instance_identity
         CHECK (num_nonnulls(generated_instance_uuid, verbatim_instance_id) = 1),
@@ -67,22 +66,22 @@ CREATE TABLE scope_history (
 SELECT create_hypertable('scope_history', by_range('recorded_at', INTERVAL '7 days'));
 
 CREATE INDEX idx_scope_history_entity_recorded_at
-    ON scope_history (context_space_key, temporal_entity_key, recorded_at DESC);
+    ON scope_history (temporal_entity_key, recorded_at DESC);
 
 CREATE INDEX idx_scope_history_entity_observed_at
-    ON scope_history (context_space_key, temporal_entity_key, observed_at DESC)
+    ON scope_history (temporal_entity_key, observed_at DESC)
     WHERE observed_at IS NOT NULL;
 
 CREATE INDEX idx_scope_history_entity_generated_instance
-    ON scope_history (context_space_key, temporal_entity_key, generated_instance_uuid)
+    ON scope_history (temporal_entity_key, generated_instance_uuid)
     WHERE generated_instance_uuid IS NOT NULL;
 
 CREATE INDEX idx_scope_history_entity_verbatim_instance
-    ON scope_history (context_space_key, temporal_entity_key, verbatim_instance_id)
+    ON scope_history (temporal_entity_key, verbatim_instance_id)
     WHERE verbatim_instance_id IS NOT NULL;
 
 CREATE INDEX idx_scope_history_scope_path
-    ON scope_history USING GIST (context_space_key, scope_path)
+    ON scope_history USING GIST (scope_path)
     WHERE scope_path IS NOT NULL;
 
 CREATE INDEX idx_scope_history_observed_at_brin
@@ -99,7 +98,7 @@ CREATE INDEX idx_scope_history_deleted_at_brin
 
 ALTER TABLE scope_history SET (
     timescaledb.enable_columnstore,
-    timescaledb.segmentby = 'context_space_key,temporal_entity_key',
+    timescaledb.segmentby = 'temporal_entity_key',
     timescaledb.orderby = 'recorded_at DESC, write_id, write_ordinal',
     timescaledb.compress_chunk_time_interval = '28 days'
 );

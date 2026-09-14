@@ -15,8 +15,6 @@ pub enum NotificationEvents {
     Table,
     /// Surrogate key referenced by every delivery that answers the event
     Id,
-    /// Context-space partition that owns the event.
-    ContextSpaceKey,
     /// Instant the event was written, the retention clock reads
     CreatedAt,
     /// Identity of the write that produced the event
@@ -44,8 +42,6 @@ pub enum NotificationDeliveries {
     Table,
     /// Delivery surrogate key
     Id,
-    /// Context-space partition that owns the delivery
-    ContextSpaceKey,
     /// Event the delivery answers
     EventId,
     /// External key of the subscription the delivery is owed to
@@ -58,8 +54,8 @@ pub enum NotificationDeliveries {
     DeliveredAt,
     /// Instant the worker gave the delivery up for good, `NULL` unless dead-lettered
     ExhaustedAt,
-    /// Diagnostic recorded by the last failed attempt
-    DeliveryError,
+    /// Diagnostic recorded by the last failed attempt (shared claimable-queue contract)
+    LastError,
     /// Instant the current lease was taken
     ClaimedAt,
     /// Worker that holds the current lease
@@ -92,14 +88,13 @@ mod tests {
     fn notification_deliveries_table_and_columns() {
         assert_eq!(NotificationDeliveries::Table.to_string(), "notification_deliveries");
         assert_eq!(NotificationDeliveries::Id.to_string(), "id");
-        assert_eq!(NotificationDeliveries::ContextSpaceKey.to_string(), "context_space_key");
         assert_eq!(NotificationDeliveries::EventId.to_string(), "event_id");
         assert_eq!(NotificationDeliveries::SubscriptionKey.to_string(), "subscription_key");
         assert_eq!(NotificationDeliveries::AttemptCount.to_string(), "attempt_count");
         assert_eq!(NotificationDeliveries::NextAttemptAt.to_string(), "next_attempt_at");
         assert_eq!(NotificationDeliveries::DeliveredAt.to_string(), "delivered_at");
         assert_eq!(NotificationDeliveries::ExhaustedAt.to_string(), "exhausted_at");
-        assert_eq!(NotificationDeliveries::DeliveryError.to_string(), "delivery_error");
+        assert_eq!(NotificationDeliveries::LastError.to_string(), "last_error");
         assert_eq!(NotificationDeliveries::ClaimedAt.to_string(), "claimed_at");
         assert_eq!(NotificationDeliveries::ClaimedBy.to_string(), "claimed_by");
         assert_eq!(NotificationDeliveries::LeaseUntil.to_string(), "lease_until");

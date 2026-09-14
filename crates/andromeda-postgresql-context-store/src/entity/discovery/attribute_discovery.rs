@@ -15,7 +15,7 @@ use crate::{
     },
     error::ContextStoreError,
 };
-use andromeda_context_space::{context_space_key::ContextSpaceKey, context_target::ContextTarget};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::attribute_summary::AttributeSummary;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_postgresql_schema::current::{EntityDocuments, EntitySearch};
@@ -112,7 +112,7 @@ fn attribute_type_iris(attribute_type: &dyn Fn() -> SimpleExpr) -> FunctionCall 
 /// `@type` expansion is left-joined so an attribute with no declared type still
 /// contributes its entity to the counts. Entities are counted by surrogate
 /// key, so the identity row is never read.
-fn attribute_summary_base(context_space_key: ContextSpaceKey, key_predicate: SimpleExpr) -> SelectStatement {
+fn attribute_summary_base(target: &ContextTarget, key_predicate: SimpleExpr) -> SelectStatement {
     let attributes = Query::select()
         .expr_as(Expr::col((Je, Key)), AttrKey)
         .expr_as(Expr::col((Je, ValueColumn)), AttrValue)
@@ -136,7 +136,7 @@ fn attribute_summary_base(context_space_key: ContextSpaceKey, key_predicate: Sim
             array_agg_distinct_filter(Expr::col((At, ValueColumn)), Expr::col((At, ValueColumn)).is_not_null()),
             AttributeTypes,
         );
-    search_with_documents(&mut statement, context_space_key);
+    search_with_documents(&mut statement, target);
     unnest_type_ids(&mut statement);
     join_type_names(&mut statement)
         .join_lateral(JoinType::InnerJoin, attributes, Attrs, SimpleExpr::from(Expr::val(true)))
@@ -147,8 +147,8 @@ fn attribute_summary_base(context_space_key: ContextSpaceKey, key_predicate: Sim
 
 /// The paginated attribute summary: every non-keyword attribute, keyset-paged on
 /// the attribute IRI.
-fn attribute_summary_statement(context_space_key: ContextSpaceKey, after: Option<&str>, limit: u64) -> SelectStatement {
-    let mut statement = attribute_summary_base(context_space_key, Expr::col((Je, Key)).not_like("@%"));
+fn attribute_summary_statement(target: &ContextTarget, after: Option<&str>, limit: u64) -> SelectStatement {
+    let mut statement = attribute_summary_base(target, Expr::col((Je, Key)).not_like("@%"));
     statement
         .cond_having(keyset_after(Expr::col((Attrs, AttrKey)), after))
         .order_by((Attrs, AttrKey), Order::Asc)
@@ -158,8 +158,8 @@ fn attribute_summary_statement(context_space_key: ContextSpaceKey, after: Option
 
 /// The single-attribute lookup: the aggregate restricted to one attribute key,
 /// which groups to at most one row and needs no keyset clauses.
-fn attribute_info_statement(context_space_key: ContextSpaceKey, attr_iri: &str) -> SelectStatement {
-    attribute_summary_base(context_space_key, Expr::col((Je, Key)).eq(attr_iri))
+fn attribute_info_statement(target: &ContextTarget, attr_iri: &str) -> SelectStatement {
+    attribute_summary_base(target, Expr::col((Je, Key)).eq(attr_iri))
 }
 
 /// An attribute has no `@type` when no instance of it declares one, which the
@@ -198,7 +198,7 @@ impl EntityRepository {
         after: Option<&AttributeName>,
         limit: u32,
     ) -> Result<Vec<AttributeSummary>, ContextStoreError> {
-        let (sql, values) = attribute_summary_statement(target.key(), after.map(AttributeName::as_str), u64::from(limit)).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = attribute_summary_statement(target, after.map(AttributeName::as_str), u64::from(limit)).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
         rows.iter().map(row_to_attribute_summary).collect()
     }
@@ -211,7 +211,7 @@ impl EntityRepository {
     /// aggregated row does not map to an [`AttributeSummary`] because its
     /// attribute IRI, type names or attribute types no longer parse.
     pub async fn get_attribute_info(&self, target: &ContextTarget, attr_iri: &AttributeName) -> Result<Option<AttributeSummary>, ContextStoreError> {
-        let (sql, values) = attribute_info_statement(target.key(), attr_iri.as_str()).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = attribute_info_statement(target, attr_iri.as_str()).build_sqlx(PostgresQueryBuilder);
         let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(&self.pool).await?;
         row.as_ref().map(row_to_attribute_summary).transpose()
     }
@@ -220,18 +220,14 @@ impl EntityRepository {
 #[cfg(test)]
 mod tests {
     use crate::entity::discovery::attribute_discovery::{attribute_info_statement, attribute_summary_statement};
-    use andromeda_context_space::context_space_key::ContextSpaceKey;
+    use andromeda_context_space::context_target::ContextTarget;
     use sea_query::PostgresQueryBuilder;
     use sea_query_sqlx::SqlxBinder;
 
-    fn context_space_key() -> ContextSpaceKey {
-        ContextSpaceKey::try_from(1).expect("positive context-space key")
-    }
-
     #[test]
     fn the_paginated_summary_and_the_single_lookup_share_one_aggregate() {
-        let (summary, _) = attribute_summary_statement(context_space_key(), None, 10).build_sqlx(PostgresQueryBuilder);
-        let (info, _) = attribute_info_statement(context_space_key(), "https://example.org/speed").build_sqlx(PostgresQueryBuilder);
+        let (summary, _) = attribute_summary_statement(&ContextTarget::Live, None, 10).build_sqlx(PostgresQueryBuilder);
+        let (info, _) = attribute_info_statement(&ContextTarget::Live, "https://example.org/speed").build_sqlx(PostgresQueryBuilder);
         for shared in [
             r#"COUNT(DISTINCT "s"."entity_key")"#,
             r#"FROM "entity_search" AS "s" JOIN "entity_documents" AS "d" ON "d"."entity_key" = "s"."entity_key""#,
@@ -249,7 +245,7 @@ mod tests {
 
     #[test]
     fn the_summary_filters_missing_attribute_types_out_of_the_aggregate() {
-        let (summary, _) = attribute_summary_statement(context_space_key(), None, 10).build_sqlx(PostgresQueryBuilder);
+        let (summary, _) = attribute_summary_statement(&ContextTarget::Live, None, 10).build_sqlx(PostgresQueryBuilder);
         assert!(
             summary.contains(r#"array_agg(DISTINCT "at"."value") FILTER (WHERE "at"."value" IS NOT NULL)"#),
             "{summary}"
@@ -265,8 +261,8 @@ mod tests {
     #[test]
     fn the_attribute_type_expansion_reads_both_json_ld_spellings_of_at_type() {
         for (statement, _) in [
-            attribute_summary_statement(context_space_key(), None, 10).build_sqlx(PostgresQueryBuilder),
-            attribute_info_statement(context_space_key(), "https://example.org/speed").build_sqlx(PostgresQueryBuilder),
+            attribute_summary_statement(&ContextTarget::Live, None, 10).build_sqlx(PostgresQueryBuilder),
+            attribute_info_statement(&ContextTarget::Live, "https://example.org/speed").build_sqlx(PostgresQueryBuilder),
         ] {
             assert!(statement.contains("jsonb_array_elements_text((CASE WHEN"), "{statement}");
             assert!(statement.contains("jsonb_build_array"), "{statement}");
@@ -280,24 +276,24 @@ mod tests {
 
     #[test]
     fn the_summary_is_keyset_paged_on_the_attribute_iri() {
-        let (summary, values) = attribute_summary_statement(context_space_key(), Some("https://example.org/a"), 10).build_sqlx(PostgresQueryBuilder);
-        assert!(summary.contains(r#"HAVING ($19::text) IS NULL OR "attrs"."attr_key" > $20"#), "{summary}");
+        let (summary, values) = attribute_summary_statement(&ContextTarget::Live, Some("https://example.org/a"), 10).build_sqlx(PostgresQueryBuilder);
+        assert!(summary.contains(r#"HAVING ($18::text) IS NULL OR "attrs"."attr_key" > $19"#), "{summary}");
         assert!(summary.contains(r#"ORDER BY "attrs"."attr_key" ASC"#), "{summary}");
-        assert!(summary.contains("LIMIT $21"), "{summary}");
+        assert!(summary.contains("LIMIT $20"), "{summary}");
         // Every literal the statement carries binds rather than interpolating —
         // the keyword-skip pattern, the container index and key, the `@type`
         // node read three times over the `CASE` and the two spellings it tests,
         // the join conditions, the cursor (twice) and the limit. Only the empty
         // JSON array the `CASE` falls back to is written inline, as a typed
         // `'[]'::jsonb` constant that carries no request value.
-        assert_eq!(values.0.0.len(), 21, "{summary}");
+        assert_eq!(values.0.0.len(), 20, "{summary}");
     }
 
     /// The summary reports type IRIs, never keys, so the unnested keys are
     /// joined to the dictionary before they are aggregated.
     #[test]
     fn the_attribute_summary_aggregates_type_names_through_the_dictionary() {
-        let (summary, _) = attribute_summary_statement(context_space_key(), None, 10).build_sqlx(PostgresQueryBuilder);
+        let (summary, _) = attribute_summary_statement(&ContextTarget::Live, None, 10).build_sqlx(PostgresQueryBuilder);
         assert!(summary.contains(r#"array_agg(DISTINCT "n"."name") AS "entity_types""#), "{summary}");
         assert!(
             summary.contains(r#"INNER JOIN LATERAL (SELECT UNNEST("s"."type_ids") AS "t") AS "t" ON $"#),

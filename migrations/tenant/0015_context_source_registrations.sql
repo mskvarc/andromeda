@@ -113,6 +113,12 @@ CREATE TABLE context_source_registrations (
     -- Non-standard CSR properties (for response passthrough and q filtering)
     additional_properties JSONB COMPRESSION lz4,
 
+    -- Table 5.2.9-1 `datasetId`: the datasetIds of the attribute instances the
+    -- Context Source can provide, each a URI or the `@none` token naming the
+    -- default instance (clause 4.5.5). A typed, specification-defined member with
+    -- its own column; no index, since nothing preselects registrations by dataset.
+    dataset_id TEXT[] COMPRESSION lz4,
+
     -- The @context URI associated with this registration
     jsonld_context TEXT COMPRESSION lz4,
 

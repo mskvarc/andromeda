@@ -16,6 +16,8 @@
 
 /// Releasing a claimed delivery back to the queue, or out of it.
 pub mod acknowledge;
+/// Enumerating the context branches a per-branch delivery drain sweeps.
+pub mod branches;
 /// Leasing due deliveries and reading the events they answer.
 pub mod claim;
 /// Reaping delivered rows and the events they leave behind.

@@ -133,7 +133,6 @@
 
 CREATE TABLE notification_events (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    context_space_key BIGINT NOT NULL REFERENCES context_spaces(context_space_key) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL,
     event_ordinal INTEGER NOT NULL,
     trigger SMALLINT NOT NULL,
@@ -143,8 +142,7 @@ CREATE TABLE notification_events (
     changed_dataset_id TEXT COMPRESSION lz4 COLLATE "C",
     entity_snapshot JSONB COMPRESSION lz4,
     previous_snapshot JSONB COMPRESSION lz4,
-    CONSTRAINT uq_notification_events_write_identity UNIQUE (context_space_key, write_id, event_ordinal),
-    CONSTRAINT uq_notification_events_context_id UNIQUE (context_space_key, id),
+    CONSTRAINT uq_notification_events_write_identity UNIQUE (write_id, event_ordinal),
     CONSTRAINT chk_notification_events_event_ordinal CHECK (event_ordinal >= 0),
     CONSTRAINT chk_notification_events_trigger CHECK (trigger BETWEEN 1 AND 6)
 ) WITH (
@@ -157,7 +155,6 @@ CREATE TABLE notification_events (
 
 CREATE TABLE notification_deliveries (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    context_space_key BIGINT NOT NULL REFERENCES context_spaces(context_space_key) ON DELETE CASCADE,
     event_id BIGINT NOT NULL,
     subscription_key BIGINT NOT NULL,
     next_attempt_at TIMESTAMPTZ NOT NULL,
@@ -167,13 +164,13 @@ CREATE TABLE notification_deliveries (
     delivered_at TIMESTAMPTZ,
     exhausted_at TIMESTAMPTZ,
     claimed_by TEXT COMPRESSION lz4,
-    delivery_error TEXT COMPRESSION lz4,
-    CONSTRAINT fk_notification_deliveries_context_event
-        FOREIGN KEY (context_space_key, event_id)
-        REFERENCES notification_events(context_space_key, id) ON DELETE CASCADE,
-    CONSTRAINT fk_notification_deliveries_context_subscription
-        FOREIGN KEY (context_space_key, subscription_key)
-        REFERENCES subscriptions(context_space_key, subscription_key) ON DELETE CASCADE,
+    last_error TEXT COMPRESSION lz4,
+    CONSTRAINT fk_notification_deliveries_event
+        FOREIGN KEY (event_id)
+        REFERENCES notification_events(id) ON DELETE CASCADE,
+    CONSTRAINT fk_notification_deliveries_subscription
+        FOREIGN KEY (subscription_key)
+        REFERENCES subscriptions(subscription_key) ON DELETE CASCADE,
     CONSTRAINT chk_notification_deliveries_attempt_count_non_negative
         CHECK (attempt_count >= 0),
     CONSTRAINT chk_notification_deliveries_claim_coherent
@@ -181,8 +178,8 @@ CREATE TABLE notification_deliveries (
     CONSTRAINT chk_notification_deliveries_exhausted_state CHECK (
         exhausted_at IS NULL
         OR (delivered_at IS NULL AND num_nonnulls(claimed_at, claimed_by, lease_until) = 0)),
-    CONSTRAINT chk_notification_deliveries_delivery_error_bound
-        CHECK (delivery_error IS NULL OR char_length(delivery_error) <= 2048)
+    CONSTRAINT chk_notification_deliveries_last_error_bound
+        CHECK (last_error IS NULL OR char_length(last_error) <= 2048)
 ) WITH (
     fillfactor = 80,
     autovacuum_vacuum_scale_factor = 0.005,
@@ -193,7 +190,7 @@ CREATE TABLE notification_deliveries (
 );
 
 CREATE INDEX idx_notification_deliveries_claimable
-    ON notification_deliveries (context_space_key, GREATEST(next_attempt_at, COALESCE(lease_until, '-infinity'::timestamptz)), id)
+    ON notification_deliveries (GREATEST(next_attempt_at, COALESCE(lease_until, '-infinity'::timestamptz)), id)
     WHERE delivered_at IS NULL AND exhausted_at IS NULL;
 
 CREATE INDEX idx_notification_deliveries_delivered
@@ -205,7 +202,7 @@ CREATE INDEX idx_notification_deliveries_exhausted
     WHERE exhausted_at IS NOT NULL;
 
 CREATE INDEX idx_notification_deliveries_subscription
-    ON notification_deliveries (context_space_key, subscription_key);
+    ON notification_deliveries (subscription_key);
 
 CREATE INDEX idx_notification_deliveries_event
-    ON notification_deliveries (context_space_key, event_id);
+    ON notification_deliveries (event_id);

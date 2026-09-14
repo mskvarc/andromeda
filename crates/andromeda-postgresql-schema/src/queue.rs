@@ -28,8 +28,6 @@ pub enum PendingSideEffects {
     Table,
     /// Job surrogate identity, minted by the enqueue
     Id,
-    /// Context-space partition that owns the deferred consequences.
-    ContextSpaceKey,
     /// Instant the job was enqueued, the dead-letter retention clock
     CreatedAt,
     /// Identity of the write that enqueued the job, the deduplication key
@@ -40,18 +38,20 @@ pub enum PendingSideEffects {
     ConsequenceBase,
     /// Serialised batch side-effect job
     Payload,
-    /// Number of drain attempts already made
-    Attempts,
-    /// Whether the job is retired and no longer drainable
-    Dead,
+    /// Number of drain attempts already made (shared claimable-queue contract)
+    AttemptCount,
+    /// Dead-letter door: instant the job was retired, NULL while drainable
+    ExhaustedAt,
     /// Diagnostic recorded by the last failed attempt
     LastError,
     /// Earliest instant the job may next be attempted
     NextAttemptAt,
+    /// Instant the current lease was acquired
+    ClaimedAt,
     /// Instant the current lease expires
-    LockedUntil,
+    LeaseUntil,
     /// Worker that holds the current lease
-    LockedBy,
+    ClaimedBy,
 }
 
 /// The `temporal_append_intents` table - the durable temporal-append queue.
@@ -61,8 +61,6 @@ pub enum TemporalAppendIntents {
     Table,
     /// Monotonic queue sequence, the row identity workers order and claim by
     Sequence,
-    /// Context-space partition that owns the deferred append.
-    ContextSpaceKey,
     /// Identity of the write that produced the intent
     WriteId,
     /// Entity the intent appends temporal history for
@@ -71,14 +69,16 @@ pub enum TemporalAppendIntents {
     Base,
     /// Serialised temporal append intent
     Intent,
-    /// Earliest instant the intent may next be claimed
-    AvailableAt,
+    /// Earliest instant the intent may next be claimed (shared claimable-queue contract)
+    NextAttemptAt,
+    /// Instant the current lease was acquired
+    ClaimedAt,
     /// Instant the current lease expires
     LeaseUntil,
     /// Worker that holds the current lease
-    LeaseOwner,
+    ClaimedBy,
     /// Number of claim attempts already made
-    Attempts,
+    AttemptCount,
     /// Diagnostic recorded by the last failed attempt
     LastError,
 }
@@ -96,10 +96,11 @@ mod tests {
         assert_eq!(TemporalAppendIntents::EntityId.to_string(), "entity_id");
         assert_eq!(TemporalAppendIntents::Base.to_string(), "base");
         assert_eq!(TemporalAppendIntents::Intent.to_string(), "intent");
-        assert_eq!(TemporalAppendIntents::AvailableAt.to_string(), "available_at");
+        assert_eq!(TemporalAppendIntents::NextAttemptAt.to_string(), "next_attempt_at");
+        assert_eq!(TemporalAppendIntents::ClaimedAt.to_string(), "claimed_at");
         assert_eq!(TemporalAppendIntents::LeaseUntil.to_string(), "lease_until");
-        assert_eq!(TemporalAppendIntents::LeaseOwner.to_string(), "lease_owner");
-        assert_eq!(TemporalAppendIntents::Attempts.to_string(), "attempts");
+        assert_eq!(TemporalAppendIntents::ClaimedBy.to_string(), "claimed_by");
+        assert_eq!(TemporalAppendIntents::AttemptCount.to_string(), "attempt_count");
         assert_eq!(TemporalAppendIntents::LastError.to_string(), "last_error");
     }
 
@@ -120,11 +121,12 @@ mod tests {
         assert_eq!(PendingSideEffects::RecordedAt.to_string(), "recorded_at");
         assert_eq!(PendingSideEffects::ConsequenceBase.to_string(), "consequence_base");
         assert_eq!(PendingSideEffects::Payload.to_string(), "payload");
-        assert_eq!(PendingSideEffects::Attempts.to_string(), "attempts");
-        assert_eq!(PendingSideEffects::Dead.to_string(), "dead");
+        assert_eq!(PendingSideEffects::AttemptCount.to_string(), "attempt_count");
+        assert_eq!(PendingSideEffects::ExhaustedAt.to_string(), "exhausted_at");
         assert_eq!(PendingSideEffects::LastError.to_string(), "last_error");
         assert_eq!(PendingSideEffects::NextAttemptAt.to_string(), "next_attempt_at");
-        assert_eq!(PendingSideEffects::LockedUntil.to_string(), "locked_until");
-        assert_eq!(PendingSideEffects::LockedBy.to_string(), "locked_by");
+        assert_eq!(PendingSideEffects::ClaimedAt.to_string(), "claimed_at");
+        assert_eq!(PendingSideEffects::LeaseUntil.to_string(), "lease_until");
+        assert_eq!(PendingSideEffects::ClaimedBy.to_string(), "claimed_by");
     }
 }

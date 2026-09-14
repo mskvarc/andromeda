@@ -17,8 +17,6 @@ pub enum TemporalEntities {
     Table,
     /// Surrogate key the stream catalogue and scope history reference
     EntityKey,
-    /// Context-space partition that owns the temporal entity.
-    ContextSpaceKey,
     /// Entity URI, carried independently of `entities`
     Id,
     /// Array of `entity_type_names` keys, one per type the entity carries
@@ -36,8 +34,6 @@ pub enum TemporalAttributeStreams {
     Table,
     /// Generated surrogate key, referenced by `attribute_history.stream_key`
     StreamKey,
-    /// Context-space partition inherited from the temporal entity.
-    ContextSpaceKey,
     /// Foreign key to `temporal_entities`
     TemporalEntityKey,
     /// Foreign key to `attribute_names`
@@ -51,8 +47,6 @@ pub enum TemporalAttributeStreams {
 pub enum AttributeHistory {
     /// Table name: `attribute_history`
     Table,
-    /// Context-space partition that owns the observation.
-    ContextSpaceKey,
     /// Key of the `temporal_attribute_streams` row (no foreign key on a hypertable)
     StreamKey,
     /// Write identity of the mutation that produced the row (clause 5.6.7)
@@ -103,8 +97,6 @@ pub enum AttributeHistory {
 pub enum AttributeHistoryInstanceClaims {
     /// Table name: `attribute_history_instance_claims`
     Table,
-    /// Context-space partition that owns the claim.
-    ContextSpaceKey,
     /// The verbatim `instanceId` the claim reserves
     VerbatimInstanceId,
     /// Foreign key to `temporal_entities`
@@ -118,8 +110,6 @@ pub enum AttributeHistoryInstanceClaims {
 pub enum ScopeHistory {
     /// Table name: `scope_history`
     Table,
-    /// Context-space partition that owns the scope observation.
-    ContextSpaceKey,
     /// Operational instant the row was written, the hypertable partition column
     RecordedAt,
     /// Foreign key to `temporal_entities`

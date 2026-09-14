@@ -10,6 +10,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
 use andromeda_postgresql_seaquery::operator::array_contains_key;
 use sea_query::{Expr, ExprTrait, JoinType, Order, PostgresQueryBuilder};
@@ -41,17 +42,14 @@ impl EntityRepository {
         let Some(type_id) = self.type_id(entity_type).await? else {
             return Ok(Vec::new());
         };
-        let mut statement = identity_with_documents();
+        let mut statement = identity_with_documents(target);
         statement
             .column((EntityDocuments::Table, EntityDocuments::Payload))
             .join(
                 JoinType::Join,
-                EntitySearch::Table,
+                table_of(target, EntitySearch::Table),
                 Expr::col((EntitySearch::Table, EntitySearch::EntityKey)).equals((Entities::Table, Entities::EntityKey)),
             )
-            .and_where(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(target.key().as_i64()))
-            .and_where(Expr::col((EntityDocuments::Table, EntityDocuments::ContextSpaceKey)).eq(target.key().as_i64()))
-            .and_where(Expr::col((EntitySearch::Table, EntitySearch::ContextSpaceKey)).eq(target.key().as_i64()))
             .and_where(array_contains_key(Expr::col((EntitySearch::Table, EntitySearch::TypeIds)), type_id.get()))
             .order_by((Entities::Table, Entities::Id), Order::Asc)
             .offset(page_bound(offset.unwrap_or(0)));
@@ -68,11 +66,9 @@ impl EntityRepository {
     ///
     /// Returns [`ContextStoreError`] when the payload query fails.
     pub async fn get_all_entities(&self, target: &ContextTarget, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Value>, ContextStoreError> {
-        let mut statement = identity_with_documents();
+        let mut statement = identity_with_documents(target);
         statement
             .column((EntityDocuments::Table, EntityDocuments::Payload))
-            .and_where(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(target.key().as_i64()))
-            .and_where(Expr::col((EntityDocuments::Table, EntityDocuments::ContextSpaceKey)).eq(target.key().as_i64()))
             .order_by((Entities::Table, Entities::Id), Order::Asc)
             .offset(page_bound(offset.unwrap_or(0)));
         if let Some(limit) = limit {

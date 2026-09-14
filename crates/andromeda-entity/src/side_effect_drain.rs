@@ -412,12 +412,7 @@ mod tests {
     }
 
     fn live_target() -> ContextTarget {
-        use andromeda_context_space::{
-            context_space::{ContextSpace, ContextSpaceKind},
-            context_space_key::ContextSpaceKey,
-        };
-        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+        ContextTarget::Live
     }
 
     fn lease_owner() -> Result<SideEffectLeaseOwner, EntityError> {

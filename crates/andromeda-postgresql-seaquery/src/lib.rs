@@ -16,6 +16,7 @@
 
 pub mod advisory_lock;
 pub mod aggregate;
+pub mod branch;
 pub mod cast;
 pub mod clock;
 pub mod collation;

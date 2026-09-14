@@ -114,12 +114,12 @@ mod tests {
 
     /// The entity statement selects the entity relations unaliased.
     fn outer() -> EntityRowRefs {
-        EntityRowRefs::unaliased()
+        EntityRowRefs::unaliased(None)
     }
 
     /// The rows as the temporal path aliases them.
     fn aliased() -> EntityRowRefs {
-        EntityRowRefs::aliased(Alias::new("e"), Alias::new("s"), DocumentsRef::ByKeyLookup)
+        EntityRowRefs::aliased(None, Alias::new("e"), Alias::new("s"), DocumentsRef::ByKeyLookup)
     }
 
     /// Render a distance expression to its SQL with values inlined.

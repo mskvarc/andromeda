@@ -277,11 +277,11 @@ mod tests {
     use std::sync::LazyLock;
 
     /// The unaliased entity rows the entity path filters.
-    static UNALIASED: LazyLock<EntityRowRefs> = LazyLock::new(EntityRowRefs::unaliased);
+    static UNALIASED: LazyLock<EntityRowRefs> = LazyLock::new(|| EntityRowRefs::unaliased(None));
 
     /// The rows as the temporal path aliases them: `e` for the identity,
     /// `s` for the search row.
-    static ALIASED: LazyLock<EntityRowRefs> = LazyLock::new(|| EntityRowRefs::aliased(Alias::new("e"), Alias::new("s"), DocumentsRef::ByKeyLookup));
+    static ALIASED: LazyLock<EntityRowRefs> = LazyLock::new(|| EntityRowRefs::aliased(None, Alias::new("e"), Alias::new("s"), DocumentsRef::ByKeyLookup));
 
     fn name(value: &str) -> AttributeName {
         value.parse().expect("valid attribute name")

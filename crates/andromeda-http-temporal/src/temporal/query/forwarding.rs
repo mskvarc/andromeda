@@ -155,18 +155,13 @@ pub(crate) async fn forward_temporal_history(
 #[cfg(test)]
 mod tests {
     use crate::temporal::query::forwarding::QueryScope;
-    use andromeda_context_space::{
-        context_space::{ContextSpace, ContextSpaceKind},
-        context_space_key::ContextSpaceKey,
-        context_target::ContextTarget,
-    };
+    use andromeda_context_space::context_target::ContextTarget;
     use andromeda_federation::config::SplitEntities;
     use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 
     /// The tenant's ordinary live branch, which a distributed read may leave.
     fn live_target() -> ContextTarget {
-        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+        ContextTarget::Live
     }
 
     /// A temporal query confined to this broker (clause 5.5.13 `local=true`).

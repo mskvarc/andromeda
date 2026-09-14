@@ -19,7 +19,8 @@
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
 use andromeda_postgresql_schema::temporal::ScopeHistory;
-use sea_query::{Condition, Expr, ExprTrait, Iden, Query, SimpleExpr};
+use andromeda_postgresql_seaquery::branch::qualified;
+use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, Query, SimpleExpr};
 
 /// The `scope_history` alias one scope event is read under.
 ///
@@ -70,17 +71,21 @@ pub fn positioned_on_axis(axis: ScopeHistory) -> SimpleExpr {
 /// `from`. An open end of the window drops the predicate that would have
 /// bounded it: a window with no closing instant admits an event of any age, and
 /// a window with no opening instant cannot have been preceded by anything.
+///
+/// `schema` is the branch schema the supersession probe reads `scope_history`
+/// in, so a temporal query over a Snapshot branch tests that branch's own
+/// events rather than the live ones its copied surrogate keys collide with.
 #[must_use]
-pub fn overlaps_window(axis: ScopeHistory, interval: TimeInterval) -> Condition {
+pub fn overlaps_window(axis: ScopeHistory, interval: TimeInterval, schema: Option<&DynIden>) -> Condition {
     let mut condition = Condition::all();
     match interval {
         TimeInterval::Unbounded => {}
         TimeInterval::Before(to) => condition = condition.add(Expr::col((ScopeEvent, axis)).lt(to)),
-        TimeInterval::After(from) => condition = condition.add(not_superseded_by(Expr::val(from), axis)),
+        TimeInterval::After(from) => condition = condition.add(not_superseded_by(Expr::val(from), axis, schema)),
         TimeInterval::Between { from, to } => {
             condition = condition
                 .add(Expr::col((ScopeEvent, axis)).lt(to))
-                .add(not_superseded_by(Expr::val(from), axis));
+                .add(not_superseded_by(Expr::val(from), axis, schema));
         }
     }
     condition
@@ -91,11 +96,14 @@ pub fn overlaps_window(axis: ScopeHistory, interval: TimeInterval) -> Condition 
 /// The last event at or before `instant` decides what the entity's scope was
 /// then, which is the event that both started at or before it and had not been
 /// superseded by it.
+///
+/// `schema` is the branch schema the supersession probe reads `scope_history`
+/// in, as for [`overlaps_window`].
 #[must_use]
-pub fn valid_at(axis: ScopeHistory, instant: &SimpleExpr) -> Condition {
+pub fn valid_at(axis: ScopeHistory, instant: &SimpleExpr, schema: Option<&DynIden>) -> Condition {
     Condition::all()
         .add(Expr::col((ScopeEvent, axis)).lte(instant.clone())) // clone: the instant is named twice and sea-query takes it by value.
-        .add(not_superseded_by(instant.clone(), axis)) // clone: as above.
+        .add(not_superseded_by(instant.clone(), axis, schema)) // clone: as above.
 }
 
 /// Whether no event of the same entity, later on `axis`, falls at or before
@@ -107,11 +115,11 @@ pub fn valid_at(axis: ScopeHistory, instant: &SimpleExpr) -> Condition {
 /// comparison against the outer event is strict, which is what stops the
 /// several rows one multi-path write lands at a single instant from ending each
 /// other's interval and collapsing it to zero length.
-fn not_superseded_by(instant: SimpleExpr, axis: ScopeHistory) -> SimpleExpr {
+fn not_superseded_by(instant: SimpleExpr, axis: ScopeHistory, schema: Option<&DynIden>) -> SimpleExpr {
     let mut probe = Query::select();
     probe
         .expr(Expr::val(1))
-        .from_as(ScopeHistory::Table, SupersedingScopeEvent)
+        .from(qualified(schema, ScopeHistory::Table).alias(SupersedingScopeEvent))
         .and_where(Expr::col((SupersedingScopeEvent, ScopeHistory::TemporalEntityKey)).equals((ScopeEvent, ScopeHistory::TemporalEntityKey)))
         .and_where(Expr::col((SupersedingScopeEvent, axis)).gt(Expr::col((ScopeEvent, axis))))
         .and_where(Expr::col((SupersedingScopeEvent, axis)).lte(instant));
@@ -164,6 +172,7 @@ mod tests {
                 from: instant("2018-08-01T12:00:00Z"),
                 to: instant("2018-08-01T13:00:00Z"),
             },
+            None,
         ));
         assert!(sql.contains("\"sh\".\"observed_at\" < "), "{sql}");
         assert!(!sql.contains("\"sh\".\"observed_at\" >= "), "{sql}");
@@ -172,21 +181,29 @@ mod tests {
 
     #[test]
     fn an_unbounded_window_constrains_nothing() {
-        let sql = render(overlaps_window(ScopeHistory::ObservedAt, TimeInterval::Unbounded));
+        let sql = render(overlaps_window(ScopeHistory::ObservedAt, TimeInterval::Unbounded, None));
         assert!(!sql.contains("\"sh\".\"observed_at\""), "{sql}");
         assert!(!sql.contains("NOT EXISTS"), "{sql}");
     }
 
     #[test]
     fn a_before_window_bounds_only_the_start_of_the_interval() {
-        let sql = render(overlaps_window(ScopeHistory::ObservedAt, TimeInterval::Before(instant("2018-08-01T13:00:00Z"))));
+        let sql = render(overlaps_window(
+            ScopeHistory::ObservedAt,
+            TimeInterval::Before(instant("2018-08-01T13:00:00Z")),
+            None,
+        ));
         assert!(sql.contains("\"sh\".\"observed_at\" < "), "{sql}");
         assert!(!sql.contains("NOT EXISTS"), "{sql}");
     }
 
     #[test]
     fn an_after_window_bounds_only_the_end_of_the_interval() {
-        let sql = render(overlaps_window(ScopeHistory::ObservedAt, TimeInterval::After(instant("2018-08-01T12:00:00Z"))));
+        let sql = render(overlaps_window(
+            ScopeHistory::ObservedAt,
+            TimeInterval::After(instant("2018-08-01T12:00:00Z")),
+            None,
+        ));
         assert!(!sql.contains("\"sh\".\"observed_at\" < "), "{sql}");
         assert!(sql.contains("NOT EXISTS"), "{sql}");
     }
@@ -195,7 +212,11 @@ mod tests {
     /// the entity the outer event belongs to.
     #[test]
     fn supersession_is_strict_and_confined_to_one_entity() {
-        let sql = render(overlaps_window(ScopeHistory::ObservedAt, TimeInterval::After(instant("2018-08-01T12:00:00Z"))));
+        let sql = render(overlaps_window(
+            ScopeHistory::ObservedAt,
+            TimeInterval::After(instant("2018-08-01T12:00:00Z")),
+            None,
+        ));
         assert!(sql.contains("\"sh_next\".\"observed_at\" > \"sh\".\"observed_at\""), "{sql}");
         assert!(!sql.contains("\"sh_next\".\"observed_at\" >= \"sh\".\"observed_at\""), "{sql}");
         assert!(sql.contains("\"sh_next\".\"temporal_entity_key\" = \"sh\".\"temporal_entity_key\""), "{sql}");
@@ -213,7 +234,7 @@ mod tests {
     #[test]
     fn validity_at_an_instant_reads_the_event_in_force_then() {
         let instant_expr = Expr::col((Alias::new("ah"), Alias::new("observed_at")));
-        let sql = render(valid_at(ScopeHistory::ObservedAt, &instant_expr));
+        let sql = render(valid_at(ScopeHistory::ObservedAt, &instant_expr, None));
         assert!(sql.contains("\"sh\".\"observed_at\" <= \"ah\".\"observed_at\""), "{sql}");
         assert!(sql.contains("\"sh_next\".\"observed_at\" <= \"ah\".\"observed_at\""), "{sql}");
     }

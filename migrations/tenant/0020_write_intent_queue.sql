@@ -39,52 +39,55 @@
 -- from `recorded_at` because a replayed write is accepted again at a later
 -- moment while recording at the original one.
 --
--- There is no dead-letter for an intent. The intent is the durable record of
+-- There is no dead-letter for an intent, unlike the other durable queues: it
+-- carries the shared claimable-queue lease contract (`claimed_at`,
+-- `claimed_by`, `lease_until`, `attempt_count`, `next_attempt_at`,
+-- `last_error`) but no `exhausted_at` door. The intent is the durable record of
 -- history the broker already accepted, so an intent that keeps failing is not
 -- discarded: it stays claimable at a bounded retry cadence and is reported
 -- once its attempt count passes the operator threshold
 -- (`temporal.intent_stuck_after_attempts`). `last_error` keeps the latest
 -- failure summary, cut to 2048 characters by the drain before it is written.
 --
--- Physical shape. The queue is claim-shaped: a claim writes `lease_owner`,
--- `lease_until` and `attempts`, a retry writes `available_at`, `last_error`
--- and clears the lease, and an acknowledgement deletes the row. Only
--- `available_at` is an index key, so every claim and most retries can be
--- heap-only updates; `fillfactor = 70` leaves the page room for them, and the
--- aggressive per-table autovacuum settings reclaim the dead versions a claim
--- leaves behind before they accumulate. Column order is alignment order --
--- not-null fixed-width descending, then nullable fixed-width, then varlena --
--- with LZ4 on the varlena columns; `entity_id` is `COLLATE "C"` like every
--- identifier column, since it is only ever matched by equality.
+-- Physical shape. The queue is claim-shaped: a claim writes `claimed_at`,
+-- `claimed_by`, `lease_until` and `attempt_count`, a retry writes
+-- `next_attempt_at`, `last_error` and clears the lease, and an acknowledgement
+-- deletes the row. Only `next_attempt_at` is an index key, so every claim and
+-- most retries can be heap-only updates; `fillfactor = 70` leaves the page room
+-- for them, and the aggressive per-table autovacuum settings reclaim the dead
+-- versions a claim leaves behind before they accumulate. Column order is
+-- alignment order -- not-null fixed-width descending, then nullable fixed-width,
+-- then varlena -- with LZ4 on the varlena columns; `entity_id` is `COLLATE "C"`
+-- like every identifier column, since it is only ever matched by equality.
 --
 -- Claim-path note. The claim `UPDATE ... WHERE sequence IN (SELECT ... ORDER BY
 -- sequence LIMIT n FOR UPDATE SKIP LOCKED)` is served by
--- `idx_temporal_append_intents_claim` on `(available_at, sequence)`. The
+-- `idx_temporal_append_intents_claim` on `(next_attempt_at, sequence)`. The
 -- single-key `claimable_at` expression index the notification queue adopts is
 -- measured and not adopted here: the claim's filter depth was measured at 0.84
 -- rows removed per row returned (database-performance decision records,
--- Wave 3), under the threshold of 3 that would justify it, and `(available_at,
+-- Wave 3), under the threshold of 3 that would justify it, and `(next_attempt_at,
 -- sequence)` is kept because `sequence` is the fairness key the claim orders
 -- by -- older work must not be starved behind newer.
 -- ============================================================================
 
 CREATE TABLE temporal_append_intents (
     sequence BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    context_space_key BIGINT NOT NULL REFERENCES context_spaces(context_space_key) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     base INTEGER NOT NULL,
-    attempts INTEGER NOT NULL DEFAULT 0,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
     write_id UUID NOT NULL,
+    claimed_at TIMESTAMPTZ,
     lease_until TIMESTAMPTZ,
-    lease_owner UUID,
+    claimed_by UUID,
     entity_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
     intent JSONB COMPRESSION lz4 NOT NULL,
     last_error TEXT COMPRESSION lz4,
-    CONSTRAINT uq_temporal_append_intents_write UNIQUE (context_space_key, write_id, entity_id, base),
-    CONSTRAINT chk_temporal_append_intents_attempts_non_negative CHECK (attempts >= 0),
+    CONSTRAINT uq_temporal_append_intents_write UNIQUE (write_id, entity_id, base),
+    CONSTRAINT chk_temporal_append_intents_attempt_count_non_negative CHECK (attempt_count >= 0),
     CONSTRAINT chk_temporal_append_intents_base_non_negative CHECK (base >= 0),
-    CONSTRAINT chk_temporal_append_intents_lease_coherent CHECK ((lease_owner IS NULL) = (lease_until IS NULL)),
+    CONSTRAINT chk_temporal_append_intents_claim_coherent CHECK (num_nonnulls(claimed_at, lease_until, claimed_by) IN (0, 3)),
     CONSTRAINT chk_temporal_append_intents_last_error_length CHECK (last_error IS NULL OR length(last_error) <= 2048)
 ) WITH (
     fillfactor = 70,
@@ -96,10 +99,10 @@ CREATE TABLE temporal_append_intents (
 );
 
 CREATE INDEX idx_temporal_append_intents_claim
-    ON temporal_append_intents (context_space_key, available_at, sequence);
+    ON temporal_append_intents (next_attempt_at, sequence);
 
 CREATE INDEX idx_temporal_append_intents_entity
-    ON temporal_append_intents (context_space_key, entity_id, sequence);
+    ON temporal_append_intents (entity_id, sequence);
 
 CREATE TABLE write_records (
     recorded_at TIMESTAMPTZ NOT NULL,

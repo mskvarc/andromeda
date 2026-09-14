@@ -367,10 +367,6 @@ mod tests {
         query_outcome::QueryOutcome,
         storage_profile::StorageProfile,
     };
-    use andromeda_context_space::{
-        context_space::{ContextSpace, ContextSpaceKind},
-        context_space_key::ContextSpaceKey,
-    };
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
     use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
@@ -597,8 +593,7 @@ mod tests {
     }
 
     fn live_target() -> ContextTarget {
-        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+        ContextTarget::Live
     }
 
     fn ids(resolved: &ResolvedLinkedEntities) -> Vec<&str> {

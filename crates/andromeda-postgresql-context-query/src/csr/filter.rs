@@ -442,7 +442,7 @@ mod tests {
             }
             assert!(!evaluate(&expr, &absent()), "{} must reject an entity without the attribute", case.expression);
 
-            let projection_sql = render_entity_condition(compile(&expr, &EntityRowRefs::unaliased(), &names()));
+            let projection_sql = render_entity_condition(compile(&expr, &EntityRowRefs::unaliased(None), &names()));
             assert!(
                 projection_sql.contains("EXISTS("),
                 "{} must test presence structurally: {projection_sql}",

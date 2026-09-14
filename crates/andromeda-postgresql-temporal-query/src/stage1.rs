@@ -13,7 +13,6 @@ use crate::{
     alias::{Ah, Ahg, An, Ang, Ce, Cs, EntityIdColumn, S, Sg},
     axis::axis_column,
 };
-use andromeda_context_space::context_space_key::ContextSpaceKey;
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
@@ -37,13 +36,14 @@ use andromeda_postgresql_schema::{
     temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
 };
 use andromeda_postgresql_seaquery::{
+    branch::qualified,
     cast::cast,
     literal::{false_literal, int_literal},
     operator::regex_match,
     pg_type::PostgresType,
 };
 use iri_rs::IriBuf;
-use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Func, JoinType, Order, SelectStatement};
+use sea_query::{Condition, DynIden, Expr as SeaExpr, ExprTrait, Func, JoinType, Order, SelectStatement};
 
 /// The Stage 1 statement and its optional count, each a statement tree the store
 /// binds and executes on its own.
@@ -69,16 +69,16 @@ pub struct Stage1Query {
 /// combination clause 4.10 does not admit. Returns
 /// [`RenderError::ReferenceGeometryEncoding`] when the geo query's reference
 /// geometry cannot be encoded as `PostGIS` EWKB.
-pub fn build_stage1_entity_ids(context_space_key: ContextSpaceKey, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Stage1Query, RenderError> {
+pub fn build_stage1_entity_ids(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Stage1Query, RenderError> {
     // Entity-level conditions, applied to `temporal_entities` under alias "e".
-    let entity_conditions = build_entity_conditions_for_temporal(context_space_key, compiled, names)?;
+    let entity_conditions = build_entity_conditions_for_temporal(schema, compiled, names)?;
 
     let mut select = SelectStatement::new();
     select
         .expr_as(SeaExpr::col((E, TemporalEntities::Id)), EntityIdColumn)
-        .from_as(TemporalEntities::Table, E)
+        .from(qualified(schema, TemporalEntities::Table).alias(E))
         .cond_where(entity_conditions.clone()) // clone: the count query applies the same entity predicate
-        .cond_where(SeaExpr::exists(temporal_match_subquery(context_space_key, compiled)));
+        .cond_where(SeaExpr::exists(temporal_match_subquery(schema, compiled)));
 
     // Clause 5.7.4.5: "If Entity ordering is specified (see clause 4.23), then
     // the JSON-LD array returned shall be ordered according to the member names
@@ -108,9 +108,9 @@ pub fn build_stage1_entity_ids(context_space_key: ContextSpaceKey, compiled: &Co
         let mut count_select = SelectStatement::new();
         count_select
             .expr(Func::count(SeaExpr::col((E, TemporalEntities::Id))))
-            .from_as(TemporalEntities::Table, E)
+            .from(qualified(schema, TemporalEntities::Table).alias(E))
             .cond_where(entity_conditions)
-            .cond_where(SeaExpr::exists(temporal_match_subquery(context_space_key, compiled)));
+            .cond_where(SeaExpr::exists(temporal_match_subquery(schema, compiled)));
         Some(count_select.take())
     } else {
         None
@@ -120,12 +120,12 @@ pub fn build_stage1_entity_ids(context_space_key: ContextSpaceKey, compiled: &Co
 }
 
 /// Build the correlated stream/history predicate shared by result and count.
-fn temporal_match_subquery(context_space_key: ContextSpaceKey, compiled: &CompiledTemporalQuery) -> SelectStatement {
-    let temporal_conditions = build_temporal_stage1_conditions(compiled);
+fn temporal_match_subquery(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> SelectStatement {
+    let temporal_conditions = build_temporal_stage1_conditions(schema, compiled);
     let mut select = SelectStatement::new();
     select
         .expr(int_literal(1))
-        .from_as(TemporalAttributeStreams::Table, S)
+        .from(qualified(schema, TemporalAttributeStreams::Table).alias(S))
         .join_as(
             JoinType::Join,
             AttributeNames::Table,
@@ -133,29 +133,23 @@ fn temporal_match_subquery(context_space_key: ContextSpaceKey, compiled: &Compil
             SeaExpr::col((An, AttributeNames::Id)).equals((S, TemporalAttributeStreams::AttributeNameId)),
         )
         .cond_where(SeaExpr::col((S, TemporalAttributeStreams::TemporalEntityKey)).equals((E, TemporalEntities::EntityKey)))
-        .cond_where(SeaExpr::col((S, TemporalAttributeStreams::ContextSpaceKey)).eq(context_space_key.as_i64()))
         .cond_where(temporal_conditions);
 
     if compiled.window.interval.is_bounded() {
         select.join_as(
             JoinType::Join,
-            AttributeHistory::Table,
+            qualified(schema, AttributeHistory::Table),
             Ah,
             SeaExpr::col((Ah, AttributeHistory::StreamKey)).equals((S, TemporalAttributeStreams::StreamKey)),
         );
-        select.cond_where(SeaExpr::col((Ah, AttributeHistory::ContextSpaceKey)).eq(context_space_key.as_i64()));
     }
     select.take()
 }
 
 /// Build entity-level conditions for temporal queries (using "e" alias for
 /// the `temporal_entities` table).
-fn build_entity_conditions_for_temporal(
-    context_space_key: ContextSpaceKey,
-    compiled: &CompiledTemporalQuery,
-    names: &QueryNames,
-) -> Result<Condition, RenderError> {
-    let mut condition = Condition::all().add(SeaExpr::col((E, TemporalEntities::ContextSpaceKey)).eq(context_space_key.as_i64()));
+fn build_entity_conditions_for_temporal(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Condition, RenderError> {
+    let mut condition = Condition::all();
 
     // Entity selectors, unioned (clause 5.2.33): `(sel1) OR (sel2) OR ...`,
     // each reached through the `e` alias stage 1 selects the temporal
@@ -178,11 +172,11 @@ fn build_entity_conditions_for_temporal(
         ConsideredEntities::NoEntity => condition = condition.add(false_literal()),
     }
 
-    if let Some(probe) = current_state_probe(context_space_key, compiled, names) {
+    if let Some(probe) = current_state_probe(schema, compiled, names) {
         condition = condition.add(SeaExpr::exists(probe));
     }
 
-    if let Some(probe) = temporal_geo_existential(context_space_key, compiled)? {
+    if let Some(probe) = temporal_geo_existential(schema, compiled)? {
         condition = condition.add(SeaExpr::exists(probe));
     }
 
@@ -203,17 +197,16 @@ fn build_entity_conditions_for_temporal(
 /// checks its restriction against the `GeoProperty` instances "within the
 /// interval defined by the temporal query", which are the `attribute_history`
 /// rows, not current state. [`temporal_geo_existential`] carries it.
-fn current_state_probe(context_space_key: ContextSpaceKey, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Option<SelectStatement> {
+fn current_state_probe(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Option<SelectStatement> {
     let q_expr = compiled.entities.q_expr.as_ref()?;
 
-    let rows = EntityRowRefs::aliased(Ce, Cs, DocumentsRef::ByKeyLookup);
+    let rows = EntityRowRefs::aliased(schema.cloned(), Ce, Cs, DocumentsRef::ByKeyLookup);
 
     let mut probe = SelectStatement::new();
     probe
         .expr(int_literal(1))
-        .from_as(Entities::Table, Ce)
+        .from(qualified(schema, Entities::Table).alias(Ce))
         .cond_where(SeaExpr::col((Ce, Entities::Id)).equals((E, TemporalEntities::Id)))
-        .cond_where(SeaExpr::col((Ce, Entities::ContextSpaceKey)).eq(context_space_key.as_i64()))
         .cond_where(q_filter::compile(q_expr, &rows, names));
     Some(probe.take())
 }
@@ -235,7 +228,7 @@ fn current_state_probe(context_space_key: ContextSpaceKey, compiled: &CompiledTe
 ///
 /// Returns [`RenderError::ReferenceGeometryEncoding`] or [`RenderError::Query`]
 /// exactly as the shared relation rendering does.
-fn temporal_geo_existential(context_space_key: ContextSpaceKey, compiled: &CompiledTemporalQuery) -> Result<Option<SelectStatement>, RenderError> {
+fn temporal_geo_existential(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> Result<Option<SelectStatement>, RenderError> {
     let Some(geo) = &compiled.entities.geo else {
         return Ok(None);
     };
@@ -247,7 +240,7 @@ fn temporal_geo_existential(context_space_key: ContextSpaceKey, compiled: &Compi
     let mut probe = SelectStatement::new();
     probe
         .expr(int_literal(1))
-        .from_as(TemporalAttributeStreams::Table, Sg)
+        .from(qualified(schema, TemporalAttributeStreams::Table).alias(Sg))
         .join_as(
             JoinType::Join,
             AttributeNames::Table,
@@ -256,13 +249,11 @@ fn temporal_geo_existential(context_space_key: ContextSpaceKey, compiled: &Compi
         )
         .join_as(
             JoinType::Join,
-            AttributeHistory::Table,
+            qualified(schema, AttributeHistory::Table),
             Ahg,
             SeaExpr::col((Ahg, AttributeHistory::StreamKey)).equals((Sg, TemporalAttributeStreams::StreamKey)),
         )
         .cond_where(SeaExpr::col((Sg, TemporalAttributeStreams::TemporalEntityKey)).equals((E, TemporalEntities::EntityKey)))
-        .cond_where(SeaExpr::col((Sg, TemporalAttributeStreams::ContextSpaceKey)).eq(context_space_key.as_i64()))
-        .cond_where(SeaExpr::col((Ahg, AttributeHistory::ContextSpaceKey)).eq(context_space_key.as_i64()))
         .cond_where(SeaExpr::col((Ang, AttributeNames::Name)).eq(geo.geoproperty.as_str()))
         .cond_where(SeaExpr::col((Ahg, AttributeHistory::ValueGeo)).is_not_null())
         .cond_where(geo_window_condition(compiled))
@@ -313,7 +304,7 @@ fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<
 }
 
 /// Build temporal-specific conditions for Stage 1 (attribute filters, `datasetId`, timerel, `scopeQ`).
-fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery) -> Condition {
+fn build_temporal_stage1_conditions(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> Condition {
     let mut condition = Condition::all();
 
     // Attribute filter: an.name IN (...).
@@ -349,7 +340,12 @@ fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery) -> Conditi
     // Historical scope filtering via EXISTS subquery against scope_history,
     // which hangs off the temporal entity grain rather than off `entities`.
     if let Some(scope_q) = &compiled.entities.scope_q {
-        let target = ScopeTarget::history((E, TemporalEntities::EntityKey), compiled.window.timeproperty, compiled.window.interval);
+        let target = ScopeTarget::history(
+            (E, TemporalEntities::EntityKey),
+            compiled.window.timeproperty,
+            compiled.window.interval,
+            schema.cloned(),
+        );
         condition = condition.add(scope_condition(scope_q, &target));
     }
 
@@ -422,8 +418,7 @@ mod tests {
     /// The Stage 1 result statement, rendered with `$N` placeholders and its
     /// bound values, which is what the store hands to the driver.
     fn built(compiled: &CompiledTemporalQuery, names: &QueryNames) -> (String, Values) {
-        let context_space_key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-        build_stage1_entity_ids(context_space_key, compiled, names)
+        build_stage1_entity_ids(None, compiled, names)
             .expect("valid temporal query")
             .select
             .build(PostgresQueryBuilder)
@@ -431,8 +426,7 @@ mod tests {
 
     /// The same for the count statement, panicking when no count was requested.
     fn built_count(compiled: &CompiledTemporalQuery, names: &QueryNames) -> String {
-        let context_space_key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-        build_stage1_entity_ids(context_space_key, compiled, names)
+        build_stage1_entity_ids(None, compiled, names)
             .expect("valid temporal query")
             .count
             .expect("count requested")

@@ -17,14 +17,13 @@
 //! answer with the 11:00 instant the annex renders.
 
 use crate::alias::Te;
-use andromeda_context_space::context_space_key::ContextSpaceKey;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_postgresql_query::scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis};
 use andromeda_postgresql_schema::temporal::{ScopeHistory, TemporalEntities};
-use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
-use sea_query::{Alias, Condition, Expr, ExprTrait, JoinType, Order, Query, SelectStatement};
+use andromeda_postgresql_seaquery::{branch::qualified, cast::cast, pg_type::PostgresType};
+use sea_query::{Alias, Condition, DynIden, Expr, ExprTrait, JoinType, Order, Query, SelectStatement};
 
 /// The name the statement projects the `ltree` scope path under, decoded back
 /// into a clause 4.18 path by the store.
@@ -74,7 +73,7 @@ pub fn scope_is_selected(compiled: &CompiledTemporalQuery) -> bool {
 /// "each Property and Relationship" rather than among them; the events the
 /// window admits are what the representation carries.
 #[must_use]
-pub fn build_scope_history_query(context_space_key: ContextSpaceKey, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> SelectStatement {
+pub fn build_scope_history_query(schema: Option<&DynIden>, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> SelectStatement {
     let axis = scope_history_axis(compiled.window.timeproperty);
 
     let mut select = Query::select();
@@ -105,24 +104,22 @@ pub fn build_scope_history_query(context_space_key: ContextSpaceKey, entity_id: 
     select.expr_as(Expr::col((ScopeEvent, axis)), Alias::new(SCOPE_EVENT_AT));
 
     select
-        .from_as(ScopeHistory::Table, ScopeEvent)
+        .from(qualified(schema, ScopeHistory::Table).alias(ScopeEvent))
         // Clause 5.6.6 leaves the Temporal Evolution standing when the entity
         // is deleted, so the identity is read from the temporal catalogue and
         // never from current state.
         .join_as(
             JoinType::Join,
-            TemporalEntities::Table,
+            qualified(schema, TemporalEntities::Table),
             Te,
             Expr::col((Te, TemporalEntities::EntityKey)).equals((ScopeEvent, ScopeHistory::TemporalEntityKey)),
         )
         .cond_where(
             Condition::all()
-                .add(Expr::col((Te, TemporalEntities::ContextSpaceKey)).eq(context_space_key.as_i64()))
-                .add(Expr::col((ScopeEvent, ScopeHistory::ContextSpaceKey)).eq(context_space_key.as_i64()))
                 .add(Expr::col((Te, TemporalEntities::Id)).eq(entity_id.to_string()))
                 .add(positioned_on_axis(axis)),
         )
-        .cond_where(overlaps_window(axis, compiled.window.interval))
+        .cond_where(overlaps_window(axis, compiled.window.interval, schema))
         .order_by((ScopeEvent, axis), Order::Asc)
         .order_by((ScopeEvent, ScopeHistory::RecordedAt), Order::Asc)
         .order_by((ScopeEvent, ScopeHistory::WriteId), Order::Asc)
@@ -134,7 +131,6 @@ pub fn build_scope_history_query(context_space_key: ContextSpaceKey, entity_id: 
 #[cfg(test)]
 mod tests {
     use crate::scope_history::{build_scope_history_query, scope_is_selected};
-    use andromeda_context_space::context_space_key::ContextSpaceKey;
     use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
@@ -169,8 +165,7 @@ mod tests {
     }
 
     fn sql_of(compiled: &CompiledTemporalQuery) -> String {
-        let context_space_key = ContextSpaceKey::try_from(1).expect("positive context-space key");
-        build_scope_history_query(context_space_key, &vehicle_id(), compiled).to_string(PostgresQueryBuilder)
+        build_scope_history_query(None, &vehicle_id(), compiled).to_string(PostgresQueryBuilder)
     }
 
     fn iri(raw: &str) -> IriBuf {

@@ -7,11 +7,7 @@
 //! transaction-local update counter of the relation is read after each batch,
 //! which counts exactly the rows the conflict action rewrote and nothing else.
 
-use andromeda_context_space::{
-    context_space::{ContextSpace, ContextSpaceKind},
-    context_space_key::ContextSpaceKey,
-    context_target::ContextTarget,
-};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, entity_key::EntityKey};
 use andromeda_postgresql_context_store::current_attribute_values::{
     row::{ProjectedAttributeKey, ProjectedAttributeRow, ProjectedAttributeValue},
@@ -30,24 +26,15 @@ async fn rows_updated_in_transaction(transaction: &mut Transaction<'_, Postgres>
         .expect("the transaction-local update counter must be readable")
 }
 
-async fn live_target(transaction: &mut Transaction<'_, Postgres>) -> ContextTarget {
-    let stored: i64 = sqlx::query_scalar("SELECT context_space_key FROM context_spaces WHERE kind = 'live'")
-        .fetch_one(&mut **transaction)
-        .await
-        .expect("tenant live context space");
-    let key = ContextSpaceKey::try_from(stored).expect("positive context-space key");
-    ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
-}
-
 #[tokio::test]
 async fn current_projection_restating_an_identical_value_rewrites_no_row() {
     let scope = TestEnvironment::from_suite("current-projection").await.expect("isolated test environment");
     let id = scope.id("Building:noop-suppression");
     let mut transaction = scope.database_pool().begin().await.expect("the transaction must open");
-    let target = live_target(&mut transaction).await;
+    // The live branch is the default schema; the projection upsert names no branch.
+    let target = ContextTarget::Live;
 
-    let entity_key: i64 = sqlx::query_scalar("INSERT INTO entities (context_space_key, id) VALUES ($1, $2) RETURNING entity_key")
-        .bind(target.key().as_i64())
+    let entity_key: i64 = sqlx::query_scalar("INSERT INTO entities (id) VALUES ($1) RETURNING entity_key")
         .bind(&id)
         .fetch_one(&mut *transaction)
         .await
