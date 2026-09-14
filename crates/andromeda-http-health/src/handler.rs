@@ -16,8 +16,24 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde::Serialize;
 use urn_rs::UrnBuilder;
 use uuid::Uuid;
+
+/// The body of a liveness probe: the process is up and answering.
+#[derive(Debug, Serialize)]
+pub struct LivenessReport {
+    /// Always [`HealthStatus::Up`]; liveness consults no dependency.
+    status: HealthStatus,
+}
+
+/// Report that the process is up, without probing any dependency.
+///
+/// Liveness answers only "is the process running and able to serve"; readiness
+/// (`/ready`, which reuses [`check`]) is the signal that weighs dependencies.
+pub async fn live() -> impl IntoResponse {
+    (StatusCode::OK, Json(LivenessReport { status: HealthStatus::Up }))
+}
 
 /// Return aggregate broker health and component details.
 ///
