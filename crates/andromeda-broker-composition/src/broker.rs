@@ -3,6 +3,7 @@
 use crate::{
     component_report::{ComponentReportError, collect as collect_component_reports},
     config::{observability::MetricsExposure, runtime::RuntimeConfig},
+    logging,
     outcome::ProcessExitOutcome,
     postgresql_maintenance::{MaintenanceRegistrationError, register_postgresql_maintenance},
     routes::{
@@ -57,12 +58,7 @@ use chrono::{DateTime, Utc};
 use std::{io::Error as IoError, sync::Arc};
 use thiserror::Error;
 use tokio::runtime::Handle;
-use tracing::{
-    error,
-    info,
-    subscriber::{SetGlobalDefaultError, set_global_default},
-};
-use tracing_subscriber::fmt;
+use tracing::{error, info};
 
 /// HTTP API and process resources whose shutdown begins after traffic drains.
 struct BrokerExecution {
@@ -102,10 +98,15 @@ enum BrokerStartupError {
 
 /// Construct the broker, serve HTTP, then close process resources in order.
 pub async fn run(config: RuntimeConfig) -> ProcessExitOutcome {
-    if let Err(error) = initialize_tracing(&config) {
-        eprintln!("tracing initialization failed: {error}");
-        return ProcessExitOutcome::StartupFailure;
-    }
+    // Held for the whole process: dropping the guard flushes the non-blocking
+    // file appender, so it lives until after the shutdown logs below are written.
+    let _log_guard = match logging::initialize(&config) {
+        Ok(guard) => guard,
+        Err(error) => {
+            eprintln!("tracing initialization failed: {error}");
+            return ProcessExitOutcome::StartupFailure;
+        }
+    };
     report_startup(&config);
     let config = Arc::new(config);
     let telemetry = match install_telemetry(config.observability.metrics) {
@@ -242,12 +243,6 @@ async fn construct(
         tenants,
         process_tasks,
     })
-}
-
-/// Install composition-owned tracing before any runtime resource is opened.
-fn initialize_tracing(config: &RuntimeConfig) -> Result<(), SetGlobalDefaultError> {
-    let subscriber = fmt().compact().with_max_level(config.observability.log_level.as_tracing_level()).finish();
-    set_global_default(subscriber)
 }
 
 /// Report the active construction profile before broker resources are opened.
