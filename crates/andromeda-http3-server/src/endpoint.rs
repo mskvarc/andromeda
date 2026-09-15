@@ -54,7 +54,7 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn an_endpoint_binds_an_ephemeral_udp_port() -> Result<(), Box<dyn Error>> {
+    async fn an_endpoint_binds_an_ephemeral_udp_port() -> Result<(), Box<dyn Error + Send + Sync>> {
         let listener = SelfSignedListener::generate()?;
         let activation = listener.config().activation()?.expect("enabled config yields activation");
         let address = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));

@@ -142,7 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn a_self_signed_key_pair_assembles_a_quic_configuration() -> Result<(), Box<dyn Error>> {
+    fn a_self_signed_key_pair_assembles_a_quic_configuration() -> Result<(), Box<dyn Error + Send + Sync>> {
         let listener = SelfSignedListener::generate()?;
         let activation = listener.config().activation()?.expect("enabled config yields activation");
         quic_server_crypto(activation)?;
@@ -156,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn a_certificate_file_without_certificates_is_rejected() -> Result<(), Box<dyn Error>> {
+    fn a_certificate_file_without_certificates_is_rejected() -> Result<(), Box<dyn Error + Send + Sync>> {
         let directory = TempDir::new()?;
         let empty = directory.path().join("empty.crt");
         File::create(&empty)?.write_all(b"not a certificate\n")?;
@@ -166,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn a_key_file_without_a_key_is_rejected() -> Result<(), Box<dyn Error>> {
+    fn a_key_file_without_a_key_is_rejected() -> Result<(), Box<dyn Error + Send + Sync>> {
         let directory = TempDir::new()?;
         let empty = directory.path().join("empty.key");
         File::create(&empty)?.write_all(b"not a key\n")?;

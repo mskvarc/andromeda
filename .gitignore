@@ -8,3 +8,6 @@ results*
 
 # Self-signed TLS material for the docker/tls example stack (see docs/tls-deployment.md).
 /docker/tls/certs/
+
+# Self-signed TLS material for the docker/http3 example stack (see docs/http3.md).
+/docker/http3/certs/
