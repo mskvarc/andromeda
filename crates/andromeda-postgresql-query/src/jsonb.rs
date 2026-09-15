@@ -4,7 +4,7 @@
 use crate::temporal_operand::{stored_date_time, stored_time};
 use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::scalar::Scalar;
-use andromeda_ngsi_ld_vocabulary::expanded::properties::OBJECT;
+use andromeda_ngsi_ld_vocabulary::expanded::properties::{CREATED_AT, DELETED_AT, MODIFIED_AT, OBJECT, OBSERVED_AT, UNIT_CODE};
 use andromeda_postgresql_seaquery::{
     cast::{cast, cast_compound},
     jsonb::escape_jsonpath_key,
@@ -116,6 +116,16 @@ pub fn attribute_value_jsonpath(attr_iri: &str, sub_attrs: &[&str], value_path: 
         jsonpath.push_str(&escape_jsonpath_key(sub));
         jsonpath.push('"');
     }
+    // A system sub-attribute (clause 4.9: `observedAt`, `unitCode`, and the
+    // clause 4.8 timestamps) is stored as a bare value node
+    // `[{"@type":…,"@value":…}]` rather than wrapped in a `hasValue`/`hasObject`
+    // carrier, so a `q` reaching one terminates at its own `@value` with no
+    // terminal hop. The carrier hop is only inserted for a real Property or
+    // Relationship value.
+    if value_path.is_empty() && sub_attrs.last().is_some_and(|last| is_system_value_node_iri(last)) {
+        jsonpath.push_str("[0].\"@value\"");
+        return jsonpath;
+    }
     jsonpath.push_str("[0].\"");
     jsonpath.push_str(&escape_jsonpath_key(terminal_iri));
     jsonpath.push_str("\"[0]");
@@ -136,6 +146,18 @@ pub fn attribute_value_jsonpath(attr_iri: &str, sub_attrs: &[&str], value_path: 
     jsonpath.push_str(value_key);
     jsonpath.push('"');
     jsonpath
+}
+
+/// Whether an expanded IRI names a system sub-attribute stored as a bare value
+/// node rather than as an attribute with a `hasValue`/`hasObject` carrier.
+///
+/// These are the members `andromeda_entity::sys_attrs` injects and the client's
+/// own `observedAt` and `unitCode`: each is written as `[{"@type":…,"@value":…}]`
+/// (clauses 4.8 and 4.5.2), so a clause 4.9 `q` over one reaches its value at
+/// `@value` directly. The set is enumerated explicitly: a term outside it is a
+/// nested attribute whose value still lives behind a carrier.
+fn is_system_value_node_iri(iri: &str) -> bool {
+    iri == OBSERVED_AT.as_str() || iri == UNIT_CODE.as_str() || iri == CREATED_AT.as_str() || iri == MODIFIED_AT.as_str() || iri == DELETED_AT.as_str()
 }
 
 #[cfg(test)]
@@ -310,6 +332,38 @@ mod tests {
         pretty_assertions::assert_eq!(
             attribute_value_jsonpath("https://example.com/owner", &[], &[CITY], OBJECT.as_str()),
             format!("$[0].\"https://example.com/owner\"[0].\"https://uri.etsi.org/ngsi-ld/hasObject\"[0].\"{CITY}\"[*].\"@value\"")
+        );
+    }
+
+    /// Clause 4.9: a `q` on a system sub-attribute reaches its value directly,
+    /// because it is stored as a bare value node with no `hasValue` carrier.
+    /// Before this, the inserted `hasValue` hop meant `q=temperature.observedAt`
+    /// resolved nothing.
+    #[test]
+    fn a_system_sub_attribute_terminates_at_its_value_with_no_carrier_hop() {
+        for system in [
+            OBSERVED_AT.as_str(),
+            UNIT_CODE.as_str(),
+            CREATED_AT.as_str(),
+            MODIFIED_AT.as_str(),
+            DELETED_AT.as_str(),
+        ] {
+            pretty_assertions::assert_eq!(
+                attribute_value_jsonpath("https://example.com/temperature", &[system], &[], "https://uri.etsi.org/ngsi-ld/hasValue"),
+                format!("$[0].\"https://example.com/temperature\"[0].\"{system}\"[0].\"@value\""),
+                "{system} must reach @value with no hasValue hop"
+            );
+        }
+    }
+
+    /// The regression guard: a user-defined sub-attribute is not a system value
+    /// node, so its value still lives behind the `hasValue` carrier.
+    #[test]
+    fn a_user_defined_sub_attribute_still_hops_through_its_carrier() {
+        let accuracy = "https://uri.etsi.org/ngsi-ld/default-context/accuracy";
+        pretty_assertions::assert_eq!(
+            attribute_value_jsonpath("https://example.com/temperature", &[accuracy], &[], "https://uri.etsi.org/ngsi-ld/hasValue"),
+            format!("$[0].\"https://example.com/temperature\"[0].\"{accuracy}\"[0].\"https://uri.etsi.org/ngsi-ld/hasValue\"[0].\"@value\"")
         );
     }
 }

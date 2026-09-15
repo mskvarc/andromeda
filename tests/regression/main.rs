@@ -49,6 +49,7 @@ mod prior_findings;
 mod projection_linked_entities;
 mod projection_selector_exclusivity;
 mod proof_seal_representation;
+mod q_system_sub_attribute;
 mod query_language_evaluator;
 mod query_language_targets;
 mod query_narrowing_and_geo;

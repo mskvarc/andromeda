@@ -221,11 +221,24 @@ mod tests {
         render_condition(compile(&expr, &EntityRowRefs::unaliased(None), &names()))
     }
 
+    /// Clause 4.9: a `q` on the system sub-attribute `observedAt` reaches its
+    /// value node directly. It is stored bare (`[{"@type":…,"@value":…}]`), so
+    /// the jsonpath must terminate at `@value` with no `hasValue` carrier hop --
+    /// the hop that made this predicate resolve nothing before.
     #[test]
     fn sub_attribute_predicate_falls_back_to_jsonpath() {
         let sql = render("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/observedAt\">=\"2024-01-01T00:00:00Z\"");
         assert!(sql.contains("jsonb_path_query_first"), "{sql}");
         assert!(!sql.contains("current_attribute_values"), "sub-attributes are not projected: {sql}");
+        assert!(
+            sql.contains("$[0].\\\"https://example.com/temperature\\\"[0].\\\"https://uri.etsi.org/ngsi-ld/observedAt\\\"[0].\\\"@value\\\"")
+                || sql.contains("$[0].\"https://example.com/temperature\"[0].\"https://uri.etsi.org/ngsi-ld/observedAt\"[0].\"@value\""),
+            "a system sub-attribute reaches @value directly: {sql}"
+        );
+        assert!(
+            !sql.contains("observedAt\\\"[0].\\\"https://uri.etsi.org/ngsi-ld/hasValue"),
+            "no hasValue hop is inserted: {sql}"
+        );
     }
 
     /// Clause 4.9 gives `attr[member]` two readings — a compound value member,
