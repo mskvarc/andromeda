@@ -10,7 +10,11 @@
 use crate::config::Http3Activation;
 use quinn::crypto::rustls::{NoInitialCipherSuite, QuicServerConfig};
 use rustls::{ServerConfig, crypto::aws_lc_rs::default_provider};
-use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+use rustls_pki_types::{
+    CertificateDer,
+    PrivateKeyDer,
+    pem::{Error as PemError, PemObject},
+};
 use std::{
     fs,
     io,
@@ -39,7 +43,7 @@ pub enum Http3TlsError {
         /// The file whose PEM content was rejected.
         path: PathBuf,
         /// The underlying parse failure.
-        source: io::Error,
+        source: PemError,
     },
     /// A certificate file contained no certificates.
     #[error("no certificates found in {path}")]
@@ -70,8 +74,7 @@ fn load_certificate_chain(path: &Path) -> Result<Vec<CertificateDer<'static>>, H
         path: path.to_path_buf(),
         source,
     })?;
-    let mut reader = bytes.as_slice();
-    let chain = rustls_pemfile::certs(&mut reader)
+    let chain = CertificateDer::pem_slice_iter(&bytes)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|source| Http3TlsError::Pem {
             path: path.to_path_buf(),
@@ -89,13 +92,20 @@ fn load_private_key(path: &Path) -> Result<PrivateKeyDer<'static>, Http3TlsError
         path: path.to_path_buf(),
         source,
     })?;
-    let mut reader = bytes.as_slice();
-    rustls_pemfile::private_key(&mut reader)
-        .map_err(|source| Http3TlsError::Pem {
-            path: path.to_path_buf(),
-            source,
-        })?
-        .ok_or_else(|| Http3TlsError::NoPrivateKey { path: path.to_path_buf() })
+    // `PrivateKeyDer::from_pem_slice` reports an empty file as `NoItemsFound`; every
+    // other `pem::Error` is a genuine parse failure. The enum is `#[non_exhaustive]`,
+    // so it is matched by presence of the one variant we treat specially rather than
+    // exhaustively (which the crate forbids without a catch-all arm).
+    PrivateKeyDer::from_pem_slice(&bytes).map_err(|source| {
+        if matches!(source, PemError::NoItemsFound) {
+            Http3TlsError::NoPrivateKey { path: path.to_path_buf() }
+        } else {
+            Http3TlsError::Pem {
+                path: path.to_path_buf(),
+                source,
+            }
+        }
+    })
 }
 
 /// Assemble the QUIC server crypto configuration for an active HTTP/3 listener.

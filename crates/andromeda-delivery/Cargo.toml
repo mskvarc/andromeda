@@ -26,7 +26,7 @@ mediatype = "0.23.0"
 moka = { version = "0.12.16", features = ["future"] }
 reqwest = { version = "0.13.5", features = ["json"] }
 rumqttc = { version = "0.25.1", features = ["use-rustls"] }
-rustls = { version = "0.23.44", default-features = false, features = ["std"] }
+rustls = { version = "0.23.45", default-features = false, features = ["std"] }
 secrecy = "0.10.3"
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 strum = { version = "0.28.0", features = ["derive"] }

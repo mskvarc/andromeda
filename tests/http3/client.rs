@@ -13,6 +13,7 @@ use h3_quinn::{Connection, OpenStreams};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode};
 use quinn::{ClientConfig, Endpoint, crypto::rustls::QuicClientConfig};
 use rustls::{RootCertStore, crypto::aws_lc_rs::default_provider};
+use rustls_pki_types::{CertificateDer, pem::PemObject};
 use std::{
     env,
     error::Error,
@@ -61,9 +62,8 @@ pub fn tcp_base() -> String {
 pub fn trusted_roots() -> RootCertStore {
     let path = env::var(CERTIFICATE_ENV).unwrap_or_else(|_| "docker/http3/certs/broker.crt".to_owned());
     let pem = fs::read(&path).unwrap_or_else(|error| panic!("read broker certificate {path} (generate it per docker/http3 header): {error}"));
-    let mut reader = pem.as_slice();
     let mut roots = RootCertStore::empty();
-    for certificate in rustls_pemfile::certs(&mut reader) {
+    for certificate in CertificateDer::pem_slice_iter(&pem) {
         roots
             .add(certificate.expect("certificate PEM parses"))
             .expect("certificate is added to the root store");

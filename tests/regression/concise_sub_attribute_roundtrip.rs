@@ -82,7 +82,7 @@ async fn regression_concise_sub_attribute_roundtrip_a_sibling_survives_as_a_sub_
 }
 
 /// Clause 4.5.2.3 geospatial exception: a concise attribute whose `value`
-/// resolves to a GeoJSON geometry, carried beside a sibling, is stored as a
+/// resolves to a `GeoJSON` geometry, carried beside a sibling, is stored as a
 /// `GeoProperty` rather than a `Property` -- a moving entity's location with an
 /// `observedAt` is the common case.
 #[tokio::test]

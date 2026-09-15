@@ -44,11 +44,11 @@ impl SelfSignedListener {
     /// Generate a `localhost` identity and write it to a fresh temporary directory.
     pub(crate) fn generate() -> Result<SelfSignedListener, Box<dyn Error + Send + Sync>> {
         let directory = TempDir::new()?;
-        let CertifiedKey { cert, key_pair } = generate_simple_self_signed(vec!["localhost".to_owned()])?;
+        let CertifiedKey { cert, signing_key } = generate_simple_self_signed(vec!["localhost".to_owned()])?;
         let certificate_path = directory.path().join("broker.crt");
         let private_key_path = directory.path().join("broker.key");
         File::create(&certificate_path)?.write_all(cert.pem().as_bytes())?;
-        File::create(&private_key_path)?.write_all(key_pair.serialize_pem().as_bytes())?;
+        File::create(&private_key_path)?.write_all(signing_key.serialize_pem().as_bytes())?;
         let config = Http3Config {
             mode: Http3Mode::Enabled,
             certificate_path,
