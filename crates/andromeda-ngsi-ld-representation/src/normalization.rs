@@ -108,6 +108,19 @@ fn normalize_attribute(attribute_name: &str, value: &mut Value) {
             *value = as_typed_value(AttributeType::GeoProperty, geometry);
             return;
         }
+        // A typeless object carrying a `value` member alongside other members is
+        // a concise Property with sub-attributes (clause 4.5.2.3): its value is
+        // `value`, and every sibling is its own concise sub-attribute or a
+        // reserved member such as `unitCode`. Naming the Property type turns it
+        // into an ordinary instance, so `normalize_instance` keeps the reserved
+        // members in the envelope and normalizes the rest. Without this the
+        // catch-all below wrapped the whole object as one Property value, burying
+        // the siblings inside `value`.
+        if instance.contains_key("value") && has_member_beyond_value_and_type(instance) {
+            instance.insert("type".to_string(), Value::String(AttributeType::Property.to_string()));
+            normalize_instance(attribute_name, instance);
+            return;
+        }
         // Any other object carries no type to infer, so it is the value of an
         // implicit Property.
         let concise = take(value);
@@ -197,6 +210,15 @@ pub fn distinguishing_member_type(instance: &Map<String, Value>) -> Option<Attri
         }
     }
     inferred
+}
+
+/// Whether a typeless object holds a member other than `value` and `type`.
+///
+/// This is what distinguishes a concise Property carrying sub-attributes
+/// (`{"value": 42, "accuracy": 0.5}`) from the opaque object value clause 4.5.2.3
+/// keeps verbatim (`{"value": 42}`, or an object with no `value` member at all).
+fn has_member_beyond_value_and_type(instance: &Map<String, Value>) -> bool {
+    instance.keys().any(|member| member != "value" && member != "type")
 }
 
 /// The `GeoJSON` geometry type tokens, per RFC 7946 clause 1.4.
@@ -737,5 +759,81 @@ mod tests {
 
         pretty_assertions::assert_eq!(payload["ambiguous"]["type"], json!("Property"));
         assert!(payload["ambiguous"]["value"].is_object());
+    }
+
+    /// Clause 4.5.2.3: a concise Property may carry sub-attributes beside its
+    /// `value`. A typeless `{"value": …, "<sub>": …}` is that shape, so the
+    /// value stays scalar and the sibling becomes its own Property sub-attribute
+    /// rather than being buried inside the Property's value.
+    #[test]
+    fn a_typeless_value_with_a_sibling_is_a_property_carrying_a_sub_attribute() {
+        let mut payload = json!({
+            "id": "urn:ngsi-ld:Device:1",
+            "type": "Device",
+            "temperature": { "value": 42, "accuracy": 0.5 }
+        });
+
+        normalize_entity_attributes(&mut payload);
+
+        pretty_assertions::assert_eq!(
+            payload["temperature"],
+            json!({ "type": "Property", "value": 42, "accuracy": { "type": "Property", "value": 0.5 } })
+        );
+    }
+
+    /// A reserved member (`unitCode`) beside a `value` stays in the Property
+    /// envelope where clause 4.5.2.2 puts it, rather than being wrapped as a
+    /// sub-attribute or buried inside the value.
+    #[test]
+    fn a_typeless_value_with_a_unit_code_keeps_the_unit_code_in_the_envelope() {
+        let mut payload = json!({
+            "id": "urn:ngsi-ld:Device:1",
+            "type": "Device",
+            "temperature": { "value": 42, "unitCode": "CEL" }
+        });
+
+        normalize_entity_attributes(&mut payload);
+
+        pretty_assertions::assert_eq!(payload["temperature"], json!({ "type": "Property", "value": 42, "unitCode": "CEL" }));
+    }
+
+    /// The inference recurses: a sibling that is itself a concise value with its
+    /// own sub-attribute is normalized the same way, one level down.
+    #[test]
+    fn a_typeless_value_with_a_nested_sub_attribute_recurses() {
+        let mut payload = json!({
+            "id": "urn:ngsi-ld:Device:1",
+            "type": "Device",
+            "temperature": { "value": 42, "accuracy": { "value": 0.5, "confidence": 0.9 } }
+        });
+
+        normalize_entity_attributes(&mut payload);
+
+        pretty_assertions::assert_eq!(
+            payload["temperature"],
+            json!({
+                "type": "Property",
+                "value": 42,
+                "accuracy": { "type": "Property", "value": 0.5, "confidence": { "type": "Property", "value": 0.9 } }
+            })
+        );
+    }
+
+    /// The regression guards: without a sibling, a `value`-bearing object is
+    /// still the opaque Property value clause 4.5.2.3 keeps verbatim, and a
+    /// `value` nested inside the value object is not a top-level sibling.
+    #[test]
+    fn a_value_object_without_a_sibling_stays_an_opaque_property_value() {
+        let mut payload = json!({
+            "id": "urn:ngsi-ld:Device:1",
+            "type": "Device",
+            "lone": { "value": 42 },
+            "nested": { "value": { "value": 5 } }
+        });
+
+        normalize_entity_attributes(&mut payload);
+
+        pretty_assertions::assert_eq!(payload["lone"], json!({ "type": "Property", "value": { "value": 42 } }));
+        pretty_assertions::assert_eq!(payload["nested"], json!({ "type": "Property", "value": { "value": { "value": 5 } } }));
     }
 }

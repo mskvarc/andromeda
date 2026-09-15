@@ -16,6 +16,7 @@ mod attrs_scope_admission;
 mod batch_context_expansion;
 mod batch_upsert_duplicates;
 mod coerced_term_representation;
+mod concise_sub_attribute_roundtrip;
 mod context_cache_expiry;
 mod context_source_alias_tenancy;
 mod context_source_subscription_members;
