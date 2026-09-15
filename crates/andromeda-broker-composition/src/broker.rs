@@ -20,6 +20,7 @@ use crate::{
     tenant_factory::BrokerTenantFactory,
 };
 use andromeda_delivery::mqtt::indicator::MqttHealthIndicator;
+use andromeda_extensions::startup_log::log_conformance_override;
 use andromeda_health::aggregate::Health;
 use andromeda_http_api::{api::HttpApi, routes::ApiRoutes};
 use andromeda_http_component_report::routes::ComponentReportRoutes;
@@ -202,8 +203,13 @@ async fn construct(
     }
     let component_reports = collect_component_reports(registry.main_pool()).await?;
 
-    let entity_routes = EntityRoutes::new(Arc::new(BrokerEntityStateResolver::new(Arc::clone(&tenants))));
-    let temporal_routes = TemporalRoutes::new(Arc::new(BrokerTemporalStateResolver::new(Arc::clone(&tenants))));
+    // Resolve the enabled extensions once, folding in the conformance override,
+    // and log loudly if that override disabled a feature the operator turned on.
+    let enabled_extensions = config.extensions.resolve();
+    log_conformance_override(&config.extensions);
+
+    let entity_routes = EntityRoutes::new(Arc::new(BrokerEntityStateResolver::new(Arc::clone(&tenants))), enabled_extensions);
+    let temporal_routes = TemporalRoutes::new(Arc::new(BrokerTemporalStateResolver::new(Arc::clone(&tenants))), enabled_extensions);
     let context_registry_routes = ContextRegistryRoutes::new(Arc::new(BrokerContextRegistryStateResolver::new(Arc::clone(&tenants))));
     let registration_routes = RegistrationRoutes::new(Arc::new(BrokerRegistrationStateResolver::new(Arc::clone(&tenants))));
     let subscription_routes = SubscriptionRoutes::new(Arc::new(BrokerSubscriptionStateResolver::new(Arc::clone(&tenants))));
@@ -227,6 +233,7 @@ async fn construct(
             ContextSourceAliases::new(config.identity.source_alias.clone()), // clone: configuration and the alias family own the configured alias
             started_at,
             config.identity.source_extras.clone(), // clone: configuration and immutable route state own the raw extras
+            enabled_extensions,
         )))
         .notification_receiver(NotificationReceiverRoutes::new(Arc::new(BrokerNotificationReceiverResolver::new(
             Arc::clone(&tenants),

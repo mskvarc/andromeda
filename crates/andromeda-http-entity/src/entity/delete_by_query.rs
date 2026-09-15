@@ -4,16 +4,14 @@
 use crate::entity::{
     BatchOperationResult,
     ContextSpec,
-    ContextUrl,
     EntityQuery,
     EntityResultExt,
     EntityTenantState,
     ForwardPurgeRequest,
     ForwardedPurgeResult,
-    IncomingVia,
     IntoResponse,
     NgsiLdProtocolHeaders,
-    OriginalUri,
+    NgsiLdRequestEnvelope,
     ProblemResponse,
     PurgeMode,
     Response,
@@ -29,11 +27,39 @@ use crate::entity::{
     single_source_failure,
 };
 use andromeda_entity::side_effect::BatchSideEffectMode;
+use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
-use andromeda_ngsi_ld_query::entity_selection::ConsideredEntities;
-use axum::http::HeaderMap;
+use andromeda_http_response::classified_report::ClassifiedReport;
+use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+use andromeda_ngsi_ld_query::{entity_selection::ConsideredEntities, projection::purge::DatasetPurgeScope};
+use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
+use axum::{Extension, http::Uri as RequestUri};
 use std::slice;
+
+/// The dataset scope of a purge, gated by the `purge_dataset_scope` extension.
+///
+/// `deleteAll` removes every instance; a single `datasetId` names one
+/// (`purge datasetId` targets one instance, mirroring clause 5.6.5); absence of
+/// both is the standard whole-attribute Purge. When a dataset scope is asked for
+/// while the extension is off, clause 6.3.12's pattern answers `InvalidRequest`.
+fn purge_dataset_scope(query: &EntityQueryParameters, enabled: EnabledExtensions, uri: &RequestUri) -> Result<DatasetPurgeScope, ProblemResponse> {
+    let scope = if query.delete_all == Some(true) {
+        DatasetPurgeScope::All
+    } else if let Some(selector) = query.dataset_id.as_deref().and_then(<[_]>::first) {
+        DatasetPurgeScope::Selector(selector.clone()) // clone: the compiled scope owns its selector
+    } else {
+        DatasetPurgeScope::Unfiltered
+    };
+    if !scope.is_unfiltered() && !enabled.purge_dataset_scope_enabled() {
+        let report = ClassifiedReport::public(
+            NgsiLdErrorType::InvalidRequest,
+            "datasetId and deleteAll on Purge Entities require the purge_dataset_scope extension".to_string(),
+        );
+        return Err(report.with_instance(uri.clone()));
+    }
+    Ok(scope)
+}
 
 /// Fold the forwarded purges into the clause 5.2.16 result: every failed
 /// registration contributes one clause 5.2.17 error per entity it is reported
@@ -55,11 +81,14 @@ pub(crate) async fn delete_by_query(
         target,
         snapshot: _,
     }: EntityTenantState,
-    OriginalUri(uri): OriginalUri,
-    context: ContextUrl,
-    IncomingVia(incoming_via): IncomingVia,
+    NgsiLdRequestEnvelope {
+        uri,
+        context,
+        incoming_via,
+        headers,
+    }: NgsiLdRequestEnvelope,
     protocol: NgsiLdProtocolHeaders,
-    headers: HeaderMap,
+    Extension(enabled): Extension<EnabledExtensions>,
     EntityQuery(mut query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
     if !target.permits_federation() {
@@ -81,11 +110,24 @@ pub(crate) async fn delete_by_query(
     // below and the identifiers it reports are the map's.
     let entity_map = resolve_purge_map(&state.entity_maps, &target, &mut query, protocol.entity_map.as_ref(), &uri).await?;
 
-    // Determine purge mode from drop/keep parameters (S5.6.21)
+    // The dataset scope is the `purge_dataset_scope` extension: gated here (the
+    // extractor has no config access), following clause 6.3.12's pattern of
+    // answering an unsupported parameter with `InvalidRequest`. When the flag is
+    // off, `datasetId`/`deleteAll` are refused and the standard whole-attribute
+    // Purge (clause 5.6.21) is unchanged.
+    let dataset = purge_dataset_scope(&query, enabled, &uri)?;
+
+    // Determine purge mode from drop/keep parameters (clause 5.6.21).
     let purge_mode = if let Some(ref drop_attrs) = query.drop {
-        PurgeMode::Drop(drop_attrs.clone())
+        PurgeMode::Drop {
+            attributes: drop_attrs.clone(), // clone: the compiled mode owns its attribute list
+            dataset,
+        }
     } else if let Some(ref keep_attrs) = query.keep {
-        PurgeMode::Keep(keep_attrs.clone())
+        PurgeMode::Keep {
+            attributes: keep_attrs.clone(), // clone: the compiled mode owns its attribute list
+            dataset,
+        }
     } else {
         PurgeMode::DeleteEntities
     };
@@ -96,7 +138,7 @@ pub(crate) async fn delete_by_query(
     // Clause 5.6.21.4: the local phase deletes the matched entities, or only
     // the listed (or all but the listed) members of each.
     let mut result = match purge_mode {
-        PurgeMode::Drop(_) | PurgeMode::Keep(_) => {
+        PurgeMode::Drop { .. } | PurgeMode::Keep { .. } => {
             state
                 .entities
                 .purge_attrs(&target, &entity_ids, &purge_mode, &context)

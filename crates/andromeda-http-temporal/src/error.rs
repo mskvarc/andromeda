@@ -31,6 +31,10 @@ pub fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
         TemporalError::Validation { detail } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail),
         TemporalError::NotFound { detail } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, detail),
         TemporalError::OperationNotSupported { detail } => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, detail),
+        // The clause 5.6.21.4 `TooManyResults` bound the standard Purge raises,
+        // applied to the delete-by-query extension: a 403 naming the count and
+        // the limit so the client can narrow its window or selectors.
+        TemporalError::TooManyResults { .. } => ClassifiedReport::public(NgsiLdErrorType::TooManyResults, error.to_string()),
         TemporalError::JsonLd(source) => classify_jsonld_error(source),
         TemporalError::Query(source) => classify_query_error(source),
         TemporalError::Request(source) => classify_parameter_error(source),
@@ -151,6 +155,7 @@ mod tests {
                 TemporalError::operation_not_supported("aggregation refused"),
                 NgsiLdErrorType::OperationNotSupported,
             ),
+            ("TooManyResults", TemporalError::too_many_results(500, 100), NgsiLdErrorType::TooManyResults),
             (
                 "JsonLd",
                 TemporalError::JsonLd(JsonLdError::invalid_document("bad document")),

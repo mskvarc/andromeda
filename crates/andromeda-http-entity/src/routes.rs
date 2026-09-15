@@ -7,8 +7,10 @@ use crate::{
     entity_type,
     state::{EntityRouteState, EntityStateResolver},
 };
+use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_http_extraction::scoped_response::echo_scope_headers;
 use axum::{
+    Extension,
     Router,
     middleware::from_fn,
     routing::{delete, get, patch, post, put},
@@ -22,8 +24,14 @@ pub struct EntityRoutes {
 }
 
 impl EntityRoutes {
-    /// Construct every entity, entity-operation, type, and attribute route with only a focused tenant resolver.
-    pub fn new(resolver: Arc<dyn EntityStateResolver>) -> EntityRoutes {
+    /// Construct every entity, entity-operation, type, and attribute route with
+    /// a focused tenant resolver and the enabled-extension set.
+    ///
+    /// The extension set is attached as a request extension so the single
+    /// `DELETE /entities` gate reads it: the `EntityQuery` extractor has no
+    /// config access, so the `purge_dataset_scope` gate is applied in the
+    /// handler off this layer (extension-strategy.md 5.2).
+    pub fn new(resolver: Arc<dyn EntityStateResolver>, enabled: EnabledExtensions) -> EntityRoutes {
         let entity_routes = Router::new()
             .route("/", post(entity::create::create))
             .route("/", get(entity::query::query))
@@ -38,7 +46,11 @@ impl EntityRoutes {
             .route("/{id}/attrs", patch(entity::update_attributes::update_attrs))
             .route("/{id}/attrs/{attr_id}", patch(entity::partial_update_attribute::partial_update_attr))
             .route("/{id}/attrs/{attr_id}", delete(entity::delete_attribute::delete_attr))
-            .route("/{id}/attrs/{attr_id}", put(entity::replace_attribute::replace_attr));
+            .route("/{id}/attrs/{attr_id}", put(entity::replace_attribute::replace_attr))
+            // The single upstream gate for the `purge_dataset_scope` extension:
+            // the enabled set is available to the `DELETE /entities` handler,
+            // which is the only one that reads it.
+            .layer(Extension(enabled));
 
         // The batch query is consumption over POST, so it is added after the
         // guard layer and stays outside it.
@@ -75,6 +87,7 @@ mod tests {
         routes::EntityRoutes,
         state::{EntityRouteServices, EntityStateResolver},
     };
+    use andromeda_extensions::enabled::EnabledExtensions;
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
         body::Body,
@@ -107,7 +120,7 @@ mod tests {
 
     #[tokio::test]
     async fn complete_entity_route_inventory_is_owned_by_this_fragment() -> Result<(), Box<dyn Error>> {
-        let routes = EntityRoutes::new(Arc::new(RejectingResolver)).into_router();
+        let routes = EntityRoutes::new(Arc::new(RejectingResolver), EnabledExtensions::none()).into_router();
         for (method, path) in [
             (Method::POST, "/entities"),
             (Method::GET, "/entities"),
@@ -145,7 +158,7 @@ mod tests {
     /// handlers with the branch target resolved at the HTTP boundary.
     #[tokio::test]
     async fn snapshot_scoped_core_operations_reach_their_handlers() -> Result<(), Box<dyn Error>> {
-        let routes = EntityRoutes::new(Arc::new(RejectingResolver)).into_router();
+        let routes = EntityRoutes::new(Arc::new(RejectingResolver), EnabledExtensions::none()).into_router();
         for (method, path) in [
             (Method::POST, "/entities"),
             (Method::PATCH, "/entities/urn:ngsi-ld:Entity:1"),
@@ -167,7 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn methods_outside_the_inventory_are_rejected() -> Result<(), Box<dyn Error>> {
-        let routes = EntityRoutes::new(Arc::new(RejectingResolver)).into_router();
+        let routes = EntityRoutes::new(Arc::new(RejectingResolver), EnabledExtensions::none()).into_router();
         for (method, path) in [
             (Method::POST, "/types"),
             (Method::DELETE, "/attributes/speed"),

@@ -20,6 +20,7 @@ use crate::{
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_delivery::mqtt::pool::MqttTransportPool;
 use andromeda_entity::{config::EntityConfig, spatial_config::SpatialConfig};
+use andromeda_extensions::config::ExtensionsConfig;
 use andromeda_federation::config::FederationConfig;
 use andromeda_http_source_identity::config::InfoConfig;
 use andromeda_jsonld::config::JsonLdConfig;
@@ -86,6 +87,7 @@ struct TenantFactoryConfig {
     spatial: SpatialConfig,
     temporal: TemporalConfig,
     tenancy: TenancyConfig,
+    extensions: ExtensionsConfig,
 }
 
 impl From<&RuntimeConfig> for TenantFactoryConfig {
@@ -102,6 +104,7 @@ impl From<&RuntimeConfig> for TenantFactoryConfig {
             spatial: config.spatial.clone(),
             temporal: config.temporal.clone(),
             tenancy: config.tenancy.clone(),
+            extensions: config.extensions.clone(),
         }
     }
 }

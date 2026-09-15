@@ -70,6 +70,9 @@ impl EntityMapHttpClassify for TemporalError {
             TemporalError::Validation { detail } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail),
             TemporalError::NotFound { detail } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, detail),
             TemporalError::OperationNotSupported { detail } => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, detail),
+            // The delete-by-query bound: an entity-map path never triggers it,
+            // but the classification is total over the shared error type.
+            TemporalError::TooManyResults { .. } => ClassifiedReport::public(NgsiLdErrorType::TooManyResults, self.to_string()),
             TemporalError::JsonLd(source) => classify_jsonld_error(source),
             TemporalError::Query(source) => classify_query_error(source),
             TemporalError::Request(source) => classify_parameter_error(source),

@@ -27,6 +27,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-tenancy",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-extensions",
         "andromeda-health",
         "andromeda-http-headers",
         "andromeda-ngsi-ld-lexicon",

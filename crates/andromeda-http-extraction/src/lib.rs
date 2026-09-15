@@ -26,6 +26,7 @@ pub mod scoped_response;
 pub mod snapshot;
 pub mod snapshot_purge;
 pub mod snapshot_scope_guard;
+pub mod temporal_delete_query;
 pub mod temporal_query;
 pub mod tenant;
 pub mod tenant_state;

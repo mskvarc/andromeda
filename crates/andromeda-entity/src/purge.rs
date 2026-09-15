@@ -6,7 +6,7 @@
 //! outside that write, so the write states the `modifiedAt` it assumed and is
 //! recomputed against a fresh read if a concurrent writer got in first.
 
-use crate::{EntityService, error::EntityError, notification_plan::attribute_change_groups};
+use crate::{EntityService, error::EntityError, notification_plan::attribute_change_groups, purge_dataset::build_dataset_purge_write};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     change_event::ChangeEvent,
@@ -18,7 +18,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::expanded::{entity_member::extract_types, removed_instance::removed_attribute_instances};
-use andromeda_ngsi_ld_query::projection::purge::PurgeMode;
+use andromeda_ngsi_ld_query::projection::purge::{DatasetPurgeScope, PurgeMode};
 use iri_rs::IriBuf;
 use serde_json::Value;
 use std::sync::Arc;
@@ -48,9 +48,9 @@ impl EntityService {
         let prepared_context = self.engine.prepare_term_context(context);
         let attr_iris: Vec<IriBuf> = match mode {
             PurgeMode::DeleteEntities => return Ok(0),
-            PurgeMode::Drop(attrs) | PurgeMode::Keep(attrs) => {
-                let mut expanded = Vec::with_capacity(attrs.len());
-                for attr in attrs {
+            PurgeMode::Drop { attributes, .. } | PurgeMode::Keep { attributes, .. } => {
+                let mut expanded = Vec::with_capacity(attributes.len());
+                for attr in attributes {
                     expanded.push(self.engine.expand_term(attr.as_str(), &prepared_context).await?);
                 }
                 expanded
@@ -63,7 +63,7 @@ impl EntityService {
             let mut purged: Option<PurgedEntity> = None;
             let outcome = self
                 .commit_read_modify_write(target, entity_id, |previous| {
-                    let Some((mut write, mut removed)) = build_purge_write(entity_id, previous, mode, &attr_iris) else {
+                    let Some((mut write, mut removed)) = build_scoped_purge_write(entity_id, previous, mode, &attr_iris) else {
                         return Ok(None);
                     };
                     let groups = attribute_change_groups(previous, &removed.merged);
@@ -99,15 +99,33 @@ impl EntityService {
 }
 
 /// What one clause 5.6.21 purge removed from one entity.
-struct PurgedEntity {
+pub(crate) struct PurgedEntity {
     /// The entity as it stands once the purged attributes are gone.
-    merged: Arc<Value>,
+    pub(crate) merged: Arc<Value>,
     /// In-process events matching the durable records committed with the write.
-    events: Vec<ChangeEvent>,
+    pub(crate) events: Vec<ChangeEvent>,
 }
 
-/// The write that purges `previous` of the attributes `mode` selects, together
-/// with what it removed, or `None` when the entity holds none of them.
+/// The write that purges one entity, dispatched on the dataset scope.
+///
+/// A whole-attribute scope — the standard clause 5.6.21 default and the
+/// explicit `deleteAll`, which both remove every instance — takes the payload
+/// key-removal path. A `datasetId` selector removes only the named instances of
+/// each targeted attribute, reusing the single-entity clause 5.6.5 mutation.
+fn build_scoped_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_iris: &[IriBuf]) -> Option<(AtomicWrite, PurgedEntity)> {
+    match mode.dataset_scope() {
+        // Whole-entity deletion never reaches attribute purging.
+        None => None,
+        // `deleteAll` removes every instance, which is the whole attribute, so
+        // it reduces to the standard key-removal path rather than a per-instance
+        // one; only a `datasetId` selector needs the instance-level mutation.
+        Some(DatasetPurgeScope::Unfiltered | DatasetPurgeScope::All) => build_purge_write(entity_id, previous, mode, attr_iris),
+        Some(DatasetPurgeScope::Selector(selector)) => build_dataset_purge_write(entity_id, previous, mode, attr_iris, selector),
+    }
+}
+
+/// The write that purges `previous` of the whole attributes `mode` selects,
+/// together with what it removed, or `None` when the entity holds none of them.
 fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_iris: &[IriBuf]) -> Option<(AtomicWrite, PurgedEntity)> {
     let mut purged = previous.clone(); // clone: the "before" side stays intact for the removal diff
     let obj = match &mut purged {
@@ -119,12 +137,12 @@ fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_i
     let obj = obj?;
 
     let keys_to_remove: Vec<String> = match mode {
-        PurgeMode::Drop(_) => attr_iris
+        PurgeMode::Drop { .. } => attr_iris
             .iter()
             .filter(|iri| obj.contains_key(iri.as_str()))
             .map(|iri| iri.as_str().to_owned())
             .collect(),
-        PurgeMode::Keep(_) => obj
+        PurgeMode::Keep { .. } => obj
             .keys()
             .filter(|k| {
                 // Preserve JSON-LD structural keys and NGSI-LD system attrs

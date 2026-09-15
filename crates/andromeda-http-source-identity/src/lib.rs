@@ -13,6 +13,7 @@ pub mod state;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-extensions",
         "andromeda-http-extraction",
         "andromeda-http-response",
         "andromeda-ngsi-ld-lexicon",

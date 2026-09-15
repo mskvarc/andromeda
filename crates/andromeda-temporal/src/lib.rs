@@ -11,6 +11,7 @@ pub mod append_intent;
 pub mod attribute_instance_value;
 mod compilation;
 pub mod config;
+pub mod delete_by_query;
 pub mod error;
 /// Bounded delivery of deferred temporal append intents.
 pub mod intent_drain;

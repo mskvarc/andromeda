@@ -3,6 +3,7 @@
 use crate::error::TemporalError;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_identity::InstanceIdentity, uri::Uri};
+use andromeda_ngsi_ld_query::temporal::history_delete::TemporalHistoryDeleteScope;
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -75,4 +76,23 @@ pub trait TemporalMutator: Send + Sync {
         entity_id: &Uri,
         attribute_name: &AttributeName,
     ) -> Result<(), TemporalError>;
+
+    /// Count the history instances a windowed delete-by-query would remove from
+    /// the given entities (the `temporal_delete_by_query` extension).
+    ///
+    /// Applied to the bound-check pre-count: the same predicate the delete runs,
+    /// under `COUNT`, so an oversized delete is refused before any row is
+    /// removed.
+    #[must_use = "temporal history counts must be awaited"]
+    async fn count_history_instances(&self, target: &ContextTarget, entity_ids: &[Uri], scope: &TemporalHistoryDeleteScope) -> Result<u64, TemporalError>;
+
+    /// Delete the history instances a windowed delete-by-query selects from the
+    /// given entities and return how many were removed (the
+    /// `temporal_delete_by_query` extension).
+    ///
+    /// One transaction: the matching entities are locked, the instances removed,
+    /// their now-empty streams cleaned up only for an unbounded `deleteAll`, and
+    /// the idempotency records the removed writes held are released.
+    #[must_use = "temporal history deletions must be awaited"]
+    async fn delete_history_instances(&self, target: &ContextTarget, entity_ids: &[Uri], scope: &TemporalHistoryDeleteScope) -> Result<u64, TemporalError>;
 }

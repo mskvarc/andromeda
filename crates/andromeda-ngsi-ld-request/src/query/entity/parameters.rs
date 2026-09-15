@@ -148,6 +148,14 @@ pub struct EntityQueryParameters {
     /// All other attributes are removed. Mutually exclusive with `drop`.
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
     pub keep: Option<Vec<AttributeName>>,
+    /// Whether a `drop`/`keep` purge removes every `datasetId` instance of the
+    /// targeted attributes (the Andromeda `purge_dataset_scope` extension).
+    ///
+    /// Contradictory with `datasetId`, which names one instance: `deleteAll`
+    /// means "ignore datasetId". Inert unless the extension is enabled, in which
+    /// case it adds clause-5.6.13 `deleteAll` precision to the standard purge.
+    #[serde(rename = "deleteAll")]
+    pub delete_all: Option<bool>,
 }
 
 impl_shared_query_params!(EntityQueryParameters {
@@ -636,5 +644,24 @@ mod tests {
     fn validate_accepts_keep_alone() {
         let p = params_from_query("type=Vehicle&keep=speed");
         assert!(p.validate().is_ok());
+    }
+
+    /// Clause 5.6.13: `deleteAll` and `datasetId` are contradictory, so the pair
+    /// is a `BadRequestData`. The check is independent of whether the
+    /// dataset-scope extension is enabled, which the handler gates separately.
+    #[test]
+    fn validate_rejects_dataset_id_with_delete_all() {
+        let p = params_from_query("type=Vehicle&drop=speed&datasetId=urn:ngsi-ld:Dataset:1&deleteAll=true");
+        let err = p.validate().expect_err("datasetId and deleteAll contradict");
+        assert!(matches!(err, ParameterError::DatasetIdWithDeleteAll), "got {err:?}");
+        assert!(err.to_string().contains("mutually exclusive"));
+    }
+
+    /// `deleteAll` and `datasetId` each purge dataset-scoped instances on their
+    /// own, so each validates alone.
+    #[test]
+    fn validate_accepts_delete_all_or_dataset_id_alone() {
+        assert!(params_from_query("type=Vehicle&drop=speed&deleteAll=true").validate().is_ok());
+        assert!(params_from_query("type=Vehicle&drop=speed&datasetId=urn:ngsi-ld:Dataset:1").validate().is_ok());
     }
 }

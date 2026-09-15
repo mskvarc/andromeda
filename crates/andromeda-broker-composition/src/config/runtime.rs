@@ -8,6 +8,7 @@ use crate::{
     outcome::ProcessExitOutcome,
 };
 use andromeda_entity::{config::EntityConfig, spatial_config::SpatialConfig};
+use andromeda_extensions::config::ExtensionsConfig;
 use andromeda_federation::config::FederationConfig;
 use andromeda_http_server::config::{ServerConfig, ServerOverrides};
 use andromeda_http_source_identity::config::InfoConfig;
@@ -116,6 +117,9 @@ pub struct RuntimeConfig {
 
     /// Composition-owned tracing configuration.
     pub observability: ObservabilityConfig,
+
+    /// Opt-in, non-standard extension configuration (off by default).
+    pub extensions: ExtensionsConfig,
 }
 
 impl RuntimeConfig {

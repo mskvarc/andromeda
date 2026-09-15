@@ -48,6 +48,12 @@ use std::num::NonZeroU32;
 
 /// Conversion of the canonical clause-5.2.23 body into these parameters.
 pub mod body_conversion;
+/// Reusing the query machinery to resolve a delete-by-query's entity set.
+pub mod delete_conversion;
+/// The parameters of the temporal history delete-by-query extension.
+pub mod delete_parameters;
+/// What a temporal history delete-by-query has to satisfy before it runs.
+pub mod delete_validation;
 /// Boundary deserialisers for the temporal-only parameters.
 pub mod deserialization;
 /// The URL parameters the POST binding carries beside its clause 5.2.23 body.

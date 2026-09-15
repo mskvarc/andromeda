@@ -31,6 +31,7 @@ typed-builder = "0.23.2"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+andromeda-extensions.workspace = true
 andromeda-health.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true

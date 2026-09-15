@@ -15,6 +15,7 @@ ignored = ["toml"]
 workspace = true
 
 [dependencies]
+andromeda-extensions.workspace = true
 andromeda-http-extraction.workspace = true
 andromeda-http-response.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true

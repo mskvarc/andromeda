@@ -19,6 +19,7 @@ pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), Configuratio
     config.snapshot.validate().map_err(owner_configuration_error)?;
     config.notifications.validate().map_err(owner_configuration_error)?;
     config.spatial.validate().map_err(owner_configuration_error)?;
+    config.extensions.validate().map_err(owner_configuration_error)?;
     Ok(())
 }
 

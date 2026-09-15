@@ -38,6 +38,9 @@ pub struct TemporalService {
     pub(crate) engine: JsonLdEngine,
     /// Broker safety cap applied when the client omits `lastN`.
     pub(crate) default_last_n: u32,
+    /// The maximum history instances one delete-by-query may remove before it is
+    /// refused with `TooManyResults` (the `temporal_delete_by_query` extension).
+    pub(crate) delete_by_query_max_matches: u64,
     /// Resolution of `objectType`-annotated Linked Entities whose history this
     /// broker does not hold (clause 4.5.23.1). Absent in a composition without
     /// federation, which resolves joins purely against its own history.
@@ -119,6 +122,7 @@ impl TemporalService {
         ports: TemporalServicePorts,
         engine: JsonLdEngine,
         default_last_n: u32,
+        delete_by_query_max_matches: u64,
         remote_temporal_linked: Option<Arc<dyn RemoteTemporalLinkedSource>>,
     ) -> TemporalService {
         let TemporalServicePorts {
@@ -136,6 +140,7 @@ impl TemporalService {
             entity_reader,
             engine,
             default_last_n,
+            delete_by_query_max_matches,
             remote_temporal_linked,
         }
     }

@@ -134,7 +134,7 @@ impl BoundPresence {
 
 /// The interval of the time axis a temporal query reads, and the property it
 /// reads it on (clause 4.5.19).
-#[derive(Debug, Clone, Copy, TypedBuilder)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TypedBuilder)]
 pub struct TemporalWindow {
     /// The slice of the time axis the query is bounded to.
     #[builder(default = TimeInterval::Unbounded)]

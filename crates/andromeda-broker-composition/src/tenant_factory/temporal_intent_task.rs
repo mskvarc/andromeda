@@ -130,6 +130,7 @@ fn classify_temporal_drain_failure(error: &TemporalError) -> TaskFailure {
         TemporalError::Validation { detail: _ }
         | TemporalError::NotFound { detail: _ }
         | TemporalError::OperationNotSupported { detail: _ }
+        | TemporalError::TooManyResults { .. }
         | TemporalError::JsonLd(_)
         | TemporalError::Query(_)
         | TemporalError::Request(_)

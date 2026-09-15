@@ -108,6 +108,13 @@ impl EntityQueryParameters {
         if self.drop.is_some() && self.keep.is_some() {
             return Err(ParameterError::DropKeepExclusive);
         }
+        // Clause 5.6.13: `deleteAll` removes every instance while `datasetId`
+        // names one, so the pair is contradictory. The check is unconditional;
+        // whether `datasetId`/`deleteAll` are admitted at all is the
+        // flag-dependent gate the handler applies.
+        if self.delete_all == Some(true) && self.dataset_id.is_some() {
+            return Err(ParameterError::DatasetIdWithDeleteAll);
+        }
         check_projection_exclusivity(ProjectionSelectors {
             pick: Presence::of(self.pick.as_deref()),
             omit: Presence::of(self.omit.as_deref()),

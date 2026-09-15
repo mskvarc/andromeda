@@ -27,6 +27,7 @@ impl SourceIdentityRoutes {
 #[cfg(test)]
 mod tests {
     use crate::{routes::SourceIdentityRoutes, state::SourceIdentityState};
+    use andromeda_extensions::enabled::EnabledExtensions;
     use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
     use andromeda_tenancy::context_source_alias::ContextSourceAliases;
     use axum::{
@@ -45,6 +46,7 @@ mod tests {
             ContextSourceAliases::new("test".parse::<ContextSourcePseudonym>()?),
             Utc::now(),
             None,
+            EnabledExtensions::none(),
         );
         let mut request = Request::get("/info/sourceIdentity");
         if let Some(tenant) = tenant {

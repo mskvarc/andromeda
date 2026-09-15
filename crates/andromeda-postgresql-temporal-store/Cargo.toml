@@ -34,6 +34,7 @@ async-trait = "0.1.92"
 bigdecimal = "0.4.10"
 cefact-units = "0.1.2"
 chrono = { version = "0.4.45", features = ["serde"] }
+iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "with-bigdecimal", "with-chrono", "with-json", "with-uuid"] }
 sea-query-sqlx = { version = "0.9.1", features = ["postgres-array", "runtime-tokio", "sqlx-postgres", "with-bigdecimal", "with-chrono", "with-json", "with-uuid"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }

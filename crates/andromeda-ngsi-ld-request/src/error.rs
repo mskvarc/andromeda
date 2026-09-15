@@ -56,6 +56,14 @@ pub enum ParameterError {
     /// `drop` and `keep` were both provided on an entity purge.
     #[error("drop and keep parameters are mutually exclusive")]
     DropKeepExclusive,
+    /// `datasetId` and `deleteAll` were both provided on a purge.
+    ///
+    /// The two are contradictory: `deleteAll` removes every instance and
+    /// `datasetId` names one, so `deleteAll` means "ignore datasetId" and the
+    /// pair cannot both be honoured (clause 5.6.13). Reported as
+    /// `BadRequestData`.
+    #[error("datasetId and deleteAll parameters are mutually exclusive")]
+    DatasetIdWithDeleteAll,
     /// The request combined clause 4.21 selectors that shape the same
     /// projection.
     #[error(transparent)]

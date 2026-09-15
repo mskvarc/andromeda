@@ -1,5 +1,6 @@
 //! Focused immutable state for context source identity retrieval.
 
+use andromeda_extensions::{advertisement::enabled_extension_extras, enabled::EnabledExtensions};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::context_source_identity::{ContextSourceIdentity, ContextSourceIdentityType, uptime_duration};
 use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
@@ -38,21 +39,25 @@ struct ConfiguredIdentity {
     aliases: ContextSourceAliases,
     /// The instant the broker became available.
     started_at: DateTime<Utc>,
-    /// Raw, never-expanded instance information.
+    /// Raw, never-expanded operator instance information.
     extras: Option<Value>,
+    /// The enabled extensions, advertised beside the operator extras under a
+    /// vendor namespace (clause 5.15.1.4).
+    enabled: EnabledExtensions,
 }
 
 impl SourceIdentityState {
     /// Construct the context source identity exposed by the broker, available
     /// since `started_at`.
     #[must_use]
-    pub fn new(id: Uri, aliases: ContextSourceAliases, started_at: DateTime<Utc>, extras: Option<Value>) -> SourceIdentityState {
+    pub fn new(id: Uri, aliases: ContextSourceAliases, started_at: DateTime<Utc>, extras: Option<Value>, enabled: EnabledExtensions) -> SourceIdentityState {
         SourceIdentityState {
             configured: Arc::new(ConfiguredIdentity {
                 id,
                 aliases,
                 started_at,
                 extras,
+                enabled,
             }),
         }
     }
@@ -72,7 +77,9 @@ impl SourceIdentityState {
             context_source_alias: self.configured.aliases.for_tenant(tenant),
             context_source_uptime: uptime_duration(elapsed),
             context_source_time_at: now,
-            context_source_extras: self.configured.extras.clone(), // clone: every response document owns its raw extras
+            // clone: the merge owns the operator extras it folds the enabled
+            // extension tokens into (clause 5.15.1.4).
+            context_source_extras: enabled_extension_extras(self.configured.extras.clone(), self.configured.enabled),
         }
     }
 }
@@ -80,17 +87,23 @@ impl SourceIdentityState {
 #[cfg(test)]
 mod tests {
     use crate::state::SourceIdentityState;
+    use andromeda_extensions::{advertisement::EXTENSION_KEY, enabled::EnabledExtensions};
     use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, tenant::TenantName, uri::Uri};
     use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
     use chrono::{Duration, Utc};
     use std::error::Error;
 
     fn state() -> Result<SourceIdentityState, Box<dyn Error>> {
+        state_with(EnabledExtensions::none())
+    }
+
+    fn state_with(enabled: EnabledExtensions) -> Result<SourceIdentityState, Box<dyn Error>> {
         Ok(SourceIdentityState::new(
             "urn:ngsi-ld:ContextSourceIdentity:test".parse::<Uri>()?,
             ContextSourceAliases::new("test".parse::<ContextSourcePseudonym>()?),
             Utc::now() - Duration::hours(2),
             Some(serde_json::json!({"node": 1})),
+            enabled,
         ))
     }
 
@@ -123,6 +136,27 @@ mod tests {
     #[test]
     fn the_extras_travel_into_every_document() -> Result<(), Box<dyn Error>> {
         let identity = state()?.identity_at(&TenantRef::UnnamedDefault, Utc::now());
+        pretty_assertions::assert_eq!(identity.context_source_extras, Some(serde_json::json!({"node": 1})));
+        Ok(())
+    }
+
+    /// Clause 5.15.1.4: the enabled extensions are advertised beside the
+    /// operator's own extras, under a vendor namespace rather than `ngsi-ld:`.
+    #[test]
+    fn enabled_extensions_are_advertised_beside_the_operator_extras() -> Result<(), Box<dyn Error>> {
+        let identity = state_with(EnabledExtensions::all())?.identity_at(&TenantRef::UnnamedDefault, Utc::now());
+        let extras = identity.context_source_extras.ok_or("extras present")?;
+        pretty_assertions::assert_eq!(extras.get("node"), Some(&serde_json::json!(1)));
+        assert!(extras.get(EXTENSION_KEY).is_some(), "{extras}");
+        assert!(!EXTENSION_KEY.starts_with("ngsi-ld:"));
+        Ok(())
+    }
+
+    /// A conformant broker advertises exactly the operator's extras and no
+    /// extension key.
+    #[test]
+    fn a_broker_with_no_extension_advertises_only_the_operator_extras() -> Result<(), Box<dyn Error>> {
+        let identity = state_with(EnabledExtensions::none())?.identity_at(&TenantRef::UnnamedDefault, Utc::now());
         pretty_assertions::assert_eq!(identity.context_source_extras, Some(serde_json::json!({"node": 1})));
         Ok(())
     }

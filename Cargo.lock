@@ -154,6 +154,7 @@ dependencies = [
  "andromeda-delivery",
  "andromeda-entity",
  "andromeda-entity-map",
+ "andromeda-extensions",
  "andromeda-federation",
  "andromeda-health",
  "andromeda-http-api",
@@ -388,6 +389,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-extensions"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-http-stack",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "toml",
+ "toml-comment",
+ "tracing",
+]
+
+[[package]]
 name = "andromeda-federation"
 version = "0.1.0"
 dependencies = [
@@ -449,6 +465,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-component-report",
+ "andromeda-extensions",
  "andromeda-health",
  "andromeda-http-component-report",
  "andromeda-http-context-registry",
@@ -527,6 +544,7 @@ dependencies = [
  "andromeda-context-space",
  "andromeda-entity",
  "andromeda-entity-map",
+ "andromeda-extensions",
  "andromeda-federation",
  "andromeda-http-extraction",
  "andromeda-http-headers",
@@ -785,6 +803,7 @@ name = "andromeda-http-source-identity"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-extensions",
  "andromeda-http-extraction",
  "andromeda-http-response",
  "andromeda-ngsi-ld-lexicon",
@@ -886,6 +905,7 @@ dependencies = [
  "andromeda-context-commit",
  "andromeda-context-space",
  "andromeda-entity-map",
+ "andromeda-extensions",
  "andromeda-federation",
  "andromeda-http-extraction",
  "andromeda-http-headers",
@@ -1552,6 +1572,7 @@ dependencies = [
  "bigdecimal",
  "cefact-units",
  "chrono",
+ "iri-rs",
  "pretty_assertions",
  "sea-query",
  "sea-query-sqlx",

@@ -21,6 +21,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-delivery",
         "andromeda-entity",
         "andromeda-entity-map",
+        "andromeda-extensions",
         "andromeda-federation",
         "andromeda-health",
         "andromeda-http-api",

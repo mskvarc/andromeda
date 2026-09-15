@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 andromeda-context-space.workspace = true
 andromeda-entity-map.workspace = true
+andromeda-extensions.workspace = true
 andromeda-federation.workspace = true
 andromeda-http-extraction.workspace = true
 andromeda-http-headers.workspace = true

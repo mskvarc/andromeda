@@ -77,6 +77,7 @@ impl HttpApi {
 mod tests {
     use crate::{api::HttpApi, routes::ApiRoutes};
     use andromeda_component_report::{ComponentReport, ComponentVersion};
+    use andromeda_extensions::enabled::EnabledExtensions;
     use andromeda_health::aggregate::Health;
     use andromeda_http_component_report::routes::ComponentReportRoutes;
     use andromeda_http_context_registry::{
@@ -202,8 +203,8 @@ mod tests {
         let directory: Arc<dyn TenantDirectory> = administration.clone();
         let evictor: Arc<dyn OrphanTenantEvictor> = administration;
         let routes = ApiRoutes::builder()
-            .entity(EntityRoutes::new(Arc::new(RejectEntity)))
-            .temporal(TemporalRoutes::new(Arc::new(RejectTemporal)))
+            .entity(EntityRoutes::new(Arc::new(RejectEntity), EnabledExtensions::none()))
+            .temporal(TemporalRoutes::new(Arc::new(RejectTemporal), EnabledExtensions::none()))
             .context_registry(ContextRegistryRoutes::new(Arc::new(RejectContextRegistry)))
             .registration(RegistrationRoutes::new(Arc::new(RejectRegistration)))
             .subscription(SubscriptionRoutes::new(Arc::new(RejectSubscription)))
@@ -214,6 +215,7 @@ mod tests {
                 ContextSourceAliases::new("test".parse::<ContextSourcePseudonym>()?),
                 Utc::now(),
                 None,
+                EnabledExtensions::none(),
             )))
             .notification_receiver(NotificationReceiverRoutes::new(Arc::new(RejectReceiver)))
             .tenancy(TenancyRoutes::new(directory, evictor))

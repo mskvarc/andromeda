@@ -47,7 +47,10 @@ use andromeda_ngsi_ld_model::{
     temporal::{TemporalAggregationRow, TemporalHistoryRow, TemporalValue},
 };
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_query::{projection::grammar::parse_projection_list, temporal::compiled::CompiledTemporalQuery};
+use andromeda_ngsi_ld_query::{
+    projection::grammar::parse_projection_list,
+    temporal::{compiled::CompiledTemporalQuery, history_delete::TemporalHistoryDeleteScope},
+};
 use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
 use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
 use async_trait::async_trait;
@@ -505,6 +508,14 @@ impl TemporalMutator for StubBroker {
     ) -> Result<(), TemporalError> {
         Err(unsupported("delete_instance"))
     }
+
+    async fn count_history_instances(&self, _target: &ContextTarget, _entity_ids: &[Uri], _scope: &TemporalHistoryDeleteScope) -> Result<u64, TemporalError> {
+        Err(unsupported("count_history_instances"))
+    }
+
+    async fn delete_history_instances(&self, _target: &ContextTarget, _entity_ids: &[Uri], _scope: &TemporalHistoryDeleteScope) -> Result<u64, TemporalError> {
+        Err(unsupported("delete_history_instances"))
+    }
 }
 
 impl ContextCommitter for StubBroker {
@@ -538,6 +549,7 @@ fn service(broker: StubBroker) -> TemporalService {
             writes: broker as Arc<dyn ContextCommitter>,
         },
         JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
+        100,
         100,
         None,
     )
@@ -749,6 +761,7 @@ fn service_with_remote(broker: StubBroker, source: &Arc<RecordingSource>) -> Tem
             writes: broker as Arc<dyn ContextCommitter>,
         },
         JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
+        100,
         100,
         Some(Arc::clone(source) as Arc<dyn RemoteTemporalLinkedSource>), // clone: the test keeps its handle on the recording
     )

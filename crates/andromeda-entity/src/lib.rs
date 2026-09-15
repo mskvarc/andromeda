@@ -56,6 +56,7 @@ pub mod pagination_outcome;
 pub mod port;
 /// Purging attributes from a set of entities.
 pub mod purge;
+mod purge_dataset;
 /// Entity query and retrieval operations.
 pub mod query;
 /// Query rows and unapplied work returned by a store.

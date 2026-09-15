@@ -109,6 +109,8 @@ pub mod delete;
 pub mod delete_attribute;
 /// Temporal delete attribute instance handling.
 pub mod delete_attribute_instance;
+/// Temporal history delete-by-query handling (the delete-by-query extension).
+pub mod delete_by_query;
 /// Where the entities a temporal `EntityMap` attributes to this broker come from.
 pub mod local_map_entities;
 /// Temporal query handling.

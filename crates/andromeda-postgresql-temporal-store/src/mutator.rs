@@ -9,6 +9,7 @@
 use crate::{repo::TemporalRepository, temporal_catalog_read::AttributeStreamScope};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_identity::InstanceIdentity, uri::Uri};
+use andromeda_ngsi_ld_query::temporal::history_delete::TemporalHistoryDeleteScope;
 use andromeda_temporal::{
     error::TemporalError,
     port::mutator::{TemporalDeleteScope, TemporalMutator},
@@ -90,5 +91,13 @@ impl TemporalMutator for TemporalRepository {
         TemporalRepository::delete_instance(self, target, instance, entity_id, attribute_name)
             .await
             .map_err(TemporalError::from)
+    }
+
+    async fn count_history_instances(&self, target: &ContextTarget, entity_ids: &[Uri], scope: &TemporalHistoryDeleteScope) -> Result<u64, TemporalError> {
+        self.count_windowed_history(target, entity_ids, scope).await.map_err(TemporalError::from)
+    }
+
+    async fn delete_history_instances(&self, target: &ContextTarget, entity_ids: &[Uri], scope: &TemporalHistoryDeleteScope) -> Result<u64, TemporalError> {
+        self.delete_windowed_history(target, entity_ids, scope).await.map_err(TemporalError::from)
     }
 }

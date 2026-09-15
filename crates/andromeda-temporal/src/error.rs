@@ -27,6 +27,19 @@ pub enum TemporalError {
         /// Unsupported capability detail.
         detail: String,
     },
+    /// A temporal delete-by-query would remove more history instances than the
+    /// configured bound admits (the `temporal_delete_by_query` extension).
+    ///
+    /// Reported off a pre-count, so an oversized delete is refused whole rather
+    /// than half-executed. Classified as `TooManyResults` (403), mirroring the
+    /// clause 5.6.21.4 bound the standard Purge already raises.
+    #[error("temporal delete-by-query would remove {matched} history instances, over the configured maximum of {maximum}")]
+    TooManyResults {
+        /// The number of instances the delete matched.
+        matched: u64,
+        /// The configured upper bound.
+        maximum: u64,
+    },
     /// JSON-LD processing failed.
     #[error(transparent)]
     JsonLd(#[from] JsonLdError),
@@ -93,6 +106,12 @@ impl TemporalError {
     /// Construct an unsupported-capability failure.
     pub fn operation_not_supported(detail: impl Into<String>) -> TemporalError {
         TemporalError::OperationNotSupported { detail: detail.into() }
+    }
+
+    /// Construct an over-the-bound delete-by-query failure.
+    #[must_use]
+    pub const fn too_many_results(matched: u64, maximum: u64) -> TemporalError {
+        TemporalError::TooManyResults { matched, maximum }
     }
 
     /// Construct a persistence failure at an adapter boundary.

@@ -55,6 +55,7 @@ pub(crate) fn temporal(error: TemporalError) -> CommitError {
         TemporalError::Validation { detail } => CommitError::Submission { detail },
         TemporalError::NotFound { .. }
         | TemporalError::OperationNotSupported { .. }
+        | TemporalError::TooManyResults { .. }
         | TemporalError::JsonLd(_)
         | TemporalError::Query(_)
         | TemporalError::Request(_)
