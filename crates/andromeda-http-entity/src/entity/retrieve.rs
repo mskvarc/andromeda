@@ -35,6 +35,7 @@ use crate::{
     },
     read_rendering::{EntityRepresentation, apply_representation_names, render_entity, render_joined_entities},
 };
+use andromeda_entity_map::recording::PageMatches;
 use andromeda_federation::request::{EntityMapInUse, TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_http_headers::{ngsild_entity_map::NgsiLdEntityMap, ngsild_warning::NgsiLdWarning};
@@ -200,7 +201,10 @@ pub(crate) async fn get(
         // created now when none was in use (clause 5.7.1.4), naming this
         // broker and every registration that returned the entity.
         let map_entities = LocalEntitySource::Retrieved(held_locally.then_some(&id));
-        let map_uri = record_map_use(&state.entity_maps, map_use, retrieved.contributions, map_entities, &uri).await?;
+        // A retrieval applies no filters (clause 4.3.6.7), so it sheds nothing
+        // and the match set is never consulted; the per-source reading is the
+        // only one it could need.
+        let map_uri = record_map_use(&state.entity_maps, map_use, retrieved.contributions, map_entities, PageMatches::PerSource, &uri).await?;
         (entity, retrieved.warnings, map_uri)
     };
 

@@ -105,12 +105,24 @@ async fn local_entity_ids(
 /// Create the map an entity query selects, over either binding (clause 5.14.4.4).
 async fn create_from_entity_query(
     state: &Arc<EntityMapRouteServices>,
-    query: &EntityQueryParameters,
+    query: &mut EntityQueryParameters,
     forwarded_query: String,
     rendering: &CreationRendering<'_>,
     triggering: TriggeringRequest<'_>,
 ) -> Result<Response, ProblemResponse> {
+    // The fingerprint is taken from the request as written, before any filter is
+    // held back, so a later query reusing this map -- which fingerprints with its
+    // `q`, geoquery and `scopeQ` present -- matches it.
     let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities(query)).with_entity_map_instance(rendering.uri)?;
+    // Clause 5.5.9.3: a split map fixes candidate entities, so the attribute
+    // reading filters are held back before the local membership is resolved. A
+    // locally held partial entity that fails `q` may be completed by a peer, so
+    // it must stay in the candidate set the map fixes rather than be filtered out
+    // here -- the deferred filters are evaluated once, over the merged result, by
+    // each query that later reuses the map.
+    if state.forwarding.split_entities(query.split_entities).is_split() && !query.is_local() {
+        let _deferred = query.defer_split_filters();
+    }
     let local_ids = local_entity_ids(state, query, rendering.context, rendering.uri).await?;
     create_map(
         state,
@@ -180,7 +192,7 @@ pub async fn create_from_query(
         headers,
     }: NgsiLdRequestEnvelope,
     prefer: PreferHeader,
-    EntityQuery(query): EntityQuery,
+    EntityQuery(mut query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
     validate_entity_map_query(&query, &uri)?;
     let context: ContextSpec = context.into_inner();
@@ -188,7 +200,7 @@ pub async fn create_from_query(
     let forwarded_query = forwarded_query_string(&uri, filters);
     create_from_entity_query(
         &state,
-        &query,
+        &mut query,
         forwarded_query,
         &CreationRendering {
             context: &context,
@@ -222,13 +234,13 @@ pub async fn create_from_query_post(
 ) -> Result<Response, ProblemResponse> {
     // Clause 6.3.5: the body's `@context` and the `Link` context make one.
     let context = context.merge(body_context);
-    let query = EntityQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
+    let mut query = EntityQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
     validate_entity_map_query(&query, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(query.split_entities).is_split());
     let forwarded_query = body_query_string(&query, filters, &uri);
     create_from_entity_query(
         &state,
-        &query,
+        &mut query,
         forwarded_query,
         &CreationRendering {
             context: &context,

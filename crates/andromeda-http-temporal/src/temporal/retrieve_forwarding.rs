@@ -28,7 +28,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::{
     contribution::SourceContribution,
     fingerprint::{FingerprintedRequest, fingerprint_of},
-    recording::RecordingFailure,
+    recording::{PageMatches, RecordingFailure},
     reuse::{EntityMapFlag, EntityMapUse},
     service::EntityMapService,
 };
@@ -226,7 +226,9 @@ async fn record_retrieve_map(
 ) -> Result<Option<Uri>, ProblemResponse> {
     let local = LocalHistoryEntities::Retrieved(local_id.as_ref());
     entity_maps
-        .record_read(map_use, contributions, &local, local.page_filtering())
+        // A retrieval applies no filters, so it prunes nothing and the match set
+        // is never consulted; the per-source reading is all it needs.
+        .record_read(map_use, contributions, &local, local.page_filtering(), PageMatches::PerSource)
         .await
         .map_err(|failure| match failure {
             RecordingFailure::LocalEntities(problem) => problem,

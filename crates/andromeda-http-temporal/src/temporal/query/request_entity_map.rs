@@ -15,7 +15,7 @@ use andromeda_entity_map::{
     contribution::SourceContribution,
     fingerprint::{FingerprintedRequest, fingerprint_of},
     query_scoping::hold_selection_to_map,
-    recording::RecordingFailure,
+    recording::{PageMatches, RecordingFailure},
     reuse::{EntityMapFlag, EntityMapUse},
     service::EntityMapService,
 };
@@ -100,7 +100,9 @@ pub(crate) async fn record_query_map(
         instance,
     };
     entity_maps
-        .record_read(map_use, contributions, &local, local.page_filtering())
+        // Temporal split pruning is not narrowed by the deferred filters here,
+        // so each source's answer is recorded on its own terms (clause 5.7.4.4).
+        .record_read(map_use, contributions, &local, local.page_filtering(), PageMatches::PerSource)
         .await
         .map_err(|failure| match failure {
             RecordingFailure::LocalEntities(problem) => problem,

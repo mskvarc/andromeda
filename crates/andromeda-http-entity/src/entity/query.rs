@@ -28,7 +28,7 @@ use crate::{
         query_forwarding::{ForwardedQueryResults, MergedEntities, QueryForwarding},
         query_page::QueryPage,
         query_response::{QueryCollectionMetadata, query_response},
-        query_split_filters::{defer_filters, retain_matching},
+        query_split_filters::retain_matching,
         request_entity_map::{LocalEntitySource, record_map_use, resolve_query_map_use},
         start_rendering,
         with_linked_resolution_warnings,
@@ -38,7 +38,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
-use andromeda_entity_map::reuse::EntityMapUse;
+use andromeda_entity_map::{recording::PageMatches, reuse::EntityMapUse};
 use andromeda_federation::{
     FederationService,
     config::SplitEntities,
@@ -48,6 +48,7 @@ use andromeda_federation::{
 };
 use andromeda_http_extraction::{context_target, prefer::PreferHeader};
 use andromeda_http_headers::{language::LanguageFilter, ngsild_entity_map::NgsiLdEntityMap, via::Via};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::entity_selection::ConsideredEntities;
 use andromeda_ngsi_ld_request::{
@@ -185,7 +186,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
 
         // Clause 5.7.2.4: with `splitEntities`, `q`, the geoquery and `scopeQ`
         // are decided on the merged entities rather than by any one source.
-        let deferred = split_entities.then(|| defer_filters(&mut query));
+        let deferred = split_entities.then(|| query.defer_split_filters());
         let page = QueryPage::of(&mut query, forwarded.as_ref(), binding.page_pointers());
 
         let (local_entities, local_total) = service.query(&target, &query, &context).await.with_entity_instance(&uri)?;
@@ -194,6 +195,11 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
             warnings,
             contributions,
         } = merge_and_filter(service, local_entities, forwarded, deferred, &query, &context, &uri).await?;
+        // Clause 5.5.9.3: under `splitEntities` the entities that survived the
+        // deferred filters over the merged result are the whole match set the
+        // reused map is pruned against -- captured here over the full result,
+        // before the page window narrows it. A non-split page prunes per source.
+        let split_survivors = split_entities.then(|| entities.iter().map(|entity| entity.id.clone()).collect::<Vec<_>>());
         let (mut entities, total_count) = page.cut(entities, local_total);
 
         // Clause 4.21: the request's `pick`/`omit` govern both the matching
@@ -220,7 +226,8 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         // (re)created.
         let status = if map_use.mints() { StatusCode::CREATED } else { StatusCode::OK };
         let map_entities = LocalEntitySource::queried(service, &target, &query, &context, resolved.as_ref(), &uri);
-        let entity_map_uri = record_map_use(&state.entity_maps, map_use, contributions, map_entities, &uri).await?;
+        let page_matches = split_page_matches(split_survivors, resolved.as_ref());
+        let entity_map_uri = record_map_use(&state.entity_maps, map_use, contributions, map_entities, page_matches, &uri).await?;
 
         let representation = EntityRepresentation::new(language_filter.as_ref(), opts.render_mode, projection);
         apply_representation_names(service, &representation, &context, &mut entities, resolved.as_mut(), &uri).await?;
@@ -393,4 +400,23 @@ async fn merge_and_filter(
         warnings,
         contributions,
     })
+}
+
+/// How the map a `splitEntities` query ran under is pruned (clause 5.5.9.3).
+///
+/// `split_survivors` is `Some` only under `splitEntities`, carrying the entities
+/// that survived the deferred filters over the merged result; the Linked
+/// Entities the join reached join them, since clause 5.5.14 fixes them as part
+/// of the same unitary request rather than as candidates a filter could shed.
+/// A non-split query prunes per source.
+fn split_page_matches(split_survivors: Option<Vec<Uri>>, resolved: Option<&ResolvedJoin<'_>>) -> PageMatches {
+    match split_survivors {
+        Some(mut survivors) => {
+            if let Some(resolved) = resolved {
+                survivors.extend(resolved.linked.keys().cloned()); // clone: the match set owns its identifiers
+            }
+            PageMatches::Merged(survivors)
+        }
+        None => PageMatches::PerSource,
+    }
 }

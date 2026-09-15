@@ -17,7 +17,7 @@ use andromeda_entity_map::{
     contribution::SourceContribution,
     fingerprint::{FingerprintedRequest, fingerprint_of},
     query_scoping::hold_selection_to_map,
-    recording::{LocalMapEntities, MapListing, PageFiltering, RecordingFailure},
+    recording::{LocalMapEntities, MapListing, PageFiltering, PageMatches, RecordingFailure},
     reuse::{EntityMapFlag, EntityMapUse},
     service::EntityMapService,
 };
@@ -232,9 +232,10 @@ pub(crate) async fn record_map_use(
     map_use: EntityMapUse,
     contributions: Vec<SourceContribution>,
     local: LocalEntitySource<'_>,
+    matches: PageMatches,
     instance: &HttpUri,
 ) -> Result<Option<Uri>, ProblemResponse> {
-    maps.record_read(map_use, contributions, &local, local.page_filtering())
+    maps.record_read(map_use, contributions, &local, local.page_filtering(), matches)
         .await
         .map_err(|failure| match failure {
             RecordingFailure::LocalEntities(problem) => problem,

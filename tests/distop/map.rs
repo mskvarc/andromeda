@@ -26,6 +26,7 @@ mod notification_format;
 mod notification_inspection;
 mod notification_reassembly;
 mod source_identity;
+mod split_entities_pruning;
 mod subscription_create;
 mod subscription_document;
 mod subscription_forwarding;

@@ -55,6 +55,27 @@ pub enum MapListing {
     Rechecked,
 }
 
+/// How this page decided which of the map's entities still match, when it
+/// applied the request's filters at all (clause 4.3.6.7, clause 5.5.9.3).
+///
+/// The two readings differ only under `splitEntities`, where no single source
+/// holds enough of an entity to decide the match. Without it, each source
+/// decided its own contribution and the broker rechecked what it holds itself;
+/// with it, the broker applied the deferred filters once over the merged result,
+/// and the survivors are the only authority on what still matches -- the raw
+/// per-source answers are candidates, not matches, so pruning against them would
+/// shed nothing.
+pub enum PageMatches {
+    /// No `splitEntities`: the match set is what this broker still holds
+    /// (listed as [`MapListing::Rechecked`]) together with every identifier each
+    /// consulted source returned.
+    PerSource,
+    /// `splitEntities` (clause 5.5.9.3): the broker evaluated the deferred `q`,
+    /// geoquery and `scopeQ` over the merged local-plus-forwarded result, so the
+    /// surviving identifiers are the whole match set.
+    Merged(Vec<Uri>),
+}
+
 /// Whether preparing this read's page applied the request's filters to the
 /// entities of the map it ran under (clause 4.3.6.7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +125,7 @@ impl EntityMapService {
         contributions: Vec<SourceContribution>,
         local: &L,
         filtering: PageFiltering,
+        matches: PageMatches,
     ) -> Result<Option<Uri>, RecordingFailure<L::Error>>
     where
         L: LocalMapEntities + Sync,
@@ -120,12 +142,29 @@ impl EntityMapService {
                     // fit the query leave the map instead of being offered to
                     // the pages that follow.
                     PageFiltering::Applied => {
-                        let mut matching = local.identifiers(MapListing::Rechecked).await.map_err(RecordingFailure::LocalEntities)?;
-                        let mut consulted = Vec::with_capacity(contributions.len());
-                        for contribution in contributions {
-                            consulted.push(contribution.registration);
-                            matching.extend(contribution.entity_ids);
-                        }
+                        let (matching, consulted) = match matches {
+                            // Each source decided its own contribution, so the
+                            // match set is what the broker still holds plus every
+                            // identifier a consulted source returned.
+                            PageMatches::PerSource => {
+                                let mut matching = local.identifiers(MapListing::Rechecked).await.map_err(RecordingFailure::LocalEntities)?;
+                                let mut consulted = Vec::with_capacity(contributions.len());
+                                for contribution in contributions {
+                                    consulted.push(contribution.registration);
+                                    matching.extend(contribution.entity_ids);
+                                }
+                                (matching, consulted)
+                            }
+                            // Clause 5.5.9.3: under `splitEntities` no single
+                            // source decided the match, so the survivors of the
+                            // broker's own recheck over the merged result are the
+                            // whole match set. The per-source answers are only
+                            // candidates and name every source that was consulted.
+                            PageMatches::Merged(survivors) => {
+                                let consulted = contributions.into_iter().map(|contribution| contribution.registration).collect::<Vec<_>>();
+                                (survivors, consulted)
+                            }
+                        };
                         self.prune_unmatched(&map, &PageCheck::new(matching, consulted))
                             .await
                             .map_err(RecordingFailure::Store)?;
@@ -152,7 +191,7 @@ mod tests {
     use crate::{
         contribution::SourceContribution,
         error::EntityMapError,
-        recording::{LocalMapEntities, MapListing, PageFiltering, RecordingFailure},
+        recording::{LocalMapEntities, MapListing, PageFiltering, PageMatches, RecordingFailure},
         reuse::EntityMapUse,
         service::EntityMapService,
         store::{EntityMapMutation, EntityMapStore, EntityMapStoreFuture},
@@ -287,13 +326,56 @@ mod tests {
 
         let local = Local::answering(Ok(vec![identifier("urn:a")?]));
         let recorded = service
-            .record_read(EntityMapUse::Reuse(Box::new(map)), Vec::new(), &local, PageFiltering::Applied)
+            .record_read(
+                EntityMapUse::Reuse(Box::new(map)),
+                Vec::new(),
+                &local,
+                PageFiltering::Applied,
+                PageMatches::PerSource,
+            )
             .await;
         assert!(matches!(recorded, Ok(Some(_))));
 
         let stored = service.retrieve(&identifier("urn:ngsi-ld:EntityMap:1")?).await?;
         pretty_assertions::assert_eq!(stored.entity_ids().collect::<Vec<_>>(), vec![&identifier("urn:a")?]);
         pretty_assertions::assert_eq!(local.asked_for(), vec![MapListing::Rechecked]);
+        Ok(())
+    }
+
+    /// Clause 5.5.9.3: under `splitEntities` the survivors of the broker's own
+    /// recheck over the merged result are the whole match set, so a candidate a
+    /// source returned but that no longer matched after the merge is shed -- and
+    /// the broker does not ask for a per-source local recheck listing.
+    #[tokio::test]
+    async fn a_split_page_sheds_a_candidate_that_did_not_survive_the_merge() -> Result<(), EntityMapError> {
+        let service = service();
+        let registration = identifier("urn:ngsi-ld:ContextSourceRegistration:1")?;
+        let mut map = map_of("urn:ngsi-ld:EntityMap:5", [identifier("urn:a")?])?;
+        map.add_remote_entities(&registration, [identifier("urn:remote")?]);
+        service.store(&map).await?;
+
+        // The source returned `urn:remote` as a candidate, but only `urn:a`
+        // survived the deferred filters over the merged result.
+        let contributions = vec![SourceContribution {
+            registration: registration.clone(), // clone: the map read below is by identifier, but the contribution owns its registration
+            entity_ids: vec![identifier("urn:remote")?],
+            linked_map: None,
+        }];
+        let local = Local::answering(Err("a split page lists nothing to recheck locally"));
+        let recorded = service
+            .record_read(
+                EntityMapUse::Reuse(Box::new(map)),
+                contributions,
+                &local,
+                PageFiltering::Applied,
+                PageMatches::Merged(vec![identifier("urn:a")?]),
+            )
+            .await;
+        assert!(matches!(recorded, Ok(Some(_))));
+
+        let stored = service.retrieve(&identifier("urn:ngsi-ld:EntityMap:5")?).await?;
+        pretty_assertions::assert_eq!(stored.entity_ids().collect::<Vec<_>>(), vec![&identifier("urn:a")?]);
+        assert!(local.asked_for().is_empty(), "a split page does not ask for a local recheck listing");
         Ok(())
     }
 
@@ -307,7 +389,13 @@ mod tests {
 
         let local = Local::answering(Err("a retrieval never lists them"));
         let recorded = service
-            .record_read(EntityMapUse::Reuse(Box::new(map)), Vec::new(), &local, PageFiltering::NotApplied)
+            .record_read(
+                EntityMapUse::Reuse(Box::new(map)),
+                Vec::new(),
+                &local,
+                PageFiltering::NotApplied,
+                PageMatches::PerSource,
+            )
             .await;
         assert!(matches!(recorded, Ok(Some(_))));
 
@@ -337,6 +425,7 @@ mod tests {
                 contributions,
                 &local,
                 PageFiltering::Applied,
+                PageMatches::PerSource,
             )
             .await;
         assert!(matches!(recorded, Ok(Some(_))));
@@ -356,7 +445,9 @@ mod tests {
     #[tokio::test]
     async fn a_read_under_no_map_records_nothing() {
         let local = Local::answering(Err("no map, nothing to list"));
-        let recorded = service().record_read(EntityMapUse::None, Vec::new(), &local, PageFiltering::Applied).await;
+        let recorded = service()
+            .record_read(EntityMapUse::None, Vec::new(), &local, PageFiltering::Applied, PageMatches::PerSource)
+            .await;
         assert!(matches!(recorded, Ok(None)));
     }
 
@@ -372,6 +463,7 @@ mod tests {
                 Vec::new(),
                 &local,
                 PageFiltering::Applied,
+                PageMatches::PerSource,
             )
             .await;
         assert!(matches!(recorded, Err(RecordingFailure::LocalEntities("the store could not be read"))));
