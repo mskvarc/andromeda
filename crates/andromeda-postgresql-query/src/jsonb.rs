@@ -4,7 +4,7 @@
 use crate::temporal_operand::{stored_date_time, stored_time};
 use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::scalar::Scalar;
-use andromeda_ngsi_ld_vocabulary::expanded::properties::{CREATED_AT, DELETED_AT, MODIFIED_AT, OBJECT, OBSERVED_AT, UNIT_CODE};
+use andromeda_ngsi_ld_vocabulary::expanded::properties::{CREATED_AT, DELETED_AT, EXPIRES_AT, MODIFIED_AT, OBJECT, OBSERVED_AT, UNIT_CODE};
 use andromeda_postgresql_seaquery::{
     cast::{cast, cast_compound},
     jsonb::escape_jsonpath_key,
@@ -152,12 +152,18 @@ pub fn attribute_value_jsonpath(attr_iri: &str, sub_attrs: &[&str], value_path: 
 /// node rather than as an attribute with a `hasValue`/`hasObject` carrier.
 ///
 /// These are the members `andromeda_entity::sys_attrs` injects and the client's
-/// own `observedAt` and `unitCode`: each is written as `[{"@type":…,"@value":…}]`
-/// (clauses 4.8 and 4.5.2), so a clause 4.9 `q` over one reaches its value at
-/// `@value` directly. The set is enumerated explicitly: a term outside it is a
-/// nested attribute whose value still lives behind a carrier.
+/// own `observedAt`, `unitCode` and `expiresAt`: each is written as
+/// `[{"@type":…,"@value":…}]` (clauses 4.5.1, 4.8 and 4.5.2), so a clause 4.9 `q`
+/// over one reaches its value at `@value` directly. The set is enumerated
+/// explicitly: a term outside it is a nested attribute whose value still lives
+/// behind a carrier.
 fn is_system_value_node_iri(iri: &str) -> bool {
-    iri == OBSERVED_AT.as_str() || iri == UNIT_CODE.as_str() || iri == CREATED_AT.as_str() || iri == MODIFIED_AT.as_str() || iri == DELETED_AT.as_str()
+    iri == OBSERVED_AT.as_str()
+        || iri == UNIT_CODE.as_str()
+        || iri == CREATED_AT.as_str()
+        || iri == MODIFIED_AT.as_str()
+        || iri == DELETED_AT.as_str()
+        || iri == EXPIRES_AT.as_str()
 }
 
 #[cfg(test)]
@@ -347,6 +353,7 @@ mod tests {
             CREATED_AT.as_str(),
             MODIFIED_AT.as_str(),
             DELETED_AT.as_str(),
+            EXPIRES_AT.as_str(),
         ] {
             pretty_assertions::assert_eq!(
                 attribute_value_jsonpath("https://example.com/temperature", &[system], &[], "https://uri.etsi.org/ngsi-ld/hasValue"),

@@ -80,3 +80,35 @@ async fn regression_concise_sub_attribute_roundtrip_a_sibling_survives_as_a_sub_
 
     scope.finish().await.expect("cleanup failed");
 }
+
+/// Clause 4.5.2.3 geospatial exception: a concise attribute whose `value`
+/// resolves to a GeoJSON geometry, carried beside a sibling, is stored as a
+/// `GeoProperty` rather than a `Property` -- a moving entity's location with an
+/// `observedAt` is the common case.
+#[tokio::test]
+async fn regression_concise_sub_attribute_roundtrip_a_geometry_value_infers_a_geo_property() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let id = scope.id("Device:concise-geo");
+
+    let entity = json!({
+        "id": id,
+        "type": "Device",
+        // Concise, typeless: a GeoJSON geometry value beside an observedAt sibling.
+        "location": {"value": {"type": "Point", "coordinates": [13.4, 52.5]}, "observedAt": "2024-01-01T00:00:00Z"},
+        "@context": [TEST_SUITE_CONTEXT]
+    });
+    let created = scope.client().post_entity(&entity).send().await.expect("create entity failed");
+    assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
+
+    let normalized = read(&scope, &id, "").await;
+    let location = &normalized["location"];
+    assert_eq!(location["type"], json!("GeoProperty"), "the geometry value infers a GeoProperty: {location}");
+    assert_eq!(location["value"]["type"], json!("Point"), "the geometry is the value: {location}");
+    assert_eq!(
+        location["observedAt"],
+        json!("2024-01-01T00:00:00Z"),
+        "observedAt stays in the envelope: {location}"
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}

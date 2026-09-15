@@ -134,6 +134,37 @@ async fn regression_q_system_sub_attribute_unit_code_selects_by_its_string_value
     scope.finish().await.expect("cleanup failed");
 }
 
+/// Clause 4.9 over the system sub-attribute `expiresAt` (a clause 4.5.1
+/// attribute member stored as the same bare `DateTime` value node) selects by
+/// its stored value, exactly as `observedAt` does.
+#[tokio::test]
+async fn regression_q_system_sub_attribute_expires_at_selects_by_its_datetime_value() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let soon = scope.id("Building:expires-soon");
+    let late = scope.id("Building:expires-late");
+    let entity = |id: &str, expires_at: &str| {
+        json!({
+            "id": id,
+            "type": "Building",
+            "temperature": {"type": "Property", "value": 20, "expiresAt": expires_at},
+            "@context": [TEST_SUITE_CONTEXT]
+        })
+    };
+    create(&scope, &entity(&soon, "2025-01-01T00:00:00Z")).await;
+    create(&scope, &entity(&late, "2030-01-01T00:00:00Z")).await;
+
+    assert!(
+        matches(&scope, &late, "temperature.expiresAt>\"2027-01-01T00:00:00Z\"").await,
+        "the late expiry is after the bound"
+    );
+    assert!(
+        !matches(&scope, &soon, "temperature.expiresAt>\"2027-01-01T00:00:00Z\"").await,
+        "the soon expiry is not"
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
 /// The control: a user-defined sub-attribute is still reached through its
 /// `hasValue` carrier, so the fix does not regress the ordinary case.
 #[tokio::test]

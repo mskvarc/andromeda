@@ -109,15 +109,24 @@ fn normalize_attribute(attribute_name: &str, value: &mut Value) {
             return;
         }
         // A typeless object carrying a `value` member alongside other members is
-        // a concise Property with sub-attributes (clause 4.5.2.3): its value is
+        // a concise attribute with sub-attributes (clause 4.5.2.3): its value is
         // `value`, and every sibling is its own concise sub-attribute or a
-        // reserved member such as `unitCode`. Naming the Property type turns it
-        // into an ordinary instance, so `normalize_instance` keeps the reserved
-        // members in the envelope and normalizes the rest. Without this the
-        // catch-all below wrapped the whole object as one Property value, burying
-        // the siblings inside `value`.
+        // reserved member such as `unitCode`. Naming the type turns it into an
+        // ordinary instance, so `normalize_instance` keeps the reserved members
+        // in the envelope and normalizes the rest. Without this the catch-all
+        // below wrapped the whole object as one Property value, burying the
+        // siblings inside `value`.
+        //
+        // Clause 4.5.2.3's geospatial exception applies to the inferred type:
+        // when the `value` member itself resolves to a GeoJSON geometry, the
+        // GeoProperty sub-type is inferred instead of Property (see clause 4.7).
         if instance.contains_key("value") && has_member_beyond_value_and_type(instance) {
-            instance.insert("type".to_string(), Value::String(AttributeType::Property.to_string()));
+            let inferred = if instance.get("value").and_then(Value::as_object).is_some_and(is_geojson_geometry) {
+                AttributeType::GeoProperty
+            } else {
+                AttributeType::Property
+            };
+            instance.insert("type".to_string(), Value::String(inferred.to_string()));
             normalize_instance(attribute_name, instance);
             return;
         }
@@ -815,6 +824,58 @@ mod tests {
                 "type": "Property",
                 "value": 42,
                 "accuracy": { "type": "Property", "value": 0.5, "confidence": { "type": "Property", "value": 0.9 } }
+            })
+        );
+    }
+
+    /// A typeless attribute of a non-Property family carrying a sibling is
+    /// inferred from its own distinguishing member (`valueList` -> `ListProperty`),
+    /// not from the `value` branch, so its reserved members stay in the envelope
+    /// and the sibling becomes a first-class sub-attribute. The `value`-branch
+    /// inference is reached only when no distinguishing member is present, so it
+    /// cannot mis-type these families.
+    #[test]
+    fn a_typeless_list_property_with_a_sibling_keeps_its_family_and_normalizes_the_sibling() {
+        let mut payload = json!({
+            "id": "urn:ngsi-ld:Device:1",
+            "type": "Device",
+            "readings": { "valueList": [1, 2, 3], "unitCode": "CEL", "accuracy": 0.5 }
+        });
+
+        normalize_entity_attributes(&mut payload);
+
+        pretty_assertions::assert_eq!(
+            payload["readings"],
+            json!({
+                "type": "ListProperty",
+                "valueList": [1, 2, 3],
+                "unitCode": "CEL",
+                "accuracy": { "type": "Property", "value": 0.5 }
+            })
+        );
+    }
+
+    /// Clause 4.5.2.3 geospatial exception: when a typeless concise attribute's
+    /// `value` member resolves to a `GeoJSON` geometry, the `GeoProperty` sub-type
+    /// is inferred even though a sibling forced the `value`-with-sub-attributes
+    /// shape -- a moving entity's `location` with an `observedAt` is the common
+    /// case. The sibling still becomes a first-class sub-attribute.
+    #[test]
+    fn a_typeless_value_resolving_to_a_geometry_with_a_sibling_is_a_geo_property() {
+        let mut payload = json!({
+            "id": "urn:ngsi-ld:Device:1",
+            "type": "Device",
+            "location": { "value": {"type": "Point", "coordinates": [13.4, 52.5]}, "observedAt": "2024-01-01T00:00:00Z" }
+        });
+
+        normalize_entity_attributes(&mut payload);
+
+        pretty_assertions::assert_eq!(
+            payload["location"],
+            json!({
+                "type": "GeoProperty",
+                "value": {"type": "Point", "coordinates": [13.4, 52.5]},
+                "observedAt": "2024-01-01T00:00:00Z"
             })
         );
     }
