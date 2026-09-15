@@ -28,7 +28,7 @@ mod tests {
     };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_jsonld::engine::processor::JsonLdEngine;
-    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches};
+    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance, relation::matches};
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
     use andromeda_ngsi_ld_model::{
         expanded::{
@@ -50,7 +50,7 @@ mod tests {
     use andromeda_tenancy::tenant_ref::TenantRef;
     use async_trait::async_trait;
     use serde_json::{Value, json};
-    use std::{collections::HashMap, sync::Arc};
+    use std::{collections::HashMap, str::FromStr, sync::Arc};
 
     const TEMPERATURE: &str = "https://example.com/temperature";
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
@@ -227,7 +227,7 @@ mod tests {
     fn near_berlin() -> GeoQuery {
         GeoQuery {
             georel: GeoRel::Near {
-                max_distance: Some(1_000.0),
+                max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
                 min_distance: None,
             },
             geometry: Geometry::from_geojson_value(&json!({"type": "Point", "coordinates": [13.4, 52.5]})).expect("valid geometry"),

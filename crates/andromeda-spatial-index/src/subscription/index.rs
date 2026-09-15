@@ -108,10 +108,12 @@ mod tests {
         geo_rel::GeoRel,
         geometry::Geometry,
         position::Position,
+        positive_distance::PositiveDistance,
     };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use iri_rs::{IriBuf, iri};
+    use std::str::FromStr;
 
     fn uri(id: &str) -> Uri {
         format!("urn:ngsi-ld:Subscription:{id}").parse().expect("a valid subscription URI")
@@ -167,7 +169,7 @@ mod tests {
                 "sub-near",
                 point(0.0, 0.0),
                 GeoRel::Near {
-                    max_distance: Some(100.0),
+                    max_distance: Some(PositiveDistance::from_str("100").expect("positive distance")),
                     min_distance: None,
                 },
             ),
@@ -184,7 +186,7 @@ mod tests {
                 "sub-5km",
                 point(0.0, 0.0),
                 GeoRel::Near {
-                    max_distance: Some(5_000.0),
+                    max_distance: Some(PositiveDistance::from_str("5000").expect("positive distance")),
                     min_distance: None,
                 },
             ),
@@ -245,7 +247,7 @@ mod tests {
                 point(0.0, 0.0),
                 GeoRel::Near {
                     max_distance: None,
-                    min_distance: Some(300.0),
+                    min_distance: Some(PositiveDistance::from_str("300").expect("positive distance")),
                 },
             ),
         );
@@ -262,7 +264,7 @@ mod tests {
             "sub-north",
             point(0.0, 60.0),
             GeoRel::Near {
-                max_distance: Some(5_000.0),
+                max_distance: Some(PositiveDistance::from_str("5000").expect("positive distance")),
                 min_distance: None,
             },
         );

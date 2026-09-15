@@ -355,7 +355,7 @@ fn build_temporal_stage1_conditions(schema: Option<&DynIden>, compiled: &Compile
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
+    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
     use andromeda_ngsi_ld_query::{
         entity_selection::{EntitySelection, EntitySelector},
@@ -370,6 +370,7 @@ mod tests {
     use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, entity_type_id::EntityTypeId};
     use chrono::{DateTime, Utc};
     use sea_query::{PostgresQueryBuilder, Value, Values};
+    use std::str::FromStr;
 
     fn instant(raw: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
@@ -701,7 +702,7 @@ mod tests {
         compiled.window.interval = TimeInterval::After(instant("2020-07-01T12:05:00Z"));
         compiled.entities.geo = Some(GeoQuery {
             georel: GeoRel::Near {
-                max_distance: Some(2000.0),
+                max_distance: Some(PositiveDistance::from_str("2000").expect("positive distance")),
                 min_distance: None,
             },
             geometry: point(&serde_json::json!([-8.503, 41.202])),

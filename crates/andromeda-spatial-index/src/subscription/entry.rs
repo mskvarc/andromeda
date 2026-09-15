@@ -49,7 +49,7 @@ impl SubEntry {
             // Grow the reference box outward by `maxDistance`, widening the
             // east-west axis correctly with latitude via a great-circle
             // destination rather than a flat degrees-per-metre factor.
-            (min, max) = grow_lonlat_bounds_metres(min, max, *metres);
+            (min, max) = grow_lonlat_bounds_metres(min, max, metres.metres());
         }
 
         Some(SubEntry {

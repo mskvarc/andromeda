@@ -161,10 +161,11 @@ mod tests {
         geo_rel::GeoRel,
         geometry::Geometry,
         position::Position,
+        positive_distance::PositiveDistance,
     };
     use andromeda_tenancy::tenant_ref::TenantRef;
     use iri_rs::{IriBuf, iri};
-    use std::collections::HashSet;
+    use std::{collections::HashSet, str::FromStr};
     use urn_rs::Urn;
 
     fn key() -> SpatialKey {
@@ -216,11 +217,11 @@ mod tests {
         index.insert_all(key(), id.clone(), [point(0.01797, 0.0)]);
 
         let tight = GeoRel::Near {
-            max_distance: Some(1_000.0),
+            max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
             min_distance: None,
         };
         let loose = GeoRel::Near {
-            max_distance: Some(3_000.0),
+            max_distance: Some(PositiveDistance::from_str("3000").expect("positive distance")),
             min_distance: None,
         };
 
@@ -238,8 +239,8 @@ mod tests {
         index.insert_all(key(), urn("urn:ngsi-ld:Vehicle:2000m"), [point(0.018, 0.0)]);
 
         let georel = GeoRel::Near {
-            max_distance: Some(1_000.0),
-            min_distance: Some(300.0),
+            max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
+            min_distance: Some(PositiveDistance::from_str("300").expect("positive distance")),
         };
         pretty_assertions::assert_eq!(index.query(&key(), &georel, &point(0.0, 0.0)), Some(HashSet::from([inside])));
     }

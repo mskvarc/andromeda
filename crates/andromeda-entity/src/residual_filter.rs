@@ -138,7 +138,7 @@ fn scope_matches(scope_q: Option<&ScopeQuery>, expanded: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::{query_residual::ResidualFilter, residual_filter::matches};
-    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
+    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_query::{
         entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
         filter::{eval, expression::Expr, parser},
@@ -148,6 +148,7 @@ mod tests {
         type_selection::grammar::TypeExpr,
     };
     use serde_json::{Value, json};
+    use std::str::FromStr;
 
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
     const TEMPERATURE: &str = "https://example.com/temperature";
@@ -184,7 +185,7 @@ mod tests {
     fn near_berlin() -> GeoQuery {
         GeoQuery {
             georel: GeoRel::Near {
-                max_distance: Some(1000.0),
+                max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
                 min_distance: None,
             },
             geometry: Geometry::from_geojson_value(&json!({"type": "Point", "coordinates": [13.4, 52.5]})).expect("valid geometry"),

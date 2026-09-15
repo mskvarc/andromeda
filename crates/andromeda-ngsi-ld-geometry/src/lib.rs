@@ -39,6 +39,7 @@ pub mod geometry;
 pub mod geometry_type;
 pub mod planar;
 pub mod position;
+pub mod positive_distance;
 pub mod relation;
 
 #[cfg(test)]

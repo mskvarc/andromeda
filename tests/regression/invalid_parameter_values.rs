@@ -236,3 +236,43 @@ async fn regression_invalid_parameters_a_value_inside_a_defined_parameter_is_bad
 
     scope.finish().await.expect("cleanup failed");
 }
+
+/// Clause 4.10 spells a `near` distance as a `PositiveNumber` -- an IETF RFC 8259
+/// JSON number that is strictly positive. A distance outside that grammar makes
+/// the whole geoquery "not valid as per clause 4.10", which clause 5.7.2.4 maps
+/// to `BadRequestData`. Every case below carries a well-formed `geometry` and
+/// `coordinates`, so the distance spelling is the only thing under test: a
+/// laxer parser that accepted `f64`'s own `+500` / `.5` / `007` spellings would
+/// answer `200` here.
+#[tokio::test]
+async fn regression_invalid_parameters_a_near_distance_outside_the_positive_number_grammar_is_bad_request_data() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Vehicle:near-distance-grammar");
+    create_entity(client, &vehicle(&id)).await;
+
+    // `near;maxDistance==<distance>` over a valid Point, with the `;`, `==`, and
+    // any `+`/`,` percent-encoded so the server sees them verbatim.
+    let geoquery = |distance: &str| format!("type=Vehicle&geometry=Point&coordinates=%5B1,2%5D&georel=near%3BmaxDistance%3D%3D{distance}");
+
+    // A well-formed positive distance is accepted (the entity carries no
+    // location, so the page is simply empty).
+    let accepted = read(client, &format!("entities?{}", geoquery("500"))).await;
+    assert_eq!(accepted.status, StatusCode::OK, "a well-formed distance is accepted: {:?}", accepted.body);
+
+    for distance in [
+        "%2B500",  // +500 -- a leading sign is not an RFC 8259 number
+        ".5",      // a bare leading decimal point
+        "5.",      // a bare trailing decimal point
+        "007",     // a leading zero
+        "1%2C000", // 1,000 -- a thousands separator
+        "0",       // not strictly positive
+        "-5",      // negative
+        "NaN",     // not a number at all
+    ] {
+        let queried = read(client, &format!("entities?{}", geoquery(distance))).await;
+        assert_refused_as(&queried, BAD_REQUEST_DATA, &format!("near distance {distance}"));
+    }
+
+    scope.finish().await.expect("cleanup failed");
+}

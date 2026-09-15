@@ -136,7 +136,7 @@ pub fn apply_deferred_page<T>(rows: Vec<T>, pagination: Pagination) -> (Vec<T>, 
 mod tests {
     use crate::outcome::{TemporalEntityCandidate, TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual};
     use andromeda_entity::{query_residual::ResidualFilter, residual_filter};
-    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
+    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
@@ -146,6 +146,7 @@ mod tests {
         scope::query::ScopeQuery,
     };
     use serde_json::{Value, json};
+    use std::str::FromStr;
 
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
     const TEMPERATURE: &str = "https://example.com/temperature";
@@ -165,7 +166,7 @@ mod tests {
             .q_expr(Some(parser::parse("\"https://example.com/temperature\">25").expect("valid q")))
             .geo(Some(GeoQuery {
                 georel: GeoRel::Near {
-                    max_distance: Some(1_000.0),
+                    max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
                     min_distance: None,
                 },
                 geometry: Geometry::from_geojson_value(&json!({"type": "Point", "coordinates": [13.4, 52.5]})).expect("valid point"),

@@ -21,7 +21,7 @@ use crate::{
     entity_row_refs::EntityRowRefs,
     error::RenderError,
 };
-use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
+use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{error::QueryError, geo::query::GeoQuery};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
@@ -149,7 +149,9 @@ pub fn relation_expression(georel: &GeoRel, planar: SimpleExpr, geographic: Simp
         // `near` measures on the spheroid, so both operands become `geography`.
         GeoRel::Near { max_distance, min_distance } => {
             let reference_geography = cast(reference_geom(), PostgresType::Geography);
-            near_expression(geographic, reference_geography, *max_distance, *min_distance)?
+            let max_metres = max_distance.map(PositiveDistance::metres);
+            let min_metres = min_distance.map(PositiveDistance::metres);
+            near_expression(geographic, reference_geography, max_metres, min_metres)?
         }
     };
     Ok(spatial)
@@ -275,7 +277,7 @@ mod tests {
     use andromeda_postgresql_schema::current::Entities;
     use pretty_assertions::{assert_eq, assert_ne};
     use sea_query::{PostgresQueryBuilder, Query, Value, Values};
-    use std::sync::LazyLock;
+    use std::{str::FromStr, sync::LazyLock};
 
     /// The unaliased entity rows the entity path filters.
     static UNALIASED: LazyLock<EntityRowRefs> = LazyLock::new(|| EntityRowRefs::unaliased(None));
@@ -410,8 +412,8 @@ mod tests {
     fn near_with_both_distances_renders_a_conjunction() {
         let geo = point_query(
             GeoRel::Near {
-                max_distance: Some(1000.0),
-                min_distance: Some(10.0),
+                max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
+                min_distance: Some(PositiveDistance::from_str("10").expect("positive distance")),
             },
             LOCATION,
         );
@@ -520,7 +522,7 @@ mod tests {
     fn a_near_relation_casts_the_instance_geometry_to_geography() {
         let geo = point_query(
             GeoRel::Near {
-                max_distance: Some(500.0),
+                max_distance: Some(PositiveDistance::from_str("500").expect("positive distance")),
                 min_distance: None,
             },
             CUSTOM_GEOPROPERTY,
@@ -588,7 +590,7 @@ mod tests {
             (GeoRel::Overlaps, "ST_Overlaps"),
             (
                 GeoRel::Near {
-                    max_distance: Some(500.0),
+                    max_distance: Some(PositiveDistance::from_str("500").expect("positive distance")),
                     min_distance: None,
                 },
                 "ST_DWithin",
@@ -609,7 +611,7 @@ mod tests {
     fn entity_and_temporal_render_the_same_geo_predicate() {
         let geo = point_query(
             GeoRel::Near {
-                max_distance: Some(500.0),
+                max_distance: Some(PositiveDistance::from_str("500").expect("positive distance")),
                 min_distance: None,
             },
             LOCATION,
@@ -639,8 +641,8 @@ mod tests {
             GeoRel::Equals,
             GeoRel::Overlaps,
             GeoRel::Near {
-                max_distance: Some(500.0),
-                min_distance: Some(10.0),
+                max_distance: Some(PositiveDistance::from_str("500").expect("positive distance")),
+                min_distance: Some(PositiveDistance::from_str("10").expect("positive distance")),
             },
         ];
         for georel in relations {

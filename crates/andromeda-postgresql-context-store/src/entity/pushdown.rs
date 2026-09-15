@@ -78,7 +78,7 @@ mod tests {
         residual_predicate::ResidualPredicate,
         storage_profile::{GeoPredicatePushdown, ScopePushdown, StorageProfile, ValueFilterPushdown},
     };
-    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
+    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_query::{
         entity::compiled::CompiledEntityQuery,
         entity_selection::EntitySelection,
@@ -88,12 +88,13 @@ mod tests {
         scope::query::ScopeQuery,
     };
     use serde_json::json;
+    use std::str::FromStr;
 
     /// A geo-query centred on Berlin.
     fn geo_query() -> GeoQuery {
         GeoQuery {
             georel: GeoRel::Near {
-                max_distance: Some(1000.0),
+                max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
                 min_distance: None,
             },
             geometry: Geometry::from_geojson_value(&json!({"type": "Point", "coordinates": [13.4, 52.5]})).expect("valid geometry"),

@@ -1,7 +1,8 @@
 //! The `georel` spatial relationship (ETSI GS CIM 009 clause 4.10).
 
+use crate::positive_distance::{PositiveDistance, PositiveDistanceParseError};
 use serde::{Deserialize, Serialize};
-use std::{fmt, num::ParseFloatError, str::FromStr};
+use std::{fmt, str::FromStr};
 use thiserror::Error;
 
 /// Failures parsing a `georel` expression.
@@ -10,32 +11,10 @@ pub enum GeoRelParseError {
     /// The relationship token is not one clause 4.10 defines.
     #[error("unknown georel: {0}")]
     UnknownRel(String),
-    /// A `maxDistance` / `minDistance` modifier held a value that is not a number.
-    #[error("invalid georel distance: {value}")]
-    InvalidDistance {
-        /// The offending modifier value.
-        value: String,
-        /// Underlying float parse failure.
-        #[source]
-        source: ParseFloatError,
-    },
-    /// A `maxDistance` / `minDistance` modifier parsed to a non-finite number
-    /// (`NaN` or an infinity). Clause 4.10 gives these no meaning, and left
-    /// unchecked they reach `PostGIS` as bare identifiers rather than a distance,
-    /// turning a malformed request into a statement that errors at execution.
-    #[error("non-finite georel distance: {value}")]
-    NonFiniteDistance {
-        /// The offending modifier value.
-        value: String,
-    },
-    /// A `maxDistance` / `minDistance` modifier was zero or negative. Clause
-    /// 4.10's grammar is `distance equal PositiveNumber`, so a non-positive
-    /// distance is not a `near` query at all.
-    #[error("non-positive georel distance: {value}")]
-    NonPositiveDistance {
-        /// The offending modifier value.
-        value: String,
-    },
+    /// A `maxDistance` / `minDistance` modifier held a value that is not a valid
+    /// clause 4.10 `PositiveNumber`.
+    #[error(transparent)]
+    InvalidDistance(#[from] PositiveDistanceParseError),
     /// A `near` relationship carried no `maxDistance` or `minDistance`. Clause
     /// 4.10 requires exactly one mandatory positive distance, so an unbounded
     /// `near` has no meaning and is not representable.
@@ -70,9 +49,9 @@ pub enum GeoRel {
     /// At least one of `max_distance` or `min_distance` must be specified.
     Near {
         /// Maximum distance in meters. Entities farther than this are excluded.
-        max_distance: Option<f64>,
+        max_distance: Option<PositiveDistance>,
         /// Minimum distance in meters. Entities closer than this are excluded.
-        min_distance: Option<f64>,
+        min_distance: Option<PositiveDistance>,
     },
 }
 
@@ -127,9 +106,9 @@ impl FromStr for GeoRel {
                         continue;
                     }
                     if let Some(raw) = part.strip_prefix("maxDistance==") {
-                        max_distance = Some(parse_distance(raw)?);
+                        max_distance = Some(PositiveDistance::from_str(raw)?);
                     } else if let Some(raw) = part.strip_prefix("minDistance==") {
-                        min_distance = Some(parse_distance(raw)?);
+                        min_distance = Some(PositiveDistance::from_str(raw)?);
                     } else {
                         // A malformed modifier is a rejected request, never a
                         // silently unbounded `near`.
@@ -164,29 +143,17 @@ impl From<GeoRel> for String {
     }
 }
 
-/// Parse one `maxDistance` / `minDistance` modifier value, in metres.
-///
-/// Rust's `f64` parser accepts `NaN`, `inf` and `infinity`; those are rejected
-/// here so a non-finite distance never reaches the statement builder. Clause
-/// 4.10's grammar requires a `PositiveNumber`, so zero and negatives are
-/// rejected too.
-fn parse_distance(raw: &str) -> Result<f64, GeoRelParseError> {
-    let parsed = raw.parse::<f64>().map_err(|source| GeoRelParseError::InvalidDistance {
-        value: raw.to_string(),
-        source,
-    })?;
-    if !parsed.is_finite() {
-        return Err(GeoRelParseError::NonFiniteDistance { value: raw.to_string() });
-    }
-    if parsed <= 0.0 {
-        return Err(GeoRelParseError::NonPositiveDistance { value: raw.to_string() });
-    }
-    Ok(parsed)
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::geo_rel::{GeoRel, GeoRelParseError};
+    use crate::{
+        geo_rel::{GeoRel, GeoRelParseError},
+        positive_distance::{PositiveDistance, PositiveDistanceParseError},
+    };
+    use std::str::FromStr;
+
+    fn metres(raw: &str) -> PositiveDistance {
+        PositiveDistance::from_str(raw).expect(raw)
+    }
 
     #[test]
     fn every_simple_georel_round_trips_through_its_spec_token() {
@@ -209,8 +176,8 @@ mod tests {
         pretty_assertions::assert_eq!(
             parsed,
             GeoRel::Near {
-                max_distance: Some(500.0),
-                min_distance: Some(50.0)
+                max_distance: Some(metres("500")),
+                min_distance: Some(metres("50"))
             }
         );
         pretty_assertions::assert_eq!(parsed.to_string(), "near;maxDistance==500;minDistance==50");
@@ -228,21 +195,36 @@ mod tests {
     fn a_non_numeric_distance_is_a_typed_error() {
         assert!(matches!(
             "near;maxDistance==far".parse::<GeoRel>().expect_err("must fail"),
-            GeoRelParseError::InvalidDistance { .. }
+            GeoRelParseError::InvalidDistance(PositiveDistanceParseError::InvalidSyntax(_))
         ));
     }
 
     #[test]
     fn a_non_finite_distance_is_rejected() {
-        // Rust's f64 parser accepts these spellings; clause 4.10 gives them no
-        // meaning, so they are rejected before reaching the statement builder.
+        // These spellings are not RFC 8259 numbers, so the clause 4.10
+        // `PositiveNumber` grammar rejects them before they become a distance.
         for raw in ["NaN", "inf", "infinity", "-inf"] {
             assert!(
                 matches!(
                     format!("near;maxDistance=={raw}").parse::<GeoRel>().expect_err("must fail"),
-                    GeoRelParseError::NonFiniteDistance { .. }
+                    GeoRelParseError::InvalidDistance(_)
                 ),
-                "{raw} should be rejected as non-finite"
+                "{raw} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn a_distance_outside_the_positive_number_grammar_is_rejected() {
+        // Clause 4.10 spells the distance as a `PositiveNumber`, an RFC 8259
+        // JSON number; `f64`'s own laxer parser is not the arbiter here.
+        for raw in ["+500", ".5", "5.", "007", "1,000"] {
+            assert!(
+                matches!(
+                    format!("near;maxDistance=={raw}").parse::<GeoRel>().expect_err("must fail"),
+                    GeoRelParseError::InvalidDistance(PositiveDistanceParseError::InvalidSyntax(_))
+                ),
+                "{raw} should be rejected as invalid syntax"
             );
         }
     }
@@ -261,7 +243,7 @@ mod tests {
             assert!(
                 matches!(
                     format!("near;maxDistance=={raw}").parse::<GeoRel>().expect_err("must fail"),
-                    GeoRelParseError::NonPositiveDistance { .. }
+                    GeoRelParseError::InvalidDistance(PositiveDistanceParseError::NonPositive(_))
                 ),
                 "{raw} should be rejected as non-positive"
             );
@@ -285,7 +267,7 @@ mod tests {
         pretty_assertions::assert_eq!(
             decoded,
             GeoRel::Near {
-                max_distance: Some(1000.0),
+                max_distance: Some(metres("1000")),
                 min_distance: None
             }
         );

@@ -237,7 +237,7 @@ fn selector_condition(rows: &EntityRowRefs, selector: &EntitySelector, types: &R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
+    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
     use andromeda_ngsi_ld_query::{
         entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
@@ -264,6 +264,7 @@ mod tests {
     use iri_rs::IriBuf;
     use pretty_assertions::{assert_eq, assert_ne};
     use sea_query::{PostgresQueryBuilder, Value};
+    use std::str::FromStr;
 
     /// A built entity query rendered with `$N` placeholders and its bound
     /// values, which is what the store hands the driver.
@@ -474,7 +475,7 @@ mod tests {
         q.selection.selectors = vec![EntitySelector::builder().ids(ids(&["urn:a", "urn:b", "urn:c"])).build()];
         q.selection.geo = Some(GeoQuery {
             georel: GeoRel::Near {
-                max_distance: Some(1000.0),
+                max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
                 min_distance: None,
             },
             geometry: point(&serde_json::json!([13.4, 52.5])),
@@ -730,7 +731,7 @@ mod tests {
         let mut q = empty_query();
         q.selection.geo = Some(GeoQuery {
             georel: GeoRel::Near {
-                max_distance: Some(1000.0),
+                max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
                 min_distance: None,
             },
             geometry: point(&serde_json::json!([13.4, 52.5])),
@@ -788,7 +789,7 @@ mod tests {
         let mut q = empty_query();
         q.selection.geo = Some(GeoQuery {
             georel: GeoRel::Near {
-                max_distance: Some(1_000_000.0),
+                max_distance: Some(PositiveDistance::from_str("1000000").expect("positive distance")),
                 min_distance: None,
             },
             geometry: point(&serde_json::json!([2.3522, 48.8566])),
@@ -887,7 +888,7 @@ mod tests {
         let mut q = empty_query();
         q.selection.geo = Some(GeoQuery {
             georel: GeoRel::Near {
-                max_distance: Some(5000.0),
+                max_distance: Some(PositiveDistance::from_str("5000").expect("positive distance")),
                 min_distance: None,
             },
             geometry: point(&serde_json::json!([13.4, 52.5])),
@@ -917,8 +918,8 @@ mod tests {
             GeoRel::Equals,
             GeoRel::Overlaps,
             GeoRel::Near {
-                max_distance: Some(1000.0),
-                min_distance: Some(10.0),
+                max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
+                min_distance: Some(PositiveDistance::from_str("10").expect("positive distance")),
             },
         ];
 
@@ -1017,7 +1018,7 @@ mod tests {
         let relations = [
             GeoRel::Within,
             GeoRel::Near {
-                max_distance: Some(500.0),
+                max_distance: Some(PositiveDistance::from_str("500").expect("positive distance")),
                 min_distance: None,
             },
         ];

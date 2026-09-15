@@ -61,7 +61,7 @@ fn matches_planar(georel: &GeoRel, subject: &geo::Geometry<f64>, reference: &geo
         // distance between centroids, which is what the `geography` type
         // approximates for non-point geometries.
         GeoRel::Near { max_distance, min_distance } => match haversine_distance_m(subject, reference) {
-            Some(distance) => max_distance.is_none_or(|max| distance <= max) && min_distance.is_none_or(|min| distance >= min),
+            Some(distance) => max_distance.is_none_or(|max| distance <= max.metres()) && min_distance.is_none_or(|min| distance >= min.metres()),
             // A geometry with no centroid is nowhere, so it is near nothing.
             None => false,
         },
@@ -90,7 +90,9 @@ mod tests {
     use crate::{
         form::{GeometryForm, PolygonRings},
         position::Position,
+        positive_distance::PositiveDistance,
     };
+    use std::str::FromStr;
 
     fn point(longitude: f64, latitude: f64) -> Geometry {
         Geometry::new(GeometryForm::Point(Position::new(longitude, latitude, None)))
@@ -310,7 +312,7 @@ mod tests {
                 // The two fixtures are ~7 300 km apart on the great circle.
                 description: "a point inside the max distance is near",
                 georel: GeoRel::Near {
-                    max_distance: Some(10_000_000.0),
+                    max_distance: Some(PositiveDistance::from_str("10000000").expect("positive distance")),
                     min_distance: None,
                 },
                 subject: &fixtures.inside,
@@ -320,7 +322,7 @@ mod tests {
             Case {
                 description: "a point beyond the max distance is not near",
                 georel: GeoRel::Near {
-                    max_distance: Some(1_000.0),
+                    max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
                     min_distance: None,
                 },
                 subject: &fixtures.inside,
@@ -331,7 +333,7 @@ mod tests {
                 description: "a point beyond the min distance is near",
                 georel: GeoRel::Near {
                     max_distance: None,
-                    min_distance: Some(1_000.0),
+                    min_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
                 },
                 subject: &fixtures.inside,
                 reference: &fixtures.outside,
@@ -341,7 +343,7 @@ mod tests {
                 description: "a point inside the min distance is not near",
                 georel: GeoRel::Near {
                     max_distance: None,
-                    min_distance: Some(10_000_000.0),
+                    min_distance: Some(PositiveDistance::from_str("10000000").expect("positive distance")),
                 },
                 subject: &fixtures.inside,
                 reference: &fixtures.outside,
@@ -350,8 +352,8 @@ mod tests {
             Case {
                 description: "a point satisfying neither bound is not near",
                 georel: GeoRel::Near {
-                    max_distance: Some(1_000.0),
-                    min_distance: Some(100.0),
+                    max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
+                    min_distance: Some(PositiveDistance::from_str("100").expect("positive distance")),
                 },
                 subject: &fixtures.inside,
                 reference: &fixtures.outside,
