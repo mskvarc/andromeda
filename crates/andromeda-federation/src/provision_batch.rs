@@ -16,7 +16,7 @@ use crate::{
     forwarding_url::forwarding_url,
     operation::ForwardingOperation,
     outcome::ForwardedWriteOutcome,
-    provision::{is_proxied, proxied_mode},
+    provision::{ForwardWrite, is_proxied, proxied_mode},
     registration_selection::{covered_attribute_members, csr_has_matching_information, is_entity_control_member, retain_covered_attributes},
     request::TriggeringRequest,
 };
@@ -434,7 +434,15 @@ impl FederationService {
                     request.query_string.unwrap_or(""),
                 );
                 let outcome = self
-                    .forward_write(csr, url, reqwest::Method::POST, body.as_deref(), request.context, request.triggering)
+                    .forward_write(ForwardWrite {
+                        registration: csr,
+                        url,
+                        method: reqwest::Method::POST,
+                        body: body.as_deref(),
+                        context: request.context,
+                        triggering: request.triggering,
+                        linked_map: None,
+                    })
                     .await;
                 let outcomes = batch_outcomes(&ids, &outcome).into_iter().collect::<HashMap<_, _>>();
                 narrowed
@@ -481,7 +489,17 @@ impl FederationService {
         request: &ForwardBatchRequest<'_>,
     ) -> ForwardedWriteOutcome {
         let (url, method, body) = single_write_request(write, csr.access.endpoint.url(), entity);
-        let outcome = self.forward_write(csr, url, method, body.as_deref(), request.context, request.triggering).await;
+        let outcome = self
+            .forward_write(ForwardWrite {
+                registration: csr,
+                url,
+                method,
+                body: body.as_deref(),
+                context: request.context,
+                triggering: request.triggering,
+                linked_map: None,
+            })
+            .await;
         let SingleWrite::CreateThenOnConflict(follow_up) = write else {
             return outcome;
         };
@@ -492,7 +510,16 @@ impl FederationService {
             return ForwardedWriteOutcome::UpsertFollowUpNotAdvertised;
         };
         let (url, method, body) = single_write_request(follow_up, csr.access.endpoint.url(), entity);
-        self.forward_write(csr, url, method, body.as_deref(), request.context, request.triggering).await
+        self.forward_write(ForwardWrite {
+            registration: csr,
+            url,
+            method,
+            body: body.as_deref(),
+            context: request.context,
+            triggering: request.triggering,
+            linked_map: None,
+        })
+        .await
     }
 }
 

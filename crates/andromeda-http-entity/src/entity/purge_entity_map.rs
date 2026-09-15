@@ -32,17 +32,20 @@ use andromeda_entity_map::{
     query_scoping::hold_selection_to_map,
     service::{EntityMapService, ReferencedEntityMap},
 };
+use andromeda_federation::request::EntityMapInUse;
 use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
 use andromeda_http_response::{headers::with_entity_map, problem_response::ProblemResponse};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use axum::{http::Uri as HttpUri, response::Response};
 
 /// Which `EntityMap` a purge determined its entities from (Table 6.4.3.3-2).
 pub(crate) enum PurgeEntityMap {
-    /// The live map the request supplied: it fixed the entities purged, and its
-    /// location is returned in the response.
-    Used(Uri),
+    /// The live map the request supplied: it fixed the entities purged, its
+    /// registrations fix the sources the purge is forwarded to (clause 5.5.14),
+    /// and its location is returned in the response. Boxed because an
+    /// [`EntityMap`] dwarfs the empty variant.
+    Used(Box<EntityMap>),
     /// No map determined the entity set: the request supplied none, or supplied
     /// one that has expired or cannot be accessed, from which clause 5.5.14
     /// allows no inference. There is no location to return.
@@ -53,8 +56,17 @@ impl PurgeEntityMap {
     /// Answer with the location of the map the purge used, when it used one.
     pub(crate) fn attach_to(&self, response: Response) -> Response {
         match self {
-            PurgeEntityMap::Used(identifier) => with_entity_map(response, identifier),
+            PurgeEntityMap::Used(map) => with_entity_map(response, &map.id),
             PurgeEntityMap::None => response,
+        }
+    }
+
+    /// The map in use for forwarding: a referenced map fixes the registrations
+    /// the purge contacts and the location each is told (clause 5.5.14).
+    pub(crate) fn in_use(&self) -> EntityMapInUse<'_> {
+        match self {
+            PurgeEntityMap::Used(map) => EntityMapInUse::Referenced(map),
+            PurgeEntityMap::None => EntityMapInUse::None,
         }
     }
 }
@@ -98,7 +110,8 @@ pub(crate) async fn resolve_purge_map(
     match resolved {
         ReferencedEntityMap::Live(map) => {
             hold_selection_to_map(&map, &mut query.id, &mut query.entity_selectors);
-            Ok(PurgeEntityMap::Used(map.id))
+            // `resolve_reuse` already hands back a boxed map.
+            Ok(PurgeEntityMap::Used(map))
         }
         ReferencedEntityMap::Unavailable => Ok(PurgeEntityMap::None),
     }
@@ -108,10 +121,12 @@ pub(crate) async fn resolve_purge_map(
 mod tests {
     use crate::entity::purge_entity_map::PurgeEntityMap;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_model::entity_map::EntityMap;
     use axum::{
         http::StatusCode,
         response::{IntoResponse, Response},
     };
+    use chrono::{TimeZone, Utc};
 
     /// The 204 a purge answers with when nothing failed.
     fn no_content() -> Response {
@@ -123,12 +138,19 @@ mod tests {
         response.headers().get("ngsild-entitymap").and_then(|value| value.to_str().ok())
     }
 
+    /// A live map fixed to one locally held entity, standing in for a resolved
+    /// referenced map.
+    fn map_used() -> EntityMap {
+        let identifier: Uri = "urn:ngsi-ld:EntityMap:used".parse().expect("valid URI");
+        let expires_at = Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).single().expect("valid instant");
+        EntityMap::local(identifier, expires_at, [])
+    }
+
     /// Table 6.4.3.3-2: "The location of the `EntityMap` used in the purge
     /// operation is returned in the response."
     #[test]
     fn a_purge_that_used_a_map_answers_with_its_location() {
-        let identifier: Uri = "urn:ngsi-ld:EntityMap:used".parse().expect("valid URI");
-        let response = PurgeEntityMap::Used(identifier).attach_to(no_content());
+        let response = PurgeEntityMap::Used(Box::new(map_used())).attach_to(no_content());
         pretty_assertions::assert_eq!(advertised_map(&response), Some("urn:ngsi-ld:EntityMap:used"));
     }
 

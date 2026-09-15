@@ -142,6 +142,7 @@ pub(crate) async fn delete_by_query(
                     entity_ids: query.id.as_deref(),
                     local_ids: &entity_ids,
                     query_string: uri.query().unwrap_or(""),
+                    entity_map: entity_map.in_use(),
                     context: &context,
                     triggering: TriggeringRequest {
                         via: incoming_via.as_ref(),

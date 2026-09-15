@@ -27,6 +27,7 @@ mod forwarding;
 mod merge;
 mod partial_update;
 mod purge;
+mod purge_entity_map;
 mod replace_attr;
 mod replace_entity;
 mod temporal_attr;

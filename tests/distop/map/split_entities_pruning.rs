@@ -132,10 +132,7 @@ async fn distop_split_pruning_sheds_an_entity_that_stopped_matching_after_merge(
     // Lower one entity's speed below the threshold on the front broker, so the
     // merged entity no longer matches `q=speed>50`.
     let patch = attribute_fragment(&[("speed", property(json!(10)))]);
-    assert_status(
-        &front.client().update_entity_attrs(&sheds, &patch).await.expect("lower the speed"),
-        204,
-    );
+    assert_status(&front.client().update_entity_attrs(&sheds, &patch).await.expect("lower the speed"), 204);
 
     // Reuse the map with the filter applied over the merged result.
     let reused = front
@@ -153,14 +150,20 @@ async fn distop_split_pruning_sheds_an_entity_that_stopped_matching_after_merge(
         .flatten()
         .filter_map(|entity| entity["id"].as_str().map(str::to_owned))
         .collect();
-    assert!(returned.iter().any(|id| *id == stays), "the still-matching entity is returned: {returned:?}");
-    assert!(!returned.iter().any(|id| *id == sheds), "the no-longer-matching entity is excluded: {returned:?}");
+    assert!(returned.contains(&stays), "the still-matching entity is returned: {returned:?}");
+    assert!(!returned.contains(&sheds), "the no-longer-matching entity is excluded: {returned:?}");
 
     // The map itself sheds the candidate that stopped matching, and keeps the
     // one that still does.
     let map = json_body(&front.client().retrieve_entity_map(&map_id).await.expect("retrieve the reused map"));
-    assert!(holders(&map, &stays).iter().any(|holder| holder == "@none"), "the still-matching entity stays in the map: {map}");
-    assert!(map["entityMap"].get(&sheds).is_none(), "the no-longer-matching entity is shed from the map: {map}");
+    assert!(
+        holders(&map, &stays).iter().any(|holder| holder == "@none"),
+        "the still-matching entity stays in the map: {map}"
+    );
+    assert!(
+        map["entityMap"].get(&sheds).is_none(),
+        "the no-longer-matching entity is shed from the map: {map}"
+    );
 
     topology.finish().await.expect("topology cleanup");
 }

@@ -51,6 +51,11 @@ impl ContextSourceServer {
         self.server.next_request(timeout).await
     }
 
+    /// Take every request captured so far, in arrival order, clearing the queue.
+    pub async fn drain_requests(&self) -> Vec<CapturedRequest> {
+        self.server.drain_requests().await
+    }
+
     /// Return the number of requests captured for one exact method and path.
     #[must_use]
     pub fn request_count(&self, method: Method, path: CallbackPath) -> usize {

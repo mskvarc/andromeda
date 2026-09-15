@@ -12,7 +12,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_telemetry::federation_ops::{self, FederationOperation};
 use futures::{StreamExt, stream};
@@ -37,6 +37,31 @@ pub(crate) struct PlannedWrite<'a> {
     pub(crate) context: &'a ContextSpec,
     /// The triggering request.
     pub(crate) triggering: TriggeringRequest<'a>,
+    /// The `NGSILD-EntityMap` this forwarded write carries: the map the source
+    /// is linked to under the Entity Map in use (clause 5.5.14), or `None` when
+    /// the write runs under no map.
+    pub(crate) linked_map: Option<Uri>,
+}
+
+/// One forwarded write request, as [`FederationService::forward_write`] sends it.
+///
+/// The fields are what the transport needs to build and classify one request;
+/// they travel as a struct rather than a long argument list.
+pub(crate) struct ForwardWrite<'a> {
+    /// The registration being contacted.
+    pub(crate) registration: &'a ContextSourceRegistration,
+    /// The forwarded URL, or the failure that stops it being built.
+    pub(crate) url: Result<Url, FederationError>,
+    /// The HTTP method.
+    pub(crate) method: reqwest::Method,
+    /// The request body, already narrowed to what the registration covers.
+    pub(crate) body: Option<&'a [u8]>,
+    /// The context of the triggering request.
+    pub(crate) context: &'a ContextSpec,
+    /// The request that triggered the forwarding.
+    pub(crate) triggering: TriggeringRequest<'a>,
+    /// The `NGSILD-EntityMap` the forwarded request carries (clause 5.5.14).
+    pub(crate) linked_map: Option<&'a Uri>,
 }
 
 impl FederationService {
@@ -145,6 +170,8 @@ impl FederationService {
                         proxied_attrs,
                         context: request_ref.context,
                         triggering: request_ref.triggering,
+                        // A single-entity provision runs under no Entity Map.
+                        linked_map: None,
                     })
                 })
                 .collect();
@@ -176,9 +203,20 @@ impl FederationService {
             proxied_attrs,
             context,
             triggering,
+            linked_map,
         } = write;
         let mode = registration.access.mode.unwrap_or_default();
-        let outcome = self.forward_write(&registration, url, method, body.as_deref(), context, triggering).await;
+        let outcome = self
+            .forward_write(ForwardWrite {
+                registration: &registration,
+                url,
+                method,
+                body: body.as_deref(),
+                context,
+                triggering,
+                linked_map: linked_map.as_ref(),
+            })
+            .await;
         if let ForwardedWriteOutcome::Transport(failure) = &outcome {
             warn!("Failed to forward to context source {}: {}", registration.id, failure.detail());
         }
@@ -191,15 +229,16 @@ impl FederationService {
     }
 
     /// Make a write request (POST/PUT/PATCH/DELETE) to a context source endpoint.
-    pub(crate) async fn forward_write(
-        &self,
-        registration: &ContextSourceRegistration,
-        url: Result<Url, FederationError>,
-        method: reqwest::Method,
-        body: Option<&[u8]>,
-        context: &ContextSpec,
-        triggering: TriggeringRequest<'_>,
-    ) -> ForwardedWriteOutcome {
+    pub(crate) async fn forward_write(&self, write: ForwardWrite<'_>) -> ForwardedWriteOutcome {
+        let ForwardWrite {
+            registration,
+            url,
+            method,
+            body,
+            context,
+            triggering,
+            linked_map,
+        } = write;
         if self.registration_loops(registration, triggering.via) {
             return ForwardedWriteOutcome::LoopDetected;
         }
@@ -226,7 +265,7 @@ impl FederationService {
             payload: &payload,
             registration,
             triggering,
-            linked_map: None,
+            linked_map,
         }) {
             Ok(request) => request,
             Err(error) => return unreachable(error.to_string()),

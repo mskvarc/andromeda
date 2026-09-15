@@ -14,7 +14,7 @@ use crate::{
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
     provision::{PlannedWrite, is_proxied, proxied_mode},
     registration_selection::information_matches_entity,
-    request::TriggeringRequest,
+    request::{EntityMapInUse, TriggeringRequest},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -36,6 +36,11 @@ pub struct ForwardPurgeRequest<'a> {
     /// The client's query string; its `local` parameter is not forwarded
     /// (clause 6.3.18 binds it to this broker's own forwarding decision).
     pub query_string: &'a str,
+    /// The Entity Map the purge runs under (clause 5.5.14): when a map is
+    /// referenced, the fan-out is fixed to its registrations and each forwarded
+    /// DELETE carries the map that source is linked to, exactly as a forwarded
+    /// query or retrieval does.
+    pub entity_map: EntityMapInUse<'a>,
     /// The JSON-LD context the triggering request resolved to.
     pub context: &'a ContextSpec,
     /// The request that triggered this forwarding.
@@ -57,6 +62,23 @@ pub struct ForwardedPurgeResult {
 fn forwarded_query_string(query_string: &str) -> String {
     let mut serializer = form_urlencoded::Serializer::new(String::new());
     serializer.extend_pairs(form_urlencoded::parse(query_string.as_bytes()).filter(|(name, _)| name != "local"));
+    serializer.finish()
+}
+
+/// The client's query with `local` and its own `id` dropped and the map-narrowed
+/// identifiers put in their place (clause 5.5.14).
+///
+/// Under a referenced Entity Map the local phase was held to the intersection of
+/// the client's identifiers and the map's (clause 5.5.14), so the forwarded
+/// DELETE must carry that same narrowed set rather than the client's verbatim
+/// list; the other filters (`type`, `q`, `attrs`, `drop`/`keep`) travel
+/// unchanged so each source purges exactly what the map fixed.
+fn narrowed_query_string(query_string: &str, narrowed_ids: Option<&[Uri]>) -> String {
+    let mut serializer = form_urlencoded::Serializer::new(String::new());
+    serializer.extend_pairs(form_urlencoded::parse(query_string.as_bytes()).filter(|(name, _)| name != "local" && name != "id"));
+    if let Some(ids) = narrowed_ids.filter(|ids| !ids.is_empty()) {
+        serializer.append_pair("id", &ids.iter().map(Uri::as_str).collect::<Vec<_>>().join(","));
+    }
     serializer.finish()
 }
 
@@ -112,8 +134,17 @@ impl FederationService {
             None => None,
         };
         let first_id = request.entity_ids.and_then(|ids| ids.first());
-        let csrs = self.csr_repo.find_matching(expanded_type.as_ref(), first_id).await?;
-        let query_string = forwarded_query_string(request.query_string);
+        // Clause 5.5.14 (and clause 5.12, last paragraph): a referenced map fixes
+        // the sources this purge contacts to the map's own registrations, in
+        // place of clause 5.12 matching, exactly as a forwarded query does.
+        let csrs = match request.entity_map.referenced() {
+            Some(map) => self.registrations_of_map(map).await?,
+            None => self.csr_repo.find_matching(expanded_type.as_ref(), first_id).await?,
+        };
+        let query_string = match request.entity_map.referenced() {
+            Some(_) => narrowed_query_string(request.query_string, request.entity_ids),
+            None => forwarded_query_string(request.query_string),
+        };
 
         // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
         let mut results = Vec::new();
@@ -123,6 +154,10 @@ impl FederationService {
             let ids = reported_ids(&csr, request.local_ids);
             if ForwardingOperation::PurgeEntity.matches(&csr) {
                 let url = forwarding_url(csr.access.endpoint.url(), &["entities"], &query_string);
+                // Clause 5.5.14: the source is told the map it is linked to under
+                // the map in use, so it joins the same unitary sequence the query
+                // that built the map did.
+                let linked_map = request.entity_map.location_for(&csr.id).cloned(); // clone: the planned write owns the map location it carries
                 reported.push((csr.id.clone(), ids)); // clone: the report is keyed by the registration the write contacts
                 planned.push(PlannedWrite {
                     registration: csr,
@@ -132,6 +167,7 @@ impl FederationService {
                     proxied_attrs: Vec::new(),
                     context: request.context,
                     triggering: request.triggering,
+                    linked_map,
                 });
             } else if is_proxied(&csr) {
                 let mode = proxied_mode(&csr);
@@ -160,7 +196,7 @@ impl FederationService {
 
 #[cfg(test)]
 mod tests {
-    use crate::provision_purge::{forwarded_query_string, reported_ids};
+    use crate::provision_purge::{forwarded_query_string, narrowed_query_string, reported_ids};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use serde_json::{Value, json};
@@ -188,6 +224,21 @@ mod tests {
     fn the_local_parameter_is_not_forwarded_and_the_rest_of_the_query_is() {
         pretty_assertions::assert_eq!(forwarded_query_string("type=Vehicle&local=false&q=speed%3E5"), "type=Vehicle&q=speed%3E5");
         pretty_assertions::assert_eq!(forwarded_query_string("local=true"), "");
+    }
+
+    /// Clause 5.5.14: under a referenced map the forwarded DELETE carries the
+    /// map-narrowed identifiers, not the client's verbatim `id`, while the other
+    /// filters travel unchanged.
+    #[test]
+    fn the_narrowed_identifiers_replace_the_clients_own() {
+        let narrowed = [uri("urn:ngsi-ld:Vehicle:1"), uri("urn:ngsi-ld:Vehicle:2")];
+        pretty_assertions::assert_eq!(
+            narrowed_query_string("type=Vehicle&id=urn:ngsi-ld:Vehicle:9&local=false&q=speed%3E5", Some(&narrowed)),
+            "type=Vehicle&q=speed%3E5&id=urn%3Angsi-ld%3AVehicle%3A1%2Curn%3Angsi-ld%3AVehicle%3A2"
+        );
+        // With no narrowed identifiers the client's `id` is still dropped: the
+        // map fixed the set and the peer scopes by the map it is told.
+        pretty_assertions::assert_eq!(narrowed_query_string("type=Vehicle&id=urn:ngsi-ld:Vehicle:9", None), "type=Vehicle");
     }
 
     #[test]

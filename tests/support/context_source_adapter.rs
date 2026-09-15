@@ -105,6 +105,11 @@ impl ContextSourceAdapter {
         self.server.next_request(timeout).await.expect("Context Source captured a forwarded request")
     }
 
+    /// Take every request captured so far, in arrival order, clearing the queue.
+    pub async fn drain_requests(&self) -> Vec<CapturedRequest> {
+        self.server.drain_requests().await
+    }
+
     /// Returns the absolute URL a registration should point at to reach `path` on this source.
     ///
     /// # Panics
