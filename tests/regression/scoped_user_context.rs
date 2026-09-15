@@ -415,6 +415,275 @@ async fn regression_scoped_user_context_hosting_a_context_that_declares_one_is_a
     scope.finish().await.expect("cleanup failed");
 }
 
+/// A remote scoped context, and a plain one of the same shape, both served for
+/// one run's read-path tests.
+async fn scoped_and_plain(server: &JsonLdContextServer, label: &str) -> (String, String) {
+    let scoped = serve_context(server, &format!("{label}-scoped"), &json!({"@context": {"gear": scoped_definition()}})).await;
+    let plain = serve_context(server, &format!("{label}-plain"), &json!({"@context": {"gear": "https://example.org/gear"}})).await;
+    (scoped, plain)
+}
+
+/// Clause 5.5.7 addresses the request's `@context` on every operation that
+/// expands one, so the retrieval of clause 5.7.1 refuses a scoped user
+/// `@context` named in a `Link` header before it looks the entity up.
+#[tokio::test]
+async fn regression_scoped_user_context_a_get_retrieve_refuses_a_scoped_context() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let server = JsonLdContextServer::start(MockServerConfig::from_environment().expect("callback host"))
+        .await
+        .expect("context server starts");
+    let (scoped, plain) = scoped_and_plain(&server, "get-retrieve").await;
+
+    let id = scope.id("Device:get-retrieve");
+    let seeded = json!({"id": id, "type": "Device", "gear": {"type": "Property", "value": 1}, "@context": [CORE_CONTEXT]});
+    let created = client.post_entity(&seeded).with_ld_json().send().await.expect("create entity request");
+    assert_eq!(created.status, StatusCode::CREATED, "seeding the target: {:?}", created.body);
+
+    let refused = send_json_with_link_contexts(client, Method::GET, &format!("/ngsi-ld/v1/entities/{id}"), &Value::Null, from_ref(&scoped)).await;
+    assert_scoped_context_refused(&refused, "retrieve entity under a scoped @context");
+
+    // Control: the same read under a plain user context is answered.
+    let admitted = send_json_with_link_contexts(client, Method::GET, &format!("/ngsi-ld/v1/entities/{id}"), &Value::Null, from_ref(&plain)).await;
+    assert_eq!(admitted.status, StatusCode::OK, "retrieve under a plain context: {:?}", admitted.body);
+
+    forget_cached(scope.database_pool(), &[scoped, plain]).await;
+    server.shutdown().await.expect("context server shuts down");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// The GET binding of Query Entities (clause 5.7.2) refuses a scoped user
+/// `@context` named in a `Link` header before it runs.
+#[tokio::test]
+async fn regression_scoped_user_context_a_get_query_refuses_a_scoped_context() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let server = JsonLdContextServer::start(MockServerConfig::from_environment().expect("callback host"))
+        .await
+        .expect("context server starts");
+    let (scoped, plain) = scoped_and_plain(&server, "get-query").await;
+
+    let refused = send_json_with_link_contexts(client, Method::GET, "/ngsi-ld/v1/entities?type=Device", &Value::Null, from_ref(&scoped)).await;
+    assert_scoped_context_refused(&refused, "query entities under a scoped @context");
+
+    let admitted = send_json_with_link_contexts(client, Method::GET, "/ngsi-ld/v1/entities?type=Device", &Value::Null, from_ref(&plain)).await;
+    assert_eq!(admitted.status, StatusCode::OK, "query under a plain context: {:?}", admitted.body);
+
+    forget_cached(scope.database_pool(), &[scoped, plain]).await;
+    server.shutdown().await.expect("context server shuts down");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// The POST binding of Query Entities (clause 5.7.2) carries its `@context` in
+/// the body, and it is refused there once merged, exactly as the GET binding's
+/// `Link` context is.
+#[tokio::test]
+async fn regression_scoped_user_context_a_post_query_refuses_a_scoped_context() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+
+    let refused = send_ld_json(
+        client,
+        Method::POST,
+        "/ngsi-ld/v1/entityOperations/query",
+        &json!({"type": "Query", "entities": [{"type": "Device"}], "@context": [CORE_CONTEXT, {"gear": scoped_definition()}]}),
+    )
+    .await;
+    assert_scoped_context_refused(&refused, "POST query under a scoped body @context");
+
+    let admitted = send_ld_json(
+        client,
+        Method::POST,
+        "/ngsi-ld/v1/entityOperations/query",
+        &json!({"type": "Query", "entities": [{"type": "Device"}], "@context": [CORE_CONTEXT, {"gear": "https://example.org/gear"}]}),
+    )
+    .await;
+    assert_eq!(admitted.status, StatusCode::OK, "POST query under a plain body @context: {:?}", admitted.body);
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Query Temporal Evolution of Entities (clause 5.7.4) refuses a scoped user
+/// `@context` on its read path too.
+#[tokio::test]
+async fn regression_scoped_user_context_a_temporal_query_refuses_a_scoped_context() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let server = JsonLdContextServer::start(MockServerConfig::from_environment().expect("callback host"))
+        .await
+        .expect("context server starts");
+    let (scoped, plain) = scoped_and_plain(&server, "temporal-query").await;
+
+    let window = "type=Device&timerel=after&timeAt=2000-01-01T00:00:00Z";
+    let refused = send_json_with_link_contexts(
+        client,
+        Method::GET,
+        &format!("/ngsi-ld/v1/temporal/entities?{window}"),
+        &Value::Null,
+        from_ref(&scoped),
+    )
+    .await;
+    assert_scoped_context_refused(&refused, "temporal query under a scoped @context");
+
+    let admitted = send_json_with_link_contexts(
+        client,
+        Method::GET,
+        &format!("/ngsi-ld/v1/temporal/entities?{window}"),
+        &Value::Null,
+        from_ref(&plain),
+    )
+    .await;
+    assert_eq!(admitted.status, StatusCode::OK, "temporal query under a plain context: {:?}", admitted.body);
+
+    forget_cached(scope.database_pool(), &[scoped, plain]).await;
+    server.shutdown().await.expect("context server shuts down");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Create Subscription (clause 5.8.1) validates the request `@context` it will
+/// render notifications against, and refuses a scoped one (clause 5.5.7).
+#[tokio::test]
+async fn regression_scoped_user_context_a_subscription_create_refuses_a_scoped_context() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let scoped_id = scope.id("Subscription:create-scoped");
+
+    let refused = send_ld_json(
+        client,
+        Method::POST,
+        "/ngsi-ld/v1/subscriptions",
+        &json!({
+            "id": scoped_id,
+            "type": "Subscription",
+            "entities": [{"type": "Device"}],
+            "notification": {"endpoint": {"uri": "http://127.0.0.1:9/notify", "accept": "application/json"}},
+            "@context": [CORE_CONTEXT, {"gear": scoped_definition()}]
+        }),
+    )
+    .await;
+    assert_scoped_context_refused(&refused, "create subscription under a scoped @context");
+
+    let plain_id = scope.id("Subscription:create-plain");
+    let admitted = send_ld_json(
+        client,
+        Method::POST,
+        "/ngsi-ld/v1/subscriptions",
+        &json!({
+            "id": plain_id,
+            "type": "Subscription",
+            "entities": [{"type": "Device"}],
+            "notification": {"endpoint": {"uri": "http://127.0.0.1:9/notify", "accept": "application/json"}},
+            "@context": [CORE_CONTEXT, {"gear": "https://example.org/gear"}]
+        }),
+    )
+    .await;
+    assert_eq!(
+        admitted.status,
+        StatusCode::CREATED,
+        "create subscription under a plain @context: {:?}",
+        admitted.body
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Update Subscription (clause 5.8.3) runs the same admission, so a scoped user
+/// `@context` on the update is refused and leaves the subscription unchanged.
+#[tokio::test]
+async fn regression_scoped_user_context_a_subscription_update_refuses_a_scoped_context() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Subscription:update-scoped");
+
+    let created = send_ld_json(
+        client,
+        Method::POST,
+        "/ngsi-ld/v1/subscriptions",
+        &json!({
+            "id": id,
+            "type": "Subscription",
+            "entities": [{"type": "Device"}],
+            "notification": {"endpoint": {"uri": "http://127.0.0.1:9/notify", "accept": "application/json"}},
+            "@context": [CORE_CONTEXT]
+        }),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED, "seeding the subscription: {:?}", created.body);
+
+    let refused = send_ld_json(
+        client,
+        Method::PATCH,
+        &format!("/ngsi-ld/v1/subscriptions/{id}"),
+        &json!({"description": "rescoped", "@context": [CORE_CONTEXT, {"gear": scoped_definition()}]}),
+    )
+    .await;
+    assert_scoped_context_refused(&refused, "update subscription under a scoped @context");
+
+    // Control: a plain-context update is applied.
+    let admitted = send_ld_json(
+        client,
+        Method::PATCH,
+        &format!("/ngsi-ld/v1/subscriptions/{id}"),
+        &json!({"description": "still fine", "@context": [CORE_CONTEXT]}),
+    )
+    .await;
+    assert_eq!(
+        admitted.status,
+        StatusCode::NO_CONTENT,
+        "update subscription under a plain @context: {:?}",
+        admitted.body
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Create Context Source Registration (clause 5.9.2) refuses a scoped user
+/// `@context` before it expands the registration's footprint.
+#[tokio::test]
+async fn regression_scoped_user_context_a_registration_create_refuses_a_scoped_context() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let scoped_id = scope.id("ContextSourceRegistration:create-scoped");
+
+    let refused = send_ld_json(
+        client,
+        Method::POST,
+        "/ngsi-ld/v1/csourceRegistrations",
+        &json!({
+            "id": scoped_id,
+            "type": "ContextSourceRegistration",
+            "information": [{"entities": [{"type": "Device"}]}],
+            "endpoint": "http://127.0.0.1:9",
+            "@context": [CORE_CONTEXT, {"gear": scoped_definition()}]
+        }),
+    )
+    .await;
+    assert_scoped_context_refused(&refused, "create registration under a scoped @context");
+
+    let plain_id = scope.id("ContextSourceRegistration:create-plain");
+    let admitted = send_ld_json(
+        client,
+        Method::POST,
+        "/ngsi-ld/v1/csourceRegistrations",
+        &json!({
+            "id": plain_id,
+            "type": "ContextSourceRegistration",
+            "information": [{"entities": [{"type": "Device"}]}],
+            "endpoint": "http://127.0.0.1:9",
+            "@context": [CORE_CONTEXT, {"gear": "https://example.org/gear"}]
+        }),
+    )
+    .await;
+    assert_eq!(
+        admitted.status,
+        StatusCode::CREATED,
+        "create registration under a plain @context: {:?}",
+        admitted.body
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
 /// The control for the whole rule: a user `@context` that declares ordinary
 /// terms, inline and remote, is used exactly as before.
 #[tokio::test]

@@ -7,7 +7,7 @@
 //! resolved once, at the write, by expanding the smallest document that
 //! forces every context it names to load.
 
-use crate::{context_spec::ContextSpec, engine::processor::JsonLdEngine, error::JsonLdError};
+use crate::{context_spec::ContextSpec, engine::processor::JsonLdEngine, error::JsonLdError, scoped_context_admission::reject_scoped_user_contexts};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use serde_json::{Value, json};
 use std::str::FromStr;
@@ -42,9 +42,15 @@ pub async fn validate_jsonld_context_value(engine: &JsonLdEngine, value: &Value)
 ///
 /// # Errors
 ///
-/// Returns the typed JSON-LD processing or context-loading failure produced
-/// while resolving the effective request context.
+/// Returns [`JsonLdError::ScopedUserContext`] when the request `@context`
+/// declares a JSON-LD Scoped Context clause 5.5.7 forbids, and the typed
+/// JSON-LD processing or context-loading failure produced while resolving the
+/// effective request context.
 pub async fn validate_context_spec(engine: &JsonLdEngine, context: &ContextSpec) -> Result<(), JsonLdError> {
+    // Clause 5.5.7: the request `@context` a subscription or registration is
+    // written under shall not declare a JSON-LD Scoped Context, screened here on
+    // create and update alike before the probe expands anything against it.
+    reject_scoped_user_contexts(engine, context).await?;
     let probe = json!({
         "id": "urn:ngsi-ld:_:context-validate",
         "type": "Subscription"

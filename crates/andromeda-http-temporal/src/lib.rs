@@ -6,6 +6,7 @@ pub mod error;
 mod history_read;
 mod join;
 mod operation_query;
+mod request_context_admission;
 pub mod routes;
 pub mod state;
 mod temporal;

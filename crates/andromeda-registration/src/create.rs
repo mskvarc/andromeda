@@ -9,7 +9,7 @@ use crate::{
     payload::extract_create_params,
     validation::{RegistrationShape, validate_shape},
 };
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::{context_spec::ContextSpec, scoped_context_admission::reject_scoped_user_contexts};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::{CsrChangeEvent, CsrTriggerReason};
 use serde_json::Value;
@@ -41,6 +41,11 @@ impl RegistrationService {
             }
             None => generate_registration_id()?,
         };
+
+        // Clause 5.5.7: the request `@context` a registration is created under
+        // shall not declare a JSON-LD Scoped Context, refused before the payload
+        // is expanded against it.
+        reject_scoped_user_contexts(&self.engine, context).await?;
 
         let validation_document = serde_json::json!({
             "id": "urn:ngsi-ld:_:context-validate",

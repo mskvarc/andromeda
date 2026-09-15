@@ -44,9 +44,9 @@
 //! because reaching them needs the expanded payload the temporal write path
 //! does not build before it forwards.
 
-use andromeda_http_extraction::classification::classify_jsonld_error;
+use crate::request_context_admission::admit_request_context;
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
-use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, scoped_context_admission::reject_scoped_user_contexts};
+use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_representation::{
@@ -67,7 +67,7 @@ use std::fmt::Display;
 /// `@context` embedded below the document's top level; a context the request
 /// names that does not resolve is answered `LdContextNotAvailable` instead.
 pub(crate) async fn admit_written_evolution(engine: &JsonLdEngine, payload: &Value, context: &ContextSpec, instance: &HttpUri) -> Result<(), ProblemResponse> {
-    admit_written_context(engine, context, instance).await?;
+    admit_request_context(engine, context, instance).await?;
     validate_fragment_attribute_types(payload).map_err(|error| bad_request_data(&error, instance))?;
     reject_embedded_contexts_in_fragment(payload).map_err(|error| bad_request_data(&error, instance))
 }
@@ -84,21 +84,9 @@ pub(crate) async fn admit_written_instance(
     context: &ContextSpec,
     instance: &HttpUri,
 ) -> Result<(), ProblemResponse> {
-    admit_written_context(engine, context, instance).await?;
+    admit_request_context(engine, context, instance).await?;
     validate_attribute_node(attribute.as_str(), payload).map_err(|error| bad_request_data(&error, instance))?;
     reject_embedded_contexts_in_attribute(attribute.as_str(), payload).map_err(|error| bad_request_data(&error, instance))
-}
-
-/// Refuse a request `@context` clause 5.5.7 does not admit.
-///
-/// The refusal is classified rather than fixed to `BadRequestData`, because the
-/// same walk reports a context that does not resolve, which clause 5.5.2 answers
-/// with `LdContextNotAvailable`.
-async fn admit_written_context(engine: &JsonLdEngine, context: &ContextSpec, instance: &HttpUri) -> Result<(), ProblemResponse> {
-    reject_scoped_user_contexts(engine, context)
-        .await
-        .map_err(|error| classify_jsonld_error(&error).with_instance(instance.clone()))
-    // clone: the problem details own the instance the borrowed request names
 }
 
 /// The clause 5.5.4 answer to a representation this broker refuses.

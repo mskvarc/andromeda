@@ -9,6 +9,7 @@ use crate::{
     error::temporal_problem,
     history_read::TemporalHistoryRead,
     join::{apply_temporal_join, single_retrieval_payload},
+    request_context_admission::admit_request_context,
     temporal::{
         AcceptFormatNoGeo,
         ContextSpec,
@@ -61,6 +62,10 @@ pub async fn get(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     let context: ContextSpec = context.into_inner();
+    // Clause 5.5.7: a request `@context` declaring a JSON-LD Scoped Context is
+    // refused on the temporal history read path before anything is forwarded or
+    // expanded against it.
+    admit_request_context(service.engine(), &context, &uri).await?;
     protocol.extensions().apply_to_temporal_query(&mut params).with_instance(&uri)?;
     params.validate(false).with_instance(&uri)?;
 

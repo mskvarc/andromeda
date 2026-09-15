@@ -128,6 +128,10 @@ pub(crate) async fn get(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entity_query;
     let context: ContextSpec = context.into_inner();
+    // Clause 5.5.7: a request `@context` declaring a JSON-LD Scoped Context is
+    // refused on the read path exactly as on the write path, before anything is
+    // expanded against it.
+    service.admit_read_context(&context).await.with_entity_instance(&uri)?;
     protocol.extensions().apply_to_entity_get(&mut params).with_entity_instance(&uri)?;
     let language_filter = params.lang.take().or(protocol.language_filter);
     let prefer = protocol.prefer;
