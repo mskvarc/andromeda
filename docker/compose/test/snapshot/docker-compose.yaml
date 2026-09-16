@@ -59,7 +59,7 @@ services:
     <<: *postgres-base
     volumes:
       - ./initdb/primary:/docker-entrypoint-initdb.d:ro
-      - snapshot-postgres-primary-data:/var/lib/postgresql/data
+      - snapshot-postgres-primary-data:/var/lib/postgresql
     ports:
       - "5481:5432"
 
@@ -67,7 +67,7 @@ services:
     <<: *postgres-base
     volumes:
       - ./initdb/remote:/docker-entrypoint-initdb.d:ro
-      - snapshot-postgres-remote-data:/var/lib/postgresql/data
+      - snapshot-postgres-remote-data:/var/lib/postgresql
     ports:
       - "5482:5432"
 

@@ -90,7 +90,7 @@ services:
     <<: *postgres-base
     volumes:
       - ./initdb/a:/docker-entrypoint-initdb.d:ro
-      - postgres-a-data:/var/lib/postgresql/data
+      - postgres-a-data:/var/lib/postgresql
     ports:
       # Host 544x to avoid colliding with other local Postgres instances on 5432;
       # brokers reach their server over the compose network on 5432 regardless.
@@ -100,7 +100,7 @@ services:
     <<: *postgres-base
     volumes:
       - ./initdb/b:/docker-entrypoint-initdb.d:ro
-      - postgres-b-data:/var/lib/postgresql/data
+      - postgres-b-data:/var/lib/postgresql
     ports:
       - "5443:5432"
 
@@ -108,7 +108,7 @@ services:
     <<: *postgres-base
     volumes:
       - ./initdb/c:/docker-entrypoint-initdb.d:ro
-      - postgres-c-data:/var/lib/postgresql/data
+      - postgres-c-data:/var/lib/postgresql
     ports:
       - "5444:5432"
 

@@ -49,7 +49,7 @@ services:
     <<: *postgres-base
     volumes:
       - ./initdb/hub:/docker-entrypoint-initdb.d:ro
-      - fed-postgres-hub-data:/var/lib/postgresql/data
+      - fed-postgres-hub-data:/var/lib/postgresql
     ports:
       - "5451:5432"
 
@@ -57,7 +57,7 @@ services:
     <<: *postgres-base
     volumes:
       - ./initdb/madrid:/docker-entrypoint-initdb.d:ro
-      - fed-postgres-madrid-data:/var/lib/postgresql/data
+      - fed-postgres-madrid-data:/var/lib/postgresql
     ports:
       - "5452:5432"
 
@@ -65,7 +65,7 @@ services:
     <<: *postgres-base
     volumes:
       - ./initdb/berlin:/docker-entrypoint-initdb.d:ro
-      - fed-postgres-berlin-data:/var/lib/postgresql/data
+      - fed-postgres-berlin-data:/var/lib/postgresql
     ports:
       - "5453:5432"
 
@@ -73,7 +73,7 @@ services:
     <<: *postgres-base
     volumes:
       - ./initdb/nordic:/docker-entrypoint-initdb.d:ro
-      - fed-postgres-nordic-data:/var/lib/postgresql/data
+      - fed-postgres-nordic-data:/var/lib/postgresql
     ports:
       - "5454:5432"
 
@@ -81,7 +81,7 @@ services:
     <<: *postgres-base
     volumes:
       - ./initdb/north:/docker-entrypoint-initdb.d:ro
-      - fed-postgres-north-data:/var/lib/postgresql/data
+      - fed-postgres-north-data:/var/lib/postgresql
     ports:
       - "5455:5432"
 
