@@ -6,7 +6,7 @@
 //! `ANDROMEDA__EXTENSIONS__TEMPORAL_AGGREGATION_GROUPING_MAX_GROUPS` (see
 //! `docker/compose/test/extensions/env`).
 
-use crate::seeding::{DATASET_A, DATASET_B, seed_grouping_history};
+use crate::seeding::{DATASET_A, DATASET_B, seed_grouping_history, seed_hourly_history, seed_mixed_unit_history, seed_monthly_history};
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
@@ -61,7 +61,7 @@ async fn grouping_by_unit_code_splits_a_mixed_unit_request() {
     let scope = TestEnvironment::from_suite("extensions").await.expect("isolated environment");
     let client = scope.client();
     let id = scope.id("Vehicle:group-unit");
-    seed_grouping_history(client, &id).await;
+    seed_mixed_unit_history(client, &id).await;
 
     // Without grouping the mixed-unit aggregation is refused.
     let ungrouped = client
@@ -82,7 +82,7 @@ async fn grouping_by_unit_code_splits_a_mixed_unit_request() {
     assert_eq!(status, StatusCode::OK, "grouping by unit makes the mixed-unit request answerable: {body}");
     let group_maps = speed_group_maps(&speed_member(&body), "avg");
     assert!(group_maps.iter().any(|map| map.contains_key("KMH")), "KMH is a group: {body}");
-    assert!(group_maps.iter().any(|map| map.contains_key("MPH")), "MPH is a group: {body}");
+    assert!(group_maps.iter().any(|map| map.contains_key("HM")), "HM is a group: {body}");
     scope.finish().await.expect("cleanup");
 }
 
@@ -93,7 +93,7 @@ async fn a_calendar_month_bucket_groups_by_month() {
     let scope = TestEnvironment::from_suite("extensions").await.expect("isolated environment");
     let client = scope.client();
     let id = scope.id("Vehicle:group-month");
-    seed_grouping_history(client, &id).await;
+    seed_monthly_history(client, &id).await;
 
     let (status, body) = grouped_speed(client, &id, "aggrGroupBy=observedAt;month").await;
     assert_eq!(status, StatusCode::OK, "a monthly grouping answers 200: {body}");
@@ -109,12 +109,12 @@ async fn a_cyclic_hour_of_day_bucket_folds_the_timeline() {
     let scope = TestEnvironment::from_suite("extensions").await.expect("isolated environment");
     let client = scope.client();
     let id = scope.id("Vehicle:group-hour");
-    seed_grouping_history(client, &id).await;
+    seed_hourly_history(client, &id).await;
 
     let (status, body) = grouped_speed(client, &id, "aggrGroupBy=observedAt;hourOfDay").await;
     assert_eq!(status, StatusCode::OK, "a cyclic grouping answers 200: {body}");
     let keys = union_group_keys(&speed_member(&body), "avg");
-    // The seed observes at hours 8, 9 and 10.
+    // The seed observes at hour 8 (twice, on different days) and hour 9.
     assert!(
         keys.iter().any(|key| key == "8" || key == "9" || key == "10"),
         "an hour-of-day group is present: {keys:?}"
