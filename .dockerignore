@@ -1,2 +1,8 @@
+# Build output is the single largest context cost and is never needed.
 target/
-.git/
+
+# Not consumed by the build; .git is deliberately kept so shadow-rs can embed
+# the commit metadata the broker reports at runtime.
+.github/
+docs/
+docker/compose/
