@@ -116,6 +116,10 @@ impl RepresentationGrammar for TemporalRepresentationOptions {
             match token {
                 "temporalValues" => set_temporal_format(&mut parsed, TemporalFormat::TemporalValues)?,
                 "aggregatedValues" => set_temporal_format(&mut parsed, TemporalFormat::AggregatedValues)?,
+                // Non-standard, from the temporal aggregation grouping
+                // extension: the grouped counterpart of `aggregatedValues`,
+                // named through `options` as well as `format`.
+                "groupedValues" => set_temporal_format(&mut parsed, TemporalFormat::GroupedValues)?,
                 "sysAttrs" if parsed.sys_attrs == SysAttrsInclusion::Strip => parsed.sys_attrs = SysAttrsInclusion::Include,
                 "sysAttrs" => return Err("duplicate options token 'sysAttrs'".to_owned()),
                 other => return Err(format!("unsupported options token '{other}'")),

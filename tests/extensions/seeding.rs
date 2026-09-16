@@ -61,6 +61,41 @@ fn instant_values(entity: &Value, attribute: &str) -> Vec<String> {
         .collect()
 }
 
+/// A `datasetId` used by the grouping seed.
+pub const DATASET_A: &str = "urn:ngsi-ld:Dataset:A";
+/// A second `datasetId` used by the grouping seed.
+pub const DATASET_B: &str = "urn:ngsi-ld:Dataset:B";
+
+/// Seed a temporal entity whose `speed` history spans two `datasetId`s and two
+/// `unitCode`s across several months and hours, plus a `zone` attribute whose
+/// value changes over time (for the value-in-effect key).
+///
+/// The mixed units are the case a plain aggregation refuses; grouping by
+/// `unitCode` splits them instead.
+pub async fn seed_grouping_history(client: &TestClient, id: &str) {
+    let body = json!({
+        "id": id,
+        "type": "Vehicle",
+        "speed": [
+            {"type": "Property", "value": 10, "unitCode": "KMH", "datasetId": DATASET_A, "observedAt": "2024-01-01T08:00:00Z"},
+            {"type": "Property", "value": 20, "unitCode": "KMH", "datasetId": DATASET_A, "observedAt": "2024-02-01T09:00:00Z"},
+            {"type": "Property", "value": 30, "unitCode": "MPH", "datasetId": DATASET_B, "observedAt": "2024-01-15T08:30:00Z"},
+            {"type": "Property", "value": 40, "unitCode": "MPH", "datasetId": DATASET_B, "observedAt": "2024-03-01T10:00:00Z"}
+        ],
+        "zone": [
+            {"type": "Property", "value": "north", "observedAt": "2024-01-01T00:00:00Z"},
+            {"type": "Property", "value": "south", "observedAt": "2024-02-15T00:00:00Z"}
+        ],
+        "@context": [CORE_CONTEXT]
+    });
+    let response = client.create_temporal_entity(&body).await.expect("seed grouping history");
+    assert!(
+        response.status == StatusCode::CREATED || response.status == StatusCode::NO_CONTENT,
+        "unexpected seed status: {}",
+        response.status
+    );
+}
+
 /// Seed a current-state entity whose `speed` attribute has a default instance
 /// and one named `datasetId` instance.
 pub async fn seed_two_dataset_instances(client: &TestClient, id: &str, dataset: &str) {

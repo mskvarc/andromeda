@@ -18,8 +18,10 @@ impl TryFrom<Query> for TemporalQueryParameters {
             Some(_) if temporal.aggr_methods.is_some() || temporal.aggr_period_duration.is_some() => {
                 return Err(ParameterError::TemporalAggregationConflict);
             }
-            Some(aggregation) => (Some(aggregation.aggr_methods), aggregation.aggr_period_duration),
-            None => (temporal.aggr_methods, temporal.aggr_period_duration),
+            // `aggrGroupBy` is an aggregation member, so it travels with the rest
+            // of `aggrParams`; a standard `temporalQ` carries none.
+            Some(aggregation) => (Some(aggregation.aggr_methods), aggregation.aggr_period_duration, aggregation.aggr_group_by),
+            None => (temporal.aggr_methods, temporal.aggr_period_duration, None),
         };
         let entity_selectors: Vec<EntitySelectorParams> = query
             .entities
@@ -53,6 +55,7 @@ impl TryFrom<Query> for TemporalQueryParameters {
             options: None,
             aggr_methods: aggregation.0,
             aggr_period_duration: aggregation.1,
+            aggr_group_by: aggregation.2,
             limit: None,
             offset: None,
             count: None,

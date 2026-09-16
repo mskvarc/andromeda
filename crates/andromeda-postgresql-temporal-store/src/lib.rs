@@ -13,6 +13,7 @@
 #![deny(missing_docs)]
 
 /// Decoding `PgRow` into the backend-neutral aggregation row and its group span.
+pub(crate) mod aggregation_group_key_decode;
 pub(crate) mod aggregation_row_decode;
 /// One row of the rebuilt `attribute_history` hypertable.
 pub mod attribute_history_row;

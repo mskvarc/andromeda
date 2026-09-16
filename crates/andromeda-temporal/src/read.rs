@@ -11,13 +11,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::compact_attr_iri, context_spec::ContextSpec, engine::options::CompactOptions};
-use andromeda_ngsi_ld_lexicon::{
-    aggr_method::AggrMethod,
-    attribute_name::AttributeName,
-    entity_type_name::EntityTypeName,
-    temporal_format::TemporalFormat,
-    uri::Uri,
-};
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::{
     pagination::{CountPolicy, Pagination},
@@ -188,6 +182,10 @@ impl TemporalService {
                         linked_candidates.extend(rendered.candidates);
                         entities.push(rendered.value);
                     }
+                    // The grouped-aggregation bound refuses the whole operation
+                    // rather than dropping one entity: an over-the-bound grouping
+                    // is a `TooManyResults` (403), not a partial result set.
+                    Err(error @ TemporalError::TooManyResults { .. }) => return Err(error),
                     // One entity that cannot be rendered degrades the result set
                     // rather than the query: the rest of the matches still answer.
                     Err(error) => {
@@ -351,7 +349,7 @@ impl TemporalService {
     /// attribute is not, which is why the statement itself must also refuse to
     /// fold a value-derived aggregate for a family Table 4.5.19.1-3 marks N/A.
     async fn ensure_requested_attributes_aggregable(&self, target: &ContextTarget, compiled: &CompiledTemporalQuery) -> Result<(), TemporalError> {
-        if compiled.representation.format != TemporalFormat::AggregatedValues || compiled.instances.attr_filter.is_empty() {
+        if !compiled.representation.format.is_aggregated() || compiled.instances.attr_filter.is_empty() {
             return Ok(());
         }
         let attributes = compiled

@@ -1,6 +1,6 @@
 //! How a temporal query renders the instances it selected.
 
-use crate::temporal::aggregation_period::AggregationPeriod;
+use crate::temporal::{aggregation_period::AggregationPeriod, grouping::AggregationGrouping};
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use typed_builder::TypedBuilder;
@@ -22,6 +22,11 @@ pub struct Representation {
     /// (clause 4.5.19).
     #[builder(default = Default::default())]
     pub aggr_period_duration: Option<AggregationPeriod>,
+    /// The `aggrGroupBy` grouping applied within each aggregation period, when
+    /// the grouped extension format is requested. Non-standard; present only for
+    /// [`TemporalFormat::GroupedValues`].
+    #[builder(default = Default::default())]
+    pub grouping: Option<AggregationGrouping>,
     /// Whether `createdAt` / `modifiedAt` survive into the response.
     pub sys_attrs: SysAttrsInclusion,
 }

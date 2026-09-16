@@ -3,6 +3,7 @@
 #![deny(missing_docs)]
 
 pub mod error;
+mod grouping_gate;
 mod history_read;
 mod join;
 mod operation_query;

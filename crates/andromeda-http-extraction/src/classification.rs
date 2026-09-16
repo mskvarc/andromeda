@@ -36,9 +36,15 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         // Clause 5.7.4.4 names the ineligible-aggregation failure an
         // InvalidRequest, beside the clause 6.3.20 parameter incompatibilities,
         // of which `type=*` contradicted by `local=false` is one.
+        // The grouping-extension parameter incompatibilities are clause 6.3.20
+        // InvalidRequest failures, beside the standard ones (study §4.9).
         ParameterError::OptionsInvalid(_)
         | ParameterError::FormatInvalid(_)
         | ParameterError::AggregationIneligible { .. }
+        | ParameterError::AggrGroupByWithoutGroupedValues
+        | ParameterError::AggrGroupByInvalid(_)
+        | ParameterError::AggrGroupByOnAggregatedAttribute(_)
+        | ParameterError::LastNWithGrouping
         | ParameterError::WildcardTypeWithLocalFalse => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
         ParameterError::IdPatternEmpty
         | ParameterError::OrderByDirectionInvalid(_)

@@ -7,6 +7,7 @@
 
 use crate::{
     error::temporal_problem,
+    grouping_gate::reject_grouping_when_disabled,
     history_read::TemporalHistoryRead,
     join::{apply_temporal_join, single_retrieval_payload},
     request_context_admission::admit_request_context,
@@ -35,13 +36,14 @@ use crate::{
     },
 };
 use andromeda_entity_map::reuse::EntityMapUse;
+use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{collection::NgsiLdCollectionResponse, content_range::build_content_range};
 use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
 use andromeda_temporal::{error::TemporalError, linked::candidates::TemporalLinkedCandidate};
-use axum::http::Uri as RequestUri;
+use axum::{Extension, http::Uri as RequestUri};
 
 pub async fn get(
     context_target::ExistingTargetedTenantState {
@@ -50,6 +52,7 @@ pub async fn get(
         snapshot: _,
     }: TenantState,
     accept: AcceptFormatNoGeo,
+    Extension(enabled): Extension<EnabledExtensions>,
     NgsiLdRequestEnvelope {
         uri,
         context,
@@ -60,6 +63,9 @@ pub async fn get(
     TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(mut params): ValidatedQuery<TemporalQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
+    // The grouped extension is refused upstream when it is disabled
+    // (extension-strategy 5.2).
+    reject_grouping_when_disabled(&params, enabled, &uri)?;
     let service = &state.temporal;
     let context: ContextSpec = context.into_inner();
     // Clause 5.5.7: a request `@context` declaring a JSON-LD Scoped Context is

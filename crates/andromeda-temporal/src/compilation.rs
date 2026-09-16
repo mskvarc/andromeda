@@ -7,7 +7,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, temporal_format::
 use andromeda_ngsi_ld_query::{
     entity_selection::{ConsideredEntities, EntitySelection},
     filter::{
-        expansion::{apply_expand_values, expand_attribute_names, expand_q_expr},
+        expansion::{apply_expand_values, expand_attr_path, expand_attribute_names, expand_q_expr},
         expression::Expr,
         json_key_attributes::JsonKeyAttributes,
     },
@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_query::{
     },
     temporal::{
         compiled::CompiledTemporalQuery,
+        grouping::{AggregationGrouping, GroupingTerm, group_key::GroupKey},
         instance_selection::InstanceSelection,
         last_n::LastNOrigin,
         ordering::TemporalEntityOrdering,
@@ -27,7 +28,10 @@ use andromeda_ngsi_ld_query::{
     },
     term_expander::TermExpander,
 };
-use andromeda_ngsi_ld_request::query::{SharedQueryParams, temporal::TemporalQueryParameters};
+use andromeda_ngsi_ld_request::{
+    error::ParameterError,
+    query::{SharedQueryParams, temporal::TemporalQueryParameters},
+};
 use std::collections::HashSet;
 
 impl TemporalService {
@@ -72,6 +76,7 @@ impl TemporalService {
 
         let format = params.parse_format()?;
         let last_n = compile_last_n(params, format, self.default_last_n);
+        let grouping = compile_grouping(params, format, &expander).await?;
 
         Ok(CompiledTemporalQuery::builder()
             .entities(
@@ -101,7 +106,7 @@ impl TemporalService {
                     .last_n_origin(last_n.origin)
                     .build(),
             )
-            .representation(compile_representation(params, format))
+            .representation(compile_representation(params, format, grouping))
             .pagination(compile_pagination(params))
             .projection(projection)
             // Clause 5.7.4.5: "If Entity ordering is specified (see clause
@@ -163,7 +168,7 @@ struct LastNSelection {
 /// (clause 4.5.19), so the safety cap that clause 6.3.10 leaves to the broker
 /// is imposed only on the instance-returning formats.
 fn compile_last_n(params: &TemporalQueryParameters, format: TemporalFormat, cap: u32) -> LastNSelection {
-    if format == TemporalFormat::AggregatedValues {
+    if format.is_aggregated() {
         return LastNSelection {
             effective: params.last_n,
             origin: match params.last_n {
@@ -183,15 +188,51 @@ fn compile_last_n(params: &TemporalQueryParameters, format: TemporalFormat, cap:
 }
 
 /// Compile the clause 4.5.19 response shape: output format, aggregation
-/// methods and period, and whether system attributes survive.
-fn compile_representation(params: &TemporalQueryParameters, format: TemporalFormat) -> Representation {
+/// methods and period, the extension grouping, and whether system attributes
+/// survive.
+fn compile_representation(params: &TemporalQueryParameters, format: TemporalFormat, grouping: Option<AggregationGrouping>) -> Representation {
     Representation::builder()
         .format(format)
         // clone: the compiled representation owns its methods independently of the reusable request parameters.
         .aggr_methods(params.aggr_methods.clone().unwrap_or_default())
         .aggr_period_duration(params.aggr_period_duration)
+        .grouping(grouping)
         .sys_attrs(params.sys_attrs())
         .build()
+}
+
+/// Parse and expand the `aggrGroupBy` grouping (the extension, study §4.2).
+///
+/// Value-path keys are expanded against the request context so they match the
+/// stored attribute IRIs, exactly as `attrs` and `q` are; member and bucket
+/// keys carry no term to expand.
+///
+/// # Errors
+///
+/// Returns [`TemporalError::Request`] carrying
+/// [`ParameterError::AggrGroupByInvalid`] when `aggrGroupBy` is not a well-formed
+/// grouping (the request seam validated it already, so this is the re-parse the
+/// compiled query is built from), and [`TemporalError::Query`] when a value-path
+/// key cannot be expanded.
+async fn compile_grouping(
+    params: &TemporalQueryParameters,
+    format: TemporalFormat,
+    expander: &impl TermExpander,
+) -> Result<Option<AggregationGrouping>, TemporalError> {
+    let (true, Some(raw)) = (format.is_grouped(), params.aggr_group_by.as_deref()) else {
+        return Ok(None);
+    };
+    let grouping = AggregationGrouping::parse(raw).map_err(|error| TemporalError::Request(ParameterError::AggrGroupByInvalid(error)))?;
+    let json_keys = JsonKeyAttributes::default();
+    let mut expanded_terms = Vec::with_capacity(grouping.terms().len());
+    for term in grouping.0 {
+        let key = match term.key {
+            GroupKey::Member(member) => GroupKey::Member(member),
+            GroupKey::Path(path) => GroupKey::Path(expand_attr_path(path, &json_keys, expander).await?),
+        };
+        expanded_terms.push(GroupingTerm { key, bucket: term.bucket });
+    }
+    Ok(Some(AggregationGrouping(expanded_terms)))
 }
 
 /// Compile the clause 5.5.9 page the query returns.

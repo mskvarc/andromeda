@@ -27,15 +27,18 @@ pub enum TemporalError {
         /// Unsupported capability detail.
         detail: String,
     },
-    /// A temporal delete-by-query would remove more history instances than the
-    /// configured bound admits (the `temporal_delete_by_query` extension).
+    /// A bounded temporal extension would produce more results than its
+    /// configured maximum admits.
     ///
-    /// Reported off a pre-count, so an oversized delete is refused whole rather
-    /// than half-executed. Classified as `TooManyResults` (403), mirroring the
-    /// clause 5.6.21.4 bound the standard Purge already raises.
-    #[error("temporal delete-by-query would remove {matched} history instances, over the configured maximum of {maximum}")]
+    /// Reported off a pre-count, so an oversized operation is refused whole
+    /// rather than partially executed. Two extensions raise it: the
+    /// `temporal_delete_by_query` bound on the history instances a purge would
+    /// remove, and the `temporal_aggregation_grouping` bound on the distinct
+    /// groups a grouped aggregation would emit. Classified as `TooManyResults`
+    /// (403), mirroring the clause 5.6.21.4 bound the standard Purge raises.
+    #[error("temporal operation would produce {matched} results, over the configured maximum of {maximum}")]
     TooManyResults {
-        /// The number of instances the delete matched.
+        /// The number of results the operation matched (instances or groups).
         matched: u64,
         /// The configured upper bound.
         maximum: u64,

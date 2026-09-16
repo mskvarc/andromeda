@@ -37,6 +37,11 @@ impl RepresentationGrammar for TemporalFormat {
         match written {
             "temporalValues" => Ok(TemporalFormat::TemporalValues),
             "aggregatedValues" => Ok(TemporalFormat::AggregatedValues),
+            // Non-standard, from the temporal aggregation grouping extension:
+            // the grouped counterpart of `aggregatedValues`. The HTTP gate has
+            // already refused it when the extension is disabled, so reaching
+            // here means the broker serves it.
+            "groupedValues" => Ok(TemporalFormat::GroupedValues),
             other => Err(other.to_owned()),
         }
     }
@@ -71,6 +76,7 @@ mod tests {
     fn only_the_two_temporal_renderings_parse() {
         pretty_assertions::assert_eq!(TemporalFormat::parse("temporalValues"), Ok(TemporalFormat::TemporalValues));
         pretty_assertions::assert_eq!(TemporalFormat::parse("aggregatedValues"), Ok(TemporalFormat::AggregatedValues));
+        pretty_assertions::assert_eq!(TemporalFormat::parse("groupedValues"), Ok(TemporalFormat::GroupedValues));
         for written in ["invalidFormat", "normalized", "keyValues", "concise", ""] {
             assert!(TemporalFormat::parse(written).is_err(), "{written} must be refused");
         }

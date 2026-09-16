@@ -17,6 +17,7 @@ use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::Time
 use andromeda_ngsi_ld_query::{
     projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
     temporal::{
+        grouping::{AggregationGrouping, group_key::GroupKey},
         ordering::TemporalEntityOrdering,
         window::{BoundPresence, TimeInterval},
     },
@@ -185,7 +186,9 @@ impl TemporalQueryParameters {
         if self.join == Some(JoinMode::Inline) {
             let format = self.parse_format()?;
             match format {
-                TemporalFormat::TemporalValues | TemporalFormat::AggregatedValues => {
+                // The grouped extension format collapses instances the same way
+                // the aggregated one does, so it has no nesting site either.
+                TemporalFormat::TemporalValues | TemporalFormat::AggregatedValues | TemporalFormat::GroupedValues => {
                     return Err(ParameterError::InlineJoinWithoutInstances(format));
                 }
                 TemporalFormat::Normalized => {}
@@ -211,8 +214,52 @@ impl TemporalQueryParameters {
             BoundPresence::of(self.end_time_at.as_ref()),
         )
         .map_err(ParameterError::Query)?;
-        if self.parse_format()? == TemporalFormat::AggregatedValues && self.aggr_methods.is_none() {
+        // Both the standard aggregated format and the grouped extension format
+        // apply the clause 4.5.19 methods, so both require them.
+        if self.parse_format()?.is_aggregated() && self.aggr_methods.is_none() {
             return Err(ParameterError::AggrMethodsRequired);
+        }
+        self.validate_grouping()?;
+        Ok(())
+    }
+
+    /// Validate the `aggrGroupBy` grouping extension parameter (study §4.9).
+    ///
+    /// The parameter is inert unless present, so a broker with the extension
+    /// disabled — where the HTTP gate has already refused a non-empty value —
+    /// reaches here only with `aggr_group_by` absent and passes unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParameterError::AggrGroupByWithoutGroupedValues`] when grouping
+    /// is asked for outside the grouped format,
+    /// [`ParameterError::AggrGroupByInvalid`] when the value is not a well-formed
+    /// grouping, [`ParameterError::LastNWithGrouping`] when it is combined with
+    /// `lastN`, and [`ParameterError::AggrGroupByOnAggregatedAttribute`] when a
+    /// key names an attribute the request also aggregates.
+    fn validate_grouping(&self) -> Result<(), ParameterError> {
+        let Some(raw) = self.aggr_group_by.as_deref() else {
+            return Ok(());
+        };
+        if !self.parse_format()?.is_grouped() {
+            return Err(ParameterError::AggrGroupByWithoutGroupedValues);
+        }
+        let grouping = AggregationGrouping::parse(raw).map_err(ParameterError::AggrGroupByInvalid)?;
+        if self.last_n.is_some() {
+            return Err(ParameterError::LastNWithGrouping);
+        }
+        // Self-reference: grouping by an attribute the request also aggregates
+        // is ambiguous, so it must be spelled out rather than guessed. Compared
+        // on the compact names both parameters carry at this stage.
+        if let Some(attrs) = self.attrs.as_deref() {
+            for term in grouping.terms() {
+                if let GroupKey::Path(path) = &term.key
+                    && attrs.iter().any(|attr| attr.as_str() == path.attr.as_str())
+                {
+                    // clone: the error owns the offending name past the borrow of the parsed grouping.
+                    return Err(ParameterError::AggrGroupByOnAggregatedAttribute(path.attr.clone()));
+                }
+            }
         }
         Ok(())
     }

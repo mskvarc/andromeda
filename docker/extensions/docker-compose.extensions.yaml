@@ -62,7 +62,10 @@ services:
       ANDROMEDA__SERVER__PORT: "1091"
       ANDROMEDA__EXTENSIONS__TEMPORAL_DELETE_BY_QUERY: "enabled"
       ANDROMEDA__EXTENSIONS__PURGE_DATASET_SCOPE: "enabled"
+      ANDROMEDA__EXTENSIONS__TEMPORAL_AGGREGATION_GROUPING: "enabled"
       ANDROMEDA__EXTENSIONS__TEMPORAL_DELETE_BY_QUERY_MAX_MATCHES: "2"
+      # A deliberately small group bound so the TooManyResults case is drillable.
+      ANDROMEDA__EXTENSIONS__TEMPORAL_AGGREGATION_GROUPING_MAX_GROUPS: "3"
       ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:extensions-enabled"
       ANDROMEDA__IDENTITY__SOURCE_ALIAS: "extensions-enabled"
     ports:
@@ -79,6 +82,7 @@ services:
       ANDROMEDA__EXTENSIONS__CONFORMANCE_MODE: "enabled"
       ANDROMEDA__EXTENSIONS__TEMPORAL_DELETE_BY_QUERY: "enabled"
       ANDROMEDA__EXTENSIONS__PURGE_DATASET_SCOPE: "enabled"
+      ANDROMEDA__EXTENSIONS__TEMPORAL_AGGREGATION_GROUPING: "enabled"
       ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:extensions-conformance"
       ANDROMEDA__IDENTITY__SOURCE_ALIAS: "extensions-conformance"
     ports:

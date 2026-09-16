@@ -66,6 +66,9 @@ pub(crate) fn decode_aggregation_row(row: &PgRow, span: &AggregationGroupSpan) -
         stddev: decode_exact_aggregate(row, "agg_stddev")?,
         total_count: projected_column(row, "agg_total_count")?,
         distinct_count: projected_column(row, "agg_distinct_count")?,
+        // Populated by the caller, which holds the grouping and the entity the
+        // row belongs to; an ungrouped aggregation leaves it empty.
+        group_keys: Vec::new(),
     })
 }
 
@@ -186,7 +189,7 @@ fn decode_exact_aggregate(row: &PgRow, column: &str) -> Result<Option<JsonNumber
 /// method list says it should be. A column that is present and unreadable is an
 /// error: the alternative is reporting a computed aggregate as no aggregate at
 /// all.
-fn projected_column<'r, T>(row: &'r PgRow, column: &str) -> Result<Option<T>, TemporalStoreError>
+pub(crate) fn projected_column<'r, T>(row: &'r PgRow, column: &str) -> Result<Option<T>, TemporalStoreError>
 where
     T: Decode<'r, Postgres> + Type<Postgres>,
 {

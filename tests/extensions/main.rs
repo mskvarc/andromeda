@@ -28,4 +28,5 @@
 mod gate;
 mod purge_dataset_scope;
 mod seeding;
+mod temporal_aggregation_grouping;
 mod temporal_delete_by_query;

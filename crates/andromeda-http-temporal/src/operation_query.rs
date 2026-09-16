@@ -11,9 +11,11 @@
 
 use crate::{
     error::TemporalResultExt,
+    grouping_gate::reject_grouping_when_disabled,
     state::TemporalTenantState,
     temporal::query::{TemporalQueryRequest, run},
 };
+use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     context_target,
@@ -25,7 +27,7 @@ use andromeda_http_extraction::{
 use andromeda_http_response::{pagination::PagePointers, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, post_parameters::TemporalPostQueryParams};
-use axum::response::Response;
+use axum::{Extension, response::Response};
 
 /// POST /ngsi-ld/v1/temporal/entityOperations/query -- Query Temporal Evolution
 /// of Entities carried in a clause 5.2.23 `Query` body.
@@ -37,6 +39,7 @@ use axum::response::Response;
 pub async fn query(
     context_target::ExistingTargetedTenantState { services, target, snapshot: _ }: TemporalTenantState,
     accept: AcceptFormatNoGeo,
+    Extension(enabled): Extension<EnabledExtensions>,
     NgsiLdRequestEnvelope {
         uri,
         context,
@@ -55,6 +58,10 @@ pub async fn query(
     let context = context.merge(body_context);
     let mut params = TemporalQueryParameters::try_from(request).with_instance(&uri)?;
     url_params.apply_to(&mut params);
+    // The grouped extension is refused upstream when it is disabled
+    // (extension-strategy 5.2); the POST body's `aggrParams.aggrGroupBy` is now
+    // folded into `params`.
+    reject_grouping_when_disabled(&params, enabled, &uri)?;
     // Boxed: a temporal query parameter set is wide enough that the operation's
     // future overflows the task-local budget the `large_futures` lint guards.
     Box::pin(run(TemporalQueryRequest {

@@ -7,6 +7,7 @@
 //! [`TemporalHistoryRow`].
 
 use crate::{
+    aggregation_group_key_decode::decode_group_keys,
     aggregation_row_decode::{decode_aggregation_group_span, decode_aggregation_row},
     attribute_kind_code::attribute_type_of,
     error::TemporalStoreError,
@@ -27,7 +28,8 @@ use andromeda_postgresql_query::{
     projected_type_names::projected_type_names,
 };
 use andromeda_postgresql_temporal_query::{
-    aggregation_group::ensure_uniform_aggregation_groups,
+    aggregation_group::{PromotedGroupFacets, ensure_uniform_aggregation_groups},
+    aggregation_grouping::promoted_facets,
     history::build_temporal_history_query,
     recorded_shape::RecordedShape,
     scope_history::{build_scope_history_query, scope_is_selected},
@@ -273,13 +275,26 @@ impl TemporalHistoryReader for TemporalRepository {
         for pg_row in &pg_rows {
             spans.push(decode_aggregation_group_span(pg_row).map_err(TemporalError::from)?);
         }
-        ensure_uniform_aggregation_groups(&spans, &compiled.representation.aggr_methods)
+        // A facet promoted to an `aggrGroupBy` key splits the groups rather than
+        // contradicting them, so the guard skips its uniformity check (study
+        // §4).
+        let promoted = compiled
+            .representation
+            .grouping
+            .as_ref()
+            .map_or(PromotedGroupFacets::default(), promoted_facets);
+        ensure_uniform_aggregation_groups(&spans, &compiled.representation.aggr_methods, promoted)
             .map_err(TemporalStoreError::from)
             .map_err(TemporalError::from)?;
 
         let mut rows = Vec::with_capacity(pg_rows.len());
         for (pg_row, span) in pg_rows.iter().zip(&spans) {
-            rows.push(decode_aggregation_row(pg_row, span).map_err(TemporalError::from)?);
+            let mut row = decode_aggregation_row(pg_row, span).map_err(TemporalError::from)?;
+            if let Some(grouping) = &compiled.representation.grouping {
+                row.group_keys =
+                    decode_group_keys(pg_row, grouping, entity_id, row.dataset_id.as_ref(), row.attribute_type, span.units).map_err(TemporalError::from)?;
+            }
+            rows.push(row);
         }
 
         Ok(rows)

@@ -41,6 +41,10 @@ pub struct TemporalService {
     /// The maximum history instances one delete-by-query may remove before it is
     /// refused with `TooManyResults` (the `temporal_delete_by_query` extension).
     pub(crate) delete_by_query_max_matches: u64,
+    /// The maximum distinct aggregation groups one grouped aggregation may
+    /// produce before it is refused with `TooManyResults` (the
+    /// `temporal_aggregation_grouping` extension).
+    pub(crate) aggregation_grouping_max_groups: u64,
     /// Resolution of `objectType`-annotated Linked Entities whose history this
     /// broker does not hold (clause 4.5.23.1). Absent in a composition without
     /// federation, which resolves joins purely against its own history.
@@ -123,6 +127,7 @@ impl TemporalService {
         engine: JsonLdEngine,
         default_last_n: u32,
         delete_by_query_max_matches: u64,
+        aggregation_grouping_max_groups: u64,
         remote_temporal_linked: Option<Arc<dyn RemoteTemporalLinkedSource>>,
     ) -> TemporalService {
         let TemporalServicePorts {
@@ -141,6 +146,7 @@ impl TemporalService {
             engine,
             default_last_n,
             delete_by_query_max_matches,
+            aggregation_grouping_max_groups,
             remote_temporal_linked,
         }
     }

@@ -119,7 +119,10 @@ impl ForwardedQuery {
                 query.push_optional(ForwardedParameter::Timeproperty, params.timeproperty.map(|property| property.to_string()));
                 query.push_optional(ForwardedParameter::LastN, params.last_n.map(|last_n| last_n.to_string()));
                 // Clause 6.3.12: `normalized` is the absence of a temporal
-                // `format`, not a value a source accepts.
+                // `format`, not a value a source accepts. The grouped extension
+                // format is never forwarded (study §4.10): grouping is applied
+                // by this broker after the merge, so a source is asked for the
+                // plain aggregated representation and `aggrGroupBy` stays local.
                 query.push_optional(
                     ForwardedParameter::Format,
                     params
@@ -127,7 +130,10 @@ impl ForwardedQuery {
                         .as_ref()
                         .and_then(WrittenValue::if_supported)
                         .filter(|format| **format != TemporalFormat::Normalized)
-                        .map(ToString::to_string),
+                        .map(|format| match format {
+                            TemporalFormat::GroupedValues => TemporalFormat::AggregatedValues.to_string(),
+                            TemporalFormat::Normalized | TemporalFormat::TemporalValues | TemporalFormat::AggregatedValues => format.to_string(),
+                        }),
                 );
                 query.push_temporal_options(params);
                 query.push_optional(

@@ -16,4 +16,11 @@ pub struct AggregationParameters {
     /// Width of each aggregation period; absent means the full time range.
     #[serde(with = "aggregation_period::optional", default, skip_serializing_if = "Option::is_none")]
     pub aggr_period_duration: Option<AggregationPeriod>,
+    /// The grouping applied within each aggregation period (`aggrGroupBy`).
+    ///
+    /// Non-standard, from the temporal aggregation grouping extension. Carried
+    /// raw so the query crate owns its parsing, consistent with the GET binding;
+    /// absent on a standard aggregation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aggr_group_by: Option<String>,
 }

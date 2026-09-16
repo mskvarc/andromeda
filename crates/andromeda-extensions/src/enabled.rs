@@ -19,6 +19,8 @@ pub struct EnabledExtensions {
     temporal_delete_by_query: bool,
     /// Whether entity Purge accepts `datasetId` / `deleteAll`.
     purge_dataset_scope: bool,
+    /// Whether grouped temporal aggregation (`aggrGroupBy`) is accepted.
+    temporal_aggregation_grouping: bool,
 }
 
 impl ExtensionsConfig {
@@ -33,11 +35,13 @@ impl ExtensionsConfig {
             return EnabledExtensions {
                 temporal_delete_by_query: false,
                 purge_dataset_scope: false,
+                temporal_aggregation_grouping: false,
             };
         }
         EnabledExtensions {
             temporal_delete_by_query: matches!(self.temporal_delete_by_query, HttpFeatureMode::Enabled),
             purge_dataset_scope: matches!(self.purge_dataset_scope, HttpFeatureMode::Enabled),
+            temporal_aggregation_grouping: matches!(self.temporal_aggregation_grouping, HttpFeatureMode::Enabled),
         }
     }
 }
@@ -52,6 +56,7 @@ impl EnabledExtensions {
         EnabledExtensions {
             temporal_delete_by_query: false,
             purge_dataset_scope: false,
+            temporal_aggregation_grouping: false,
         }
     }
 
@@ -65,6 +70,7 @@ impl EnabledExtensions {
         EnabledExtensions {
             temporal_delete_by_query: true,
             purge_dataset_scope: true,
+            temporal_aggregation_grouping: true,
         }
     }
 
@@ -80,10 +86,16 @@ impl EnabledExtensions {
         self.purge_dataset_scope
     }
 
+    /// Whether the grouped temporal aggregation extension is enabled.
+    #[must_use]
+    pub const fn temporal_aggregation_grouping_enabled(&self) -> bool {
+        self.temporal_aggregation_grouping
+    }
+
     /// Whether any extension at all is enabled.
     #[must_use]
     pub const fn any_enabled(&self) -> bool {
-        self.temporal_delete_by_query || self.purge_dataset_scope
+        self.temporal_delete_by_query || self.purge_dataset_scope || self.temporal_aggregation_grouping
     }
 }
 
@@ -97,7 +109,9 @@ mod tests {
             conformance_mode: HttpFeatureMode::Disabled,
             temporal_delete_by_query: HttpFeatureMode::Enabled,
             purge_dataset_scope: HttpFeatureMode::Enabled,
+            temporal_aggregation_grouping: HttpFeatureMode::Enabled,
             temporal_delete_by_query_max_matches: 100,
+            temporal_aggregation_grouping_max_groups: 100,
         }
     }
 
@@ -106,6 +120,7 @@ mod tests {
         let enabled = ExtensionsConfig::default().resolve();
         assert!(!enabled.temporal_delete_by_query_enabled());
         assert!(!enabled.purge_dataset_scope_enabled());
+        assert!(!enabled.temporal_aggregation_grouping_enabled());
         assert!(!enabled.any_enabled());
     }
 
@@ -114,6 +129,7 @@ mod tests {
         let enabled = both_on().resolve();
         assert!(enabled.temporal_delete_by_query_enabled());
         assert!(enabled.purge_dataset_scope_enabled());
+        assert!(enabled.temporal_aggregation_grouping_enabled());
         assert!(enabled.any_enabled());
     }
 
@@ -127,6 +143,7 @@ mod tests {
         let enabled = config.resolve();
         assert!(!enabled.temporal_delete_by_query_enabled());
         assert!(!enabled.purge_dataset_scope_enabled());
+        assert!(!enabled.temporal_aggregation_grouping_enabled());
     }
 
     #[test]

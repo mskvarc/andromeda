@@ -10,6 +10,7 @@ use andromeda_ngsi_ld_lexicon::{
     uri::Uri,
 };
 use andromeda_ngsi_ld_number::JsonNumber;
+use andromeda_ngsi_ld_vocabulary::NULL_URI;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -199,6 +200,47 @@ pub enum AggregationAverage {
     Time(NgsiLdTime),
 }
 
+/// One rendered group-key value of a grouped aggregation row (`aggrGroupBy`
+/// extension, study §4.6).
+///
+/// A grouped aggregation nests its triples under one map key per grouping term.
+/// The three shapes are the map keys the study defines: `@none` for a row whose
+/// key was absent, `urn:ngsi-ld:null` for an explicit NGSI-LD Null value key,
+/// and the rendered value otherwise. The value is carried as text because it is
+/// a JSON object key, which is unstructured by construction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GroupKeyValue {
+    /// The key was absent for this row.
+    Absent,
+    /// The key was an explicit NGSI-LD Null value.
+    Null,
+    /// The rendered group value used as the nesting map key.
+    Value(String),
+}
+
+impl GroupKeyValue {
+    /// The `@none` map key of an absent group value (study §4.6).
+    pub const NONE_KEY: &'static str = "@none";
+
+    /// The map key of an explicit NGSI-LD Null (study §4.6): the clause 4.5.0
+    /// `urn:ngsi-ld:null` sentinel, taken from the validated vocabulary constant
+    /// rather than spelled as a raw string.
+    #[must_use]
+    pub fn null_key() -> &'static str {
+        NULL_URI.as_str()
+    }
+
+    /// The JSON object key this group value nests its triples under.
+    #[must_use]
+    pub fn as_map_key(&self) -> &str {
+        match self {
+            GroupKeyValue::Absent => GroupKeyValue::NONE_KEY,
+            GroupKeyValue::Null => GroupKeyValue::null_key(),
+            GroupKeyValue::Value(value) => value,
+        }
+    }
+}
+
 /// One backend-neutral aggregation bucket for one temporal attribute.
 ///
 /// Clause 4.5.19 gives one aggregate value per attribute, `datasetId` and
@@ -237,4 +279,7 @@ pub struct TemporalAggregationRow {
     pub total_count: Option<i64>,
     /// Number of distinct values.
     pub distinct_count: Option<i64>,
+    /// The rendered group-key values this row falls under, one per grouping term
+    /// in order (`aggrGroupBy` extension). Empty for an ungrouped aggregation.
+    pub group_keys: Vec<GroupKeyValue>,
 }

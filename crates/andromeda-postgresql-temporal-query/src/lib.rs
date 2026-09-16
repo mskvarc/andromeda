@@ -16,6 +16,7 @@
 pub mod aggregated_value;
 pub mod aggregation;
 pub mod aggregation_group;
+pub mod aggregation_grouping;
 pub mod alias;
 pub mod axis;
 pub mod history;

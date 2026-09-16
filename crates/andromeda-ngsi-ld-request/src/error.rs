@@ -12,7 +12,7 @@
 
 use crate::linked_retrieval_term::LinkedRetrievalTerm;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, temporal_format::TemporalFormat};
-use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict};
+use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict, temporal::grouping::GroupingParseError};
 use thiserror::Error;
 
 /// A query parameter the broker cannot act on.
@@ -131,6 +131,34 @@ pub enum ParameterError {
     /// (clause 4.5.19).
     #[error("aggrMethods is required when format is 'aggregatedValues'")]
     AggrMethodsRequired,
+    /// `aggrGroupBy` was sent without `format=groupedValues` (extension, study
+    /// §4.9).
+    ///
+    /// The grouped response shape is a pure function of the format, so grouping
+    /// only takes effect under the grouped format; asking to group any other
+    /// representation is a contradiction rather than a silently ignored
+    /// parameter.
+    #[error("aggrGroupBy requires format=groupedValues (or options=groupedValues)")]
+    AggrGroupByWithoutGroupedValues,
+    /// `aggrGroupBy` did not parse as the extension grouping grammar (study §4.2).
+    #[error("invalid aggrGroupBy: {0}")]
+    AggrGroupByInvalid(#[source] GroupingParseError),
+    /// An `aggrGroupBy` key named an attribute that is also an aggregation
+    /// target (extension, study §4.9).
+    ///
+    /// Grouping by the same attribute the request aggregates is ambiguous — the
+    /// value that keys the group is the value being summarised — so the study
+    /// requires it to be spelled out rather than guessed.
+    #[error("aggrGroupBy key '{0}' is also an aggregation target; group by a different member")]
+    AggrGroupByOnAggregatedAttribute(AttributeName),
+    /// `lastN` was combined with `aggrGroupBy` (extension, study OQ-5).
+    ///
+    /// `lastN` bounds the instances per attribute, which grouping then
+    /// re-partitions; the two shape the result along different axes and the
+    /// study leaves the combination out, as aggregation already leaves out
+    /// `lastN`.
+    #[error("lastN is not applicable together with aggrGroupBy")]
+    LastNWithGrouping,
     /// A POST query body named a resource type other than `Query`.
     ///
     /// Clause 5.2.23 fixes the body's `type` as `Query`; a different value is a

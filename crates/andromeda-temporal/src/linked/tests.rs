@@ -551,6 +551,7 @@ fn service(broker: StubBroker) -> TemporalService {
         JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
         100,
         100,
+        100,
         None,
     )
 }
@@ -761,6 +762,7 @@ fn service_with_remote(broker: StubBroker, source: &Arc<RecordingSource>) -> Tem
             writes: broker as Arc<dyn ContextCommitter>,
         },
         JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
+        100,
         100,
         100,
         Some(Arc::clone(source) as Arc<dyn RemoteTemporalLinkedSource>), // clone: the test keeps its handle on the recording

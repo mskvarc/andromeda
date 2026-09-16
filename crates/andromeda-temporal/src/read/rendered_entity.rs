@@ -109,8 +109,19 @@ impl TemporalService {
         compiled: &CompiledTemporalQuery,
         context: &ContextSpec,
     ) -> Result<RenderedTemporalEntity, TemporalError> {
-        if compiled.representation.format == TemporalFormat::AggregatedValues {
+        if compiled.representation.format.is_aggregated() {
             let rows = self.reader.query_entity_aggregation(target, entity_id, compiled).await?;
+            // The grouped extension refuses a runaway grouping off the count of
+            // distinct groups it produced — one per row — mirroring the
+            // delete-by-query bound (study §4.9). `TooManyResults` is fatal to
+            // the whole operation, so the query loop must not demote it to a
+            // per-entity warning.
+            if compiled.representation.format.is_grouped() {
+                let groups = rows.len() as u64;
+                if groups > self.aggregation_grouping_max_groups {
+                    return Err(TemporalError::too_many_results(groups, self.aggregation_grouping_max_groups));
+                }
+            }
             let presence = presence_of(rows.is_empty());
             let value = self.build_aggregated_compacted(entity_id, entity_types, &rows, compiled, context).await?;
             return Ok(RenderedTemporalEntity {

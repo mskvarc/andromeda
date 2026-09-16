@@ -8,6 +8,7 @@ use crate::{
 use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_http_extraction::scoped_response::echo_scope_headers;
 use axum::{
+    Extension,
     Router,
     middleware::from_fn,
     routing::{delete, get, patch, post},
@@ -53,6 +54,11 @@ impl TemporalRoutes {
             .nest("/entities", entity_routes)
             .nest("/entityOperations", operation_routes)
             .layer(from_fn(echo_scope_headers))
+            // The temporal aggregation grouping gate reads the enabled-extension
+            // set from this layer: the aggregation query handlers reject
+            // `aggrGroupBy`/`groupedValues` when the extension is off, exactly as
+            // a broker that never implemented them does.
+            .layer(Extension(enabled))
             .with_state(state);
         TemporalRoutes { router }
     }

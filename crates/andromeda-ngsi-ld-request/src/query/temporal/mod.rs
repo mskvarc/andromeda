@@ -127,6 +127,14 @@ pub struct TemporalQueryParameters {
     #[serde(rename = "aggrPeriodDuration")]
     #[serde(default, with = "optional")]
     pub aggr_period_duration: Option<AggregationPeriod>,
+    /// The grouping applied within each aggregation period (`aggrGroupBy`).
+    ///
+    /// Non-standard, from the temporal aggregation grouping extension. Carried
+    /// raw and parsed by the query crate, consistent with `q` and `orderBy`; the
+    /// HTTP gate rejects it when the extension is disabled, so a compiled query
+    /// only ever sees it under an enabled broker.
+    #[serde(rename = "aggrGroupBy")]
+    pub aggr_group_by: Option<String>,
 
     // --- Pagination ---
     /// The page size (clause 5.5.9 `limit`).
@@ -277,6 +285,78 @@ mod tests {
     fn validate_aggregated_with_aggr_methods_ok() {
         let p = params_from_query("format=aggregatedValues&aggrMethods=avg");
         assert!(p.validate(false).is_ok());
+    }
+
+    /// A valid grouped request passes (extension, study §4.9).
+    #[test]
+    fn a_grouped_query_with_methods_and_a_group_key_is_admitted() {
+        assert!(
+            params_from_query("format=groupedValues&aggrMethods=avg&aggrGroupBy=unitCode")
+                .validate(false)
+                .is_ok()
+        );
+    }
+
+    /// Study §4.9: grouping only shapes the grouped format, so `aggrGroupBy`
+    /// without it is refused.
+    #[test]
+    fn aggr_group_by_without_the_grouped_format_is_rejected() {
+        let err = params_from_query("format=aggregatedValues&aggrMethods=avg&aggrGroupBy=unitCode")
+            .validate(false)
+            .expect_err("grouping needs the grouped format");
+        assert!(matches!(err, ParameterError::AggrGroupByWithoutGroupedValues), "got {err:?}");
+    }
+
+    /// The grouped format is an aggregation, so it needs `aggrMethods` (clause
+    /// 4.5.19).
+    #[test]
+    fn the_grouped_format_requires_aggr_methods() {
+        let err = params_from_query("format=groupedValues&aggrGroupBy=unitCode")
+            .validate(false)
+            .expect_err("the grouped format aggregates");
+        assert!(matches!(err, ParameterError::AggrMethodsRequired), "got {err:?}");
+    }
+
+    /// A malformed `aggrGroupBy` is refused with its parse error (study §4.2).
+    #[test]
+    fn an_unparseable_aggr_group_by_is_rejected() {
+        let err = params_from_query("format=groupedValues&aggrMethods=avg&aggrGroupBy=speed%3Bbogus")
+            .validate(false)
+            .expect_err("bogus is no bucket");
+        assert!(matches!(err, ParameterError::AggrGroupByInvalid(_)), "got {err:?}");
+    }
+
+    /// Study §4.9: grouping by an attribute the request also aggregates is
+    /// ambiguous, so it must be spelled out.
+    #[test]
+    fn grouping_by_an_aggregation_target_is_rejected() {
+        let err = params_from_query("format=groupedValues&aggrMethods=avg&attrs=speed&aggrGroupBy=speed")
+            .validate(false)
+            .expect_err("a self-referential group key is ambiguous");
+        assert!(matches!(err, ParameterError::AggrGroupByOnAggregatedAttribute(_)), "got {err:?}");
+    }
+
+    /// Study OQ-5: `lastN` and grouping shape the result along different axes and
+    /// are not combined.
+    #[test]
+    fn last_n_with_grouping_is_rejected() {
+        let err = params_from_query("format=groupedValues&aggrMethods=avg&aggrGroupBy=unitCode&lastN=5")
+            .validate(false)
+            .expect_err("lastN and grouping do not combine");
+        assert!(matches!(err, ParameterError::LastNWithGrouping), "got {err:?}");
+    }
+
+    /// The grouped format collapses instances like the aggregated one, so an
+    /// inline join has no nesting site.
+    #[test]
+    fn an_inline_join_over_grouped_values_is_rejected() {
+        let err = params_from_query("join=inline&format=groupedValues&aggrMethods=avg&aggrGroupBy=unitCode")
+            .validate(false)
+            .expect_err("inline join has no nesting site");
+        assert!(
+            matches!(err, ParameterError::InlineJoinWithoutInstances(TemporalFormat::GroupedValues)),
+            "got {err:?}"
+        );
     }
 
     /// Clause 4.21: `observation{temperature,humidity}` is one raw term

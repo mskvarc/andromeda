@@ -22,6 +22,8 @@ pub const EXTENSION_KEY: &str = "extensions";
 const TEMPORAL_DELETE_BY_QUERY_TOKEN: &str = "temporal-delete-by-query";
 /// The advertised token for the entity-Purge dataset-scope extension.
 const PURGE_DATASET_SCOPE_TOKEN: &str = "purge-dataset-scope";
+/// The advertised token for the grouped temporal aggregation extension.
+const TEMPORAL_AGGREGATION_GROUPING_TOKEN: &str = "temporal-aggregation-grouping";
 
 /// Merge the enabled extension tokens into the operator's `contextSourceExtras`.
 ///
@@ -60,13 +62,22 @@ fn enabled_tokens(enabled: EnabledExtensions) -> Vec<&'static str> {
     if enabled.purge_dataset_scope_enabled() {
         tokens.push(PURGE_DATASET_SCOPE_TOKEN);
     }
+    if enabled.temporal_aggregation_grouping_enabled() {
+        tokens.push(TEMPORAL_AGGREGATION_GROUPING_TOKEN);
+    }
     tokens
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        advertisement::{EXTENSION_KEY, PURGE_DATASET_SCOPE_TOKEN, TEMPORAL_DELETE_BY_QUERY_TOKEN, enabled_extension_extras},
+        advertisement::{
+            EXTENSION_KEY,
+            PURGE_DATASET_SCOPE_TOKEN,
+            TEMPORAL_AGGREGATION_GROUPING_TOKEN,
+            TEMPORAL_DELETE_BY_QUERY_TOKEN,
+            enabled_extension_extras,
+        },
         config::ExtensionsConfig,
         enabled::EnabledExtensions,
     };
@@ -78,7 +89,9 @@ mod tests {
             conformance_mode: HttpFeatureMode::Disabled,
             temporal_delete_by_query: HttpFeatureMode::Enabled,
             purge_dataset_scope: HttpFeatureMode::Enabled,
+            temporal_aggregation_grouping: HttpFeatureMode::Enabled,
             temporal_delete_by_query_max_matches: 100,
+            temporal_aggregation_grouping_max_groups: 100,
         }
         .resolve()
     }
@@ -90,6 +103,7 @@ mod tests {
         let rendered: Vec<&str> = tokens.iter().filter_map(Value::as_str).collect();
         assert!(rendered.contains(&TEMPORAL_DELETE_BY_QUERY_TOKEN), "{rendered:?}");
         assert!(rendered.contains(&PURGE_DATASET_SCOPE_TOKEN), "{rendered:?}");
+        assert!(rendered.contains(&TEMPORAL_AGGREGATION_GROUPING_TOKEN), "{rendered:?}");
     }
 
     #[test]

@@ -18,6 +18,7 @@
 
 use crate::{
     aggregated_value::{arithmetic_numeric_expr, average_time_expr, distinct_value_expr, ordered_instant_expr, ordered_text_expr, sized_numeric_expr},
+    aggregation_grouping::apply_grouping,
     alias::{Ah, An, S},
     axis::axis_column,
     history::base_history_source,
@@ -212,22 +213,24 @@ pub fn build_aggregation_query(schema: Option<&DynIden>, compiled: &CompiledTemp
     // rows that record one are outside every aggregate rather than counted.
     select.cond_where(condition.add(Expr::col((Ah, AttributeHistory::ValueKind)).ne(int_literal(0))));
 
-    // Clause 4.5.19: the group key is the attribute, `datasetId` and period, and
-    // nothing else. An absent period is the whole range, which is one bucket
-    // rather than no grouping at all.
-    let mut group = vec![
-        Expr::col((An, AttributeNames::Name)),
+    // Clause 4.5.19: the fixed key is the attribute and `datasetId`. The
+    // `aggrGroupBy` extension inserts its own keys between that fixed key and
+    // the period, and an absent period is the whole range — one bucket rather
+    // than no grouping at all.
+    select.add_group_by([
+        SimpleExpr::from(Expr::col((An, AttributeNames::Name))),
         SimpleExpr::from(Expr::col((S, TemporalAttributeStreams::DatasetId))),
-    ];
-    if period.is_some() {
-        group.push(Expr::col((Bucket, BucketStart)));
-    }
-    select.add_group_by(group);
-
+    ]);
     select
         .order_by((An, AttributeNames::Name), Order::Asc)
         .order_by((S, TemporalAttributeStreams::DatasetId), Order::Asc);
+
+    if let Some(grouping) = &compiled.representation.grouping {
+        apply_grouping(&mut select, grouping, axis, schema);
+    }
+
     if period.is_some() {
+        select.add_group_by([SimpleExpr::from(Expr::col((Bucket, BucketStart)))]);
         select.order_by((Bucket, BucketStart), Order::Asc);
     }
 
@@ -257,6 +260,24 @@ mod tests {
                     .format(TemporalFormat::AggregatedValues)
                     .aggr_methods(methods)
                     .aggr_period_duration(period.and_then(|raw| AggregationPeriod::parse(raw).expect("valid period")))
+                    .sys_attrs(SysAttrsInclusion::Strip)
+                    .build(),
+            )
+            .build()
+    }
+
+    fn grouped(methods: Vec<AggrMethod>, period: Option<&str>, aggr_group_by: &str) -> CompiledTemporalQuery {
+        use andromeda_ngsi_ld_query::temporal::grouping::AggregationGrouping;
+        CompiledTemporalQuery::builder()
+            .entities(EntitySelection::builder().build())
+            .window(TemporalWindow::builder().timeproperty(TimeProp::Observed).build())
+            .instances(InstanceSelection::builder().build())
+            .representation(
+                Representation::builder()
+                    .format(TemporalFormat::GroupedValues)
+                    .aggr_methods(methods)
+                    .aggr_period_duration(period.and_then(|raw| AggregationPeriod::parse(raw).expect("valid period")))
+                    .grouping(Some(AggregationGrouping::parse(aggr_group_by).expect("a well-formed grouping")))
                     .sys_attrs(SysAttrsInclusion::Strip)
                     .build(),
             )
@@ -465,6 +486,62 @@ mod tests {
             "\"an\".\"name\" ASC, \"s\".\"dataset_id\" ASC, \"bucket\".\"bucket_start\" ASC",
             "{sql}"
         );
+    }
+
+    /// `aggrGroupBy=unitCode` promotes the unit to a group key: `ah.unit_code_id`
+    /// joins the `GROUP BY`, while the span projection that decides a mixed group
+    /// is unchanged (study G2).
+    #[test]
+    fn grouping_by_unit_code_adds_the_unit_column_to_the_group_by() {
+        let sql = sql_of(&grouped(vec![AggrMethod::Avg], None, "unitCode"));
+        let group_by = sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
+        let group_by = group_by.split("ORDER BY").next().expect("a clause before ORDER BY");
+        assert!(group_by.contains("\"ah\".\"unit_code_id\""), "unit_code_id must key the group: {sql}");
+        // The span projection survives so the reader still reads the group's unit.
+        assert!(sql.contains("AS \"unit_code_id_lowest\""), "{sql}");
+    }
+
+    /// `aggrGroupBy=observedAt;month` truncates the observation axis to a calendar
+    /// month — the calendar bucketing clause 4.5.19's fixed-width period cannot
+    /// express (study G1).
+    #[test]
+    fn a_calendar_bucket_truncates_the_axis_in_the_group_by() {
+        let sql = sql_of(&grouped(vec![AggrMethod::Avg], None, "observedAt;month"));
+        assert!(sql.contains("date_trunc('month', \"ah\".\"observed_at\")"), "{sql}");
+        let group_by = sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
+        assert!(group_by.contains("date_trunc('month'"), "the bucket keys the group: {sql}");
+    }
+
+    /// `aggrGroupBy=observedAt;hourOfDay` folds the axis onto the hour of day —
+    /// the non-contiguous cyclic bucketing (study G1).
+    #[test]
+    fn a_cyclic_bucket_extracts_the_axis_field_in_the_group_by() {
+        let sql = sql_of(&grouped(vec![AggrMethod::Avg], None, "observedAt;hourOfDay"));
+        assert!(sql.contains("date_part('hour', \"ah\".\"observed_at\")"), "{sql}");
+    }
+
+    /// A value-in-effect key correlates the attribute's value at each instant
+    /// through a lateral join selecting the latest instance not after the row
+    /// (study §4.4).
+    #[test]
+    fn a_value_key_joins_the_value_in_effect_through_a_lateral() {
+        let sql = sql_of(&grouped(vec![AggrMethod::Avg], None, "category"));
+        assert!(sql.contains("JOIN LATERAL"), "{sql}");
+        assert!(sql.contains("ORDER BY \"ahk0\".\"observed_at\" DESC"), "{sql}");
+        assert!(sql.contains("LIMIT 1"), "{sql}");
+    }
+
+    /// Grouping combines with `aggrPeriodDuration`: the period column stays, and
+    /// the group key sits before it in the `GROUP BY` (study §4.3).
+    #[test]
+    fn grouping_combines_with_the_aggregation_period() {
+        let sql = sql_of(&grouped(vec![AggrMethod::Avg], Some("PT1H"), "unitCode"));
+        assert!(sql.contains("time_bucket"), "the period bucket survives grouping: {sql}");
+        let group_by = sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
+        let group_by = group_by.split("ORDER BY").next().expect("a clause before ORDER BY");
+        let unit_at = group_by.find("unit_code_id").expect("the unit keys the group");
+        let period_at = group_by.find("bucket_start").expect("the period keys the group");
+        assert!(unit_at < period_at, "the group key must precede the period: {group_by}");
     }
 
     #[test]

@@ -10,7 +10,7 @@
 //! carry the same period bounds.
 
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, attribute_type::AttributeType, rfc3339::whole_seconds, uri::Uri};
-use andromeda_ngsi_ld_model::temporal::{AggregationAverage, AggregationMinMax, TemporalAggregationRow};
+use andromeda_ngsi_ld_model::temporal::{AggregationAverage, AggregationMinMax, GroupKeyValue, TemporalAggregationRow};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use indexmap::IndexMap;
 use serde_json::{Value, json};
@@ -57,6 +57,63 @@ fn aggregation_average_to_json(value: Option<&AggregationAverage>) -> Value {
     }
 }
 
+/// The clause 4.5.19 member name one aggregation method renders under.
+const fn aggregation_method_key(method: AggrMethod) -> &'static str {
+    match method {
+        AggrMethod::Avg => "avg",
+        AggrMethod::Min => "min",
+        AggrMethod::Max => "max",
+        AggrMethod::Sum => "sum",
+        AggrMethod::SumSq => "sumsq",
+        AggrMethod::StdDev => "stddev",
+        AggrMethod::TotalCount => "totalCount",
+        AggrMethod::DistinctCount => "distinctCount",
+    }
+}
+
+/// The `[value, start, end]` triples one method contributes over a set of rows.
+fn method_triples(rows: &[&TemporalAggregationRow], method: AggrMethod) -> Vec<Value> {
+    rows.iter()
+        .map(|row| {
+            let value: Value = match method {
+                AggrMethod::TotalCount => row.total_count.map_or(Value::Null, |count| json!(count)),
+                AggrMethod::DistinctCount => row.distinct_count.map_or(Value::Null, |count| json!(count)),
+                AggrMethod::Min => aggregation_min_max_to_json(row.min.as_ref()),
+                AggrMethod::Max => aggregation_min_max_to_json(row.max.as_ref()),
+                AggrMethod::Avg => aggregation_average_to_json(row.avg.as_ref()),
+                AggrMethod::Sum => row.sum.as_ref().map_or(Value::Null, |number| json!(number)),
+                AggrMethod::SumSq => row.sumsq.as_ref().map_or(Value::Null, |number| json!(number)),
+                AggrMethod::StdDev => row.stddev.as_ref().map_or(Value::Null, |number| json!(number)),
+            };
+            let bucket_start = row.bucket_start.map_or(Value::Null, |instant| json!(whole_seconds(instant)));
+            let bucket_end = row.bucket_end.map_or(Value::Null, |instant| json!(whole_seconds(instant)));
+            json!([value, bucket_start, bucket_end])
+        })
+        .collect()
+}
+
+/// Nest one method's triples under one map key per grouping term (study §4.6).
+///
+/// At each level the rows are partitioned by their group-key value at that
+/// level, preserving the order the store returned them in (clause 4.23.2 plus
+/// the query's collation, applied by the SQL `ORDER BY`). The leaf, once every
+/// term has been consumed, is the triple array the standard format would emit.
+fn nested_group_value(rows: &[&TemporalAggregationRow], method: AggrMethod, level: usize, depth: usize) -> Value {
+    if level == depth {
+        return Value::Array(method_triples(rows, method));
+    }
+    let mut buckets: IndexMap<String, Vec<&TemporalAggregationRow>> = IndexMap::new();
+    for row in rows {
+        let key = row.group_keys.get(level).map_or(GroupKeyValue::NONE_KEY, GroupKeyValue::as_map_key).to_owned();
+        buckets.entry(key).or_default().push(*row);
+    }
+    let mut map = serde_json::Map::with_capacity(buckets.len());
+    for (key, sub_rows) in buckets {
+        map.insert(key, nested_group_value(&sub_rows, method, level + 1, depth));
+    }
+    Value::Object(map)
+}
+
 /// Render a typed minimum or maximum in the family it was observed in.
 fn aggregation_min_max_to_json(value: Option<&AggregationMinMax>) -> Value {
     match value {
@@ -98,40 +155,22 @@ impl TemporalAggregationRenderer<'_> {
                 instance.insert("datasetId".to_string(), json!(dataset_id));
             }
 
+            // The grouped extension format nests the triples under one map key
+            // per grouping term, between the method member and its array (study
+            // §4.6); the standard format emits the array directly.
+            let grouping_depth = if compiled.representation.format.is_grouped() {
+                compiled.representation.grouping.as_ref().map_or(0, |grouping| grouping.terms().len())
+            } else {
+                0
+            };
             for method in &compiled.representation.aggr_methods {
-                let key = match method {
-                    AggrMethod::Avg => "avg",
-                    AggrMethod::Min => "min",
-                    AggrMethod::Max => "max",
-                    AggrMethod::Sum => "sum",
-                    AggrMethod::SumSq => "sumsq",
-                    AggrMethod::StdDev => "stddev",
-                    AggrMethod::TotalCount => "totalCount",
-                    AggrMethod::DistinctCount => "distinctCount",
+                let key = aggregation_method_key(*method);
+                let value = if grouping_depth == 0 {
+                    Value::Array(method_triples(bucket_rows, *method))
+                } else {
+                    nested_group_value(bucket_rows, *method, 0, grouping_depth)
                 };
-
-                let triples: Vec<Value> = bucket_rows
-                    .iter()
-                    .map(|row| {
-                        let value: Value = match method {
-                            AggrMethod::TotalCount => row.total_count.map_or(Value::Null, |count| json!(count)),
-                            AggrMethod::DistinctCount => row.distinct_count.map_or(Value::Null, |count| json!(count)),
-                            AggrMethod::Min => aggregation_min_max_to_json(row.min.as_ref()),
-                            AggrMethod::Max => aggregation_min_max_to_json(row.max.as_ref()),
-                            AggrMethod::Avg => aggregation_average_to_json(row.avg.as_ref()),
-                            AggrMethod::Sum => row.sum.as_ref().map_or(Value::Null, |number| json!(number)),
-                            AggrMethod::SumSq => row.sumsq.as_ref().map_or(Value::Null, |number| json!(number)),
-                            AggrMethod::StdDev => row.stddev.as_ref().map_or(Value::Null, |number| json!(number)),
-                        };
-
-                        let bucket_start = row.bucket_start.map_or(Value::Null, |instant| json!(whole_seconds(instant)));
-                        let bucket_end = row.bucket_end.map_or(Value::Null, |instant| json!(whole_seconds(instant)));
-
-                        json!([value, bucket_start, bucket_end])
-                    })
-                    .collect();
-
-                instance.insert(key.to_string(), Value::Array(triples));
+                instance.insert(key.to_string(), value);
             }
 
             // clone: the outer index owns the attribute key its instances hang off.
@@ -164,7 +203,7 @@ mod tests {
         temporal_format::TemporalFormat,
         time_prop::TimeProp,
     };
-    use andromeda_ngsi_ld_model::temporal::{AggregationAverage, AggregationMinMax, TemporalAggregationRow};
+    use andromeda_ngsi_ld_model::temporal::{AggregationAverage, AggregationMinMax, GroupKeyValue, TemporalAggregationRow};
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
@@ -212,6 +251,7 @@ mod tests {
             stddev: None,
             total_count: None,
             distinct_count: None,
+            group_keys: Vec::new(),
         }
     }
 
@@ -329,6 +369,89 @@ mod tests {
             ])
         );
         pretty_assertions::assert_eq!(instance["type"], json!("Property"));
+    }
+
+    fn grouped_requesting(methods: Vec<AggrMethod>, aggr_group_by: &str) -> CompiledTemporalQuery {
+        use andromeda_ngsi_ld_query::temporal::grouping::AggregationGrouping;
+        CompiledTemporalQuery::builder()
+            .entities(EntitySelection::builder().build())
+            .window(TemporalWindow::builder().timeproperty(TimeProp::Observed).build())
+            .instances(InstanceSelection::builder().build())
+            .representation(
+                Representation::builder()
+                    .format(TemporalFormat::GroupedValues)
+                    .aggr_methods(methods)
+                    .grouping(Some(AggregationGrouping::parse(aggr_group_by).expect("a well-formed grouping")))
+                    .sys_attrs(SysAttrsInclusion::Strip)
+                    .build(),
+            )
+            .build()
+    }
+
+    fn grouped_bucket(count: i64, keys: Vec<GroupKeyValue>) -> TemporalAggregationRow {
+        let mut row = bucket(None, None);
+        row.total_count = Some(count);
+        row.group_keys = keys;
+        row
+    }
+
+    fn grouped_instance(rows: &[TemporalAggregationRow], compiled: &CompiledTemporalQuery) -> Value {
+        let attributes = TemporalAggregationRenderer::new(rows, compiled).render();
+        let name = WEIGHT.parse::<AttributeName>().expect("valid attribute name");
+        attributes.get(&name).cloned().expect("the aggregated attribute is rendered")
+    }
+
+    /// Study §4.6: one grouping term nests a map keyed by the group value between
+    /// the method member and its triple array.
+    #[test]
+    fn one_grouping_term_nests_a_map_keyed_by_the_group_value() {
+        let compiled = grouped_requesting(vec![AggrMethod::TotalCount], "unitCode");
+        let rows = [
+            grouped_bucket(2, vec![GroupKeyValue::Value("KGM".to_owned())]),
+            grouped_bucket(3, vec![GroupKeyValue::Value("LBR".to_owned())]),
+        ];
+        let instance = grouped_instance(&rows, &compiled);
+        pretty_assertions::assert_eq!(instance["totalCount"]["KGM"], json!([[2, Value::Null, Value::Null]]));
+        pretty_assertions::assert_eq!(instance["totalCount"]["LBR"], json!([[3, Value::Null, Value::Null]]));
+    }
+
+    /// Two terms nest two levels, in the order the terms were written.
+    #[test]
+    fn two_grouping_terms_nest_two_levels_in_order() {
+        let compiled = grouped_requesting(vec![AggrMethod::TotalCount], "unitCode,observedAt;day");
+        let rows = [grouped_bucket(
+            5,
+            vec![GroupKeyValue::Value("KGM".to_owned()), GroupKeyValue::Value("2026-01-01T00:00:00Z".to_owned())],
+        )];
+        let instance = grouped_instance(&rows, &compiled);
+        pretty_assertions::assert_eq!(instance["totalCount"]["KGM"]["2026-01-01T00:00:00Z"], json!([[5, Value::Null, Value::Null]]));
+    }
+
+    /// Study §4.6: an absent key renders as `@none` and an explicit NGSI-LD Null
+    /// as `urn:ngsi-ld:null`.
+    #[test]
+    fn absent_and_null_keys_use_their_reserved_map_keys() {
+        let compiled = grouped_requesting(vec![AggrMethod::TotalCount], "category");
+        let rows = [grouped_bucket(1, vec![GroupKeyValue::Absent]), grouped_bucket(2, vec![GroupKeyValue::Null])];
+        let instance = grouped_instance(&rows, &compiled);
+        pretty_assertions::assert_eq!(instance["totalCount"]["@none"], json!([[1, Value::Null, Value::Null]]));
+        pretty_assertions::assert_eq!(instance["totalCount"]["urn:ngsi-ld:null"], json!([[2, Value::Null, Value::Null]]));
+    }
+
+    /// A single group degenerates to a map with one entry, and the ungrouped
+    /// `aggregatedValues` output is unchanged (regression).
+    #[test]
+    fn a_single_group_is_one_map_entry_and_ungrouped_output_is_unchanged() {
+        let compiled = grouped_requesting(vec![AggrMethod::TotalCount], "unitCode");
+        let rows = [grouped_bucket(7, vec![GroupKeyValue::Value("KGM".to_owned())])];
+        let instance = grouped_instance(&rows, &compiled);
+        pretty_assertions::assert_eq!(instance["totalCount"].as_object().expect("a group map").len(), 1);
+
+        // The ungrouped format still emits the bare triple array.
+        let mut plain = bucket(None, None);
+        plain.total_count = Some(7);
+        let ungrouped = rendered(&[plain], vec![AggrMethod::TotalCount]);
+        pretty_assertions::assert_eq!(ungrouped["totalCount"], json!([[7, Value::Null, Value::Null]]));
     }
 
     /// Clause 4.5.4: instances of one attribute are told apart by `datasetId`,

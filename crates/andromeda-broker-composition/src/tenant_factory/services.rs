@@ -185,6 +185,9 @@ fn compose_temporal_service(
         // The delete-by-query extension's `TooManyResults` bound; inert unless
         // the extension is routed, which composition gates separately.
         config.extensions.temporal_delete_by_query_max_matches,
+        // The grouped-aggregation extension's `TooManyResults` bound; likewise
+        // inert unless the extension is routed.
+        config.extensions.temporal_aggregation_grouping_max_groups,
         // Clause 4.5.23.1 applied to the temporal API: an annotated Linked
         // Entity whose history this broker does not record is fetched from the
         // context sources registered for it.

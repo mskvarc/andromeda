@@ -63,7 +63,7 @@ impl AdaptedPayload {
     pub const fn of_temporal(format: TemporalFormat) -> AdaptedPayload {
         match format {
             TemporalFormat::Normalized => AdaptedPayload::TemporalEvolution,
-            TemporalFormat::TemporalValues | TemporalFormat::AggregatedValues => AdaptedPayload::SimplifiedTemporalEvolution,
+            TemporalFormat::TemporalValues | TemporalFormat::AggregatedValues | TemporalFormat::GroupedValues => AdaptedPayload::SimplifiedTemporalEvolution,
         }
     }
 }

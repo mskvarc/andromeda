@@ -8,6 +8,7 @@
 //! bindings hand it the same [`TemporalQueryRequest`].
 
 use crate::{
+    grouping_gate::reject_grouping_when_disabled,
     history_read::TemporalHistoryRead,
     join::apply_temporal_join,
     request_context_admission::admit_request_context,
@@ -36,6 +37,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::reuse::EntityMapUse;
+use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_federation::{
     FederationService,
     forwarded_query::client_query::ClientQuery,
@@ -49,7 +51,10 @@ use andromeda_http_response::pagination::PagePointers;
 use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
 use andromeda_ngsi_ld_request::{error::ParameterError, join_traversal::RetrievingJoin};
 use andromeda_temporal::{error::TemporalError, linked::candidates::TemporalLinkedCandidate, service::TemporalQueryWarning};
-use axum::http::{HeaderMap, Uri};
+use axum::{
+    Extension,
+    http::{HeaderMap, Uri},
+};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -104,6 +109,7 @@ pub(crate) struct TemporalQueryRequest {
 pub async fn query(
     context_target::ExistingTargetedTenantState { services, target, snapshot: _ }: TenantState,
     accept: AcceptFormatNoGeo,
+    Extension(enabled): Extension<EnabledExtensions>,
     NgsiLdRequestEnvelope {
         uri,
         context,
@@ -113,6 +119,10 @@ pub async fn query(
     protocol: NgsiLdProtocolHeaders,
     ValidatedQuery(params): ValidatedQuery<TemporalQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
+    // The grouped extension is refused upstream when it is disabled, so a
+    // conformant broker rejects `aggrGroupBy`/`groupedValues` before the query
+    // is admitted (extension-strategy 5.2).
+    reject_grouping_when_disabled(&params, enabled, &uri)?;
     // Boxed: a temporal query parameter set is wide enough that the operation's
     // future overflows the task-local budget the `large_futures` lint guards.
     Box::pin(run(TemporalQueryRequest {

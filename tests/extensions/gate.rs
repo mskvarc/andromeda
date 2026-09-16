@@ -61,6 +61,30 @@ async fn conformance_mode_rejects_the_purge_dataset_scope() {
     );
 }
 
+/// Conformance mode rejects `format=groupedValues` / `aggrGroupBy` as an invalid
+/// request, because the temporal aggregation grouping extension is off.
+#[tokio::test]
+async fn conformance_mode_rejects_the_temporal_aggregation_grouping() {
+    let Some(client) = conformance_client() else {
+        eprintln!("skipping: ANDROMEDA_TEST_CONFORMANCE_BROKER_URL is not set");
+        return;
+    };
+    let response = client
+        .raw(
+            Method::GET,
+            "/ngsi-ld/v1/temporal/entities?type=Vehicle&timerel=after&timeAt=1970-01-01T00:00:00Z&format=groupedValues&aggrMethods=avg&aggrGroupBy=unitCode",
+        )
+        .header("Link", jsonld_link_header(CORE_CONTEXT).expect("core context Link"))
+        .send()
+        .await
+        .expect("grouped query request");
+    assert_eq!(
+        response.status,
+        StatusCode::BAD_REQUEST,
+        "conformance mode must reject aggrGroupBy/groupedValues with InvalidRequest"
+    );
+}
+
 /// Conformance mode advertises no extension in the Context Source Identity.
 #[tokio::test]
 async fn conformance_mode_advertises_no_extension() {
@@ -76,4 +100,8 @@ async fn conformance_mode_advertises_no_extension() {
         "no extension token is advertised: {advertised}"
     );
     assert!(!advertised.contains("purge-dataset-scope"), "no extension token is advertised: {advertised}");
+    assert!(
+        !advertised.contains("temporal-aggregation-grouping"),
+        "no extension token is advertised: {advertised}"
+    );
 }

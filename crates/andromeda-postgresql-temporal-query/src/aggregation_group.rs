@@ -145,18 +145,37 @@ pub enum MixedAggregationGroup {
     },
 }
 
+/// The facets an `aggrGroupBy` promoted from a spanned property to a group key.
+///
+/// A facet used as a grouping key splits the groups rather than contradicting
+/// them: `aggrGroupBy=unitCode` makes a formerly-refused mixed-unit request
+/// succeed as one group per unit, and grouping by the attribute family
+/// (`type`) does the same for a family that changed within a period. A promoted
+/// facet is therefore skipped by [`ensure_uniform_aggregation_groups`], because
+/// the SQL `GROUP BY` has already made it uniform within each group.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PromotedGroupFacets {
+    /// Whether `unitCode` is a grouping key.
+    pub units: bool,
+    /// Whether the attribute family (`type`) is a grouping key.
+    pub families: bool,
+}
+
 /// Refuse an aggregated result set whose value-sensitive aggregates span inputs that disagree.
 ///
-/// `groups` is the statement's output, one entry per attribute, dataset and
-/// period. Methods that only count are unaffected, so a request made up
-/// entirely of `totalCount` and `distinctCount` — including the empty method
-/// list, which counts by default — is answered over any span unchanged.
+/// `groups` is the statement's output, one entry per attribute, dataset, period
+/// and grouping key. Methods that only count are unaffected, so a request made
+/// up entirely of `totalCount` and `distinctCount` — including the empty method
+/// list, which counts by default — is answered over any span unchanged. A facet
+/// named in `promoted` is a grouping key rather than a spanned property, so its
+/// uniformity is not a precondition but a consequence of the grouping, and its
+/// check is skipped.
 ///
 /// # Errors
 ///
 /// Returns the first contradiction found, naming the attribute it was found
 /// under and the two values that contradicted each other.
-pub fn ensure_uniform_aggregation_groups<'a, Groups>(groups: Groups, methods: &[AggrMethod]) -> Result<(), MixedAggregationGroup>
+pub fn ensure_uniform_aggregation_groups<'a, Groups>(groups: Groups, methods: &[AggrMethod], promoted: PromotedGroupFacets) -> Result<(), MixedAggregationGroup>
 where
     Groups: IntoIterator<Item = &'a AggregationGroupSpan>,
 {
@@ -173,23 +192,25 @@ where
         // The error names the attribute, so it owns a copy of a name the caller
         // keeps: the borrow ends with the result set.
         let attribute_name = || group.attribute_name.clone();
-        match group.units {
-            ObservedUnits::Uniform(_) => {}
-            ObservedUnits::Conflicting { first, second } => {
-                return Err(MixedAggregationGroup::ConflictingUnits {
-                    attribute_name: attribute_name(),
-                    first,
-                    second,
-                });
-            }
-            ObservedUnits::UnitAndUnitless { present } => {
-                return Err(MixedAggregationGroup::UnitAndUnitless {
-                    attribute_name: attribute_name(),
-                    present,
-                });
+        if !promoted.units {
+            match group.units {
+                ObservedUnits::Uniform(_) => {}
+                ObservedUnits::Conflicting { first, second } => {
+                    return Err(MixedAggregationGroup::ConflictingUnits {
+                        attribute_name: attribute_name(),
+                        first,
+                        second,
+                    });
+                }
+                ObservedUnits::UnitAndUnitless { present } => {
+                    return Err(MixedAggregationGroup::UnitAndUnitless {
+                        attribute_name: attribute_name(),
+                        present,
+                    });
+                }
             }
         }
-        if group.families.uniform().is_none() {
+        if !promoted.families && group.families.uniform().is_none() {
             return Err(MixedAggregationGroup::ConflictingFamilies {
                 attribute_name: attribute_name(),
                 first: group.families.lowest,
@@ -217,6 +238,7 @@ mod tests {
             MixedAggregationGroup,
             MixingSensitivity,
             ObservedUnits,
+            PromotedGroupFacets,
             ensure_uniform_aggregation_groups,
             mixing_sensitivity,
         },
@@ -255,7 +277,10 @@ mod tests {
     #[test]
     fn a_group_recorded_in_one_unit_is_accepted_unchanged() {
         let groups = [uniform_group(WEIGHT, ObservedUnits::Uniform(Some(unit(367))))];
-        pretty_assertions::assert_eq!(ensure_uniform_aggregation_groups(&groups, &[AggrMethod::Avg]), Ok(()));
+        pretty_assertions::assert_eq!(
+            ensure_uniform_aggregation_groups(&groups, &[AggrMethod::Avg], PromotedGroupFacets::default()),
+            Ok(())
+        );
     }
 
     #[test]
@@ -264,7 +289,10 @@ mod tests {
             "https://uri.etsi.org/ngsi-ld/default-context/occupancy",
             ObservedUnits::Uniform(None),
         )];
-        pretty_assertions::assert_eq!(ensure_uniform_aggregation_groups(&groups, &[AggrMethod::Avg, AggrMethod::StdDev]), Ok(()));
+        pretty_assertions::assert_eq!(
+            ensure_uniform_aggregation_groups(&groups, &[AggrMethod::Avg, AggrMethod::StdDev], PromotedGroupFacets::default()),
+            Ok(())
+        );
     }
 
     #[test]
@@ -281,7 +309,10 @@ mod tests {
             first: unit(1121),
             second: unit(1407),
         };
-        pretty_assertions::assert_eq!(ensure_uniform_aggregation_groups(&groups, &[AggrMethod::Avg]), Err(expected));
+        pretty_assertions::assert_eq!(
+            ensure_uniform_aggregation_groups(&groups, &[AggrMethod::Avg], PromotedGroupFacets::default()),
+            Err(expected)
+        );
     }
 
     #[test]
@@ -291,7 +322,10 @@ mod tests {
             attribute_name: name(WEIGHT),
             present: unit(1121),
         };
-        pretty_assertions::assert_eq!(ensure_uniform_aggregation_groups(&groups, &[AggrMethod::Sum]), Err(expected));
+        pretty_assertions::assert_eq!(
+            ensure_uniform_aggregation_groups(&groups, &[AggrMethod::Sum], PromotedGroupFacets::default()),
+            Err(expected)
+        );
     }
 
     /// A period whose rows changed attribute family cannot be answered with one
@@ -309,7 +343,10 @@ mod tests {
             first: AttributeKind::Property,
             second: AttributeKind::Relationship,
         };
-        pretty_assertions::assert_eq!(ensure_uniform_aggregation_groups(&[group], &[AggrMethod::Min]), Err(expected));
+        pretty_assertions::assert_eq!(
+            ensure_uniform_aggregation_groups(&[group], &[AggrMethod::Min], PromotedGroupFacets::default()),
+            Err(expected)
+        );
     }
 
     /// `min` reads the typed column the value shape names, so a group holding
@@ -327,7 +364,10 @@ mod tests {
             first: RecordedShape::Number,
             second: RecordedShape::String,
         };
-        pretty_assertions::assert_eq!(ensure_uniform_aggregation_groups(&[group], &[AggrMethod::Max]), Err(expected));
+        pretty_assertions::assert_eq!(
+            ensure_uniform_aggregation_groups(&[group], &[AggrMethod::Max], PromotedGroupFacets::default()),
+            Err(expected)
+        );
     }
 
     /// Counting instances says nothing about the scale they were measured on or
@@ -356,7 +396,11 @@ mod tests {
             vec![AggrMethod::TotalCount, AggrMethod::DistinctCount],
             Vec::new(),
         ] {
-            pretty_assertions::assert_eq!(ensure_uniform_aggregation_groups(&groups, &methods), Ok(()), "{methods:?}");
+            pretty_assertions::assert_eq!(
+                ensure_uniform_aggregation_groups(&groups, &methods, PromotedGroupFacets::default()),
+                Ok(()),
+                "{methods:?}"
+            );
         }
     }
 
@@ -371,7 +415,7 @@ mod tests {
                 second: unit(1407),
             },
         )];
-        assert!(ensure_uniform_aggregation_groups(&groups, &[AggrMethod::TotalCount, AggrMethod::Avg]).is_err());
+        assert!(ensure_uniform_aggregation_groups(&groups, &[AggrMethod::TotalCount, AggrMethod::Avg], PromotedGroupFacets::default()).is_err());
     }
 
     #[test]
@@ -380,7 +424,10 @@ mod tests {
             uniform_group(WEIGHT, ObservedUnits::Uniform(Some(unit(1121)))),
             uniform_group("https://uri.etsi.org/ngsi-ld/default-context/length", ObservedUnits::Uniform(Some(unit(1407)))),
         ];
-        pretty_assertions::assert_eq!(ensure_uniform_aggregation_groups(&groups, &[AggrMethod::Max]), Ok(()));
+        pretty_assertions::assert_eq!(
+            ensure_uniform_aggregation_groups(&groups, &[AggrMethod::Max], PromotedGroupFacets::default()),
+            Ok(())
+        );
     }
 
     #[test]
@@ -398,6 +445,38 @@ mod tests {
         for method in [AggrMethod::TotalCount, AggrMethod::DistinctCount] {
             pretty_assertions::assert_eq!(mixing_sensitivity(method), MixingSensitivity::Insensitive, "{method}");
         }
+    }
+
+    /// `aggrGroupBy=unitCode` promotes the unit to a key, so a span that would
+    /// be refused as `ConflictingUnits` is accepted: the SQL splits it into one
+    /// group per unit and the guard no longer checks the facet.
+    #[test]
+    fn promoting_the_unit_to_a_key_accepts_a_formerly_conflicting_unit_span() {
+        let groups = [uniform_group(
+            WEIGHT,
+            ObservedUnits::Conflicting {
+                first: unit(1121),
+                second: unit(1407),
+            },
+        )];
+        let promoted = PromotedGroupFacets { units: true, families: false };
+        pretty_assertions::assert_eq!(ensure_uniform_aggregation_groups(&groups, &[AggrMethod::Avg], promoted), Ok(()));
+        // Without the promotion the same span is still refused.
+        assert!(ensure_uniform_aggregation_groups(&groups, &[AggrMethod::Avg], PromotedGroupFacets::default()).is_err());
+    }
+
+    /// Promoting the attribute family (`type`) likewise accepts a span that
+    /// changed family, while the unit and shape checks stay in force.
+    #[test]
+    fn promoting_the_family_to_a_key_accepts_a_formerly_conflicting_family_span() {
+        let mut group = uniform_group(WEIGHT, ObservedUnits::Uniform(None));
+        group.families = CodeSpan {
+            lowest: AttributeKind::Property,
+            highest: AttributeKind::Relationship,
+        };
+        let promoted = PromotedGroupFacets { units: false, families: true };
+        pretty_assertions::assert_eq!(ensure_uniform_aggregation_groups(&[group.clone()], &[AggrMethod::Min], promoted), Ok(()));
+        assert!(ensure_uniform_aggregation_groups(&[group], &[AggrMethod::Min], PromotedGroupFacets::default()).is_err());
     }
 
     #[test]

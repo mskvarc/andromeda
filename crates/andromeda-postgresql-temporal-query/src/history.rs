@@ -40,7 +40,9 @@ use sea_query::{Alias, Asterisk, Condition, DynIden, Expr, ExprTrait, JoinType, 
 pub fn build_temporal_history_query(schema: Option<&DynIden>, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> SelectStatement {
     let condition = stage2_conditions(schema, entity_id, compiled);
     match compiled.representation.format {
-        TemporalFormat::AggregatedValues => build_aggregation_query(schema, compiled, condition),
+        // The grouped extension format runs the same aggregation pipeline; the
+        // builder adds the group-key columns when `representation.grouping` is set.
+        TemporalFormat::AggregatedValues | TemporalFormat::GroupedValues => build_aggregation_query(schema, compiled, condition),
         TemporalFormat::Normalized | TemporalFormat::TemporalValues => build_history_query(schema, compiled, condition),
     }
 }
