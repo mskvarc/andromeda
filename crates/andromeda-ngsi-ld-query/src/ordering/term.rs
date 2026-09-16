@@ -148,7 +148,7 @@ pub enum OrderTermError {
     /// based and its prose names only the dotted and bracketed paths, so an
     /// ordering that suppressed language selection would be ordering by a value
     /// the clause never says how to choose.
-    #[error("invalid orderBy member '{0}': the [*] language marker is part of the clause 4.9 q grammar, not of clause 4.23.3 ordering")]
+    #[error("invalid orderBy member '{0}': the [*] language marker belongs to the q filter grammar, not to orderBy")]
     LanguageSuppression(String),
 }
 

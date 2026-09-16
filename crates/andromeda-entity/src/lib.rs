@@ -20,8 +20,14 @@ pub mod compiled_cache;
 pub mod config;
 /// Entity type and attribute discovery operations.
 pub mod discovery;
+/// A masked, operator-facing diagnostic for entity failures a client cannot act on.
+pub mod entity_diagnostic;
+/// The concrete reasons an entity operation is unsupported by the storage backend.
+pub mod entity_operation_unsupported;
 /// Versioned entity snapshots used by optimistic writes.
 pub mod entity_snapshot;
+/// The concrete reasons an entity payload or operation is rejected as invalid.
+pub mod entity_validation_reason;
 /// Entity policy failures.
 pub mod error;
 /// Reading members out of an expanded JSON-LD entity.

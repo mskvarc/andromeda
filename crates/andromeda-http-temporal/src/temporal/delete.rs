@@ -81,7 +81,7 @@ pub async fn delete(
         .iter()
         .any(|result| matches!(result.mode, ForwardingMode::Exclusive | ForwardingMode::Redirect));
     let local = match service.delete(&target, &id).await {
-        Err(TemporalError::NotFound { .. }) if proxied => LocalOutcome::NothingRemained,
+        Err(TemporalError::NotFound(_)) if proxied => LocalOutcome::NothingRemained,
         other => LocalOutcome::processed(other, classify_temporal_error),
     };
     provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)

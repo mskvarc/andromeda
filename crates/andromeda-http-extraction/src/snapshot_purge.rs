@@ -28,7 +28,7 @@ fn resolve_purge_query(parts: &Parts) -> Result<SnapshotPurgeQ, ExtractorRejecti
     let uri = parts.uri.clone();
     let query_str = parts.uri.query().unwrap_or("");
     let raw: RawPurgeQuery = serde_urlencoded::from_str(query_str)
-        .map_err(|error| ExtractorRejection::bad_request_data(format!("Invalid query parameters: {error}"), uri.clone()))?;
+        .map_err(|error| ExtractorRejection::bad_request_data(format!("invalid query parameters: {error}"), uri.clone()))?;
     let q_value = raw
         .q
         .ok_or_else(|| ExtractorRejection::bad_request_data("DELETE /snapshots requires a 'q' query parameter (ETSI GS CIM 009 clause 5.16.7)", uri.clone()))?;

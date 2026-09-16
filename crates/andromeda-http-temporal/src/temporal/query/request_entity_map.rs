@@ -66,7 +66,7 @@ pub(crate) async fn resolve_query_map(
             params.time_at = Some(
                 DateTime::parse_from_rfc3339("9999-12-31T23:59:59Z")
                     .map(|instant| instant.with_timezone(&Utc))
-                    .map_err(|source| TemporalError::validation(format!("Invalid entity-map temporal horizon: {source}")))
+                    .map_err(|source| TemporalError::internal(format!("entity-map temporal horizon constant failed to parse: {source}")))
                     .with_instance(instance)?,
             );
         }

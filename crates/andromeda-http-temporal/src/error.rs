@@ -28,9 +28,9 @@ impl TemporalHttpClassify for TemporalError {
 #[must_use]
 pub fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
     match error {
-        TemporalError::Validation { detail } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail),
-        TemporalError::NotFound { detail } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, detail),
-        TemporalError::OperationNotSupported { detail } => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, detail),
+        TemporalError::Validation(reason) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, reason.to_string()),
+        TemporalError::NotFound(reason) => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, reason.to_string()),
+        TemporalError::OperationNotSupported(reason) => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, reason.to_string()),
         // The clause 5.6.21.4 `TooManyResults` bound the standard Purge raises,
         // applied to the delete-by-query extension: a 403 naming the count and
         // the limit so the client can narrow its window or selectors.
@@ -38,7 +38,7 @@ pub fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
         TemporalError::JsonLd(source) => classify_jsonld_error(source),
         TemporalError::Query(source) => classify_query_error(source),
         TemporalError::Request(source) => classify_parameter_error(source),
-        TemporalError::Commit(_) | TemporalError::Persistence { .. } | TemporalError::Rendering { .. } | TemporalError::Internal { .. } => {
+        TemporalError::Commit(_) | TemporalError::Persistence(_) | TemporalError::Rendering(_) | TemporalError::Internal(_) => {
             ClassifiedReport::internal(error)
         }
     }
@@ -52,9 +52,7 @@ pub(crate) fn temporal_problem(error: &TemporalError, instance: &Uri) -> Problem
 impl TemporalHttpClassify for EntityMapError {
     fn classify_for_temporal_http(&self) -> ClassifiedReport {
         match self {
-            EntityMapError::NotFound { identifier } => {
-                ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, format!("Entity Map {identifier} not found"))
-            }
+            EntityMapError::NotFound { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, self.to_string()),
             // Clause 5.5.14 with clause 6.3.20: parameters incompatible with
             // the request that created the map are an invalid request.
             EntityMapError::RequestChanged { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, self.to_string()),
@@ -70,15 +68,15 @@ impl TemporalHttpClassify for FederationError {
             FederationError::Query(source) => classify_query_error(source),
             // Clause 6.3.17: the failures of a forwarded request carry their
             // own status and the most informative detail available.
-            FederationError::Conflict { .. }
-            | FederationError::OperationNotSupported { .. }
+            FederationError::Conflict(_)
+            | FederationError::OperationNotSupported(_)
             | FederationError::LoopDetected { .. }
             | FederationError::GatewayTimeout { .. }
             | FederationError::RemoteNotFound { .. }
             | FederationError::BadGateway { .. }
             | FederationError::Registration(_)
             | FederationError::Representation(_)
-            | FederationError::Internal { .. } => classify_forwarding_error(self),
+            | FederationError::Internal(_) => classify_forwarding_error(self),
         }
     }
 }
@@ -143,16 +141,33 @@ mod tests {
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use andromeda_ngsi_ld_query::error::QueryError;
     use andromeda_ngsi_ld_request::error::ParameterError;
-    use andromeda_temporal::error::TemporalError;
+    use andromeda_temporal::{
+        error::TemporalError,
+        temporal_not_found_reason::TemporalNotFoundReason,
+        temporal_operation_unsupported::TemporalOperationUnsupported,
+        temporal_validation_reason::TemporalValidationReason,
+    };
 
     #[test]
     fn every_temporal_error_variant_has_one_typed_http_classification() {
         for (name, error, expected) in [
-            ("Validation", TemporalError::validation("invalid window"), NgsiLdErrorType::BadRequestData),
-            ("NotFound", TemporalError::not_found("missing history"), NgsiLdErrorType::ResourceNotFound),
+            (
+                "Validation",
+                TemporalError::Validation(TemporalValidationReason::Store {
+                    detail: "invalid window".to_string(),
+                }),
+                NgsiLdErrorType::BadRequestData,
+            ),
+            (
+                "NotFound",
+                TemporalError::NotFound(TemporalNotFoundReason::Store {
+                    detail: "missing history".to_string(),
+                }),
+                NgsiLdErrorType::ResourceNotFound,
+            ),
             (
                 "OperationNotSupported",
-                TemporalError::operation_not_supported("aggregation refused"),
+                TemporalError::OperationNotSupported(TemporalOperationUnsupported::RecordingSinkNoAggregation),
                 NgsiLdErrorType::OperationNotSupported,
             ),
             ("TooManyResults", TemporalError::too_many_results(500, 100), NgsiLdErrorType::TooManyResults),
@@ -182,7 +197,7 @@ mod tests {
             pretty_assertions::assert_eq!(report.error_type(), expected, "wrong category for {name}");
             pretty_assertions::assert_eq!(report.classification().status_code(), expected.status_code(), "wrong status for {name}");
             if expected == NgsiLdErrorType::InternalError {
-                pretty_assertions::assert_eq!(report.detail(), "Internal error", "internal detail leaked for {name}");
+                pretty_assertions::assert_eq!(report.detail(), "internal error", "internal detail leaked for {name}");
             }
         }
     }
@@ -211,7 +226,9 @@ mod tests {
 
     #[test]
     fn temporal_public_detail_is_preserved() {
-        let report = classify_temporal_error(&TemporalError::validation("missing timerel"));
+        let report = classify_temporal_error(&TemporalError::Validation(TemporalValidationReason::Store {
+            detail: "missing timerel".to_string(),
+        }));
         pretty_assertions::assert_eq!(report.detail(), "missing timerel");
     }
 }

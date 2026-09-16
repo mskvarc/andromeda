@@ -60,7 +60,7 @@ pub(crate) fn build_dataset_purge_write(
                 ExpandedEntityError::EntityNotExpanded
                 | ExpandedEntityError::PatchNotExpanded
                 | ExpandedEntityError::AttributesNotObject
-                | ExpandedEntityError::InvalidAttributeName
+                | ExpandedEntityError::InvalidAttributeName { .. }
                 | ExpandedEntityError::InvalidAttributeType
                 | ExpandedEntityError::AttributeTypeMismatch { .. },
             ) => return None,

@@ -1,32 +1,30 @@
 //! Failures produced by temporal policy and its storage ports.
 
+use crate::{
+    temporal_diagnostic::TemporalDiagnostic,
+    temporal_not_found_reason::TemporalNotFoundReason,
+    temporal_operation_unsupported::TemporalOperationUnsupported,
+    temporal_validation_reason::TemporalValidationReason,
+};
 use andromeda_context_commit::error::CommitError;
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_request::error::ParameterError;
+use std::fmt::Display;
 use thiserror::Error;
 
 /// A failure while compiling, reading, rendering, or mutating temporal history.
 #[derive(Debug, Error)]
 pub enum TemporalError {
     /// The temporal request or representation is semantically invalid.
-    #[error("invalid temporal operation: {detail}")]
-    Validation {
-        /// Deliberate validation detail.
-        detail: String,
-    },
+    #[error("invalid temporal operation: {0}")]
+    Validation(#[from] TemporalValidationReason),
     /// The requested temporal resource does not exist.
-    #[error("temporal resource not found: {detail}")]
-    NotFound {
-        /// Deliberate missing-resource detail.
-        detail: String,
-    },
+    #[error("temporal resource not found: {0}")]
+    NotFound(#[from] TemporalNotFoundReason),
     /// The selected history capability cannot safely answer the request.
-    #[error("temporal operation is not supported: {detail}")]
-    OperationNotSupported {
-        /// Unsupported capability detail.
-        detail: String,
-    },
+    #[error("temporal operation is not supported: {0}")]
+    OperationNotSupported(#[from] TemporalOperationUnsupported),
     /// A bounded temporal extension would produce more results than its
     /// configured maximum admits.
     ///
@@ -60,23 +58,14 @@ pub enum TemporalError {
     #[error(transparent)]
     Commit(CommitError),
     /// A persistence adapter could not complete the operation.
-    #[error("temporal persistence failed: {detail}")]
-    Persistence {
-        /// Adapter diagnostic retained for operators.
-        detail: String,
-    },
+    #[error("temporal persistence failed: {0}")]
+    Persistence(TemporalDiagnostic),
     /// Temporal representation construction failed.
-    #[error("temporal rendering failed: {detail}")]
-    Rendering {
-        /// Internal rendering diagnostic.
-        detail: String,
-    },
+    #[error("temporal rendering failed: {0}")]
+    Rendering(TemporalDiagnostic),
     /// An internal temporal invariant could not be satisfied.
-    #[error("temporal invariant failed: {detail}")]
-    Internal {
-        /// Internal diagnostic detail.
-        detail: String,
-    },
+    #[error("temporal invariant failed: {0}")]
+    Internal(TemporalDiagnostic),
 }
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
@@ -86,7 +75,10 @@ pub enum TemporalError {
 impl From<CommitError> for TemporalError {
     fn from(error: CommitError) -> TemporalError {
         match error {
-            CommitError::Submission { detail } => TemporalError::Validation { detail },
+            // The commit port cannot depend on this crate's error types without a
+            // cycle, so a refused submission arrives as opaque prose relayed into
+            // the typed validation reason rather than as a typed cause.
+            CommitError::Submission { detail } => TemporalError::Validation(TemporalValidationReason::CommitRefused { detail }),
             failure @ (CommitError::DuplicateEntity { .. }
             | CommitError::Persistence { .. }
             | CommitError::Invariant { .. }
@@ -96,45 +88,34 @@ impl From<CommitError> for TemporalError {
 }
 
 impl TemporalError {
-    /// Construct a validation failure.
-    pub fn validation(detail: impl Into<String>) -> TemporalError {
-        TemporalError::Validation { detail: detail.into() }
-    }
-
-    /// Construct a missing-resource failure.
-    pub fn not_found(detail: impl Into<String>) -> TemporalError {
-        TemporalError::NotFound { detail: detail.into() }
-    }
-
-    /// Construct an unsupported-capability failure.
-    pub fn operation_not_supported(detail: impl Into<String>) -> TemporalError {
-        TemporalError::OperationNotSupported { detail: detail.into() }
-    }
-
-    /// Construct an over-the-bound delete-by-query failure.
+    /// Construct an over-the-bound temporal-extension failure.
     #[must_use]
     pub const fn too_many_results(matched: u64, maximum: u64) -> TemporalError {
         TemporalError::TooManyResults { matched, maximum }
     }
 
-    /// Construct a persistence failure at an adapter boundary.
-    pub fn persistence(detail: impl Into<String>) -> TemporalError {
-        TemporalError::Persistence { detail: detail.into() }
+    /// Construct a persistence failure from its masked diagnostic source.
+    ///
+    /// The detail is captured for operators and masked before any client sees
+    /// it, so this takes `impl Display` — a typed adapter error is handed over
+    /// directly rather than pre-rendered to a string at the call site.
+    pub fn persistence(source: impl Display) -> TemporalError {
+        TemporalError::Persistence(TemporalDiagnostic::new(source))
     }
 
-    /// Construct an internal rendering failure.
-    pub fn rendering(detail: impl Into<String>) -> TemporalError {
-        TemporalError::Rendering { detail: detail.into() }
+    /// Construct an internal rendering failure from its masked diagnostic source.
+    pub fn rendering(source: impl Display) -> TemporalError {
+        TemporalError::Rendering(TemporalDiagnostic::new(source))
     }
 
-    /// Construct an internal invariant failure.
-    pub fn internal(detail: impl Into<String>) -> TemporalError {
-        TemporalError::Internal { detail: detail.into() }
+    /// Construct an internal invariant failure from its masked diagnostic source.
+    pub fn internal(source: impl Display) -> TemporalError {
+        TemporalError::Internal(TemporalDiagnostic::new(source))
     }
 
     /// Whether this failure deliberately reports a missing temporal resource.
     #[must_use]
     pub const fn is_not_found(&self) -> bool {
-        matches!(self, TemporalError::NotFound { .. })
+        matches!(self, TemporalError::NotFound(_))
     }
 }

@@ -32,9 +32,7 @@ pub enum GeometryError {
     /// The value is a `GeoJSON` `GeometryCollection`. ETSI GS CIM 009 v1.9.1 clause
     /// 4.7.1 allows a `GeoProperty` value every geometry RFC 7946 defines except
     /// this one, and clause 4.6.3 excludes it from reference geometries too.
-    #[error(
-        "GeometryCollection is not an allowed GeoProperty geometry: ETSI GS CIM 009 v1.9.1 clause 4.7.1 allows every RFC 7946 geometry except GeometryCollection"
-    )]
+    #[error("GeometryCollection is not an allowed GeoProperty geometry; every RFC 7946 geometry except GeometryCollection is accepted")]
     GeometryCollectionUnsupported,
 }
 

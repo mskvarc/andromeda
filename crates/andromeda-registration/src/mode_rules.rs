@@ -10,6 +10,8 @@
 use crate::{
     entity_probe::{EntityPresence, RegisteredEntityProbe},
     error::RegistrationError,
+    registration_conflict_reason::RegistrationConflictReason,
+    registration_validation_reason::RegistrationValidationReason,
     store::RegistrationStore,
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -49,9 +51,7 @@ pub(super) fn validate_structure(mode: ForwardingMode, information: &[Registrati
             if operations.iter().all(|operation| AUXILIARY_OPERATIONS.contains(operation)) {
                 Ok(())
             } else {
-                Err(RegistrationError::csr_validation(
-                    "an auxiliary registration may only advertise retrieveOps, retrieveEntity or queryEntity",
-                ))
+                Err(RegistrationError::Validation(RegistrationValidationReason::AuxiliaryOperationsRestricted))
             }
         }
         ForwardingMode::Inclusive | ForwardingMode::Redirect => Ok(()),
@@ -65,16 +65,12 @@ fn validate_exclusive_entry(entry: &RegistrationInfo) -> Result<(), Registration
     let selectors = entry
         .entities
         .as_deref()
-        .ok_or_else(|| RegistrationError::csr_validation("an exclusive registration must name the entity it covers by id"))?;
+        .ok_or_else(|| RegistrationError::Validation(RegistrationValidationReason::ExclusiveMissingEntities))?;
     if selectors.iter().any(|selector| selector.id.is_none() || selector.id_pattern.is_some()) {
-        return Err(RegistrationError::csr_validation(
-            "an exclusive registration must name each covered entity by id; idPattern and type-only selectors are not supported",
-        ));
+        return Err(RegistrationError::Validation(RegistrationValidationReason::ExclusiveEntityNotById));
     }
     if entry.attribute_names().next().is_none() {
-        return Err(RegistrationError::csr_validation(
-            "an exclusive registration must name the attributes it covers in propertyNames or relationshipNames",
-        ));
+        return Err(RegistrationError::Validation(RegistrationValidationReason::ExclusiveMissingAttributes));
     }
     Ok(())
 }
@@ -128,10 +124,10 @@ async fn reject_overlapping_registrations(
             && registration_overlaps(candidate, entity_id, attributes)
     });
     match collision {
-        Some(existing) => Err(RegistrationError::conflict(format!(
-            "registration {} already covers entity {entity_id} for the registered attributes",
-            existing.id
-        ))),
+        Some(existing) => Err(RegistrationError::Conflict(RegistrationConflictReason::RegistrationCoversEntity {
+            registration: existing.id.clone(),   // clone: the error owns the borrowed candidate identifier.
+            entity: Box::new(entity_id.clone()), // clone: the error owns the borrowed request identifier.
+        })),
         None => Ok(()),
     }
 }
@@ -151,9 +147,9 @@ async fn check_exclusive(
             };
             reject_overlapping_registrations(repo, self_id, entity_id, &attributes, &[ForwardingMode::Exclusive, ForwardingMode::Redirect]).await?;
             if probe.holds_any_attribute(entity_id, &attributes).await? == EntityPresence::Present {
-                return Err(RegistrationError::conflict(format!(
-                    "entity {entity_id} already holds one of the attributes the exclusive registration covers"
-                )));
+                return Err(RegistrationError::Conflict(RegistrationConflictReason::EntityHoldsCoveredAttribute {
+                    entity: entity_id.clone(), // clone: the error owns the borrowed request identifier.
+                }));
             }
         }
     }
@@ -188,9 +184,7 @@ async fn check_redirect(
 /// Reject the footprint when a local entity already matches it.
 async fn reject_matching_entity(probe: &dyn RegisteredEntityProbe, selector: Option<&EntityInfo>, attributes: &[IriBuf]) -> Result<(), RegistrationError> {
     match probe.any_entity_matching(selector, attributes).await? {
-        EntityPresence::Present => Err(RegistrationError::conflict(
-            "a local entity already matches the redirect registration's entity and attribute footprint",
-        )),
+        EntityPresence::Present => Err(RegistrationError::Conflict(RegistrationConflictReason::LocalEntityMatchesRedirect)),
         EntityPresence::Absent => Ok(()),
     }
 }
@@ -247,7 +241,7 @@ mod tests {
         for entry in [type_only, pattern, no_attributes, attributes_only] {
             assert!(matches!(
                 validate_structure(ForwardingMode::Exclusive, &[entry], &[CsrOperation::FederationOps]),
-                Err(RegistrationError::Validation { .. })
+                Err(RegistrationError::Validation(_))
             ));
         }
         let valid = info(exclusive_info(V1, &[SPEED]));
@@ -259,11 +253,11 @@ mod tests {
         let entry = info(json!({"entities": [{"type": VEHICLE}]}));
         assert!(matches!(
             validate_structure(ForwardingMode::Auxiliary, slice::from_ref(&entry), &[CsrOperation::CreateEntity]),
-            Err(RegistrationError::Validation { .. })
+            Err(RegistrationError::Validation(_))
         ));
         assert!(matches!(
             validate_structure(ForwardingMode::Auxiliary, slice::from_ref(&entry), &[CsrOperation::FederationOps]),
-            Err(RegistrationError::Validation { .. })
+            Err(RegistrationError::Validation(_))
         ));
         assert!(validate_structure(ForwardingMode::Auxiliary, &[entry], &[CsrOperation::RetrieveEntity, CsrOperation::QueryEntity]).is_ok());
     }
@@ -302,7 +296,7 @@ mod tests {
             )]);
             let probe = FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent);
             let result = check_conflicts(&store, &probe, ForwardingMode::Exclusive, &[info(exclusive_info(V1, &[SPEED]))], None).await;
-            assert!(matches!(result, Err(RegistrationError::Conflict { .. })), "{existing_mode} must conflict");
+            assert!(matches!(result, Err(RegistrationError::Conflict(_))), "{existing_mode} must conflict");
         }
     }
 
@@ -338,7 +332,7 @@ mod tests {
         let store = FixedStore::new(vec![whole_entity]);
         let probe = FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent);
         let result = check_conflicts(&store, &probe, ForwardingMode::Exclusive, &[info(exclusive_info(V1, &[FUEL]))], None).await;
-        assert!(matches!(result, Err(RegistrationError::Conflict { .. })));
+        assert!(matches!(result, Err(RegistrationError::Conflict(_))));
     }
 
     #[tokio::test]
@@ -352,7 +346,7 @@ mod tests {
         let probe = FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent);
         assert!(matches!(
             check_conflicts(&store, &probe, ForwardingMode::Exclusive, &[info(exclusive_info(V1, &[SPEED]))], None).await,
-            Err(RegistrationError::Conflict { .. })
+            Err(RegistrationError::Conflict(_))
         ));
         assert!(
             check_conflicts(
@@ -384,7 +378,7 @@ mod tests {
         let store = FixedStore::new(Vec::new());
         let probe = FixedProbe::new(EntityPresence::Present, EntityPresence::Absent);
         let result = check_conflicts(&store, &probe, ForwardingMode::Exclusive, &[info(exclusive_info(V1, &[SPEED]))], None).await;
-        assert!(matches!(result, Err(RegistrationError::Conflict { .. })));
+        assert!(matches!(result, Err(RegistrationError::Conflict(_))));
         pretty_assertions::assert_eq!(probe.asked(), [format!("holds:{V1}")]);
     }
 
@@ -395,12 +389,12 @@ mod tests {
         let by_type = info(json!({"entities": [{"type": VEHICLE}]}));
         assert!(matches!(
             check_conflicts(&store, &probe, ForwardingMode::Redirect, &[by_type], None).await,
-            Err(RegistrationError::Conflict { .. })
+            Err(RegistrationError::Conflict(_))
         ));
         let attributes_only = info(json!({"propertyNames": [SPEED]}));
         assert!(matches!(
             check_conflicts(&store, &probe, ForwardingMode::Redirect, &[attributes_only], None).await,
-            Err(RegistrationError::Conflict { .. })
+            Err(RegistrationError::Conflict(_))
         ));
         assert!(probe.asked().contains(&"matches:<none>".to_string()));
     }
@@ -416,7 +410,7 @@ mod tests {
         let redirect = info(json!({"entities": [{"type": VEHICLE, "id": V1}]}));
         assert!(matches!(
             check_conflicts(&store, &probe, ForwardingMode::Redirect, &[redirect], None).await,
-            Err(RegistrationError::Conflict { .. })
+            Err(RegistrationError::Conflict(_))
         ));
     }
 

@@ -135,6 +135,7 @@ dependencies = [
 name = "andromeda-architecture-checks"
 version = "0.1.0"
 dependencies = [
+ "andromeda-ngsi-ld-vocabulary",
  "pretty_assertions",
  "proc-macro2",
  "quote",

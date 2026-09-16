@@ -14,6 +14,7 @@
 use crate::{
     EntityService,
     batch::{BatchResult, chunk::UpdatedPayloads},
+    entity_validation_reason::EntityValidationReason,
     error::EntityError,
     expanded_member::unwrap_expanded_ref,
     notification_plan::attribute_change_groups,
@@ -111,7 +112,7 @@ impl EntityService {
                 if skipped {
                     errors.push((
                         id.clone(), // clone: the write below still owns the identifier
-                        EntityError::validation("Some attributes already exist and were not updated due to noOverwrite"),
+                        EntityError::Validation(EntityValidationReason::NoOverwriteConflict),
                     ));
                 }
             } else {

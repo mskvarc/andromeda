@@ -36,7 +36,7 @@ pub(crate) async fn create(
     body: Bytes,
 ) -> Result<Response, ProblemResponse> {
     let payload: Value = serde_json::from_slice(&body).map_err(|error| {
-        ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, format!("Request body is not valid JSON: {error}")).with_instance(uri.clone())
+        ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, format!("request body is not valid JSON: {error}")).with_instance(uri.clone())
     })?;
     let identifier = state.contexts.create(payload, base_url.as_ref()).await.with_context_registry_instance(&uri)?;
     Ok(with_location(

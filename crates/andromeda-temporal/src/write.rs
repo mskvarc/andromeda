@@ -4,6 +4,8 @@ use crate::{
     error::TemporalError,
     port::mutator::TemporalDeleteScope,
     service::{CreateOrUpdateResult, TemporalService, iri_short_name},
+    temporal_not_found_reason::TemporalNotFoundReason,
+    temporal_validation_reason::TemporalValidationReason,
     unit_code_admission::{validate_entity_unit_code_admission, validate_instance_unit_code_admission},
 };
 use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, history_record::HistoryRecord};
@@ -45,18 +47,18 @@ impl TemporalService {
                 .as_array()
                 .and_then(|arr| arr.first())
                 .and_then(|v| v.as_object())
-                .ok_or_else(|| TemporalError::validation("Entity must be a JSON object"))?;
+                .ok_or_else(|| TemporalError::Validation(TemporalValidationReason::EntityNotObject))?;
 
             let entity_id = entity_obj
                 .get("@id")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| TemporalError::validation("Entity missing @id"))?;
+                .ok_or_else(|| TemporalError::Validation(TemporalValidationReason::EntityMissingId))?;
 
             let entity_id = entity_id
                 .parse::<Uri>()
-                .map_err(|error| TemporalError::validation(format!("Invalid entity id: {error}")))?;
+                .map_err(|source| TemporalError::Validation(TemporalValidationReason::EntityId { source }))?;
             if entity_obj.get("@type").and_then(|v| v.as_array()).is_none_or(Vec::is_empty) {
-                return Err(TemporalError::validation("Entity missing @type"));
+                return Err(TemporalError::Validation(TemporalValidationReason::EntityMissingType));
             }
             entity_id
         };
@@ -110,7 +112,7 @@ impl TemporalService {
     /// The measured body of [`TemporalService::add_attrs`].
     async fn add_attrs_inner(&self, target: &ContextTarget, entity_id: &Uri, mut payload: Value, context: &ContextSpec) -> Result<(), TemporalError> {
         if !self.reader.entity_exists(target, entity_id).await? {
-            return Err(TemporalError::not_found(entity_id.to_string()));
+            return Err(TemporalError::NotFound(TemporalNotFoundReason::Entity { id: entity_id.clone() }));
         }
 
         normalize_entity_attributes(&mut payload);
@@ -157,7 +159,7 @@ impl TemporalService {
             .await?
             .to_string()
             .parse::<AttributeName>()
-            .map_err(|error| TemporalError::validation(format!("Expanded attribute name is invalid: {error}")))?;
+            .map_err(|source| TemporalError::Validation(TemporalValidationReason::AttributeName { source }))?;
 
         if self.mutator.attribute_exists(target, entity_id, &expanded_attr).await? {
             return Ok(expanded_attr);
@@ -201,7 +203,7 @@ impl TemporalService {
     async fn delete_inner(&self, target: &ContextTarget, entity_id: &Uri) -> Result<(), TemporalError> {
         self.mutation_barrier.synchronize(target, entity_id).await?;
         if !self.mutator.entity_exists(target, entity_id).await? {
-            return Err(TemporalError::not_found(entity_id.to_string()));
+            return Err(TemporalError::NotFound(TemporalNotFoundReason::Entity { id: entity_id.clone() }));
         }
         self.mutator.delete_all_for_entity(target, entity_id).await?;
         Ok(())
@@ -247,11 +249,14 @@ impl TemporalService {
         let attr_iri = self.resolve_attr_iri_for_entity(target, entity_id, attr_id, context).await?;
 
         if !self.mutator.entity_exists(target, entity_id).await? {
-            return Err(TemporalError::not_found(entity_id.to_string()));
+            return Err(TemporalError::NotFound(TemporalNotFoundReason::Entity { id: entity_id.clone() }));
         }
 
         if !self.mutator.attribute_exists(target, entity_id, &attr_iri).await? {
-            return Err(TemporalError::not_found(format!("Attribute {attr_iri} not found on entity {entity_id}")));
+            return Err(TemporalError::NotFound(TemporalNotFoundReason::AttributeOnEntity {
+                attribute: attr_iri.clone(),
+                entity: entity_id.clone(),
+            }));
         }
 
         let dataset_uri = match dataset_id {
@@ -260,11 +265,19 @@ impl TemporalService {
         };
         let deleted = self.mutator.delete_attribute(target, entity_id, &attr_iri, dataset_uri, scope).await?;
         if deleted == 0 {
-            let missing_detail = match dataset_id {
-                Some(ds_id) => format!("Attribute {attr_iri} with datasetId {ds_id} not found on entity {entity_id}"),
-                None => format!("Attribute {attr_iri} default instance not found on entity {entity_id}"),
+            // clone: the error owns the borrowed request attribute and identifier.
+            let missing = match dataset_id {
+                Some(DatasetSelector::Id(ds_id)) => TemporalNotFoundReason::AttributeDatasetOnEntity {
+                    attribute: attr_iri.clone(),
+                    dataset_id: Box::new(ds_id.clone()),
+                    entity: entity_id.clone(),
+                },
+                Some(DatasetSelector::Default) | None => TemporalNotFoundReason::AttributeDefaultInstanceOnEntity {
+                    attribute: attr_iri.clone(),
+                    entity: entity_id.clone(),
+                },
             };
-            return Err(TemporalError::not_found(missing_detail));
+            return Err(TemporalError::NotFound(missing));
         }
         Ok(())
     }
@@ -310,18 +323,20 @@ impl TemporalService {
         let attr_iri = self.resolve_attr_iri_for_entity(target, entity_id, attr_id, context).await?;
 
         if !self.mutator.entity_exists(target, entity_id).await? {
-            return Err(TemporalError::not_found(format!("Entity {entity_id} not found")));
+            return Err(TemporalError::NotFound(TemporalNotFoundReason::Entity { id: entity_id.clone() }));
         }
 
         if !self.mutator.attribute_exists(target, entity_id, &attr_iri).await? {
-            return Err(TemporalError::not_found(format!("Attribute {attr_iri} not found on entity {entity_id}")));
+            return Err(TemporalError::NotFound(TemporalNotFoundReason::AttributeOnEntity {
+                attribute: attr_iri.clone(),
+                entity: entity_id.clone(),
+            }));
         }
 
         if !self.mutator.instance_exists(target, instance, entity_id, &attr_iri).await? {
-            return Err(TemporalError::not_found(format!(
-                "Attribute instance {} not found",
-                instance.rendered(InstanceFamily::Attribute)
-            )));
+            return Err(TemporalError::NotFound(TemporalNotFoundReason::AttributeInstance {
+                instance: instance.rendered(InstanceFamily::Attribute).to_string(),
+            }));
         }
 
         let expanded = self.engine.expand(payload, context).await?;
@@ -367,18 +382,20 @@ impl TemporalService {
         let attr_iri = self.resolve_attr_iri_for_entity(target, entity_id, attr_id, context).await?;
 
         if !self.mutator.entity_exists(target, entity_id).await? {
-            return Err(TemporalError::not_found(format!("Entity {entity_id} not found")));
+            return Err(TemporalError::NotFound(TemporalNotFoundReason::Entity { id: entity_id.clone() }));
         }
 
         if !self.mutator.attribute_exists(target, entity_id, &attr_iri).await? {
-            return Err(TemporalError::not_found(format!("Attribute {attr_iri} not found on entity {entity_id}")));
+            return Err(TemporalError::NotFound(TemporalNotFoundReason::AttributeOnEntity {
+                attribute: attr_iri.clone(),
+                entity: entity_id.clone(),
+            }));
         }
 
         if !self.mutator.instance_exists(target, instance, entity_id, &attr_iri).await? {
-            return Err(TemporalError::not_found(format!(
-                "Attribute instance {} not found",
-                instance.rendered(InstanceFamily::Attribute)
-            )));
+            return Err(TemporalError::NotFound(TemporalNotFoundReason::AttributeInstance {
+                instance: instance.rendered(InstanceFamily::Attribute).to_string(),
+            }));
         }
 
         self.mutator.delete_instance(target, instance, entity_id, &attr_iri).await?;

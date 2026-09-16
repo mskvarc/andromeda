@@ -20,12 +20,12 @@ pub const ENTITY_TYPES_PRESENT_CONSTRAINT: &str = "chk_entity_search_types_prese
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum EntityTypesMissing {
     /// The write path refused the row before the statement ran, so the entity
-    /// it belongs to is known.
-    #[error("entity {0} carries no type, and clause 4.5.1 requires at least one")]
+    /// it belongs to is known (ETSI GS CIM 009 clause 4.5.1).
+    #[error("entity {0} carries no type, but at least one is required")]
     Rejected(Uri),
     /// The database check constraint refused the row. The statement is set-based
-    /// and the constraint names no row, so no identifier is available.
-    #[error("an entity write carried no type, and clause 4.5.1 requires at least one")]
+    /// and the constraint names no row, so no identifier is available (ETSI GS CIM 009 clause 4.5.1).
+    #[error("an entity write carried no type, but at least one is required")]
     ConstraintViolated,
 }
 

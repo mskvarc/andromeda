@@ -12,13 +12,15 @@ pub enum TransportFailure {
     /// The source did not answer within the registration's timeout, or is
     /// inside its cooldown window and was not contacted (clause 5.2.34).
     Timeout {
-        /// Sanitized detail.
+        /// Sanitized transport detail, relayed opaquely from the failed attempt
+        /// and not broker-authored.
         detail: String,
     },
     /// The request could not be delivered: connection refused, DNS failure,
     /// TLS failure, or a malformed request.
     Unreachable {
-        /// Sanitized detail.
+        /// Sanitized transport detail, relayed opaquely from the failed attempt
+        /// and not broker-authored.
         detail: String,
     },
 }

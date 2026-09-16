@@ -24,7 +24,7 @@ fn resolve_temporal_delete_query(parts: &Parts) -> Result<TemporalDeleteQuery, E
     let query_str = parts.uri.query().unwrap_or("");
     let params = serde_urlencoded::from_str::<TemporalDeleteParameters>(query_str).map_err(|error| {
         let error_text = error.to_string();
-        let message = format!("Invalid query parameters: {error_text}");
+        let message = format!("invalid query parameters: {error_text}");
         classify_query_parse_error(&error_text, message, uri.clone())
     })?;
 

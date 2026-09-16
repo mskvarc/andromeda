@@ -78,7 +78,7 @@ impl RequestFingerprint {
 
 /// Why stored text is not a [`RequestFingerprint`].
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[error("entity map request fingerprint {0:?} is not <operation>:<64 lowercase hex digits>")]
+#[error("entity map request fingerprint '{0}' is not <operation>:<64 lowercase hex digits>")]
 pub struct RequestFingerprintError(String);
 
 // The stored form carries two fields behind one separator, which no derive

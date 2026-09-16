@@ -57,6 +57,10 @@ pub mod status;
 pub mod store;
 /// A stored Subscription paired with its surrogate key.
 pub mod stored_subscription;
+/// The masked operator diagnostic carried by internal/persistence failures.
+pub mod subscription_diagnostic;
+/// The typed reasons a subscription request is rejected as `BadRequestData`.
+pub mod subscription_validation_reason;
 /// Counting a suppression window back from an instant.
 mod suppression_window;
 /// Expansion of a subscription payload against the request `@context`.

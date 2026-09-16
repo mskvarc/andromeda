@@ -1,6 +1,6 @@
 //! Typed subscription persistence values and update merging.
 
-use crate::{error::SubscriptionError, store::SubscriptionFields, variant::DatasetIdPolicy};
+use crate::{error::SubscriptionError, store::SubscriptionFields, subscription_validation_reason::SubscriptionValidationReason, variant::DatasetIdPolicy};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion, uri::Uri};
 use andromeda_ngsi_ld_model::{
     attribute_name_csv,
@@ -115,7 +115,10 @@ where
             serde_json::from_value(value.clone()).map_err(|error| {
                 // clone: serde owns the selected JSON member while the request
                 // payload remains available to the other field parsers.
-                SubscriptionError::validation(format!("Invalid '{member}' value: {error}"))
+                SubscriptionError::Validation(SubscriptionValidationReason::MemberValue {
+                    member: member.to_string(),
+                    source: error,
+                })
             })
         })
         .transpose()
@@ -136,7 +139,12 @@ pub(crate) fn attribute_name_csv_member(payload: &Value, member: &str) -> Result
     let Some(value) = payload.get(member) else {
         return Ok(None);
     };
-    attribute_name_csv::deserialize(value).map_err(|error| SubscriptionError::validation(format!("Invalid '{member}' value: {error}")))
+    attribute_name_csv::deserialize(value).map_err(|error| {
+        SubscriptionError::Validation(SubscriptionValidationReason::MemberValue {
+            member: member.to_string(),
+            source: error,
+        })
+    })
 }
 
 /// Merge one comma-separated attribute-name member of an update fragment over
@@ -163,7 +171,12 @@ fn expiration(payload: &Value) -> Result<Option<DateTime<Utc>>, SubscriptionErro
         .map(|raw| {
             DateTime::parse_from_rfc3339(raw)
                 .map(|date_time| date_time.with_timezone(&Utc))
-                .map_err(|error| SubscriptionError::validation(format!("Invalid 'expiresAt' value '{raw}': {error}")))
+                .map_err(|error| {
+                    SubscriptionError::Validation(SubscriptionValidationReason::ExpiresAt {
+                        raw: raw.to_string(),
+                        source: error,
+                    })
+                })
         })
         .transpose()
 }
@@ -183,10 +196,10 @@ fn ngsild_conformance(payload: &Value) -> Result<Option<SpecVersion>, Subscripti
     };
     let raw = value
         .as_str()
-        .ok_or_else(|| SubscriptionError::validation("'ngsildConformance' must be a string of the form major.minor"))?;
+        .ok_or_else(|| SubscriptionError::Validation(SubscriptionValidationReason::NgsildConformanceNotString))?;
     SpecVersion::from_str(raw)
         .map(Some)
-        .map_err(|error| SubscriptionError::validation(format!("Invalid 'ngsildConformance' value: {error}")))
+        .map_err(|error| SubscriptionError::Validation(SubscriptionValidationReason::NgsildConformance { source: error }))
 }
 
 /// Parse a create payload into validated persistence values.
@@ -355,7 +368,7 @@ mod tests {
     #[test]
     fn malformed_expiration_is_rejected() {
         let result = extract_create_fields(&serde_json::json!({"expiresAt": "tomorrow"}), DatasetIdPolicy::Retain);
-        assert!(matches!(result, Err(SubscriptionError::Validation { .. })));
+        assert!(matches!(result, Err(SubscriptionError::Validation(_))));
     }
 
     /// Table 5.2.12-1 gives `ngsildConformance` the form `major.minor`, so a
@@ -395,7 +408,7 @@ mod tests {
             serde_json::json!(null),
         ] {
             let result = extract_create_fields(&serde_json::json!({"ngsildConformance": token}), DatasetIdPolicy::Retain);
-            assert!(matches!(result, Err(SubscriptionError::Validation { .. })), "{token} must be refused");
+            assert!(matches!(result, Err(SubscriptionError::Validation(_))), "{token} must be refused");
         }
     }
 

@@ -18,16 +18,15 @@ pub trait RegistrationHttpClassify {
 impl RegistrationHttpClassify for RegistrationError {
     fn classify_for_registration_http(&self) -> ClassifiedReport {
         match self {
-            RegistrationError::Validation { detail } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail),
+            RegistrationError::Validation(reason) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, reason.to_string()),
             RegistrationError::NotFound { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, self.to_string()),
             RegistrationError::AlreadyExists { .. } => ClassifiedReport::public(NgsiLdErrorType::AlreadyExists, self.to_string()),
-            RegistrationError::Conflict { detail } => ClassifiedReport::public(NgsiLdErrorType::Conflict, detail),
+            RegistrationError::Conflict(reason) => ClassifiedReport::public(NgsiLdErrorType::Conflict, reason.to_string()),
             RegistrationError::JsonLd(source) => classify_jsonld_error(source),
             RegistrationError::Query(source) => classify_query_error(source),
-            RegistrationError::Representation(_)
-            | RegistrationError::Identifier(_)
-            | RegistrationError::Persistence { .. }
-            | RegistrationError::Internal { .. } => ClassifiedReport::internal(self),
+            RegistrationError::Representation(_) | RegistrationError::Identifier(_) | RegistrationError::Persistence(_) | RegistrationError::Internal(_) => {
+                ClassifiedReport::internal(self)
+            }
         }
     }
 }
@@ -76,14 +75,21 @@ mod tests {
     use super::RegistrationHttpClassify;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-    use andromeda_registration::error::RegistrationError;
+    use andromeda_registration::{
+        error::RegistrationError,
+        registration_conflict_reason::RegistrationConflictReason,
+        registration_validation_reason::RegistrationValidationReason,
+    };
     use std::error::Error;
 
     #[test]
     fn focused_registration_categories_and_disclosure_are_stable() -> Result<(), Box<dyn Error>> {
         let identifier = "urn:ngsi-ld:ContextSourceRegistration:1".parse::<Uri>()?;
         for (error, expected) in [
-            (RegistrationError::Validation { detail: "invalid".to_string() }, NgsiLdErrorType::BadRequestData),
+            (
+                RegistrationError::Validation(RegistrationValidationReason::IdNotUri),
+                NgsiLdErrorType::BadRequestData,
+            ),
             (
                 RegistrationError::NotFound {
                     identifier: identifier.clone(),
@@ -91,18 +97,16 @@ mod tests {
                 NgsiLdErrorType::ResourceNotFound,
             ),
             (RegistrationError::AlreadyExists { identifier }, NgsiLdErrorType::AlreadyExists),
-            (RegistrationError::Conflict { detail: "overlap".to_string() }, NgsiLdErrorType::Conflict),
             (
-                RegistrationError::Persistence {
-                    detail: "database host".to_string(),
-                },
-                NgsiLdErrorType::InternalError,
+                RegistrationError::Conflict(RegistrationConflictReason::LocalEntityMatchesRedirect),
+                NgsiLdErrorType::Conflict,
             ),
+            (RegistrationError::persistence("database host"), NgsiLdErrorType::InternalError),
         ] {
             let report = error.classify_for_registration_http();
             pretty_assertions::assert_eq!(report.error_type(), expected);
             if expected == NgsiLdErrorType::InternalError {
-                pretty_assertions::assert_eq!(report.detail(), "Internal error");
+                pretty_assertions::assert_eq!(report.detail(), "internal error");
             }
         }
         Ok(())

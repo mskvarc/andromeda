@@ -36,7 +36,7 @@ use tracing_subscriber::{
 #[derive(Debug, Error)]
 pub enum TracingInitError {
     /// The configured log directory could not be created.
-    #[error("the log directory {directory:?} could not be created: {source}")]
+    #[error("the log directory {} could not be created: {source}", .directory.display())]
     LogDirectory {
         /// The directory whose creation failed.
         directory: PathBuf,

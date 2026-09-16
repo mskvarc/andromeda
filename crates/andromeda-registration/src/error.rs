@@ -1,19 +1,22 @@
 //! Errors produced by context-source registration policy and persistence.
 
+use crate::{
+    registration_conflict_reason::RegistrationConflictReason,
+    registration_diagnostic::RegistrationDiagnostic,
+    registration_validation_reason::RegistrationValidationReason,
+};
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::error::QueryError;
+use std::fmt::Display;
 use thiserror::Error;
 
 /// A failure while validating, applying, or persisting a registration operation.
 #[derive(Debug, Error)]
 pub enum RegistrationError {
     /// The request does not satisfy the registration contract.
-    #[error("invalid context-source registration: {detail}")]
-    Validation {
-        /// Human-readable validation detail.
-        detail: String,
-    },
+    #[error("invalid context-source registration: {0}")]
+    Validation(#[from] RegistrationValidationReason),
     /// The requested registration does not exist.
     #[error("context-source registration not found: {identifier}")]
     NotFound {
@@ -28,11 +31,8 @@ pub enum RegistrationError {
     },
     /// A proxied registration overlaps an existing registration or a local
     /// entity (clauses 5.9.2.4 and 5.9.3.4, `Conflict`).
-    #[error("context-source registration conflicts with existing context data: {detail}")]
-    Conflict {
-        /// Which registration or entity the footprint collides with.
-        detail: String,
-    },
+    #[error("context-source registration conflicts with existing context data: {0}")]
+    Conflict(RegistrationConflictReason),
     /// JSON-LD processing failed.
     #[error(transparent)]
     JsonLd(#[from] JsonLdError),
@@ -46,25 +46,14 @@ pub enum RegistrationError {
     #[error(transparent)]
     Identifier(#[from] urn_rs::Error),
     /// The persistence adapter could not complete the requested operation.
-    #[error("registration persistence failed: {detail}")]
-    Persistence {
-        /// Adapter-specific diagnostic detail.
-        detail: String,
-    },
+    #[error("registration persistence failed: {0}")]
+    Persistence(RegistrationDiagnostic),
     /// An internal registration invariant could not be satisfied.
-    #[error("registration invariant failed: {detail}")]
-    Internal {
-        /// Internal diagnostic detail.
-        detail: String,
-    },
+    #[error("registration invariant failed: {0}")]
+    Internal(RegistrationDiagnostic),
 }
 
 impl RegistrationError {
-    /// Construct a request-validation error.
-    pub fn csr_validation(detail: impl Into<String>) -> RegistrationError {
-        RegistrationError::Validation { detail: detail.into() }
-    }
-
     /// Construct a missing-registration error.
     #[must_use]
     pub fn not_found(identifier: &Uri) -> RegistrationError {
@@ -81,18 +70,17 @@ impl RegistrationError {
         }
     }
 
-    /// Construct a proxied-registration overlap error.
-    pub fn conflict(detail: impl Into<String>) -> RegistrationError {
-        RegistrationError::Conflict { detail: detail.into() }
+    /// Construct a persistence-adapter error from its masked diagnostic source.
+    ///
+    /// The detail is captured for operators and masked before any client sees
+    /// it, so this takes `impl Display` — a typed adapter error is handed over
+    /// directly rather than pre-rendered to a string at the call site.
+    pub fn persistence(source: impl Display) -> RegistrationError {
+        RegistrationError::Persistence(RegistrationDiagnostic::new(source))
     }
 
-    /// Construct a persistence-adapter error.
-    pub fn persistence(detail: impl Into<String>) -> RegistrationError {
-        RegistrationError::Persistence { detail: detail.into() }
-    }
-
-    /// Construct an internal invariant error.
-    pub fn internal(detail: impl Into<String>) -> RegistrationError {
-        RegistrationError::Internal { detail: detail.into() }
+    /// Construct an internal-invariant error from its masked diagnostic source.
+    pub fn internal(source: impl Display) -> RegistrationError {
+        RegistrationError::Internal(RegistrationDiagnostic::new(source))
     }
 }

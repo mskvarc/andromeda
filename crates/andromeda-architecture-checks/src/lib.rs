@@ -11,6 +11,8 @@
 
 pub mod architecture;
 pub mod dependencies;
+pub mod detail_message;
+pub mod detail_message_baseline;
 pub mod god_file;
 pub mod manifest_hygiene;
 pub mod module_naming;

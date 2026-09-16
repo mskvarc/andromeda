@@ -46,6 +46,7 @@ use andromeda_temporal::{
     error::TemporalError,
     linked::candidates::TemporalLinkedCandidate,
     service::{TemporalRange, TemporalReadResult},
+    temporal_not_found_reason::TemporalNotFoundReason,
 };
 use axum::http::Uri as RequestUri;
 use serde_json::json;
@@ -192,7 +193,9 @@ pub(crate) async fn distributed_retrieval(
         // nothing leaves the entity known by its registered identity alone.
         None => match registered_identity(id, &forwarded.sources) {
             Some(identity) => identity,
-            None => return Err(temporal_problem(&TemporalError::not_found(id.to_string()), instance).with_warnings(warnings)),
+            None => {
+                return Err(temporal_problem(&TemporalError::NotFound(TemporalNotFoundReason::Entity { id: id.clone() }), instance).with_warnings(warnings));
+            }
         },
     };
     Ok(RetrievedHistory {

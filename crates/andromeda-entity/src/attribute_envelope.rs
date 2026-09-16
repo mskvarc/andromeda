@@ -29,7 +29,7 @@
 //! not one attribute carrying two default instances, and clause 4.5.5.1 says
 //! nothing about either.
 
-use crate::error::EntityError;
+use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
     dataset_id::get_instance_dataset_id,
@@ -57,9 +57,12 @@ pub(crate) fn validate_attribute_envelopes(expanded: &Value) -> Result<(), Entit
             if key.starts_with('@') {
                 continue;
             }
-            let attribute_name = key
-                .parse::<AttributeName>()
-                .map_err(|error| EntityError::validation(format!("invalid expanded attribute name '{key}': {error}")))?;
+            let attribute_name = key.parse::<AttributeName>().map_err(|error| {
+                EntityError::Validation(EntityValidationReason::ExpandedAttributeName {
+                    name: key.clone(),
+                    source: error,
+                })
+            })?;
             if is_reserved_member(&attribute_name) {
                 continue;
             }
@@ -150,13 +153,11 @@ fn reject_forbidden_member(attribute: Option<&AttributeName>, family: Option<Att
     if member_admission(family, term) == MemberAdmission::Admitted {
         return Ok(());
     }
-    let subject = match attribute {
-        Some(attribute) => format!("{family} '{attribute}'"),
-        None => format!("the {family} fragment"),
-    };
-    Err(EntityError::validation(format!(
-        "{subject} cannot carry '{term}': the specification states that member shall never be present on this attribute family"
-    )))
+    Err(EntityError::Validation(EntityValidationReason::MemberForbidden {
+        attribute: attribute.cloned(),
+        family: Some(family),
+        term: term.to_string(),
+    }))
 }
 
 /// Reject any instance of one attribute that omits the member its type needs.
@@ -182,7 +183,7 @@ fn validate_attr_instances(attr_name: &AttributeName, value: &Value) -> Result<(
                 value
                     .as_str()
                     .and_then(AttributeType::from_expanded_iri)
-                    .ok_or_else(|| EntityError::validation("attribute type is not a supported NGSI-LD attribute type"))
+                    .ok_or_else(|| EntityError::Validation(EntityValidationReason::UnsupportedAttributeType))
             })
             .collect::<Result<_, _>>()?;
 
@@ -191,20 +192,26 @@ fn validate_attr_instances(attr_name: &AttributeName, value: &Value) -> Result<(
         let is_relationship = types.contains(&AttributeType::Relationship);
 
         if (is_property || is_geo_property) && !obj.contains_key(expanded_properties::VALUE.as_str()) {
-            let short_type = if is_geo_property { "GeoProperty" } else { "Property" };
-            return Err(EntityError::validation(format!("{short_type} '{attr_name}' is missing required field 'value'")));
+            let attribute_type = if is_geo_property {
+                AttributeType::GeoProperty
+            } else {
+                AttributeType::Property
+            };
+            return Err(EntityError::Validation(EntityValidationReason::MissingValue {
+                attribute_type,
+                attribute: attr_name.clone(),
+            }));
         }
 
         if is_relationship && !obj.contains_key(expanded_properties::OBJECT.as_str()) {
-            return Err(EntityError::validation(format!(
-                "Relationship '{attr_name}' is missing required field 'object'"
-            )));
+            return Err(EntityError::Validation(EntityValidationReason::MissingObject { attribute: attr_name.clone() }));
         }
 
-        if let Some(unitless) = forbidden_unit_code_family(instance) {
-            return Err(EntityError::validation(format!(
-                "{unitless} '{attr_name}' cannot carry 'unitCode': the specification defines this attribute family without one"
-            )));
+        if let Some(family) = forbidden_unit_code_family(instance) {
+            return Err(EntityError::Validation(EntityValidationReason::UnitCodeForbidden {
+                family,
+                attribute: attr_name.clone(),
+            }));
         }
     }
     Ok(())
@@ -228,8 +235,11 @@ fn validate_instance_identities(attr_name: &AttributeName, instances: &[Value]) 
         if !seen.insert(dataset_id.clone()) {
             // clone: the reported identity outlives the set that detected it.
             return Err(match dataset_id {
-                Some(dataset_id) => EntityError::validation(format!("attribute '{attr_name}' repeats the instance with datasetId '{dataset_id}'")),
-                None => EntityError::validation(format!("attribute '{attr_name}' carries more than one default instance")),
+                Some(dataset_id) => EntityError::Validation(EntityValidationReason::RepeatedInstance {
+                    attribute: attr_name.clone(),
+                    dataset_id,
+                }),
+                None => EntityError::Validation(EntityValidationReason::MultipleDefaultInstances { attribute: attr_name.clone() }),
             });
         }
     }

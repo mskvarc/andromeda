@@ -132,6 +132,6 @@ mod tests {
     #[test]
     fn a_malformed_filter_is_rejected_when_the_resource_is_deserialized() {
         let error = serde_json::from_str::<Expr>("\"speed>\"").expect_err("must reject");
-        assert!(error.to_string().contains("Q expression"), "got {error}");
+        assert!(error.to_string().contains("q expression"), "got {error}");
     }
 }

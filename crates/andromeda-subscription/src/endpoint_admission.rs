@@ -8,7 +8,7 @@
 //! endpoint has to be admitted exactly as a create carrying the same endpoint
 //! would be.
 
-use crate::error::SubscriptionError;
+use crate::{error::SubscriptionError, subscription_validation_reason::SubscriptionValidationReason};
 use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
 use serde::Deserialize;
 use serde_json::Value;
@@ -33,12 +33,11 @@ pub(crate) fn validate_endpoint(payload: &Value, validator: &dyn SubscriptionEnd
     let Some(endpoint_uri) = endpoint.get("uri").and_then(Value::as_str) else {
         return Ok(());
     };
-    let endpoint_uri = Url::parse(endpoint_uri).map_err(|error| SubscriptionError::validation(error.to_string()))?;
+    let endpoint_uri = Url::parse(endpoint_uri).map_err(|source| SubscriptionError::Validation(SubscriptionValidationReason::EndpointUri { source }))?;
 
     let notifier_info = match endpoint.get("notifierInfo") {
         Some(value) => Some(
-            Vec::<KeyValuePair>::deserialize(value)
-                .map_err(|error| SubscriptionError::validation(format!("notifierInfo must be an array of key-value pairs: {error}")))?,
+            Vec::<KeyValuePair>::deserialize(value).map_err(|source| SubscriptionError::Validation(SubscriptionValidationReason::NotifierInfo { source }))?,
         ),
         None => None,
     };
@@ -63,6 +62,7 @@ mod tests {
     use crate::{
         endpoint_admission::{SubscriptionEndpointValidator, validate_endpoint},
         error::SubscriptionError,
+        subscription_validation_reason::SubscriptionValidationReason,
     };
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
     use url::Url;
@@ -71,7 +71,9 @@ mod tests {
 
     impl SubscriptionEndpointValidator for RejectingEndpointValidator {
         fn validate(&self, _endpoint: &Url, _notifier_info: Option<&[KeyValuePair]>) -> Result<(), SubscriptionError> {
-            Err(SubscriptionError::validation("unsupported endpoint"))
+            Err(SubscriptionError::Validation(SubscriptionValidationReason::EndpointRejected {
+                detail: "unsupported endpoint".to_string(),
+            }))
         }
     }
 
@@ -80,7 +82,7 @@ mod tests {
         let payload = serde_json::json!({"notification": {"endpoint": {"uri": "://invalid"}}});
         assert!(matches!(
             validate_endpoint(&payload, &RejectingEndpointValidator),
-            Err(SubscriptionError::Validation { .. })
+            Err(SubscriptionError::Validation(SubscriptionValidationReason::EndpointUri { .. }))
         ));
     }
 
@@ -88,6 +90,8 @@ mod tests {
     fn endpoint_validation_propagates_the_selected_binding_refusal() {
         let payload = serde_json::json!({"notification": {"endpoint": {"uri": "http://example.com/notify"}}});
         let error = validate_endpoint(&payload, &RejectingEndpointValidator);
-        assert!(matches!(error, Err(SubscriptionError::Validation { detail }) if detail == "unsupported endpoint"));
+        assert!(
+            matches!(error, Err(SubscriptionError::Validation(SubscriptionValidationReason::EndpointRejected { detail })) if detail == "unsupported endpoint")
+        );
     }
 }

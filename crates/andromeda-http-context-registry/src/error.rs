@@ -73,7 +73,7 @@ mod tests {
             let report = classify_context_registry_error(&error);
             pretty_assertions::assert_eq!(report.error_type(), expected);
             if expected == NgsiLdErrorType::InternalError {
-                pretty_assertions::assert_eq!(report.detail(), "Internal error");
+                pretty_assertions::assert_eq!(report.detail(), "internal error");
             }
         }
         Ok(())

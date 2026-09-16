@@ -4,6 +4,8 @@
 use crate::{
     FederationService,
     error::FederationError,
+    federation_conflict_reason::FederationConflictReason,
+    federation_operation_unsupported::FederationOperationUnsupported,
     forwarding_url::forwarding_url,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure},
     registration_selection::{collect_matching_attrs, csr_has_matching_information, filter_fragment_for_registration},
@@ -311,12 +313,10 @@ pub fn single_source_failure(results: &[ForwardedWriteResult]) -> Option<Federat
     let registration = single.registration_id.clone(); // clone: the error owns the identifier of the result it describes
     match &single.outcome {
         ForwardedWriteOutcome::Completed { .. } => None,
-        ForwardedWriteOutcome::NotAdvertised => Some(FederationError::conflict(format!(
-            "registration {registration} covers the data but does not advertise the requested operation"
-        ))),
-        ForwardedWriteOutcome::UpsertFollowUpNotAdvertised => Some(FederationError::OperationNotSupported {
-            detail: format!("registration {registration} reported the entity exists and advertises no operation to update it"),
-        }),
+        ForwardedWriteOutcome::NotAdvertised => Some(FederationError::Conflict(FederationConflictReason::NotAdvertised { registration })),
+        ForwardedWriteOutcome::UpsertFollowUpNotAdvertised => Some(FederationError::OperationNotSupported(
+            FederationOperationUnsupported::UpsertFollowUpNotAdvertised { registration },
+        )),
         ForwardedWriteOutcome::LoopDetected => Some(FederationError::LoopDetected { registration }),
         ForwardedWriteOutcome::Transport(TransportFailure::Timeout { detail }) => Some(FederationError::GatewayTimeout {
             registration,
@@ -331,10 +331,14 @@ pub fn single_source_failure(results: &[ForwardedWriteResult]) -> Option<Federat
         // Clause 6.3.17 asks for the most informative error response; a
         // source that refused the operation itself (409, 422) is reported as
         // that refusal rather than folded into 502 Bad Gateway.
-        ForwardedWriteOutcome::RemoteHttpFailure { status: status @ 409, body } => Some(FederationError::conflict(remote_detail(*status, body.as_ref()))),
-        ForwardedWriteOutcome::RemoteHttpFailure { status: status @ 422, body } => Some(FederationError::OperationNotSupported {
+        ForwardedWriteOutcome::RemoteHttpFailure { status: status @ 409, body } => Some(FederationError::Conflict(FederationConflictReason::RemoteRejected {
             detail: remote_detail(*status, body.as_ref()),
-        }),
+        })),
+        ForwardedWriteOutcome::RemoteHttpFailure { status: status @ 422, body } => {
+            Some(FederationError::OperationNotSupported(FederationOperationUnsupported::RemoteUnsupported {
+                detail: remote_detail(*status, body.as_ref()),
+            }))
+        }
         ForwardedWriteOutcome::RemoteHttpFailure { status, body } => Some(FederationError::BadGateway {
             registration,
             status: Some(*status),
@@ -441,13 +445,14 @@ mod tests {
                     ),
                     "unreachable" => assert!(matches!(escalated, Some(FederationError::BadGateway { status: None, .. })), "{mode:?} {label}"),
                     "not found" => assert!(matches!(escalated, Some(FederationError::RemoteNotFound { .. })), "{mode:?} {label}"),
-                    "not advertised" => assert!(matches!(escalated, Some(FederationError::Conflict { .. })), "{mode:?} {label}"),
-                    "no follow-up" => assert!(matches!(escalated, Some(FederationError::OperationNotSupported { .. })), "{mode:?} {label}"),
+                    "not advertised" => assert!(matches!(escalated, Some(FederationError::Conflict(_))), "{mode:?} {label}"),
+                    "no follow-up" | "remote unsupported" => {
+                        assert!(matches!(escalated, Some(FederationError::OperationNotSupported(_))), "{mode:?} {label}");
+                    }
                     "remote conflict" => assert!(
-                        matches!(escalated, Some(FederationError::Conflict { ref detail }) if detail.contains("exists")),
+                        matches!(&escalated, Some(error @ FederationError::Conflict(_)) if error.to_string().contains("exists")),
                         "{mode:?} {label}"
                     ),
-                    "remote unsupported" => assert!(matches!(escalated, Some(FederationError::OperationNotSupported { .. })), "{mode:?} {label}"),
                     other => assert!(
                         matches!(escalated, Some(FederationError::BadGateway { status: Some(403), ref detail, .. }) if detail.contains("no access")),
                         "{mode:?} {other}"

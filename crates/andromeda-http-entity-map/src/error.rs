@@ -33,13 +33,14 @@ impl EntityMapHttpClassify for EntityMapError {
 impl EntityMapHttpClassify for EntityError {
     fn classify_for_entity_map_http(&self) -> ClassifiedReport {
         match self {
-            EntityError::Validation { detail } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail),
-            EntityError::NotFound { .. } | EntityError::TypeNotFound { .. } | EntityError::AttributeNotFound { .. } | EntityError::MemberNotFound { .. } => {
+            EntityError::Validation(reason) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, reason.to_string()),
+            EntityError::NotFound { .. } | EntityError::TypeNotFound { .. } | EntityError::AttributeNotFound { .. } => {
                 ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, self.to_string())
             }
+            EntityError::MemberNotFound(reason) => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, reason.to_string()),
             EntityError::AlreadyExists { .. } => ClassifiedReport::public(NgsiLdErrorType::AlreadyExists, self.to_string()),
             EntityError::Contention { .. } => ClassifiedReport::public(NgsiLdErrorType::Conflict, self.to_string()),
-            EntityError::OperationNotSupported { detail } => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, detail),
+            EntityError::OperationNotSupported(reason) => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, reason.to_string()),
             EntityError::JsonLd(source) => classify_jsonld_error(source),
             EntityError::Query(source) => classify_query_error(source),
             EntityError::Request(source) => classify_parameter_error(source),
@@ -47,7 +48,7 @@ impl EntityMapHttpClassify for EntityError {
             EntityError::Identifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
             EntityError::EntityTypeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
             EntityError::AttributeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
-            EntityError::Commit(_) | EntityError::Persistence { .. } | EntityError::Internal { .. } => ClassifiedReport::internal(self),
+            EntityError::Commit(_) | EntityError::Persistence(_) | EntityError::Internal(_) => ClassifiedReport::internal(self),
         }
     }
 }
@@ -67,16 +68,16 @@ impl EntityMapHttpClassify for RenderError {
 impl EntityMapHttpClassify for TemporalError {
     fn classify_for_entity_map_http(&self) -> ClassifiedReport {
         match self {
-            TemporalError::Validation { detail } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail),
-            TemporalError::NotFound { detail } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, detail),
-            TemporalError::OperationNotSupported { detail } => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, detail),
+            TemporalError::Validation(reason) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, reason.to_string()),
+            TemporalError::NotFound(reason) => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, reason.to_string()),
+            TemporalError::OperationNotSupported(reason) => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, reason.to_string()),
             // The delete-by-query bound: an entity-map path never triggers it,
             // but the classification is total over the shared error type.
             TemporalError::TooManyResults { .. } => ClassifiedReport::public(NgsiLdErrorType::TooManyResults, self.to_string()),
             TemporalError::JsonLd(source) => classify_jsonld_error(source),
             TemporalError::Query(source) => classify_query_error(source),
             TemporalError::Request(source) => classify_parameter_error(source),
-            TemporalError::Commit(_) | TemporalError::Persistence { .. } | TemporalError::Rendering { .. } | TemporalError::Internal { .. } => {
+            TemporalError::Commit(_) | TemporalError::Persistence(_) | TemporalError::Rendering(_) | TemporalError::Internal(_) => {
                 ClassifiedReport::internal(self)
             }
         }
@@ -86,15 +87,15 @@ impl EntityMapHttpClassify for TemporalError {
 impl EntityMapHttpClassify for FederationError {
     fn classify_for_entity_map_http(&self) -> ClassifiedReport {
         match self {
-            FederationError::Conflict { detail } => ClassifiedReport::public(NgsiLdErrorType::Conflict, detail),
-            FederationError::OperationNotSupported { detail } => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, detail),
+            FederationError::Conflict(reason) => ClassifiedReport::public(NgsiLdErrorType::Conflict, reason.to_string()),
+            FederationError::OperationNotSupported(reason) => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, reason.to_string()),
             FederationError::LoopDetected { .. } => ClassifiedReport::public_binding(ProblemClassification::LoopDetected, self.to_string()),
             FederationError::GatewayTimeout { .. } => ClassifiedReport::public_binding(ProblemClassification::GatewayTimeout, self.to_string()),
             FederationError::RemoteNotFound { .. } => ClassifiedReport::public_binding(ProblemClassification::DistributedResourceNotFound, self.to_string()),
             FederationError::BadGateway { .. } => ClassifiedReport::public_binding(ProblemClassification::BadGateway, self.to_string()),
             FederationError::JsonLd(source) => classify_jsonld_error(source),
             FederationError::Query(source) => classify_query_error(source),
-            FederationError::Registration(_) | FederationError::Representation(_) | FederationError::Internal { .. } => ClassifiedReport::internal(self),
+            FederationError::Registration(_) | FederationError::Representation(_) | FederationError::Internal(_) => ClassifiedReport::internal(self),
         }
     }
 }
@@ -162,7 +163,7 @@ mod tests {
             let report = error.classify_for_entity_map_http();
             pretty_assertions::assert_eq!(report.error_type(), expected);
             if expected == NgsiLdErrorType::InternalError {
-                pretty_assertions::assert_eq!(report.detail(), "Internal error");
+                pretty_assertions::assert_eq!(report.detail(), "internal error");
             }
         }
         Ok(())

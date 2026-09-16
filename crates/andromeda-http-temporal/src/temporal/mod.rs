@@ -91,7 +91,7 @@ fn payload_entity_type(payload: &Value) -> Option<EntityTypeName> {
 /// not-found beside a matching registration is nothing left to do here.
 fn local_temporal_outcome<T>(result: Result<T, TemporalError>, forwarded: &[ForwardedWriteResult]) -> LocalOutcome {
     match result {
-        Err(TemporalError::NotFound { .. }) if !forwarded.is_empty() => LocalOutcome::NothingRemained,
+        Err(TemporalError::NotFound(_)) if !forwarded.is_empty() => LocalOutcome::NothingRemained,
         other => LocalOutcome::processed(other, classify_temporal_error),
     }
 }

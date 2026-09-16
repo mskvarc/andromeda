@@ -42,8 +42,8 @@ pub enum AttributeTypeError {
         /// The token the node declared.
         token: String,
     },
-    /// The named member carried a data-integrity seal outside `ngsildproof`.
-    #[error("attribute {attribute} carries the member {member}, which clause 4.5.2.2 admits only on the ngsildproof Property")]
+    /// The named member carried a data-integrity seal outside `ngsildproof` (ETSI GS CIM 009 clause 4.5.2.2).
+    #[error("attribute {attribute} carries the member {member}, which is admitted only on the ngsildproof Property")]
     ProofSealOutsideNgsildproof {
         /// The attribute carrying the seal.
         attribute: String,

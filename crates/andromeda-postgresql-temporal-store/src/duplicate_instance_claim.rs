@@ -26,9 +26,9 @@ use thiserror::Error;
 pub const PK_ATTRIBUTE_HISTORY_INSTANCE_CLAIMS: &str = "pk_attribute_history_instance_claims";
 
 /// A client-supplied `instanceId` claimed more than one attribute instance of
-/// the same attribute at once.
+/// the same attribute at once (ETSI GS CIM 009 clause 4.5.7).
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
-#[error("instanceId is already claimed by another instance of the same attribute, and clause 4.5.7 makes it unique to one")]
+#[error("instanceId is already claimed by another instance of the same attribute, and must be unique to one")]
 pub struct DuplicateInstanceClaimError;
 
 /// Lift a statement failure into the typed invariant when the instance-claim

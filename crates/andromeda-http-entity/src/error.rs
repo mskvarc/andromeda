@@ -28,9 +28,7 @@ impl EntityHttpClassify for EntityError {
 impl EntityHttpClassify for EntityMapError {
     fn classify_for_entity_http(&self) -> ClassifiedReport {
         match self {
-            EntityMapError::NotFound { identifier } => {
-                ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, format!("Entity Map {identifier} not found"))
-            }
+            EntityMapError::NotFound { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, self.to_string()),
             // Clause 5.5.14 with clause 6.3.20: parameters incompatible with
             // the request that created the map are an invalid request.
             EntityMapError::RequestChanged { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, self.to_string()),

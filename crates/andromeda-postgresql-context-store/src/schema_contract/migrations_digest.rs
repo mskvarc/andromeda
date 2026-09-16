@@ -89,7 +89,7 @@ impl TryFrom<&str> for MigrationsDigest {
 #[derive(Debug, thiserror::Error)]
 pub enum MigrationsDigestError {
     /// The stored text is not 64 lowercase hexadecimal digits.
-    #[error("migrations digest {found:?} is not 64 lowercase hexadecimal digits: {detail}")]
+    #[error("migrations digest '{found}' is not 64 lowercase hexadecimal digits: {detail}")]
     Unreadable {
         /// The text the database holds.
         found: String,

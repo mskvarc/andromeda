@@ -45,11 +45,11 @@ impl Presence {
 /// Two clause 4.21 selectors a request carried that contradict each other.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum ProjectionConflict {
-    /// `pick` and `omit` select opposite ends of the same projection.
-    #[error("pick and omit are mutually exclusive (clause 4.21)")]
+    /// `pick` and `omit` select opposite ends of the same projection (ETSI GS CIM 009 clause 4.21).
+    #[error("pick and omit are mutually exclusive")]
     PickWithOmit,
-    /// `attrs` (`attributes` in a Subscription) is a synonym for `pick`.
-    #[error("pick/omit and attrs are mutually exclusive (clause 4.21)")]
+    /// `attrs` (`attributes` in a Subscription) is a synonym for `pick` (ETSI GS CIM 009 clause 4.21).
+    #[error("pick/omit and attrs are mutually exclusive")]
     ProjectionWithAttrs,
 }
 

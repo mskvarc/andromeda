@@ -37,11 +37,11 @@ pub struct ContextSourcePseudonym(String);
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ContextSourcePseudonymError {
     /// The token was empty.
-    #[error("Via pseudonym must not be empty")]
+    #[error("via pseudonym must not be empty")]
     Empty,
     /// The token carried whitespace or a control character, so it could not be a
     /// single `received-by` token.
-    #[error("Via pseudonym `{0}` contains whitespace or a control character")]
+    #[error("via pseudonym `{0}` contains whitespace or a control character")]
     NotAToken(String),
 }
 

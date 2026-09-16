@@ -9,6 +9,7 @@ authors.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+andromeda-ngsi-ld-vocabulary.workspace = true
 proc-macro2 = "1.0.107"
 quote = "1.0.47"
 syn = { version = "3.0.5", features = ["full", "visit"] }

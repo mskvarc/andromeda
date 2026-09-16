@@ -7,7 +7,7 @@
 //! carry are both family-decided. Everything the family does not name as its
 //! value member is metadata and is kept verbatim.
 
-use crate::error::TemporalError;
+use crate::{error::TemporalError, temporal_validation_reason::TemporalValidationReason};
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     time_value::TimeValue,
@@ -75,9 +75,17 @@ pub(crate) fn extract_temporal_value(instance: &Value, attribute_type: Attribute
         AttributeType::Relationship => relationship_value(instance),
         AttributeType::GeoProperty => geometry_value(instance),
         AttributeType::VocabProperty => vocab_value(instance),
-        AttributeType::LanguageProperty => owned_member(instance, expanded_properties::LANGUAGE_MAP.as_str(), "LanguageProperty missing languageMap"),
-        AttributeType::JsonProperty => nested_value(instance, expanded_properties::JSON.as_str(), "JsonProperty missing json value"),
-        AttributeType::ListProperty => list_value(instance, expanded_properties::VALUE_LIST.as_str(), "ListProperty missing valueList"),
+        AttributeType::LanguageProperty => owned_member(
+            instance,
+            expanded_properties::LANGUAGE_MAP.as_str(),
+            TemporalValidationReason::LanguagePropertyMissingLanguageMap,
+        ),
+        AttributeType::JsonProperty => nested_value(instance, expanded_properties::JSON.as_str(), TemporalValidationReason::JsonPropertyMissingJson),
+        AttributeType::ListProperty => list_value(
+            instance,
+            expanded_properties::VALUE_LIST.as_str(),
+            TemporalValidationReason::ListPropertyMissingValueList,
+        ),
         AttributeType::ListRelationship => list_relationship_value(instance),
         AttributeType::Property => property_value(instance),
     }
@@ -98,14 +106,14 @@ fn relationship_value(instance: &Value) -> Result<TemporalValue, TemporalError> 
     let nodes = instance
         .get(expanded_properties::OBJECT.as_str())
         .and_then(Value::as_array)
-        .ok_or_else(|| TemporalError::validation("Relationship missing object"))?;
+        .ok_or_else(|| TemporalError::Validation(TemporalValidationReason::RelationshipMissingObject))?;
     let mut targets = nodes
         .iter()
         .map(|node| {
             let raw = node
                 .get("@id")
                 .and_then(Value::as_str)
-                .ok_or_else(|| TemporalError::validation("Relationship object names no target URI"))?;
+                .ok_or_else(|| TemporalError::Validation(TemporalValidationReason::RelationshipObjectNoTarget))?;
             parse_target(raw, "Relationship object")
         })
         .collect::<Result<Vec<Uri>, TemporalError>>()?;
@@ -115,20 +123,21 @@ fn relationship_value(instance: &Value) -> Result<TemporalValue, TemporalError> 
             targets.push(last);
             Ok(TemporalValue::Object(uri_array(&targets)))
         }
-        None => Err(TemporalError::validation("Relationship missing object")),
+        None => Err(TemporalError::Validation(TemporalValidationReason::RelationshipMissingObject)),
     }
 }
 
 /// Decode an expanded or encoded `GeoProperty` value.
 fn geometry_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
-    let node = first_member(instance, expanded_properties::VALUE.as_str()).ok_or_else(|| TemporalError::validation("GeoProperty missing value"))?;
+    let node = first_member(instance, expanded_properties::VALUE.as_str())
+        .ok_or_else(|| TemporalError::Validation(TemporalValidationReason::GeoPropertyMissingValue))?;
     let geometry = if let Some(value) = node.get("@value") {
         match value.as_str() {
-            Some(raw) => serde_json::from_str(raw).map_err(|error| TemporalError::validation(format!("invalid GeoProperty GeoJSON string: {error}")))?,
+            Some(raw) => serde_json::from_str(raw).map_err(|source| TemporalError::Validation(TemporalValidationReason::GeoPropertyGeoJson { source }))?,
             None => Value::clone(value), // clone: the intent owns the geometry value.
         }
     } else {
-        let geometry = expanded_geo_node_to_geometry(node).ok_or_else(|| TemporalError::validation("invalid expanded GeoProperty geometry"))?;
+        let geometry = expanded_geo_node_to_geometry(node).ok_or_else(|| TemporalError::Validation(TemporalValidationReason::GeoPropertyGeometryInvalid))?;
         serde_json::to_value(geometry.to_geojson()).map_err(|error| TemporalError::internal(format!("failed to serialize GeoProperty geometry: {error}")))?
     };
     Ok(TemporalValue::Geometry(geometry))
@@ -139,7 +148,7 @@ fn vocab_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
     let values = instance
         .get(expanded_properties::VOCAB.as_str())
         .and_then(Value::as_array)
-        .ok_or_else(|| TemporalError::validation("VocabProperty missing vocab value"))?;
+        .ok_or_else(|| TemporalError::Validation(TemporalValidationReason::VocabPropertyMissingVocab))?;
     if values.len() > 1 {
         Ok(TemporalValue::Object(Value::Array(
             values
@@ -153,35 +162,35 @@ fn vocab_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
             .and_then(|value| value.get("@id").or_else(|| value.get("@value")))
             .and_then(Value::as_str)
             .map(|value| TemporalValue::String(value.to_owned()))
-            .ok_or_else(|| TemporalError::validation("VocabProperty missing vocab value"))
+            .ok_or_else(|| TemporalError::Validation(TemporalValidationReason::VocabPropertyMissingVocab))
     }
 }
 
 /// Own an expanded member used directly as a temporal object value.
-fn owned_member(instance: &Value, key: &str, error: &'static str) -> Result<TemporalValue, TemporalError> {
+fn owned_member(instance: &Value, key: &str, reason: TemporalValidationReason) -> Result<TemporalValue, TemporalError> {
     instance
         .get(key)
         .cloned()
         .map(TemporalValue::Object)
-        .ok_or_else(|| TemporalError::validation(error))
+        .ok_or_else(move || TemporalError::Validation(reason))
 }
 
 /// Own the `@value` nested in the first expanded member.
-fn nested_value(instance: &Value, key: &str, error: &'static str) -> Result<TemporalValue, TemporalError> {
+fn nested_value(instance: &Value, key: &str, reason: TemporalValidationReason) -> Result<TemporalValue, TemporalError> {
     first_member(instance, key)
         .and_then(|value| value.get("@value"))
         .cloned()
         .map(TemporalValue::Object)
-        .ok_or_else(|| TemporalError::validation(error))
+        .ok_or_else(move || TemporalError::Validation(reason))
 }
 
 /// Own the `@list` nested in the first expanded member.
-fn list_value(instance: &Value, key: &str, error: &'static str) -> Result<TemporalValue, TemporalError> {
+fn list_value(instance: &Value, key: &str, reason: TemporalValidationReason) -> Result<TemporalValue, TemporalError> {
     first_member(instance, key)
         .and_then(|value| value.get("@list"))
         .cloned()
         .map(TemporalValue::Object)
-        .ok_or_else(|| TemporalError::validation(error))
+        .ok_or_else(move || TemporalError::Validation(reason))
 }
 
 /// Decode a `ListRelationship` object list.
@@ -189,11 +198,12 @@ fn list_relationship_value(instance: &Value) -> Result<TemporalValue, TemporalEr
     let list = first_member(instance, expanded_properties::OBJECT_LIST.as_str())
         .and_then(|value| value.get("@list"))
         .and_then(Value::as_array)
-        .ok_or_else(|| TemporalError::validation("ListRelationship missing objectList"))?;
+        .ok_or_else(|| TemporalError::Validation(TemporalValidationReason::ListRelationshipMissingObjectList))?;
     let targets = list
         .iter()
         .map(|member| {
-            let raw = object_list_target_iri(member).ok_or_else(|| TemporalError::validation("ListRelationship objectList member names no target URI"))?;
+            let raw =
+                object_list_target_iri(member).ok_or_else(|| TemporalError::Validation(TemporalValidationReason::ListRelationshipObjectListMemberNoTarget))?;
             parse_target(raw, "ListRelationship objectList member")
         })
         .collect::<Result<Vec<Uri>, TemporalError>>()?;
@@ -251,7 +261,12 @@ pub fn relationship_target_uri(raw: &str) -> Result<Uri, UriParseError> {
 
 /// Validate one Relationship target, naming the member it came from.
 fn parse_target(raw: &str, context: &str) -> Result<Uri, TemporalError> {
-    relationship_target_uri(raw).map_err(|error| TemporalError::validation(format!("{context} is not a valid URI: {error}")))
+    relationship_target_uri(raw).map_err(|source| {
+        TemporalError::Validation(TemporalValidationReason::RelationshipTarget {
+            member: context.to_string(),
+            source,
+        })
+    })
 }
 
 /// The JSON array of bare target URIs a multi-target Relationship family is
@@ -265,7 +280,7 @@ fn property_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
     let nodes = instance
         .get(expanded_properties::VALUE.as_str())
         .and_then(Value::as_array)
-        .ok_or_else(|| TemporalError::validation("Property missing value"))?;
+        .ok_or_else(|| TemporalError::Validation(TemporalValidationReason::PropertyMissingValue))?;
     // Clause 4.9 makes an array-valued Property's target value the whole array
     // ("is included in the target value, if the latter is an array"), and
     // JSON-LD expands `"value": ["a","b","c"]` into one value node per element.
@@ -277,12 +292,13 @@ fn property_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
             .map(|node| {
                 node.get("@value")
                     .cloned() // clone: the intent owns the element the expanded node holds.
-                    .ok_or_else(|| TemporalError::validation("Property array element carries no value"))
+                    .ok_or_else(|| TemporalError::Validation(TemporalValidationReason::PropertyArrayElementMissingValue))
             })
             .collect::<Result<Vec<Value>, TemporalError>>()?;
         return Ok(TemporalValue::Object(Value::Array(values)));
     }
-    let value_node = first_member(instance, expanded_properties::VALUE.as_str()).ok_or_else(|| TemporalError::validation("Property missing value"))?;
+    let value_node =
+        first_member(instance, expanded_properties::VALUE.as_str()).ok_or_else(|| TemporalError::Validation(TemporalValidationReason::PropertyMissingValue))?;
     let Some(value) = value_node.get("@value") else {
         return Ok(TemporalValue::Object(Value::clone(value_node))); // clone: the intent owns the expanded node.
     };
@@ -298,7 +314,7 @@ fn property_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
         // would round an integer beyond 2^53 before anything could refuse it.
         Value::Number(number) => JsonNumber::try_from(number)
             .map(TemporalValue::Number)
-            .map_err(|error| TemporalError::validation(format!("Property number cannot be carried: {error}"))),
+            .map_err(|source| TemporalError::Validation(TemporalValidationReason::PropertyNumber { source })),
         Value::String(text) => Ok(TemporalValue::String(text.clone())), // clone: the intent owns the text.
         Value::Bool(flag) => Ok(TemporalValue::Boolean(*flag)),
         Value::Array(_) | Value::Object(_) => Ok(TemporalValue::Object(Value::clone(value))), // clone: the intent owns the structured value.
@@ -333,7 +349,7 @@ fn temporal_property_value(type_hint: Option<&str>, raw: &str) -> Option<Result<
     TimeValue::admitted(type_hint, raw).map(|admitted| {
         admitted
             .map(recorded_time_value)
-            .map_err(|error| TemporalError::validation(format!("invalid time value property '{raw}': {error}")))
+            .map_err(|source| TemporalError::Validation(TemporalValidationReason::TimeValueProperty { raw: raw.to_string(), source }))
     })
 }
 

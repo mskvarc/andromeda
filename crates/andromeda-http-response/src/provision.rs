@@ -144,8 +144,8 @@ pub fn multi_status_result(entity_id: &Uri, local: &LocalOutcome, forwarded: &[F
 #[must_use]
 pub fn classify_forwarding_error(error: &FederationError) -> ClassifiedReport {
     match error {
-        FederationError::Conflict { detail } => ClassifiedReport::public(NgsiLdErrorType::Conflict, detail),
-        FederationError::OperationNotSupported { detail } => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, detail),
+        FederationError::Conflict(reason) => ClassifiedReport::public(NgsiLdErrorType::Conflict, reason.to_string()),
+        FederationError::OperationNotSupported(reason) => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, reason.to_string()),
         FederationError::LoopDetected { .. } => ClassifiedReport::public_binding(ProblemClassification::LoopDetected, error.to_string()),
         FederationError::GatewayTimeout { .. } => ClassifiedReport::public_binding(ProblemClassification::GatewayTimeout, error.to_string()),
         FederationError::RemoteNotFound { .. } => ClassifiedReport::public_binding(ProblemClassification::DistributedResourceNotFound, error.to_string()),
@@ -154,7 +154,7 @@ pub fn classify_forwarding_error(error: &FederationError) -> ClassifiedReport {
         | FederationError::JsonLd(_)
         | FederationError::Query(_)
         | FederationError::Representation(_)
-        | FederationError::Internal { .. } => ClassifiedReport::internal(error),
+        | FederationError::Internal(_) => ClassifiedReport::internal(error),
     }
 }
 
@@ -167,6 +167,8 @@ mod tests {
     };
     use andromeda_federation::{
         error::FederationError,
+        federation_conflict_reason::FederationConflictReason,
+        federation_operation_unsupported::FederationOperationUnsupported,
         outcome::{ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure},
     };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -379,13 +381,15 @@ mod tests {
         let registration = uri("urn:ngsi-ld:ContextSourceRegistration:test");
         for (error, expected) in [
             (
-                FederationError::conflict("not advertised"),
+                FederationError::Conflict(FederationConflictReason::RemoteRejected {
+                    detail: "not advertised".to_string(),
+                }),
                 ProblemClassification::Category(NgsiLdErrorType::Conflict),
             ),
             (
-                FederationError::OperationNotSupported {
+                FederationError::OperationNotSupported(FederationOperationUnsupported::RemoteUnsupported {
                     detail: "no follow-up".to_string(),
-                },
+                }),
                 ProblemClassification::Category(NgsiLdErrorType::OperationNotSupported),
             ),
             (

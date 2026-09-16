@@ -193,7 +193,7 @@ pub(crate) async fn get(
             None => match registered_identity(&id, &retrieved.sources) {
                 Some(entity) => entity,
                 None => {
-                    return Err(public_error(NgsiLdErrorType::ResourceNotFound, format!("Entity {id} not found"), &uri).with_warnings(retrieved.warnings));
+                    return Err(public_error(NgsiLdErrorType::ResourceNotFound, format!("entity {id} not found"), &uri).with_warnings(retrieved.warnings));
                 }
             },
         };

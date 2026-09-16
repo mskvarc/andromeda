@@ -3,6 +3,7 @@
 use crate::{
     EntityService,
     attrs::attribute_write::{MutatedEntity, payload_write},
+    entity_validation_reason::EntityValidationReason,
     error::EntityError,
     expanded_member::unwrap_expanded_ref,
     notification_plan::attribute_change_groups,
@@ -58,7 +59,7 @@ impl EntityService {
         // Clause 5.6.4.4: `scope` is not an attribute and cannot be a partial
         // update target, exactly as Replace Attribute rejects it.
         if attr_iri.as_str() == expanded_properties::SCOPE.as_str() {
-            return Err(EntityError::validation("Scope is not a partially updatable attribute"));
+            return Err(EntityError::Validation(EntityValidationReason::ScopeNotPartiallyUpdatable));
         }
 
         // Clauses 5.6.4 and 5.6.19 take a bare Attribute Fragment, so the
@@ -134,6 +135,6 @@ mod tests {
             )
             .await
             .expect_err("scope cannot be partially updated");
-        assert!(matches!(error, EntityError::Validation { .. }), "{error}");
+        assert!(matches!(error, EntityError::Validation(_)), "{error}");
     }
 }

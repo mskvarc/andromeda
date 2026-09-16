@@ -3,6 +3,7 @@
 use crate::{
     EntityService,
     attrs::attribute_write::{MutatedEntity, payload_write},
+    entity_validation_reason::EntityValidationReason,
     error::EntityError,
     expanded_member::unwrap_expanded_ref,
     notification_plan::attribute_change_groups,
@@ -49,14 +50,16 @@ impl EntityService {
         let entity_uri = id.clone(); // clone: notification and computed write own the identifier
 
         if attr_name.as_str().starts_with('@') {
-            return Err(EntityError::validation("Invalid attribute name"));
+            return Err(EntityError::Validation(EntityValidationReason::ReservedAttributeName {
+                name: attr_name.clone(),
+            }));
         }
 
         let prepared_context = self.engine.prepare_term_context(context);
         let attr_iri = self.engine.expand_term(attr_name.as_str(), &prepared_context).await?;
 
         if attr_iri.as_str() == expanded_properties::SCOPE.as_str() {
-            return Err(EntityError::validation("Scope is not a replaceable attribute"));
+            return Err(EntityError::Validation(EntityValidationReason::ScopeNotReplaceable));
         }
 
         // Clauses 5.6.4 and 5.6.19 take a bare Attribute Fragment, so the

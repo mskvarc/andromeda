@@ -14,6 +14,7 @@ use crate::{
     forwarding_hook::SubscriptionForwardingHook,
     status::compute_updated_status,
     store::{StatusUpdateFields, SubscriptionStore},
+    subscription_validation_reason::SubscriptionValidationReason,
     validation,
     variant::SubscriptionVariant,
 };
@@ -141,7 +142,7 @@ where
                 Some(provided_id) => {
                     let provided_id = provided_id
                         .parse::<Uri>()
-                        .map_err(|error| SubscriptionError::validation(format!("Subscription id must be a valid URI: {error}")))?;
+                        .map_err(|source| SubscriptionError::Validation(SubscriptionValidationReason::SubscriptionId { source }))?;
                     if self.repo.exists(target, &provided_id).await? {
                         return Err(SubscriptionError::already_exists(&provided_id));
                     }

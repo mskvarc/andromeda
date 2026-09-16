@@ -7,7 +7,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum EntityMapError {
     /// The requested Entity Map is absent or has expired.
-    #[error("entity map not found: {identifier}")]
+    #[error("entity map {identifier} not found")]
     NotFound {
         /// The requested Entity Map identifier.
         identifier: Uri,
@@ -44,7 +44,7 @@ mod tests {
             .parse::<Uri>()
             .map_err(|error| EntityMapError::Invariant { detail: error.to_string() })?;
         let error = EntityMapError::NotFound { identifier };
-        pretty_assertions::assert_eq!(error.to_string(), "entity map not found: urn:ngsi-ld:EntityMap:missing");
+        pretty_assertions::assert_eq!(error.to_string(), "entity map urn:ngsi-ld:EntityMap:missing not found");
         Ok(())
     }
 }

@@ -2,7 +2,7 @@
 //! clauses around it place on a create body or an update fragment, checked
 //! before any of it is expanded or stored.
 
-use crate::error::SubscriptionError;
+use crate::{error::SubscriptionError, subscription_validation_reason::SubscriptionValidationReason};
 use andromeda_ngsi_ld_geometry::{geometry::Geometry, geometry_type::GeometryType};
 use andromeda_ngsi_ld_query::{
     filter::{expression::Expr, parser, predicate::Predicate},
@@ -22,17 +22,17 @@ fn q_has_comparison(expr: &Expr) -> bool {
 /// Validate the common parts of a subscription create payload.
 pub fn validate_create_payload(payload: &Value) -> Result<(), SubscriptionError> {
     if payload.get("notification").is_none() {
-        return Err(SubscriptionError::validation("notification is required"));
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::NotificationRequired));
     }
 
     if let Some(notification) = payload.get("notification") {
         if notification.get("endpoint").is_none() {
-            return Err(SubscriptionError::validation("notification.endpoint is required"));
+            return Err(SubscriptionError::Validation(SubscriptionValidationReason::EndpointRequired));
         }
         if let Some(endpoint) = notification.get("endpoint")
             && endpoint.get("uri").is_none()
         {
-            return Err(SubscriptionError::validation("notification.endpoint.uri is required"));
+            return Err(SubscriptionError::Validation(SubscriptionValidationReason::EndpointUriRequired));
         }
     }
 
@@ -43,7 +43,7 @@ pub fn validate_create_payload(payload: &Value) -> Result<(), SubscriptionError>
         if let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(expires_at_val)
             && expires_at <= Utc::now()
         {
-            return Err(SubscriptionError::validation("expiresAt must be in the future"));
+            return Err(SubscriptionError::Validation(SubscriptionValidationReason::ExpiresAtInPast));
         }
     }
 
@@ -76,14 +76,10 @@ fn validate_subscribed_scope(payload: &Value) -> Result<(), SubscriptionError> {
         .and_then(serde_json::Value::as_array)
         .is_some_and(|entities| !entities.is_empty());
     if !names_entities && payload.get("watchedAttributes").is_none() {
-        return Err(SubscriptionError::validation(
-            "at least one of 'entities' or 'watchedAttributes' is required, unless 'localOnly' is true",
-        ));
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::SelectorRequired));
     }
     if payload.get("timeInterval").is_some() && !names_entities {
-        return Err(SubscriptionError::validation(
-            "'entities' is required when 'timeInterval' is present, unless the request is limited to local scope",
-        ));
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::EntitiesRequiredForTimeInterval));
     }
     Ok(())
 }
@@ -96,7 +92,7 @@ pub fn validate_expires_at_not_in_past(payload: &Value) -> Result<(), Subscripti
         && let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(expires_at_val)
         && expires_at <= Utc::now()
     {
-        return Err(SubscriptionError::validation("expiresAt must be in the future"));
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::ExpiresAtInPast));
     }
     Ok(())
 }
@@ -106,7 +102,7 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
     if let Some(type_val) = payload.get("type")
         && type_val.as_str() != Some("Subscription")
     {
-        return Err(SubscriptionError::validation("type must be 'Subscription'"));
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::TypeNotSubscription));
     }
 
     // expiresAt format validation only. The future check is applied separately by each
@@ -114,15 +110,15 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
     if let Some(expires_at_val) = payload.get("expiresAt").and_then(|v| v.as_str())
         && chrono::DateTime::parse_from_rfc3339(expires_at_val).is_err()
     {
-        return Err(SubscriptionError::validation("expiresAt must be a valid ISO 8601 date-time"));
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::ExpiresAtNotDateTime));
     }
 
     if payload.get("timeInterval").is_some() && payload.get("watchedAttributes").is_some() {
-        return Err(SubscriptionError::validation("timeInterval and watchedAttributes are mutually exclusive"));
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::TimeIntervalWithWatchedAttributes));
     }
 
     if payload.get("timeInterval").is_some() && payload.get("throttling").is_some() {
-        return Err(SubscriptionError::validation("timeInterval and throttling are mutually exclusive"));
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::TimeIntervalWithThrottling));
     }
 
     // Table 5.2.12-1 restricts `throttling` to "Greater than 0", the same
@@ -130,21 +126,19 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
     if let Some(throttling) = payload.get("throttling").and_then(serde_json::Value::as_f64)
         && throttling <= 0.0
     {
-        return Err(SubscriptionError::validation("throttling must be greater than 0"));
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::ThrottlingNotPositive));
     }
 
     if let Some(time_interval) = payload.get("timeInterval").and_then(serde_json::Value::as_f64)
         && time_interval <= 0.0
     {
-        return Err(SubscriptionError::validation("timeInterval must be greater than 0"));
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::TimeIntervalNotPositive));
     }
 
     if let Some(q_str) = payload.get("q").and_then(|v| v.as_str()) {
-        let expr = parser::parse(q_str).map_err(|e| SubscriptionError::validation(format!("Invalid q expression: {e}")))?;
+        let expr = parser::parse(q_str)?;
         if !q_has_comparison(&expr) {
-            return Err(SubscriptionError::validation(
-                "Invalid q expression: must contain at least one comparison operator",
-            ));
+            return Err(SubscriptionError::Validation(SubscriptionValidationReason::QExpressionNoComparison));
         }
         // Clause 4.9's `{}` axis addresses an attribute of a *linked* entity,
         // and clause 5.8.6 evaluates a subscription's filter against the entity
@@ -156,10 +150,7 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
         // store-backed matching, which resolves the linked entity at match time
         // the way the query path already does.
         if expr.contains_linked_hop() {
-            return Err(SubscriptionError::validation(
-                "Invalid q expression: a filter that traverses into a linked entity is not supported for subscriptions, \
-                 because a subscription is matched against the notified entity's own data",
-            ));
+            return Err(SubscriptionError::Validation(SubscriptionValidationReason::QExpressionLinkedTraversal));
         }
     }
 
@@ -171,7 +162,7 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
         && let Some(arr) = watched.as_array()
         && arr.is_empty()
     {
-        return Err(SubscriptionError::validation("watchedAttributes must not be empty"));
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::WatchedAttributesEmpty));
     }
 
     // Table 5.2.12-1, `entities` row: "Empty array (0 length) is not allowed."
@@ -181,7 +172,7 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
         && let Some(arr) = entities.as_array()
         && arr.is_empty()
     {
-        return Err(SubscriptionError::validation("entities must not be empty"));
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::EntitiesEmpty));
     }
 
     if let Some(notification) = payload.get("notification") {
@@ -207,7 +198,7 @@ fn validate_notification_projection(notification: &Value) -> Result<(), Subscrip
         omit: Presence::of(notification.get("omit")),
         attrs: Presence::of(notification.get("attributes")),
     })
-    .map_err(|conflict| SubscriptionError::validation(conflict.to_string()))
+    .map_err(|conflict| SubscriptionError::Validation(SubscriptionValidationReason::Projection(conflict)))
 }
 
 /// Reject a notification asking for `showChanges` under a simplified format
@@ -235,9 +226,7 @@ fn validate_show_changes_format(notification: &Value) -> Result<(), Subscription
         .and_then(|format| format.parse::<ResponseFormat>().ok())
         .is_some_and(ResponseFormat::is_simplified);
     if simplified {
-        return Err(SubscriptionError::validation(
-            "notification.showChanges cannot be true when notification.format is keyValues",
-        ));
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::ShowChangesWithKeyValues));
     }
     Ok(())
 }
@@ -260,16 +249,18 @@ fn validate_geo_q_geometry(geo_q: &Value) -> Result<(), SubscriptionError> {
     };
     let geometry_type = geometry_type
         .as_str()
-        .ok_or_else(|| SubscriptionError::validation("geoQ geometry must be a GeoJSON geometry type string"))?
+        .ok_or_else(|| SubscriptionError::Validation(SubscriptionValidationReason::GeoQGeometryNotString))?
         .parse::<GeometryType>()
-        .map_err(|error| SubscriptionError::validation(format!("geoQ geometry: {error}")))?;
+        .map_err(|source| SubscriptionError::Validation(SubscriptionValidationReason::GeoQGeometryType { source }))?;
     let coordinates = match coordinates {
-        Value::String(raw) => serde_json::from_str::<Value>(raw).map_err(|error| SubscriptionError::validation(format!("geoQ coordinates: {error}")))?,
+        Value::String(raw) => {
+            serde_json::from_str::<Value>(raw).map_err(|source| SubscriptionError::Validation(SubscriptionValidationReason::GeoQCoordinates { source }))?
+        }
         other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) => other.clone(), // clone: the GeoJSON decoder consumes the value it decodes
     };
     Geometry::from_type_and_coordinates(geometry_type, coordinates)
         .map(|_geometry| ())
-        .map_err(|error| SubscriptionError::validation(format!("geoQ reference geometry: {error}")))
+        .map_err(|source| SubscriptionError::Validation(SubscriptionValidationReason::GeoQReferenceGeometry { source }))
 }
 
 /// Validate the notification fragment in an update payload.
@@ -277,22 +268,22 @@ pub fn validate_notification_fragment(payload: &Value) -> Result<(), Subscriptio
     if let Some(notification_val) = payload.get("notification") {
         match notification_val {
             Value::Null => {
-                return Err(SubscriptionError::validation("notification cannot be set to null"));
+                return Err(SubscriptionError::Validation(SubscriptionValidationReason::NotificationNull));
             }
             Value::Object(_) => {
                 if let Some(endpoint_val) = notification_val.get("endpoint") {
                     match endpoint_val {
                         Value::Null => {
-                            return Err(SubscriptionError::validation("notification.endpoint cannot be set to null"));
+                            return Err(SubscriptionError::Validation(SubscriptionValidationReason::EndpointNull));
                         }
                         Value::Object(_) => {
                             if let Some(uri_val) = endpoint_val.get("uri") {
                                 match uri_val {
                                     Value::Null => {
-                                        return Err(SubscriptionError::validation("notification.endpoint.uri cannot be set to null"));
+                                        return Err(SubscriptionError::Validation(SubscriptionValidationReason::EndpointUriNull));
                                     }
                                     Value::String(s) if s.trim().is_empty() => {
-                                        return Err(SubscriptionError::validation("notification.endpoint.uri must be a non-empty string"));
+                                        return Err(SubscriptionError::Validation(SubscriptionValidationReason::EndpointUriEmpty));
                                     }
                                     Value::String(_) | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => {}
                                 }
@@ -301,11 +292,11 @@ pub fn validate_notification_fragment(payload: &Value) -> Result<(), Subscriptio
                         _other @ (Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => {}
                     }
                 } else {
-                    return Err(SubscriptionError::validation("notification.endpoint is required"));
+                    return Err(SubscriptionError::Validation(SubscriptionValidationReason::EndpointRequired));
                 }
             }
             _other @ (Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => {
-                return Err(SubscriptionError::validation("notification must be an object"));
+                return Err(SubscriptionError::Validation(SubscriptionValidationReason::NotificationNotObject));
             }
         }
     }
@@ -316,6 +307,7 @@ pub fn validate_notification_fragment(payload: &Value) -> Result<(), Subscriptio
 mod tests {
     use crate::{
         error::SubscriptionError,
+        subscription_validation_reason::SubscriptionValidationReason,
         validation::{validate_common_fields, validate_create_payload},
     };
     use serde_json::json;
@@ -323,7 +315,10 @@ mod tests {
     #[test]
     fn create_requires_notification_configuration() {
         let result = validate_create_payload(&serde_json::json!({"type": "Subscription"}));
-        assert!(matches!(result, Err(SubscriptionError::Validation { detail }) if detail == "notification is required"));
+        assert!(matches!(
+            result,
+            Err(SubscriptionError::Validation(SubscriptionValidationReason::NotificationRequired))
+        ));
     }
 
     /// Clause 4.9 defines the `{}` axis over an entity's linked entities, and
@@ -336,7 +331,10 @@ mod tests {
     fn a_subscription_whose_filter_traverses_a_linked_entity_is_rejected() {
         let result = validate_common_fields(&serde_json::json!({"q": "isParkedIn{category==\"commercial\"}"}));
         assert!(
-            matches!(&result, Err(SubscriptionError::Validation { detail }) if detail.contains("linked entity")),
+            matches!(
+                &result,
+                Err(SubscriptionError::Validation(SubscriptionValidationReason::QExpressionLinkedTraversal))
+            ),
             "got {result:?}"
         );
     }
@@ -344,7 +342,7 @@ mod tests {
     #[test]
     fn a_traversal_nested_inside_a_boolean_filter_is_rejected_too() {
         let result = validate_common_fields(&serde_json::json!({"q": "speed>50;isParkedIn{category==\"x\"}"}));
-        assert!(matches!(result, Err(SubscriptionError::Validation { .. })), "got {result:?}");
+        assert!(matches!(result, Err(SubscriptionError::Validation(_))), "got {result:?}");
     }
 
     #[test]
@@ -474,6 +472,9 @@ mod tests {
     #[test]
     fn time_interval_and_watched_attributes_are_mutually_exclusive() {
         let result = validate_common_fields(&serde_json::json!({"timeInterval": 5, "watchedAttributes": ["temperature"]}));
-        assert!(matches!(result, Err(SubscriptionError::Validation { detail }) if detail == "timeInterval and watchedAttributes are mutually exclusive"));
+        assert!(matches!(
+            result,
+            Err(SubscriptionError::Validation(SubscriptionValidationReason::TimeIntervalWithWatchedAttributes))
+        ));
     }
 }

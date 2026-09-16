@@ -60,7 +60,7 @@ pub(crate) async fn batch_merge(
     if entities.is_empty() && entity_errors.is_empty() {
         return Err(public_error(
             NgsiLdErrorType::BadRequestData,
-            "Request body must contain a non-empty array of entities",
+            "request body must contain a non-empty array of entities",
             &uri,
         ));
     }

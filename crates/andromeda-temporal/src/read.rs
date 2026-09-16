@@ -8,6 +8,8 @@ use crate::{
     read::rendered_entity::HistoryPresence,
     requested_identifiers::RequestedIdentifiers,
     service::{TemporalQueryResult, TemporalQueryWarning, TemporalRange, TemporalReadResult, TemporalService},
+    temporal_not_found_reason::TemporalNotFoundReason,
+    temporal_operation_unsupported::TemporalOperationUnsupported,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::compact_attr_iri, context_spec::ContextSpec, engine::options::CompactOptions};
@@ -58,7 +60,7 @@ impl TemporalService {
             self.ensure_requested_attributes_aggregable(target, &compiled).await?;
 
             if !self.reader.entity_exists(target, entity_id).await? {
-                return Err(TemporalError::not_found(entity_id.to_string()));
+                return Err(TemporalError::NotFound(TemporalNotFoundReason::Entity { id: entity_id.clone() }));
             }
 
             // Clauses 4.5.1 and 4.5.6: the temporal catalogue is the authority for
@@ -78,9 +80,9 @@ impl TemporalService {
             // temporal representation to return, which is a 404 rather than an
             // entity with no attributes.
             if rendered.presence == HistoryPresence::Absent && !compiled.instances.attr_filter.is_empty() {
-                return Err(TemporalError::not_found(format!(
-                    "No temporal data found for the specified attributes on entity {entity_id}"
-                )));
+                return Err(TemporalError::NotFound(TemporalNotFoundReason::NoDataForAttributes {
+                    entity: entity_id.clone(),
+                }));
             }
 
             // Clause 5.7.3.5 reduces the Temporal Evolution "down to only contain
@@ -90,9 +92,9 @@ impl TemporalService {
             // which clause 5.7.1.4 states in full for the non-temporal twin.
             let projected = !compiled.projection.pick.is_empty() || !compiled.projection.omit.is_empty();
             if projected && rendered_entity_members(&rendered.value) == RenderedEntityMembers::None {
-                return Err(TemporalError::not_found(format!(
-                    "No temporal representation of entity {entity_id} is left by the requested projection"
-                )));
+                return Err(TemporalError::NotFound(TemporalNotFoundReason::ProjectionLeftNothing {
+                    entity: entity_id.clone(),
+                }));
             }
 
             let range = if rendered.truncated {
@@ -370,9 +372,9 @@ fn ensure_aggregation_supported(reader: &dyn TemporalHistoryReader, requested: &
     if refused.is_empty() {
         Ok(())
     } else {
-        Err(TemporalError::operation_not_supported(format!(
-            "temporal reader refused aggregation methods: {refused:?}"
-        )))
+        Err(TemporalError::OperationNotSupported(TemporalOperationUnsupported::ReaderRefusedAggregation {
+            methods: refused,
+        }))
     }
 }
 

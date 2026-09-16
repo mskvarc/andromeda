@@ -322,7 +322,7 @@ mod tests {
             serde_json::json!([13.4, 52.5]),
             Some(parse_fixture("location", "geoproperty")?),
         )
-        .map_err(|error| SubscriptionError::validation(error.to_string()))?;
+        .map_err(SubscriptionError::internal)?;
         let from_request = block_on(compile_geo_query(Some(&request_geo), &LocationExpander))?
             .ok_or_else(|| SubscriptionError::internal("the complete request geo fixture did not compile"))?;
 

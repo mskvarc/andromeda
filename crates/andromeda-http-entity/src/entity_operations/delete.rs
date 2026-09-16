@@ -54,7 +54,7 @@ pub(crate) async fn batch_delete(
     let entity_ids: Vec<Uri> = serde_json::from_slice(&body).map_err(|error| {
         public_error(
             NgsiLdErrorType::InvalidRequest,
-            format!("Request body must be a JSON array of entity IDs: {error}"),
+            format!("request body must be a JSON array of entity IDs: {error}"),
             &uri,
         )
     })?;
@@ -62,7 +62,7 @@ pub(crate) async fn batch_delete(
     if entity_ids.is_empty() {
         return Err(public_error(
             NgsiLdErrorType::BadRequestData,
-            "Request body must contain a non-empty array of entity IDs",
+            "request body must contain a non-empty array of entity IDs",
             &uri,
         ));
     }

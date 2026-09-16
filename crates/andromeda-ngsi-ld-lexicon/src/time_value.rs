@@ -252,8 +252,8 @@ pub enum TimeValueError {
     /// The literal is written in the `Time` form and is not one.
     #[error(transparent)]
     Time(#[from] NgsiLdTimeError),
-    /// The literal is written in none of the three forms.
-    #[error("value is written in no clause 4.6.3 time value form: {value}")]
+    /// The literal is written in none of the three forms (ETSI GS CIM 009 clause 4.6.3).
+    #[error("value is written in no NGSI-LD time value form: {value}")]
     NoTimeValueForm {
         /// The rejected literal.
         value: String,

@@ -21,7 +21,7 @@
 //! representation renders it, so the two cannot disagree about a name neither
 //! clause distinguishes.
 
-use crate::{error::EntityError, query::EntityQueryService};
+use crate::{entity_validation_reason::EntityValidationReason, error::EntityError, query::EntityQueryService};
 use andromeda_jsonld::{compaction::compact_attr_iri, context_spec::ContextSpec};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity::Entity;
@@ -59,9 +59,13 @@ impl EntityQueryService {
     /// or the name itself when it declares none.
     async fn declared_name(&self, name: &AttributeName, context: &ContextSpec) -> Result<AttributeName, EntityError> {
         let compacted = compact_attr_iri(self.engine(), name.as_str(), context).await;
-        compacted
-            .parse()
-            .map_err(|error| EntityError::validation(format!("the context declares '{compacted}' for {name}, which is not an NGSI-LD name: {error}")))
+        compacted.parse().map_err(|error| {
+            EntityError::Validation(EntityValidationReason::DeclaredName {
+                declared: compacted,
+                requested: name.clone(),
+                source: error,
+            })
+        })
     }
 }
 

@@ -7,25 +7,23 @@
 //! holds, and clause 5.5.2 provides `OperationNotSupported` precisely so that
 //! answer can be refused instead of given slowly and silently.
 
-use crate::{error::EntityError, storage_profile::StorageProfile};
+use crate::{entity_operation_unsupported::EntityOperationUnsupported, error::EntityError, storage_profile::StorageProfile};
 use andromeda_ngsi_ld_query::entity_selection::EntitySelection;
 
 /// Refuse a selection carrying a predicate the store cannot narrow.
 ///
 /// # Errors
 ///
-/// Returns [`EntityError::operation_not_supported`] naming every query
+/// Returns [`EntityError::OperationNotSupported`] naming every query
 /// parameter the store could not narrow (clause 5.5.2).
 pub(super) fn refuse_unnarrowable(profile: StorageProfile, selection: &EntitySelection) -> Result<(), EntityError> {
     let refused = profile.unnarrowable(selection);
     if refused.is_empty() {
         return Ok(());
     }
-    let named: Vec<String> = refused.iter().map(ToString::to_string).collect();
-    Err(EntityError::operation_not_supported(format!(
-        "this broker's storage backend cannot evaluate {}; the request would have to be answered by reading every entity",
-        named.join(", ")
-    )))
+    Err(EntityError::OperationNotSupported(EntityOperationUnsupported::Unnarrowable {
+        predicates: refused,
+    }))
 }
 
 #[cfg(test)]

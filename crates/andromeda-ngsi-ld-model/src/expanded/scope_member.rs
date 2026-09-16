@@ -46,13 +46,13 @@ pub enum ScopeMemberError {
     /// Clause 4.18 admits the special string only "in case of deleted scopes",
     /// which is a statement about the whole member: a request cannot delete the
     /// scope and set it in one breath.
-    #[error("the NGSI-LD Null names a deleted scope (clause 4.18), so it cannot appear beside a scope path")]
+    #[error("the NGSI-LD Null names a deleted scope, so it cannot appear beside a scope path")]
     NullBesidePath,
     /// The NGSI-LD Null appears more than once.
     ///
     /// Clause 4.18: "There shall at most be one instance of the scope property
     /// per Entity", so there is at most one deletion to state.
-    #[error("the NGSI-LD Null appears more than once in the scope member, which states at most one deleted scope (clause 4.18)")]
+    #[error("the NGSI-LD Null appears more than once in the scope member, which states at most one deleted scope")]
     RepeatedNull,
 }
 

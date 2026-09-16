@@ -265,9 +265,9 @@ fn register_spatial_reconciliation(
 pub(super) fn classify_subscription_expiry_failure(error: &SubscriptionError) -> TaskFailure {
     let summary = error.to_string();
     match error {
-        SubscriptionError::Persistence { .. } => TaskFailure::transient(summary),
-        SubscriptionError::Internal { .. } => TaskFailure::invariant_violation(summary),
-        SubscriptionError::Validation { .. }
+        SubscriptionError::Persistence(_) => TaskFailure::transient(summary),
+        SubscriptionError::Internal(_) => TaskFailure::invariant_violation(summary),
+        SubscriptionError::Validation(_)
         | SubscriptionError::NotFound { .. }
         | SubscriptionError::AlreadyExists { .. }
         | SubscriptionError::JsonLd(_)
@@ -280,12 +280,12 @@ pub(super) fn classify_subscription_expiry_failure(error: &SubscriptionError) ->
 pub(super) fn classify_registration_expiry_failure(error: &RegistrationError) -> TaskFailure {
     let summary = error.to_string();
     match error {
-        RegistrationError::Persistence { .. } => TaskFailure::transient(summary),
-        RegistrationError::Internal { .. } => TaskFailure::invariant_violation(summary),
-        RegistrationError::Validation { .. }
+        RegistrationError::Persistence(_) => TaskFailure::transient(summary),
+        RegistrationError::Internal(_) => TaskFailure::invariant_violation(summary),
+        RegistrationError::Validation(_)
         | RegistrationError::NotFound { .. }
         | RegistrationError::AlreadyExists { .. }
-        | RegistrationError::Conflict { .. }
+        | RegistrationError::Conflict(_)
         | RegistrationError::JsonLd(_)
         | RegistrationError::Query(_)
         | RegistrationError::Representation(_)
@@ -297,17 +297,15 @@ pub(super) fn classify_registration_expiry_failure(error: &RegistrationError) ->
 pub(super) fn classify_entity_expiry_failure(error: &EntityError) -> TaskFailure {
     let summary = error.to_string();
     match error {
-        EntityError::Commit(_) | EntityError::Persistence { detail: _ } | EntityError::Contention { identifier: _, attempts: _ } => {
-            TaskFailure::transient(summary)
-        }
-        EntityError::Internal { detail: _ } => TaskFailure::invariant_violation(summary),
-        EntityError::Validation { detail: _ }
+        EntityError::Commit(_) | EntityError::Persistence(_) | EntityError::Contention { identifier: _, attempts: _ } => TaskFailure::transient(summary),
+        EntityError::Internal(_) => TaskFailure::invariant_violation(summary),
+        EntityError::Validation(_)
         | EntityError::NotFound { identifier: _ }
         | EntityError::TypeNotFound { name: _ }
         | EntityError::AttributeNotFound { name: _ }
-        | EntityError::MemberNotFound { detail: _ }
+        | EntityError::MemberNotFound(_)
         | EntityError::AlreadyExists { identifier: _ }
-        | EntityError::OperationNotSupported { detail: _ }
+        | EntityError::OperationNotSupported(_)
         | EntityError::JsonLd(_)
         | EntityError::Query(_)
         | EntityError::Request(_)

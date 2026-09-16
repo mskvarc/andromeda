@@ -5,6 +5,7 @@ use crate::{
     context_source_properties::compact_context_source_properties,
     error::RegistrationError,
     information_compaction::compact_information,
+    registration_validation_reason::RegistrationValidationReason,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, entity_type_name::EntityTypeName};
@@ -51,7 +52,9 @@ impl RegistrationService {
         encountered_sources: &[ContextSourcePseudonym],
         context: &ContextSpec,
     ) -> Result<(Vec<Value>, u64), RegistrationError> {
-        params.validate().map_err(|error| RegistrationError::csr_validation(error.to_string()))?;
+        params
+            .validate()
+            .map_err(|error| RegistrationError::Validation(RegistrationValidationReason::QueryParameters(error)))?;
         let compiled = self.compile_csr_query(params, encountered_sources, context).await?;
         let page = self.repo.query_compiled(&compiled).await?;
         let mut values = Vec::with_capacity(page.registrations.len());
@@ -86,7 +89,7 @@ impl RegistrationService {
         let expanded_type = match params.entity_type.as_ref() {
             Some(selection) => match selection.as_single_type() {
                 Some(entity_type) => Some(expander.expand_type(entity_type.as_str()).await?),
-                None => return Err(RegistrationError::csr_validation("CSR discovery requires a single entity type")),
+                None => return Err(RegistrationError::Validation(RegistrationValidationReason::DiscoveryRequiresSingleType)),
             },
             None => None,
         };
@@ -100,7 +103,7 @@ impl RegistrationService {
             let expanded_filter = expand_q_expr(expression, &JsonKeyAttributes::default(), &expander).await?;
             for name in referenced_attributes(&expanded_filter) {
                 let iri = IriBuf::new(name.as_str().to_owned())
-                    .map_err(|error| RegistrationError::csr_validation(format!("q names a non-IRI attribute: {error}")))?;
+                    .map_err(|source| RegistrationError::Validation(RegistrationValidationReason::QNonIriAttribute { source }))?;
                 if !attrs.contains(&iri) {
                     attrs.push(iri);
                 }
@@ -108,7 +111,7 @@ impl RegistrationService {
         }
         if let Some(geo) = &geo {
             let iri = IriBuf::new(geo.geoproperty.as_str().to_owned())
-                .map_err(|error| RegistrationError::csr_validation(format!("geoproperty is not an IRI: {error}")))?;
+                .map_err(|source| RegistrationError::Validation(RegistrationValidationReason::GeopropertyNotIri { source }))?;
             if !attrs.contains(&iri) {
                 attrs.push(iri);
             }

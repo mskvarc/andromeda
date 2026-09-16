@@ -9,6 +9,7 @@
 use crate::{
     EntityService,
     batch::execution::{BatchExecution, decide_batch_execution},
+    entity_validation_reason::EntityValidationReason,
     error::EntityError,
     null_sentinel_admission::NullSentinelAdmission,
     port::blocking_executor::BlockingTask,
@@ -342,7 +343,7 @@ impl EntityService {
             let id = entity.id.clone(); // clone: owned identifier for the classified entry
             match serde_json::to_value(*entity) {
                 Ok(value) => entries.push(ClassifiedEntry { idx, id, value }),
-                Err(error) => errors.push((id, EntityError::validation(format!("Invalid entity payload: {error}")))),
+                Err(error) => errors.push((id, EntityError::Validation(EntityValidationReason::EntityPayload(error)))),
             }
         }
 

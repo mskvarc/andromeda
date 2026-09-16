@@ -52,17 +52,20 @@ pub(crate) fn context_store(error: ContextStoreError) -> CommitError {
 /// store could do, so the validation variant is exactly the refused submission.
 pub(crate) fn temporal(error: TemporalError) -> CommitError {
     match error {
-        TemporalError::Validation { detail } => CommitError::Submission { detail },
-        TemporalError::NotFound { .. }
-        | TemporalError::OperationNotSupported { .. }
+        // The refused submission carries the typed validation reason; relay its
+        // rendered text, as the commit port cannot hold the reason typed without
+        // a dependency cycle.
+        TemporalError::Validation(reason) => CommitError::Submission { detail: reason.to_string() },
+        TemporalError::NotFound(_)
+        | TemporalError::OperationNotSupported(_)
         | TemporalError::TooManyResults { .. }
         | TemporalError::JsonLd(_)
         | TemporalError::Query(_)
         | TemporalError::Request(_)
         | TemporalError::Commit(_)
-        | TemporalError::Persistence { .. }
-        | TemporalError::Rendering { .. }
-        | TemporalError::Internal { .. } => persistence(error),
+        | TemporalError::Persistence(_)
+        | TemporalError::Rendering(_)
+        | TemporalError::Internal(_) => persistence(error),
     }
 }
 
@@ -92,7 +95,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_postgresql_context_store::{entity::types_present::EntityTypesMissing, error::ContextStoreError};
     use andromeda_postgresql_temporal_store::{error::TemporalStoreError, unit_code_metadata::UnitCodeMetadataError};
-    use andromeda_temporal::error::TemporalError;
+    use andromeda_temporal::{error::TemporalError, temporal_validation_reason::TemporalValidationReason};
 
     fn entity_id() -> Uri {
         "urn:ngsi-ld:Building:1".parse().expect("valid entity URI")
@@ -121,7 +124,7 @@ mod tests {
 
     #[test]
     fn an_invalid_temporal_operation_is_reported_as_a_refused_submission() {
-        let error = temporal(TemporalError::validation("Property missing value"));
+        let error = temporal(TemporalError::Validation(TemporalValidationReason::PropertyMissingValue));
         assert!(matches!(error, CommitError::Submission { .. }), "{error}");
     }
 

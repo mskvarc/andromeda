@@ -6,7 +6,7 @@
 //!
 //! [`EntityError`]: crate::error::EntityError
 
-use crate::error::EntityError;
+use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
 use andromeda_ngsi_ld_model::expanded::mutation::error::ExpandedEntityError;
 
 impl From<ExpandedEntityError> for EntityError {
@@ -14,18 +14,22 @@ impl From<ExpandedEntityError> for EntityError {
     /// 5.5.2 requires: a malformed request body is `BadRequestData` (400),
     /// while a well-formed request naming an attribute, dataset or instance
     /// the entity does not have is `ResourceNotFound` (404).
+    ///
+    /// The typed [`ExpandedEntityError`] is carried through unchanged rather than
+    /// stringified: it renders its own client-facing message, and keeping it
+    /// typed lets the mapping stay total over its variants.
     fn from(error: ExpandedEntityError) -> EntityError {
         match error {
-            ExpandedEntityError::EntityNotExpanded
+            malformed @ (ExpandedEntityError::EntityNotExpanded
             | ExpandedEntityError::PatchNotExpanded
             | ExpandedEntityError::AttributesNotObject
-            | ExpandedEntityError::InvalidAttributeName
+            | ExpandedEntityError::InvalidAttributeName { .. }
             | ExpandedEntityError::InvalidAttributeType
-            | ExpandedEntityError::AttributeTypeMismatch { .. } => EntityError::validation(error.to_string()),
-            ExpandedEntityError::AttributeNotFound { .. }
+            | ExpandedEntityError::AttributeTypeMismatch { .. }) => EntityError::Validation(EntityValidationReason::Expanded(malformed)),
+            missing @ (ExpandedEntityError::AttributeNotFound { .. }
             | ExpandedEntityError::AttributeHasNoInstances { .. }
             | ExpandedEntityError::DatasetNotFound { .. }
-            | ExpandedEntityError::DefaultInstanceNotFound { .. } => EntityError::member_not_found(error.to_string()),
+            | ExpandedEntityError::DefaultInstanceNotFound { .. }) => EntityError::MemberNotFound(missing),
         }
     }
 }

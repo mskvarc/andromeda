@@ -20,6 +20,7 @@ use crate::{
         temporal_history_sink::TemporalHistorySink,
         temporal_intent_queue::{ClaimedTemporalAppendIntent, TemporalIntentBatchSize, TemporalIntentLeaseOwner, TemporalIntentQueue, TemporalIntentRetry},
     },
+    temporal_operation_unsupported::TemporalOperationUnsupported,
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_context_space::context_target::ContextTarget;
@@ -323,7 +324,7 @@ impl TemporalHistoryReader for RecordingSink {
         _entity_id: &Uri,
         _compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
-        Err(TemporalError::operation_not_supported("recording sink has no aggregation"))
+        Err(TemporalError::OperationNotSupported(TemporalOperationUnsupported::RecordingSinkNoAggregation))
     }
     async fn recorded_attribute_shapes(
         &self,

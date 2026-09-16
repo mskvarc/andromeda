@@ -22,6 +22,12 @@ pub mod entity_read;
 pub mod entity_result;
 /// Federation policy failures.
 pub mod error;
+/// The concrete reasons a single forwarded write is reported as a conflict.
+pub mod federation_conflict_reason;
+/// A masked diagnostic for federation failures the client cannot act on.
+pub mod federation_diagnostic;
+/// The concrete reasons a single registered source cannot serve an operation.
+pub mod federation_operation_unsupported;
 /// The parameter vocabulary of a forwarded read request.
 pub mod forwarded_parameter;
 /// The representation a forwarded request carries.

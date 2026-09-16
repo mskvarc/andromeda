@@ -82,8 +82,9 @@ pub fn decode_geo_query(
 /// Geo-query decoding failure at a request boundary.
 #[derive(Debug, thiserror::Error)]
 pub enum GeoQueryDecodeError {
-    /// The relationship token is invalid.
-    #[error("invalid georel: {0}")]
+    /// The geo-query wire form could not be decoded; the inner error names which
+    /// member (`georel`, `coordinates`, `geometry`) was at fault and why.
+    #[error(transparent)]
     Decode(#[from] GeoQueryInputError),
 }
 

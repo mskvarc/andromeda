@@ -263,7 +263,10 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: Overwri
         // Attribute already exists -- merge by datasetId
         let Some(patch_instances) = value.as_array() else {
             if no_overwrite {
-                not_appended.push(key.parse::<AttributeName>().map_err(|_| ExpandedEntityError::InvalidAttributeName)?);
+                not_appended.push(
+                    key.parse::<AttributeName>()
+                        .map_err(|_| ExpandedEntityError::InvalidAttributeName { name: key.clone() })?,
+                );
             } else {
                 // clone: both the key and the value are borrowed from the fragment and stored owned.
                 entity_obj.insert(key.clone(), value.clone());
@@ -290,7 +293,10 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: Overwri
                 }
             }
             if any_skipped {
-                not_appended.push(key.parse::<AttributeName>().map_err(|_| ExpandedEntityError::InvalidAttributeName)?);
+                not_appended.push(
+                    key.parse::<AttributeName>()
+                        .map_err(|_| ExpandedEntityError::InvalidAttributeName { name: key.clone() })?,
+                );
             }
         } else {
             // Append with overwrite replaces the matched instance (clause 5.6.3),
@@ -349,7 +355,10 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Attr
         // 4.18 reserves the sentinel for.
         if key == properties::SCOPE.as_str() {
             if !entity_obj.contains_key(key) {
-                not_updated.push(key.parse::<AttributeName>().map_err(|_| ExpandedEntityError::InvalidAttributeName)?);
+                not_updated.push(
+                    key.parse::<AttributeName>()
+                        .map_err(|_| ExpandedEntityError::InvalidAttributeName { name: key.clone() })?,
+                );
                 continue;
             }
             if member_is_scope_deletion(value) {

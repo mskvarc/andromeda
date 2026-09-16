@@ -1,19 +1,18 @@
 //! Errors produced by subscription policy and persistence.
 
+use crate::{subscription_diagnostic::SubscriptionDiagnostic, subscription_validation_reason::SubscriptionValidationReason};
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::error::QueryError;
+use std::fmt::Display;
 use thiserror::Error;
 
 /// A failure while validating, applying, compiling, or persisting a subscription.
 #[derive(Debug, Error)]
 pub enum SubscriptionError {
     /// The request does not satisfy the subscription contract.
-    #[error("invalid subscription: {detail}")]
-    Validation {
-        /// Human-readable validation detail.
-        detail: String,
-    },
+    #[error("invalid subscription: {0}")]
+    Validation(#[from] SubscriptionValidationReason),
     /// The requested subscription does not exist.
     #[error("subscription not found: {identifier}")]
     NotFound {
@@ -39,25 +38,14 @@ pub enum SubscriptionError {
     #[error(transparent)]
     Identifier(#[from] urn_rs::Error),
     /// The persistence adapter could not complete the operation.
-    #[error("subscription persistence failed: {detail}")]
-    Persistence {
-        /// Adapter-specific diagnostic detail.
-        detail: String,
-    },
+    #[error("subscription persistence failed: {0}")]
+    Persistence(SubscriptionDiagnostic),
     /// An internal subscription invariant could not be satisfied.
-    #[error("subscription invariant failed: {detail}")]
-    Internal {
-        /// Internal diagnostic detail.
-        detail: String,
-    },
+    #[error("subscription invariant failed: {0}")]
+    Internal(SubscriptionDiagnostic),
 }
 
 impl SubscriptionError {
-    /// Construct a request-validation error.
-    pub fn validation(detail: impl Into<String>) -> SubscriptionError {
-        SubscriptionError::Validation { detail: detail.into() }
-    }
-
     /// Construct a missing-subscription error.
     #[must_use]
     pub fn not_found(identifier: &Uri) -> SubscriptionError {
@@ -74,13 +62,17 @@ impl SubscriptionError {
         }
     }
 
-    /// Construct a persistence-adapter error.
-    pub fn persistence(detail: impl Into<String>) -> SubscriptionError {
-        SubscriptionError::Persistence { detail: detail.into() }
+    /// Construct a persistence-adapter failure from its masked diagnostic source.
+    ///
+    /// The detail is captured for operators and masked before any client sees
+    /// it, so this takes `impl Display` — a typed adapter error is handed over
+    /// directly rather than pre-rendered to a string at the call site.
+    pub fn persistence(source: impl Display) -> SubscriptionError {
+        SubscriptionError::Persistence(SubscriptionDiagnostic::new(source))
     }
 
-    /// Construct an internal-invariant error.
-    pub fn internal(detail: impl Into<String>) -> SubscriptionError {
-        SubscriptionError::Internal { detail: detail.into() }
+    /// Construct an internal-invariant failure from its masked diagnostic source.
+    pub fn internal(source: impl Display) -> SubscriptionError {
+        SubscriptionError::Internal(SubscriptionDiagnostic::new(source))
     }
 }

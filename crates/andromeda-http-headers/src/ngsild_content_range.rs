@@ -27,19 +27,19 @@ const RANGE_UNIT: &str = "DateTime";
 #[derive(Debug, Error)]
 pub enum NgsiLdContentRangeError {
     /// The value did not open with the clause 6.3.10 `DateTime` range unit.
-    #[error("Content-Range must use the '{RANGE_UNIT}' range unit: '{0}'")]
+    #[error("content-range must use the '{RANGE_UNIT}' range unit: '{0}'")]
     UnitMissing(String),
     /// The value carried no `/` separating the range from its size.
-    #[error("Content-Range must separate range and size with '/': '{0}'")]
+    #[error("content-range must separate range and size with '/': '{0}'")]
     SizeMissing(String),
     /// The range halves were not separated by a UTC-terminated start instant.
-    #[error("Content-Range must separate range-start and range-end with 'Z-': '{0}'")]
+    #[error("content-range must separate range-start and range-end with 'Z-': '{0}'")]
     RangeMalformed(String),
     /// One of the two instants was not an RFC 3339 timestamp.
-    #[error("Content-Range instant is not an RFC 3339 timestamp: {0}")]
+    #[error("content-range instant is not an RFC 3339 timestamp: {0}")]
     Instant(#[from] chrono::ParseError),
     /// The size was neither `*` nor a count.
-    #[error("Content-Range size must be '*' or a count: {0}")]
+    #[error("content-range size must be '*' or a count: {0}")]
     Size(#[from] ParseIntError),
 }
 

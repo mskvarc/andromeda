@@ -2,7 +2,7 @@
 //!
 //! [`Entity`]: andromeda_ngsi_ld_model::entity::Entity
 
-use crate::{error::EntityError, query::EntityQueryService};
+use crate::{entity_validation_reason::EntityValidationReason, error::EntityError, query::EntityQueryService};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::options::CompactOptions, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_model::{entity::Entity, expanded::attribute_system_time::strip_attribute_instants};
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
@@ -43,7 +43,7 @@ impl EntityQueryService {
             Value::Object(map) => Some(map),
             Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => None,
         }
-        .ok_or_else(|| EntityError::validation("Entity data is not a JSON object"))?;
+        .ok_or_else(|| EntityError::Validation(EntityValidationReason::EntityDataNotObject))?;
 
         if let Some(t) = obj.remove("@type") {
             obj.insert("type".to_string(), t);
@@ -53,12 +53,12 @@ impl EntityQueryService {
             .map(str::to_string)
             .or_else(|| obj.get("id").and_then(Value::as_str).map(str::to_string))
             .or_else(|| obj.get("@id").and_then(Value::as_str).map(str::to_string))
-            .ok_or_else(|| EntityError::validation("Entity missing id field"))?;
+            .ok_or_else(|| EntityError::Validation(EntityValidationReason::EntityMissingId))?;
 
         obj.remove("@id");
         obj.insert("id".to_string(), Value::String(id));
 
-        let mut entity: Entity = deserialize_exact(&Value::Object(obj)).map_err(|err| EntityError::validation(format!("Invalid entity data: {err}")))?;
+        let mut entity: Entity = deserialize_exact(&Value::Object(obj)).map_err(|err| EntityError::Validation(EntityValidationReason::EntityData(err)))?;
 
         // Clause 4.22: an instance whose `expiresAt` has passed is not part of
         // the entity, and the sweep that removes it from storage runs on an

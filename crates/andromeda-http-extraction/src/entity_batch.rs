@@ -163,18 +163,18 @@ fn carries_context_link(headers: &HeaderMap) -> bool {
 /// The body is known to be non-empty: [`BatchBody`] exists only for a request
 /// that declared a payload length and carried one.
 fn batch_items(body: &Bytes, uri: &Uri) -> Result<Vec<Value>, ProblemResponse> {
-    let value: Value = parse_batch_body_json(body).map_err(|error| public_error(NgsiLdErrorType::InvalidRequest, format!("Invalid JSON: {error}"), uri))?;
+    let value: Value = parse_batch_body_json(body).map_err(|error| public_error(NgsiLdErrorType::InvalidRequest, format!("invalid JSON: {error}"), uri))?;
 
     match value {
         Value::Array(items) if items.is_empty() => Err(public_error(
             NgsiLdErrorType::BadRequestData,
-            "Request body must contain a non-empty array of entities",
+            "request body must contain a non-empty array of entities",
             uri,
         )),
         Value::Array(items) => Ok(items),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => Err(public_error(
             NgsiLdErrorType::BadRequestData,
-            "Request body must be a JSON array of entities",
+            "request body must be a JSON array of entities",
             uri,
         )),
     }
@@ -231,15 +231,15 @@ fn batch_entity_id(item: &Value, uri: &Uri) -> Result<EntityId, ProblemResponse>
     // reported as BadRequestData for the whole request rather than the
     // InvalidRequest a missing id raises.
     if item.is_null() {
-        return Err(public_error(NgsiLdErrorType::BadRequestData, "Batch array items must not be null", uri));
+        return Err(public_error(NgsiLdErrorType::BadRequestData, "batch array items must not be null", uri));
     }
 
     item.as_object()
         .and_then(|o| o.get("id"))
         .and_then(|v| v.as_str())
-        .ok_or_else(|| public_error(NgsiLdErrorType::InvalidRequest, "Every batch entity must contain a valid URI id", uri))?
+        .ok_or_else(|| public_error(NgsiLdErrorType::InvalidRequest, "every batch entity must contain a valid URI id", uri))?
         .parse::<EntityId>()
-        .map_err(|_error| public_error(NgsiLdErrorType::InvalidRequest, "Every batch entity must contain a valid URI id", uri))
+        .map_err(|_error| public_error(NgsiLdErrorType::InvalidRequest, "every batch entity must contain a valid URI id", uri))
 }
 
 /// Decode one batch array item into its entity.

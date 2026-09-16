@@ -108,7 +108,7 @@ pub async fn purge(
     let outcome = state.snapshots.purge_by_query(&filter).await.with_snapshot_instance(&uri)?;
 
     match outcome {
-        PurgeOutcome::NoMatch => Err(ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, "No snapshots matched the purge query").with_instance(uri)),
+        PurgeOutcome::NoMatch => Err(ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, "no snapshots matched the purge query").with_instance(uri)),
         PurgeOutcome::FullSuccess => Ok(StatusCode::NO_CONTENT.into_response()),
         PurgeOutcome::AllFailed { failures } => {
             let body = BatchOperationResult {

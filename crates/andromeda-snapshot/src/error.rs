@@ -35,14 +35,18 @@ pub enum SnapshotError {
         identifier: Uri,
     },
     /// Entity query policy failed during preparation.
+    ///
+    /// Boxed: these embedded policy errors are the widest members, and inlining
+    /// them would enlarge every snapshot `Result`. The [`From`] impls below keep
+    /// `?` ergonomic.
     #[error(transparent)]
-    Entity(#[from] EntityError),
+    Entity(Box<EntityError>),
     /// Temporal query policy failed during preparation.
     #[error(transparent)]
-    Temporal(#[from] TemporalError),
+    Temporal(Box<TemporalError>),
     /// Federation policy failed during preparation.
     #[error(transparent)]
-    Federation(#[from] FederationError),
+    Federation(Box<FederationError>),
     /// A canonical request parameter was invalid.
     #[error(transparent)]
     Request(#[from] ParameterError),
@@ -61,6 +65,30 @@ pub enum SnapshotError {
         /// Internal invariant diagnostic.
         detail: String,
     },
+}
+
+/// Box the embedded entity policy error, keeping `?` ergonomic while snapshot
+/// `Result`s stay small.
+impl From<EntityError> for SnapshotError {
+    fn from(error: EntityError) -> SnapshotError {
+        SnapshotError::Entity(Box::new(error))
+    }
+}
+
+/// Box the embedded temporal policy error, keeping `?` ergonomic while snapshot
+/// `Result`s stay small.
+impl From<TemporalError> for SnapshotError {
+    fn from(error: TemporalError) -> SnapshotError {
+        SnapshotError::Temporal(Box::new(error))
+    }
+}
+
+/// Box the embedded federation policy error, keeping `?` ergonomic while snapshot
+/// `Result`s stay small.
+impl From<FederationError> for SnapshotError {
+    fn from(error: FederationError) -> SnapshotError {
+        SnapshotError::Federation(Box::new(error))
+    }
 }
 
 impl SnapshotError {

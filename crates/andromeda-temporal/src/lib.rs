@@ -34,6 +34,10 @@ pub mod scope_observation;
 pub mod service;
 /// The physical storage policy an operator sets for temporal history.
 pub mod storage_policy;
+pub mod temporal_diagnostic;
+pub mod temporal_not_found_reason;
+pub mod temporal_operation_unsupported;
+pub mod temporal_validation_reason;
 mod unit_code_admission;
 mod write;
 /// What one temporal write is for, and what an absent evolution means for it.

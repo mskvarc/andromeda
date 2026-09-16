@@ -21,21 +21,21 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum JsonLdError {
     /// Configuration attempted to replace an embedded NGSI-LD core context.
-    #[error("Preloading protected NGSI-LD core context {url} is forbidden")]
+    #[error("preloading the protected NGSI-LD core context {url} is not allowed")]
     ProtectedContextPreload {
         /// The protected core-context URL supplied by configuration.
         url: IriBuf,
     },
 
     /// Remote context fetch is disabled by configuration.
-    #[error("Remote context fetch disabled for {url}")]
+    #[error("remote context fetch is disabled for {url}")]
     ContextFetchDisabled {
         /// The URL that was requested.
         url: IriBuf,
     },
 
     /// A remote JSON-LD context could not be loaded.
-    #[error("Failed to load context from {url}: {message}")]
+    #[error("failed to load context from {url}: {message}")]
     ContextLoad {
         /// The URL that was requested.
         url: IriBuf,
@@ -44,7 +44,7 @@ pub enum JsonLdError {
     },
 
     /// The HTTP request returned a non-success status code.
-    #[error("HTTP error {status} for {url}")]
+    #[error("loading context from {url} returned HTTP {status}")]
     ContextHttp {
         /// The URL that was requested.
         url: IriBuf,
@@ -53,7 +53,7 @@ pub enum JsonLdError {
     },
 
     /// The remote context exceeded the configured size limit.
-    #[error("Context {url} too large ({size} > {max} bytes)")]
+    #[error("context at {url} is too large ({size} bytes exceeds the {max}-byte limit)")]
     ContextTooLarge {
         /// The URL that was requested.
         url: IriBuf,
@@ -64,7 +64,7 @@ pub enum JsonLdError {
     },
 
     /// The remote context could not be parsed as valid JSON-LD.
-    #[error("Invalid JSON-LD context at {url}: {message}")]
+    #[error("invalid JSON-LD context at {url}: {message}")]
     ContextInvalid {
         /// The URL that was requested.
         url: IriBuf,
@@ -73,11 +73,11 @@ pub enum JsonLdError {
     },
 
     /// An embedded (inline) context could not be parsed.
-    #[error("Embedded context invalid: {0}")]
+    #[error("embedded context is invalid: {0}")]
     EmbeddedContextInvalid(String),
 
     /// An inline context could not be parsed as valid JSON-LD.
-    #[error("Inline context invalid: {0}")]
+    #[error("inline context is invalid: {0}")]
     InlineContextInvalid(String),
 
     /// A user `@context` declares a JSON-LD Scoped Context.
@@ -86,34 +86,34 @@ pub enum JsonLdError {
     /// contain JSON-LD Scoped Contexts", because one "could be used to modify
     /// terms defined in the Core `@context` or to reshape NGSI-LD Elements
     /// during the expansion of terms".
-    #[error("The user @context defines the term {term} with a scoped @context, which clause 5.5.7 does not admit")]
+    #[error("the user @context defines the term {term} with a scoped @context, which is not allowed")]
     ScopedUserContext {
         /// The term whose definition carries the scoped `@context`.
         term: String,
     },
 
     /// The HTTP client could not be constructed from the configured settings.
-    #[error("Failed to build JSON-LD HTTP client")]
+    #[error("failed to build the JSON-LD HTTP client: {0}")]
     ClientBuild(#[source] reqwest::Error),
 
     /// JSON-LD expansion failed.
-    #[error("Failed to expand document")]
+    #[error("failed to expand the document: {0}")]
     Expansion(#[source] Box<ExpandError<LoaderError>>),
 
     /// JSON-LD compaction failed.
-    #[error("Failed to compact document")]
+    #[error("failed to compact the document: {0}")]
     Compaction(#[source] Box<CompactError<LoaderError>>),
 
     /// An IRI could not be parsed or resolved.
-    #[error("Invalid IRI: {0}")]
+    #[error("invalid IRI: {0}")]
     InvalidIri(String),
 
     /// The document structure is not a valid JSON-LD input.
-    #[error("Invalid document: {0}")]
+    #[error("invalid document: {0}")]
     InvalidDocument(String),
 
     /// JSON serialisation / deserialisation error.
-    #[error("JSON error: {0}")]
+    #[error("JSON processing failed: {0}")]
     Json(#[from] serde_json::Error),
 }
 

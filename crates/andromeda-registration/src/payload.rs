@@ -11,6 +11,7 @@ use crate::{
     geometry::unwrap_geo_property_to_geometry,
     mode_rules::default_operations,
     nullable_member::NullableMember,
+    registration_validation_reason::RegistrationValidationReason,
     store::{create_params::CreateCsrParams, update_fragment::CsrUpdateFragment},
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
@@ -42,7 +43,12 @@ where
         .get(key)
         .map(|value| {
             serde_json::from_value(value.clone()) // clone: serde owns the selected member while the payload remains borrowed.
-                .map_err(|error| RegistrationError::csr_validation(format!("Invalid '{key}' value: {error}")))
+                .map_err(|source| {
+                    RegistrationError::Validation(RegistrationValidationReason::MemberValue {
+                        member: key.to_string(),
+                        source,
+                    })
+                })
         })
         .transpose()
 }
@@ -52,7 +58,7 @@ fn deserialize_required<T>(payload: &Value, key: &str) -> Result<T, Registration
 where
     T: DeserializeOwned,
 {
-    deserialize_member(payload, key)?.ok_or_else(|| RegistrationError::csr_validation(format!("{key} is required")))
+    deserialize_member(payload, key)?.ok_or_else(|| RegistrationError::Validation(RegistrationValidationReason::MemberRequired { member: key.to_string() }))
 }
 
 /// Read one nullable member for an update (clause 5.5.8 member removal).
@@ -65,7 +71,12 @@ where
         Some(value) if value.is_null() => Ok(NullableMember::Cleared),
         Some(value) => serde_json::from_value(value.clone()) // clone: serde owns the selected member while the update payload remains borrowed.
             .map(NullableMember::Set)
-            .map_err(|error| RegistrationError::csr_validation(format!("Invalid '{key}' value: {error}"))),
+            .map_err(|source| {
+                RegistrationError::Validation(RegistrationValidationReason::MemberValue {
+                    member: key.to_string(),
+                    source,
+                })
+            }),
     }
 }
 
@@ -87,26 +98,34 @@ fn deserialize_nullable_geometry(payload: &Value, key: &str) -> Result<NullableM
 fn parse_datetime(value: &Value, key: &str) -> Result<DateTime<Utc>, RegistrationError> {
     let raw = value
         .as_str()
-        .ok_or_else(|| RegistrationError::csr_validation(format!("'{key}' must be a string")))?;
-    DateTime::parse_from_rfc3339(raw)
-        .map(|parsed| parsed.with_timezone(&Utc))
-        .map_err(|error| RegistrationError::csr_validation(format!("Invalid '{key}' value '{raw}': {error}")))
+        .ok_or_else(|| RegistrationError::Validation(RegistrationValidationReason::MemberNotString { member: key.to_string() }))?;
+    DateTime::parse_from_rfc3339(raw).map(|parsed| parsed.with_timezone(&Utc)).map_err(|source| {
+        RegistrationError::Validation(RegistrationValidationReason::DateTimeMember {
+            member: key.to_string(),
+            raw: raw.to_string(),
+            source,
+        })
+    })
 }
 
 /// Parse an ISO 8601 duration member, naming the member in the error.
 pub(super) fn parse_duration_value(value: &Value, key: &str) -> Result<Iso8601Duration, RegistrationError> {
     let raw = value
         .as_str()
-        .ok_or_else(|| RegistrationError::csr_validation(format!("'{key}' must be a string")))?;
-    raw.parse::<Iso8601Duration>()
-        .map_err(|error| RegistrationError::csr_validation(format!("Invalid '{key}' value '{raw}': {error:?}")))
+        .ok_or_else(|| RegistrationError::Validation(RegistrationValidationReason::MemberNotString { member: key.to_string() }))?;
+    raw.parse::<Iso8601Duration>().map_err(|_| {
+        RegistrationError::Validation(RegistrationValidationReason::DurationMember {
+            member: key.to_string(),
+            raw: raw.to_string(),
+        })
+    })
 }
 
 /// Table 5.2.9-1: `information` is an array of at least one block; an empty
 /// array is not allowed.
-fn reject_empty_information(information: &[RegistrationInfo]) -> Result<(), RegistrationError> {
+const fn reject_empty_information(information: &[RegistrationInfo]) -> Result<(), RegistrationError> {
     if information.is_empty() {
-        return Err(RegistrationError::csr_validation("information must not be an empty array"));
+        return Err(RegistrationError::Validation(RegistrationValidationReason::InformationMustNotBeEmpty));
     }
     Ok(())
 }

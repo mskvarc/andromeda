@@ -6,7 +6,7 @@
 //! the clause 4.3.6.6 restrictions on `contextSourceInfo`, and the mode rules of
 //! `mode_rules.rs` that need nothing beyond the registration itself.
 
-use crate::{error::RegistrationError, mode_rules::validate_structure};
+use crate::{error::RegistrationError, mode_rules::validate_structure, registration_validation_reason::RegistrationValidationReason};
 use andromeda_ngsi_ld_model::{
     context_source_info::ContextSourceInfo,
     key_value_pair::KeyValuePair,
@@ -33,10 +33,10 @@ pub(super) struct RegistrationShape<'a> {
 /// `contextSourceInfo` restrictions.
 pub(super) fn validate_shape(shape: &RegistrationShape<'_>) -> Result<(), RegistrationError> {
     if shape.expires_at.is_some_and(|expires_at| expires_at <= Utc::now()) {
-        return Err(RegistrationError::csr_validation("expiresAt must be in the future"));
+        return Err(RegistrationError::Validation(RegistrationValidationReason::ExpiresAtInPast));
     }
     if let Some(pairs) = shape.context_source_info {
-        ContextSourceInfo::try_from(pairs).map_err(|error| RegistrationError::csr_validation(error.to_string()))?;
+        ContextSourceInfo::try_from(pairs).map_err(|error| RegistrationError::Validation(RegistrationValidationReason::ContextSourceInfo(error)))?;
     }
     validate_structure(shape.mode, shape.information, shape.operations)
 }

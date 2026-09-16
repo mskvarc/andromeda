@@ -18,7 +18,7 @@
 //! path the broker can store, so a level no label-path index could hold is bad
 //! input rather than a failed database cast.
 
-use crate::{error::EntityError, null_sentinel_admission::NullSentinelAdmission};
+use crate::{entity_validation_reason::EntityValidationReason, error::EntityError, null_sentinel_admission::NullSentinelAdmission};
 use andromeda_ngsi_ld_model::expanded::scope_member::{ScopeMember, read_scope_member};
 use serde_json::Value;
 
@@ -31,11 +31,9 @@ use serde_json::Value;
 /// admits, and when it is the NGSI-LD Null under an `admission` that refuses a
 /// deletion sentinel.
 pub(crate) fn validate_scope_member(expanded: &Value, admission: NullSentinelAdmission) -> Result<(), EntityError> {
-    let member = read_scope_member(expanded).map_err(|error| EntityError::validation(error.to_string()))?;
+    let member = read_scope_member(expanded).map_err(|error| EntityError::Validation(EntityValidationReason::Scope(error)))?;
     match (member, admission) {
-        (Some(ScopeMember::Deleted), NullSentinelAdmission::Refused) => Err(EntityError::validation(
-            "the scope member carries the NGSI-LD Null, which clause 5.5.4 admits as a first level member value only in the fragment of a partial update or merge operation",
-        )),
+        (Some(ScopeMember::Deleted), NullSentinelAdmission::Refused) => Err(EntityError::Validation(EntityValidationReason::ScopeNull)),
         (Some(ScopeMember::Deleted), NullSentinelAdmission::PartialUpdateFragment | NullSentinelAdmission::MergeFragment)
         | (
             Some(ScopeMember::Paths(_)) | None,

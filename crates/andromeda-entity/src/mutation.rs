@@ -5,6 +5,7 @@
 
 use crate::{
     EntityService,
+    entity_validation_reason::EntityValidationReason,
     error::EntityError,
     merge_fragment::{adapt_member, existing_attribute_types},
     merge_options::MergeOptions,
@@ -83,7 +84,7 @@ impl EntityService {
         let result: Result<Uri, EntityError> = async {
             let id = &entity.id;
 
-            let mut entity_json = serde_json::to_value(entity).map_err(|err| EntityError::validation(format!("Invalid entity payload: {err}")))?;
+            let mut entity_json = serde_json::to_value(entity).map_err(|err| EntityError::Validation(EntityValidationReason::EntityPayload(err)))?;
             normalize_entity_attributes(&mut entity_json);
             let expanded = self.engine.expand(entity_json, context).await?;
             // Clause 5.6.1.4 opens with the clause 5.5.4 validation. The transport
@@ -156,7 +157,7 @@ impl EntityService {
         let result: Result<(), EntityError> = async {
             let entity_uri = id.clone(); // clone: mutation events and computed-write closures own the identifier
 
-            let mut patch_json = serde_json::to_value(patch).map_err(|err| EntityError::validation(format!("Invalid patch payload: {err}")))?;
+            let mut patch_json = serde_json::to_value(patch).map_err(|err| EntityError::Validation(EntityValidationReason::PatchPayload(err)))?;
             let prepared_context = self.engine.prepare_term_context(context);
             let type_selector = match options.type_selector {
                 Some(raw) => Some(expand_type_expression(raw, &ContextualExpander::new(&self.engine, &prepared_context)).await?),
@@ -245,7 +246,7 @@ impl EntityService {
             }
             let iri = self.engine.expand_term(member, prepared_context).await?;
             adapt_member(member, value, existing_types.get(iri.as_str()).copied(), options.representation, options.lang)
-                .map_err(|error| EntityError::validation(error.to_string()))?;
+                .map_err(|error| EntityError::Validation(EntityValidationReason::MemberAdaptation(error)))?;
         }
         Ok(())
     }
@@ -277,7 +278,7 @@ impl EntityService {
                 return Err(EntityError::not_found(&entity_uri));
             }
 
-            let mut patch_json = serde_json::to_value(patch).map_err(|err| EntityError::validation(format!("Invalid patch payload: {err}")))?;
+            let mut patch_json = serde_json::to_value(patch).map_err(|err| EntityError::Validation(EntityValidationReason::PatchPayload(err)))?;
             normalize_entity_attributes(&mut patch_json);
             let expanded = self.engine.expand(patch_json, context).await?;
             // Clause 5.6.18.4: Replace Entity does not support null values.

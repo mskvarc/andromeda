@@ -44,7 +44,8 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
     }
 
     async fn serialize_for_response(&self, subscription: &Subscription, context: &ContextSpec) -> Result<Value, SubscriptionError> {
-        let mut value = serde_json::to_value(subscription).map_err(|e| SubscriptionError::validation(format!("Serialization failed: {e}")))?;
+        let mut value =
+            serde_json::to_value(subscription).map_err(|e| SubscriptionError::internal(format!("serializing subscription for response failed: {e}")))?;
         normalization::fixup_expired_status(&mut value, subscription.lifecycle.expires_at);
         normalization::compact_subscription_iris(&self.engine, &mut value, context).await;
         normalization::compact_subscription_filters(&self.engine, &mut value, &subscription.filters, context).await;

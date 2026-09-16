@@ -41,14 +41,14 @@ pub enum QueryError {
     // Q expression grammar (NGSI-LD 4.9)
     // -----------------------------------------------------------------------
     /// The q expression was empty.
-    #[error("Q expression: empty input")]
+    #[error("q expression: empty input")]
     QEmpty,
     /// A quoted string literal was not closed.
-    #[error("Q expression: unterminated string literal")]
+    #[error("q expression: unterminated string literal")]
     QUnterminatedString,
     /// A backslash escape named a character the clause 4.9 `char` production
     /// does not define; IETF RFC 8259 section 7 lists exactly eight.
-    #[error("Q expression: invalid string escape '\\{escape}' at position {position}")]
+    #[error("q expression: invalid string escape '\\{escape}' at position {position}")]
     QInvalidStringEscape {
         /// The character that followed the backslash.
         escape: char,
@@ -56,7 +56,7 @@ pub enum QueryError {
         position: usize,
     },
     /// A `\u` escape did not name a Unicode scalar value.
-    #[error("Q expression: invalid unicode escape at position {position}: {fault}")]
+    #[error("q expression: invalid unicode escape at position {position}: {fault}")]
     QInvalidUnicodeEscape {
         /// Zero-based character offset of the backslash.
         position: usize,
@@ -65,7 +65,7 @@ pub enum QueryError {
     },
     /// A quoted string carried a raw control character, which the clause 4.9
     /// `char` production requires to be written as an escape.
-    #[error("Q expression: unescaped control character U+{code_point:04X} at position {position}")]
+    #[error("q expression: unescaped control character U+{code_point:04X} at position {position}")]
     QUnescapedControlCharacter {
         /// The code point that had to be escaped.
         code_point: u32,
@@ -73,7 +73,7 @@ pub enum QueryError {
         position: usize,
     },
     /// A token remained after the parser reached end of expression.
-    #[error("Q expression: unexpected token at position {position}: {token}")]
+    #[error("q expression: unexpected token at position {position}: {token}")]
     QUnexpectedToken {
         /// Zero-based offset into the token stream.
         position: usize,
@@ -81,7 +81,7 @@ pub enum QueryError {
         token: String,
     },
     /// The parser expected a specific token but found something else.
-    #[error("Q expression: expected {expected}, found {found}")]
+    #[error("q expression: expected {expected}, found {found}")]
     QExpected {
         /// Human-readable description of what was expected.
         expected: String,
@@ -89,7 +89,7 @@ pub enum QueryError {
         found: String,
     },
     /// An identifier or character could not be tokenized.
-    #[error("Q expression: unexpected character '{ch}' at position {position}")]
+    #[error("q expression: unexpected character '{ch}' at position {position}")]
     QUnexpectedChar {
         /// The character that could not be tokenised.
         ch: char,
@@ -97,7 +97,7 @@ pub enum QueryError {
         position: usize,
     },
     /// A numeric literal was lexed but failed to parse.
-    #[error("Q expression: invalid number literal {value}: {source}")]
+    #[error("q expression: invalid number literal {value}: {source}")]
     QInvalidNumber {
         /// The rejected numeric operand.
         value: String,
@@ -109,7 +109,7 @@ pub enum QueryError {
     ///
     /// A guard against a pathological path whose backend rendering grows with
     /// its depth; the limit is far above any legitimate NGSI-LD nesting.
-    #[error("Q expression: attribute path too deep ({depth} sub-attributes, limit {limit})")]
+    #[error("q expression: attribute path too deep ({depth} sub-attributes, limit {limit})")]
     QAttributePathTooDeep {
         /// The number of sub-attributes the path carried.
         depth: usize,
@@ -117,7 +117,7 @@ pub enum QueryError {
         limit: usize,
     },
     /// A bare literal written in the clause 4.6.3 `DateTime` form was not one.
-    #[error("Q expression: invalid date-time literal '{value}'")]
+    #[error("q expression: invalid date-time literal '{value}'")]
     QInvalidDateTime {
         /// The rejected literal.
         value: String,
@@ -126,7 +126,7 @@ pub enum QueryError {
         source: NgsiLdDateTimeError,
     },
     /// A bare literal written in the clause 4.6.3 `Date` form was not one.
-    #[error("Q expression: invalid date literal '{value}'")]
+    #[error("q expression: invalid date literal '{value}'")]
     QInvalidDate {
         /// The rejected literal.
         value: String,
@@ -135,7 +135,7 @@ pub enum QueryError {
         source: NgsiLdDateError,
     },
     /// A bare literal written in the clause 4.6.3 `Time` form was not one.
-    #[error("Q expression: invalid time literal '{value}'")]
+    #[error("q expression: invalid time literal '{value}'")]
     QInvalidTime {
         /// The rejected literal.
         value: String,
@@ -148,16 +148,16 @@ pub enum QueryError {
     // Type expression grammar (NGSI-LD 4.17)
     // -----------------------------------------------------------------------
     /// The type expression string was empty.
-    #[error("Type expression: empty input")]
+    #[error("type expression: empty input")]
     TypeExprEmpty,
     /// The type expression ended before a primary could be parsed.
-    #[error("Type expression: unexpected end of input")]
+    #[error("type expression: unexpected end of input")]
     TypeExprUnexpectedEnd,
     /// A `)` was expected at the given position but not found.
-    #[error("Type expression: unbalanced parenthesis at position {0}")]
+    #[error("type expression: unbalanced parenthesis at position {0}")]
     TypeExprUnbalanced(usize),
     /// A character outside the type-name grammar was encountered.
-    #[error("Type expression: unexpected character {ch:?} at position {position}")]
+    #[error("type expression: unexpected character '{ch}' at position {position}")]
     TypeExprUnexpected {
         /// The offending character.
         ch: char,
@@ -165,10 +165,10 @@ pub enum QueryError {
         position: usize,
     },
     /// A type name production produced an empty name.
-    #[error("Type expression: empty type name at position {0}")]
+    #[error("type expression: empty type name at position {0}")]
     TypeExprEmptyName(usize),
     /// A type name did not satisfy the clause 4.6.2 name grammar.
-    #[error("Type expression: invalid type name {name:?} at position {position}")]
+    #[error("type expression: invalid type name '{name}' at position {position}")]
     TypeExprInvalidName {
         /// The offending name.
         name: String,
@@ -209,7 +209,7 @@ pub enum QueryError {
     // Regular expressions (clause 4.9 `q` patterns, clause 5.7.2 `idPattern`)
     // -----------------------------------------------------------------------
     /// A pattern operand was not a valid regular expression.
-    #[error("invalid regular expression")]
+    #[error("invalid regular expression: {0}")]
     PatternRegex(#[from] regex::Error),
     /// A repetition operator immediately followed another repetition operator, which PostgreSQL's POSIX engine rejects.
     #[error("invalid POSIX regular expression: a repetition operator cannot follow another repetition operator")]
@@ -271,7 +271,7 @@ pub enum QueryError {
         message: String,
     },
     /// A `scopeQ` pattern was outside the clause 4.19 grammar.
-    #[error("Invalid scopeQ pattern: '{0}'")]
+    #[error("invalid scopeQ pattern: '{0}'")]
     ScopePatternInvalid(String),
     /// An expanded IRI was not usable as an attribute name (clause 5.2.4).
     #[error("'{value}' is not a valid attribute name")]
@@ -324,19 +324,19 @@ pub enum QueryError {
     // Parameter values the query and projection languages above parse themselves (clauses 4.9 and 4.21)
     // -----------------------------------------------------------------------
     /// An `id` value could not be parsed as a URI.
-    #[error("Invalid id value: '{0}'")]
+    #[error("invalid id value: '{0}'")]
     ParamIdInvalid(String),
     /// An empty value appeared in a comma-separated id list.
-    #[error("Invalid id: empty value in comma-separated list")]
+    #[error("invalid id: empty value in comma-separated list")]
     ParamIdListEmpty,
     /// `timerel` and `timeAt` must both be present or both absent.
     #[error("timerel and timeAt must both be present or both absent")]
     ParamTimerelTimeatPair,
     /// The `aggrPeriodDuration` value was not an ISO 8601 duration.
-    #[error("Invalid aggrPeriodDuration value: '{0}'")]
+    #[error("invalid aggrPeriodDuration value: '{0}'")]
     ParamAggrPeriodDurationInvalid(String),
     /// A `datasetId` entry was neither `@none` nor a URN.
-    #[error("Invalid datasetId value: '{0}'")]
+    #[error("invalid datasetId value: '{0}'")]
     ParamDatasetIdInvalid(String),
     /// `timerel=between` was provided without an `endTimeAt`.
     #[error("endTimeAt is required when timerel is 'between'")]

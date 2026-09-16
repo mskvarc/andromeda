@@ -1,5 +1,6 @@
 //! Failures produced by entity policy and its persistence ports.
 
+use crate::{entity_diagnostic::EntityDiagnostic, entity_operation_unsupported::EntityOperationUnsupported, entity_validation_reason::EntityValidationReason};
 use andromeda_context_commit::error::CommitError;
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_lexicon::{
@@ -8,46 +9,42 @@ use andromeda_ngsi_ld_lexicon::{
     ngsi_ld_urn::{AttributeListIdParseError, EntityTypeListIdParseError},
     uri::Uri,
 };
+use andromeda_ngsi_ld_model::expanded::mutation::error::ExpandedEntityError;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use derive_more::IsVariant;
+use std::fmt::Display;
 use thiserror::Error;
 
 /// A failure while validating, reading, querying, mutating, or persisting an entity.
 #[derive(Debug, Error, IsVariant)]
 pub enum EntityError {
     /// The entity payload or operation is invalid.
-    #[error("invalid entity operation: {detail}")]
-    Validation {
-        /// Human-readable validation detail.
-        detail: String,
-    },
+    #[error("invalid entity operation: {0}")]
+    Validation(#[from] EntityValidationReason),
     /// The requested entity does not exist.
-    #[error("entity not found: {identifier}")]
+    #[error("entity {identifier} not found")]
     NotFound {
         /// Missing entity identifier.
         identifier: Uri,
     },
     /// The requested entity type does not exist.
-    #[error("entity type not found: {name}")]
+    #[error("entity type {name} not found")]
     TypeNotFound {
         /// Missing entity type name.
         name: EntityTypeName,
     },
     /// The requested attribute does not exist.
-    #[error("attribute not found: {name}")]
+    #[error("attribute {name} not found")]
     AttributeNotFound {
         /// Missing attribute name.
         name: AttributeName,
     },
     /// A requested entity member or dataset instance does not exist.
-    #[error("entity member not found: {detail}")]
-    MemberNotFound {
-        /// Human-readable missing-member detail.
-        detail: String,
-    },
+    #[error("entity member not found: {0}")]
+    MemberNotFound(ExpandedEntityError),
     /// An entity already uses the requested identifier.
-    #[error("entity already exists: {identifier}")]
+    #[error("entity {identifier} already exists")]
     AlreadyExists {
         /// Conflicting entity identifier.
         identifier: Uri,
@@ -65,11 +62,8 @@ pub enum EntityError {
         attempts: u32,
     },
     /// The selected storage capability cannot answer the operation safely.
-    #[error("entity operation is not supported: {detail}")]
-    OperationNotSupported {
-        /// Unsupported capability detail.
-        detail: String,
-    },
+    #[error("entity operation is not supported: {0}")]
+    OperationNotSupported(EntityOperationUnsupported),
     /// JSON-LD processing failed.
     #[error(transparent)]
     JsonLd(#[from] JsonLdError),
@@ -99,17 +93,11 @@ pub enum EntityError {
     #[error(transparent)]
     Commit(CommitError),
     /// A persistence adapter could not complete the operation.
-    #[error("entity persistence failed: {detail}")]
-    Persistence {
-        /// Adapter-specific diagnostic detail.
-        detail: String,
-    },
+    #[error("entity persistence failed: {0}")]
+    Persistence(EntityDiagnostic),
     /// An internal entity invariant could not be satisfied.
-    #[error("entity invariant failed: {detail}")]
-    Internal {
-        /// Internal diagnostic detail.
-        detail: String,
-    },
+    #[error("entity invariant failed: {0}")]
+    Internal(EntityDiagnostic),
 }
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
@@ -119,7 +107,10 @@ pub enum EntityError {
 impl From<CommitError> for EntityError {
     fn from(error: CommitError) -> EntityError {
         match error {
-            CommitError::Submission { detail } => EntityError::Validation { detail },
+            // The commit port cannot depend on this crate's error types without a
+            // cycle, so a refused submission arrives as opaque prose relayed into
+            // the typed validation reason rather than as a typed cause.
+            CommitError::Submission { detail } => EntityError::Validation(EntityValidationReason::CommitRefused { detail }),
             failure @ (CommitError::DuplicateEntity { .. }
             | CommitError::Persistence { .. }
             | CommitError::Invariant { .. }
@@ -129,11 +120,6 @@ impl From<CommitError> for EntityError {
 }
 
 impl EntityError {
-    /// Construct an entity-validation failure.
-    pub fn validation(detail: impl Into<String>) -> EntityError {
-        EntityError::Validation { detail: detail.into() }
-    }
-
     /// Construct a missing-entity failure.
     #[must_use]
     pub fn not_found(identifier: &Uri) -> EntityError {
@@ -158,11 +144,6 @@ impl EntityError {
         }
     }
 
-    /// Construct a missing entity member or dataset-instance failure.
-    pub fn member_not_found(detail: impl Into<String>) -> EntityError {
-        EntityError::MemberNotFound { detail: detail.into() }
-    }
-
     /// Construct an identifier-conflict failure.
     #[must_use]
     pub fn already_exists(identifier: &Uri) -> EntityError {
@@ -180,18 +161,17 @@ impl EntityError {
         }
     }
 
-    /// Construct an unsupported-capability failure.
-    pub fn operation_not_supported(detail: impl Into<String>) -> EntityError {
-        EntityError::OperationNotSupported { detail: detail.into() }
+    /// Construct a persistence-adapter failure from its masked diagnostic source.
+    ///
+    /// The detail is captured for operators and masked before any client sees
+    /// it, so this takes `impl Display` — a typed adapter error is handed over
+    /// directly rather than pre-rendered to a string at the call site.
+    pub fn persistence(source: impl Display) -> EntityError {
+        EntityError::Persistence(EntityDiagnostic::new(source))
     }
 
-    /// Construct a persistence-adapter failure.
-    pub fn persistence(detail: impl Into<String>) -> EntityError {
-        EntityError::Persistence { detail: detail.into() }
-    }
-
-    /// Construct an internal-invariant failure.
-    pub fn internal(detail: impl Into<String>) -> EntityError {
-        EntityError::Internal { detail: detail.into() }
+    /// Construct an internal-invariant failure from its masked diagnostic source.
+    pub fn internal(source: impl Display) -> EntityError {
+        EntityError::Internal(EntityDiagnostic::new(source))
     }
 }

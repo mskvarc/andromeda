@@ -27,6 +27,12 @@ mod mode_rules;
 pub mod nullable_member;
 mod payload;
 mod query;
+/// The typed reasons a registration collides with existing context data.
+pub mod registration_conflict_reason;
+/// The masked operator diagnostic behind persistence and internal failures.
+pub mod registration_diagnostic;
+/// The typed reasons a registration request is rejected as `BadRequestData`.
+pub mod registration_validation_reason;
 /// Fully resolved registration update values and merge policy.
 pub mod resolved_update;
 mod retrieve;

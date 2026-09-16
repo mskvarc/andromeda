@@ -21,11 +21,11 @@ static VIA: HeaderName = HeaderName::from_static("via");
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ViaParseError {
     /// The element was empty.
-    #[error("Via element is empty")]
+    #[error("via element is empty")]
     Empty,
     /// The element carried no token that could name an intermediary, or the
     /// token it carried was not a usable [`ContextSourcePseudonym`].
-    #[error("Via element names no intermediary")]
+    #[error("via element names no intermediary")]
     MissingPseudonym,
 }
 

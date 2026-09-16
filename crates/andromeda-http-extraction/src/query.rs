@@ -29,7 +29,7 @@ where
 
     serde_urlencoded::from_str::<T>(query_str).map(ValidatedQuery).map_err(|error| {
         let error_str = error.to_string();
-        let error_msg = format!("Invalid query parameters: {error_str}");
+        let error_msg = format!("invalid query parameters: {error_str}");
         classify_query_parse_error(&error_str, error_msg, uri)
     })
 }

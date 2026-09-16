@@ -127,7 +127,7 @@ impl TryFrom<Option<String>> for ExtensionPresence {
 #[derive(Debug, thiserror::Error)]
 pub enum ExtensionVersionError {
     /// The reported version has no readable `major.minor` prefix.
-    #[error("extension version {found:?} has no readable major.minor prefix")]
+    #[error("extension version '{found}' has no readable major.minor prefix")]
     Unreadable {
         /// The version the catalogue reports.
         found: String,

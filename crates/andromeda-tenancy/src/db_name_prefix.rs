@@ -25,7 +25,7 @@ pub enum DbNamePrefixError {
     #[error("database name prefix must not be empty")]
     Empty,
     /// The value held a character outside `[A-Za-z0-9_]`, or began with a digit.
-    #[error("database name prefix must match [A-Za-z_][A-Za-z0-9_]*: {0:?}")]
+    #[error("database name prefix must match [A-Za-z_][A-Za-z0-9_]*: '{0}'")]
     Invalid(String),
 }
 

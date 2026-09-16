@@ -19,7 +19,7 @@ pub async fn reject_snapshot_scope(request: Request, next: Next) -> Response {
             .map_or_else(|| request.uri().clone(), |original| original.0.clone());
         return ClassifiedReport::public(
             NgsiLdErrorType::OperationNotSupported,
-            "NGSILD-Snapshot is supported only by Core, Temporal, and entity-subscription operations",
+            "ngsild-snapshot is supported only by the core, temporal, and entity-subscription operations",
         )
         .with_instance(instance)
         .into_response();

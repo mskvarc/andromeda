@@ -81,7 +81,7 @@ pub async fn create_or_update(
         .get("id")
         .and_then(Value::as_str)
         .and_then(|raw| raw.parse::<Uri>().ok())
-        .ok_or_else(|| ClassifiedReport::public(NgsiLdErrorType::BadRequestData, "Entity id must be a valid URI").with_instance(uri.clone()))?;
+        .ok_or_else(|| ClassifiedReport::public(NgsiLdErrorType::BadRequestData, "entity id must be a valid URI").with_instance(uri.clone()))?;
     let entity_type = payload_entity_type(&payload);
     let body = serde_json::to_vec(&payload).map_err(|error| ClassifiedReport::internal(&error).with_instance(uri.clone()))?;
     let forwarded = state

@@ -27,19 +27,19 @@ pub struct LoaderError {
 #[derive(Debug, Clone, Error)]
 pub enum LoaderErrorKind {
     /// Remote context fetch is disabled by configuration.
-    #[error("Remote context fetch disabled")]
+    #[error("remote context fetch is disabled")]
     FetchDisabled,
     /// The HTTP request returned a non-success status code.
-    #[error("HTTP {0}")]
+    #[error("upstream returned HTTP {0}")]
     Http(StatusCode),
     /// Network or transport-level request failure.
-    #[error("Request failed: {0}")]
+    #[error("request failed: {0}")]
     Request(String),
     /// The attached durable cache failed while remote loading was unavailable.
-    #[error("Context cache failed: {0}")]
+    #[error("context cache failed: {0}")]
     Cache(String),
     /// The response body exceeds the configured size limit.
-    #[error("Context too large ({size} > {max} bytes)")]
+    #[error("context too large ({size} bytes exceeds the {max}-byte limit)")]
     TooLarge {
         /// Actual payload size in bytes.
         size: usize,
@@ -47,7 +47,7 @@ pub enum LoaderErrorKind {
         max: usize,
     },
     /// The response body could not be parsed as valid JSON-LD.
-    #[error("Invalid context: {0}")]
+    #[error("invalid context: {0}")]
     Invalid(String),
 }
 

@@ -23,13 +23,13 @@
 //! 7946 nowhere requires a uniform arity, and a `LineString` whose first position
 //! is flat and whose second is elevated is a legal `GeoJSON` document.
 
-use crate::error::EntityError;
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
+use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry};
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_ngsi_ld_model::expanded::geo_property::validate_expanded_geo_node;
 use andromeda_ngsi_ld_vocabulary::{expanded::properties as expanded_properties, expanded_to_compact};
 use serde_json::Value;
-use std::{fmt::Display, slice::from_ref};
+use std::slice::from_ref;
 
 /// Reject an expanded write payload carrying a `GeoProperty` whose geometry has an
 /// unusable position, or whose geometry is a `GeometryCollection`.
@@ -118,7 +118,7 @@ fn validate_geo_node(attribute_iri: &str, node: &Value) -> Result<(), EntityErro
         },
         Some(document @ Value::Object(_)) => validate_geojson_document(attribute_iri, document),
         Some(Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_)) | None => {
-            validate_expanded_geo_node(node).map_err(|error| geo_property_error(attribute_iri, &error))
+            validate_expanded_geo_node(node).map_err(|error| geo_property_error(attribute_iri, error))
         }
     }
 }
@@ -138,7 +138,7 @@ fn validate_geojson_document(attribute_iri: &str, document: &Value) -> Result<()
     }
     Geometry::from_geojson_value(document)
         .map(|_geometry| ())
-        .map_err(|error| geo_property_error(attribute_iri, &error))
+        .map_err(|error| geo_property_error(attribute_iri, error))
 }
 
 /// The clause 5.5.4 `BadRequestData` detail for one unusable `GeoProperty`.
@@ -147,9 +147,12 @@ fn validate_geojson_document(attribute_iri: &str, document: &Value) -> Result<()
 /// one, and by its expanded IRI otherwise: a user-defined term's compaction
 /// depends on the request's own `@context`, which validation does not hold, and
 /// an IRI the client can look up beats a guess it cannot.
-fn geo_property_error(attribute_iri: &str, cause: &dyn Display) -> EntityError {
+fn geo_property_error(attribute_iri: &str, cause: GeometryError) -> EntityError {
     let name = expanded_to_compact(attribute_iri).unwrap_or(attribute_iri);
-    EntityError::validation(format!("GeoProperty '{name}': {cause}"))
+    EntityError::Validation(EntityValidationReason::GeoProperty {
+        name: name.to_string(),
+        source: cause,
+    })
 }
 
 #[cfg(test)]
@@ -385,8 +388,8 @@ mod tests {
         let error = validate_geo_property_geometries(&entity).expect_err("a collection is not an allowed GeoProperty geometry");
         pretty_assertions::assert_eq!(
             error.to_string(),
-            "invalid entity operation: GeoProperty 'location': GeometryCollection is not an allowed GeoProperty geometry: \
-             ETSI GS CIM 009 v1.9.1 clause 4.7.1 allows every RFC 7946 geometry except GeometryCollection"
+            "invalid entity operation: GeoProperty 'location': GeometryCollection is not an allowed GeoProperty geometry; \
+             every RFC 7946 geometry except GeometryCollection is accepted"
         );
     }
 

@@ -40,10 +40,10 @@ const PATH_ENCODED_BYTE_LIMIT: usize = 3000;
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum ScopePathError {
     /// The string is outside the clause 4.18 scope grammar.
-    #[error("'{0}' does not satisfy the NGSI-LD scope grammar of clause 4.18")]
+    #[error("'{0}' does not satisfy the NGSI-LD scope grammar")]
     Malformed(String),
-    /// The string is the NGSI-LD Null, which names a deleted scope rather than a place.
-    #[error("'{null}' is the NGSI-LD Null, which clause 4.18 uses only in case of a deleted scope", null = NULL_URI.as_str())]
+    /// The string is the NGSI-LD Null, which names a deleted scope rather than a place (ETSI GS CIM 009 clause 4.18).
+    #[error("'{null}' is the NGSI-LD Null, which names only a deleted scope, not a scope path", null = NULL_URI.as_str())]
     NullSentinel,
     /// One level of the path is longer than [`LEVEL_CHARACTER_LIMIT`].
     #[error("a scope level of {0} characters exceeds the {LEVEL_CHARACTER_LIMIT} characters a scope level may carry")]

@@ -57,9 +57,9 @@ const NATIVE_JSON_MEMBERS: &[&str] = &[
 /// A `@context` written somewhere clause 5.5.7 does not admit one.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum EmbeddedContextError {
-    /// A `@context` stands below the top level of the document.
+    /// A `@context` stands below the top level of the document (ETSI GS CIM 009 v1.9.1 clause 5.5.7).
     #[error(
-        "an @context is embedded under {}, and ETSI GS CIM 009 v1.9.1 clause 5.5.7 admits a user @context only at the top level of an NGSI-LD document",
+        "an @context is embedded under {}, but a user @context is admitted only at the top level of an NGSI-LD document",
         .path.join("/")
     )]
     BelowTopLevel {

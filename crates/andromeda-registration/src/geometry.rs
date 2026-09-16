@@ -4,7 +4,7 @@
 //! decodes inbound `GeoProperty` wrappers into a [`Geometry`] before any CSR
 //! insert or update.
 
-use crate::error::RegistrationError;
+use crate::{error::RegistrationError, registration_validation_reason::RegistrationValidationReason};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use serde_json::Value;
 
@@ -19,7 +19,7 @@ pub fn unwrap_geo_property_to_geometry(v: &Value) -> Result<Geometry, Registrati
     } else {
         v
     };
-    Geometry::from_geojson_value(geometry).map_err(|error| RegistrationError::csr_validation(format!("invalid GeoProperty geometry: {error}")))
+    Geometry::from_geojson_value(geometry).map_err(|source| RegistrationError::Validation(RegistrationValidationReason::GeoPropertyGeometry { source }))
 }
 
 #[cfg(test)]

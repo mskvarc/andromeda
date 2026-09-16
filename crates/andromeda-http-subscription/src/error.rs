@@ -18,15 +18,14 @@ pub trait SubscriptionHttpClassify {
 impl SubscriptionHttpClassify for SubscriptionError {
     fn classify_for_subscription_http(&self) -> ClassifiedReport {
         match self {
-            SubscriptionError::Validation { detail } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail),
+            SubscriptionError::Validation(reason) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, reason.to_string()),
             SubscriptionError::NotFound { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, self.to_string()),
             SubscriptionError::AlreadyExists { .. } => ClassifiedReport::public(NgsiLdErrorType::AlreadyExists, self.to_string()),
             SubscriptionError::JsonLd(source) => classify_jsonld_error(source),
             SubscriptionError::Query(source) => classify_query_error(source),
-            SubscriptionError::Representation(_)
-            | SubscriptionError::Identifier(_)
-            | SubscriptionError::Persistence { .. }
-            | SubscriptionError::Internal { .. } => ClassifiedReport::internal(self),
+            SubscriptionError::Representation(_) | SubscriptionError::Identifier(_) | SubscriptionError::Persistence(_) | SubscriptionError::Internal(_) => {
+                ClassifiedReport::internal(self)
+            }
         }
     }
 }
@@ -80,14 +79,17 @@ mod tests {
     use super::SubscriptionHttpClassify;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-    use andromeda_subscription::error::SubscriptionError;
+    use andromeda_subscription::{error::SubscriptionError, subscription_validation_reason::SubscriptionValidationReason};
     use std::error::Error;
 
     #[test]
     fn focused_subscription_categories_and_disclosure_are_stable() -> Result<(), Box<dyn Error>> {
         let identifier = "urn:ngsi-ld:Subscription:1".parse::<Uri>()?;
         for (error, expected) in [
-            (SubscriptionError::Validation { detail: "invalid".to_string() }, NgsiLdErrorType::BadRequestData),
+            (
+                SubscriptionError::Validation(SubscriptionValidationReason::NotificationRequired),
+                NgsiLdErrorType::BadRequestData,
+            ),
             (
                 SubscriptionError::NotFound {
                     identifier: identifier.clone(),
@@ -95,17 +97,12 @@ mod tests {
                 NgsiLdErrorType::ResourceNotFound,
             ),
             (SubscriptionError::AlreadyExists { identifier }, NgsiLdErrorType::AlreadyExists),
-            (
-                SubscriptionError::Persistence {
-                    detail: "database host".to_string(),
-                },
-                NgsiLdErrorType::InternalError,
-            ),
+            (SubscriptionError::persistence("database host"), NgsiLdErrorType::InternalError),
         ] {
             let report = error.classify_for_subscription_http();
             pretty_assertions::assert_eq!(report.error_type(), expected);
             if expected == NgsiLdErrorType::InternalError {
-                pretty_assertions::assert_eq!(report.detail(), "Internal error");
+                pretty_assertions::assert_eq!(report.detail(), "internal error");
             }
         }
         Ok(())

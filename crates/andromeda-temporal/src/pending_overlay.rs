@@ -17,6 +17,7 @@ use crate::{
         },
         pending_intent_reader::PendingTemporalIntentReader,
     },
+    temporal_operation_unsupported::TemporalOperationUnsupported,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query_residual::ResidualFilter;
@@ -253,9 +254,7 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
         _entity_id: &Uri,
         _compiled: &CompiledTemporalQuery,
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
-        Err(TemporalError::operation_not_supported(
-            "aggregation requires sink-side pending-intent union support",
-        ))
+        Err(TemporalError::OperationNotSupported(TemporalOperationUnsupported::PendingUnionUnsupported))
     }
 }
 

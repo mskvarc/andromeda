@@ -4,6 +4,7 @@
 
 use crate::{
     compiled_cache::{CompiledQueryKey, LimitCap},
+    entity_validation_reason::EntityValidationReason,
     error::EntityError,
     query::{EntityQueryService, selector_compilation::compile_entity_selectors},
 };
@@ -101,9 +102,7 @@ impl EntityQueryService {
         // geo-query or an explicit `orderFrom`.
         let has_distance_term = order_by.iter().any(|term| term.direction.is_distance());
         if has_distance_term && geo.is_none() && ordering_geometry.is_none() {
-            return Err(EntityError::validation(
-                "Distance-based ordering requires either a geo-query or orderFrom parameter".to_string(),
-            ));
+            return Err(EntityError::Validation(EntityValidationReason::DistanceOrderingWithoutReference));
         }
 
         let pagination = Pagination {

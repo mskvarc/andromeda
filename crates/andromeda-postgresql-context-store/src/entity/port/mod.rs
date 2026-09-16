@@ -12,7 +12,7 @@ mod reader;
 mod spatial_snapshot;
 
 use crate::error::ContextStoreError;
-use andromeda_entity::error::EntityError;
+use andromeda_entity::{entity_validation_reason::EntityValidationReason, error::EntityError};
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 
 /// Map an adapter failure into the category the entity policy answers it in.
@@ -26,7 +26,9 @@ use andromeda_postgresql_collation::provisioned_collations::CollationProvisionin
 fn classify(error: &ContextStoreError) -> EntityError {
     match error {
         ContextStoreError::Collation(CollationProvisioningError::NotAnIcuCollation { collation, .. }) => {
-            EntityError::validation(format!("'{collation}' does not conform to a valid ICU collation"))
+            EntityError::Validation(EntityValidationReason::Collation {
+                collation: collation.to_string(),
+            })
         }
         ContextStoreError::Collation(CollationProvisioningError::Statement { .. })
         | ContextStoreError::Database(_)

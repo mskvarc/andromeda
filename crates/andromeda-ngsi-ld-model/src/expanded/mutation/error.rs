@@ -29,9 +29,12 @@ pub enum ExpandedEntityError {
     /// The attribute fragment was not a JSON object.
     #[error("attributes must be a JSON object")]
     AttributesNotObject,
-    /// An attribute member did not satisfy the clause-4.6.2 name grammar.
-    #[error("invalid attribute name")]
-    InvalidAttributeName,
+    /// An attribute member did not satisfy the attribute-name grammar (clause 4.6.2).
+    #[error("invalid attribute name '{name}'")]
+    InvalidAttributeName {
+        /// The offending attribute key carried by the fragment.
+        name: String,
+    },
     /// An attribute instance declared a type outside the clause-5.2.4 set.
     #[error("attribute instance has an invalid attribute type")]
     InvalidAttributeType,
@@ -63,7 +66,11 @@ pub enum ExpandedEntityError {
         attribute: IriBuf,
     },
     /// The fragment declares a type that the stored instance does not share.
-    #[error("attribute type mismatch for {attribute}: fragment declares {fragment_types:?}, instance is {instance_types:?}")]
+    #[error(
+        "attribute type mismatch for {attribute}: fragment declares [{}], instance is [{}]",
+        join_attribute_types(.fragment_types),
+        join_attribute_types(.instance_types)
+    )]
     AttributeTypeMismatch {
         /// Expanded IRI of the attribute that was looked up.
         attribute: IriBuf,
@@ -72,4 +79,13 @@ pub enum ExpandedEntityError {
         /// Expanded type IRIs carried by the stored instance.
         instance_types: Vec<AttributeType>,
     },
+}
+
+/// Render a list of attribute types as their comma-separated spec tokens.
+///
+/// Cold path: only a mismatch error allocates this, so the join is not on any
+/// hot path. Rendered through each type's `Display` (its spec token) rather than
+/// `Debug`, so the message never leaks the Rust variant spelling.
+fn join_attribute_types(types: &[AttributeType]) -> String {
+    types.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
 }

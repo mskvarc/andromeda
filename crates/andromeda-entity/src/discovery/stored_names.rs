@@ -58,8 +58,8 @@ mod tests {
 
     #[test]
     fn a_stored_name_that_does_not_parse_is_an_internal_fault() {
-        assert!(matches!(parse_type_name("two words"), Err(EntityError::Internal { .. })));
-        assert!(matches!(parse_attribute_name(""), Err(EntityError::Internal { .. })));
-        assert!(matches!(parse_discovery_iri("not an iri".to_owned()), Err(EntityError::Internal { .. })));
+        assert!(matches!(parse_type_name("two words"), Err(EntityError::Internal(_))));
+        assert!(matches!(parse_attribute_name(""), Err(EntityError::Internal(_))));
+        assert!(matches!(parse_discovery_iri("not an iri".to_owned()), Err(EntityError::Internal(_))));
     }
 }

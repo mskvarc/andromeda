@@ -5,7 +5,7 @@ use andromeda_ngsi_ld_lexicon::ngsi_ld_date_time::NgsiLdDateTimeError;
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 use andromeda_postgresql_encoding::{copy::CopyFieldError, ewkb::EwkbError};
 use andromeda_postgresql_temporal_query::aggregation_group::MixedAggregationGroup;
-use andromeda_temporal::error::TemporalError;
+use andromeda_temporal::{error::TemporalError, temporal_not_found_reason::TemporalNotFoundReason, temporal_validation_reason::TemporalValidationReason};
 
 /// Errors produced by a temporal store implementation.
 ///
@@ -59,12 +59,14 @@ pub enum TemporalStoreError {
 impl From<TemporalStoreError> for TemporalError {
     fn from(error: TemporalStoreError) -> TemporalError {
         match error {
-            TemporalStoreError::NotFound(detail) => TemporalError::not_found(detail),
-            TemporalStoreError::Validation(detail) => TemporalError::validation(detail),
+            TemporalStoreError::NotFound(detail) => TemporalError::NotFound(TemporalNotFoundReason::Store { detail }),
+            TemporalStoreError::Validation(detail) => TemporalError::Validation(TemporalValidationReason::Store { detail }),
             // A unit the client sent is a request fault; an identity already in
             // a row that the catalog no longer registers is catalog drift.
             TemporalStoreError::UnitCode(detail) => match detail {
-                UnitCodeMetadataError::Malformed | UnitCodeMetadataError::Unregistered { .. } => TemporalError::validation(detail.to_string()),
+                UnitCodeMetadataError::Malformed | UnitCodeMetadataError::Unregistered { .. } => {
+                    TemporalError::Validation(TemporalValidationReason::Store { detail: detail.to_string() })
+                }
                 UnitCodeMetadataError::UnknownIdentity { .. } | UnitCodeMetadataError::Catalog(_) => TemporalError::persistence(detail.to_string()),
             },
             // Each of these three is a fault in the client's own request rather
@@ -75,7 +77,7 @@ impl From<TemporalStoreError> for TemporalError {
             // input too; and two instances claiming the same instanceId is a
             // conflict inside the submitted write (clause 4.5.7).
             TemporalStoreError::TimestampPrecision(_) | TemporalStoreError::MixedAggregationGroup(_) | TemporalStoreError::DuplicateInstanceClaim(_) => {
-                TemporalError::validation(error.to_string())
+                TemporalError::Validation(TemporalValidationReason::Store { detail: error.to_string() })
             }
             // Clause 5.7.4.4: "if a preferred collation setting is present and
             // it does not conform to a valid ICU collation (see IETF RFC 6067)
@@ -84,7 +86,9 @@ impl From<TemporalStoreError> for TemporalError {
             // database can answer, so its refusal of the client's own
             // `collation` reaches policy here rather than as a broker fault.
             TemporalStoreError::Collation(CollationProvisioningError::NotAnIcuCollation { collation, .. }) => {
-                TemporalError::validation(format!("'{collation}' does not conform to a valid ICU collation"))
+                TemporalError::Validation(TemporalValidationReason::Collation {
+                    collation: collation.to_string(),
+                })
             }
             TemporalStoreError::Database(_)
             | TemporalStoreError::Decode(_)

@@ -5,7 +5,13 @@
 //! produced [`ResolvedCsrUpdate`](crate::resolved_update::ResolvedCsrUpdate) as
 //! an unconditional UPDATE.
 
-use crate::{error::RegistrationError, mode_rules::default_operations, nullable_member::NullableMember, store::update_fragment::CsrUpdateFragment};
+use crate::{
+    error::RegistrationError,
+    mode_rules::default_operations,
+    nullable_member::NullableMember,
+    registration_validation_reason::RegistrationValidationReason,
+    store::update_fragment::CsrUpdateFragment,
+};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonym,
@@ -86,10 +92,12 @@ pub struct ResolvedCsrUpdate {
 /// value set. `member` names the payload member in the failure message.
 fn resolve_geometry(fragment: &NullableMember<Geometry>, stored: Option<&Value>, member: &str) -> Result<Option<Geometry>, RegistrationError> {
     match fragment {
-        NullableMember::Absent => stored
-            .map(Geometry::from_geojson_value)
-            .transpose()
-            .map_err(|error| RegistrationError::csr_validation(format!("invalid existing {member} GeoJSON: {error}"))),
+        NullableMember::Absent => stored.map(Geometry::from_geojson_value).transpose().map_err(|source| {
+            RegistrationError::Validation(RegistrationValidationReason::ExistingGeometry {
+                member: member.to_string(),
+                source,
+            })
+        }),
         NullableMember::Cleared => Ok(None),
         // clone: own fragment side; the fragment is borrowed
         NullableMember::Set(geometry) => Ok(Some(geometry.clone())),

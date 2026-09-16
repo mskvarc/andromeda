@@ -50,7 +50,7 @@ impl ForwardedProtocol {
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum ForwardedProtocolError {
     /// The `Forwarded` field value does not parse as RFC 7239 syntax.
-    #[error("Forwarded field value is not RFC 7239 syntax: {detail}")]
+    #[error("forwarded field value is not RFC 7239 syntax: {detail}")]
     ForwardedSyntax {
         /// What the RFC 7239 parser reported.
         detail: String,

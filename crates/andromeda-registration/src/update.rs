@@ -6,6 +6,7 @@ use crate::{
     error::RegistrationError,
     mode_rules::check_conflicts,
     payload::extract_update_fragment,
+    registration_validation_reason::RegistrationValidationReason,
     resolved_update::apply_fragment,
     validation::{RegistrationShape, validate_shape},
 };
@@ -38,13 +39,13 @@ impl RegistrationService {
         // registration type (clause 5.2.9).
         if let Some(type_value) = payload.get("type") {
             serde_json::from_value::<ContextSourceRegistrationType>(type_value.clone()) // clone: serde owns the member while the fragment remains borrowed.
-                .map_err(|_| RegistrationError::csr_validation("type must be 'ContextSourceRegistration'"))?;
+                .map_err(|_| RegistrationError::Validation(RegistrationValidationReason::TypeNotContextSourceRegistration))?;
         }
         if payload.get("information").is_some_and(Value::is_null) {
-            return Err(RegistrationError::csr_validation("information must not be null"));
+            return Err(RegistrationError::Validation(RegistrationValidationReason::InformationMustNotBeNull));
         }
         if payload.get("endpoint").is_some_and(Value::is_null) {
-            return Err(RegistrationError::csr_validation("endpoint must not be null"));
+            return Err(RegistrationError::Validation(RegistrationValidationReason::EndpointMustNotBeNull));
         }
 
         let expanded_properties = expand_context_source_properties(&self.engine, &payload, context).await?;

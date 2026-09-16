@@ -33,7 +33,7 @@
 //! because the top-level node of the one is an Entity whose members are
 //! attributes, and of the other a single attribute instance.
 
-use crate::error::EntityError;
+use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::expanded::{
     json_literal_merge::json_object_carries_null_sentinel,
@@ -159,9 +159,12 @@ fn reject_in_attribute_members(members: &Map<String, Value>, admission: NullSent
         if key.starts_with('@') {
             continue;
         }
-        let attribute = key
-            .parse::<AttributeName>()
-            .map_err(|error| EntityError::validation(format!("invalid expanded attribute name '{key}': {error}")))?;
+        let attribute = key.parse::<AttributeName>().map_err(|error| {
+            EntityError::Validation(EntityValidationReason::ExpandedAttributeName {
+                name: key.clone(),
+                source: error,
+            })
+        })?;
         if is_reserved_member(&attribute) {
             continue;
         }
@@ -178,19 +181,19 @@ fn reject_in_attribute_members(members: &Map<String, Value>, admission: NullSent
 /// Apply every prohibition to one attribute instance and to its sub-attributes.
 fn reject_in_instance(attribute: &AttributeName, instance: &Value, admission: NullSentinelAdmission) -> Result<(), EntityError> {
     if dataset_id_is_sentinel(instance) {
-        return Err(EntityError::validation(format!(
-            "attribute '{attribute}' sets its datasetId to 'urn:ngsi-ld:null'; a datasetId cannot be deleted by setting it to that value (clauses 5.5.8 and 5.5.12)"
-        )));
+        return Err(EntityError::Validation(EntityValidationReason::DatasetIdSentinel {
+            attribute: attribute.clone(),
+        }));
     }
     if admission.deletion_sentinel_admission() == MemberAdmission::Forbidden && (member_is_null_sentinel(instance) || instance_is_null_sentinel(instance)) {
-        return Err(EntityError::validation(format!(
-            "attribute '{attribute}' carries the reserved value 'urn:ngsi-ld:null', which this operation does not permit (clause 5.5.4)"
-        )));
+        return Err(EntityError::Validation(EntityValidationReason::ReservedNullValue {
+            attribute: attribute.clone(),
+        }));
     }
     if admission.nested_sentinel_admission() == MemberAdmission::Forbidden && value_object_carries_sentinel(instance) {
-        return Err(EntityError::validation(format!(
-            "attribute '{attribute}' carries 'urn:ngsi-ld:null' inside the JSON object on the right-hand side of its value, which only a merge fragment may do (clause 5.5.4)"
-        )));
+        return Err(EntityError::Validation(EntityValidationReason::NestedNullValue {
+            attribute: attribute.clone(),
+        }));
     }
     let Some(members) = instance.as_object() else {
         return Ok(());
@@ -466,7 +469,7 @@ mod tests {
             .create(&live_target(), &entity, &ContextSpec::core_only())
             .await
             .expect_err("a creation may not nest the sentinel in a value object");
-        assert!(matches!(error, EntityError::Validation { .. }), "{error}");
+        assert!(matches!(error, EntityError::Validation(_)), "{error}");
     }
 
     /// Clause 5.5.12 EXAMPLE 2 merges exactly that fragment, so the same
@@ -491,7 +494,7 @@ mod tests {
             .merge(&live_target(), &entity_uri(), &patch, &ContextSpec::core_only(), MergeOptions::default())
             .await
             .expect_err("a datasetId cannot be deleted by the sentinel");
-        assert!(matches!(error, EntityError::Validation { .. }), "{error}");
+        assert!(matches!(error, EntityError::Validation(_)), "{error}");
     }
 
     /// Clause 5.6.7.4 runs the clause 5.5.4 validation for each item of the
@@ -507,7 +510,7 @@ mod tests {
         assert!(batch.success.is_empty(), "nothing may be created");
         pretty_assertions::assert_eq!(batch.errors.len(), 1);
         pretty_assertions::assert_eq!(batch.errors[0].0.as_str(), ENTITY_ID);
-        assert!(matches!(batch.errors[0].1, EntityError::Validation { .. }), "{}", batch.errors[0].1);
+        assert!(matches!(batch.errors[0].1, EntityError::Validation(_)), "{}", batch.errors[0].1);
     }
 
     /// Clause 5.6.20 is a merge, so the batch admits what clause 5.5.12 gives
@@ -548,7 +551,7 @@ mod tests {
                 .await;
             match outcome {
                 Ok(created) => panic!("{attribute}: a creation admits no NGSI-LD Null, yet {created} was stored"),
-                Err(error) => assert!(matches!(error, EntityError::Validation { .. }), "{attribute}: {error}"),
+                Err(error) => assert!(matches!(error, EntityError::Validation(_)), "{attribute}: {error}"),
             }
         }
     }

@@ -133,6 +133,15 @@ macro_rules! workspace_architecture {
             fn manifests_follow_dependency_hygiene() {
                 $crate::manifest_hygiene::assert_manifest_hygiene(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
+
+            /// Client-facing error detail is lowercase prose that interpolates through Display.
+            #[test]
+            fn error_detail_messages_are_well_formed() {
+                $crate::detail_message::assert_detail_messages_are_well_formed(
+                    concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root),
+                    $crate::detail_message_baseline::DETAIL_MESSAGE_BASELINE,
+                );
+            }
         }
     };
 }

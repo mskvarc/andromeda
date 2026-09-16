@@ -44,15 +44,15 @@ impl DeclaredBodyLength {
 pub enum ContentLengthPreconditionError {
     /// No `Content-Length` header at all. Clause 6.3.4 answers this one with a
     /// bare status, so the message is only ever read by a log.
-    #[error("Content-Length is required")]
+    #[error("content-length is required")]
     Absent,
     /// A `Content-Length` that is not the decimal byte count RFC 9110 clause
     /// 8.6 defines.
-    #[error("Content-Length shall be a non-negative decimal integer")]
+    #[error("content-length shall be a non-negative decimal integer")]
     Malformed,
     /// A `Content-Length` of zero, which declares a payload body that clause
     /// 5.5.4 cannot read as a JSON document.
-    #[error("Request body shall not be empty")]
+    #[error("request body shall not be empty")]
     Empty,
 }
 

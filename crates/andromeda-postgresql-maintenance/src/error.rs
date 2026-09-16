@@ -37,6 +37,6 @@ pub enum MaintenanceError {
     #[error("platform tenant registry contains an invalid tenant name: {0}")]
     TenantName(#[from] InvalidTenantName),
     /// Durable state named a target this binary does not own.
-    #[error("platform maintenance state contains unknown target {0:?}")]
+    #[error("platform maintenance state contains unknown target '{0}'")]
     UnknownTarget(String),
 }

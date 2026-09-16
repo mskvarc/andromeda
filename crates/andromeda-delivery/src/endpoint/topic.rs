@@ -51,7 +51,7 @@ pub enum MqttTopicError {
     #[error("an MQTT publish topic must not be empty")]
     Empty,
     /// The topic carried a wildcard, which only a subscription filter may.
-    #[error("an MQTT publish topic must not contain the wildcard character {wildcard:?}")]
+    #[error("an MQTT publish topic must not contain the wildcard character '{wildcard}'")]
     Wildcard {
         /// The wildcard character that was found, `+` or `#`.
         wildcard: char,

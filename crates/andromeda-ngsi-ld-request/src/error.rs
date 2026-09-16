@@ -30,22 +30,22 @@ pub enum ParameterError {
     #[error("{0}")]
     OptionsInvalid(String),
     /// The `format` parameter value was not a recognised output format.
-    #[error("Invalid format value: '{0}'")]
+    #[error("invalid format value: '{0}'")]
     FormatInvalid(String),
     /// The `idPattern` parameter was present but empty.
-    #[error("Invalid idPattern: empty value")]
+    #[error("invalid idPattern: empty value")]
     IdPatternEmpty,
     /// An `orderBy` term carried a direction outside the clause 4.23 grammar.
-    #[error("Invalid orderBy direction: '{0}'")]
+    #[error("invalid orderBy direction: '{0}'")]
     OrderByDirectionInvalid(String),
     /// The `orderGeometry` parameter value was not a valid geometry kind.
-    #[error("Invalid orderGeometry value: '{0}'")]
+    #[error("invalid orderGeometry value: '{0}'")]
     OrderGeometryInvalid(String),
     /// `orderGeometry=GeometryCollection` is not supported.
     #[error("orderGeometry does not support GeometryCollection")]
     OrderGeometryCollection,
     /// The `orderFrom` JSON value could not be parsed.
-    #[error("Invalid orderFrom value: '{value}' is not valid JSON")]
+    #[error("invalid orderFrom value: '{value}' is not valid JSON")]
     OrderFromInvalid {
         /// The raw value from the request.
         value: String,
@@ -70,14 +70,14 @@ pub enum ParameterError {
     Projection(#[from] ProjectionConflict),
     /// `limit=0` appeared without the `count` option, which clause 6.3.10 Table
     /// 6.3.10-1 permits only when a count is requested.
-    #[error("limit=0 is only allowed together with the count option (clause 6.3.10)")]
+    #[error("limit=0 is only allowed together with the count option")]
     LimitZeroWithoutCount,
     /// A `pick`/`omit` term nested a clause 4.21 sub-projection while the
     /// request asked for no join to retrieve the entity it describes.
-    #[error("pick/omit select Linked Entity members but the request asks for no join to retrieve them (clause 5.7.2.4)")]
+    #[error("pick/omit select Linked Entity members but the request asks for no join to retrieve them")]
     ProjectionLinkedTermsWithoutJoin,
     /// A `pick`/`omit` term nested deeper than the requested traversal walks.
-    #[error("pick/omit select Linked Entity members {depth} relationship(s) deep, beyond joinLevel={join_level} (clause 5.7.2.4)")]
+    #[error("pick/omit select Linked Entity members {depth} relationship(s) deep, beyond joinLevel={join_level}")]
     ProjectionDepthExceedsJoinLevel {
         /// How many Relationship hops the deepest nested term crosses.
         depth: u32,
@@ -86,10 +86,10 @@ pub enum ParameterError {
     },
     /// A `q` filter crossed a Relationship while the request asked for no
     /// Linked Entity retrieval to reach it.
-    #[error("q traverses a Linked Entity but the request asks for no join to retrieve them (clause 5.7.2.4)")]
+    #[error("q traverses a Linked Entity but the request asks for no join to retrieve them")]
     FilterTraversalWithoutJoin,
     /// A `q` filter chained more Relationship hops than the traversal walks.
-    #[error("too deep query: q traverses {depth} Relationship(s), beyond joinLevel={join_level} (clause 5.7.2.4)")]
+    #[error("too deep query: q traverses {depth} Relationship(s), beyond joinLevel={join_level}")]
     FilterDepthExceedsJoinLevel {
         /// How many Relationship hops the deepest chain in the filter crosses.
         depth: u32,
@@ -98,25 +98,23 @@ pub enum ParameterError {
     },
     /// A delete-by-query named a Linked Entity, which the operation cannot
     /// reach at all (clause 5.6.21.4 defines no `join` for it).
-    #[error("delete by query must not name Linked Entities: {0} (clause 5.6.21.4)")]
+    #[error("delete by query must not name Linked Entities: {0}")]
     PurgeNamesLinkedEntities(LinkedRetrievalTerm),
     /// `join=inline` was combined with a temporal representation that has no
     /// per-instance nesting site.
-    #[error(
-        "join=inline is not applicable to the {0} representation, which has no attribute instance to nest a linked entity under (clauses 4.5.5, 4.5.19, 4.5.23)"
-    )]
+    #[error("join=inline is not applicable to the {0} representation, which has no attribute instance to nest a linked entity under")]
     InlineJoinWithoutInstances(TemporalFormat),
     /// The deprecated `attrs` parameter named a structural Entity member.
     #[error("'{0}' is an Entity member and is not allowed in attrs")]
     AttrsReservedMember(AttributeName),
     /// The `timerel` value was not one of `before`, `after`, `between`.
-    #[error("Invalid timerel value: {0}")]
+    #[error("invalid timerel value: {0}")]
     TimerelInvalid(String),
     /// The `timeproperty` value did not name a temporal property (clause 4.8).
-    #[error("Invalid timeproperty value: {0}")]
+    #[error("invalid timeproperty value: {0}")]
     TimePropertyInvalid(String),
     /// The `aggrMethod` value was not a recognised aggregation method.
-    #[error("Invalid aggrMethod value: {0}")]
+    #[error("invalid aggrMethod value: {0}")]
     AggrMethodInvalid(String),
     /// A temporal query was issued without the required `timerel`/`timeAt` pair.
     #[error("timerel and timeAt are required for temporal query")]
@@ -188,7 +186,7 @@ pub enum ParameterError {
     /// An aggregated temporal representation named an attribute whose recorded
     /// values cannot be aggregated by one of the requested methods (clause
     /// 5.7.4.4, Table 4.5.19.1-1).
-    #[error("attribute {attribute} is not eligible for the aggregation method {method} (clause 5.7.4.4)")]
+    #[error("attribute {attribute} is not eligible for the aggregation method {method}")]
     AggregationIneligible {
         /// The attribute the request named.
         attribute: AttributeName,

@@ -23,7 +23,7 @@ const LISTENER_PROTOCOL: ForwardedProtocol = ForwardedProtocol::Http;
 #[derive(Debug, Error)]
 pub enum RequestOriginError {
     /// The header text cannot form an HTTP origin.
-    #[error("Host header does not identify a valid origin: {detail}")]
+    #[error("host header does not identify a valid origin: {detail}")]
     InvalidOrigin {
         /// URL parsing detail.
         detail: String,

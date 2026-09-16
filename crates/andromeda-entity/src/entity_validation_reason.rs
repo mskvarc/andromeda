@@ -1,0 +1,207 @@
+//! The concrete reasons an entity operation is rejected as `BadRequestData`.
+//!
+//! Every client-facing validation failure of entity policy is one variant here,
+//! carrying the offending value as a typed field and chaining the typed source
+//! error where one exists, so [`EntityError::Validation`](crate::error::EntityError::Validation)
+//! never holds an ad-hoc string. Each `#[error]` renders lowercase client prose;
+//! spec clause numbers stay in these doc comments, never in the message.
+
+use crate::merge_fragment::MergeFragmentError;
+use andromeda_ngsi_ld_geometry::geojson::GeometryError;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, reference::NgsiLdReferenceError, uri::Uri};
+use andromeda_ngsi_ld_model::expanded::{mutation::error::ExpandedEntityError, scope_member::ScopeMemberError};
+use thiserror::Error;
+
+/// Why an entity payload or operation is invalid.
+#[derive(Debug, Error)]
+pub enum EntityValidationReason {
+    /// An expanded JSON-LD member key does not satisfy the attribute-name grammar.
+    #[error("invalid expanded attribute name '{name}': {source}")]
+    ExpandedAttributeName {
+        /// The rejected expanded member key.
+        name: String,
+        /// The grammar violation.
+        #[source]
+        source: NgsiLdReferenceError,
+    },
+    /// An expanded attribute IRI does not satisfy the attribute-name grammar.
+    #[error("invalid attribute name '{iri}': {source}")]
+    AttributeName {
+        /// The rejected expanded attribute IRI.
+        iri: String,
+        /// The grammar violation.
+        #[source]
+        source: NgsiLdReferenceError,
+    },
+    /// An attribute name begins with the reserved `@` character.
+    #[error("invalid attribute name '{name}': names beginning with '@' are reserved")]
+    ReservedAttributeName {
+        /// The rejected attribute name.
+        name: AttributeName,
+    },
+    /// The short name the active `@context` declares for a requested attribute is
+    /// not itself an NGSI-LD name.
+    #[error("the context declares '{declared}' for {requested}, which is not an NGSI-LD name: {source}")]
+    DeclaredName {
+        /// The short name the context maps the attribute to.
+        declared: String,
+        /// The attribute the client requested.
+        requested: AttributeName,
+        /// The grammar violation.
+        #[source]
+        source: NgsiLdReferenceError,
+    },
+    /// An attribute set its `datasetId` to the NGSI-LD Null (clauses 5.5.8, 5.5.12).
+    #[error("attribute '{attribute}' sets its datasetId to 'urn:ngsi-ld:null'; a datasetId cannot be deleted by setting it to that value")]
+    DatasetIdSentinel {
+        /// The offending attribute.
+        attribute: AttributeName,
+    },
+    /// An attribute carried the NGSI-LD Null where this operation forbids it (clause 5.5.4).
+    #[error("attribute '{attribute}' carries the reserved value 'urn:ngsi-ld:null', which this operation does not permit")]
+    ReservedNullValue {
+        /// The offending attribute.
+        attribute: AttributeName,
+    },
+    /// An attribute nested the NGSI-LD Null inside its value object outside a
+    /// merge fragment (clause 5.5.4).
+    #[error(
+        "attribute '{attribute}' carries 'urn:ngsi-ld:null' inside the JSON object on the right-hand side of its value, which only a merge fragment may do"
+    )]
+    NestedNullValue {
+        /// The offending attribute.
+        attribute: AttributeName,
+    },
+    /// The `scope` member carried the NGSI-LD Null outside a partial-update or
+    /// merge fragment (clause 5.5.4).
+    #[error(
+        "the scope member carries the NGSI-LD Null, which is admitted as a first-level member value only in the fragment of a partial update or merge operation"
+    )]
+    ScopeNull,
+    /// The `scope` member was not a value the scope grammar admits.
+    #[error(transparent)]
+    Scope(#[from] ScopeMemberError),
+    /// `scope` was named in a partial-update, which cannot target it (clause 5.6.4).
+    #[error("scope is not a partially updatable attribute")]
+    ScopeNotPartiallyUpdatable,
+    /// `scope` was named in an attribute replacement, which cannot target it.
+    #[error("scope is not a replaceable attribute")]
+    ScopeNotReplaceable,
+    /// An attribute instance carried a member its family never defines (clauses
+    /// 4.5.2 through 4.5.24).
+    #[error("{} cannot carry '{term}': that member is never present on this attribute family", forbidden_member_subject(.family.as_ref(), .attribute.as_ref()))]
+    MemberForbidden {
+        /// The attribute the instance belongs to, when it has a name.
+        attribute: Option<AttributeName>,
+        /// The attribute family, when the instance declares one.
+        family: Option<AttributeType>,
+        /// The expanded IRI of the forbidden member.
+        term: String,
+    },
+    /// An attribute instance declared a `@type` outside the NGSI-LD set (clause 5.2.4).
+    #[error("attribute type is not a supported NGSI-LD attribute type")]
+    UnsupportedAttributeType,
+    /// A `Property` or `GeoProperty` instance omitted its required `value` member.
+    #[error("{attribute_type} '{attribute}' is missing required field 'value'")]
+    MissingValue {
+        /// The declared attribute family.
+        attribute_type: AttributeType,
+        /// The offending attribute.
+        attribute: AttributeName,
+    },
+    /// A `Relationship` instance omitted its required `object` member.
+    #[error("Relationship '{attribute}' is missing required field 'object'")]
+    MissingObject {
+        /// The offending attribute.
+        attribute: AttributeName,
+    },
+    /// An instance of a unitless attribute family carried `unitCode` (clauses
+    /// 4.5.3, 4.5.18, 4.5.20, 4.5.24).
+    #[error("{family} '{attribute}' cannot carry 'unitCode': this attribute family is defined without one")]
+    UnitCodeForbidden {
+        /// The unitless attribute family.
+        family: AttributeType,
+        /// The offending attribute.
+        attribute: AttributeName,
+    },
+    /// Two instances of one attribute share a `datasetId` (clause 4.5.5).
+    #[error("attribute '{attribute}' repeats the instance with datasetId '{dataset_id}'")]
+    RepeatedInstance {
+        /// The offending attribute.
+        attribute: AttributeName,
+        /// The repeated dataset identifier.
+        dataset_id: Uri,
+    },
+    /// An attribute carried more than one default (no-`datasetId`) instance
+    /// (clause 4.5.5).
+    #[error("attribute '{attribute}' carries more than one default instance")]
+    MultipleDefaultInstances {
+        /// The offending attribute.
+        attribute: AttributeName,
+    },
+    /// A `GeoProperty` instance did not carry a usable `GeoJSON` geometry (clause 5.5.4).
+    #[error("GeoProperty '{name}': {source}")]
+    GeoProperty {
+        /// The `GeoProperty`, by compact term where the core context defines one.
+        name: String,
+        /// The geometry fault.
+        #[source]
+        source: GeometryError,
+    },
+    /// A merge fragment could not be adapted to the stored attribute's shape.
+    #[error(transparent)]
+    MemberAdaptation(#[from] MergeFragmentError),
+    /// The entity could not be serialized to a JSON payload.
+    #[error("entity payload could not be serialized: {0}")]
+    EntityPayload(#[source] serde_json::Error),
+    /// The patch could not be serialized to a JSON payload.
+    #[error("patch payload could not be serialized: {0}")]
+    PatchPayload(#[source] serde_json::Error),
+    /// The compacted entity could not be read back as an entity.
+    #[error("entity data is not valid: {0}")]
+    EntityData(#[source] serde_json::Error),
+    /// The entity representation was not a JSON object.
+    #[error("entity data is not a JSON object")]
+    EntityDataNotObject,
+    /// The entity representation omitted its `id`.
+    #[error("entity is missing an id")]
+    EntityMissingId,
+    /// A distance ordering was requested with nothing to measure from (clause 5.7.2.4).
+    #[error("distance-based ordering requires either a geo-query or an orderFrom parameter")]
+    DistanceOrderingWithoutReference,
+    /// The client's `collation` is not a locale the database can honour.
+    #[error("'{collation}' does not conform to a valid ICU collation")]
+    Collation {
+        /// The rejected collation identifier.
+        collation: String,
+    },
+    /// A `noOverwrite` batch update named attributes that already exist.
+    #[error("some attributes already exist and were not updated due to noOverwrite")]
+    NoOverwriteConflict,
+    /// The atomic commit port refused the submission as unusable (clause 5.5.6).
+    ///
+    /// The text is relayed verbatim from the commit port: `context-commit`
+    /// cannot depend on the domain error types that shape it without a
+    /// dependency cycle, so its refusal reason arrives as opaque prose.
+    #[error("{detail}")]
+    CommitRefused {
+        /// The commit port's own refusal detail.
+        detail: String,
+    },
+    /// An expanded entity- or attribute-level mutation rejected malformed input.
+    #[error(transparent)]
+    Expanded(ExpandedEntityError),
+}
+
+/// Render the subject of a forbidden-member message from its typed parts.
+///
+/// Named after the attribute where the instance has one, and after its family's
+/// fragment otherwise, matching how the specification phrases the prohibition.
+fn forbidden_member_subject(family: Option<&AttributeType>, attribute: Option<&AttributeName>) -> String {
+    match (family, attribute) {
+        (Some(family), Some(attribute)) => format!("{family} '{attribute}'"),
+        (Some(family), None) => format!("the {family} fragment"),
+        (None, Some(attribute)) => format!("attribute '{attribute}'"),
+        (None, None) => "the attribute fragment".to_string(),
+    }
+}
