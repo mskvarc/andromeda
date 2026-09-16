@@ -23,12 +23,12 @@
 #   broker-c  -> http://broker-c:1056
 #   broker-a2 -> http://broker-a2:1056
 #
-# Bring up:  docker compose -f docker/distributed/docker-compose.distributed.yaml up --build
+# Bring up:  docker compose -f docker/compose/test/distributed/docker-compose.yaml up --build
 name: andromeda-distributed
 
 x-postgres-base: &postgres-base
   build:
-    context: ../postgresql
+    context: ../../../images/postgresql
   image: andromeda-distributed-postgres:latest
   environment:
     POSTGRES_USER: postgres
@@ -42,8 +42,8 @@ x-postgres-base: &postgres-base
 
 x-broker-base: &broker-base
   build:
-    context: ../..
-    dockerfile: docker/andromeda/Dockerfile
+    context: ../../../..
+    dockerfile: docker/images/andromeda/Dockerfile
   image: andromeda-distributed:latest
   restart: unless-stopped
   # Lets each broker reach mock Context Sources / notification receivers that the

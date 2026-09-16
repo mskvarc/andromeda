@@ -5,19 +5,19 @@
 #   - extensions-conformance (host :1092): conformance_mode on AND the flags on,
 #     to prove the hard override wins (the gate module targets it)
 #
-#   docker compose -f docker/extensions/docker-compose.extensions.yaml up --build -d
+#   docker compose -f docker/compose/test/extensions/docker-compose.yaml up --build -d
 #   ANDROMEDA_TEST_BROKER_URL=http://127.0.0.1:1091/ngsi-ld/v1 \
 #   ANDROMEDA_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5491/postgres \
 #   ANDROMEDA_TEST_CALLBACK_HOST=127.0.0.1 \
 #   ANDROMEDA_TEST_CONFORMANCE_BROKER_URL=http://127.0.0.1:1092/ngsi-ld/v1 \
 #   cargo test --test extensions -- --test-threads=1
-#   docker compose -f docker/extensions/docker-compose.extensions.yaml down -v
+#   docker compose -f docker/compose/test/extensions/docker-compose.yaml down -v
 name: andromeda-extensions
 
 x-broker-base: &broker-base
   build:
-    context: ../..
-    dockerfile: docker/andromeda/Dockerfile
+    context: ../../../..
+    dockerfile: docker/images/andromeda/Dockerfile
   image: andromeda-extensions:latest
   restart: unless-stopped
   extra_hosts:
@@ -39,7 +39,7 @@ x-broker-base: &broker-base
 services:
   extensions-postgres:
     build:
-      context: ../postgresql
+      context: ../../../images/postgresql
     image: andromeda-extensions-postgres:latest
     environment:
       POSTGRES_USER: postgres

@@ -60,8 +60,8 @@ pub fn tcp_base() -> String {
 
 /// A root store trusting only the broker's mounted certificate.
 pub fn trusted_roots() -> RootCertStore {
-    let path = env::var(CERTIFICATE_ENV).unwrap_or_else(|_| "docker/http3/certs/broker.crt".to_owned());
-    let pem = fs::read(&path).unwrap_or_else(|error| panic!("read broker certificate {path} (generate it per docker/http3 header): {error}"));
+    let path = env::var(CERTIFICATE_ENV).unwrap_or_else(|_| "docker/compose/test/http3/certs/broker.crt".to_owned());
+    let pem = fs::read(&path).unwrap_or_else(|error| panic!("read broker certificate {path} (generate it per docker/compose/test/http3 header): {error}"));
     let mut roots = RootCertStore::empty();
     for certificate in CertificateDer::pem_slice_iter(&pem) {
         roots

@@ -12,20 +12,20 @@
 # hand any client control of the scheme in the broker's persisted @context URLs.
 #
 # Certificate (not committed -- key material does not belong in a repository):
-#   mkdir -p docker/tls/certs
+#   mkdir -p docker/compose/test/tls/certs
 #   openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
-#     -keyout docker/tls/certs/broker.key -out docker/tls/certs/broker.crt \
+#     -keyout docker/compose/test/tls/certs/broker.key -out docker/compose/test/tls/certs/broker.crt \
 #     -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 #
 # Bring up:
-#   docker compose -f docker/tls/docker-compose.tls.yaml up -d --build
+#   docker compose -f docker/compose/test/tls/docker-compose.yaml up -d --build
 #   curl -k https://127.0.0.1:8443/ngsi-ld/v1/info/sourceIdentity
 name: andromeda-tls
 
 services:
   postgres:
     build:
-      context: ../postgresql
+      context: ../../../images/postgresql
     image: andromeda-tls-postgres:latest
     environment:
       POSTGRES_USER: postgres
@@ -39,8 +39,8 @@ services:
 
   broker:
     build:
-      context: ../..
-      dockerfile: docker/andromeda/Dockerfile
+      context: ../../../..
+      dockerfile: docker/images/andromeda/Dockerfile
     image: andromeda-tls:latest
     restart: unless-stopped
     depends_on:

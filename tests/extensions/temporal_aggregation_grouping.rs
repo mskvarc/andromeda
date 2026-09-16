@@ -4,7 +4,7 @@
 //! Runs against a broker started with
 //! `ANDROMEDA__EXTENSIONS__TEMPORAL_AGGREGATION_GROUPING=enabled` and a small
 //! `ANDROMEDA__EXTENSIONS__TEMPORAL_AGGREGATION_GROUPING_MAX_GROUPS` (see
-//! `docker/extensions/extensions.env`).
+//! `docker/compose/test/extensions/env`).
 
 use crate::seeding::{DATASET_A, DATASET_B, seed_grouping_history};
 use andromeda_test_client::test_client::TestClient;

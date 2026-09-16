@@ -27,19 +27,19 @@ Each Postgres server keeps the image default `max_connections = 100`. The broker
 
 ```sh
 # build the broker image once and start the stack
-docker compose -f docker/distributed/docker-compose.distributed.yaml up --build -d
+docker compose -f docker/compose/test/distributed/docker-compose.yaml up --build -d
 
 # wait until all four brokers report healthy
-docker compose -f docker/distributed/docker-compose.distributed.yaml ps
+docker compose -f docker/compose/test/distributed/docker-compose.yaml ps
 
 # logs for one instance
-docker compose -f docker/distributed/docker-compose.distributed.yaml logs -f broker-a
+docker compose -f docker/compose/test/distributed/docker-compose.yaml logs -f broker-a
 
 # stop and remove, including the per-server data volumes
-docker compose -f docker/distributed/docker-compose.distributed.yaml down -v
+docker compose -f docker/compose/test/distributed/docker-compose.yaml down -v
 ```
 
-The broker image (`docker/andromeda/Dockerfile`) builds a debug binary and ships no config file - every setting comes from `ANDROMEDA_*` env vars, which all have defaults. The Postgres image (`docker/postgresql/Dockerfile`) provides TimescaleDB + PostGIS, required by the tenant migrations.
+The broker image (`docker/images/andromeda/Dockerfile`) builds a debug binary and ships no config file - every setting comes from `ANDROMEDA_*` env vars, which all have defaults. The Postgres image (`docker/images/postgresql/Dockerfile`) provides TimescaleDB + PostGIS, required by the tenant migrations.
 
 ## Notes
 

@@ -7,7 +7,7 @@
 //!
 //! The `andromeda` binary implements no TLS: it serves plaintext HTTP, and the
 //! clause is met by the deployment described in `docs/tls-deployment.md` and
-//! built by `docker/tls/`. That makes those two files load-bearing rather than
+//! built by `docker/compose/test/tls/`. That makes those two files load-bearing rather than
 //! illustrative, and the three properties the claim actually depends on are
 //! properties of their content:
 //!
@@ -29,10 +29,10 @@ use serde_norway::Value;
 use std::{fs, mem::take, path::PathBuf};
 
 /// The reference proxy configuration.
-const NGINX_CONFIGURATION: &str = "docker/tls/nginx.conf";
+const NGINX_CONFIGURATION: &str = "docker/compose/test/tls/nginx.conf";
 
 /// The reference stack that runs a broker behind that proxy.
-const TLS_COMPOSE_FILE: &str = "docker/tls/docker-compose.tls.yaml";
+const TLS_COMPOSE_FILE: &str = "docker/compose/test/tls/docker-compose.yaml";
 
 /// The two forwarded fields the broker reads, and the only two whose value a
 /// client must never be able to influence at a trusted edge.

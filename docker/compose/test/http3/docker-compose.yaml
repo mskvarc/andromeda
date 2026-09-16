@@ -1,6 +1,6 @@
 # One Andromeda broker serving HTTP/3 natively alongside HTTP/1.1 and HTTP/2.
 #
-# Unlike the TLS tier (docker/tls/), which terminates TLS in an nginx proxy in
+# Unlike the TLS tier (docker/compose/test/tls/), which terminates TLS in an nginx proxy in
 # front of a plaintext broker, HTTP/3 cannot be proxied to a plaintext hop:
 # QUIC (RFC 9114) has no cleartext mode and always terminates TLS 1.3 at the
 # endpoint. The broker therefore holds the certificate and serves HTTP/3 itself.
@@ -15,25 +15,25 @@
 # The SANs must cover the names and address the client verifies against, and the
 # leaf must be marked CA:FALSE: a client that trusts the self-signed leaf
 # directly rejects a CA-marked certificate presented as an end entity.
-#   mkdir -p docker/http3/certs
+#   mkdir -p docker/compose/test/http3/certs
 #   openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
-#     -keyout docker/http3/certs/broker.key -out docker/http3/certs/broker.crt \
+#     -keyout docker/compose/test/http3/certs/broker.key -out docker/compose/test/http3/certs/broker.crt \
 #     -subj "/CN=localhost" \
 #     -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
 #     -addext "basicConstraints=critical,CA:FALSE"
 #
 # Bring up:
-#   docker compose -f docker/http3/docker-compose.http3.yaml up -d --build --wait
+#   docker compose -f docker/compose/test/http3/docker-compose.yaml up -d --build --wait
 # Then run the suite from the repository root:
 #   cargo test --test http3 -- --test-threads=1
 # Tear down:
-#   docker compose -f docker/http3/docker-compose.http3.yaml down --volumes --remove-orphans
+#   docker compose -f docker/compose/test/http3/docker-compose.yaml down --volumes --remove-orphans
 name: andromeda-http3
 
 services:
   postgres:
     build:
-      context: ../postgresql
+      context: ../../../images/postgresql
     image: andromeda-http3-postgres:latest
     environment:
       POSTGRES_USER: postgres
@@ -47,8 +47,8 @@ services:
 
   broker:
     build:
-      context: ../..
-      dockerfile: docker/andromeda/Dockerfile
+      context: ../../../..
+      dockerfile: docker/images/andromeda/Dockerfile
     image: andromeda-http3:latest
     restart: unless-stopped
     depends_on:
