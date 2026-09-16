@@ -268,7 +268,7 @@ fn regression_the_reference_tls_stack_trusts_the_terminator_it_mounts() {
     let trust = services
         .get("broker")
         .and_then(|broker| broker.get("environment"))
-        .and_then(|environment| environment.get("ANDROMEDA_HTTP_FORWARDED_HEADERS"))
+        .and_then(|environment| environment.get("ANDROMEDA__HTTP__FORWARDED_HEADERS"))
         .and_then(Value::as_str)
         .map(str::to_owned);
     assert_eq!(
