@@ -262,14 +262,23 @@ jobs:
       - name: Sign manifest list and per-platform manifests
         run: cosign sign --yes --recursive "${IMAGE}@${{ steps.digest.outputs.digest }}"
 
+      # GitHub's artifact-attestation API rejects user-owned private
+      # repositories ("Feature not available for user-owned private
+      # repositories"), so provenance and SBOM attestation can only run once the
+      # repository is public. Gate them on visibility: they are skipped on a
+      # private repo and light up automatically on the first public build. The
+      # cosign signature above needs no such gate -- it writes to the registry
+      # and the public Rekor log, which work regardless of repository visibility.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        if: ${{ github.event.repository.visibility == 'public' }}
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.digest.outputs.digest }}
           push-to-registry: true
 
       - name: Generate SBOM
+        if: ${{ github.event.repository.visibility == 'public' }}
         uses: anchore/sbom-action@v0
         with:
           image: ${{ env.IMAGE }}@${{ steps.digest.outputs.digest }}
@@ -277,7 +286,8 @@ jobs:
           output-file: sbom.spdx.json
 
       - name: Attest SBOM
-        uses: actions/attest-sbom@v2
+        if: ${{ github.event.repository.visibility == 'public' }}
+        uses: actions/attest-sbom@v4
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.digest.outputs.digest }}
