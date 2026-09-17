@@ -1,13 +1,15 @@
 //! The host-broker dev loop for the base tier: an incremental cargo build and two
 //! spawned broker processes, in place of the containerized `broker` profile.
 
-use crate::error::XtaskError;
+use crate::{
+    error::XtaskError,
+    readiness::{self, Readiness},
+};
 use reqwest::blocking::Client;
 use std::{
     net::TcpListener,
     path::Path,
     process::{Child, Command, Stdio},
-    thread::sleep,
     time::Duration,
 };
 
@@ -97,15 +99,7 @@ pub(crate) fn await_ready() -> Result<(), XtaskError> {
     let client = Client::builder().timeout(Duration::from_secs(2)).build()?;
     for port in [BROKER_PORT, TRUSTED_PORT] {
         let url = format!("http://127.0.0.1:{port}/ngsi-ld/v1/health");
-        let mut ready = false;
-        for _attempt in 0..READINESS_ATTEMPTS {
-            if client.get(&url).send().is_ok_and(|response| response.status().is_success()) {
-                ready = true;
-                break;
-            }
-            sleep(Duration::from_secs(1));
-        }
-        if !ready {
+        if readiness::await_health(&client, &url, READINESS_ATTEMPTS) == Readiness::Unready {
             return Err(XtaskError::BrokerNotReady(port));
         }
     }

@@ -10,8 +10,10 @@ mod certs;
 mod cli;
 mod compose;
 mod error;
+mod etsi;
 mod lifecycle;
 mod local_broker;
+mod readiness;
 mod stack;
 
 fn main() -> ExitCode {

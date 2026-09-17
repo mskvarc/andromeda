@@ -39,6 +39,42 @@ pub(crate) enum XtaskError {
     /// Building the blocking HTTP client for the health probe failed.
     #[error("failed to build the health-probe HTTP client: {0}")]
     HealthClient(#[from] reqwest::Error),
+    /// Cloning the ETSI suite checkout failed.
+    #[error("git clone of the ETSI test suite failed")]
+    SuiteClone,
+    /// Resetting the ETSI checkout to its pinned commit failed.
+    #[error("git reset of the ETSI checkout to {0} failed")]
+    SuiteReset(String),
+    /// Fetching the pinned commit into an existing checkout failed.
+    #[error("git fetch of the ETSI test suite failed")]
+    SuiteFetch,
+    /// `python3` is not on `PATH`, so the robot virtualenv cannot be built.
+    #[error("python3 was not found on PATH; it is required to run the ETSI suite")]
+    PythonMissing,
+    /// Creating the robot virtualenv failed.
+    #[error("creating the ETSI robot virtualenv failed")]
+    VenvCreate,
+    /// Installing the suite's Python requirements into the virtualenv failed.
+    #[error("installing the ETSI suite's Python requirements failed")]
+    PipInstall,
+    /// A patch did not apply cleanly to the pristine checkout.
+    #[error("patch did not apply cleanly to the ETSI checkout: {0}")]
+    PatchApply(String),
+    /// A requested suite subtree exists nowhere under the checkout.
+    #[error("no such suite subtree under the ETSI checkout: {0}")]
+    UnknownSubtree(String),
+    /// The broker process exited while the runner was waiting for readiness.
+    #[error("the broker exited during startup; see broker.log in the output directory")]
+    BrokerStartupExit,
+    /// A run's `output.xml` is absent, so a diff has nothing to read.
+    #[error("robot output.xml not found at {0}")]
+    OutputXmlMissing(String),
+    /// A run's `output.xml` could not be parsed as XML.
+    #[error("failed to parse {0}: {1}")]
+    OutputXmlParse(String, String),
+    /// A diff found test cases that pass in the baseline but fail in the candidate.
+    #[error("{0} test case(s) newly failing since the baseline")]
+    NewlyFailing(usize),
     /// An underlying process could not be spawned or waited on.
     #[error("process error: {0}")]
     Io(#[from] io::Error),

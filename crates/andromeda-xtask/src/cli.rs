@@ -3,6 +3,7 @@
 use crate::{
     compose::ImageBuild,
     error::XtaskError,
+    etsi::EtsiArgs,
     lifecycle::{self, BrokerMode},
     stack::{STACKS, Stack, StackName, stack_for_suite},
 };
@@ -33,6 +34,7 @@ impl Cli {
     pub(crate) fn execute(self) -> Result<(), XtaskError> {
         match self.command {
             Command::Itest(arguments) => arguments.execute(),
+            Command::Etsi(arguments) => arguments.execute(),
         }
     }
 }
@@ -42,6 +44,8 @@ impl Cli {
 enum Command {
     /// Run integration-test suites against a docker-compose stack.
     Itest(ItestArgs),
+    /// Fetch, patch, and run the official ETSI NGSI-LD Robot Framework suite.
+    Etsi(EtsiArgs),
 }
 
 /// Arguments to `xtask itest`. Exactly one selector is required.
@@ -151,7 +155,7 @@ fn no_build_from_env() -> bool {
 }
 
 /// The repository root: two directories above this crate's manifest.
-fn repository_root() -> PathBuf {
+pub(crate) fn repository_root() -> PathBuf {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     manifest.ancestors().nth(2).map_or_else(|| manifest.to_path_buf(), Path::to_path_buf)
 }

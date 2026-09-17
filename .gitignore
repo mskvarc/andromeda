@@ -11,3 +11,7 @@ results*
 
 # Self-signed TLS material for the docker/compose/test/http3 stack (see docs/http3.md).
 /docker/compose/test/http3/certs/
+
+# Python bytecode cache from robot loading the ETSI pre-run modifier (crates/andromeda-xtask/etsi).
+__pycache__/
+*.pyc
