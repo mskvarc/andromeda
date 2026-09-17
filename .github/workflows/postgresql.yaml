@@ -1,0 +1,235 @@
+name: postgresql
+
+# The PostgreSQL image is derived infrastructure, not broker code: it is
+# postgres:18-trixie plus PostGIS, TimescaleDB, and the Andromeda entrypoint.
+# It therefore versions on its own inputs, decoupled from the broker's
+# release-on-tag cadence. It rebuilds when its build context changes, on a
+# weekly schedule to pick up base-image security patches, and on demand.
+on:
+  push:
+    branches: [master]
+    paths:
+      - docker/images/postgresql/**
+      - .github/workflows/postgresql.yaml
+  schedule:
+    # Weekly, Monday 04:17 UTC. Off the hour to avoid the scheduler's peak.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        # tsl is Timescale Community Edition (the broker's default); apache is
+        # the Apache-2.0-only build with the TSL module removed. Both editions
+        # are built for both platforms and published side by side.
+        edition: [tsl, apache]
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+        # The include entries above attach one platform per matrix row; the
+        # cross product with `edition` yields tsl/apache on amd64 and arm64.
+        platform: [linux/amd64, linux/arm64]
+
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda-postgresql
+    steps:
+      - name: Prepare platform slug
+        run: |
+          platform="${{ matrix.platform }}"
+          echo "PLATFORM_SLUG=${platform//\//-}" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v7
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: docker/images/postgresql
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            TIMESCALEDB_EDITION=${{ matrix.edition }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.edition }}-${{ env.PLATFORM_SLUG }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.edition }}-${{ env.PLATFORM_SLUG }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ matrix.edition }}-${{ env.PLATFORM_SLUG }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        edition: [tsl, apache]
+    runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda-postgresql
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: digests
+          pattern: digests-${{ matrix.edition }}-*
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The tag is not knowable before the build: PostGIS and TimescaleDB are
+      # installed by apt at their latest patch, so the honest version is
+      # whatever landed in the image. Read it back from the amd64 build (the
+      # apt package versions are identical across platforms) and compose the
+      # tag from the real contents.
+      - name: Resolve tags from image contents
+        id: tags
+        run: |
+          set -euo pipefail
+          amd64_file="$(ls digests/digests-${{ matrix.edition }}-linux-amd64/*)"
+          amd64_digest="$(basename "$amd64_file")"
+          ref="${IMAGE}@sha256:${amd64_digest}"
+
+          read -r pg_major pg_version ts_version postgis_version < <(
+            docker run --rm --entrypoint bash "$ref" -c '
+              set -euo pipefail
+              ts="$(dpkg-query -W timescaledb-2-postgresql-18 | cut -f2)"
+              gis="$(dpkg-query -W postgresql-18-postgis-3 | cut -f2)"
+              printf "%s %s %s %s\n" "$PG_MAJOR" "$PG_VERSION" "$ts" "$gis"
+            '
+          )
+
+          # PG_VERSION is "18.6-1.pgdg13+1"; keep the upstream "18.6".
+          pg="${pg_version%%-*}"
+          # TimescaleDB Debian version is "2.22.1~debian13"; keep "2.22.1".
+          ts="${ts_version%%~*}"
+          ts="${ts%%-*}"
+          # PostGIS is "3.5.3+dfsg-1.pgdg13+1" or "3.5.3-1.pgdg13+1"; keep the
+          # full upstream "3.5.3" so its patch level shows, matching TimescaleDB.
+          postgis="${postgis_version%%+*}"
+          postgis="${postgis%%-*}"
+
+          version="${pg}-timescaledb${ts}-postgis${postgis}-${{ matrix.edition }}"
+          {
+            echo "version=${version}"
+            echo "ref=${ref}"
+          } >> "$GITHUB_OUTPUT"
+
+          # Fully pinned tag, the minor-line rolling tag, and the moving
+          # per-edition tag. The tsl edition is the broker's default, so it
+          # additionally owns the unqualified `latest`.
+          tags=(
+            "${IMAGE}:${version}"
+            "${IMAGE}:${pg_major}-${{ matrix.edition }}"
+            "${IMAGE}:${{ matrix.edition }}"
+          )
+          if [ "${{ matrix.edition }}" = tsl ]; then
+            tags+=("${IMAGE}:latest")
+          fi
+          printf '%s\n' "${tags[@]}" > tags.txt
+          echo "Resolved version ${version} with tags:"
+          cat tags.txt
+
+      - name: Create manifest list and push
+        run: |
+          set -euo pipefail
+          refs=()
+          for f in digests/*/*; do
+            refs+=("${IMAGE}@sha256:$(basename "$f")")
+          done
+          tag_args=()
+          while IFS= read -r tag; do
+            tag_args+=(-t "$tag")
+          done < tags.txt
+          docker buildx imagetools create "${tag_args[@]}" "${refs[@]}"
+
+      - name: Resolve manifest list digest
+        id: digest
+        run: |
+          set -euo pipefail
+          digest="$(
+            docker buildx imagetools inspect "${IMAGE}:${{ steps.tags.outputs.version }}" \
+              --format '{{json .Manifest}}' | jq -er '.digest'
+          )"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect image
+        run: docker buildx imagetools inspect "${IMAGE}:${{ steps.tags.outputs.version }}"
+
+      # Keyless signature over the manifest list and, with --recursive, each
+      # per-platform manifest it references.
+      - name: Sign manifest list and per-platform manifests
+        run: cosign sign --yes --recursive "${IMAGE}@${{ steps.digest.outputs.digest }}"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          push-to-registry: true
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.digest.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Attest SBOM
+        uses: actions/attest-sbom@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
