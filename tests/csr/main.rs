@@ -443,7 +443,7 @@ fn expected_query_detailed(id: &str) -> Value {
 /// does trim, because there the subscriber is told what changed.
 /// The `csr_basic_jsonld` registration as a discovery by `type=Vehicle` returns
 /// it: clause 5.10.2.5 recommends the narrowed answer, so only the Vehicle
-/// `RegistrationInfo` element survives and the OffStreetParking element is
+/// `RegistrationInfo` element survives and the `OffStreetParking` element is
 /// trimmed away.
 fn expected_query_vehicle_information(id: &str) -> Value {
     json!([{
@@ -464,7 +464,7 @@ fn expected_query_vehicle_information(id: &str) -> Value {
 
 /// The `csr_basic_jsonld` registration as a discovery by `type=OffStreetParking`
 /// returns it: clause 5.10.2.5 trims to the matching `RegistrationInfo`
-/// element, so only the OffStreetParking element survives -- whole, both of its
+/// element, so only the `OffStreetParking` element survives -- whole, both of its
 /// `idPattern` entities included, because the trim is at element granularity --
 /// and the Vehicle element is dropped.
 fn expected_query_offstreetparking_information(id: &str) -> Value {

@@ -75,7 +75,7 @@ impl TemporalEntityOrdering {
 fn check_term(term: &OrderTerm) -> Result<(), QueryError> {
     match RawOrderTarget::classify(&term.attr) {
         RawOrderTarget::Id => {}
-        RawOrderTarget::Type | RawOrderTarget::Scope | RawOrderTarget::Attribute(_) => {
+        RawOrderTarget::Type | RawOrderTarget::Scope | RawOrderTarget::CreatedAt | RawOrderTarget::ModifiedAt | RawOrderTarget::Attribute(_) => {
             return Err(QueryError::TemporalOrderingMember(serialize_attr_path(&term.attr)));
         }
     }

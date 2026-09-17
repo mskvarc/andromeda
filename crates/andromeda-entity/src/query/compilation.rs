@@ -192,6 +192,10 @@ impl EntityQueryService {
                 RawOrderTarget::Id => OrderTarget::Id,
                 RawOrderTarget::Type => OrderTarget::Type,
                 RawOrderTarget::Scope => OrderTarget::Scope,
+                // The system timestamps read their own columns and carry no IRI
+                // to expand, so they pass through like `id`/`type`/`scope`.
+                RawOrderTarget::CreatedAt => OrderTarget::CreatedAt,
+                RawOrderTarget::ModifiedAt => OrderTarget::ModifiedAt,
                 // clone: expansion rewrites the path it consumes, and the cached
                 // request parameters stay immutable across compilations.
                 RawOrderTarget::Attribute(path) => OrderTarget::Attribute(expand_attr_path(path.clone(), &json_keys, &expander).await?),

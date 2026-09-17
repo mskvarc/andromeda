@@ -35,9 +35,9 @@ pub struct OrderTerm {
 
 /// What an `orderBy` term sorts on (clause 4.23).
 ///
-/// `id`, `type` and `scope` name structural members of the entity
-/// representation, not attributes, so they have no IRI to expand to and they
-/// are read from their own columns rather than from the payload.
+/// `id`, `type`, `scope`, `createdAt` and `modifiedAt` name structural members
+/// of the entity representation, not attributes, so they have no IRI to expand
+/// to and they are read from their own columns rather than from the payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OrderTarget {
     /// The entity identifier.
@@ -46,6 +46,11 @@ pub enum OrderTarget {
     Type,
     /// The entity scopes.
     Scope,
+    /// The instant the entity was created (clause 4.8 `createdAt`).
+    CreatedAt,
+    /// The instant the entity's payload was last modified (clause 4.8
+    /// `modifiedAt`).
+    ModifiedAt,
     /// One attribute's value, addressed by a path whose every name is an
     /// expanded IRI (clause 5.2.4).
     Attribute(AttrPath),
@@ -64,6 +69,10 @@ pub enum RawOrderTarget<'a> {
     Type,
     /// The `scope` keyword.
     Scope,
+    /// The `createdAt` keyword.
+    CreatedAt,
+    /// The `modifiedAt` keyword.
+    ModifiedAt,
     /// An attribute path, still compact.
     Attribute(&'a AttrPath),
 }
@@ -75,13 +84,19 @@ impl<'a> RawOrderTarget<'a> {
     pub const TYPE_KEYWORD: &'static str = "type";
     /// The `scope` keyword of clause 4.23.
     pub const SCOPE_KEYWORD: &'static str = "scope";
+    /// The `createdAt` system timestamp keyword (clause 4.8).
+    pub const CREATED_AT_KEYWORD: &'static str = "createdAt";
+    /// The `modifiedAt` system timestamp keyword (clause 4.8).
+    pub const MODIFIED_AT_KEYWORD: &'static str = "modifiedAt";
 
     /// Classify a raw `orderBy` path.
     ///
     /// A keyword is only a keyword when the path names it and nothing else.
     /// Clause 4.23.3 spells each as a bare `AttrName`, so `id.foo` descends
     /// into an attribute that happens to be spelled `id` rather than naming the
-    /// entity identifier — which carries no sub-attribute to descend into.
+    /// entity identifier — which carries no sub-attribute to descend into. The
+    /// same reading keeps `name.createdAt` an attribute path into a temporal
+    /// sub-member rather than the entity's own `createdAt` column.
     #[must_use]
     pub fn classify(raw: &'a AttrPath) -> RawOrderTarget<'a> {
         if !raw.is_simple() {
@@ -91,9 +106,11 @@ impl<'a> RawOrderTarget<'a> {
             RawOrderTarget::ID_KEYWORD => RawOrderTarget::Id,
             RawOrderTarget::TYPE_KEYWORD => RawOrderTarget::Type,
             RawOrderTarget::SCOPE_KEYWORD => RawOrderTarget::Scope,
+            RawOrderTarget::CREATED_AT_KEYWORD => RawOrderTarget::CreatedAt,
+            RawOrderTarget::MODIFIED_AT_KEYWORD => RawOrderTarget::ModifiedAt,
             // `&str` is unbounded, so a catch-all is the only way to close this
-            // match; anything that is not one of the three keywords is an
-            // attribute name.
+            // match; anything that is not one of the keywords is an attribute
+            // name.
             _other => RawOrderTarget::Attribute(raw),
         }
     }
@@ -235,6 +252,32 @@ mod tests {
         for (text, expected) in [("id", RawOrderTarget::Id), ("type", RawOrderTarget::Type), ("scope", RawOrderTarget::Scope)] {
             let parsed = term(text);
             assert_eq!(RawOrderTarget::classify(&parsed.attr), expected, "{text}");
+        }
+    }
+
+    /// Clause 4.8: `createdAt` and `modifiedAt` are sortable system timestamps
+    /// of the entity, read from their own columns like `id`, `type` and
+    /// `scope`, so a bare keyword classifies as the member rather than as an
+    /// attribute path.
+    #[test]
+    fn the_system_timestamp_keywords_classify_as_their_members() {
+        for (text, expected) in [("createdAt", RawOrderTarget::CreatedAt), ("modifiedAt", RawOrderTarget::ModifiedAt)] {
+            let parsed = term(text);
+            assert_eq!(RawOrderTarget::classify(&parsed.attr), expected, "{text}");
+        }
+    }
+
+    /// A dotted path whose head is `createdAt`/`modifiedAt` descends into an
+    /// attribute spelled that way, not the entity's own timestamp column, so it
+    /// stays an attribute path exactly as `id.foo` does.
+    #[test]
+    fn a_system_timestamp_keyword_carrying_a_path_is_an_attribute() {
+        for text in ["createdAt.foo", "modifiedAt[a]", "name.createdAt", "name.modifiedAt"] {
+            let parsed = term(text);
+            assert!(
+                matches!(RawOrderTarget::classify(&parsed.attr), RawOrderTarget::Attribute(_)),
+                "{text} descends past the keyword"
+            );
         }
     }
 

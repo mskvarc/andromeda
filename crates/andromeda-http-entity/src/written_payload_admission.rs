@@ -157,9 +157,13 @@ pub(crate) async fn admit_written_attribute(
 /// # Errors
 ///
 /// Returns the one refusal that is the request's rather than an entity's: a
-/// user `@context` clause 5.5.7 does not admit belongs to no entity in the
-/// array, so it fails the operation instead of being projected onto each of
-/// them.
+/// user `@context` clause 5.5.7 does not admit (a JSON-LD Scoped Context)
+/// belongs to no entity in the array, so it fails the operation instead of
+/// being projected onto each of them. An `@context` that could not be retrieved
+/// is the other outcome, and it is not returned as an error at all: clause
+/// 5.6.7.5 requires the batch to answer 207 with a per-entity `BatchEntityError`
+/// for it, so the one refusal is projected onto every submitted entity and an
+/// empty admitted set is returned.
 pub(crate) async fn admitted_batch_entities(
     service: &EntityService,
     write: BatchWrite,
@@ -167,7 +171,23 @@ pub(crate) async fn admitted_batch_entities(
     context: &ContextSpec,
     refused: &mut Vec<BatchEntityError>,
 ) -> Result<Vec<Entity>, WrittenPayloadRefusal> {
-    service.admit_write_context(context).await?;
+    if let Err(error) = service.admit_write_context(context).await {
+        let refusal = WrittenPayloadRefusal::Placement(error);
+        // Clause 5.5.6 makes an unretrievable user `@context` an
+        // `LdContextNotAvailable`, and clause 5.6.7.5 answers a batch with a
+        // per-entity `BatchEntityError` rather than failing the whole array.
+        // The refusal is the same for every entity -- the `@context` they share
+        // could not be resolved -- so it is projected onto each. A Scoped
+        // Context (clause 5.5.7) classifies as `BadRequestData`, which is the
+        // request's own fault and still fails the operation.
+        if refusal.classify_for_entity_http().error_type() == NgsiLdErrorType::LdContextNotAvailable {
+            for entity in entities {
+                refused.push(batch_entity_error(entity.id, &refusal, EntityHttpClassify::classify_for_entity_http));
+            }
+            return Ok(Vec::new());
+        }
+        return Err(refusal);
+    }
     let mut admitted = Vec::with_capacity(entities.len());
     for entity in entities {
         match render_and_validate(&entity) {

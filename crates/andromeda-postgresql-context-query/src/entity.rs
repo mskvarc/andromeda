@@ -726,6 +726,54 @@ mod tests {
         assert!(built.sql.contains("ASC"));
     }
 
+    /// Clause 4.8 with clause 4.23: `orderBy=createdAt` sorts on the identity
+    /// row's own `created_at` column, not on a payload attribute, so the
+    /// statement reads `entities.created_at` and joins no document row for it.
+    #[test]
+    fn build_with_order_by_created_at_reads_the_identity_column() {
+        let mut q = empty_query();
+        q.ordering.terms = vec![CompiledOrderTerm {
+            target: OrderTarget::CreatedAt,
+            direction: OrderDirection::Asc,
+            collation: None,
+        }];
+        let built = build(&q, &known_types());
+        assert!(built.sql.contains(r#"ORDER BY "entities"."created_at" ASC"#), "{}", built.sql);
+        assert!(!built.sql.contains("jsonb_path_query_first("), "no payload lateral is opened: {}", built.sql);
+    }
+
+    /// A descending `createdAt` reverses only the order.
+    #[test]
+    fn build_with_order_by_created_at_desc_reverses_the_order() {
+        let mut q = empty_query();
+        q.ordering.terms = vec![CompiledOrderTerm {
+            target: OrderTarget::CreatedAt,
+            direction: OrderDirection::Desc,
+            collation: None,
+        }];
+        let built = build(&q, &known_types());
+        assert!(built.sql.contains(r#"ORDER BY "entities"."created_at" DESC"#), "{}", built.sql);
+    }
+
+    /// Clause 4.8 `modifiedAt` lives on `entity_documents`, is nullable, and so
+    /// sorts with `NULLS LAST`; the term joins the document row to read it.
+    #[test]
+    fn build_with_order_by_modified_at_joins_and_reads_the_document_column() {
+        let mut q = empty_query();
+        q.ordering.terms = vec![CompiledOrderTerm {
+            target: OrderTarget::ModifiedAt,
+            direction: OrderDirection::Asc,
+            collation: None,
+        }];
+        let built = build(&q, &known_types());
+        assert!(built.sql.contains(r#"JOIN "entity_documents" ON"#), "the document row is joined: {}", built.sql);
+        assert!(
+            built.sql.contains(r#"ORDER BY "entity_documents"."modified_at" ASC NULLS LAST"#),
+            "{}",
+            built.sql
+        );
+    }
+
     #[test]
     fn build_with_order_by_dist_asc_with_geo() {
         let mut q = empty_query();

@@ -5,7 +5,8 @@
 //! selectors filter and the ordering breaks ties on. `entity_search` is joined
 //! only when some axis of the query reads an indexed column of it, and
 //! `entity_documents` only when a filter or an ordering reads the payload — a
-//! `q` expression, or a sort on an attribute value. A projected payload is not
+//! `q` expression, a sort on an attribute value, or a sort on the `modifiedAt`
+//! column that lives on that row. A projected payload is not
 //! a reason to join: it is read by a scalar lookup on the identity row's key,
 //! which the planner evaluates after the sort and the limit, so a page fetches
 //! only its own documents. A query that asks for identifiers with no filter
@@ -46,8 +47,9 @@ impl EntityRelations {
     /// query, a scope query, an ordering on `type` or `scope`, or a distance
     /// ordering measured to the default `location`. The document row is joined
     /// when a `q` expression is present (its jsonpath fallback reads the
-    /// payload) or when an ordering sorts on an attribute value; a projected
-    /// payload alone is read by key lookup instead.
+    /// payload) or when an ordering sorts on an attribute value or on the
+    /// `modifiedAt` column; a projected payload alone is read by key lookup
+    /// instead.
     pub fn for_query(query: &CompiledEntityQuery) -> EntityRelations {
         let selection = &query.selection;
         let terms = &query.ordering.terms;
@@ -56,7 +58,7 @@ impl EntityRelations {
             || selection.geo.is_some()
             || selection.scope_q.is_some()
             || terms.iter().any(reads_search_row);
-        let documents = selection.q_expr.is_some() || terms.iter().any(reads_payload);
+        let documents = selection.q_expr.is_some() || terms.iter().any(reads_documents_row);
         EntityRelations {
             documents: demand(documents),
             search: demand(search),
@@ -128,16 +130,19 @@ fn reads_search_row(term: &CompiledOrderTerm) -> bool {
         // Only a term naming the attribute itself can read the dedicated
         // geometry column; a path descending into it reads the payload.
         OrderTarget::Attribute(path) => term.direction.is_distance() && path.is_simple() && path.attr.as_str() == LOCATION.as_str(),
-        OrderTarget::Id => false,
+        // `createdAt` reads the identity row; `modifiedAt` the document row.
+        OrderTarget::Id | OrderTarget::CreatedAt | OrderTarget::ModifiedAt => false,
     }
 }
 
-/// Whether an ordering term reads the payload: a value ordering on an
-/// attribute. A distance ordering reads a geometry column or the projection.
-const fn reads_payload(term: &CompiledOrderTerm) -> bool {
+/// Whether an ordering term reads the `entity_documents` row: a value ordering
+/// on an attribute, or an ordering on the `modifiedAt` column that lives there.
+/// A distance ordering reads a geometry column or the projection.
+const fn reads_documents_row(term: &CompiledOrderTerm) -> bool {
     match &term.target {
         OrderTarget::Attribute(_) => !term.direction.is_distance(),
-        OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope => false,
+        OrderTarget::ModifiedAt => true,
+        OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope | OrderTarget::CreatedAt => false,
     }
 }
 
@@ -255,6 +260,20 @@ mod tests {
             OrderDirection::Asc,
         )];
         assert_eq!(EntityRelations::for_query(&ordered).documents, Demand::Joined);
+    }
+
+    /// An ordering on `modifiedAt` reads a column of `entity_documents`, so the
+    /// document row is joined; `createdAt` reads the identity row and joins
+    /// neither.
+    #[test]
+    fn a_modified_at_ordering_joins_the_documents_and_created_at_joins_nothing() {
+        let mut by_modified = empty_query();
+        by_modified.ordering.terms = vec![term(OrderTarget::ModifiedAt, OrderDirection::Asc)];
+        assert_eq!(EntityRelations::for_query(&by_modified), joined(Demand::Joined, Demand::NotJoined));
+
+        let mut by_created = empty_query();
+        by_created.ordering.terms = vec![term(OrderTarget::CreatedAt, OrderDirection::Desc)];
+        assert_eq!(EntityRelations::for_query(&by_created), joined(Demand::NotJoined, Demand::NotJoined));
     }
 
     #[test]

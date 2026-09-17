@@ -46,7 +46,7 @@ pub fn projected_attribute_names(attrs: &[IriBuf], q_expr: Option<&Expr>, geo: O
             OrderTarget::Attribute(path) if path.is_simple() => push_geoproperty(&path.attr, &mut names),
             // None of the clause 4.23 keywords names an attribute, so none of
             // them has a dictionary row.
-            OrderTarget::Attribute(_) | OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope => {}
+            OrderTarget::Attribute(_) | OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope | OrderTarget::CreatedAt | OrderTarget::ModifiedAt => {}
         }
     }
     names

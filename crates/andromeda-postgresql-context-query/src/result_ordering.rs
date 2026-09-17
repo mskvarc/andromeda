@@ -27,7 +27,7 @@ use andromeda_postgresql_query::{
     entity_type_names::type_names_of,
     error::RenderError,
 };
-use andromeda_postgresql_schema::current::{Entities, EntitySearch};
+use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
 use andromeda_postgresql_seaquery::collation::{PostgresCollation, collate};
 use sea_query::{Expr as SeaExpr, JoinType, NullOrdering, Order, SelectStatement, SimpleExpr};
 
@@ -70,6 +70,19 @@ pub fn apply(
             // The scope path column is an `ltree[]`, which no client collation applies to.
             OrderTarget::Scope => {
                 select.order_by_expr_with_nulls(rows.search_column(EntitySearch::ScopePaths), sql_order(direction), NullOrdering::Last);
+            }
+            // Clause 4.8 `createdAt` is a `timestamptz` on the identity row that
+            // is never null, so it needs no `NULLS LAST` and no collation; two
+            // entities created in one transaction share it and fall to the
+            // `id ASC` tie-break below (clause 5.5.9).
+            OrderTarget::CreatedAt => {
+                select.order_by_expr(rows.identity_column(Entities::CreatedAt), sql_order(direction));
+            }
+            // Clause 4.8 `modifiedAt` lives on `entity_documents`; it is
+            // nullable, so absent values sort last in both directions
+            // (clause 4.23.2).
+            OrderTarget::ModifiedAt => {
+                select.order_by_expr_with_nulls(rows.documents_column(EntityDocuments::ModifiedAt), sql_order(direction), NullOrdering::Last);
             }
             OrderTarget::Attribute(path) => {
                 // Only an attribute is a `GeoProperty`. Clause 4.23.1 sorts by

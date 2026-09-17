@@ -136,7 +136,11 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
     }
 
     if let Some(q_str) = payload.get("q").and_then(|v| v.as_str()) {
-        let expr = parser::parse(q_str)?;
+        // Clause 5.5.4: a malformed `q` in a valid-JSON body is data that is not
+        // syntactically correct per the API data type definitions, so it is
+        // `BadRequestData` rather than the `InvalidRequest` a query-language
+        // parse error is otherwise classified as.
+        let expr = parser::parse(q_str).map_err(|source| SubscriptionError::Validation(SubscriptionValidationReason::QExpressionInvalid { source }))?;
         if !q_has_comparison(&expr) {
             return Err(SubscriptionError::Validation(SubscriptionValidationReason::QExpressionNoComparison));
         }

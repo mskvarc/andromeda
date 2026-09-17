@@ -140,19 +140,27 @@ impl EntityRowRefs {
         self.search.clone()
     }
 
-    /// The payload, as a column of the joined `entity_documents` row or as a
-    /// scalar subquery keyed on the identity row.
+    /// A column of the `entity_documents` row, reached as the joined row's
+    /// column or, when the row is not joined, by a scalar subquery keyed on the
+    /// identity row -- the same two shapes the payload is reached in.
     #[must_use]
-    pub fn payload_column(&self) -> SimpleExpr {
+    pub fn documents_column(&self, column: EntityDocuments) -> SimpleExpr {
         match &self.documents {
-            DocumentsRef::Joined(documents) => Expr::col((documents.clone(), EntityDocuments::Payload.into_iden())),
+            DocumentsRef::Joined(documents) => Expr::col((documents.clone(), column.into_iden())),
             DocumentsRef::ByKeyLookup => Query::select()
-                .column(EntityDocuments::Payload)
+                .column(column)
                 .from(qualified(self.schema.as_ref(), EntityDocuments::Table))
                 .and_where(Expr::col(EntityDocuments::EntityKey).eq(self.entity_key_column()))
                 .take()
                 .into(),
         }
+    }
+
+    /// The payload, as a column of the joined `entity_documents` row or as a
+    /// scalar subquery keyed on the identity row.
+    #[must_use]
+    pub fn payload_column(&self) -> SimpleExpr {
+        self.documents_column(EntityDocuments::Payload)
     }
 }
 

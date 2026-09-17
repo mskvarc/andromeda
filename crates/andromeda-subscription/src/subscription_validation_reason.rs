@@ -11,7 +11,7 @@
 
 use andromeda_ngsi_ld_geometry::geojson::GeometryError;
 use andromeda_ngsi_ld_lexicon::{spec_version::SpecVersionParseError, uri::UriParseError};
-use andromeda_ngsi_ld_query::projection::exclusivity::ProjectionConflict;
+use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict};
 use thiserror::Error;
 
 /// Why a subscription request is invalid.
@@ -128,6 +128,18 @@ pub enum SubscriptionValidationReason {
         /// The version grammar violation.
         #[source]
         source: SpecVersionParseError,
+    },
+    /// A subscription `q` filter was not syntactically valid.
+    ///
+    /// Clause 5.5.4: the request body is valid JSON but the `q` data is not
+    /// syntactically correct according to the API data type definitions, so it
+    /// is `BadRequestData`, not the `InvalidRequest` reserved for a body that is
+    /// not a valid JSON document.
+    #[error("q expression: {source}")]
+    QExpressionInvalid {
+        /// The clause 4.9 `q` grammar violation.
+        #[source]
+        source: QueryError,
     },
     /// A `q` filter for a subscription named no comparison operator.
     ///
