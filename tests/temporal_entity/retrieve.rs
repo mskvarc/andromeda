@@ -51,7 +51,11 @@ async fn temporal_retrieve_basic_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED, "create temporal entity should succeed");
 
-    let (status, body, _) = get_temporal_entity(&c, &id, "", "application/ld+json", None).await;
+    // Retrieve under the creation context so its terms compact: a retrieval that
+    // carries no @context is rendered against the core context alone (clause
+    // 5.5.7), which does not declare Vehicle/speed and leaves them full IRIs --
+    // the no-context path is covered by tests/regression/temporal_retrieve_term_expansion.rs.
+    let (status, body, _) = get_temporal_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK, "retrieve should return 200");
     assert_eq!(body["id"], id);
     assert_eq!(body["type"], "Vehicle");

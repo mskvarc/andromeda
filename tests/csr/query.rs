@@ -20,11 +20,12 @@ use crate::{
     csr_with_location,
     csr_with_management_interval,
     csr_with_observation_interval,
-    expected_query_basic_whole_information,
     expected_query_detailed,
     expected_query_detailed_expanded,
     expected_query_matching_entity_ids,
+    expected_query_offstreetparking_information,
     expected_query_only_properties,
+    expected_query_vehicle_information,
     expected_query_with_csource_properties,
     expected_query_with_location,
     expected_query_with_management_interval,
@@ -223,7 +224,7 @@ async fn query_entity_info_with_type_and_id_pattern_returns_matching() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ignored = &["@context", "createdAt", "modifiedAt", "status"];
-    let mut expected = expected_query_basic_whole_information(&id);
+    let mut expected = expected_query_offstreetparking_information(&id);
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
@@ -377,7 +378,7 @@ async fn query_without_temporal_query_returns_matching() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ignored = &["@context", "createdAt", "modifiedAt", "status"];
-    let mut expected = expected_query_basic_whole_information(&id);
+    let mut expected = expected_query_vehicle_information(&id);
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);

@@ -132,6 +132,18 @@ pub fn fragment_speed_datasetid() -> Value {
     })
 }
 
+/// Bare `speed` attribute fragment without a datasetId, targeting the Entity's
+/// existing default-dataset instance. A Partial Update Attribute selects the
+/// instance by datasetId (clause 5.6.4), so a fragment naming a datasetId the
+/// Entity does not hold updates nothing and answers 404 when the operation is
+/// not forwarded.
+pub fn fragment_speed_no_datasetid() -> Value {
+    json!({
+        "type": "Property",
+        "value": 150
+    })
+}
+
 /// Fragment with brandName for update operations.
 pub fn fragment_brandname() -> Value {
     json!({

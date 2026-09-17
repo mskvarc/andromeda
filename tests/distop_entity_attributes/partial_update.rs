@@ -16,6 +16,7 @@ use crate::{
         delete_entity,
         delete_registration,
         fragment_speed_datasetid,
+        fragment_speed_no_datasetid,
         get_entity,
         jsonld_link_value,
         partial_update_attr,
@@ -211,8 +212,12 @@ async fn distop_entity_attrs_partial_update_auxiliary_no_forwarding() {
     let stub_path = format!("/ngsi-ld/v1/entities/{entity_id}/attrs/speed");
     mock.set_stub(Method::PATCH, &stub_path, 204).await;
 
-    // Partial update speed attribute
-    let fragment = fragment_speed_datasetid();
+    // Partial update the Entity's existing default-dataset speed. An auxiliary
+    // registration does not support HTTP unsafe methods (clause 6.3.17), so the
+    // update stays local and succeeds against the instance the Entity holds; a
+    // fragment naming an absent datasetId would answer 404 here, with no forward
+    // to mask the miss.
+    let fragment = fragment_speed_no_datasetid();
     let status = partial_update_attr(&c, &entity_id, "speed", &fragment, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 

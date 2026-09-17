@@ -75,10 +75,14 @@ async fn distop_entity_attrs_update_exclusive_forwards_to_context_source() {
 // Update entity attributes - inclusive mode
 // ---------------------------------------------------------------------------
 
-/// Update with inclusive registration: local fails (no matching attr), remote succeeds -> 207.
+/// Update attributes with no local instance: the inclusive registration's
+/// source applies the update and answers 204, so with no error from any
+/// registered source the operation is a plain success. Clause 6.3.17 reserves
+/// 207 Multi-Status for when "an error response is returned from one or more
+/// registered sources"; a successful remote update is not one.
 #[tokio::test]
 #[serial]
-async fn distop_entity_attrs_update_inclusive_partial_success_returns_207() {
+async fn distop_entity_attrs_update_local_absent_remote_success_returns_204() {
     let _serialized_environment = clean_database().await;
     let c = client();
     let mock = MockServer::start().await;
@@ -94,10 +98,10 @@ async fn distop_entity_attrs_update_inclusive_partial_success_returns_207() {
     let stub_path = format!("/ngsi-ld/v1/entities/{entity_id}/attrs");
     mock.set_stub(Method::PATCH, &stub_path, 204).await;
 
-    // Update entity attributes -- local fails (no entity), remote succeeds -> 207
+    // Update entity attributes -- no local entity, the source succeeds -> 204
     let fragment = fragment_brandname();
     let status = update_entity_attrs(&c, &entity_id, &fragment, &jsonld_link_value()).await;
-    pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify forwarding happened
     let count = mock.get_count(Method::PATCH, &stub_path);

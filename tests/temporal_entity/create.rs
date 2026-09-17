@@ -148,7 +148,10 @@ async fn temporal_create_entity_without_context_success() {
     let status = create_temporal_entity_json(&c, &entity, "application/json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::CREATED, "create without @context should return 201");
 
-    let (status, body, _) = get_temporal_entity(&c, &id, "", "application/json", None).await;
+    // Retrieve under the same context so speed compacts to its term; without a
+    // context the core context alone applies (clause 5.5.7) and speed stays a
+    // full IRI, which tests/regression/temporal_retrieve_term_expansion.rs pins.
+    let (status, body, _) = get_temporal_entity(&c, &id, "", "application/json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
     assert!(body["speed"].is_array());

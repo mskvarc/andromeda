@@ -441,7 +441,11 @@ fn expected_query_detailed(id: &str) -> Value {
 /// a source can provide, not which part of it matched the question it happened
 /// to ask. A Context Source Notification is the other case (clause 5.11.7) and
 /// does trim, because there the subscriber is told what changed.
-fn expected_query_basic_whole_information(id: &str) -> Value {
+/// The `csr_basic_jsonld` registration as a discovery by `type=Vehicle` returns
+/// it: clause 5.10.2.5 recommends the narrowed answer, so only the Vehicle
+/// `RegistrationInfo` element survives and the OffStreetParking element is
+/// trimmed away.
+fn expected_query_vehicle_information(id: &str) -> Value {
     json!([{
         "id": id,
         "type": "ContextSourceRegistration",
@@ -450,7 +454,24 @@ fn expected_query_basic_whole_information(id: &str) -> Value {
                 "entities": [{"id": "urn:ngsi-ld:Vehicle:A456", "type": "Vehicle"}],
                 "propertyNames": ["brandName", "speed"],
                 "relationshipNames": ["isParked"]
-            },
+            }
+        ],
+        "endpoint": "http://my.csource.org:1026/",
+        "mode": "inclusive",
+        "operations": ["federationOps"]
+    }])
+}
+
+/// The `csr_basic_jsonld` registration as a discovery by `type=OffStreetParking`
+/// returns it: clause 5.10.2.5 trims to the matching `RegistrationInfo`
+/// element, so only the OffStreetParking element survives -- whole, both of its
+/// `idPattern` entities included, because the trim is at element granularity --
+/// and the Vehicle element is dropped.
+fn expected_query_offstreetparking_information(id: &str) -> Value {
+    json!([{
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [
             {
                 "entities": [
                     {"idPattern": ".*downtown$", "type": "OffStreetParking"},

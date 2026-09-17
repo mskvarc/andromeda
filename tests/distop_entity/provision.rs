@@ -562,10 +562,15 @@ async fn distop_entity_delete_local_success_remote_failure_returns_207() {
     mock.shutdown().await;
 }
 
-/// Delete entity: local failure, remote success returns 207.
+/// Delete entity with no local instance: the inclusive registration's source
+/// deletes it and answers 204, so with no error from any registered source the
+/// operation is a plain success. Clause 6.3.17 reserves 207 Multi-Status for
+/// when "an error response is returned from one or more registered sources",
+/// and a source answering 204 (or a local absence, which for a registered
+/// entity "should not be considered abnormal") is not such an error.
 #[tokio::test]
 #[serial]
-async fn distop_entity_delete_local_failure_remote_success_returns_207() {
+async fn distop_entity_delete_local_absent_remote_success_returns_204() {
     let _serialized_environment = clean_database().await;
     let c = client();
     let mock = MockServer::start().await;
@@ -581,12 +586,8 @@ async fn distop_entity_delete_local_failure_remote_success_returns_207() {
     let delete_path = format!("/ngsi-ld/v1/entities/{entity_id}");
     mock.set_stub(Method::DELETE, &delete_path, 204).await;
 
-    let (status, body) = delete_entity_with_status(&c, &entity_id).await;
-    pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS);
-
-    let errors = body["errors"].as_array().unwrap();
-    pretty_assertions::assert_eq!(errors.len(), 1);
-    pretty_assertions::assert_eq!(errors[0]["error"]["status"], 404);
+    let (status, _body) = delete_entity_with_status(&c, &entity_id).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
