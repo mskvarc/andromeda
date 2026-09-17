@@ -74,6 +74,24 @@ RUN sed -ri "s/^[#]?\s*(shared_preload_libraries)\s*=\s*'(.*)'/\1 = 'timescaledb
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-LABEL org.opencontainers.image.title="Andromeda PostgreSQL" \
-      org.opencontainers.image.description="PostgreSQL 18 with PostGIS 3 and TimescaleDB for the Andromeda broker" \
-      org.opencontainers.image.licenses="EUPL-1.2"
+# OCI image annotations: https://specs.opencontainers.org/image-spec/annotations/
+#
+# org.opencontainers.image.licenses is the SPDX expression for the software the
+# image *contains* -- not this Dockerfile's own licence and not any consumer's.
+# The image ships PostgreSQL, PostGIS, and TimescaleDB, so the expression covers
+# those. The default below is the tsl (Community) edition, which carries the
+# TSL-licensed TimescaleDB module and toolkit; the apache edition removes both,
+# narrowing the expression to "PostgreSQL AND GPL-2.0-or-later AND Apache-2.0".
+# The build pipeline stamps the correct per-edition value; this default is right
+# for a local tsl build. TSL has no SPDX identifier, hence LicenseRef-Timescale.
+#
+# Dynamic annotations (created, revision, version, source, url) are stamped by
+# the build pipeline, which knows the commit and repository, and are not
+# hardcoded here. authors is a neutral placeholder: replace it with a real
+# maintainer identity if you want personal attribution published.
+LABEL org.opencontainers.image.title="PostgreSQL with PostGIS and TimescaleDB" \
+      org.opencontainers.image.description="PostgreSQL 18 with PostGIS 3 and TimescaleDB 2, tuned for high-throughput time-series ingest" \
+      org.opencontainers.image.authors="Matej Škvarč <matej.skvarc@senlab.io>" \
+      org.opencontainers.image.vendor="Matej Škvarč" \
+      org.opencontainers.image.base.name="docker.io/library/postgres:18.6-trixie" \
+      org.opencontainers.image.licenses="PostgreSQL AND GPL-2.0-or-later AND Apache-2.0 AND LicenseRef-Timescale"

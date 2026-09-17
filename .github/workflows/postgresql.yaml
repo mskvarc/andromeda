@@ -51,12 +51,24 @@ jobs:
 
       - uses: actions/checkout@v7
 
+      # Pin the exact base manifest the build consumed. The FROM tag in the
+      # Dockerfile can move; the digest recorded here cannot. Kept in sync with
+      # that FROM line by hand -- there is only one base image.
+      - name: Resolve base image digest
+        run: |
+          set -euo pipefail
+          digest="$(
+            docker buildx imagetools inspect postgres:18.6-trixie \
+              --format '{{json .Manifest}}' | jq -er '.digest'
+          )"
+          echo "BASE_DIGEST=${digest}" >> "$GITHUB_ENV"
+
       # metadata-action would otherwise derive title/description/licenses from
       # the host repository (title "andromeda", licence EUPL-1.2), which is
       # wrong: this image contains PostgreSQL, PostGIS, and TimescaleDB and no
       # broker code. Override those keys with the image's real identity and the
       # per-edition SPDX expression; the auto-generated created/revision/source/
-      # version labels still flow through unchanged.
+      # url/version labels still flow through unchanged.
       - name: Image metadata
         id: meta
         uses: docker/metadata-action@v6
@@ -65,8 +77,35 @@ jobs:
           labels: |
             org.opencontainers.image.title=PostgreSQL with PostGIS and TimescaleDB
             org.opencontainers.image.description=PostgreSQL 18 with PostGIS 3 and TimescaleDB 2, tuned for high-throughput time-series ingest
+            org.opencontainers.image.documentation=${{ github.server_url }}/${{ github.repository }}/blob/master/docs/postgresql-image.md
             org.opencontainers.image.base.name=docker.io/library/postgres:18.6-trixie
+            org.opencontainers.image.base.digest=${{ env.BASE_DIGEST }}
             org.opencontainers.image.licenses=${{ matrix.edition == 'tsl' && 'PostgreSQL AND GPL-2.0-or-later AND Apache-2.0 AND LicenseRef-Timescale' || 'PostgreSQL AND GPL-2.0-or-later AND Apache-2.0' }}
+
+      # metadata-action derives org.opencontainers.image.version from git: on a
+      # branch or scheduled build that is the branch name ("master"), which is
+      # meaningless for this image. Its real version is the composite tag
+      # (18.6-timescaledb...-postgis...), so drop the label rather than publish a
+      # wrong one. metadata-action emits its full OCI label set with no per-label
+      # opt-out, so the unwanted key is stripped here rather than never created.
+      # The raw labels are read through an env var so a repository description
+      # containing shell metacharacters cannot break the script.
+      - name: Drop the git-derived version label
+        id: labels
+        env:
+          RAW_LABELS: ${{ steps.meta.outputs.labels }}
+        run: |
+          set -euo pipefail
+          {
+            echo 'labels<<LABELS_EOF'
+            while IFS= read -r line; do
+              case "$line" in
+                org.opencontainers.image.version=*) ;;
+                *) printf '%s\n' "$line" ;;
+              esac
+            done <<< "$RAW_LABELS"
+            echo 'LABELS_EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
@@ -86,7 +125,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             TIMESCALEDB_EDITION=${{ matrix.edition }}
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: ${{ steps.labels.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.edition }}-${{ env.PLATFORM_SLUG }}
           cache-to: type=gha,mode=max,scope=${{ matrix.edition }}-${{ env.PLATFORM_SLUG }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
