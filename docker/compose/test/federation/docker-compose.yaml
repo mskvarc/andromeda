@@ -4,12 +4,12 @@
 # network. This makes a discovered endpoint such as
 # http://fed-domain-madrid:1072 usable unchanged by a client with the test
 # harness DNS override.
-name: andromeda-fed
+name: andromeda-federation
 
 x-postgres-base: &postgres-base
   build:
     context: ../../../images/postgresql
-  image: andromeda-fed-postgres:latest
+  image: andromeda-federation-postgres:latest
   environment:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
@@ -24,7 +24,7 @@ x-broker-base: &broker-base
   build:
     context: ../../../..
     dockerfile: docker/images/andromeda/Dockerfile
-  image: andromeda-fed:latest
+  image: andromeda-federation:latest
   restart: unless-stopped
   extra_hosts:
     - "host.docker.internal:host-gateway"

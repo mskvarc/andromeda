@@ -1,4 +1,4 @@
-name: unit-test
+name: unit
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   pull_request:
 
 concurrency:
-  group: unit-test-${{ github.ref }}
+  group: unit-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

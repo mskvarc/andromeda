@@ -1,12 +1,20 @@
 //! Command-line surface: `cargo xtask itest <selector> [flags] [-- <cargo test args>]`.
 
 use crate::{
+    compose::ImageBuild,
     error::XtaskError,
     lifecycle::{self, BrokerMode},
     stack::{STACKS, Stack, StackName, stack_for_suite},
 };
 use clap::{ArgGroup, Args, Parser, Subcommand};
-use std::path::{Path, PathBuf};
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
+
+/// Environment variable that, set to `1`, forces `--no-build` without the flag.
+/// CI sets it once for the whole `xtask itest` invocation.
+const NO_BUILD_ENV: &str = "ANDROMEDA_XTASK_NO_BUILD";
 
 /// The `xtask` developer command.
 #[derive(Parser)]
@@ -49,15 +57,28 @@ struct ItestArgs {
     /// Run every stack in sequence.
     #[arg(long)]
     all: bool,
+    /// Toggles that shape how the selected stacks run.
+    #[command(flatten)]
+    options: RunOptions,
+    /// Extra arguments forwarded to the test binary after `--test-threads`.
+    #[arg(last = true, value_name = "CARGO_TEST_ARGS")]
+    cargo_args: Vec<String>,
+}
+
+/// Execution toggles common to every selector, kept in their own group so no
+/// single arg struct carries more boolean flags than clippy tolerates.
+#[derive(Args)]
+struct RunOptions {
     /// Leave the stack running after the suites finish.
     #[arg(long)]
     keep: bool,
     /// Base stack only: skip the broker profile and run two host brokers instead.
     #[arg(long)]
     local_broker: bool,
-    /// Extra arguments forwarded to the test binary after `--test-threads`.
-    #[arg(last = true, value_name = "CARGO_TEST_ARGS")]
-    cargo_args: Vec<String>,
+    /// Reuse images already tagged into the compose `image:` names instead of
+    /// rebuilding them; also enabled by `ANDROMEDA_XTASK_NO_BUILD=1`.
+    #[arg(long)]
+    no_build: bool,
 }
 
 impl ItestArgs {
@@ -65,9 +86,18 @@ impl ItestArgs {
     fn execute(self) -> Result<(), XtaskError> {
         let repository_root = repository_root();
         let plan = self.resolve()?;
-        let broker_mode = if self.local_broker { BrokerMode::Local } else { BrokerMode::Containerized };
+        let broker_mode = if self.options.local_broker {
+            BrokerMode::Local
+        } else {
+            BrokerMode::Containerized
+        };
+        let image_build = if self.options.no_build || no_build_from_env() {
+            ImageBuild::Reuse
+        } else {
+            ImageBuild::Build
+        };
         for (stack, suites) in plan {
-            lifecycle::run_stack(&repository_root, stack, &suites, self.keep, broker_mode, &self.cargo_args)?;
+            lifecycle::run_stack(&repository_root, stack, &suites, self.options.keep, broker_mode, image_build, &self.cargo_args)?;
         }
         Ok(())
     }
@@ -108,11 +138,16 @@ impl ItestArgs {
 
     /// Reject `--local-broker` unless every selected stack is the base tier.
     fn check_local_broker(&self, plan: &[(&'static Stack, Vec<&'static str>)]) -> Result<(), XtaskError> {
-        if self.local_broker && plan.iter().any(|(stack, _)| stack.name != StackName::Base) {
+        if self.options.local_broker && plan.iter().any(|(stack, _)| stack.name != StackName::Base) {
             return Err(XtaskError::LocalBrokerRequiresBase);
         }
         Ok(())
     }
+}
+
+/// Whether the environment forces image reuse: `ANDROMEDA_XTASK_NO_BUILD=1`.
+fn no_build_from_env() -> bool {
+    env::var(NO_BUILD_ENV).is_ok_and(|value| value == "1")
 }
 
 /// The repository root: two directories above this crate's manifest.

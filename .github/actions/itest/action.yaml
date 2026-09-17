@@ -1,0 +1,85 @@
+name: Integration test stack
+description: >
+  Build the broker image once, tag it and the PostgreSQL image into the named
+  stack's compose `image:` targets, then drive the stack through `cargo xtask
+  itest` with rebuilding disabled. Shared by the nightly per-stack workflows and
+  the release gate so both exercise the byte-identical image.
+
+inputs:
+  stack:
+    description: The xtask stack name (base, distributed, federation, snapshot, http3, extensions).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # The caller checks the repository out before `uses: ./.github/actions/itest`
+    # -- a local action cannot resolve otherwise -- so this composite does not
+    # repeat the checkout.
+    - uses: ./.github/actions/free-disk-space
+
+    - uses: docker/setup-buildx-action@v4
+
+    # Build the broker image once with the shared gha cache and load it into the
+    # local docker so compose can reuse it by tag. The cache scope is stable
+    # across stacks: the Dockerfile and context are identical, so every stack
+    # warms and reuses the same `broker` scope. The tag matches each stack's
+    # compose `image:` (andromeda-<stack>) exactly, so `docker compose up` under
+    # ANDROMEDA_XTASK_NO_BUILD reuses it instead of rebuilding.
+    - name: Build broker image
+      shell: bash
+      run: |
+        set -euo pipefail
+        docker buildx build --load -t andromeda-ci:broker \
+          -f docker/images/andromeda/Dockerfile \
+          --cache-from type=gha,scope=broker \
+          --cache-to type=gha,mode=max,scope=broker \
+          .
+        docker tag andromeda-ci:broker "andromeda-${{ inputs.stack }}:latest"
+
+    # Authenticate to GHCR so the published PostgreSQL image can be pulled even
+    # while the repository (and thus its packages) is private. github.token is
+    # the job's GITHUB_TOKEN, available to composite steps without a secrets
+    # reference; it needs only the default `packages: read` scope.
+    - name: Log in to GHCR
+      uses: docker/login-action@v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+
+    # The PostgreSQL image is published by postgresql.yaml; its `latest` tag is
+    # the tsl edition, matching the compose files' default build. Pull and retag
+    # it into the stack's postgres `image:`. On a fresh repository where
+    # postgresql.yaml has never published, the pull 404s and the image is built
+    # from context instead so the gate still runs.
+    - name: Provide PostgreSQL image
+      shell: bash
+      run: |
+        set -euo pipefail
+        postgres_tag="andromeda-${{ inputs.stack }}-postgres:latest"
+        published="ghcr.io/${{ github.repository_owner }}/postgresql:latest"
+        if docker pull "$published"; then
+          docker tag "$published" "$postgres_tag"
+        else
+          echo "postgresql:latest not published yet; building from context"
+          docker build -t "$postgres_tag" docker/images/postgresql
+        fi
+
+    # rust-toolchain.toml pins the nightly the workspace and its test binaries
+    # build on.
+    - name: Install pinned toolchain
+      shell: bash
+      run: rustup toolchain install --profile minimal
+
+    - uses: Swatinem/rust-cache@v2
+
+    # xtask brings the stack up reusing the tagged images, runs the suites, and
+    # tears the stack down via its Drop guard even when a suite fails.
+    - name: Run integration suites
+      shell: bash
+      env:
+        ANDROMEDA_XTASK_NO_BUILD: "1"
+        CARGO_INCREMENTAL: "0"
+        CARGO_PROFILE_TEST_DEBUG: line-tables-only
+      run: cargo xtask itest --stack "${{ inputs.stack }}"

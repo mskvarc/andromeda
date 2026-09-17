@@ -1,0 +1,373 @@
+name: release
+
+# One tag is one immutable published version. The `-` in the tag is the switch:
+# a pre-release tag (v1.4.0-alpha1/-beta1/-rc1) publishes the exact version and
+# never `latest`; a clean vX.Y.Z publishes `latest` and the rolling `X.Y` line
+# and is marked the latest GitHub release. Every tag, pre-release included, runs
+# the full integration gate before anything publishes.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-alpha[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-beta[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc[0-9]+"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
+
+jobs:
+  # The release gate: the same composite the nightly badge workflows call, once
+  # per stack. Everything below needs this job, so nothing publishes unless every
+  # stack is green against the tagged commit. amd64 only -- arm64 is a packaging
+  # concern, not a logic difference, and the gate image is byte-identical to the
+  # published image (same Dockerfile).
+  gate:
+    name: gate (${{ matrix.stack }})
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: [base, distributed, federation, snapshot, http3, extensions]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/itest
+        with:
+          stack: ${{ matrix.stack }}
+
+  binaries:
+    needs: gate
+    name: binary (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, runner: ubuntu-latest, os: linux }
+          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-24.04-arm, os: linux }
+          - { target: x86_64-unknown-linux-musl, runner: ubuntu-latest, os: linux, musl: true }
+          - { target: aarch64-unknown-linux-musl, runner: ubuntu-24.04-arm, os: linux, musl: true }
+          - { target: aarch64-apple-darwin, runner: macos-15, os: macos }
+          - { target: x86_64-apple-darwin, runner: macos-15-intel, os: macos }
+          - { target: x86_64-pc-windows-msvc, runner: windows-latest, os: windows }
+          - { target: aarch64-pc-windows-msvc, runner: windows-latest, os: windows }
+    steps:
+      - uses: actions/checkout@v7
+
+      # rust-toolchain.toml pins the nightly; add the row's target for the
+      # cross-compiled rows (musl, and the aarch64 Windows row built on x64).
+      - name: Install pinned toolchain
+        shell: bash
+        run: |
+          rustup toolchain install --profile minimal
+          rustup target add ${{ matrix.target }}
+
+      # musl-tools supplies musl-gcc, the linker the musl rows need.
+      - name: Install musl tools
+        if: ${{ matrix.musl }}
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+
+      # aws-lc-rs (via rustls/quinn) assembles its crypto primitives with NASM on
+      # Windows; cmake and the MSVC C toolchain are already on the runner image.
+      - name: Install NASM
+        if: ${{ matrix.os == 'windows' }}
+        uses: ilammy/setup-nasm@v1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build broker
+        shell: bash
+        run: cargo build --release --locked --bin andromeda --target ${{ matrix.target }}
+
+      # Package the binary: tar.xz on unix, zip on Windows, each with a sibling
+      # .sha256. github.ref_name (e.g. v1.4.0-rc1) names the archive.
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist stage
+          name="andromeda-${{ github.ref_name }}-${{ matrix.target }}"
+          if [ "${{ matrix.os }}" = windows ]; then
+            bin="andromeda.exe"
+            cp "target/${{ matrix.target }}/release/${bin}" "stage/${bin}"
+            archive="${name}.zip"
+            (cd stage && 7z a "../dist/${archive}" "${bin}" >/dev/null)
+          else
+            bin="andromeda"
+            cp "target/${{ matrix.target }}/release/${bin}" "stage/${bin}"
+            archive="${name}.tar.xz"
+            tar -C stage -cJf "dist/${archive}" "${bin}"
+          fi
+          cd dist
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${archive}" > "${archive}.sha256"
+          else
+            shasum -a 256 "${archive}" > "${archive}.sha256"
+          fi
+          cat "${archive}.sha256"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binaries-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 1
+
+  image:
+    needs: gate
+    name: image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux/amd64, runner: ubuntu-latest }
+          - { platform: linux/arm64, runner: ubuntu-24.04-arm }
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda
+    steps:
+      - name: Prepare platform slug
+        shell: bash
+        run: |
+          platform="${{ matrix.platform }}"
+          echo "PLATFORM_SLUG=${platform//\//-}" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/free-disk-space
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build one platform and push it to GHCR by digest only; the manifest list
+      # that ties the platforms together under the human tags is composed in the
+      # merge job. .git is in the context so shadow-rs can embed commit metadata.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/images/andromeda/Dockerfile
+          platforms: ${{ matrix.platform }}
+          cache-from: type=gha,scope=release-${{ env.PLATFORM_SLUG }}
+          cache-to: type=gha,mode=max,scope=release-${{ env.PLATFORM_SLUG }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        shell: bash
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-digests-${{ env.PLATFORM_SLUG }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  image-merge:
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: digests
+          pattern: image-digests-*
+
+      - uses: docker/setup-buildx-action@v4
+      - uses: sigstore/cosign-installer@v4.1.2
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Strip the leading `v` for the image tags and derive the rolling X.Y line
+      # from the release (patch and any pre-release suffix removed). The X.Y and
+      # latest tags are gated on a clean release below.
+      - name: Resolve version and minor line
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="${{ github.ref_name }}"
+          version="${ref#v}"
+          base="${version%%-*}"
+          minor="${base%.*}"
+          {
+            echo "version=${version}"
+            echo "minor=${minor}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+            type=raw,value=${{ steps.version.outputs.minor }},enable=${{ !contains(github.ref_name, '-') }}
+
+      # TAGS is passed through the environment rather than interpolated into the
+      # script body so a tag value can never be read as shell.
+      - name: Create manifest list and push
+        shell: bash
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          refs=()
+          for f in digests/*/*; do
+            refs+=("${IMAGE}@sha256:$(basename "$f")")
+          done
+          tag_args=()
+          while IFS= read -r tag; do
+            [ -n "$tag" ] && tag_args+=(-t "$tag")
+          done <<< "$TAGS"
+          docker buildx imagetools create "${tag_args[@]}" "${refs[@]}"
+
+      - name: Resolve manifest list digest
+        id: digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(
+            docker buildx imagetools inspect "${IMAGE}:${{ steps.version.outputs.version }}" \
+              --format '{{json .Manifest}}' | jq -er '.digest'
+          )"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect image
+        run: docker buildx imagetools inspect "${IMAGE}:${{ steps.version.outputs.version }}"
+
+      # Keyless signature over the manifest list and, with --recursive, each
+      # per-platform manifest it references. Works on a private repo; the Rekor
+      # log and GHCR both accept it regardless of visibility.
+      - name: Sign manifest list and per-platform manifests
+        run: cosign sign --yes --recursive "${IMAGE}@${{ steps.digest.outputs.digest }}"
+
+      # GitHub's artifact-attestation API rejects user-owned private repositories,
+      # so provenance and SBOM attestation are gated on visibility: skipped while
+      # private, they light up on the first public build.
+      - name: Attest build provenance
+        if: ${{ github.event.repository.visibility == 'public' }}
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          push-to-registry: true
+
+      - name: Generate SBOM
+        if: ${{ github.event.repository.visibility == 'public' }}
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.digest.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Attest SBOM
+        if: ${{ github.event.repository.visibility == 'public' }}
+        uses: actions/attest-sbom@v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
+
+  release:
+    needs: [binaries, image-merge]
+    runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      # Full history so git-cliff can walk the commits since the previous tag.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download binary artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: binaries-*
+          merge-multiple: true
+
+      - name: Verify checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          for f in *.sha256; do
+            sha256sum -c "$f"
+          done
+
+      # Build provenance over the release archives. Gated on visibility for the
+      # same reason as the image attestation above.
+      - name: Attest binary provenance
+        if: ${{ github.event.repository.visibility == 'public' }}
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/andromeda-*.tar.xz
+            dist/andromeda-*.zip
+
+      # Message/scope-only notes for the current tag; --strip all drops the
+      # header and footer. cliff.toml already lives at the repository root.
+      - name: Generate release notes
+        uses: orhun/git-cliff-action@v4
+        with:
+          args: --current --strip all -o RELEASE_NOTES.md
+
+      - name: Compose release body
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            cat RELEASE_NOTES.md
+            printf '\n## Checksums (SHA-256)\n\n| Artifact | SHA-256 |\n|---|---|\n'
+            for f in dist/*.sha256; do
+              sum="$(cut -d' ' -f1 "$f")"
+              base="$(basename "${f%.sha256}")"
+              printf '| %s | %s |\n' "$base" "$sum"
+            done
+          } > body.md
+
+      # A tag containing `-` is a pre-release and never the latest release; a
+      # clean vX.Y.Z is marked latest.
+      - name: Publish release
+        uses: ncipollo/release-action@v1
+        with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          makeLatest: ${{ !contains(github.ref_name, '-') }}
+          artifacts: "dist/andromeda-*"
+          bodyFile: body.md

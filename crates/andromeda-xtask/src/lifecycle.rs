@@ -4,7 +4,7 @@
 
 use crate::{
     certs,
-    compose,
+    compose::{self, ImageBuild},
     error::XtaskError,
     local_broker::{self, BROKER_PORT, ForwardedHeaders, TRUSTED_PORT},
     stack::{Stack, StackName},
@@ -64,6 +64,7 @@ pub(crate) fn run_stack(
     suites: &[&'static str],
     keep: bool,
     broker_mode: BrokerMode,
+    image_build: ImageBuild,
     cargo_args: &[String],
 ) -> Result<(), XtaskError> {
     // With host brokers the compose `broker` profile is omitted, leaving only the
@@ -89,7 +90,7 @@ pub(crate) fn run_stack(
         keep,
         brokers: Vec::new(),
     };
-    compose::up(repository_root, &teardown.compose_file, effective_profile)?;
+    compose::up(repository_root, &teardown.compose_file, effective_profile, image_build)?;
 
     let callback_host = match broker_mode {
         BrokerMode::Local => {

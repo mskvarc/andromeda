@@ -1,0 +1,29 @@
+name: distributed
+
+# Nightly integration run for the distributed stack. Its status badge is per
+# workflow, so each stack owns a thin workflow file over the shared composite
+# action; the release gate calls the same composite for a matrix leg. Crons are
+# staggered across the stacks so their broker-image builds do not contend for
+# the gha cache at once.
+on:
+  schedule:
+    - cron: "13 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: itest-distributed-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  itest:
+    name: distributed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/itest
+        with:
+          stack: distributed
