@@ -7,6 +7,7 @@
 /// Eligibility of attributes for aggregation methods (clause 5.7.4.4).
 pub mod aggregation_eligibility;
 pub mod append_intent;
+mod attribute_instance_mutation;
 /// The temporal value one expanded attribute instance carries.
 pub mod attribute_instance_value;
 mod compilation;

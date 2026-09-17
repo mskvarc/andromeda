@@ -131,7 +131,7 @@ impl EntitySideEffectDrain {
                 }
             },
             Err(error) => {
-                let attempt = u16::try_from(i32::from(attempts).saturating_add(1))
+                let attempt = u16::try_from(attempts.saturating_add(1))
                     .map_err(|conversion| EntityError::internal(format!("invalid durable side-effect attempt count: {conversion}")))?;
                 let detail = error.to_string();
                 let (acknowledgement, outcome) = if attempt >= self.config.max_attempts {
@@ -397,7 +397,7 @@ mod tests {
         WriteRecord::restored(WriteId::mint(), recorded_at)
     }
 
-    fn lease(attempts: i16) -> LeasedSideEffect {
+    fn lease(attempts: i32) -> LeasedSideEffect {
         LeasedSideEffect {
             id: SideEffectJobId::mint(),
             attempts,

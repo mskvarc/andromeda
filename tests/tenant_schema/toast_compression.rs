@@ -43,7 +43,7 @@ const LZ4_COLUMNS: &[(&str, &str)] = &[
     ("registration_information", "entity_types"),
     ("snapshots", "id"),
     ("snapshots", "snapshot_queries"),
-    ("snapshots", "queries_details"),
+    ("snapshots", "snapshot_temporal_queries"),
     ("notification_events", "entity_id"),
     ("notification_events", "entity_snapshot"),
     ("pending_side_effects", "payload"),

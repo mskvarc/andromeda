@@ -90,6 +90,8 @@ pub mod partial_update_attribute;
 pub mod purge_entity_map;
 /// Entity collection query handling.
 pub mod query;
+/// Admitting a decoded entity query before it runs.
+pub mod query_admission;
 /// Which HTTP binding carried a Query Entities request.
 pub mod query_binding;
 /// The forwarding phases of an entity query.

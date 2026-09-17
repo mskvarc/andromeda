@@ -41,7 +41,11 @@ pub struct LeasedSideEffect {
     /// Queue entry identifier, used to acknowledge or reschedule the job.
     pub id: SideEffectJobId,
     /// How many times this job has already been attempted.
-    pub attempts: i16,
+    ///
+    /// Decoded from `pending_side_effects.attempt_count`, an `INTEGER` column
+    /// (migration 0019), so this is `i32` to match its SQL width; the sibling
+    /// notification and temporal queues carry the same-width counter.
+    pub attempts: i32,
     /// The work to perform.
     pub job: BatchSideEffectJob,
     /// The identity and ingestion instant the job's enqueueing commit shares

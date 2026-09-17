@@ -24,12 +24,13 @@ use crate::{
         Response,
         ResponsePayload,
         StatusCode,
+        query_admission::{AdmittedQuery, admit_request},
         query_binding::QueryBinding,
         query_forwarding::{ForwardedQueryResults, MergedEntities, QueryForwarding},
         query_page::QueryPage,
         query_response::{QueryCollectionMetadata, query_response},
         query_split_filters::retain_matching,
-        request_entity_map::{LocalEntitySource, record_map_use, resolve_query_map_use},
+        request_entity_map::{LocalEntitySource, record_map_use},
         start_rendering,
         with_linked_resolution_warnings,
     },
@@ -38,24 +39,16 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
-use andromeda_entity_map::{recording::PageMatches, reuse::EntityMapUse};
+use andromeda_entity_map::recording::PageMatches;
 use andromeda_federation::{
-    FederationService,
     config::SplitEntities,
-    forwarded_query::client_query::ClientQuery,
-    ordering_admission::{OrderedRead, OrderingAdmission},
     request::{EntityMapInUse, TriggeringRequest},
 };
-use andromeda_http_extraction::{context_target, prefer::PreferHeader};
-use andromeda_http_headers::{language::LanguageFilter, ngsild_entity_map::NgsiLdEntityMap, via::Via};
+use andromeda_http_extraction::context_target;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::entity_selection::ConsideredEntities;
-use andromeda_ngsi_ld_request::{
-    deferred_split_filters::DeferredSplitFilters,
-    error::ParameterError,
-    query::entity::parameters::{EntityQueryParameters, EntityQueryParametersOptions},
-};
+use andromeda_ngsi_ld_request::{deferred_split_filters::DeferredSplitFilters, query::entity::parameters::EntityQueryParameters};
 use axum::http::{HeaderMap, Uri as HttpUri};
 use std::sync::Arc;
 
@@ -257,109 +250,6 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         ))
     })
     .await
-}
-
-/// One query, decoded and admitted: what the protocol headers contributed to
-/// it, the Entity Map it runs under, and the options its response is shaped by.
-struct AdmittedQuery {
-    /// The preferred natural language, from the query or the fallback header.
-    language_filter: Option<LanguageFilter>,
-    /// The `Prefer` header the response honours (clause 6.3.21).
-    prefer: PreferHeader,
-    /// The `Via` chain the request arrived with, replayed onto every forwarded
-    /// copy so a forwarding loop is detected rather than followed.
-    incoming_via: Option<Via>,
-    /// The Entity Map the query runs under (clause 5.5.14).
-    map_use: EntityMapUse,
-    /// The representation, `sysAttrs` and `count` options resolved (clause 6.3.7).
-    opts: EntityQueryParametersOptions,
-}
-
-/// Decode `protocol` into the query, hold the query to every rule that can be
-/// decided before it runs, and resolve the Entity Map it runs under.
-///
-/// The extension headers add to the query before it is validated, so a value a
-/// header supplied is held to the same rules as one the query string carried.
-/// A branch that cannot federate is confined to the local scope first: clause
-/// 5.5.15 makes a Snapshot "implicitly limited to a local scope ... overriding
-/// setting a local scope to false".
-///
-/// # Errors
-///
-/// The classified failure of an extension header the query cannot take, of the
-/// clause 5.7.2.4 validation, of resolving the Entity Map, of the Table 6.3.7-1
-/// options, and of the clause 5.7.2.4 ordering rule.
-async fn admit_request(
-    state: &EntityRouteServices,
-    target: &ContextTarget,
-    context: &ContextSpec,
-    protocol: NgsiLdProtocolHeaders,
-    query: &mut EntityQueryParameters,
-    binding: QueryBinding,
-    instance: &HttpUri,
-) -> Result<AdmittedQuery, ProblemResponse> {
-    protocol.extensions().apply_to_entity_query(query).with_entity_instance(instance)?;
-    // Clause 5.5.7: a request `@context` declaring a JSON-LD Scoped Context is
-    // refused on the query path -- GET and POST alike, the latter after its body
-    // `@context` has been merged into `context` -- before anything is expanded
-    // against it.
-    state.entity_query.admit_read_context(context).await.with_entity_instance(instance)?;
-    if !target.permits_federation() {
-        query.local = Some(true);
-    }
-    query.validate().with_entity_instance(instance)?;
-    let referenced = protocol.entity_map.as_ref().map(NgsiLdEntityMap::as_inner);
-    let map_use = resolve_query_map_use(&state.entity_maps, target, query, referenced, instance).await?;
-    let opts = query.parse_options().with_entity_instance(instance)?;
-    refuse_inadmissible_ordering(&state.forwarding, target, context, query, binding, EntityMapInUse::from(&map_use), instance).await?;
-    Ok(AdmittedQuery {
-        language_filter: query.lang.take().or(protocol.language_filter),
-        prefer: protocol.prefer,
-        incoming_via: protocol.incoming_via,
-        map_use,
-        opts,
-    })
-}
-
-/// Refuse an ordering clause 5.7.2.4 does not admit.
-///
-/// The bullet raises `BadRequestData` for an `orderBy` on a query "not limited
-/// to the local scope", which `andromeda_federation::ordering_admission` reads
-/// as an answer a registered Context Source takes part in assembling. That is a
-/// question for the Context Registry rather than for the parameters, so it is
-/// asked here rather than during validation.
-///
-/// # Errors
-///
-/// The classified failure of reading the registrations that would take part,
-/// and the clause 5.7.2.4 refusal itself when one of them does.
-async fn refuse_inadmissible_ordering(
-    forwarding: &FederationService,
-    target: &ContextTarget,
-    context: &ContextSpec,
-    query: &EntityQueryParameters,
-    binding: QueryBinding,
-    entity_map: EntityMapInUse<'_>,
-    instance: &HttpUri,
-) -> Result<(), ProblemResponse> {
-    let admission = forwarding
-        .admit_ordering(
-            target,
-            context,
-            OrderedRead {
-                ordering: &query.ordering,
-                requested_scope: query.execution_scope(),
-                client_query: ClientQuery::EntityQuery(query),
-                operation: binding.forwarding_operation(),
-                entity_map,
-            },
-        )
-        .await
-        .with_entity_instance(instance)?;
-    match admission {
-        OrderingAdmission::Admitted => Ok(()),
-        OrderingAdmission::Refused => Err(ParameterError::OrderingWithParticipatingSource).with_entity_instance(instance),
-    }
 }
 
 /// Fold what the context sources contributed onto the entities this broker

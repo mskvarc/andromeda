@@ -86,10 +86,6 @@ const INVARIANTS: &[Invariant] = &[
         count: "SELECT COUNT(*) FROM context_source_registrations csr WHERE NOT EXISTS (SELECT 1 FROM registration_information ri WHERE ri.registration_id = csr.id)",
     },
     Invariant {
-        description: "snapshots whose context space does not exist or is not a Snapshot branch",
-        count: "SELECT COUNT(*) FROM snapshots s WHERE NOT EXISTS (SELECT 1 FROM context_spaces cs WHERE cs.context_space_key = s.context_space_key AND cs.kind = 'snapshot')",
-    },
-    Invariant {
         description: "history rows naming a unit the catalogue does not hold",
         count: "SELECT COUNT(*) FROM attribute_history ah WHERE ah.unit_code_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM unit_codes uc WHERE uc.id = ah.unit_code_id)",
     },
@@ -265,7 +261,6 @@ async fn an_invariant_violation_is_actually_counted_rather_than_silently_passing
     let orphan_history = "SELECT COUNT(*) FROM attribute_history ah \
                           WHERE ah.write_id = $1 AND NOT EXISTS (SELECT 1 FROM temporal_attribute_streams s WHERE s.stream_key = ah.stream_key)";
     let write_id = uuid::Uuid::new_v4();
-    let context_space_key = crate::live_context_space_key(pool).await;
     let before: i64 = sqlx::query_scalar(orphan_history)
         .bind(write_id)
         .fetch_one(pool)
@@ -275,10 +270,9 @@ async fn an_invariant_violation_is_actually_counted_rather_than_silently_passing
 
     sqlx::query(
         "INSERT INTO attribute_history \
-         (recorded_at, context_space_key, write_id, stream_key, write_ordinal, attribute_kind, value_kind, generated_instance_uuid, value_number) \
-         VALUES (now(), $1, $2, 9223372036854775807, 0, 1, 1, gen_random_uuid(), 1::numeric)",
+         (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind, generated_instance_uuid, value_number) \
+         VALUES (now(), $1, 9223372036854775807, 0, 1, 1, gen_random_uuid(), 1::numeric)",
     )
-    .bind(context_space_key)
     .bind(write_id)
     .execute(pool)
     .await

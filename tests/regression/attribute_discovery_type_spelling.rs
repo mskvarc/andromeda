@@ -95,7 +95,7 @@ async fn store_attribute_type(pool: &PgPool, id: &str, attribute: &str, spelling
         "UPDATE entity_documents AS d \
          SET payload = jsonb_set(d.payload, ARRAY['0', $2, '0', '@type'], $3::jsonb) \
          FROM entities AS e \
-         WHERE e.entity_key = d.entity_key AND e.context_space_key = d.context_space_key AND e.id = $1",
+         WHERE e.entity_key = d.entity_key AND e.id = $1",
     )
     .bind(id)
     .bind(attribute)

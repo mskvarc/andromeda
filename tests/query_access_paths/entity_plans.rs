@@ -38,7 +38,7 @@ async fn entity_access_paths_reach_their_intended_index_for_every_query_shape() 
         PlannedShape {
             shape: "anchored id pattern",
             statement: format!("SELECT e.id FROM entities AS e WHERE e.id LIKE '{prefix}:seed:0001%'"),
-            index: "uq_entities_context_id",
+            index: "uq_entities_id",
         },
         PlannedShape {
             shape: "unanchored id pattern",
