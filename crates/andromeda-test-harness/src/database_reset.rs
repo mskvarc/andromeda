@@ -16,11 +16,26 @@ pub const RESET_TENANT_SQL: &str = include_str!("../sql/reset-tenant.sql");
 ///
 /// # Errors
 ///
-/// Returns [`DatabaseResetError::Isolation`] when the exclusive lease no longer holds its connection, and [`DatabaseResetError::Sqlx`] when the reset script fails.
+/// Returns [`DatabaseResetError::Isolation`] when the exclusive lease no longer holds its connection, and [`DatabaseResetError::Sqlx`] when the reset script fails for any reason other than a deadlock, or when it still deadlocks after the bounded deadlock retries are exhausted.
 pub async fn reset_tenant(lease: &mut SerializedLease) -> Result<(), DatabaseResetError> {
-    let connection = lease.connection()?;
-    connection.execute(RESET_TENANT_SQL).await.map_err(DatabaseResetError::from_sqlx)?;
-    Ok(())
+    let mut attempt = 0;
+    loop {
+        let connection = lease.connection()?;
+        match connection.execute(RESET_TENANT_SQL).await {
+            Ok(_) => return Ok(()),
+            Err(error) if is_deadlock(&error) && attempt < RESET_DEADLOCK_RETRIES => {
+                // The brokers' background tasks (expiry sweeps, notification
+                // drains) keep short transactions open against the same tables;
+                // the reset's TRUNCATE racing one of them is reported as a
+                // deadlock rather than waiting, so it is retried once that
+                // transaction has finished. This is the same race, and the same
+                // remedy, as `reset_owned_tenant`.
+                attempt += 1;
+                sleep(RESET_DEADLOCK_BACKOFF).await;
+            }
+            Err(error) => return Err(DatabaseResetError::from_sqlx(error)),
+        }
+    }
 }
 
 /// Reset a tenant database the calling suite created and owns outright.
