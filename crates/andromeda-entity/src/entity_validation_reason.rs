@@ -175,8 +175,10 @@ pub enum EntityValidationReason {
         /// The rejected collation identifier.
         collation: String,
     },
-    /// A `noOverwrite` batch update named attributes that already exist.
-    #[error("some attributes already exist and were not updated due to noOverwrite")]
+    /// A `noOverwrite` batch update named only attributes that already exist, so
+    /// clause 5.6.9.4's local Append (clause 5.6.3) appended nothing and the
+    /// Entity is not "successfully updated (Attributes appended)" for S (clause 5.6.9.5).
+    #[error("no attributes were appended: every named attribute already exists and noOverwrite was set")]
     NoOverwriteConflict,
     /// The atomic commit port refused the submission as unusable (clause 5.5.6).
     ///

@@ -7,7 +7,7 @@
 //! decoded a query, and both are properties of the binding rather than of the
 //! query, so they are read off this one value.
 
-use andromeda_federation::operation::ForwardingOperation;
+use andromeda_federation::{operation::ForwardingOperation, request::QueryDelivery};
 use andromeda_http_response::pagination::PagePointers;
 
 /// The HTTP binding one Query Entities request arrived on.
@@ -32,6 +32,15 @@ impl QueryBinding {
         match self {
             QueryBinding::QueryString => ForwardingOperation::QueryEntity,
             QueryBinding::PostedBody => ForwardingOperation::QueryBatch,
+        }
+    }
+
+    /// The binding a forwarded query prefers to mirror (clause 6.23.1): a GET
+    /// query prefers `queryEntity`, a POST query `queryBatch`.
+    pub(crate) const fn delivery(self) -> QueryDelivery {
+        match self {
+            QueryBinding::QueryString => QueryDelivery::Query,
+            QueryBinding::PostedBody => QueryDelivery::Batch,
         }
     }
 

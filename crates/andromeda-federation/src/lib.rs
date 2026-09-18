@@ -4,6 +4,8 @@
 
 /// The clause 4.5.5 merge of attribute instances from several sources.
 pub mod attribute_instance_merge;
+/// The POST body of a forwarded batch entity query (clause 6.23).
+pub mod batch_query_body;
 /// Cached forwarded GET responses (clause 6.3.17).
 pub mod cache;
 /// Federation operation configuration.
@@ -48,6 +50,8 @@ pub mod provision;
 pub mod provision_batch;
 /// Purge forwarding.
 pub mod provision_purge;
+/// Choosing how a forwarded current-entity read reaches one registration.
+pub mod read_binding;
 /// Registration selection and fan-out shared by forwarded reads.
 pub mod read_fan_out;
 /// Registration-information selection.

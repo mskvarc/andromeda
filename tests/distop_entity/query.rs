@@ -613,7 +613,9 @@ async fn distop_entity_query_inclusive_by_id_with_only_query_batch_does_not_forw
     mock.shutdown().await;
 }
 
-/// Query via POST /entityOperations/query with queryBatch operation.
+/// A POST batch query reaches a source that advertises `queryBatch` through a
+/// forwarded POST batch query at `/entityOperations/query`, the batch endpoint it
+/// advertises (clause 4.3.6.1; ETSI conformance `D011_03_inc_02`).
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_post_with_query_batch_op() {
@@ -629,10 +631,10 @@ async fn distop_entity_query_post_with_query_batch_op() {
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // The broker always forwards queries as GET /entities
-    let mock_entity = vehicle_entity(&entity_id);
-    let mock_array = Value::Array(vec![mock_entity]);
-    mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
+    // A queryBatch source is contacted through the POST batch endpoint it advertises.
+    let mock_array = Value::Array(vec![vehicle_entity(&entity_id)]);
+    mock.set_stub_with_body(Method::POST, "/ngsi-ld/v1/entityOperations/query", 200, &mock_array)
+        .await;
 
     // Query via POST
     let query_body = json!({
@@ -644,15 +646,22 @@ async fn distop_entity_query_post_with_query_batch_op() {
 
     let entries = body.as_array().expect("response should be array");
     assert!(entries.iter().any(|e| e["id"] == entity_id));
+    assert!(
+        mock.get_count(Method::POST, "/ngsi-ld/v1/entityOperations/query") > 0,
+        "the batch query is forwarded to the queryBatch source"
+    );
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
 }
 
-/// A batch POST query does not use the single-query capability.
+/// A POST batch query reaches a source that advertises only `queryEntity` through a
+/// forwarded GET query (clause 6.23.1: the GET and POST bindings are the same "Query
+/// Entities" operation; clause 4.3.6.1: reach the source through an operation it
+/// advertises). The source is queried at `/entities`.
 #[tokio::test]
 #[serial]
-async fn distop_entity_query_post_with_only_query_entity_does_not_forward() {
+async fn distop_entity_query_post_with_only_query_entity_forwards_as_query() {
     let _serialized_environment = clean_database().await;
     let c = client();
     let mock = MockServer::start().await;
@@ -660,14 +669,13 @@ async fn distop_entity_query_post_with_only_query_entity_does_not_forward() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-post-op2");
     let reg_id = unique_id("urn:ngsi-ld:Registration:query-post-op2");
 
-    // Create inclusive registration with queryEntity operation
+    // A registration advertising only queryEntity: the POST batch query is downgraded
+    // to a GET query (clause 6.23.1).
     let reg = vehicle_registration_with_ops(&reg_id, Some(&entity_id), &mock.url(""), None, &["queryEntity"]);
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Mock returns entity
-    let mock_entity = vehicle_entity(&entity_id);
-    let mock_array = Value::Array(vec![mock_entity]);
+    let mock_array = Value::Array(vec![vehicle_entity(&entity_id)]);
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
 
     // Query via POST
@@ -680,10 +688,13 @@ async fn distop_entity_query_post_with_only_query_entity_does_not_forward() {
 
     let entries = body.as_array().expect("response should be array");
     assert!(
-        entries.is_empty(),
-        "a registration offering only queryEntity is never used for a batch query: {entries:?}"
+        entries.iter().any(|e| e["id"] == entity_id),
+        "the queryEntity source serves the batch query: {entries:?}"
     );
-    pretty_assertions::assert_eq!(mock.get_count(Method::GET, "/ngsi-ld/v1/entities"), 0);
+    assert!(
+        mock.get_count(Method::GET, "/ngsi-ld/v1/entities") > 0,
+        "the batch query is forwarded as a GET query"
+    );
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;

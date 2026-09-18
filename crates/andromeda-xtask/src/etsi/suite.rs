@@ -57,7 +57,17 @@ fn reset(checkout: &Path) -> Result<(), XtaskError> {
         .arg(checkout)
         .args(["reset", "--hard", "--quiet", PINNED_COMMIT])
         .status()?;
-    if reset.success() {
+    if !reset.success() {
+        return Err(XtaskError::SuiteReset(PINNED_COMMIT.to_owned()));
+    }
+    // `reset --hard` restores tracked files but leaves untracked ones behind. A
+    // corrected-material patch that adds a file leaves that file untracked, so an
+    // interrupted run (whose `PatchGuard` never reverses its patches) would poison
+    // the next run: re-applying the file-creating patch fails with "already exists
+    // in working directory". Removing untracked files here makes provisioning
+    // idempotent regardless of how a previous run ended.
+    let cleaned = Command::new("git").arg("-C").arg(checkout).args(["clean", "-fdq"]).status()?;
+    if cleaned.success() {
         Ok(())
     } else {
         Err(XtaskError::SuiteReset(PINNED_COMMIT.to_owned()))

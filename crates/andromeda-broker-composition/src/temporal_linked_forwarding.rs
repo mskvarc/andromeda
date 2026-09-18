@@ -18,7 +18,6 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_federation::{
     FederationService,
     forwarded_query::client_query::ClientQuery,
-    operation::ForwardingOperation,
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -85,7 +84,6 @@ impl RemoteTemporalLinkedSource for ForwardedTemporalLinkedSource {
                     exclude_registration: None,
                     client_query: ClientQuery::Temporal(&parameters),
                     context,
-                    operation: ForwardingOperation::RetrieveTemporalEntity,
                     // A linked retrieval starts at this broker rather than being a
                     // hop of an inbound one, so there is no `Via` chain to extend
                     // and no headers to pass through.

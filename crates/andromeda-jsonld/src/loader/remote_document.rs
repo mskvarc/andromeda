@@ -22,12 +22,14 @@ use crate::{
     },
 };
 use andromeda_http_headers::json_ld_accept::JsonLdAccept;
+use backon::{ConstantBuilder, Retryable};
 use headers::HeaderMapExt;
 use iri_rs::IriBuf;
 use mediatype::MediaTypeBuf;
 use reqwest::{Client, header::HeaderMap};
 use serde_json::Value;
-use std::str::from_utf8;
+use std::{str::from_utf8, time::Duration};
+use tracing::warn;
 
 /// A parsed remote context and the freshness its response granted it.
 #[derive(Debug)]
@@ -125,6 +127,53 @@ pub(crate) async fn fetch_and_parse(
     })
 }
 
+/// How many extra attempts a transport-level fetch failure is given after the
+/// first, before it is reported. A context host that drops or refuses a
+/// connection under load recovers within a few hundred milliseconds; only a
+/// genuinely unreachable source exhausts all attempts.
+const MAX_TRANSPORT_RETRIES: usize = 2;
+/// How long to wait between transport-level retries.
+const TRANSPORT_RETRY_BACKOFF: Duration = Duration::from_millis(250);
+
+/// [`fetch_and_parse`], retrying only a transport-level failure.
+///
+/// A dropped or refused connection ([`LoaderErrorKind::Request`]) is transient
+/// and worth another attempt; every other failure is deterministic -- an HTTP
+/// status, an oversized body, or an unparseable document fails identically on a
+/// retry -- and is returned at once, filtered by
+/// [`is_transient_transport_failure`]. Retrying matters most under
+/// `--isolate-tenants`, where the per-tenant context cache makes many fresh
+/// tenants cold-fetch the same public context at once and a host occasionally
+/// resets one connection, but the same transience arises for any deployment
+/// fetching a remote `@context`.
+pub(crate) async fn fetch_and_parse_retrying(
+    client: &Client,
+    url: &IriBuf,
+    max_bytes: usize,
+    default_lifetime: CacheLifetime,
+) -> Result<RemoteContextDocument, LoaderError> {
+    let backoff = ConstantBuilder::default()
+        .with_delay(TRANSPORT_RETRY_BACKOFF)
+        .with_max_times(MAX_TRANSPORT_RETRIES);
+    (|| fetch_and_parse(client, url, max_bytes, default_lifetime))
+        .retry(backoff)
+        .when(is_transient_transport_failure)
+        .notify(
+            |error: &LoaderError, delay| warn!(url = %error.url, error = %error.kind, ?delay, "Remote context fetch failed at the transport level; retrying"),
+        )
+        .await
+}
+
+/// Whether a loader failure is a transient transport error worth retrying.
+///
+/// Only a network- or transport-level request failure recovers on a retry.
+/// A non-success HTTP status, an oversized body, an unparseable document, a
+/// disabled fetch, or a degraded durable cache are all deterministic given the
+/// same request, so retrying them only delays the inevitable report.
+const fn is_transient_transport_failure(error: &LoaderError) -> bool {
+    matches!(error.kind, LoaderErrorKind::Request(_))
+}
+
 /// Whether a `Content-Type` names something a context can be parsed from.
 fn is_json_like(content_type: &str) -> bool {
     match content_type.parse::<MediaTypeBuf>() {
@@ -151,9 +200,39 @@ const fn too_large(url: IriBuf, size: usize, max: usize) -> LoaderError {
 mod tests {
     use crate::{
         context_subtree::context_subtree,
-        loader::remote_document::{is_json_like, ld_json_media_type},
+        loader::{
+            error::{LoaderError, LoaderErrorKind},
+            remote_document::{is_json_like, is_transient_transport_failure, ld_json_media_type},
+        },
     };
+    use iri_rs::IriBuf;
+    use reqwest::StatusCode;
     use serde_json::json;
+
+    /// A loader error under a fixed URL, for the retry-classification test.
+    fn error(kind: LoaderErrorKind) -> LoaderError {
+        LoaderError {
+            url: IriBuf::new("https://example.com/context.jsonld".to_owned()).expect("valid URL"),
+            kind,
+        }
+    }
+
+    #[test]
+    fn only_a_transport_failure_is_retried() {
+        assert!(
+            is_transient_transport_failure(&error(LoaderErrorKind::Request("connection reset".to_owned()))),
+            "a dropped or refused connection is transient and retried"
+        );
+        for deterministic in [
+            LoaderErrorKind::Http(StatusCode::NOT_FOUND),
+            LoaderErrorKind::TooLarge { size: 10, max: 5 },
+            LoaderErrorKind::Invalid("missing @context".to_owned()),
+            LoaderErrorKind::FetchDisabled,
+            LoaderErrorKind::Cache("database unavailable".to_owned()),
+        ] {
+            assert!(!is_transient_transport_failure(&error(deterministic)), "a deterministic failure is not retried");
+        }
+    }
 
     /// Clause 5.13.2.3: a downloaded `@context` is a referenced object, so
     /// "all extra information located outside of the @context subtree" is gone

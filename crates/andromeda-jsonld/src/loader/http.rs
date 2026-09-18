@@ -30,7 +30,7 @@ use crate::{
     hit_counter::{HitCounter, HitDelta},
     loader::{
         cache_lifetime::CacheLifetime,
-        durable_cache::{fetch_and_persist, load_from_durable_cache},
+        durable_cache::{fetch_and_persist, load_from_durable_cache, persist_registry_context},
         error::LoaderError,
         loaded_context::{ContextDurability, EntryLifetime, LoadedContext, ResponseDrivenExpiry, registry_context},
         pending_persistence::PersistenceRetryLease,
@@ -172,6 +172,17 @@ impl HttpContextLoader {
             .try_get_with(url_iri.clone(), async move {
                 fill_marker.store(true, Ordering::Relaxed);
                 if let Some(value) = registry.get(&url_iri) {
+                    // Clause 5.13.1: a preloaded @context is a local copy of a
+                    // document whose authority is a URL, so the first resolution
+                    // that reaches it records a "Cached" durable entry that
+                    // clause 5.13.3 then lists. An embedded @context (the core
+                    // contexts, the data-integrity stub) is registered by a path
+                    // that never marks it preloaded, so it stays out of the cache.
+                    if registry.is_preloaded(&url_iri)
+                        && let Some(ref cache) = l2_cache
+                    {
+                        return Ok(persist_registry_context(cache.as_ref(), &url_iri, value, default_lifetime).await);
+                    }
                     return Ok(registry_context(value));
                 }
 
@@ -319,7 +330,7 @@ mod tests {
     use iri_rs::IriBuf;
     use jsonld::Loader;
     use serde_json::json;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     fn registry_with(url: &str, context: serde_json::Value) -> Arc<ContextRegistry> {
         let registry = Arc::new(ContextRegistry::new());
@@ -396,5 +407,90 @@ mod tests {
         let error = loader.load_value(&url).await.expect_err("no registry entry");
 
         assert!(error.is_context_not_available(), "expected a loading failure, got {error}");
+    }
+
+    /// An L2 cache that records the URLs written to it and never reports a hit,
+    /// so a resolution proceeds past it to the registry.
+    #[derive(Debug, Default)]
+    struct RecordingL2 {
+        /// The URLs handed to `put`, in call order.
+        puts: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ContextCache for RecordingL2 {
+        async fn get(&self, _url: &IriBuf) -> Result<Option<CachedContext>, ContextCacheError> {
+            Ok(None)
+        }
+        async fn put(&self, url: &IriBuf, _payload: &serde_json::Value, _lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
+            self.puts.lock().expect("mutex not poisoned").push(url.to_string());
+            Ok(())
+        }
+    }
+
+    /// Clause 5.13.1 / 5.13.3: resolving a preloaded @context records it in the
+    /// durable cache as a "Cached" entry, so the listing can serve it.
+    #[tokio::test]
+    async fn a_preloaded_context_is_recorded_in_the_durable_cache() {
+        let registry = Arc::new(ContextRegistry::new());
+        let url = IriBuf::new("https://forge.example.com/suite.jsonld".to_string()).expect("valid URL");
+        registry.register_preloaded(
+            url.clone(),
+            jsonld_syntax::Value::from_serde_json(json!({ "@context": { "name": "https://example.com/name" } })),
+        );
+        let recorder = Arc::new(RecordingL2::default());
+        let loader = offline_loader(registry).with_l2_cache(Arc::clone(&recorder) as Arc<dyn ContextCache>);
+
+        loader.load_value(&url).await.expect("a preloaded context resolves");
+
+        assert_eq!(
+            recorder.puts.lock().expect("mutex not poisoned").as_slice(),
+            &[url.to_string()],
+            "the preloaded context is written to the durable cache under its URL"
+        );
+    }
+
+    /// An embedded @context (registered rather than preloaded) has no origin URL
+    /// the broker resolved, so clause 5.13.1 does not make it "Cached" and the
+    /// resolver leaves the durable cache untouched.
+    #[tokio::test]
+    async fn an_embedded_context_is_not_recorded_in_the_durable_cache() {
+        let registry = registry_with(
+            "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld",
+            json!({ "@context": { "name": "https://example.com/name" } }),
+        );
+        let recorder = Arc::new(RecordingL2::default());
+        let loader = offline_loader(registry).with_l2_cache(Arc::clone(&recorder) as Arc<dyn ContextCache>);
+        let url = IriBuf::new("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld".to_string()).expect("valid URL");
+
+        loader.load_value(&url).await.expect("an embedded context resolves");
+
+        assert!(
+            recorder.puts.lock().expect("mutex not poisoned").is_empty(),
+            "an embedded context is not written to the durable cache"
+        );
+    }
+
+    /// The durable write lands once, behind the in-process cache: a second
+    /// resolution is served from moka and never reaches the registry again.
+    #[tokio::test]
+    async fn a_second_resolution_of_a_preloaded_context_does_not_write_again() {
+        let registry = Arc::new(ContextRegistry::new());
+        let url = IriBuf::new("https://forge.example.com/suite.jsonld".to_string()).expect("valid URL");
+        registry.register_preloaded(
+            url.clone(),
+            jsonld_syntax::Value::from_serde_json(json!({ "@context": { "name": "https://example.com/name" } })),
+        );
+        let recorder = Arc::new(RecordingL2::default());
+        let loader = offline_loader(registry).with_l2_cache(Arc::clone(&recorder) as Arc<dyn ContextCache>);
+
+        loader.load_value(&url).await.expect("first resolution");
+        loader.load_value(&url).await.expect("second resolution");
+
+        assert_eq!(
+            recorder.puts.lock().expect("mutex not poisoned").len(),
+            1,
+            "the durable write happens once, behind the in-process cache"
+        );
     }
 }

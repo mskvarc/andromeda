@@ -39,7 +39,7 @@ use crate::{
     error::FederationError,
     forwarded_query::client_query::ClientQuery,
     operation::ForwardingOperation,
-    read_fan_out::ReadSelection,
+    read_fan_out::{ReadSelection, ReadServing},
     request::{CsrModeFilter, EntityMapInUse},
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -133,7 +133,7 @@ impl FederationService {
                     exclude_registration: None,
                     csf: None,
                     scope_q: read.client_query.scope_q(),
-                    operation: read.operation,
+                    serving: ReadServing::Operation(read.operation),
                     mode_filter: CsrModeFilter::All,
                     entity_map: read.entity_map,
                 },

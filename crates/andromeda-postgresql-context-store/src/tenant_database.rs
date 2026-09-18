@@ -13,11 +13,12 @@ use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_tenancy::{database_name::TenantDatabaseName, db_name_prefix::DbNamePrefix};
 use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{Connection, Executor, PgConnection, postgres::PgPoolOptions};
+use sqlx::{Connection, Executor, PgConnection, error::DatabaseError, postgres::PgPoolOptions};
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
     time::Duration,
 };
+use tokio::time::sleep;
 use url::Url;
 
 /// How long an idle connection is kept before the pool closes it. Tenant
@@ -147,10 +148,65 @@ pub async fn create_database_if_missing(base_url: &DatabaseUrl, db_name: &Tenant
         .is_some();
     if !exists {
         let sql = create_database(db_name);
-        conn.execute(sqlx::AssertSqlSafe(sql)).await?;
+        create_database_with_retry(&mut conn, &sql).await?;
     }
     conn.close().await?;
     Ok(())
+}
+
+/// The attempts a contended `CREATE DATABASE` is given before its failure is reported.
+const CREATE_DATABASE_ATTEMPTS: u32 = 6;
+/// The delay between contended `CREATE DATABASE` attempts.
+const CREATE_DATABASE_BACKOFF: Duration = Duration::from_millis(250);
+
+/// Execute `CREATE DATABASE`, retrying the transient contention that arises when
+/// many tenants are provisioned at once.
+///
+/// PostgreSQL copies a template database for every `CREATE DATABASE` and rejects
+/// one whose template is being read by a concurrent create with SQLSTATE 55006
+/// (`object_in_use`, "source database ... is being accessed by other users"); a
+/// deadlock (40P01), a serialization failure (40001) or momentary connection
+/// exhaustion (53300) is likewise transient. A fresh broker that materialises a
+/// tenant database per `--isolate-tenants` suite meets this contention in bursts,
+/// which otherwise surfaces to the client as a 500 on the first request in the
+/// new tenant. A create that lost the race to a concurrent create of the same
+/// name (42P04) finds its database already made, which is success.
+async fn create_database_with_retry(conn: &mut PgConnection, sql: &str) -> Result<(), ContextStoreError> {
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        match conn.execute(sqlx::AssertSqlSafe(sql)).await {
+            Ok(_) => return Ok(()),
+            Err(error) if is_database_already_exists(&error) => return Ok(()),
+            Err(error) if attempt < CREATE_DATABASE_ATTEMPTS && is_transient_create_failure(&error) => {
+                sleep(CREATE_DATABASE_BACKOFF).await;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+/// Whether a `CREATE DATABASE` failure is transient contention a retry can clear.
+fn is_transient_create_failure(error: &sqlx::Error) -> bool {
+    is_transient_create_sqlstate(error.as_database_error().and_then(DatabaseError::code).as_deref())
+}
+
+/// Whether a `CREATE DATABASE` failed because a concurrent provisioner already
+/// created the database (SQLSTATE 42P04, `duplicate_database`).
+fn is_database_already_exists(error: &sqlx::Error) -> bool {
+    is_duplicate_database_sqlstate(error.as_database_error().and_then(DatabaseError::code).as_deref())
+}
+
+/// Whether `code` is a transient `CREATE DATABASE` SQLSTATE: 55006 (template in
+/// use by a concurrent create), 40001 (serialization), 40P01 (deadlock) or 53300
+/// (too many connections).
+fn is_transient_create_sqlstate(code: Option<&str>) -> bool {
+    code.is_some_and(|code| matches!(code, "55006" | "40001" | "40P01" | "53300"))
+}
+
+/// Whether `code` is the `duplicate_database` SQLSTATE (42P04).
+fn is_duplicate_database_sqlstate(code: Option<&str>) -> bool {
+    code == Some("42P04")
 }
 
 /// The `SELECT 1 FROM pg_database WHERE datname = $1` existence probe.
@@ -276,5 +332,30 @@ mod tests {
         let raw = "postgres://postgres:postgres@localhost:5432";
         let parsed = DatabaseUrl::new(raw.parse().expect("database URL"));
         assert!(parsed.db_name().is_err());
+    }
+
+    /// The contention a burst of tenant provisioning meets is retried: 55006
+    /// (template in use), 40001, 40P01 and 53300. Every other failure, and the
+    /// absence of a SQLSTATE, is returned at once.
+    #[test]
+    fn only_the_concurrent_create_database_sqlstates_are_retried() {
+        use crate::tenant_database::is_transient_create_sqlstate;
+        for code in ["55006", "40001", "40P01", "53300"] {
+            assert!(is_transient_create_sqlstate(Some(code)), "{code}");
+        }
+        for code in ["42P04", "42501", "23505", "3D000", "08006"] {
+            assert!(!is_transient_create_sqlstate(Some(code)), "{code}");
+        }
+        assert!(!is_transient_create_sqlstate(None));
+    }
+
+    /// A create that lost the race to a concurrent create of the same database
+    /// name is a success, not a failure, so 42P04 (and only 42P04) is a duplicate.
+    #[test]
+    fn only_duplicate_database_is_treated_as_already_created() {
+        use crate::tenant_database::is_duplicate_database_sqlstate;
+        assert!(is_duplicate_database_sqlstate(Some("42P04")));
+        assert!(!is_duplicate_database_sqlstate(Some("55006")));
+        assert!(!is_duplicate_database_sqlstate(None));
     }
 }

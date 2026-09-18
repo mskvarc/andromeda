@@ -138,18 +138,30 @@ pub struct ForwardTemporalQueryRequest<'a> {
     pub source_page: Option<SourcePage>,
 }
 
+/// Which HTTP binding a Query Entities request arrived on, which the forwarded
+/// read prefers to mirror when the registration advertises it (clauses 4.3.6.1,
+/// 6.23.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryDelivery {
+    /// `GET /entities` -- prefers `queryEntity`.
+    Query,
+    /// `POST /entityOperations/query` -- prefers `queryBatch`.
+    Batch,
+}
+
 /// Parameters for forwarding an entity query.
 pub struct ForwardQueryRequest<'a> {
     /// The client's query, narrowed per registration before it is forwarded
     /// (clause 4.3.6.1) and the source of the type and identifiers the
     /// registrations are matched against.
     pub client_query: ClientQuery<'a>,
+    /// The binding the client's query arrived on, which the forward prefers to
+    /// mirror (clause 6.23.1).
+    pub delivery: QueryDelivery,
     /// Whether the attribute-reading filters stay with the broker (clause 5.7.2.4).
     pub split: SplitEntities,
     /// The JSON-LD context the triggering request resolved to.
     pub context: &'a ContextSpec,
-    /// NGSI-LD operation being forwarded.
-    pub operation: ForwardingOperation,
     /// The request that triggered this forwarding.
     pub triggering: TriggeringRequest<'a>,
     /// The expanded context source filter selecting the registrations to
@@ -176,8 +188,6 @@ pub struct ForwardRetrieveRequest<'a> {
     pub client_query: ClientQuery<'a>,
     /// The JSON-LD context the triggering request resolved to.
     pub context: &'a ContextSpec,
-    /// NGSI-LD operation being forwarded.
-    pub operation: ForwardingOperation,
     /// The request that triggered this forwarding.
     pub triggering: TriggeringRequest<'a>,
     /// Registration modes included in this forwarding phase.

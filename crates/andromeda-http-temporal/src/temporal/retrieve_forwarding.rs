@@ -13,7 +13,6 @@ use crate::{
     temporal::{
         ContextSpec,
         CsrModeFilter,
-        ForwardingOperation,
         ProblemResponse,
         ResultInstanceExt,
         TemporalQueryParameters,
@@ -147,7 +146,6 @@ pub(crate) async fn distributed_retrieval(
                 exclude_registration: None,
                 client_query: ClientQuery::Temporal(params),
                 context,
-                operation: ForwardingOperation::RetrieveTemporalEntity,
                 triggering,
                 mode_filter: CsrModeFilter::All,
                 entity_map: EntityMapInUse::from(&map_use),

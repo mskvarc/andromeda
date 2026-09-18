@@ -18,6 +18,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_telemetry::federation_ops::{self, FederationOperation};
 use futures::{StreamExt, stream};
+use iri_rs::IriBuf;
 use serde_json::Value;
 use std::time::Duration;
 use tracing::{debug, warn};
@@ -83,10 +84,11 @@ impl FederationService {
             if !target.permits_federation() {
                 return Ok(Vec::new());
             }
-            if self.is_loop_detected(request.triggering.via) {
-                debug!("Loop detected in Via header chain, skipping provision forwarding");
-                return Ok(Vec::new());
-            }
+            // Clause 6.3.18: an incoming request whose Via already names this
+            // broker's own hostAlias has looped back onto it. The forward is not
+            // sent; how the operation answers depends on the matched registration
+            // (clause 6.3.17), decided per registration below.
+            let looped = self.is_loop_detected(request.triggering.via);
 
             let prepared_context = self.engine.prepare_term_context(request.context);
             let expanded_type = if let Some(t) = request.entity_type_compact {
@@ -107,6 +109,23 @@ impl FederationService {
                 if !csr_has_matching_information(&csr, expanded_type.as_ref(), Some(request.entity_id), request.attribute_name) {
                     continue;
                 }
+                if looped {
+                    // Clause 6.3.17: with the request looped back, a proxied source
+                    // that holds all the data externally cannot be forwarded to, so
+                    // a lone one is 508 Loop Detected (`single_source_failure`
+                    // escalates it). An inclusive registration holds local data, so
+                    // the loop only stops the forward and the local part still runs.
+                    if is_proxied(&csr) {
+                        let mode = proxied_mode(&csr);
+                        results.push(ForwardedWriteResult {
+                            registration_id: csr.id,
+                            mode,
+                            outcome: ForwardedWriteOutcome::LoopDetected,
+                            proxied_attrs: Vec::new(),
+                        });
+                    }
+                    continue;
+                }
                 if request.operation.matches(&csr) {
                     matching_csrs.push(csr);
                 } else if is_proxied(&csr) {
@@ -124,58 +143,10 @@ impl FederationService {
                 }
             }
 
-            let request_ref = &request;
             let expanded_type_ref = expanded_type.as_ref();
             let planned: Vec<PlannedWrite<'_>> = matching_csrs
                 .into_iter()
-                .filter_map(|csr| {
-                    // A POST below the bare resource creates (clauses 6.4.3.1 and
-                    // 6.18.3.1); every other write addresses the entity itself.
-                    let mut path = request_ref.resource.segments().to_vec();
-                    if !(request_ref.method == reqwest::Method::POST && request_ref.path_suffix.is_none()) {
-                        path.push(request_ref.entity_id.as_str());
-                        path.extend(
-                            request_ref
-                                .path_suffix
-                                .into_iter()
-                                .flat_map(|suffix| suffix.split('/'))
-                                .filter(|segment| !segment.is_empty()),
-                        );
-                    }
-                    let url = forwarding_url(csr.access.endpoint.url(), &path, request_ref.query_string.unwrap_or(""));
-
-                    let proxied_attrs = if is_proxied(&csr) {
-                        collect_matching_attrs(
-                            &csr,
-                            expanded_type_ref,
-                            Some(request_ref.entity_id),
-                            request_ref.attribute_name,
-                            request_ref.body,
-                        )
-                    } else {
-                        Vec::new()
-                    };
-
-                    let body = if request_ref.attribute_name.is_none() {
-                        filter_fragment_for_registration(request_ref.body, &csr, expanded_type_ref, Some(request_ref.entity_id))
-                    } else {
-                        request_ref.body.map(<[u8]>::to_vec)
-                    };
-                    if request_ref.body.is_some() && body.is_none() {
-                        return None;
-                    }
-                    Some(PlannedWrite {
-                        registration: csr,
-                        url,
-                        method: request_ref.method.clone(),
-                        body,
-                        proxied_attrs,
-                        context: request_ref.context,
-                        triggering: request_ref.triggering,
-                        // A single-entity provision runs under no Entity Map.
-                        linked_map: None,
-                    })
-                })
+                .filter_map(|csr| plan_write(csr, &request, expanded_type_ref))
                 .collect();
 
             results.extend(self.execute_writes(planned).await);
@@ -290,6 +261,52 @@ impl FederationService {
             ForwardedWriteOutcome::RemoteHttpFailure { status, body: response_body }
         }
     }
+}
+
+/// Plan the one forwarded write to `csr` for `request`, or `None` when the
+/// registration covers nothing of the body once it is narrowed to what the
+/// registration declares (clause 4.3.6.1).
+fn plan_write<'a>(csr: ContextSourceRegistration, request: &ForwardProvisionRequest<'a>, expanded_type: Option<&IriBuf>) -> Option<PlannedWrite<'a>> {
+    // A POST below the bare resource creates (clauses 6.4.3.1 and 6.18.3.1);
+    // every other write addresses the entity itself.
+    let mut path = request.resource.segments().to_vec();
+    if !(request.method == reqwest::Method::POST && request.path_suffix.is_none()) {
+        path.push(request.entity_id.as_str());
+        path.extend(
+            request
+                .path_suffix
+                .into_iter()
+                .flat_map(|suffix| suffix.split('/'))
+                .filter(|segment| !segment.is_empty()),
+        );
+    }
+    let url = forwarding_url(csr.access.endpoint.url(), &path, request.query_string.unwrap_or(""));
+
+    let proxied_attrs = if is_proxied(&csr) {
+        collect_matching_attrs(&csr, expanded_type, Some(request.entity_id), request.attribute_name, request.body)
+    } else {
+        Vec::new()
+    };
+
+    let body = if request.attribute_name.is_none() {
+        filter_fragment_for_registration(request.body, &csr, expanded_type, Some(request.entity_id))
+    } else {
+        request.body.map(<[u8]>::to_vec)
+    };
+    if request.body.is_some() && body.is_none() {
+        return None;
+    }
+    Some(PlannedWrite {
+        registration: csr,
+        url,
+        method: request.method.clone(), // clone: each planned write owns the method it sends
+        body,
+        proxied_attrs,
+        context: request.context,
+        triggering: request.triggering,
+        // A single-entity provision runs under no Entity Map.
+        linked_map: None,
+    })
 }
 
 /// Clause 6.3.17: when the data lives in a single exclusive or redirect

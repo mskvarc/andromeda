@@ -15,7 +15,6 @@ use andromeda_federation::{
     config::SplitEntities,
     entity_result::merge_retrieve_results,
     forwarded_query::client_query::ClientQuery,
-    operation::ForwardingOperation,
     outcome::ForwardedEntities,
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
 };
@@ -80,7 +79,6 @@ impl SubscriptionForwardingService {
                     exclude_registration: Some(sender),
                     client_query: ClientQuery::EntityRetrieve(&whole_entity),
                     context,
-                    operation: ForwardingOperation::RetrieveEntity,
                     triggering: TriggeringRequest::default(),
                     mode_filter: CsrModeFilter::All,
                     entity_map: EntityMapInUse::None,

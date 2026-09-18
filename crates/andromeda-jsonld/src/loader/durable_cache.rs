@@ -19,7 +19,7 @@ use crate::{
         error::{LoaderError, LoaderErrorKind},
         loaded_context::{ContextDurability, EntryLifetime, LoadedContext},
         pending_persistence::PendingPersistence,
-        remote_document::fetch_and_parse,
+        remote_document::fetch_and_parse_retrying,
     },
 };
 use iri_rs::IriBuf;
@@ -77,8 +77,8 @@ pub(crate) async fn load_from_durable_cache(
 ///
 /// # Errors
 ///
-/// Returns whatever [`fetch_and_parse`] reports; a failed durable write is not
-/// an error, only a downgrade to [`ContextDurability::Pending`].
+/// Returns whatever [`fetch_and_parse_retrying`] reports; a failed durable write
+/// is not an error, only a downgrade to [`ContextDurability::Pending`].
 pub(crate) async fn fetch_and_persist(
     client: &Client,
     url: &IriBuf,
@@ -86,7 +86,7 @@ pub(crate) async fn fetch_and_persist(
     default_lifetime: CacheLifetime,
     l2_cache: Option<&Arc<dyn ContextCache>>,
 ) -> Result<LoadedContext, LoaderError> {
-    let fetched = fetch_and_parse(client, url, max_bytes, default_lifetime).await?;
+    let fetched = fetch_and_parse_retrying(client, url, max_bytes, default_lifetime).await?;
     let normalized = without_embedded_core_context(url, fetched.value);
     let lifetime = EntryLifetime::of(fetched.freshness);
     let ContextFreshness::Fresh(granted) = fetched.freshness else {
@@ -112,6 +112,34 @@ pub(crate) async fn fetch_and_persist(
         lifetime,
         canonical_url: None,
     })
+}
+
+/// Record a preloaded registry context as a "Cached" durable entry.
+///
+/// Clause 5.13.1 flags "Cached" the copies the broker holds of documents whose
+/// authority is a URL it resolved. A preloaded context is a local stand-in for
+/// exactly such a download, so the first resolution that reaches the registry
+/// writes it to the durable cache and thereafter clause 5.13.3 lists it under
+/// its URL. The write lands inside the caller's moka single-flight, so it
+/// happens once per URL per process rather than per expansion; a failed write
+/// downgrades to [`ContextDurability::Pending`] so a later access retries it.
+///
+/// A preloaded document has no origin server to grant a lifetime, so the
+/// in-process entry is bounded by the resolver's heuristic (`lifetime`); once it
+/// lapses the resolver re-hits the registry and refreshes the row.
+pub(crate) async fn persist_registry_context(
+    cache: &dyn ContextCache,
+    url: &IriBuf,
+    value: Arc<jsonld_syntax::Value>,
+    lifetime: CacheLifetime,
+) -> LoadedContext {
+    let durability = persist_to_durable_cache(cache, url, value.as_ref(), lifetime).await;
+    LoadedContext {
+        value,
+        durability,
+        lifetime: EntryLifetime::Bounded(lifetime),
+        canonical_url: None,
+    }
 }
 
 /// Persist a freshly fetched context, classifying the entry by whether the

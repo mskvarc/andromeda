@@ -268,7 +268,7 @@ fn register_preloaded(entries: Option<&HashMap<Url, PathBuf>>, registry: &Contex
             message: format!("Invalid preloaded context file '{}': {error}", file.display()),
         })?;
         let iri = iri_buf(url)?;
-        registry.register(iri, value);
+        registry.register_preloaded(iri, value);
         loaded.push((url.clone(), file.clone())); // clone: the configuration map is borrowed and stays valid
     }
     Ok(loaded)

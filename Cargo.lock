@@ -996,6 +996,7 @@ dependencies = [
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
  "async-trait",
+ "backon",
  "contextual",
  "dashmap",
  "headers",
@@ -1907,6 +1908,7 @@ dependencies = [
  "open",
  "reqwest",
  "roxmltree",
+ "serde_json",
  "thiserror 2.0.20",
 ]
 

@@ -6,6 +6,9 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
+    # Headroom for per-tenant connection pools: an ETSI run cycling through many
+    # tenants keeps more pools briefly live than the default 100 allows.
+    command: ["postgres", "-c", "max_connections=300"]
     ports:
       - "5432:5432"
     healthcheck:

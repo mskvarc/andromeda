@@ -7,7 +7,6 @@ use crate::entity::{
     CsrModeFilter,
     EntityResultExt,
     ForwardQueryRequest,
-    ForwardingOperation,
     JsonKeyAttributes,
     ProblemResponse,
     SourceContribution,
@@ -22,7 +21,7 @@ use andromeda_federation::{
     config::SplitEntities,
     forwarded_query::client_query::ClientQuery,
     outcome::{ForwardReadOutcome, ForwardedEntities},
-    request::{EntityMapInUse, TriggeringRequest},
+    request::{EntityMapInUse, QueryDelivery, TriggeringRequest},
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::declined_representation::single_source_declined;
@@ -119,9 +118,9 @@ pub(crate) struct QueryForwarding<'a> {
     pub(crate) triggering: TriggeringRequest<'a>,
     /// The `EntityMap` the query runs under.
     pub(crate) entity_map: EntityMapInUse<'a>,
-    /// The operation a registration has to declare for the query to reach it,
-    /// which the binding the query arrived on decides (Table 5.2.9-1).
-    pub(crate) operation: ForwardingOperation,
+    /// The binding the client's query arrived on, mirrored by the forward when
+    /// the registration advertises it (clause 6.23.1).
+    pub(crate) delivery: QueryDelivery,
 }
 
 impl QueryForwarding<'_> {
@@ -178,9 +177,9 @@ impl QueryForwarding<'_> {
                 self.target,
                 ForwardQueryRequest {
                     client_query: ClientQuery::EntityQuery(self.query),
+                    delivery: self.delivery,
                     split: self.split,
                     context: self.context,
-                    operation: self.operation,
                     triggering: self.triggering,
                     csf_expr,
                     mode_filter,

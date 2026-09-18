@@ -2,6 +2,7 @@
 
 use crate::{
     FederationService,
+    SentResponse,
     cache::{CacheKey, Cacheability, ForwardedGetCache},
     error::FederationError,
     forwarded_payload::{ForwardedPayload, build_forwarded_payload},
@@ -135,45 +136,66 @@ impl FederationService {
             Err(failure) => return ForwardGetOutcome::Transport(failure),
         };
 
-        if sent.status == reqwest::StatusCode::NOT_FOUND {
-            return ForwardGetOutcome::NotFound(sent.ngsild_warnings);
+        let outcome = interpret_read_response(&registration.id, sent);
+        if let ForwardGetOutcome::Success(response) = &outcome
+            && let (Some(key), Some(duration)) = (cache_key, cache_duration)
+        {
+            self.cache.store(key, response, duration);
         }
-        if !sent.status.is_success() {
-            return ForwardGetOutcome::ErrorStatus(sent.status.as_u16());
-        }
+        outcome
+    }
 
-        if let Some(version) = sent.returned_version {
-            // Clause 4.3.6.8: the version the source says its payload conforms
-            // to is recorded; the payload is read as the entity data it is.
-            debug!(registration = %registration.id, %version, "context source answered with its conformant version");
+    /// Make a POST batch query (`/entityOperations/query`) to a context source
+    /// (clause 6.23), sent when a registration advertises `queryBatch` but not a
+    /// direct retrieve/query (clause 4.3.6.1). The batch query is not among the
+    /// cacheable GET resources of clause 6.3.17, so no cache is consulted, and its
+    /// array answer is read exactly as a forwarded query's (clause 5.7.2.4).
+    pub(crate) async fn forward_post_query(
+        &self,
+        registration: &ContextSourceRegistration,
+        url: Result<Url, FederationError>,
+        body: Vec<u8>,
+        inbound: &ContextSpec,
+        triggering: TriggeringRequest<'_>,
+        linked_map: Option<&Uri>,
+    ) -> ForwardGetOutcome {
+        if self.registration_loops(registration, triggering.via) {
+            return ForwardGetOutcome::LoopDetected;
         }
-        // Propagate IANA Warning 110 (Response is Stale) from the context source (clause 6.3.17).
-        let mut warnings = Vec::new();
-        if let Some(Warning { code: 110, text, .. }) = sent.warning {
-            warnings.push(NgsiLdWarning::ResponseIsStale(text));
+        let url = match url {
+            Ok(url) => url,
+            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::Unreachable { detail: error.to_string() }),
+        };
+        let payload = match self.payload_for(registration, inbound, Some(&body)).await {
+            Ok(payload) => payload,
+            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::Unreachable { detail: error.to_string() }),
+        };
+        if let Some(remaining) = self.cooldowns.remaining(registration) {
+            // Clause 5.2.34: a request inside the cooldown window is answered
+            // with a timeout for the registration, without contacting it.
+            return ForwardGetOutcome::Transport(TransportFailure::Timeout {
+                detail: format!("registration is cooling down for another {}ms after a failure", remaining.as_millis()),
+            });
         }
-        // Clause 6.3.17 applies along the whole chain: what the source could
-        // not reach behind it is as missing from this response as from its own.
-        warnings.extend(sent.ngsild_warnings);
+        debug!("CS forwarding POST {}", url);
 
-        let text = String::from_utf8_lossy(&sent.body);
-        match serde_json::from_str::<serde_json::Value>(&text) {
-            Ok(body) => {
-                let response = ForwardedResponse {
-                    body,
-                    warnings,
-                    entity_map: sent.entity_map,
-                };
-                if let (Some(key), Some(duration)) = (cache_key, cache_duration) {
-                    self.cache.store(key, &response, duration);
-                }
-                ForwardGetOutcome::Success(response)
-            }
-            Err(e) => {
-                warn!("Failed to parse CS response as JSON: {}. Body: {}", e, &text[..text.len().min(200)]);
-                ForwardGetOutcome::InvalidPayload(format!("Failed to parse context source response as JSON: {e}"))
-            }
-        }
+        let request = match self.build_request(ForwardedRequest {
+            method: reqwest::Method::POST,
+            url,
+            payload: &payload,
+            registration,
+            triggering,
+            linked_map,
+        }) {
+            Ok(request) => request,
+            Err(error) => return ForwardGetOutcome::Transport(TransportFailure::Unreachable { detail: error.to_string() }),
+        };
+
+        let sent = match self.send_request(registration, request).await {
+            Ok(sent) => sent,
+            Err(failure) => return ForwardGetOutcome::Transport(failure),
+        };
+        interpret_read_response(&registration.id, sent)
     }
 
     /// Build a request with every header clause 6.3.19 and clause 6.3.18 call
@@ -265,6 +287,45 @@ impl FederationService {
         request = request.headers(via_headers);
 
         Ok(request)
+    }
+}
+
+/// Read a forwarded read response into its clause 6.3.17 outcome: a 404 that
+/// contributes nothing, an error status, a stale/relayed warning set, or the
+/// parsed entities. The GET and the POST batch-query bindings answer the same
+/// way (clause 5.7.2.4), so both interpret their response here.
+fn interpret_read_response(registration_id: &Uri, sent: SentResponse) -> ForwardGetOutcome {
+    if sent.status == reqwest::StatusCode::NOT_FOUND {
+        return ForwardGetOutcome::NotFound(sent.ngsild_warnings);
+    }
+    if !sent.status.is_success() {
+        return ForwardGetOutcome::ErrorStatus(sent.status.as_u16());
+    }
+    if let Some(version) = sent.returned_version {
+        // Clause 4.3.6.8: the version the source says its payload conforms
+        // to is recorded; the payload is read as the entity data it is.
+        debug!(registration = %registration_id, %version, "context source answered with its conformant version");
+    }
+    // Propagate IANA Warning 110 (Response is Stale) from the context source (clause 6.3.17).
+    let mut warnings = Vec::new();
+    if let Some(Warning { code: 110, text, .. }) = sent.warning {
+        warnings.push(NgsiLdWarning::ResponseIsStale(text));
+    }
+    // Clause 6.3.17 applies along the whole chain: what the source could not
+    // reach behind it is as missing from this response as from its own.
+    warnings.extend(sent.ngsild_warnings);
+
+    let text = String::from_utf8_lossy(&sent.body);
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(body) => ForwardGetOutcome::Success(ForwardedResponse {
+            body,
+            warnings,
+            entity_map: sent.entity_map,
+        }),
+        Err(e) => {
+            warn!("Failed to parse CS response as JSON: {}. Body: {}", e, &text[..text.len().min(200)]);
+            ForwardGetOutcome::InvalidPayload(format!("Failed to parse context source response as JSON: {e}"))
+        }
     }
 }
 

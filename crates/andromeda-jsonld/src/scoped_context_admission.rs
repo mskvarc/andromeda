@@ -133,15 +133,21 @@ mod tests {
         env,
         fs,
         path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
+        process,
+        sync::atomic::{AtomicU64, Ordering},
     };
     use url::Url;
+
+    /// A process-wide counter making every temporary context file name unique,
+    /// which a wall-clock timestamp does not guarantee: sibling tests can write
+    /// their first document within the same nanosecond and collide.
+    static CONTEXT_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     /// Write one context document to a temporary file, named so parallel tests
     /// cannot collide.
     fn written_context(index: usize, document: &Value) -> PathBuf {
-        let unique = SystemTime::now().duration_since(UNIX_EPOCH).expect("a clock after the epoch").as_nanos();
-        let path = env::temp_dir().join(format!("andromeda-scoped-context-{unique}-{index}.jsonld"));
+        let sequence = CONTEXT_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = env::temp_dir().join(format!("andromeda-scoped-context-{}-{sequence}-{index}.jsonld", process::id()));
         fs::write(&path, document.to_string()).expect("the temporary directory is writable");
         path
     }

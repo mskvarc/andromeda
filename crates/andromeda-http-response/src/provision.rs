@@ -272,6 +272,24 @@ mod tests {
         pretty_assertions::assert_eq!(status_of(response), 207);
     }
 
+    /// Clause 5.6.6.4: a proxied registration that does not advertise Delete
+    /// Entity cannot delete its part, but a local row that was actually removed is
+    /// a succeeded part, so the operation is a 207 partial success rather than the
+    /// 409 it is when nothing was removed locally (the `NothingRemained` case above).
+    #[test]
+    fn an_unsupported_proxied_delete_beside_a_successful_local_removal_is_a_partial_success() {
+        let mut single = result(ForwardingMode::Exclusive, 409);
+        single.outcome = ForwardedWriteOutcome::NotAdvertised;
+        let response = provision_response(
+            &uri("urn:test:1"),
+            &[single],
+            &LocalOutcome::Processed(Ok(())),
+            StatusCode::NO_CONTENT.into_response(),
+            &instance(),
+        );
+        pretty_assertions::assert_eq!(status_of(response), 207);
+    }
+
     #[test]
     fn every_part_succeeding_answers_with_the_success_response() {
         let forwarded = vec![result(ForwardingMode::Inclusive, 204)];

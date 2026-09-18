@@ -62,6 +62,12 @@ pub(crate) fn build_retrieve_url(endpoint: &Url, entity_id: &Uri, query_string: 
     forwarding_url(endpoint, &["entities", entity_id.as_str()], query_string)
 }
 
+/// Build a forwarding URL for a batch entity query (clause 6.23: POST
+/// `/entityOperations/query`).
+pub(crate) fn build_batch_query_url(endpoint: &Url) -> Result<Url, FederationError> {
+    forwarding_url(endpoint, &["entityOperations", "query"], "")
+}
+
 /// Build a forwarding URL for discovery queries (types, attributes).
 pub(crate) fn build_discovery_url(endpoint: &Url, path: &str, query_string: &str) -> Result<Url, FederationError> {
     let segments = path.split('/').filter(|segment| !segment.is_empty()).collect::<Vec<_>>();
@@ -137,5 +143,17 @@ mod tests {
     fn the_local_scope_parameter_is_appended_after_the_forwarded_query() {
         let built = forwarding_url(&url("http://peer"), &["entities"], "type=Vehicle").expect("joins");
         pretty_assertions::assert_eq!(with_local_scope(built).as_str(), "http://peer/ngsi-ld/v1/entities?type=Vehicle&local=true");
+    }
+
+    #[test]
+    fn the_batch_query_url_is_the_entity_operations_query_resource() {
+        use crate::forwarding_url::build_batch_query_url;
+        for endpoint in ["http://peer", "http://peer/ngsi-ld/v1"] {
+            pretty_assertions::assert_eq!(
+                build_batch_query_url(&url(endpoint)).expect("joins").as_str(),
+                "http://peer/ngsi-ld/v1/entityOperations/query",
+                "{endpoint}"
+            );
+        }
     }
 }

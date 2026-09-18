@@ -2,8 +2,9 @@
 //! single host process on the run's port, against the dev compose database, with
 //! the temporal page size the suite's pagination precondition requires.
 
-use crate::{error::XtaskError, local_broker, readiness};
+use crate::{error::XtaskError, etsi, local_broker, readiness};
 use reqwest::blocking::Client;
+use serde_json::{Value, json};
 use std::{
     fs::File,
     path::Path,
@@ -19,6 +20,35 @@ const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres
 const DEFAULT_LAST_N: &str = "19";
 /// Health-poll budget: 120 attempts one second apart.
 const READINESS_ATTEMPTS: u16 = 120;
+/// Per-tenant pool size for the run. Robot drives the suite serially, so one
+/// request touches one tenant at a time and a pool of two is ample; the low cap
+/// keeps a run that cycles through a fresh tenant per suite (`--isolate-tenants`)
+/// well within PostgreSQL's connection limit.
+const TENANT_MAX_CONNECTIONS: &str = "2";
+/// How many tenant runtimes stay cached at once. With the small pool above this
+/// bounds the live connection count (roughly cache times pool), and the janitor
+/// evicts the least-recently-used runtimes past it.
+const RUNTIME_MAX_CACHED: &str = "8";
+/// How long an idle tenant runtime is held before the janitor closes its pool.
+/// The run churns tenants quickly, so a short retention frees connections fast.
+const RUNTIME_IDLE_TTL_SECS: &str = "30";
+/// How often the janitor sweeps, kept short so idle and excess runtimes are
+/// released promptly during a churny run rather than accumulating between ticks.
+const JANITOR_INTERVAL_SECS: &str = "5";
+/// The compound `@context` the suite's fixtures and queries reference, and the
+/// suite `@context` the compound pulls in by a relative reference. Both are
+/// served from the checkout so the broker never fetches them from forge: under
+/// `--isolate-tenants` every fresh tenant would otherwise cold-fetch these same
+/// URLs (the remote-context cache is per-tenant), and the resulting burst of
+/// identical requests draws the occasional dropped connection that surfaces as a
+/// spurious `LdContextNotAvailable` (504) on an entity create.
+const SUITE_COMPOUND_CONTEXT_URL: &str =
+    "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld";
+/// The suite `@context` the compound references relatively; the loader resolves
+/// the relative reference against the compound's URL to exactly this URL.
+const SUITE_CONTEXT_URL: &str = "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite.jsonld";
+/// The checkout-relative directory holding both suite context documents.
+const SUITE_CONTEXT_DIR: &str = "resources/jsonld-contexts";
 
 /// Build the broker binary and spawn it on `port`, streaming its output to
 /// `broker_log`. The caller owns the returned child and must tear it down.
@@ -37,10 +67,32 @@ pub(crate) fn spawn(repository_root: &Path, port: u16, broker_log: &Path) -> Res
         .arg(port.to_string())
         .env("ANDROMEDA__DATABASE__URL", DATABASE_URL)
         .env("ANDROMEDA__TEMPORAL__DEFAULT_LAST_N", DEFAULT_LAST_N)
+        .env("ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS", TENANT_MAX_CONNECTIONS)
+        .env("ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED", RUNTIME_MAX_CACHED)
+        .env("ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL_SECS", RUNTIME_IDLE_TTL_SECS)
+        .env("ANDROMEDA__TENANCY__JANITOR_INTERVAL_SECS", JANITOR_INTERVAL_SECS)
+        .env("ANDROMEDA__JSONLD__PRELOAD_CONTEXTS", suite_context_preload())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(errors))
         .spawn()?;
     Ok(child)
+}
+
+/// The JSON `url -> file` map that pins the suite's two `@context` documents to
+/// their copies in the checkout, for `ANDROMEDA__JSONLD__PRELOAD_CONTEXTS`. The
+/// broker registers these offline and never fetches them, so a run cannot fail
+/// on forge being briefly unreachable. `serde_json` renders the paths, so a
+/// checkout path containing a quote or backslash is escaped rather than
+/// producing malformed JSON.
+fn suite_context_preload() -> String {
+    let contexts = etsi::checkout_dir().join(SUITE_CONTEXT_DIR);
+    let compound = contexts.join("ngsi-ld-test-suite-compound.jsonld");
+    let suite = contexts.join("ngsi-ld-test-suite.jsonld");
+    let map = json!({
+        SUITE_COMPOUND_CONTEXT_URL: Value::from(compound.to_string_lossy().into_owned()),
+        SUITE_CONTEXT_URL: Value::from(suite.to_string_lossy().into_owned()),
+    });
+    map.to_string()
 }
 
 /// Poll the broker's health endpoint until it answers or the budget is spent,

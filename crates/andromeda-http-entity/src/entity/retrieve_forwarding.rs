@@ -7,7 +7,6 @@ use andromeda_federation::{
     FederationService,
     entity_result::{collect_warnings, contributions_of, merge_retrieve_results},
     forwarded_query::client_query::ClientQuery,
-    operation::ForwardingOperation,
     outcome::{ForwardReadOutcome, ForwardedEntities, MatchedSources},
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
 };
@@ -103,7 +102,6 @@ impl RetrieveForwarding<'_> {
                     exclude_registration: None,
                     client_query: ClientQuery::EntityRetrieve(self.params),
                     context: self.context,
-                    operation: ForwardingOperation::RetrieveEntity,
                     triggering: self.triggering,
                     mode_filter,
                     entity_map: self.entity_map,

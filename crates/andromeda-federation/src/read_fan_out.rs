@@ -14,6 +14,7 @@ use crate::{
     forwarded_query::ForwardedQuery,
     operation::ForwardingOperation,
     outcome::{ForwardGetOutcome, ForwardReadOutcome, MatchedSources},
+    read_binding::{ReadIntent, read_binding_for},
     registration_selection::{information_matches_entity, registration_scope_admits},
     request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
 };
@@ -48,12 +49,52 @@ pub(crate) struct ReadSelection<'a> {
     /// The client's scope query, used to avoid contacting registrations whose
     /// declared footprint cannot satisfy it.
     pub(crate) scope_q: Option<&'a ScopeQuery>,
-    /// The operation the registration must advertise (clause 4.20).
-    pub(crate) operation: ForwardingOperation,
+    /// What the registration must be able to serve for this read (clause 4.20).
+    pub(crate) serving: ReadServing,
     /// The modes this forwarding phase admits (clause 4.3.6.2).
     pub(crate) mode_filter: CsrModeFilter,
     /// The `EntityMap` the read runs under (clause 5.5.14).
     pub(crate) entity_map: EntityMapInUse<'a>,
+}
+
+/// What a registration must be able to serve to be contacted for a read.
+///
+/// A temporal read is bound to one fixed operation. A current-entity read
+/// (clauses 5.7.1, 5.7.2) is bound per registration to whichever read operation
+/// it advertises (clause 4.3.6.1), so it admits any registration that has a
+/// binding for the client's read intent.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ReadServing {
+    /// The registration must advertise this exact operation (temporal reads).
+    Operation(ForwardingOperation),
+    /// The registration must advertise some operation that serves this
+    /// current-entity read intent (clause 4.3.6.1, Table 4.20-2).
+    CurrentEntity(ReadIntent),
+}
+
+impl ReadServing {
+    /// Whether `csr` can serve this read.
+    fn admits(self, csr: &ContextSourceRegistration) -> bool {
+        match self {
+            ReadServing::Operation(operation) => operation.matches(csr),
+            ReadServing::CurrentEntity(intent) => read_binding_for(intent, csr).is_some(),
+        }
+    }
+}
+
+/// One forwarded read, resolved to the request it sends: a GET (queryEntity or
+/// retrieveEntity) or a POST batch query (queryBatch), each carrying the URL its
+/// construction resolved to or the error that stopped it (clause 4.3.6.1).
+pub(crate) enum ForwardedRead {
+    /// A GET to `/entities` or `/entities/{id}`.
+    Get(Result<Url, FederationError>),
+    /// A POST to `/entityOperations/query` with an NGSI-LD `Query` body.
+    PostQuery {
+        /// The `/entityOperations/query` URL, or the error that stopped it.
+        url: Result<Url, FederationError>,
+        /// The serialized `Query` body (clause 6.23).
+        body: Vec<u8>,
+    },
 }
 
 /// What every GET of one fan-out carries, whichever registration receives it.
@@ -114,7 +155,7 @@ impl FederationService {
         };
         let mut selected = Vec::with_capacity(registrations.len());
         for registration in registrations {
-            if !selection.operation.matches(&registration)
+            if !selection.serving.admits(&registration)
                 || selection.exclude_registration.is_some_and(|excluded| excluded == &registration.id)
                 || !mode_admitted(&registration, selection.mode_filter)
                 || !registration_scope_admits(&registration, selection.scope_q)
@@ -173,7 +214,26 @@ impl FederationService {
         read: impl Fn(&ContextSourceRegistration, ForwardGetOutcome) -> Option<T> + Sync,
         conditions: ForwardedGetConditions<'_>,
     ) -> Vec<SourceAnswer<T>> {
-        let url_of = &url_of;
+        let reads = targets
+            .into_iter()
+            .map(|(registration, query)| {
+                let forwarded = ForwardedRead::Get(url_of(&registration, &query));
+                (registration, forwarded)
+            })
+            .collect();
+        self.fan_out_read(reads, read, conditions).await
+    }
+
+    /// Send each target the forwarded read it resolved to -- a GET or a POST
+    /// batch query -- telling each the location of the map in use (clause
+    /// 5.5.14), and read each answer with `read`. Both answer with the entities
+    /// they carried, so the caller reads them the same way (clause 6.3.17).
+    pub(crate) async fn fan_out_read<T>(
+        &self,
+        targets: Vec<(ContextSourceRegistration, ForwardedRead)>,
+        read: impl Fn(&ContextSourceRegistration, ForwardGetOutcome) -> Option<T> + Sync,
+        conditions: ForwardedGetConditions<'_>,
+    ) -> Vec<SourceAnswer<T>> {
         let read = &read;
         let ForwardedGetConditions {
             context,
@@ -182,11 +242,12 @@ impl FederationService {
             entity_map,
         } = conditions;
         stream::iter(targets)
-            .map(|(registration, query)| async move {
+            .map(|(registration, forwarded)| async move {
                 let linked_map = entity_map.location_for(&registration.id);
-                let outcome = self
-                    .forward_get(&registration, url_of(&registration, &query), context, triggering, cacheability, linked_map)
-                    .await;
+                let outcome = match forwarded {
+                    ForwardedRead::Get(url) => self.forward_get(&registration, url, context, triggering, cacheability, linked_map).await,
+                    ForwardedRead::PostQuery { url, body } => self.forward_post_query(&registration, url, body, context, triggering, linked_map).await,
+                };
                 let error_status = outcome.error_status();
                 SourceAnswer {
                     mode: registration.access.mode.unwrap_or_default(),

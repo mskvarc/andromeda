@@ -23,7 +23,7 @@ use crate::entity::{
     provision_response,
 };
 use andromeda_entity::error::EntityError;
-use andromeda_federation::request::TriggeringRequest;
+use andromeda_federation::{outcome::ForwardedWriteOutcome, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
 use axum::http::{HeaderMap, Method};
@@ -88,7 +88,15 @@ pub(crate) async fn delete(
     let proxied = forwarded
         .iter()
         .any(|result| matches!(result.mode, ForwardingMode::Exclusive | ForwardingMode::Redirect));
+    // Clause 5.6.6.4: when the matched proxied registrations do not advertise
+    // Delete Entity, the delete of their part is unsupported and never sent -- a
+    // Conflict "in case the complete delete Entity failed, or ... a partial success
+    // if some parts of the delete Entity succeeded". A local row that was actually
+    // removed is that succeeded part, so an unsupported-everywhere delete beside a
+    // successful local removal is a 207 partial success, not a 409.
+    let unsupported_only = forwarded.iter().all(|result| matches!(result.outcome, ForwardedWriteOutcome::NotAdvertised));
     let local = match service.delete(&target, &id).await {
+        Ok(()) if proxied && unsupported_only => LocalOutcome::Processed(Ok(())),
         Ok(()) | Err(EntityError::NotFound { .. }) if proxied => LocalOutcome::NothingRemained,
         other => LocalOutcome::processed(other, classify_entity_error),
     };

@@ -20,8 +20,6 @@ use url::form_urlencoded;
 pub enum PaginationStyle {
     /// Only `prev`/`next` links using `limit` and `offset` query parameters.
     OffsetPrevNext,
-    /// Only `prev`/`next` links using `limit` and `page` query parameters.
-    PagePrevNext,
     /// `first`/`last`/`prev`/`next` links using `limit` and `offset` query parameters.
     OffsetFull,
 }
@@ -88,11 +86,10 @@ pub enum PagePointers {
 }
 
 /// Build a pagination link URL by replacing pagination parameters in the query string.
-fn build_page_link(uri: &Uri, style: PaginationStyle, param1: (&str, i64), param2: (&str, i64)) -> String {
-    let strip_params: &[&str] = match style {
-        PaginationStyle::OffsetPrevNext | PaginationStyle::OffsetFull => &["limit", "offset"],
-        PaginationStyle::PagePrevNext => &["limit", "offset", "page"],
-    };
+fn build_page_link(uri: &Uri, param1: (&str, i64), param2: (&str, i64)) -> String {
+    // NGSI-LD pagination is limit/offset only (clause 5.5.9.2), so a rebuilt
+    // link replaces exactly those two parameters and preserves the rest.
+    let strip_params: &[&str] = &["limit", "offset"];
 
     let mut pairs: Vec<(String, String)> = Vec::new();
     if let Some(query) = uri.query() {
@@ -117,9 +114,8 @@ fn build_page_link(uri: &Uri, style: PaginationStyle, param1: (&str, i64), param
 
 /// Append pagination `Link` headers to a response.
 ///
-/// Supports three pagination styles:
+/// Supports two pagination styles:
 /// - [`PaginationStyle::OffsetPrevNext`]: `prev`/`next` using offset-based parameters.
-/// - [`PaginationStyle::PagePrevNext`]: `prev`/`next` using page-based parameters.
 /// - [`PaginationStyle::OffsetFull`]: `first`/`last`/`prev`/`next` using offset-based parameters.
 pub fn append_pagination_links(
     response: &mut Response,
@@ -154,19 +150,10 @@ pub fn append_pagination_links(
         PaginationStyle::OffsetPrevNext => {
             if has_prev {
                 let prev_offset = (offset - limit).max(0);
-                links.push((RelationType::Prev, build_page_link(uri, style, ("limit", limit), ("offset", prev_offset))));
+                links.push((RelationType::Prev, build_page_link(uri, ("limit", limit), ("offset", prev_offset))));
             }
             if has_next {
-                links.push((RelationType::Next, build_page_link(uri, style, ("limit", limit), ("offset", offset + limit))));
-            }
-        }
-        PaginationStyle::PagePrevNext => {
-            let current_page = (offset / limit) + 1;
-            if has_prev {
-                links.push((RelationType::Prev, build_page_link(uri, style, ("limit", limit), ("page", current_page - 1))));
-            }
-            if has_next {
-                links.push((RelationType::Next, build_page_link(uri, style, ("limit", limit), ("page", current_page + 1))));
+                links.push((RelationType::Next, build_page_link(uri, ("limit", limit), ("offset", offset + limit))));
             }
         }
         PaginationStyle::OffsetFull => {
@@ -174,15 +161,15 @@ pub fn append_pagination_links(
             // is present; the full style is only ever used where it is.
             if let PageExtent::Total(total) = extent {
                 let last_offset = ((total - 1) / limit) * limit;
-                links.push((RelationType::First, build_page_link(uri, style, ("limit", limit), ("offset", 0))));
-                links.push((RelationType::Last, build_page_link(uri, style, ("limit", limit), ("offset", last_offset))));
+                links.push((RelationType::First, build_page_link(uri, ("limit", limit), ("offset", 0))));
+                links.push((RelationType::Last, build_page_link(uri, ("limit", limit), ("offset", last_offset))));
             }
             if has_prev {
                 let prev_offset = (offset - limit).max(0);
-                links.push((RelationType::Prev, build_page_link(uri, style, ("limit", limit), ("offset", prev_offset))));
+                links.push((RelationType::Prev, build_page_link(uri, ("limit", limit), ("offset", prev_offset))));
             }
             if has_next {
-                links.push((RelationType::Next, build_page_link(uri, style, ("limit", limit), ("offset", offset + limit))));
+                links.push((RelationType::Next, build_page_link(uri, ("limit", limit), ("offset", offset + limit))));
             }
         }
     }
@@ -271,24 +258,20 @@ mod tests {
         assert!(response.headers().get("Link").is_none());
     }
 
+    /// NGSI-LD pagination is limit/offset only (clause 5.5.9.2): no pagination
+    /// link ever carries a `page` parameter, on any endpoint or style.
     #[test]
-    fn page_prev_next_uses_page_param() {
-        let mut response = empty_response();
-        let uri = parse_uri("/csourceSubscriptions?limit=10&offset=10");
-        append_pagination_links(
-            &mut response,
-            &uri,
-            10,
-            10,
-            PageExtent::Total(50),
-            PaginationStyle::PagePrevNext,
-            ResponseMediaType::JsonLd,
-        );
-        let link = response.headers().get("Link").expect("Link header");
-        let link_str = link.to_str().expect("valid string");
-        assert!(link_str.contains("page="));
-        assert!(link_str.contains("rel=\"prev\""));
-        assert!(link_str.contains("rel=\"next\""));
+    fn no_pagination_link_carries_a_page_parameter() {
+        for style in [PaginationStyle::OffsetPrevNext, PaginationStyle::OffsetFull] {
+            let mut response = empty_response();
+            let uri = parse_uri("/csourceSubscriptions?limit=10&offset=10");
+            append_pagination_links(&mut response, &uri, 10, 10, PageExtent::Total(50), style, ResponseMediaType::JsonLd);
+            let link = response.headers().get("Link").expect("Link header");
+            let link_str = link.to_str().expect("valid string");
+            assert!(!link_str.contains("page="), "{link_str}");
+            assert!(link_str.contains("offset="), "{link_str}");
+            assert!(link_str.contains("rel=\"prev\""), "{link_str}");
+        }
     }
 
     #[test]

@@ -123,7 +123,7 @@ mod tests {
     fn every_material_patch_is_a_dot_patch_file_in_sorted_order() {
         let patches = material_patches().expect("the patch directory is readable");
         // The crate ships exactly the corrected-material set the matrix records.
-        assert_eq!(patches.len(), 27);
+        assert_eq!(patches.len(), 86);
         assert!(patches.iter().all(|path| path.extension().is_some_and(|extension| extension == "patch")));
         assert!(patches.is_sorted());
     }

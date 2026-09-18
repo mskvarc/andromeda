@@ -593,10 +593,15 @@ async fn distop_entity_delete_local_absent_remote_success_returns_204() {
     mock.shutdown().await;
 }
 
-/// Exclusive ownership without delete capability returns a conflict.
+/// Deleting an entity that holds a local part and an exclusive registration whose
+/// operations do not advertise `deleteEntity` is a partial success, not a conflict:
+/// the local part is removed and the unsupported registration is reported as a
+/// per-registration `Conflict`, so the operation answers 207 Multi-Status (clause
+/// 5.6.6.4: "a partial success if some parts of the delete Entity succeeded"). The
+/// delete is never forwarded, since `deleteEntity` is not advertised (clause 4.3.6.1).
 #[tokio::test]
 #[serial]
-async fn distop_entity_delete_exclusive_without_operation_returns_conflict() {
+async fn distop_entity_delete_exclusive_without_delete_op_is_partial_success() {
     let _serialized_environment = clean_database().await;
     let c = client();
     let mock = MockServer::start().await;
@@ -608,7 +613,7 @@ async fn distop_entity_delete_exclusive_without_operation_returns_conflict() {
     let (status, _) = create_entity_local(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Registration without redirection ops
+    // Exclusive registration for `speed` whose operations do not include deleteEntity.
     let reg = vehicle_registration_speed_default_ops(&reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -616,11 +621,16 @@ async fn distop_entity_delete_exclusive_without_operation_returns_conflict() {
     let delete_path = format!("/broker1/ngsi-ld/v1/entities/{entity_id}");
     mock.set_stub(Method::DELETE, &delete_path, 207).await;
 
-    let (status, _) = delete_entity_with_status(&c, &entity_id).await;
-    pretty_assertions::assert_eq!(status, StatusCode::CONFLICT);
+    let (status, body) = delete_entity_with_status(&c, &entity_id).await;
+    pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS);
+    // The registration lacking deleteEntity is reported as a Conflict sub-error.
+    pretty_assertions::assert_eq!(body["errors"][0]["error"]["status"], 409);
 
-    // No forwarding should have happened
+    // The delete is never forwarded, since deleteEntity is not advertised.
     pretty_assertions::assert_eq!(mock.get_count(Method::DELETE, &delete_path), 0);
+    // The local part of the entity is removed.
+    let (status, _, _) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;

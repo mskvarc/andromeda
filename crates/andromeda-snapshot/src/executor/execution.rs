@@ -12,7 +12,7 @@ use andromeda_federation::{
     entity_result::collect_warnings,
     forwarded_query::client_query::ClientQuery,
     operation::ForwardingOperation,
-    request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, ForwardTemporalQueryRequest, SourcePage, TriggeringRequest},
+    request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, ForwardTemporalQueryRequest, QueryDelivery, SourcePage, TriggeringRequest},
     temporal_result::merge_temporal_query_results,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -61,9 +61,11 @@ impl SnapshotExecutor {
                     &self.sources.live_target,
                     ForwardQueryRequest {
                         client_query: ClientQuery::EntityQuery(&params),
+                        // A Snapshot materialises its members through the GET query
+                        // binding (clause 5.5.15).
+                        delivery: QueryDelivery::Query,
                         split: self.sources.forwarding.split_entities(params.split_entities),
                         context,
-                        operation: ForwardingOperation::QueryEntity,
                         triggering: TriggeringRequest::default(),
                         csf_expr: None,
                         mode_filter: CsrModeFilter::All,

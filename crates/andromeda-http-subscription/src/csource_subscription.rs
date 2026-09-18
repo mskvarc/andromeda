@@ -146,7 +146,7 @@ pub async fn query(
         i64::from(limit),
         i64::from(offset),
         PageExtent::Total(total),
-        PaginationStyle::PagePrevNext,
+        PaginationStyle::OffsetPrevNext,
         accept.media_type(),
     );
     Ok(response)

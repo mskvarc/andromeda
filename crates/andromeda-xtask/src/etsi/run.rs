@@ -10,7 +10,7 @@ use crate::{
         self,
         broker,
         patch::{self, Material},
-        robot,
+        robot::{self, TopologyScope},
         suite,
         venv,
     },
@@ -43,18 +43,36 @@ pub(crate) struct RunArgs {
     /// Seconds any one test may run before robot times it out.
     #[arg(long, default_value_t = 300)]
     timeout: u16,
-    /// Open `report.html` in the default browser once the run finishes.
+    /// What becomes of the report and the backing services once the run ends.
+    #[command(flatten)]
+    aftermath: RunAftermath,
+    /// Give each suite its own NGSI-LD tenant, so cases that list or aggregate
+    /// across a tenant are not polluted by other suites' data. The broker's
+    /// per-tenant pool cap and idle-runtime janitor keep the connection count
+    /// bounded as the run cycles through a fresh tenant per suite.
     #[arg(long)]
-    open: bool,
-    /// Leave the compose stack and broker running after the run.
+    isolate_tenants: bool,
+    /// Run only the distributed-operations tree (`dist-ops`) against the in-process
+    /// mock context source; the default run excludes it.
     #[arg(long)]
-    keep: bool,
+    distop: bool,
     /// An argument forwarded to robot, before the resolved targets; repeatable.
     #[arg(long = "robot-arg", value_name = "ARG")]
     robot_args: Vec<String>,
     /// Suite subtrees to run; defaults to the whole suite.
     #[arg(value_name = "SUBTREE")]
     subtrees: Vec<String>,
+}
+
+/// What becomes of the run's artifacts and backing services once it finishes.
+#[derive(Args)]
+struct RunAftermath {
+    /// Open `report.html` in the default browser once the run finishes.
+    #[arg(long)]
+    open: bool,
+    /// Leave the compose stack and broker running after the run.
+    #[arg(long)]
+    keep: bool,
 }
 
 impl RunArgs {
@@ -78,7 +96,7 @@ impl RunArgs {
         let mut teardown = RunTeardown {
             repository_root: &repository_root,
             compose_file,
-            keep: self.keep,
+            keep: self.aftermath.keep,
             broker: None,
         };
         compose::up(&repository_root, &teardown.compose_file, None, ImageBuild::Build)?;
@@ -91,10 +109,10 @@ impl RunArgs {
         // the checkout is still intact, before the stack is torn down.
         let _patches = patch::PatchGuard::apply(self.material())?;
 
-        let code = robot::run(&output, self.timeout, &self.robot_args, &targets)?;
+        let code = robot::run(&output, self.timeout, self.isolate_tenants, self.topology(), &self.robot_args, &targets)?;
         println!("robot exited {code}; results in {}", output.display());
 
-        if self.open {
+        if self.aftermath.open {
             open_report(&output);
         }
         Ok(())
@@ -103,6 +121,16 @@ impl RunArgs {
     /// Which material the run judges the broker against.
     const fn material(&self) -> Material {
         if self.as_shipped { Material::AsShipped } else { Material::Corrected }
+    }
+
+    /// Which topology the run targets, selecting the mutually exclusive `dist-ops`
+    /// tag filter.
+    const fn topology(&self) -> TopologyScope {
+        if self.distop {
+            TopologyScope::Distributed
+        } else {
+            TopologyScope::SingleBroker
+        }
     }
 }
 

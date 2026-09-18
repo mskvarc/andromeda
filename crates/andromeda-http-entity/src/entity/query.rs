@@ -172,7 +172,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
                     headers: Some(&headers),
                 },
                 entity_map: EntityMapInUse::from(&map_use),
-                operation: binding.forwarding_operation(),
+                delivery: binding.delivery(),
             };
             Some(forwarding.run().await?)
         };

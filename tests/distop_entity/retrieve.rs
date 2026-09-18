@@ -4,6 +4,7 @@
 //! Tests retrieving single entities across context sources with different registration modes.
 
 use reqwest::{Method, StatusCode};
+use serde_json::Value;
 use serial_test::serial;
 
 use crate::{
@@ -255,10 +256,13 @@ async fn distop_entity_retrieve_inclusive_with_retrieve_entity_op() {
     mock.shutdown().await;
 }
 
-/// Retrieval does not use the query-entity capability.
+/// A retrieve-by-id reaches a source that advertises only `queryEntity` through a
+/// forwarded GET query, not a retrieve it never registered (clause 4.3.6.1: "Context
+/// Brokers shall respect" the operation subset a source advertises; ETSI conformance
+/// `D010_03_inc_02`). The source is queried at `/entities` and its data is returned.
 #[tokio::test]
 #[serial]
-async fn distop_entity_retrieve_with_only_query_entity_does_not_forward() {
+async fn distop_entity_retrieve_with_only_query_entity_forwards_as_query() {
     let _serialized_environment = clean_database().await;
     let c = client();
     let mock = MockServer::start().await;
@@ -266,27 +270,39 @@ async fn distop_entity_retrieve_with_only_query_entity_does_not_forward() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-inc-op2");
     let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-inc-op2");
 
-    // Create inclusive registration with queryEntity operation
+    // A registration advertising only queryEntity: the retrieve is downgraded to a
+    // GET query so the source is still reached (clause 4.3.6.1).
     let reg = vehicle_registration_with_ops(&reg_id, Some(&entity_id), &mock.url(""), None, &["queryEntity"]);
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    let mock_entity = vehicle_entity(&entity_id);
-    mock.set_stub_with_body(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}"), 200, &mock_entity)
-        .await;
+    let mock_array = Value::Array(vec![vehicle_entity(&entity_id)]);
+    mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
 
-    let (status, _, _) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
-    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, body) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.as_object().is_some_and(|entity| entity.contains_key("brandName")),
+        "the forwarded query's data is returned: {body}"
+    );
+    assert!(
+        mock.get_count(Method::GET, "/ngsi-ld/v1/entities") > 0,
+        "the retrieve is forwarded as a GET query"
+    );
+    // The source's retrieve endpoint is never contacted, since it did not advertise retrieveEntity.
     pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}")), 0);
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
 }
 
-/// Retrieval does not use the batch-query capability.
+/// A retrieve-by-id reaches a source that advertises only `queryBatch` through a
+/// forwarded POST batch query, not a retrieve it never registered (clause 4.3.6.1;
+/// ETSI conformance `D010_03_inc_03`). The source is queried at
+/// `/entityOperations/query` and its data is returned.
 #[tokio::test]
 #[serial]
-async fn distop_entity_retrieve_with_only_query_batch_does_not_forward() {
+async fn distop_entity_retrieve_with_only_query_batch_forwards_as_batch() {
     let _serialized_environment = clean_database().await;
     let c = client();
     let mock = MockServer::start().await;
@@ -294,17 +310,27 @@ async fn distop_entity_retrieve_with_only_query_batch_does_not_forward() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-inc-op3");
     let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-inc-op3");
 
-    // Create inclusive registration with queryBatch operation
+    // A registration advertising only queryBatch: the retrieve is downgraded to a
+    // POST batch query so the source is still reached (clause 4.3.6.1).
     let reg = vehicle_registration_with_ops(&reg_id, Some(&entity_id), &mock.url(""), None, &["queryBatch"]);
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    let mock_entity = vehicle_entity(&entity_id);
-    mock.set_stub_with_body(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}"), 200, &mock_entity)
+    let mock_array = Value::Array(vec![vehicle_entity(&entity_id)]);
+    mock.set_stub_with_body(Method::POST, "/ngsi-ld/v1/entityOperations/query", 200, &mock_array)
         .await;
 
-    let (status, _, _) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
-    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, body) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.as_object().is_some_and(|entity| entity.contains_key("brandName")),
+        "the forwarded batch query's data is returned: {body}"
+    );
+    assert!(
+        mock.get_count(Method::POST, "/ngsi-ld/v1/entityOperations/query") > 0,
+        "the retrieve is forwarded as a POST batch query"
+    );
+    // The source's retrieve endpoint is never contacted, since it did not advertise retrieveEntity.
     pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}")), 0);
 
     delete_registration(&c, &reg_id).await;
