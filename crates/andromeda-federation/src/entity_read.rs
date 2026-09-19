@@ -14,6 +14,7 @@ use crate::{
     read_binding::{ReadBinding, ReadIntent, read_binding_for},
     read_fan_out::{ForwardedGetConditions, ForwardedRead, ReadSelection, ReadServing, expand_registration_targets, read_outcome, registered_type_of},
     request::{CsrModeFilter, ForwardQueryRequest, ForwardRetrieveRequest, QueryDelivery},
+    term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
@@ -185,11 +186,13 @@ impl FederationService {
             // information blocks that covers part of the query is a forwarded
             // request of its own.
             let mut targets = Vec::with_capacity(registrations.len());
+            let resolver = TermResolver::new(&self.engine, context);
             for registration in registrations {
                 let Some(binding) = read_binding_for(intent, &registration) else {
                     continue;
                 };
-                let reads = ForwardedQuery::for_registration_on_page(client_query, &registration, split, source_page)
+                let reads = ForwardedQuery::for_registration_on_page(client_query, &registration, split, source_page, &resolver)
+                    .await?
                     .iter()
                     .map(|query| query_read(&registration, query, binding))
                     .collect::<Vec<_>>();
@@ -273,11 +276,12 @@ impl FederationService {
             // blocks covering the entity contributes its own attribute
             // constraint.
             let mut targets = Vec::with_capacity(registrations.len());
+            let resolver = TermResolver::new(&self.engine, context);
             for registration in registrations {
                 let Some(binding) = read_binding_for(ReadIntent::RetrieveById, &registration) else {
                     continue;
                 };
-                let queries = ForwardedQuery::for_registration(client_query, &registration, SplitEntities::Complete);
+                let queries = ForwardedQuery::for_registration(client_query, &registration, SplitEntities::Complete, &resolver).await?;
                 if queries.is_empty() {
                     continue;
                 }

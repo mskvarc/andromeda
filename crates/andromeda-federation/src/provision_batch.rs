@@ -19,6 +19,7 @@ use crate::{
     provision::{ForwardWrite, is_proxied, proxied_mode},
     registration_selection::{covered_attribute_members, csr_has_matching_information, is_entity_control_member, retain_covered_attributes},
     request::TriggeringRequest,
+    term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -211,59 +212,67 @@ struct NarrowedEntity {
 /// attributes it covers minus those another exclusive registration -- or,
 /// unless `csr` is itself a redirect, another redirect registration -- owns,
 /// and without the entities that keeps no attribute.
-fn narrow_input(
+///
+/// # Errors
+///
+/// Returns [`FederationError::JsonLd`] when a body attribute cannot be expanded
+/// against the request context.
+async fn narrow_input(
     csr: &ContextSourceRegistration,
     candidates: &[ContextSourceRegistration],
     entities: &[BatchEntity<'_>],
     expanded_types: &HashMap<&str, IriBuf>,
-) -> Vec<NarrowedEntity> {
+    resolver: &TermResolver<'_>,
+) -> Result<Vec<NarrowedEntity>, FederationError> {
     let csr_is_redirect = csr.access.mode == Some(ForwardingMode::Redirect);
-    entities
-        .iter()
-        .filter_map(|entity| {
-            let entity_type = entity.entity_type.and_then(|name| expanded_types.get(name.as_str()));
-            if !csr_has_matching_information(csr, entity_type, Some(entity.id), None) {
-                return None;
-            }
-            let Some(body) = entity.body else {
-                return Some(NarrowedEntity {
-                    id: entity.id.clone(), // clone: the narrowed entity outlives the borrowed array
-                    body: None,
-                    proxied_attrs: Vec::new(),
-                });
-            };
-            let mut object = body.as_object()?.clone(); // clone: each registration gets its own narrowed copy of the entity
-            if !retain_covered_attributes(&mut object, csr, entity_type, Some(entity.id)) {
-                return None;
-            }
-            for other in candidates.iter().filter(|other| other.id != csr.id) {
-                let owns = match other.access.mode {
-                    Some(ForwardingMode::Exclusive) => true,
-                    Some(ForwardingMode::Redirect) => !csr_is_redirect,
-                    Some(ForwardingMode::Inclusive | ForwardingMode::Auxiliary) | None => false,
-                };
-                if !owns {
-                    continue;
-                }
-                for member in covered_attribute_members(&object, other, entity_type, Some(entity.id)) {
-                    object.remove(&member);
-                }
-            }
-            let remaining = object
-                .keys()
-                .filter(|name| !is_entity_control_member(name))
-                .filter_map(|name| name.parse::<AttributeName>().ok())
-                .collect::<Vec<_>>();
-            if remaining.is_empty() {
-                return None;
-            }
-            Some(NarrowedEntity {
+    let mut narrowed = Vec::new();
+    for entity in entities {
+        let entity_type = entity.entity_type.and_then(|name| expanded_types.get(name.as_str()));
+        if !csr_has_matching_information(csr, entity_type, Some(entity.id), None) {
+            continue;
+        }
+        let Some(body) = entity.body else {
+            narrowed.push(NarrowedEntity {
                 id: entity.id.clone(), // clone: the narrowed entity outlives the borrowed array
-                body: Some(Value::Object(object)),
-                proxied_attrs: if is_proxied(csr) { remaining } else { Vec::new() },
-            })
-        })
-        .collect()
+                body: None,
+                proxied_attrs: Vec::new(),
+            });
+            continue;
+        };
+        let Some(mut object) = body.as_object().cloned() else {
+            continue; // clone: each registration gets its own narrowed copy of the entity
+        };
+        if !retain_covered_attributes(&mut object, csr, entity_type, Some(entity.id), resolver).await? {
+            continue;
+        }
+        for other in candidates.iter().filter(|other| other.id != csr.id) {
+            let owns = match other.access.mode {
+                Some(ForwardingMode::Exclusive) => true,
+                Some(ForwardingMode::Redirect) => !csr_is_redirect,
+                Some(ForwardingMode::Inclusive | ForwardingMode::Auxiliary) | None => false,
+            };
+            if !owns {
+                continue;
+            }
+            for member in covered_attribute_members(&object, other, entity_type, Some(entity.id), resolver).await? {
+                object.remove(&member);
+            }
+        }
+        let remaining = object
+            .keys()
+            .filter(|name| !is_entity_control_member(name))
+            .filter_map(|name| name.parse::<AttributeName>().ok())
+            .collect::<Vec<_>>();
+        if remaining.is_empty() {
+            continue;
+        }
+        narrowed.push(NarrowedEntity {
+            id: entity.id.clone(), // clone: the narrowed entity outlives the borrowed array
+            body: Some(Value::Object(object)),
+            proxied_attrs: if is_proxied(csr) { remaining } else { Vec::new() },
+        });
+    }
+    Ok(narrowed)
 }
 
 /// The per-entity outcomes a forwarded batch request answered with
@@ -372,11 +381,11 @@ impl FederationService {
             debug!("Loop detected in Via header chain, skipping batch provision forwarding");
             return Ok(Vec::new());
         }
-        let prepared_context = self.engine.prepare_term_context(request.context);
+        let resolver = TermResolver::new(&self.engine, request.context);
         let mut expanded_types: HashMap<&str, IriBuf> = HashMap::new();
         for name in request.entities.iter().filter_map(|entity| entity.entity_type) {
             if !expanded_types.contains_key(name.as_str()) {
-                expanded_types.insert(name.as_str(), self.engine.expand_type(name.as_str(), &prepared_context).await?);
+                expanded_types.insert(name.as_str(), resolver.expand_type(name.as_str()).await?);
             }
         }
         // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
@@ -390,18 +399,19 @@ impl FederationService {
         let candidates = &candidates;
         let request = &request;
         let expanded_types = &expanded_types;
+        let resolver = &resolver;
         let results = stream::iter(candidates)
             .map(|csr| async move {
-                let narrowed = narrow_input(csr, candidates, request.entities, expanded_types);
+                let narrowed = narrow_input(csr, candidates, request.entities, expanded_types, resolver).await?;
                 if narrowed.is_empty() {
-                    return Vec::new();
+                    return Ok::<_, FederationError>(Vec::new());
                 }
-                self.drive_registration(csr, narrowed, request).await
+                Ok(self.drive_registration(csr, narrowed, request).await)
             })
             .buffer_unordered(self.csr_concurrency)
-            .collect::<Vec<_>>()
+            .collect::<Vec<Result<Vec<BatchForwardedResult>, FederationError>>>()
             .await;
-        Ok(results.into_iter().flatten().collect())
+        Ok(results.into_iter().collect::<Result<Vec<_>, _>>()?.into_iter().flatten().collect())
     }
 
     /// Drive one registration through the clause 5.6.7.4 ladder for its
@@ -539,7 +549,9 @@ mod tests {
             plan_for,
             single_write_request,
         },
+        term_resolver::TermResolver,
     };
+    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
     use andromeda_ngsi_ld_model::{expanded::mutation::selection::OverwritePolicy, registration::ContextSourceRegistration};
     use andromeda_ngsi_ld_request::options::UpsertMode;
@@ -547,6 +559,11 @@ mod tests {
     use serde_json::{Value, json};
     use std::{collections::HashMap, slice::from_ref};
     use url::Url;
+
+    /// An engine that resolves only what is embedded, never the network.
+    fn offline_engine() -> JsonLdEngine {
+        JsonLdEngine::builder().allow_remote(false).build().expect("engine builds")
+    }
 
     fn uri(raw: &str) -> Uri {
         raw.parse().expect("valid URI")
@@ -668,11 +685,11 @@ mod tests {
     }
 
     fn vehicle(id: &str) -> Value {
-        json!({"id": id, "type": "Vehicle", "brandName": {"type": "Property", "value": "x"}, "speed": {"type": "Property", "value": 1}, "location": {"type": "Property", "value": "here"}})
+        json!({"id": id, "type": "Vehicle", "brandName": {"type": "Property", "value": "x"}, "speed": {"type": "Property", "value": 1}, "place": {"type": "Property", "value": "here"}})
     }
 
-    #[test]
-    fn each_registration_receives_its_own_narrowed_copy_and_loses_what_other_proxied_sources_own() {
+    #[tokio::test]
+    async fn each_registration_receives_its_own_narrowed_copy_and_loses_what_other_proxied_sources_own() {
         // Clause 5.6.7.4: per registration, unmatched entities are dropped,
         // non-matching attributes are removed, attributes another exclusive or
         // redirect registration owns are removed, and an entity left without
@@ -690,7 +707,7 @@ mod tests {
             "redirect",
             Some("https://example.org/Vehicle"),
             None,
-            &["https://example.org/location"],
+            &["https://example.org/place"],
             &["createBatch"],
         );
         let everything = registration(
@@ -724,21 +741,39 @@ mod tests {
             ("Vehicle", IriBuf::new("https://example.org/Vehicle".to_string()).expect("valid IRI")),
             ("Device", IriBuf::new("https://example.org/Device".to_string()).expect("valid IRI")),
         ]);
+        // The bodies name their attributes by the terms this @context maps to
+        // the declared IRIs, so coverage is decided by what each key means.
+        let engine = offline_engine();
+        // The bodies name their attributes by the terms this @context maps to
+        // the declared IRIs, so coverage is decided by what each key means.
+        // `place` stands in for a plain vocabulary term; the core context
+        // protects `location`, so it could not be aliased to a peer IRI.
+        let context = ContextSpec::none().with_body_context(Some(json!({
+            "speed": "https://example.org/speed",
+            "place": "https://example.org/place",
+            "brandName": "https://example.org/brandName",
+            "colour": "https://example.org/colour"
+        })));
+        let resolver = TermResolver::new(&engine, &context);
 
-        let for_speed = narrow_input(&speed, &candidates, &entities, &expanded_types);
+        let for_speed = narrow_input(&speed, &candidates, &entities, &expanded_types, &resolver)
+            .await
+            .expect("narrowing resolves");
         pretty_assertions::assert_eq!(for_speed.len(), 1, "the Device is not matched");
         let body = for_speed[0].body.as_ref().expect("a narrowed body");
         assert!(
-            body.get("speed").is_some() && body.get("location").is_none() && body.get("brandName").is_none(),
+            body.get("speed").is_some() && body.get("place").is_none() && body.get("brandName").is_none(),
             "{body}"
         );
         pretty_assertions::assert_eq!(for_speed[0].proxied_attrs.iter().map(ToString::to_string).collect::<Vec<_>>(), vec!["speed"]);
 
-        let for_everything = narrow_input(&everything, &candidates, &entities, &expanded_types);
+        let for_everything = narrow_input(&everything, &candidates, &entities, &expanded_types, &resolver)
+            .await
+            .expect("narrowing resolves");
         let body = for_everything[0].body.as_ref().expect("a narrowed body");
         assert!(body.get("brandName").is_some(), "the unowned attribute stays: {body}");
         assert!(
-            body.get("speed").is_none() && body.get("location").is_none(),
+            body.get("speed").is_none() && body.get("place").is_none(),
             "the redirect-owned attributes leave the inclusive copy: {body}"
         );
         assert!(for_everything[0].proxied_attrs.is_empty(), "an inclusive registration proxies nothing");
@@ -752,13 +787,16 @@ mod tests {
             &["createBatch"],
         );
         assert!(
-            narrow_input(&colour, &candidates, &entities, &expanded_types).is_empty(),
+            narrow_input(&colour, &candidates, &entities, &expanded_types, &resolver)
+                .await
+                .expect("narrowing resolves")
+                .is_empty(),
             "a source owning nothing present is skipped"
         );
     }
 
-    #[test]
-    fn a_deletion_narrows_by_identifier_alone() {
+    #[tokio::test]
+    async fn a_deletion_narrows_by_identifier_alone() {
         // A deletion names no type, so the registration's type selector is
         // not consulted and only its identifier narrows the array.
         let owner = registration(
@@ -783,7 +821,12 @@ mod tests {
                 body: None,
             },
         ];
-        let narrowed = narrow_input(&owner, from_ref(&owner), &entities, &HashMap::new());
+        let engine = offline_engine();
+        let context = ContextSpec::none();
+        let resolver = TermResolver::new(&engine, &context);
+        let narrowed = narrow_input(&owner, from_ref(&owner), &entities, &HashMap::new(), &resolver)
+            .await
+            .expect("narrowing resolves");
         pretty_assertions::assert_eq!(
             narrowed.iter().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
             vec!["urn:ngsi-ld:Vehicle:1"]

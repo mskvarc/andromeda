@@ -74,7 +74,9 @@ mod tests {
         config::SplitEntities,
         forwarded_parameter::ForwardedParameter,
         forwarded_query::{ForwardedQuery, client_query::ClientQuery},
+        term_resolver::TermResolver,
     };
+    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
     use serde_json::{Value, json};
@@ -95,11 +97,16 @@ mod tests {
     /// The fork mock (and clause 6.23) require the first entity selector to carry
     /// both the type and the id the stubbed entity has, so a narrowed id+type
     /// query builds exactly that.
-    #[test]
-    fn a_narrowed_id_and_type_query_builds_a_single_selector_with_both() {
+    #[tokio::test]
+    async fn a_narrowed_id_and_type_query_builds_a_single_selector_with_both() {
         let by_type = registration(&json!([{"entities": [{"type": "https://uri.etsi.org/ngsi-ld/default-context/Vehicle"}]}]));
         let params: EntityQueryParameters = serde_urlencoded::from_str("type=Vehicle&id=urn:ngsi-ld:Vehicle:A1&attrs=speed").expect("valid query");
-        let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&params), &by_type, SplitEntities::Complete);
+        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
+        let context = ContextSpec::none();
+        let resolver = TermResolver::new(&engine, &context);
+        let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&params), &by_type, SplitEntities::Complete, &resolver)
+            .await
+            .expect("narrowing succeeds");
         let forwarded = forwarded.first().expect("covered");
         let selectors = selectors_from_query(forwarded);
         let body = build_batch_query_body(&selectors, forwarded.value_of(ForwardedParameter::Attrs));

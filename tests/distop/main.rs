@@ -40,6 +40,8 @@
 
 #[path = "../support/context_source_adapter.rs"]
 pub mod context_source_adapter;
+#[path = "../support/hosted_context.rs"]
+pub mod hosted_context;
 #[path = "../support/notification_adapter.rs"]
 pub mod notification_adapter;
 
@@ -49,6 +51,7 @@ mod oracle;
 mod registration;
 mod topology;
 
+mod compaction;
 mod cons;
 mod disc;
 mod fw;

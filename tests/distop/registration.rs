@@ -36,6 +36,7 @@ pub struct CsrBuilder {
     context_source_info: Vec<Value>,
     management: Option<Value>,
     alias: Option<String>,
+    context: Option<Value>,
 }
 
 impl CsrBuilder {
@@ -55,6 +56,7 @@ impl CsrBuilder {
             context_source_info: Vec::new(),
             management: None,
             alias: None,
+            context: None,
         }
     }
 
@@ -118,6 +120,14 @@ impl CsrBuilder {
         self
     }
 
+    /// Override the `@context` the registration is created under, replacing the
+    /// compound test context default. Accepts a single context URL as a string
+    /// or an array of context references.
+    pub fn context(mut self, context: Value) -> CsrBuilder {
+        self.context = Some(context);
+        self
+    }
+
     /// Drop the entity clause, producing a `RegistrationInfo` with only property
     /// or relationship names (used to test name-only registrations).
     pub fn without_entity(mut self) -> CsrBuilder {
@@ -157,7 +167,7 @@ impl CsrBuilder {
         if let Some(alias) = self.alias {
             body.insert("contextSourceAlias".to_owned(), json!(alias));
         }
-        body.insert("@context".to_owned(), json!(COMPOUND_CONTEXT.as_str()));
+        body.insert("@context".to_owned(), self.context.unwrap_or_else(|| json!(COMPOUND_CONTEXT.as_str())));
         Value::Object(body)
     }
 }

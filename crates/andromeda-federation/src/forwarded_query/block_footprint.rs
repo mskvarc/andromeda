@@ -10,22 +10,24 @@
 //! union of every block, which would ask a source for a cross-product of
 //! entities and attributes it never registered together.
 //!
-//! Registered type and attribute names are stored expanded; when a block
-//! supplies its own names to a forwarded request (the client constrained none),
-//! they are compacted with the same last-segment heuristic
-//! (`compact_attribute_name`, `compact_type_name`) the codebase uses to match
-//! a client's compact term against a stored IRI. That heuristic is exact
-//! whenever a term equals the last fragment or path segment of its expanded IRI
-//! -- the case for the NGSI-LD core context and typical vocabularies -- but a
-//! custom `@context` that aliases a term to an unrelated IRI could compact it
-//! differently than the request `@context` would. The retrieve-by-id path
-//! (`crate::entity_read`) instead compacts the registered type through the
-//! JSON-LD engine, which is exact; the query path stays engine-free so this
-//! narrowing remains a pure function.
+//! Registered type and attribute names are stored expanded (as IRIs). Two
+//! decisions turn on those names, and both go through the JSON-LD engine so
+//! they agree with the registration selection that reached here:
+//!
+//! - Coverage: a client's term is kept when its expanded IRI equals a block
+//!   selector's stored type IRI or a declared attribute IRI. This is the same
+//!   comparison `crate::registration_selection::information_matches_entity`
+//!   makes when it selects the registration, so a block that was selected is
+//!   narrowed consistently rather than discarded by a divergent string guess.
+//! - Supplied names: when a block contributes its own type or attribute names
+//!   (the client constrained none), each stored IRI is compacted to the term
+//!   the request context spells it with. A name the context abbreviates none of
+//!   is forwarded as its full IRI, which a source still resolves (clause
+//!   4.5.1), rather than a wrong last-segment token it could not.
 
-use crate::registration_selection::compact_attribute_name;
+use crate::{error::FederationError, term_resolver::TermResolver};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::{entity_info::EntityTypeSelection, registration::info::RegistrationInfo};
+use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
 use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
 
 /// The entity selection one block contributes to a forwarded request: the
@@ -51,10 +53,24 @@ impl BlockSelection {
     /// identifiers (or its id pattern) and its declared types, so a forwarded
     /// request always names the block's footprint even when the client's query
     /// was broader (clause 4.3.6.1).
-    pub(super) fn of(block: &RegistrationInfo, ids: Option<&[Uri]>, id_pattern: Option<&Pattern>, entity_type: Option<&TypeExprRaw>) -> Option<BlockSelection> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FederationError::JsonLd`] when a client type cannot be expanded
+    /// against the request context.
+    pub(super) async fn of(
+        block: &RegistrationInfo,
+        ids: Option<&[Uri]>,
+        id_pattern: Option<&Pattern>,
+        entity_type: Option<&TypeExprRaw>,
+        resolver: &TermResolver<'_>,
+    ) -> Result<Option<BlockSelection>, FederationError> {
         let mut selection = BlockSelection::default();
         if let Some(ids) = ids.filter(|ids| !ids.is_empty()) {
-            selection.ids = covered_ids(ids, block)?;
+            let Some(covered) = covered_ids(ids, block) else {
+                return Ok(None);
+            };
+            selection.ids = covered;
             selection.id_pattern = id_pattern.map(ToString::to_string);
         } else if let Some(pattern) = id_pattern {
             selection.id_pattern = Some(pattern.to_string());
@@ -67,10 +83,13 @@ impl BlockSelection {
             }
         }
         selection.entity_type = match entity_type {
-            Some(entity_type) => Some(covered_type(entity_type, block)?),
-            None => block_types(block),
+            Some(entity_type) => match covered_type(entity_type, block, resolver).await? {
+                Some(covered) => Some(covered),
+                None => return Ok(None),
+            },
+            None => block_types(block, resolver).await,
         };
-        Some(selection)
+        Ok(Some(selection))
     }
 }
 
@@ -94,38 +113,41 @@ pub(super) enum AttrCoverage {
 /// on their own, because they are a registration constraint rather than a
 /// client filter (clause 4.3.6.1). A block declaring no names forwards the
 /// client's attributes unchanged, or nothing when the client named none.
-pub(super) fn block_attrs(block: &RegistrationInfo, client_attrs: Option<&[AttributeName]>) -> AttrCoverage {
+///
+/// # Errors
+///
+/// Returns [`FederationError::JsonLd`] when a client attribute cannot be
+/// expanded against the request context.
+pub(super) async fn block_attrs(
+    block: &RegistrationInfo,
+    client_attrs: Option<&[AttributeName]>,
+    resolver: &TermResolver<'_>,
+) -> Result<AttrCoverage, FederationError> {
     let declared = block.attribute_names().collect::<Vec<_>>();
     match client_attrs.filter(|attrs| !attrs.is_empty()) {
         Some(attrs) => {
             if declared.is_empty() {
-                return AttrCoverage::Write(attrs.to_vec()); // clone: the forwarded query owns the names it writes
+                return Ok(AttrCoverage::Write(attrs.to_vec())); // clone: the forwarded query owns the names it writes
             }
-            let covered = attrs
-                .iter()
-                .filter(|attribute| {
-                    declared
-                        .iter()
-                        .any(|name| *name == *attribute || compact_attribute_name(name).as_ref() == Some(attribute))
-                })
-                .cloned() // clone: same
-                .collect::<Vec<_>>();
+            let covered = covered_attrs(attrs, &declared, resolver).await?;
             if covered.is_empty() {
-                AttrCoverage::Uncovered
+                Ok(AttrCoverage::Uncovered)
             } else {
-                AttrCoverage::Write(covered)
+                Ok(AttrCoverage::Write(covered))
             }
         }
-        None if declared.is_empty() => AttrCoverage::Omit,
+        None if declared.is_empty() => Ok(AttrCoverage::Omit),
         // The block's declared names are stored expanded; a source expects the
-        // compact term its own @context uses, so each is compacted the same way
-        // a client's term is matched against it.
-        None => AttrCoverage::Write(
-            declared
-                .into_iter()
-                .map(|name| compact_attribute_name(name).unwrap_or_else(|| name.clone())) // clone: a name already compact is forwarded as written
-                .collect(),
-        ),
+        // compact term its own @context uses, so each is compacted through the
+        // request context, falling back to the full IRI a context cannot shorten.
+        None => {
+            let mut names = Vec::with_capacity(declared.len());
+            for name in declared {
+                let compact = resolver.compact_attr(name.as_str()).await;
+                names.push(compact.parse().unwrap_or_else(|_| name.clone())); // clone: a name already compact is forwarded as written
+            }
+            Ok(AttrCoverage::Write(names))
+        }
     }
 }
 
@@ -148,37 +170,69 @@ fn covered_ids(ids: &[Uri], block: &RegistrationInfo) -> Option<Vec<Uri>> {
     (!covered.is_empty()).then_some(covered)
 }
 
+/// The attributes the client asked for that this block declares, kept in the
+/// client's own spelling.
+///
+/// Each client attribute is expanded to its IRI through the request context and
+/// kept when a declared attribute IRI equals it. The declared names are stored
+/// expanded, so this is an exact IRI comparison -- the same one that selected
+/// the registration -- rather than a guess at the client's term (clause
+/// 4.3.6.1).
+async fn covered_attrs(
+    client_attrs: &[AttributeName],
+    declared: &[&AttributeName],
+    resolver: &TermResolver<'_>,
+) -> Result<Vec<AttributeName>, FederationError> {
+    let mut covered = Vec::new();
+    for attribute in client_attrs {
+        let iri = resolver.expand_attr(attribute.as_str()).await?;
+        if declared.iter().any(|name| name.as_str() == iri.as_str()) {
+            covered.push(attribute.clone()); // clone: the forwarded query owns the names it writes
+        }
+    }
+    Ok(covered)
+}
+
 /// The part of the client's type selector the block covers, or `None` when it
 /// covers none of it.
 ///
 /// Only a flat alternation of names can be narrowed; the wildcard and a
 /// conjunction are forwarded whole, because removing a member would change what
-/// they select rather than restrict it.
-fn covered_type(entity_type: &TypeExprRaw, block: &RegistrationInfo) -> Option<TypeExprRaw> {
+/// they select rather than restrict it. Each leaf is expanded to its IRI and
+/// kept when a block selector admits that IRI, matching the registration
+/// selection exactly.
+async fn covered_type(entity_type: &TypeExprRaw, block: &RegistrationInfo, resolver: &TermResolver<'_>) -> Result<Option<TypeExprRaw>, FederationError> {
     let Some(selectors) = block.entities.as_deref().filter(|selectors| !selectors.is_empty()) else {
-        return Some(entity_type.clone()); // clone: an unrestricted block forwards the client's selector as written
+        return Ok(Some(entity_type.clone())); // clone: an unrestricted block forwards the client's selector as written
     };
     let leaves = match entity_type {
         TypeExprRaw::Type(name) => vec![name],
-        TypeExprRaw::Or(children) => children
-            .iter()
-            .map(|child| match child {
-                TypeExprRaw::Type(name) => Some(name),
-                TypeExprRaw::Wildcard | TypeExprRaw::And(_) | TypeExprRaw::Or(_) => None,
-            })
-            .collect::<Option<Vec<_>>>()?,
-        TypeExprRaw::Wildcard | TypeExprRaw::And(_) => return Some(entity_type.clone()), // clone: same
+        TypeExprRaw::Or(children) => {
+            let mut leaves = Vec::with_capacity(children.len());
+            for child in children {
+                match child {
+                    TypeExprRaw::Type(name) => leaves.push(name),
+                    // A nested boolean group cannot be narrowed member by member,
+                    // and an alternation only makes sense as a flat one, so a
+                    // block covering none of its flat leaves covers nothing here.
+                    TypeExprRaw::Wildcard | TypeExprRaw::And(_) | TypeExprRaw::Or(_) => return Ok(None),
+                }
+            }
+            leaves
+        }
+        TypeExprRaw::Wildcard | TypeExprRaw::And(_) => return Ok(Some(entity_type.clone())), // clone: same
     };
-    let mut covered = leaves
-        .into_iter()
-        .filter(|name| selectors.iter().any(|selector| selector_covers_type(&selector.type_, name)))
-        .cloned() // clone: the narrowed selector owns its names
-        .map(TypeExprRaw::Type)
-        .collect::<Vec<_>>();
+    let mut covered = Vec::new();
+    for name in leaves {
+        let iri = resolver.expand_type(name.as_str()).await?;
+        if selectors.iter().any(|selector| selector.type_.admits(iri.as_str())) {
+            covered.push(TypeExprRaw::Type(name.clone())); // clone: the narrowed selector owns its names
+        }
+    }
     match covered.len() {
-        0 => None,
-        1 => covered.pop(),
-        _ => Some(TypeExprRaw::Or(covered)),
+        0 => Ok(None),
+        1 => Ok(covered.pop()),
+        _ => Ok(Some(TypeExprRaw::Or(covered))),
     }
 }
 
@@ -202,14 +256,16 @@ fn block_identifiers(block: &RegistrationInfo) -> (Vec<Uri>, Option<String>) {
 /// The block's declared types as one selector: the single type, or the
 /// alternation of every distinct type its entity selectors name (clause 4.17).
 ///
-/// Registered types are stored expanded; each is compacted to the term a source
-/// recognises, the same way a client's type name is matched against them.
-fn block_types(block: &RegistrationInfo) -> Option<TypeExprRaw> {
+/// Registered types are stored expanded; each is compacted through the request
+/// context to the term a source recognises, falling back to the full IRI a
+/// context cannot shorten.
+async fn block_types(block: &RegistrationInfo, resolver: &TermResolver<'_>) -> Option<TypeExprRaw> {
     let selectors = block.entities.as_deref()?;
     let mut names: Vec<EntityTypeName> = Vec::new();
     for selector in selectors {
         for name in selector.type_.names() {
-            let compact = compact_type_name(name).unwrap_or_else(|| name.clone()); // clone: a type already compact is forwarded as written
+            let compact = resolver.compact_type(name.as_str()).await;
+            let compact: EntityTypeName = compact.parse().unwrap_or_else(|_| name.clone()); // clone: a type already compact is forwarded as written
             if !names.contains(&compact) {
                 names.push(compact);
             }
@@ -220,26 +276,4 @@ fn block_types(block: &RegistrationInfo) -> Option<TypeExprRaw> {
         1 => names.pop().map(TypeExprRaw::Type),
         _ => Some(TypeExprRaw::Or(names.into_iter().map(TypeExprRaw::Type).collect())),
     }
-}
-
-/// Whether a registered type selection (Table 5.2.8-1: one name or several)
-/// admits the client's compact or expanded type name. Registered names are
-/// stored expanded, so a compact client name is compared against the last
-/// segment of the registered IRI as well.
-fn selector_covers_type(selector: &EntityTypeSelection, name: &EntityTypeName) -> bool {
-    selector
-        .names()
-        .iter()
-        .any(|registered| registered == name || compact_type_name(registered).as_ref() == Some(name))
-}
-
-/// The last fragment or path segment of an expanded type IRI, as the compact
-/// name a client most likely wrote for it.
-fn compact_type_name(name: &EntityTypeName) -> Option<EntityTypeName> {
-    let iri = name.as_ref();
-    let compact = match iri.rfind('#') {
-        Some(position) => &iri[position + 1..],
-        None => iri.rfind('/').map(|position| &iri[position + 1..])?,
-    };
-    compact.parse().ok()
 }

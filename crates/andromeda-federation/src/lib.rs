@@ -66,6 +66,8 @@ pub mod temporal;
 pub mod temporal_last_n;
 /// Temporal response merging.
 pub mod temporal_result;
+/// Expanding and compacting NGSI-LD names against one operation's `@context`.
+mod term_resolver;
 /// The clause 4.5.5.2 differentiation of conflicting transient entities.
 mod transient_entity_conflict;
 /// Shared forwarding HTTP transport.

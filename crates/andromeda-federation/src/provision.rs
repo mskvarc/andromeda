@@ -10,6 +10,7 @@ use crate::{
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure},
     registration_selection::{collect_matching_attrs, csr_has_matching_information, filter_fragment_for_registration},
     request::{ForwardProvisionRequest, TriggeringRequest},
+    term_resolver::TermResolver,
     transport::ForwardedRequest,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -90,11 +91,16 @@ impl FederationService {
             // (clause 6.3.17), decided per registration below.
             let looped = self.is_loop_detected(request.triggering.via);
 
-            let prepared_context = self.engine.prepare_term_context(request.context);
-            let expanded_type = if let Some(t) = request.entity_type_compact {
-                Some(self.engine.expand_type(t.as_str(), &prepared_context).await?)
-            } else {
-                None
+            let resolver = TermResolver::new(&self.engine, request.context);
+            let expanded_type = match request.entity_type_compact {
+                Some(t) => Some(resolver.expand_type(t.as_str()).await?),
+                None => None,
+            };
+            // The path attribute is a compact term; matching compares IRIs, so
+            // it is expanded once against the triggering request's context.
+            let expanded_attribute = match request.attribute_name {
+                Some(attribute) => Some(resolver.expand_attr(attribute.as_str()).await?),
+                None => None,
             };
 
             let csrs = self.csr_repo.find_matching(expanded_type.as_ref(), Some(request.entity_id)).await?;
@@ -106,7 +112,7 @@ impl FederationService {
                 if csr.access.mode == Some(ForwardingMode::Auxiliary) {
                     continue;
                 }
-                if !csr_has_matching_information(&csr, expanded_type.as_ref(), Some(request.entity_id), request.attribute_name) {
+                if !csr_has_matching_information(&csr, expanded_type.as_ref(), Some(request.entity_id), expanded_attribute.as_ref()) {
                     continue;
                 }
                 if looped {
@@ -132,7 +138,15 @@ impl FederationService {
                     // Clauses 5.6.1.4 and following: a proxied registration that
                     // does not support the operation still owns its attributes, so
                     // the write fails for them instead of landing here.
-                    let proxied_attrs = collect_matching_attrs(&csr, expanded_type.as_ref(), Some(request.entity_id), request.attribute_name, request.body);
+                    let proxied_attrs = collect_matching_attrs(
+                        &csr,
+                        expanded_type.as_ref(),
+                        Some(request.entity_id),
+                        request.attribute_name,
+                        request.body,
+                        &resolver,
+                    )
+                    .await?;
                     let mode = proxied_mode(&csr);
                     results.push(ForwardedWriteResult {
                         registration_id: csr.id,
@@ -144,10 +158,12 @@ impl FederationService {
             }
 
             let expanded_type_ref = expanded_type.as_ref();
-            let planned: Vec<PlannedWrite<'_>> = matching_csrs
-                .into_iter()
-                .filter_map(|csr| plan_write(csr, &request, expanded_type_ref))
-                .collect();
+            let mut planned: Vec<PlannedWrite<'_>> = Vec::new();
+            for csr in matching_csrs {
+                if let Some(write) = plan_write(csr, &request, expanded_type_ref, &resolver).await? {
+                    planned.push(write);
+                }
+            }
 
             results.extend(self.execute_writes(planned).await);
             Ok(results)
@@ -266,7 +282,17 @@ impl FederationService {
 /// Plan the one forwarded write to `csr` for `request`, or `None` when the
 /// registration covers nothing of the body once it is narrowed to what the
 /// registration declares (clause 4.3.6.1).
-fn plan_write<'a>(csr: ContextSourceRegistration, request: &ForwardProvisionRequest<'a>, expanded_type: Option<&IriBuf>) -> Option<PlannedWrite<'a>> {
+///
+/// # Errors
+///
+/// Returns [`FederationError::JsonLd`] when a body attribute cannot be expanded
+/// against the request context.
+async fn plan_write<'a>(
+    csr: ContextSourceRegistration,
+    request: &ForwardProvisionRequest<'a>,
+    expanded_type: Option<&IriBuf>,
+    resolver: &TermResolver<'_>,
+) -> Result<Option<PlannedWrite<'a>>, FederationError> {
     // A POST below the bare resource creates (clauses 6.4.3.1 and 6.18.3.1);
     // every other write addresses the entity itself.
     let mut path = request.resource.segments().to_vec();
@@ -283,20 +309,20 @@ fn plan_write<'a>(csr: ContextSourceRegistration, request: &ForwardProvisionRequ
     let url = forwarding_url(csr.access.endpoint.url(), &path, request.query_string.unwrap_or(""));
 
     let proxied_attrs = if is_proxied(&csr) {
-        collect_matching_attrs(&csr, expanded_type, Some(request.entity_id), request.attribute_name, request.body)
+        collect_matching_attrs(&csr, expanded_type, Some(request.entity_id), request.attribute_name, request.body, resolver).await?
     } else {
         Vec::new()
     };
 
     let body = if request.attribute_name.is_none() {
-        filter_fragment_for_registration(request.body, &csr, expanded_type, Some(request.entity_id))
+        filter_fragment_for_registration(request.body, &csr, expanded_type, Some(request.entity_id), resolver).await?
     } else {
         request.body.map(<[u8]>::to_vec)
     };
     if request.body.is_some() && body.is_none() {
-        return None;
+        return Ok(None);
     }
-    Some(PlannedWrite {
+    Ok(Some(PlannedWrite {
         registration: csr,
         url,
         method: request.method.clone(), // clone: each planned write owns the method it sends
@@ -306,7 +332,7 @@ fn plan_write<'a>(csr: ContextSourceRegistration, request: &ForwardProvisionRequ
         triggering: request.triggering,
         // A single-entity provision runs under no Entity Map.
         linked_map: None,
-    })
+    }))
 }
 
 /// Clause 6.3.17: when the data lives in a single exclusive or redirect

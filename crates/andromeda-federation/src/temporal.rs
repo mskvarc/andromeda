@@ -12,6 +12,7 @@ use crate::{
     outcome::{ForwardGetOutcome, ForwardReadOutcome, ForwardedResponse, ForwardedTemporalEntities, MatchedSources},
     read_fan_out::{ForwardedGetConditions, ReadSelection, ReadServing, expand_registration_targets, read_outcome},
     request::{ForwardRetrieveRequest, ForwardTemporalQueryRequest},
+    term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
@@ -142,8 +143,9 @@ impl FederationService {
         // Clause 4.3.6.3: each information block that covers part of the query
         // is a forwarded request of its own.
         let mut targets = Vec::with_capacity(registrations.len());
+        let resolver = TermResolver::new(&self.engine, context);
         for registration in registrations {
-            let queries = ForwardedQuery::for_registration_on_page(client, &registration, split, source_page);
+            let queries = ForwardedQuery::for_registration_on_page(client, &registration, split, source_page, &resolver).await?;
             expand_registration_targets(registration, queries, &mut targets);
         }
         if targets.is_empty() {
@@ -216,8 +218,9 @@ impl FederationService {
         // each block covering the entity contributes its own attribute
         // constraint.
         let mut targets = Vec::with_capacity(registrations.len());
+        let resolver = TermResolver::new(&self.engine, context);
         for registration in registrations {
-            let queries = ForwardedQuery::for_registration(client_query, &registration, SplitEntities::Complete);
+            let queries = ForwardedQuery::for_registration(client_query, &registration, SplitEntities::Complete, &resolver).await?;
             expand_registration_targets(registration, queries, &mut targets);
         }
         if targets.is_empty() {
