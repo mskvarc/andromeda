@@ -35,6 +35,11 @@
 -- Lifecycle: preparing -> success/partial/empty/failure. Expired snapshots are
 -- reaped by a periodic worker on `expires_at`; the reap drops the branch schema
 -- and deletes the `snapshots` row, cascading its preparation and outbox rows.
+-- Both cascade children are reached by `snapshot_key`: `snapshot_preparation`
+-- through its primary key, and `snapshot_notification_outbox` through
+-- `idx_snapshot_notification_outbox_snapshot_key` (see that index below). The
+-- reaper and quota eviction each delete one `snapshots` control record per
+-- victim, so without that index every cascade delete would seq-scan the outbox.
 --
 -- Physical shape:
 --
@@ -176,3 +181,12 @@ CREATE INDEX idx_snapshot_notification_claimable
     ON snapshot_notification_outbox
         (GREATEST(next_attempt_at, COALESCE(lease_until, '-infinity'::timestamptz)), id)
     WHERE delivered_at IS NULL AND exhausted_at IS NULL;
+
+-- Backs the `snapshot_key` FK's ON DELETE CASCADE. The snapshot reaper
+-- (`delete_expired_snapshots`) and quota eviction each delete one `snapshots`
+-- control record per victim, and each cascade `DELETE ... WHERE snapshot_key = $1`
+-- would otherwise seq-scan the whole outbox. The sibling `snapshot_preparation`
+-- needs no equivalent -- its `snapshot_key` is its PRIMARY KEY, so its cascade is
+-- already index-backed.
+CREATE INDEX idx_snapshot_notification_outbox_snapshot_key
+    ON snapshot_notification_outbox (snapshot_key);
