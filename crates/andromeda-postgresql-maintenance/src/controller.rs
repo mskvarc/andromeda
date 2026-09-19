@@ -56,30 +56,25 @@ pub enum PassOutcome {
 
 /// Process-scoped adaptive PostgreSQL controller.
 pub struct MaintenanceController {
-    /// Platform registry and durable-state pool.
+    /// Platform registry and durable-state pool. Reaches PostgreSQL directly,
+    /// never through a pooler: a pass holds a session advisory lock and session
+    /// `SET`s across a multi-statement sweep on one connection.
     platform_pool: PgPool,
-    /// Base URL from which tenant database URLs are derived.
-    database_url: DatabaseUrl,
+    /// The straight-to-PostgreSQL base URL from which per-tenant database URLs
+    /// are derived. Never a pooler, for the same session-state reason.
+    direct_url: DatabaseUrl,
     /// Mode and fixed profile selection.
     config: MaintenanceConfig,
-    /// Per-connection durability setting retained from broker configuration.
-    synchronous_commit_setting: &'static str,
 }
 
 impl MaintenanceController {
     /// Construct a controller over the shared platform registry.
     #[must_use]
-    pub const fn new(
-        platform_pool: PgPool,
-        database_url: DatabaseUrl,
-        config: MaintenanceConfig,
-        synchronous_commit_setting: &'static str,
-    ) -> MaintenanceController {
+    pub const fn new(platform_pool: PgPool, direct_url: DatabaseUrl, config: MaintenanceConfig) -> MaintenanceController {
         MaintenanceController {
             platform_pool,
-            database_url,
+            direct_url,
             config,
-            synchronous_commit_setting,
         }
     }
 
@@ -132,10 +127,10 @@ impl MaintenanceController {
             return Ok(PassOutcome::NoTenant);
         };
         state::mark_inspected(platform, &tenant, "started").await?;
-        let tenant_url = self.database_url.with_db_name(&tenant.database);
+        let tenant_url = self.direct_url.with_db_name(&tenant.database);
         let pool_result = tokio::select! {
             () = cancellation.cancelled() => return Ok(PassOutcome::Cancelled),
-            result = configure_pool_options(1, self.synchronous_commit_setting).connect(tenant_url.as_str()) => result,
+            result = configure_pool_options(1).connect(tenant_url.as_str()) => result,
         };
         let tenant_pool = match pool_result {
             Ok(pool) => pool,

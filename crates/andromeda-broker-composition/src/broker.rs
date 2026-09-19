@@ -61,6 +61,13 @@ use thiserror::Error;
 use tokio::runtime::Handle;
 use tracing::{error, info};
 
+/// Connections the maintenance controller's direct platform pool may open.
+///
+/// A maintenance pass is fleet-serialized and holds exactly one platform
+/// connection across its sweep, so two is ample headroom while a lapsed pass's
+/// connection is being reclaimed.
+const MAINTENANCE_PLATFORM_POOL_CONNECTIONS: u32 = 2;
+
 /// HTTP API and process resources whose shutdown begins after traffic drains.
 struct BrokerExecution {
     /// Fully assembled state-complete HTTP API.
@@ -162,33 +169,44 @@ async fn construct(
     telemetry: Option<Arc<TelemetryRecorder>>,
     started_at: DateTime<Utc>,
 ) -> Result<BrokerExecution, BrokerStartupError> {
-    let database_url = DatabaseUrl::new(config.database.url.clone()); // clone: the tenant factory retains the validated base URL
-    let main_pool = configure_pool_options(config.database.max_connections, config.database.synchronous_commit.as_postgres_setting())
-        .connect(config.database.url.as_str())
+    // Two bases. The request path connects through the pooler when one is
+    // configured; provisioning, migration and maintenance always reach
+    // PostgreSQL directly, because each keeps session state (a `CREATE DATABASE`
+    // outside any transaction, the migrator's session advisory lock, the
+    // maintenance sweep's session lock) that a transaction-pooling proxy breaks.
+    let request_url = DatabaseUrl::new(config.database.request_url().clone()); // clone: the tenant factory retains the request base URL
+    let direct_url = DatabaseUrl::new(config.database.direct_url().clone()); // clone: registry, maintenance and the tenant factory retain the direct base URL
+    let main_pool = configure_pool_options(config.database.max_connections)
+        .connect(config.database.request_url().as_str())
         .await?;
     let registry = Arc::new(
         PostgresTenantRegistry::connect(
             main_pool,
-            database_url.clone(),   // clone: registry and tenant factory independently retain the base URL
+            direct_url.clone(),     // clone: the registry provisions and migrates over the direct base
             config.tenancy.clone(), // clone: registry owns its runtime tenancy policy
             config.database.synchronous_commit.as_postgres_setting(),
         )
         .await?,
     );
     let process_tasks = TaskSupervisor::process(Handle::current());
+    // Maintenance holds a session advisory lock across a whole sweep, so it gets
+    // its own direct platform pool rather than sharing the request-path pool.
+    let maintenance_platform_pool = configure_pool_options(MAINTENANCE_PLATFORM_POOL_CONNECTIONS)
+        .connect(config.database.direct_url().as_str())
+        .await?;
     register_postgresql_maintenance(
         &process_tasks,
-        registry.main_pool().clone(), // clone: the process task and registry share the platform pool
-        database_url.clone(),         // clone: the process task and tenant factory derive independent tenant URLs
+        maintenance_platform_pool,
+        direct_url.clone(), // clone: the process task derives tenant URLs over the direct base
         config.database.maintenance,
-        config.database.synchronous_commit.as_postgres_setting(),
     )?;
     // The platform route from minted subscription identifiers to tenants is
     // shared by every tenant's forwarding service and by the receiver.
     let forwarded_subscription_router: Arc<dyn ForwardedSubscriptionRouter> = Arc::new(PostgresForwardedSubscriptionRouter::new(registry.main_pool()));
     let factory = Arc::new(BrokerTenantFactory::new(
         &config,
-        database_url,
+        request_url,
+        direct_url,
         process_tasks.clone(), // clone: tenant scopes and process shutdown share supervision
         Arc::clone(&forwarded_subscription_router),
     ));
@@ -258,6 +276,7 @@ fn report_startup(config: &RuntimeConfig) {
         host = %config.server.host,
         port = config.server.port,
         tenancy_enabled = config.tenancy.enabled,
+        database_transaction_pooled = config.database.is_pooled(),
         notification_delivery_mode = %config.notifications.delivery.mode,
         log_level = %config.observability.log_level,
         metrics = %config.observability.metrics,

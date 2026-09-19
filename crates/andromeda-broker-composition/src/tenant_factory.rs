@@ -60,8 +60,12 @@ mod transport;
 pub struct BrokerTenantFactory {
     /// Owner-provided configuration required to construct one tenant.
     config: Arc<TenantFactoryConfig>,
-    /// The URL each tenant's database name is substituted into.
-    database_url: DatabaseUrl,
+    /// The request-path base URL each tenant's serving pool is derived from.
+    /// Reaches PostgreSQL through the pooler when one is configured.
+    request_url: DatabaseUrl,
+    /// The straight-to-PostgreSQL base URL each tenant's migration is derived
+    /// from. Never a pooler: the migrator holds a session advisory lock.
+    direct_url: DatabaseUrl,
     /// The MQTT pool the unnamed default tenant opened.
     ///
     /// Recorded here because `/health` reports on MQTT delivery and the pool
@@ -113,13 +117,15 @@ impl BrokerTenantFactory {
     /// A factory over the broker's configuration.
     pub(super) fn new(
         config: &RuntimeConfig,
-        database_url: DatabaseUrl,
+        request_url: DatabaseUrl,
+        direct_url: DatabaseUrl,
         process_tasks: TaskSupervisor,
         subscription_router: Arc<dyn ForwardedSubscriptionRouter>,
     ) -> BrokerTenantFactory {
         BrokerTenantFactory {
             config: Arc::new(TenantFactoryConfig::from(config)),
-            database_url,
+            request_url,
+            direct_url,
             default_mqtt_pool: OnceLock::new(),
             process_tasks,
             subscription_router,
@@ -138,13 +144,21 @@ impl TenantStateFactory for BrokerTenantFactory {
     type Runtime = BrokerTenantRuntime;
 
     async fn build(&self, tenant: &TenantRef, database: &TenantDatabaseName) -> Result<(Arc<AndromedaState>, BrokerTenantRuntime), TenancyError> {
-        let db_url = self.database_url.with_db_name(database);
-        let (state, runtime) = build_tenant_state(&self.config, &db_url, tenant, self.process_tasks.tenant(), &self.subscription_router)
-            .await
-            .map_err(|error| TenancyError::RuntimeUnavailable {
-                tenant: tenant.clone(), // clone: the error outlives this borrow
-                detail: error.to_string(),
-            })?;
+        let serving_url = self.request_url.with_db_name(database);
+        let migration_url = self.direct_url.with_db_name(database);
+        let (state, runtime) = build_tenant_state(
+            &self.config,
+            &serving_url,
+            &migration_url,
+            tenant,
+            self.process_tasks.tenant(),
+            &self.subscription_router,
+        )
+        .await
+        .map_err(|error| TenancyError::RuntimeUnavailable {
+            tenant: tenant.clone(), // clone: the error outlives this borrow
+            detail: error.to_string(),
+        })?;
 
         if tenant.is_unnamed_default() && self.default_mqtt_pool.set(Arc::clone(runtime.mqtt_pool())).is_err() {
             debug!("the default tenant's MQTT pool was already recorded; /health keeps reporting on the first");
@@ -160,13 +174,14 @@ impl TenantStateFactory for BrokerTenantFactory {
 /// route table has no business calling it.
 async fn build_tenant_state(
     config: &TenantFactoryConfig,
-    db_url: &Url,
+    serving_url: &Url,
+    migration_url: &Url,
     tenant: &TenantRef,
     task_supervisor: TaskSupervisor,
     subscription_router: &Arc<dyn ForwardedSubscriptionRouter>,
 ) -> Result<(AndromedaState, BrokerTenantRuntime), TenantAssemblyError> {
     let signals = TenantSignals::new(config.spatial.change_channel_capacity);
-    let storage = initialize_storage(config, db_url, tenant).await?;
+    let storage = initialize_storage(config, serving_url, migration_url, tenant).await?;
     let temporal = compose_temporal_history(&storage.pool, &storage.temporal_repo, &config.temporal, &task_supervisor, &storage.live_target)?;
     // Every write path reaches the `current_attribute_values` projection
     // through this complete atomic commit implementation, which writes it in

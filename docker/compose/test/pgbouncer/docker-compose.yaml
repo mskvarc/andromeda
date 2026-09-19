@@ -1,0 +1,113 @@
+# Transaction-pooling tier: PostgreSQL behind a PgBouncer proxy, with one broker
+# whose request path runs through the proxy while its provisioning, migration and
+# maintenance connect straight to PostgreSQL.
+#
+# The point of the tier is that the broker's request-path demand far exceeds what
+# it could open as direct PostgreSQL backends. At the configured runtime-cache cap
+# the broker may hold database.max_connections + cached * tenant_max_connections =
+# 32 + 64 * 16 = 1056 request-path client connections; PostgreSQL here allows
+# max_connections = 500. Without the pooler that request demand alone exhausts
+# PostgreSQL (PoolTimedOut); through it, each active tenant's client connections
+# multiplex onto default_pool_size (2) PostgreSQL backends, so the request path
+# stays a small multiple of the runtime-cache size and hundreds of tenants are
+# served well under the ceiling. (Provisioning and migration bypass the pooler
+# and are the direct consumers the 500 ceiling is otherwise sized for.)
+#
+#   docker compose -f docker/compose/test/pgbouncer/docker-compose.yaml --profile broker up --build -d --wait
+#   ANDROMEDA_TEST_BROKER_URL=http://127.0.0.1:1067/ngsi-ld/v1/ \
+#   ANDROMEDA_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5467/postgres \
+#   ANDROMEDA_TEST_CALLBACK_HOST=host.docker.internal \
+#   cargo test --test pgbouncer_scale -- --test-threads=1
+#   docker compose -f docker/compose/test/pgbouncer/docker-compose.yaml --profile broker down -v
+#
+# `cargo xtask itest --stack pgbouncer` drives this lifecycle end to end.
+name: andromeda-pgbouncer
+
+services:
+  postgres:
+    build:
+      context: ../../../images/postgresql
+    image: andromeda-base-postgres:latest
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      # The internal test network trusts every connection: the broker (directly
+      # and through the pooler) and the harness all connect as `postgres`.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    # max_connections is far below the broker's un-pooled request demand (1056);
+    # the pooler is what keeps the request path under it. The headroom above the
+    # request path's pooled footprint covers the direct provisioning/migration
+    # path, which bypasses the pooler.
+    command: ["postgres", "-c", "max_connections=500"]
+    ports:
+      - "5467:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 40
+
+  # Transaction pooler in front of PostgreSQL. The official image regenerates its
+  # config from environment variables and exposes no knob for
+  # max_prepared_statements, so the entrypoint is overridden to run the bundled
+  # binary against the mounted pgbouncer.ini verbatim.
+  pgbouncer:
+    image: pgbouncer/pgbouncer:1.25.2
+    entrypoint: ["/opt/pgbouncer/pgbouncer"]
+    command: ["/etc/pgbouncer/pgbouncer.ini"]
+    volumes:
+      - ./pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "6467:6432"
+    healthcheck:
+      # 127.0.0.1, not localhost: pgbouncer listens on IPv4 0.0.0.0, but localhost
+      # resolves to IPv6 ::1 first in the image, giving a false failure.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 6432 || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Broker under test on 1067. The request path connects through the pooler
+  # (database.pooler.url); provisioning, migration and maintenance use
+  # database.url straight to PostgreSQL.
+  broker:
+    build:
+      context: ../../../..
+      dockerfile: docker/images/andromeda/Dockerfile
+    image: andromeda-base:latest
+    restart: unless-stopped
+    profiles:
+      - broker
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    environment:
+      ANDROMEDA__SERVER__HOST: "0.0.0.0"
+      ANDROMEDA__SERVER__PORT: "1067"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres:5432/postgres"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer:6432/postgres"
+      # A high runtime-cache cap keeps many tenant request pools live at once, so
+      # the tier actually exercises the pooler's cross-tenant multiplexing.
+      ANDROMEDA__DATABASE__MAX_CONNECTIONS: "32"
+      ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS: "16"
+      ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "64"
+      ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL_SECS: "120"
+      ANDROMEDA__TENANCY__JANITOR_INTERVAL_SECS: "5"
+      ANDROMEDA__OBSERVABILITY__LOG_LEVEL: "info"
+    ports:
+      - "1067:1067"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${ANDROMEDA__SERVER__PORT}/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 5s

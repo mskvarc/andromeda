@@ -32,6 +32,8 @@ pub(crate) enum StackName {
     Http3,
     /// Two-broker extensions topology (enabled and conformance).
     Extensions,
+    /// Single broker whose request path runs through a `PgBouncer` transaction pooler.
+    Pgbouncer,
 }
 
 /// One row of the registry: everything needed to bring a stack up and run its suites.
@@ -65,6 +67,7 @@ impl Stack {
             StackName::Snapshot => 3,
             StackName::Http3 => 4,
             StackName::Extensions => 5,
+            StackName::Pgbouncer => 6,
         }
     }
 }
@@ -132,7 +135,7 @@ const BASE_SUITES: &[&str] = &[
 ];
 
 /// The complete stack registry, indexed by [`Stack::index`].
-pub(crate) static STACKS: [Stack; 6] = [
+pub(crate) static STACKS: [Stack; 7] = [
     Stack {
         name: StackName::Base,
         compose_file: "docker/compose/test/base/docker-compose.yaml",
@@ -197,6 +200,20 @@ pub(crate) static STACKS: [Stack; 6] = [
             (DATABASE_URL_ENV, "postgres://postgres:postgres@127.0.0.1:5491/postgres"),
         ],
         suites: &["extensions"],
+        test_threads: 1,
+    },
+    Stack {
+        name: StackName::Pgbouncer,
+        compose_file: "docker/compose/test/pgbouncer/docker-compose.yaml",
+        profile: Some("broker"),
+        env: &[
+            (BROKER_URL_ENV, "http://127.0.0.1:1067/ngsi-ld/v1/"),
+            // The suite's own verification and cleanup connect straight to
+            // PostgreSQL, bypassing the pooler, to read pg_stat_activity and
+            // drop tenant databases.
+            (DATABASE_URL_ENV, "postgres://postgres:postgres@127.0.0.1:5467/postgres"),
+        ],
+        suites: &["pgbouncer_scale"],
         test_threads: 1,
     },
 ];

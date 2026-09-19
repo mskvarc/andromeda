@@ -2,7 +2,7 @@
 
 use crate::{
     error::ContextStoreError,
-    tenant_database::{DatabaseUrl, create_database_if_missing, generate_db_name, migrate_main_db, migrate_single_tenant_db},
+    tenant_database::{DatabaseUrl, configure_pool_options, create_database_if_missing, generate_db_name, migrate_main_db, migrate_single_tenant_db},
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_postgresql_schema::tenancy::Tenants;
@@ -31,16 +31,21 @@ use sqlx::PgPool;
 /// tenant runtime and is the only thing that can answer which tenants exist
 /// after they have all been evicted.
 pub struct PostgresTenantRegistry {
-    /// The platform database, where the registry lives.
+    /// The platform database's request-path pool, where the registry lives and
+    /// serves the default tenant. Reaches PostgreSQL through the pooler when one
+    /// is configured.
     main_pool: PgPool,
-    /// The URL every per-tenant database is derived from.
-    database_url: DatabaseUrl,
+    /// The straight-to-PostgreSQL base URL every per-tenant database is derived
+    /// from for provisioning and migration. Never a pooler: `CREATE DATABASE`
+    /// cannot run in a transaction and the migrator holds a session advisory
+    /// lock, both of which a transaction-pooling proxy would break.
+    direct_url: DatabaseUrl,
     /// The database the unnamed default tenant uses.
     default_database: TenantDatabaseName,
     /// Prefix and pool size for provisioning.
     tenancy: TenancyConfig,
-    /// The PostgreSQL `synchronous_commit` setting value applied to every
-    /// pool opened for a migration (e.g. `"on"`, `"off"`, `"local"`).
+    /// The PostgreSQL `synchronous_commit` value installed on each database with
+    /// `ALTER DATABASE ... SET` at creation (e.g. `"on"`, `"off"`, `"local"`).
     synchronous_commit_setting: &'static str,
 }
 
@@ -57,20 +62,33 @@ impl PostgresTenantRegistry {
     /// and [`ContextStoreError::Database`] when the upsert fails.
     pub async fn connect(
         main_pool: PgPool,
-        database_url: DatabaseUrl,
+        direct_url: DatabaseUrl,
         tenancy: TenancyConfig,
         synchronous_commit_setting: &'static str,
     ) -> Result<PostgresTenantRegistry, ContextStoreError> {
-        let default_database = database_url.db_name()?;
+        let default_database = direct_url.db_name()?;
         let registry = PostgresTenantRegistry {
             main_pool,
-            database_url,
+            direct_url,
             default_database,
             tenancy,
             synchronous_commit_setting,
         };
 
-        migrate_main_db(&registry.main_pool).await?;
+        // Migrate the platform database over a direct, one-connection pool: the
+        // migrator's session advisory lock is unsafe through a pooler, so it
+        // never runs on `main_pool`.
+        let platform_url = registry.direct_url.with_db_name(&registry.default_database);
+        let platform_migration_pool = configure_pool_options(1).connect(platform_url.as_str()).await?;
+        let migration_result = migrate_main_db(
+            &platform_migration_pool,
+            registry.default_database.as_str(),
+            registry.synchronous_commit_setting,
+        )
+        .await;
+        platform_migration_pool.close().await;
+        migration_result?;
+
         registry.register_default_tenant().await?;
         Ok(registry)
     }
@@ -166,15 +184,15 @@ impl PostgresTenantRegistry {
         }
 
         let db_name = generate_db_name(&self.tenancy.tenant_db_prefix, name);
-        create_database_if_missing(&self.database_url, &db_name).await?;
+        create_database_if_missing(&self.direct_url, &db_name, self.synchronous_commit_setting).await?;
 
         let statement = tenant_insert(name.as_str(), db_name.as_str(), &TenantStatus::Active.to_string()).map_err(|error| statement_error(&error))?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut *tx).await?;
         tx.commit().await?;
 
-        let tenant_url = self.database_url.with_db_name(&db_name);
-        migrate_single_tenant_db(&tenant_url, self.tenancy.tenant_max_connections, self.synchronous_commit_setting).await?;
+        let tenant_url = self.direct_url.with_db_name(&db_name);
+        migrate_single_tenant_db(&tenant_url).await?;
 
         Ok(db_name)
     }

@@ -8,6 +8,7 @@
 use andromeda_context_commit::{subscription_key::SubscriptionKey, write_record::WriteRecord};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_context_store::{
+    config::SynchronousCommit,
     error::ContextStoreError,
     notification_delivery::{event_insert::insert_events_in_tx, rows::NewNotificationEvent},
     tenant_database::{DatabaseUrl, create_database_if_missing, migrate_tenant_db},
@@ -31,7 +32,9 @@ pub async fn queue_database() -> PgPool {
     // clone: `DatabaseUrl` owns the endpoint it derives per-database URLs from.
     let base = DatabaseUrl::new(configuration.database().url().clone());
     let name = TenantDatabaseName::from(QUEUE_DATABASE.to_owned());
-    create_database_if_missing(&base, &name).await.expect("queue verification database");
+    create_database_if_missing(&base, &name, SynchronousCommit::Off.as_postgres_setting())
+        .await
+        .expect("queue verification database");
     let pool = PgPoolOptions::new()
         .max_connections(8)
         .connect(base.with_db_name(&name).as_str())

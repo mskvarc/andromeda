@@ -7,7 +7,7 @@
 use crate::{
     error::ContextStoreError,
     schema_contract::{contract::current_tenant_schema_contract, schema_metadata::ensure_schema_contract},
-    schema_ddl::{database::create_database, session::set_synchronous_commit},
+    schema_ddl::{database::create_database, database_settings::set_database_synchronous_commit},
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_tenancy::{database_name::TenantDatabaseName, db_name_prefix::DbNamePrefix};
@@ -27,29 +27,22 @@ use url::Url;
 /// its full pool against the server's `max_connections`.
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Build a [`PgPoolOptions`] tuned with the broker's connection-level
-/// settings: a per-connection `SET synchronous_commit = '<mode>'`
-/// applied via `after_connect`.
+/// Build a [`PgPoolOptions`] with the broker's shared pool tuning.
 ///
-/// Centralised so every pool the broker opens (main, per-tenant,
-/// migration helpers) shares identical durability semantics.
+/// Centralised so every pool the broker opens (main, per-tenant, migration
+/// helpers) reclaims idle connections on the same schedule and keeps none warm.
 ///
-/// `synchronous_commit_setting` is the PostgreSQL setting value (e.g.
-/// `"on"`, `"off"`, `"local"`). The binary maps its config enum via
-/// `SynchronousCommit::as_postgres_setting()` before calling.
+/// Durability (`synchronous_commit`) is not set on the connection: it is a
+/// per-database default installed once with `ALTER DATABASE ... SET` (see
+/// [`set_database_synchronous_commit`]), so a connection borrowed from a
+/// transaction-pooling proxy inherits it without any session `SET` that the
+/// proxy could leak to the next client.
 #[must_use]
-pub fn configure_pool_options(max_connections: u32, synchronous_commit_setting: &'static str) -> PgPoolOptions {
+pub fn configure_pool_options(max_connections: u32) -> PgPoolOptions {
     PgPoolOptions::new()
         .min_connections(0)
         .max_connections(max_connections)
         .idle_timeout(POOL_IDLE_TIMEOUT)
-        .after_connect(move |conn, _meta| {
-            Box::pin(async move {
-                let stmt = set_synchronous_commit(synchronous_commit_setting);
-                conn.execute(sqlx::AssertSqlSafe(stmt)).await?;
-                Ok(())
-            })
-        })
 }
 
 /// Parsed database URL wrapper used by tenancy helpers.
@@ -131,12 +124,21 @@ pub fn generate_db_name(prefix: &DbNamePrefix, tenant_name: &TenantName) -> Tena
 /// database an operator, a managed service or a restore provisions.
 /// `docs/text-collation-invariant.md` states the invariant and its inventory.
 ///
+/// `synchronous_commit_setting` is installed on the freshly created database
+/// with `ALTER DATABASE ... SET` so every session the request path later opens
+/// through a transaction-pooling proxy inherits the broker's durability without
+/// a per-connection `SET`.
+///
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Database`] when the administrative connection
-/// cannot be opened, when the existence probe or the `CREATE DATABASE` fails,
-/// or when the connection cannot be closed cleanly.
-pub async fn create_database_if_missing(base_url: &DatabaseUrl, db_name: &TenantDatabaseName) -> Result<(), ContextStoreError> {
+/// cannot be opened, when the existence probe, the `CREATE DATABASE` or the
+/// `ALTER DATABASE` fails, or when the connection cannot be closed cleanly.
+pub async fn create_database_if_missing(
+    base_url: &DatabaseUrl,
+    db_name: &TenantDatabaseName,
+    synchronous_commit_setting: &str,
+) -> Result<(), ContextStoreError> {
     let admin_database = TenantDatabaseName::from("postgres".to_owned());
     let admin_url = base_url.with_db_name(&admin_database);
     let db_name = db_name.as_str();
@@ -149,6 +151,11 @@ pub async fn create_database_if_missing(base_url: &DatabaseUrl, db_name: &Tenant
     if !exists {
         let sql = create_database(db_name);
         create_database_with_retry(&mut conn, &sql).await?;
+        // `ALTER DATABASE ... SET` records the durability default on the new
+        // database. It runs from the admin connection, targeting the database by
+        // name, and takes effect for every session opened against it afterwards.
+        let alter = set_database_synchronous_commit(db_name, synchronous_commit_setting);
+        conn.execute(sqlx::AssertSqlSafe(alter)).await?;
     }
     conn.close().await?;
     Ok(())
@@ -221,18 +228,29 @@ fn database_exists_statement(db_name: &str) -> sea_query::SelectStatement {
         .to_owned()
 }
 
-/// Run tenant and platform migrations against the given pool.
+/// Set the platform database's durability, then run tenant and platform
+/// migrations against the given pool.
+///
+/// The pool must reach PostgreSQL directly, never through a transaction-pooling
+/// proxy: the migrator holds a session advisory lock across the run, which a
+/// per-transaction backend assignment would break.
 ///
 /// The platform database is also the unnamed default tenant's database, so it
 /// carries the tenant schema and its contract before the platform tables are
-/// added on top.
+/// added on top. `synchronous_commit_setting` is installed on it with
+/// `ALTER DATABASE ... SET` so every request-path session — including one a
+/// transaction-pooling proxy opens — inherits the broker's durability.
 ///
 /// # Errors
 ///
-/// Returns [`ContextStoreError::Migration`] when a tenant or platform migration
-/// fails, and [`ContextStoreError::SchemaContract`] when the migrated database
-/// does not carry the schema, server or extensions this binary requires.
-pub async fn migrate_main_db(pool: &sqlx::PgPool) -> Result<(), ContextStoreError> {
+/// Returns [`ContextStoreError::Database`] when the `ALTER DATABASE` fails,
+/// [`ContextStoreError::Migration`] when a tenant or platform migration fails,
+/// and [`ContextStoreError::SchemaContract`] when the migrated database does not
+/// carry the schema, server or extensions this binary requires.
+pub async fn migrate_main_db(pool: &sqlx::PgPool, platform_db_name: &str, synchronous_commit_setting: &str) -> Result<(), ContextStoreError> {
+    let alter = set_database_synchronous_commit(platform_db_name, synchronous_commit_setting);
+    pool.execute(sqlx::AssertSqlSafe(alter)).await?;
+
     migrate_tenant_db(pool).await?;
 
     let mut platform_migrator = sqlx::migrate!("../../migrations/platform");
@@ -269,21 +287,21 @@ pub async fn migrate_tenant_db(pool: &sqlx::PgPool) -> Result<(), ContextStoreEr
     Ok(())
 }
 
-/// Connect to a single tenant database, migrate it, and close the pool.
+/// Connect to a single tenant database over a one-connection pool, migrate it,
+/// and close the pool.
+///
+/// `database_url` must reach PostgreSQL directly, never a transaction-pooling
+/// proxy: the migrator holds a session advisory lock across the run, which a
+/// per-transaction backend assignment would break. Migration is single-threaded,
+/// so the pool holds exactly one connection.
 ///
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Database`] when the pool cannot connect, and
 /// the errors [`migrate_tenant_db`] returns when the migration or the schema
 /// contract check fails.
-pub async fn migrate_single_tenant_db(
-    database_url: &Url,
-    tenant_max_connections: u32,
-    synchronous_commit_setting: &'static str,
-) -> Result<(), ContextStoreError> {
-    let pool = configure_pool_options(tenant_max_connections, synchronous_commit_setting)
-        .connect(database_url.as_str())
-        .await?;
+pub async fn migrate_single_tenant_db(database_url: &Url) -> Result<(), ContextStoreError> {
+    let pool = configure_pool_options(1).connect(database_url.as_str()).await?;
     migrate_tenant_db(&pool).await?;
     pool.close().await;
     Ok(())
@@ -297,7 +315,7 @@ mod tests {
 
     #[test]
     fn pool_options_reclaim_idle_connections_and_keep_none_warm() {
-        let options = configure_pool_options(7, "off");
+        let options = configure_pool_options(7);
         assert_eq!(options.get_max_connections(), 7);
         assert_eq!(options.get_min_connections(), 0);
         assert_eq!(options.get_idle_timeout(), Some(POOL_IDLE_TIMEOUT));

@@ -39,9 +39,8 @@ pub(crate) enum MaintenanceRegistrationError {
 pub(crate) fn register_postgresql_maintenance(
     supervisor: &TaskSupervisor,
     platform_pool: PgPool,
-    database_url: DatabaseUrl,
+    direct_url: DatabaseUrl,
     config: MaintenanceConfig,
-    synchronous_commit_setting: &'static str,
 ) -> Result<(), MaintenanceRegistrationError> {
     if config.mode == MaintenanceMode::Disabled {
         return Ok(());
@@ -54,7 +53,7 @@ pub(crate) fn register_postgresql_maintenance(
         RestartPolicy::transient(u32::MAX, profile.cadence, profile.cadence),
         ShutdownPolicy::new(Duration::from_secs(30)),
     );
-    let controller = Arc::new(MaintenanceController::new(platform_pool, database_url, config, synchronous_commit_setting));
+    let controller = Arc::new(MaintenanceController::new(platform_pool, direct_url, config));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
         let controller = Arc::clone(&controller); // clone: each bounded pass owns the process controller while executing
         async move {

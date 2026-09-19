@@ -19,7 +19,43 @@ pub enum DatabaseConfigError {
     ZeroContextHitFlushCadence,
 }
 
-/// Postgres `synchronous_commit` setting applied per pool connection.
+/// A transaction-pooling proxy (pgbouncer) fronting PostgreSQL on the request path.
+///
+/// Its presence in [`DatabaseConfig`] is the single switch between a normal
+/// deployment and a pgbouncer deployment: omit the whole `[database.pooler]`
+/// section for a broker that connects straight to PostgreSQL, add it to route
+/// the request path through the proxy while provisioning, migration and
+/// maintenance keep using [`DatabaseConfig::url`] directly.
+#[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+pub struct PoolerConfig {
+    /// The transaction pooler's PostgreSQL-protocol URL, used by the request
+    /// path in place of [`DatabaseConfig::url`]. The pooler forwards to the same
+    /// PostgreSQL [`DatabaseConfig::url`] names, so credentials and database are
+    /// normally identical and only the host and port differ.
+    #[toml_comment(inline)]
+    pub url: Url,
+}
+
+impl Default for PoolerConfig {
+    // Manual because `url::Url` has no `Default`, yet `toml_comment::TomlComment`
+    // requires one to render the config template. The placeholder is pgbouncer's
+    // default port on localhost; it is only ever the commented example, never a
+    // live default, since the whole `[database.pooler]` section is absent unless
+    // an operator writes it.
+    fn default() -> PoolerConfig {
+        PoolerConfig {
+            url: url!("postgres://postgres:postgres@localhost:6432/postgres"),
+        }
+    }
+}
+
+/// Postgres `synchronous_commit` durability, applied to each tenant database and
+/// the platform database with `ALTER DATABASE ... SET` rather than per connection.
+///
+/// A database-level default is inherited by every future session, so it survives
+/// a transaction-pooling proxy that binds a different backend to each transaction;
+/// a per-connection `SET` would instead be carried by a pooled backend to the
+/// next client that borrows it.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
@@ -38,7 +74,8 @@ pub enum SynchronousCommit {
 }
 
 impl SynchronousCommit {
-    /// Render the literal accepted by PostgreSQL's `SET` statement.
+    /// Render the literal accepted by PostgreSQL's `SET` and `ALTER DATABASE ...
+    /// SET` statements.
     #[must_use]
     pub const fn as_postgres_setting(self) -> &'static str {
         match self {
@@ -54,12 +91,21 @@ impl SynchronousCommit {
 /// PostgreSQL pool configuration.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct DatabaseConfig {
-    /// Validated PostgreSQL connection URL.
+    /// Validated PostgreSQL connection URL. This always names PostgreSQL itself,
+    /// never a proxy: provisioning, migration and maintenance connect here, and
+    /// so does the request path unless a [`pooler`](Self::pooler) is configured.
     #[toml_comment(inline)]
     pub url: Url,
+    /// An optional transaction-pooling proxy for the request path. Present means
+    /// a pgbouncer deployment (the request path uses the pooler, everything that
+    /// must keep session state across transactions still uses [`url`](Self::url));
+    /// absent means a normal deployment where every connection uses
+    /// [`url`](Self::url).
+    #[serde(default)]
+    pub pooler: Option<PoolerConfig>,
     /// Maximum connections in the main pool.
     pub max_connections: u32,
-    /// Commit durability applied to each connection.
+    /// Commit durability installed on each database with `ALTER DATABASE ... SET`.
     #[toml_comment(inline)]
     pub synchronous_commit: SynchronousCommit,
     /// Populate the attribute-name and entity-type-name caches at tenant
@@ -76,6 +122,8 @@ impl Default for DatabaseConfig {
         DatabaseConfig {
             // Compile-time validated, so the built-in default carries no runtime parse or panic.
             url: url!("postgres://postgres:postgres@localhost:5432/postgres"),
+            // No proxy by default: the request path and the direct path are the same.
+            pooler: None,
             max_connections: 32,
             synchronous_commit: SynchronousCommit::Off,
             preload_name_dictionaries: true,
@@ -103,11 +151,39 @@ impl DatabaseConfig {
         }
         Ok(())
     }
+
+    /// The base URL the request path connects through: the
+    /// [`pooler`](Self::pooler) when one is configured, otherwise
+    /// [`url`](Self::url). Per-tenant serving pools and the platform serving pool
+    /// are derived from this.
+    #[must_use]
+    pub fn request_url(&self) -> &Url {
+        self.pooler.as_ref().map_or(&self.url, |pooler| &pooler.url)
+    }
+
+    /// The straight-to-PostgreSQL base URL for work that must keep session state
+    /// across transactions.
+    ///
+    /// Always [`url`](Self::url): tenant provisioning (`CREATE DATABASE`), schema
+    /// migration (the migrator holds a session advisory lock), the
+    /// `ALTER DATABASE` durability settings and maintenance's session advisory
+    /// lock bypass any [`pooler`](Self::pooler) and reach PostgreSQL directly.
+    #[must_use]
+    pub const fn direct_url(&self) -> &Url {
+        &self.url
+    }
+
+    /// Whether a transaction-pooling proxy fronts the request path, for the
+    /// startup report and diagnostics.
+    #[must_use]
+    pub const fn is_pooled(&self) -> bool {
+        self.pooler.is_some()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{DatabaseConfig, DatabaseConfigError, SynchronousCommit};
+    use super::{DatabaseConfig, DatabaseConfigError, PoolerConfig, SynchronousCommit};
     use crate::maintenance_config::MaintenanceConfig;
     use std::str::FromStr;
 
@@ -137,6 +213,7 @@ mod tests {
     fn zero_context_hit_flush_cadence_is_rejected() {
         let config = DatabaseConfig {
             url: "postgres://localhost/postgres".parse().expect("database URL"),
+            pooler: None,
             max_connections: 1,
             synchronous_commit: SynchronousCommit::Off,
             preload_name_dictionaries: true,
@@ -144,5 +221,27 @@ mod tests {
             maintenance: MaintenanceConfig::default(),
         };
         assert_eq!(config.validate(), Err(DatabaseConfigError::ZeroContextHitFlushCadence));
+    }
+
+    #[test]
+    fn without_a_pooler_the_request_and_direct_base_are_both_the_url() {
+        let config = DatabaseConfig::default();
+        assert!(!config.is_pooled());
+        pretty_assertions::assert_eq!(config.request_url(), &config.url);
+        pretty_assertions::assert_eq!(config.direct_url(), &config.url);
+    }
+
+    #[test]
+    fn a_pooler_moves_only_the_request_base_and_leaves_the_direct_base_on_postgres() {
+        let config = DatabaseConfig {
+            url: "postgres://postgres:postgres@postgres:5432/postgres".parse().expect("direct URL"),
+            pooler: Some(PoolerConfig {
+                url: "postgres://postgres:postgres@pgbouncer:6432/postgres".parse().expect("pooler URL"),
+            }),
+            ..DatabaseConfig::default()
+        };
+        assert!(config.is_pooled());
+        pretty_assertions::assert_eq!(config.request_url().as_str(), "postgres://postgres:postgres@pgbouncer:6432/postgres");
+        pretty_assertions::assert_eq!(config.direct_url().as_str(), "postgres://postgres:postgres@postgres:5432/postgres");
     }
 }

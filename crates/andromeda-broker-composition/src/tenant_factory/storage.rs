@@ -30,7 +30,7 @@ use andromeda_postgresql_context_store::{
     jsonld_context::repo::JsonLdContextRepository,
     snapshot::repo::SnapshotRepository,
     subscription::repo::SubscriptionRepository,
-    tenant_database::{configure_pool_options, migrate_tenant_db},
+    tenant_database::{configure_pool_options, migrate_single_tenant_db},
 };
 use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_lookup::NameLookup};
 use andromeda_postgresql_temporal_store::{bulk_write_mode::BulkWriteMode as TemporalBulkWriteMode, repo::TemporalRepository};
@@ -99,15 +99,24 @@ pub(super) struct EntityStoragePorts {
 }
 
 /// Open, migrate, validate, and warm every storage component for a tenant.
-pub(super) async fn initialize_storage(config: &TenantFactoryConfig, database_url: &Url, tenant: &TenantRef) -> Result<TenantStorage, TenantAssemblyError> {
+///
+/// The database is migrated over `migration_url`, which reaches PostgreSQL
+/// directly, because the migrator holds a session advisory lock a
+/// transaction-pooling proxy would break. Serving then runs over `serving_url`,
+/// which is the pooler when one is configured. The two URLs name the same
+/// database and are identical when no pooler is configured.
+pub(super) async fn initialize_storage(
+    config: &TenantFactoryConfig,
+    serving_url: &Url,
+    migration_url: &Url,
+    tenant: &TenantRef,
+) -> Result<TenantStorage, TenantAssemblyError> {
     let max_connections = match tenant {
         TenantRef::UnnamedDefault => config.database.max_connections,
         TenantRef::Named(_) => config.tenancy.tenant_max_connections,
     };
-    let pool = configure_pool_options(max_connections, config.database.synchronous_commit.as_postgres_setting())
-        .connect(database_url.as_str())
-        .await?;
-    migrate_tenant_db(&pool).await?;
+    migrate_single_tenant_db(migration_url).await?;
+    let pool = configure_pool_options(max_connections).connect(serving_url.as_str()).await?;
     let live_target = resolve_live_target();
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
     let engine = config.jsonld.build_engine(Arc::clone(&context_repo))?;
