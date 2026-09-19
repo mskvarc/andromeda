@@ -157,13 +157,15 @@ async fn pagination_subscriptions_middle_page_returns_prev_and_next_in_single_li
 
 #[tokio::test]
 #[serial(global)]
-async fn pagination_subscriptions_first_page_returns_next_only() {
+async fn pagination_subscriptions_first_page_has_first_last_next_without_prev() {
     let (scope, client) = make_scope().await;
     create_subscriptions(&client, 3, "first").await;
 
     let (status, headers, _) = query_subscriptions(&client, "limit=1&offset=0", "application/ld+json").await;
     assert_eq!(status, StatusCode::OK);
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
+    assert!(pagination.contains("rel=\"first\""));
+    assert!(pagination.contains("rel=\"last\""));
     assert!(pagination.contains("rel=\"next\""));
     assert!(!pagination.contains("rel=\"prev\""));
     scope.reset_and_finish().await.expect("post-test reset failed");
@@ -171,13 +173,15 @@ async fn pagination_subscriptions_first_page_returns_next_only() {
 
 #[tokio::test]
 #[serial(global)]
-async fn pagination_subscriptions_last_page_returns_prev_only() {
+async fn pagination_subscriptions_last_page_has_first_last_prev_without_next() {
     let (scope, client) = make_scope().await;
     create_subscriptions(&client, 3, "last").await;
 
     let (status, headers, _) = query_subscriptions(&client, "limit=1&offset=2", "application/ld+json").await;
     assert_eq!(status, StatusCode::OK);
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
+    assert!(pagination.contains("rel=\"first\""));
+    assert!(pagination.contains("rel=\"last\""));
     assert!(pagination.contains("rel=\"prev\""));
     assert!(!pagination.contains("rel=\"next\""));
     scope.reset_and_finish().await.expect("post-test reset failed");
@@ -185,13 +189,19 @@ async fn pagination_subscriptions_last_page_returns_prev_only() {
 
 #[tokio::test]
 #[serial(global)]
-async fn pagination_subscriptions_single_page_returns_no_pagination_link() {
+async fn pagination_subscriptions_single_page_has_first_last_without_prev_or_next() {
     let (scope, client) = make_scope().await;
     create_subscriptions(&client, 3, "single").await;
 
+    // A counted collection that fits in one page still knows its total, so it
+    // carries the `first`/`last` pair (both at offset 0) with no `prev`/`next`.
     let (status, headers, _) = query_subscriptions(&client, "limit=10&offset=0", "application/ld+json").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(find_pagination_link_header(&headers).is_none());
+    let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
+    assert!(pagination.contains("rel=\"first\""));
+    assert!(pagination.contains("rel=\"last\""));
+    assert!(!pagination.contains("rel=\"prev\""));
+    assert!(!pagination.contains("rel=\"next\""));
     scope.reset_and_finish().await.expect("post-test reset failed");
 }
 

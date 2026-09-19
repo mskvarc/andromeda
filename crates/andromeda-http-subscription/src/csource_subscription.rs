@@ -18,7 +18,7 @@ use andromeda_http_headers::via::Via;
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     headers::with_location,
-    pagination::{PageExtent, PaginationStyle, append_pagination_links},
+    pagination::{PageExtent, append_pagination_links},
     problem_response::ProblemResponse,
     render::start_rendering_normalized,
     single::NgsiLdResponse,
@@ -146,7 +146,6 @@ pub async fn query(
         i64::from(limit),
         i64::from(offset),
         PageExtent::Total(total),
-        PaginationStyle::OffsetPrevNext,
         accept.media_type(),
     );
     Ok(response)

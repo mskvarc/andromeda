@@ -1,7 +1,10 @@
 //! Shared pagination link construction for NGSI-LD collection responses.
 //!
-//! Provides common logic for building pagination `Link` headers across
-//! subscription, CSR subscription, and CSR query endpoints.
+//! Builds the pagination `Link` headers for every collection endpoint -- entity
+//! query, temporal query, subscription, CSR subscription, and CSR registration.
+//! A `first`/`last` pair is emitted whenever the total is known, alongside the
+//! clause 6.3.10 `prev`/`next` pointers as they apply; a query with no count
+//! carries `prev`/`next` only.
 
 use andromeda_http_headers::{
     link::{header::Link, relation_type::RelationType, value::LinkValue},
@@ -14,15 +17,6 @@ use axum::{
 use iri_rs::IriRefBuf;
 use mediatype::MediaTypeBuf;
 use url::form_urlencoded;
-
-/// Pagination link style controlling which link relations are included.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PaginationStyle {
-    /// Only `prev`/`next` links using `limit` and `offset` query parameters.
-    OffsetPrevNext,
-    /// `first`/`last`/`prev`/`next` links using `limit` and `offset` query parameters.
-    OffsetFull,
-}
 
 /// How the presence of a following page is decided.
 ///
@@ -114,18 +108,11 @@ fn build_page_link(uri: &Uri, param1: (&str, i64), param2: (&str, i64)) -> Strin
 
 /// Append pagination `Link` headers to a response.
 ///
-/// Supports two pagination styles:
-/// - [`PaginationStyle::OffsetPrevNext`]: `prev`/`next` using offset-based parameters.
-/// - [`PaginationStyle::OffsetFull`]: `first`/`last`/`prev`/`next` using offset-based parameters.
-pub fn append_pagination_links(
-    response: &mut Response,
-    uri: &Uri,
-    limit: i64,
-    offset: i64,
-    extent: PageExtent,
-    style: PaginationStyle,
-    media_type: ResponseMediaType,
-) {
+/// When the total is known ([`PageExtent::Total`]) a `first`/`last` pair is
+/// emitted; both known and unknown totals emit the clause 6.3.10 `prev`/`next`
+/// pointers as they apply. `first`/`last` are an Andromeda extension over the
+/// spec's `prev`/`next`, which RFC 8288 permits as additional relation types.
+pub fn append_pagination_links(response: &mut Response, uri: &Uri, limit: i64, offset: i64, extent: PageExtent, media_type: ResponseMediaType) {
     if limit <= 0 {
         return;
     }
@@ -146,32 +133,20 @@ pub fn append_pagination_links(
 
     let mut links: Vec<(RelationType, String)> = Vec::new();
 
-    match style {
-        PaginationStyle::OffsetPrevNext => {
-            if has_prev {
-                let prev_offset = (offset - limit).max(0);
-                links.push((RelationType::Prev, build_page_link(uri, ("limit", limit), ("offset", prev_offset))));
-            }
-            if has_next {
-                links.push((RelationType::Next, build_page_link(uri, ("limit", limit), ("offset", offset + limit))));
-            }
-        }
-        PaginationStyle::OffsetFull => {
-            // `first`/`last` need a known total, so they are emitted only when one
-            // is present; the full style is only ever used where it is.
-            if let PageExtent::Total(total) = extent {
-                let last_offset = ((total - 1) / limit) * limit;
-                links.push((RelationType::First, build_page_link(uri, ("limit", limit), ("offset", 0))));
-                links.push((RelationType::Last, build_page_link(uri, ("limit", limit), ("offset", last_offset))));
-            }
-            if has_prev {
-                let prev_offset = (offset - limit).max(0);
-                links.push((RelationType::Prev, build_page_link(uri, ("limit", limit), ("offset", prev_offset))));
-            }
-            if has_next {
-                links.push((RelationType::Next, build_page_link(uri, ("limit", limit), ("offset", offset + limit))));
-            }
-        }
+    // `first`/`last` need a known total, so they are emitted only when one is
+    // present. They are an Andromeda extension over the clause 6.3.10 `prev`/
+    // `next` pointers, which RFC 8288 permits as additional relation types.
+    if let PageExtent::Total(total) = extent {
+        let last_offset = ((total - 1) / limit) * limit;
+        links.push((RelationType::First, build_page_link(uri, ("limit", limit), ("offset", 0))));
+        links.push((RelationType::Last, build_page_link(uri, ("limit", limit), ("offset", last_offset))));
+    }
+    if has_prev {
+        let prev_offset = (offset - limit).max(0);
+        links.push((RelationType::Prev, build_page_link(uri, ("limit", limit), ("offset", prev_offset))));
+    }
+    if has_next {
+        links.push((RelationType::Next, build_page_link(uri, ("limit", limit), ("offset", offset + limit))));
     }
 
     let values = links
@@ -205,88 +180,66 @@ mod tests {
     }
 
     #[test]
-    fn offset_prev_next_adds_next_when_more_pages() {
+    fn counted_page_adds_first_last_and_next_on_first_page() {
         let mut response = empty_response();
         let uri = parse_uri("/subscriptions?limit=10&offset=0");
-        append_pagination_links(
-            &mut response,
-            &uri,
-            10,
-            0,
-            PageExtent::Total(25),
-            PaginationStyle::OffsetPrevNext,
-            ResponseMediaType::JsonLd,
-        );
+        append_pagination_links(&mut response, &uri, 10, 0, PageExtent::Total(25), ResponseMediaType::JsonLd);
         let link = response.headers().get("Link").expect("Link header");
         let link_str = link.to_str().expect("valid string");
+        assert!(link_str.contains("rel=\"first\""));
+        assert!(link_str.contains("rel=\"last\""));
         assert!(link_str.contains("rel=\"next\""));
         assert!(!link_str.contains("rel=\"prev\""));
     }
 
     #[test]
-    fn offset_prev_next_adds_prev_when_not_first_page() {
+    fn counted_page_has_first_last_prev_next_past_the_first_page() {
         let mut response = empty_response();
         let uri = parse_uri("/subscriptions?limit=10&offset=10");
-        append_pagination_links(
-            &mut response,
-            &uri,
-            10,
-            10,
-            PageExtent::Total(25),
-            PaginationStyle::OffsetPrevNext,
-            ResponseMediaType::JsonLd,
-        );
+        append_pagination_links(&mut response, &uri, 10, 10, PageExtent::Total(25), ResponseMediaType::JsonLd);
         let link = response.headers().get("Link").expect("Link header");
         let link_str = link.to_str().expect("valid string");
+        assert!(link_str.contains("rel=\"first\""));
+        assert!(link_str.contains("rel=\"last\""));
         assert!(link_str.contains("rel=\"prev\""));
         assert!(link_str.contains("rel=\"next\""));
     }
 
+    /// A counted collection that fits in one page still knows its total, so it
+    /// carries the `first`/`last` pair (both pointing at the single page) with
+    /// no `prev`/`next`.
     #[test]
-    fn offset_prev_next_no_links_when_single_page() {
+    fn counted_single_page_emits_first_last_without_prev_or_next() {
         let mut response = empty_response();
         let uri = parse_uri("/subscriptions");
-        append_pagination_links(
-            &mut response,
-            &uri,
-            10,
-            0,
-            PageExtent::Total(5),
-            PaginationStyle::OffsetPrevNext,
-            ResponseMediaType::JsonLd,
-        );
-        assert!(response.headers().get("Link").is_none());
+        append_pagination_links(&mut response, &uri, 10, 0, PageExtent::Total(5), ResponseMediaType::JsonLd);
+        let link = response.headers().get("Link").expect("Link header");
+        let link_str = link.to_str().expect("valid string");
+        assert!(link_str.contains("rel=\"first\""));
+        assert!(link_str.contains("rel=\"last\""));
+        assert!(!link_str.contains("rel=\"prev\""));
+        assert!(!link_str.contains("rel=\"next\""));
     }
 
     /// NGSI-LD pagination is limit/offset only (clause 5.5.9.2): no pagination
-    /// link ever carries a `page` parameter, on any endpoint or style.
+    /// link ever carries a `page` parameter, on any endpoint.
     #[test]
     fn no_pagination_link_carries_a_page_parameter() {
-        for style in [PaginationStyle::OffsetPrevNext, PaginationStyle::OffsetFull] {
-            let mut response = empty_response();
-            let uri = parse_uri("/csourceSubscriptions?limit=10&offset=10");
-            append_pagination_links(&mut response, &uri, 10, 10, PageExtent::Total(50), style, ResponseMediaType::JsonLd);
-            let link = response.headers().get("Link").expect("Link header");
-            let link_str = link.to_str().expect("valid string");
-            assert!(!link_str.contains("page="), "{link_str}");
-            assert!(link_str.contains("offset="), "{link_str}");
-            assert!(link_str.contains("rel=\"prev\""), "{link_str}");
-        }
+        let mut response = empty_response();
+        let uri = parse_uri("/csourceSubscriptions?limit=10&offset=10");
+        append_pagination_links(&mut response, &uri, 10, 10, PageExtent::Total(50), ResponseMediaType::JsonLd);
+        let link = response.headers().get("Link").expect("Link header");
+        let link_str = link.to_str().expect("valid string");
+        assert!(!link_str.contains("page="), "{link_str}");
+        assert!(link_str.contains("offset="), "{link_str}");
+        assert!(link_str.contains("rel=\"prev\""), "{link_str}");
     }
 
     #[test]
     fn offset_full_includes_first_last() {
         let mut response = empty_response();
         let uri = parse_uri("/csourceRegistrations?limit=10&offset=10");
-        append_pagination_links(
-            &mut response,
-            &uri,
-            10,
-            10,
-            PageExtent::Total(50),
-            PaginationStyle::OffsetFull,
-            ResponseMediaType::JsonLd,
-        );
+        append_pagination_links(&mut response, &uri, 10, 10, PageExtent::Total(50), ResponseMediaType::JsonLd);
         let link = response.headers().get("Link").expect("Link header");
         let link_str = link.to_str().expect("valid string");
         assert!(link_str.contains("rel=\"first\""));
@@ -299,15 +252,7 @@ mod tests {
     fn no_links_when_total_is_zero() {
         let mut response = empty_response();
         let uri = parse_uri("/subscriptions");
-        append_pagination_links(
-            &mut response,
-            &uri,
-            10,
-            0,
-            PageExtent::Total(0),
-            PaginationStyle::OffsetPrevNext,
-            ResponseMediaType::JsonLd,
-        );
+        append_pagination_links(&mut response, &uri, 10, 0, PageExtent::Total(0), ResponseMediaType::JsonLd);
         assert!(response.headers().get("Link").is_none());
     }
 
@@ -317,15 +262,7 @@ mod tests {
         let context = IriRefBuf::new("https://example.com/ctx.jsonld".to_string()).expect("IRI reference");
         Link::insert_jsonld_contexts(response.headers_mut(), [context]);
         let uri = parse_uri("/subscriptions?limit=1&offset=1");
-        append_pagination_links(
-            &mut response,
-            &uri,
-            1,
-            1,
-            PageExtent::Total(3),
-            PaginationStyle::OffsetPrevNext,
-            ResponseMediaType::JsonLd,
-        );
+        append_pagination_links(&mut response, &uri, 1, 1, PageExtent::Total(3), ResponseMediaType::JsonLd);
 
         let values = response
             .headers()
@@ -342,15 +279,7 @@ mod tests {
     fn no_links_when_limit_is_zero() {
         let mut response = empty_response();
         let uri = parse_uri("/subscriptions");
-        append_pagination_links(
-            &mut response,
-            &uri,
-            0,
-            0,
-            PageExtent::Total(10),
-            PaginationStyle::OffsetPrevNext,
-            ResponseMediaType::JsonLd,
-        );
+        append_pagination_links(&mut response, &uri, 0, 0, PageExtent::Total(10), ResponseMediaType::JsonLd);
         assert!(response.headers().get("Link").is_none());
     }
 
@@ -360,15 +289,7 @@ mod tests {
     fn link_type_reflects_the_negotiated_media_type() {
         let mut response = empty_response();
         let uri = parse_uri("/entities?limit=10&offset=0");
-        append_pagination_links(
-            &mut response,
-            &uri,
-            10,
-            0,
-            PageExtent::Total(25),
-            PaginationStyle::OffsetPrevNext,
-            ResponseMediaType::Json,
-        );
+        append_pagination_links(&mut response, &uri, 10, 0, PageExtent::Total(25), ResponseMediaType::Json);
         let link = response.headers().get("Link").expect("Link header");
         let link_str = link.to_str().expect("valid string");
         assert!(link_str.contains("type=\"application/json\""), "{link_str}");
@@ -381,15 +302,7 @@ mod tests {
     fn page_fullness_adds_next_when_the_page_is_full() {
         let mut response = empty_response();
         let uri = parse_uri("/entities?limit=10&offset=0");
-        append_pagination_links(
-            &mut response,
-            &uri,
-            10,
-            0,
-            PageExtent::PageFullness { returned: 10 },
-            PaginationStyle::OffsetPrevNext,
-            ResponseMediaType::JsonLd,
-        );
+        append_pagination_links(&mut response, &uri, 10, 0, PageExtent::PageFullness { returned: 10 }, ResponseMediaType::JsonLd);
         let link = response.headers().get("Link").expect("Link header");
         let link_str = link.to_str().expect("valid string");
         assert!(link_str.contains("rel=\"next\""), "{link_str}");
@@ -415,15 +328,7 @@ mod tests {
     fn page_fullness_omits_next_when_the_page_is_short() {
         let mut response = empty_response();
         let uri = parse_uri("/entities?limit=10&offset=10");
-        append_pagination_links(
-            &mut response,
-            &uri,
-            10,
-            10,
-            PageExtent::PageFullness { returned: 4 },
-            PaginationStyle::OffsetPrevNext,
-            ResponseMediaType::JsonLd,
-        );
+        append_pagination_links(&mut response, &uri, 10, 10, PageExtent::PageFullness { returned: 4 }, ResponseMediaType::JsonLd);
         let link = response.headers().get("Link").expect("Link header");
         let link_str = link.to_str().expect("valid string");
         assert!(link_str.contains("rel=\"prev\""), "{link_str}");

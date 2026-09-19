@@ -16,7 +16,7 @@
 //! each of them carries, so a response may carry either, both or neither.
 
 use andromeda_http_headers::media_type::ResponseMediaType;
-use andromeda_http_response::pagination::{PageExtent, PagePointers, PaginationStyle, append_pagination_links};
+use andromeda_http_response::pagination::{PageExtent, PagePointers, append_pagination_links};
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, temporal::TemporalQueryParameters};
 use axum::{http::Uri, response::Response};
 
@@ -47,7 +47,9 @@ impl QueriedPage {
         }
     }
 
-    /// Add the clause 6.3.10 `next` and `prev` links over this page.
+    /// Add the clause 6.3.10 `next` and `prev` links over this page, plus the
+    /// Andromeda `first`/`last` pair when the query asked for a count and so
+    /// knows the total that gives `last` an offset.
     ///
     /// `returned` counts the matching entities alone. Clause 4.5.23 has a flat
     /// join append the entities the matches link to, and those accompany the
@@ -70,7 +72,6 @@ impl QueriedPage {
             i64::from(self.limit),
             i64::from(self.offset),
             PageExtent::of_page(total, returned),
-            PaginationStyle::OffsetPrevNext,
             media_type,
         );
     }

@@ -8,7 +8,7 @@
 
 use crate::entity::query_forwarding::ForwardedQueryResults;
 use andromeda_http_headers::media_type::ResponseMediaType;
-use andromeda_http_response::pagination::{PageExtent, PagePointers, PaginationStyle, append_pagination_links};
+use andromeda_http_response::pagination::{PageExtent, PagePointers, append_pagination_links};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, entity::parameters::EntityQueryParameters};
 use axum::{http::Uri as HttpUri, response::Response};
@@ -103,7 +103,9 @@ impl QueryPage {
     ///
     /// A query that asked for a count knows its total and drives `next` from
     /// it; one that did not carries no total and signals a following page by
-    /// the page coming back full.
+    /// the page coming back full. A counted query additionally carries the
+    /// Andromeda `first`/`last` pair, since its total is what gives `last` an
+    /// offset.
     ///
     /// A binding that carried its query in the request body emits no link:
     /// clause 6.3.10 asks for a target "that could be dereferenced by an
@@ -120,7 +122,6 @@ impl QueryPage {
             i64::from(self.limit),
             i64::from(self.offset),
             PageExtent::of_page(total, returned),
-            PaginationStyle::OffsetPrevNext,
             media_type,
         );
     }

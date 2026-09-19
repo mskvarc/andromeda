@@ -18,7 +18,7 @@ use andromeda_http_headers::via::Via;
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     headers::with_location,
-    pagination::{PageExtent, PaginationStyle, append_pagination_links},
+    pagination::{PageExtent, append_pagination_links},
     problem_response::ProblemResponse,
     render::start_rendering_normalized,
     single::NgsiLdResponse,
@@ -123,15 +123,7 @@ pub(crate) async fn query(
     let pagination_total =
         i64::try_from(total).map_err(|error| internal_problem(format!("registration count does not fit offset pagination: {error}"), &uri))?;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_total_count(total_count).into_response();
-    append_pagination_links(
-        &mut response,
-        &uri,
-        limit,
-        offset,
-        PageExtent::Total(pagination_total),
-        PaginationStyle::OffsetFull,
-        accept.media_type(),
-    );
+    append_pagination_links(&mut response, &uri, limit, offset, PageExtent::Total(pagination_total), accept.media_type());
     Ok(response)
 }
 
