@@ -8,5 +8,10 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
+mod csource_subscription;
+mod cursor_walk;
 mod entity;
 mod query;
+mod registration;
+mod subscription;
+mod temporal;

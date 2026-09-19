@@ -4,6 +4,7 @@
 //! entity collection is broker-wide, so every test runs under `#[serial(global)]`
 //! and wipes broker state on entry.
 
+use crate::cursor_walk::{assert_cursor_links, ids_of, joined_links, link_target, query_string_of};
 use andromeda_test_client::{entity::results_count, test_client::TestClient};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
@@ -55,47 +56,27 @@ async fn query(client: &TestClient, query_str: &str, accept: &str) -> (StatusCod
     (response.status, response.headers)
 }
 
-/// Every `Link` header value the response carries, joined for inspection.
-fn joined_links(headers: &HeaderMap) -> String {
-    headers
-        .get_all("link")
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// The target URL of the `rel="<rel>"` pagination link, if the response carries
-/// one. Link values are comma-separated and the cursor tokens are base64url, so
-/// a comma never appears inside a target here.
-fn link_target(headers: &HeaderMap, rel: &str) -> Option<String> {
-    let needle = format!("rel=\"{rel}\"");
-    headers
-        .get_all("link")
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|header| header.split(','))
-        .find(|value| value.contains(&needle))
-        .and_then(|value| {
-            let start = value.find('<')? + 1;
-            let end = value[start..].find('>')? + start;
-            Some(value[start..end].to_string())
-        })
-}
-
-/// The query-string portion of a link target, which is what the query helper
-/// takes.
-fn query_string_of(target: &str) -> &str {
-    target.split_once('?').map_or("", |(_, query)| query)
-}
-
-/// The `id` of every entity in a query response body, in order.
-fn ids_of(body: &Value) -> Vec<String> {
-    body.as_array()
-        .expect("a collection response")
-        .iter()
-        .map(|entity| entity.get("id").and_then(Value::as_str).expect("an entity id").to_string())
-        .collect()
+/// Walk `rel="next"` from the given start query to exhaustion, collecting every
+/// entity id seen, in page order.
+async fn walk_forward(client: &TestClient, start_query: &str) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut query_str = start_query.to_string();
+    for _ in 0..1000 {
+        let response = client
+            .query_entities(&query_str, "application/ld+json", Some(CORE_CONTEXT))
+            .await
+            .expect("query entities failed");
+        assert_eq!(response.status, StatusCode::OK);
+        let headers = response.headers.clone();
+        seen.extend(ids_of(&response.json_value().expect("valid JSON body")));
+        let Some(next) = link_target(&headers, "next") else {
+            return seen;
+        };
+        query_str = query_string_of(&next).to_string();
+    }
+    // The iteration cap is far beyond any test collection; a walk that reaches
+    // it has already returned everything it will.
+    seen
 }
 
 #[tokio::test]
@@ -285,5 +266,198 @@ async fn pagination_entities_limit_zero_with_count_returns_the_count() {
     assert_eq!(results_count(&response.headers), Some(3), "the count header reports every matching entity");
     let body = response.json_value().expect("entity query response must be valid JSON");
     assert_eq!(body.as_array().map(Vec::len), Some(0), "limit=0 returns no entity data");
+    scope.reset_and_finish().await.expect("post-test reset failed");
+}
+
+/// Create one building under an explicit id (for tests that control ordering).
+async fn create_one(client: &TestClient, id: &str) {
+    let response = client.post_entity(&building(id)).with_ld_json().send().await.expect("create entity failed");
+    assert_eq!(response.status, StatusCode::CREATED);
+}
+
+/// Run one entity query and return the page's ids and its response headers.
+async fn query_page(client: &TestClient, query_str: &str) -> (Vec<String>, HeaderMap) {
+    let response = client
+        .query_entities(query_str, "application/ld+json", Some(CORE_CONTEXT))
+        .await
+        .expect("query entities failed");
+    assert_eq!(response.status, StatusCode::OK);
+    let headers = response.headers.clone();
+    (ids_of(&response.json_value().expect("valid JSON body")), headers)
+}
+
+/// A stable, zero-padded building id whose C-collation order is its numeric
+/// order.
+fn stable_id(tag: &str, index: u32) -> String {
+    format!("urn:ngsi-ld:Building:{tag}:{index:04}")
+}
+
+/// Clause 5.5.9.1: following `rel="prev"` from a mid-collection page returns to
+/// the same items the previous page held (forward/backward round-trip).
+#[tokio::test]
+#[serial(global)]
+async fn pagination_entities_following_prev_returns_to_the_same_page() {
+    let (scope, client) = make_scope().await;
+    for index in 0..6 {
+        create_one(&client, &stable_id("rt", index)).await;
+    }
+
+    let (page1, headers1) = query_page(&client, "type=Building&local=true&limit=2").await;
+    assert_cursor_links(&headers1);
+    let next = link_target(&headers1, "next").expect("first page has a next");
+    let (page2, headers2) = query_page(&client, query_string_of(&next)).await;
+    assert_eq!(page2.len(), 2, "the second page is full");
+
+    let prev = link_target(&headers2, "prev").expect("a mid-collection page has a prev");
+    let (back, _) = query_page(&client, query_string_of(&prev)).await;
+    assert_eq!(back, page1, "following prev returns to the same items");
+    scope.reset_and_finish().await.expect("post-test reset failed");
+}
+
+/// Clause 5.5.9.1: `rel="prev"` disappears once a backward fetch comes back
+/// short, which is how a count-less keyset walk recognises the first page.
+///
+/// Five ids with `limit=3`: the from-end page holds `[2,3,4]`, and following its
+/// `prev` reads `id < 2`, which returns only `[0,1]` -- a short page (2 < 3),
+/// the first page, offering no further `prev`. A backward page that comes back
+/// *full* still offers a `prev` (it cannot know it is the boundary without a
+/// count), so the short page is what pins the disappearance.
+#[tokio::test]
+#[serial(global)]
+async fn pagination_entities_prev_disappears_at_the_first_page() {
+    let (scope, client) = make_scope().await;
+    for index in 0..5 {
+        create_one(&client, &stable_id("pf", index)).await;
+    }
+
+    let (_, headers) = query_page(&client, "type=Building&local=true&limit=3").await;
+    let last = link_target(&headers, "last").expect("cursor mode offers a last link");
+    let (_, last_headers) = query_page(&client, query_string_of(&last)).await;
+    let prev = link_target(&last_headers, "prev").expect("the from-end page has a prev");
+    let (first_page, first_headers) = query_page(&client, query_string_of(&prev)).await;
+    assert_eq!(
+        first_page,
+        vec![stable_id("pf", 0), stable_id("pf", 1)],
+        "the short backward page is the first two ids"
+    );
+    assert!(
+        link_target(&first_headers, "prev").is_none(),
+        "a short backward page is the first page, offering no further prev"
+    );
+    scope.reset_and_finish().await.expect("post-test reset failed");
+}
+
+/// The Andromeda `rel="last"` cursor jumps to the final page (the last `limit`
+/// items), reachable without a count query.
+#[tokio::test]
+#[serial(global)]
+async fn pagination_entities_last_jumps_to_the_final_page() {
+    let (scope, client) = make_scope().await;
+    for index in 0..5 {
+        create_one(&client, &stable_id("last", index)).await;
+    }
+
+    let (_, headers) = query_page(&client, "type=Building&local=true&limit=2").await;
+    let last = link_target(&headers, "last").expect("cursor mode offers a last link");
+    let (final_page, final_headers) = query_page(&client, query_string_of(&last)).await;
+    assert_eq!(final_page.len(), 2, "the final page holds the last limit items");
+    assert!(
+        final_page.contains(&stable_id("last", 4)),
+        "the final page holds the greatest id: {final_page:?}"
+    );
+    assert!(link_target(&final_headers, "next").is_none(), "the final page offers no next");
+    scope.reset_and_finish().await.expect("post-test reset failed");
+}
+
+/// Stability: an entity inserted with a higher id mid-walk appears on a later
+/// page rather than being skipped, which offset paging over a growing
+/// collection could not guarantee.
+#[tokio::test]
+#[serial(global)]
+async fn pagination_entities_an_insert_mid_walk_appears_in_the_walk() {
+    let (scope, client) = make_scope().await;
+    for index in 0..4 {
+        create_one(&client, &stable_id("ins", index)).await;
+    }
+
+    // Walk the first page, then insert the greatest id before continuing.
+    let (mut seen, headers) = query_page(&client, "type=Building&local=true&limit=2").await;
+    create_one(&client, "urn:ngsi-ld:Building:ins:9999").await;
+    let mut next = link_target(&headers, "next");
+    while let Some(link) = next {
+        let (page, page_headers) = query_page(&client, query_string_of(&link)).await;
+        seen.extend(page);
+        next = link_target(&page_headers, "next");
+    }
+    assert!(
+        seen.contains(&"urn:ngsi-ld:Building:ins:9999".to_string()),
+        "the inserted higher id appears: {seen:?}"
+    );
+    scope.reset_and_finish().await.expect("post-test reset failed");
+}
+
+/// Stability: deleting an already-passed id mid-walk does not skip or duplicate
+/// its neighbours -- the keyset continues after the last id seen, not at a
+/// shifted offset. The contrast is an offset walk, which would skip an entity
+/// when a preceding one is deleted.
+#[tokio::test]
+#[serial(global)]
+async fn pagination_entities_a_delete_mid_walk_does_not_skip_neighbours() {
+    let (scope, client) = make_scope().await;
+    for index in 0..6 {
+        create_one(&client, &stable_id("del", index)).await;
+    }
+
+    let (page1, headers) = query_page(&client, "type=Building&local=true&limit=2").await;
+    assert_eq!(page1, vec![stable_id("del", 0), stable_id("del", 1)], "the first page is the two least ids");
+    // Delete an already-returned id, then continue the walk.
+    client.delete_entity(&stable_id("del", 0)).await.expect("delete entity failed");
+    let next = link_target(&headers, "next").expect("first page has a next");
+    let (page2, _) = query_page(&client, query_string_of(&next)).await;
+    assert_eq!(
+        page2,
+        vec![stable_id("del", 2), stable_id("del", 3)],
+        "the next page still starts after the last id seen, skipping nothing: {page2:?}"
+    );
+    scope.reset_and_finish().await.expect("post-test reset failed");
+}
+
+/// The full forward walk over a stable collection returns every entity exactly
+/// once, in ascending id order.
+#[tokio::test]
+#[serial(global)]
+async fn pagination_entities_full_walk_returns_every_entity_in_order() {
+    let (scope, client) = make_scope().await;
+    for index in 0..7 {
+        create_one(&client, &stable_id("full", index)).await;
+    }
+
+    let seen = walk_forward(&client, "type=Building&local=true&limit=2").await;
+    let expected: Vec<String> = (0..7).map(|index| stable_id("full", index)).collect();
+    assert_eq!(seen, expected, "the walk returns every entity once, ascending");
+    scope.reset_and_finish().await.expect("post-test reset failed");
+}
+
+/// Cursor mode still honours an explicit `count`: the `NGSILD-Results-Count`
+/// header reports the whole collection, not the page.
+#[tokio::test]
+#[serial(global)]
+async fn pagination_entities_cursor_mode_still_reports_the_count() {
+    let (scope, client) = make_scope().await;
+    for index in 0..5 {
+        create_one(&client, &stable_id("cnt", index)).await;
+    }
+
+    let response = client
+        .query_entities("type=Building&local=true&limit=2&count=true", "application/ld+json", Some(CORE_CONTEXT))
+        .await
+        .expect("query entities failed");
+    assert_eq!(response.status, StatusCode::OK);
+    assert_eq!(
+        results_count(&response.headers),
+        Some(5),
+        "count reports the whole collection under cursor mode"
+    );
+    assert_cursor_links(&response.headers);
     scope.reset_and_finish().await.expect("post-test reset failed");
 }

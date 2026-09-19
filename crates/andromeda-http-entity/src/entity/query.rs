@@ -308,7 +308,10 @@ async fn merge_and_filter(
 fn cursor_boundary(entities: &[Entity]) -> Option<(Uri, Uri)> {
     // clone: the pagination links own the identifiers, while the entities are
     // consumed by the rendering that follows.
-    entities.first().map(|entity| entity.id.clone()).zip(entities.last().map(|entity| entity.id.clone()))
+    entities
+        .first()
+        .map(|entity| entity.id.clone())
+        .zip(entities.last().map(|entity| entity.id.clone()))
 }
 
 /// How the map a `splitEntities` query ran under is pruned (clause 5.5.9.3).
