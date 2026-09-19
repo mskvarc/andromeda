@@ -170,15 +170,37 @@ mod tests {
     }
 
     /// A counted query whose total is exhausted by the current page offers no
-    /// `next`, even though the page came back full.
+    /// `next`, even though the page came back full. It still knows its total, so
+    /// it carries the Andromeda `first`/`last` pair (both at offset 0 here).
     #[test]
-    fn a_counted_query_whose_total_is_exhausted_offers_no_next_page() {
+    fn a_counted_query_whose_total_is_exhausted_offers_first_last_but_no_next() {
         let page = QueriedPage::of(&paged_query(Some(2), Some(0)), PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
         page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(2), 2);
 
-        pretty_assertions::assert_eq!(links(&response), String::new());
+        let link = links(&response);
+        assert!(link.contains("rel=\"first\""), "{link}");
+        assert!(link.contains("rel=\"last\""), "{link}");
+        assert!(!link.contains("rel=\"prev\""), "{link}");
+        assert!(!link.contains("rel=\"next\""), "{link}");
+    }
+
+    /// A counted middle page knows its total and sits past the first page with
+    /// more to come, so it carries the whole set: the Andromeda `first`/`last`
+    /// pair alongside the clause 6.3.10 `prev`/`next` pointers.
+    #[test]
+    fn a_counted_middle_page_carries_first_last_prev_and_next() {
+        let page = QueriedPage::of(&paged_query(Some(2), Some(2)), PagePointers::OverRequestUri);
+        let mut response = StatusCode::OK.into_response();
+
+        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(7), 2);
+
+        let link = links(&response);
+        assert!(link.contains("rel=\"first\""), "{link}");
+        assert!(link.contains("rel=\"last\""), "{link}");
+        assert!(link.contains("rel=\"prev\""), "{link}");
+        assert!(link.contains("rel=\"next\""), "{link}");
     }
 
     /// Clause 6.3.10 asks for a Link Target "that could be dereferenced by an
