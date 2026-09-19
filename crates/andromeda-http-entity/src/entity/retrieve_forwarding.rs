@@ -7,14 +7,14 @@ use andromeda_federation::{
     FederationService,
     entity_result::{collect_warnings, contributions_of, merge_retrieve_results},
     forwarded_query::client_query::ClientQuery,
-    outcome::{ForwardReadOutcome, ForwardedEntities, MatchedSources},
+    outcome::{ForwardReadOutcome, ForwardedEntities},
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{declined_representation::single_source_declined, problem_response::ProblemResponse};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::{entity::Entity, entity_type::EntityTypeValue};
+use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_request::entity::GetEntityParams;
 use axum::http::Uri as HttpUri;
 use tracing::warn;
@@ -27,8 +27,6 @@ pub(crate) struct ForwardedRetrieval {
     pub(crate) warnings: Vec<NgsiLdWarning>,
     /// What each source contributed to the map of the request (clause 5.2.39).
     pub(crate) contributions: Vec<SourceContribution>,
-    /// What the primary registration selection said.
-    pub(crate) sources: MatchedSources,
 }
 
 /// The two clause 5.7.1.4 forwarding phases of one retrieval: the exclusive,
@@ -70,7 +68,6 @@ impl RetrieveForwarding<'_> {
         }
         let mut warnings = collect_warnings(&primary.results);
         let mut contributions: Vec<SourceContribution> = contributions_of(&primary.results).collect();
-        let sources = primary.sources;
         let merged = merge_retrieve_results(local_entity, primary.results);
 
         // Phase 2: auxiliary sources only if an entity was found, since they
@@ -88,7 +85,6 @@ impl RetrieveForwarding<'_> {
             entity,
             warnings,
             contributions,
-            sources,
         })
     }
 
@@ -100,7 +96,10 @@ impl RetrieveForwarding<'_> {
                 ForwardRetrieveRequest {
                     entity_id: self.entity_id,
                     exclude_registration: None,
-                    client_query: ClientQuery::EntityRetrieve(self.params),
+                    client_query: ClientQuery::EntityRetrieve {
+                        id: self.entity_id,
+                        params: self.params,
+                    },
                     context: self.context,
                     triggering: self.triggering,
                     mode_filter,
@@ -115,20 +114,4 @@ impl RetrieveForwarding<'_> {
                 ForwardReadOutcome::empty()
             })
     }
-}
-
-/// The entity a retrieval answers with when a registration matched but no
-/// source returned attribute data (clause 5.7.1.4): its `id` and the type the
-/// registration registers it under.
-pub(crate) fn registered_identity(id: &Uri, sources: &MatchedSources) -> Option<Entity> {
-    if sources.registrations == 0 {
-        return None;
-    }
-    let registered_type = sources.registered_type.clone()?; // clone: the synthesized entity owns its type
-    Some(
-        Entity::builder()
-            .id(id.clone()) // clone: the synthesized entity owns its identifier
-            .type_(EntityTypeValue::Single(registered_type))
-            .build(),
-    )
 }

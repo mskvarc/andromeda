@@ -77,7 +77,10 @@ impl SubscriptionForwardingService {
                 ForwardRetrieveRequest {
                     entity_id: &received.id,
                     exclude_registration: Some(sender),
-                    client_query: ClientQuery::EntityRetrieve(&whole_entity),
+                    client_query: ClientQuery::EntityRetrieve {
+                        id: &received.id,
+                        params: &whole_entity,
+                    },
                     context,
                     triggering: TriggeringRequest::default(),
                     mode_filter: CsrModeFilter::All,

@@ -99,8 +99,9 @@ mod tests {
     fn a_narrowed_id_and_type_query_builds_a_single_selector_with_both() {
         let by_type = registration(&json!([{"entities": [{"type": "https://uri.etsi.org/ngsi-ld/default-context/Vehicle"}]}]));
         let params: EntityQueryParameters = serde_urlencoded::from_str("type=Vehicle&id=urn:ngsi-ld:Vehicle:A1&attrs=speed").expect("valid query");
-        let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&params), &by_type, SplitEntities::Complete).expect("covered");
-        let selectors = selectors_from_query(&forwarded);
+        let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&params), &by_type, SplitEntities::Complete);
+        let forwarded = forwarded.first().expect("covered");
+        let selectors = selectors_from_query(forwarded);
         let body = build_batch_query_body(&selectors, forwarded.value_of(ForwardedParameter::Attrs));
         let value: Value = serde_json::from_slice(&body).expect("valid json");
         pretty_assertions::assert_eq!(value["type"], "Query");

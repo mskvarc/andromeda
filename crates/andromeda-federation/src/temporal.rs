@@ -10,7 +10,7 @@ use crate::{
     forwarding_url::{build_temporal_query_url, build_temporal_retrieve_url},
     operation::ForwardingOperation,
     outcome::{ForwardGetOutcome, ForwardReadOutcome, ForwardedResponse, ForwardedTemporalEntities, MatchedSources},
-    read_fan_out::{ForwardedGetConditions, ReadSelection, ReadServing, read_outcome, registered_type_of},
+    read_fan_out::{ForwardedGetConditions, ReadSelection, ReadServing, expand_registration_targets, read_outcome},
     request::{ForwardRetrieveRequest, ForwardTemporalQueryRequest},
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -139,10 +139,13 @@ impl FederationService {
                 },
             )
             .await?;
-        let targets = registrations
-            .into_iter()
-            .filter_map(|registration| ForwardedQuery::for_registration_on_page(client, &registration, split, source_page).map(|query| (registration, query)))
-            .collect::<Vec<_>>();
+        // Clause 4.3.6.3: each information block that covers part of the query
+        // is a forwarded request of its own.
+        let mut targets = Vec::with_capacity(registrations.len());
+        for registration in registrations {
+            let queries = ForwardedQuery::for_registration_on_page(client, &registration, split, source_page);
+            expand_registration_targets(registration, queries, &mut targets);
+        }
         if targets.is_empty() {
             return Ok(ForwardReadOutcome::empty());
         }
@@ -161,7 +164,7 @@ impl FederationService {
                 },
             )
             .await;
-        Ok(read_outcome(answers, matched, None))
+        Ok(read_outcome(answers, matched))
     }
 
     /// Forward a temporal entity retrieval to the matching context sources
@@ -209,14 +212,14 @@ impl FederationService {
                 },
             )
             .await?;
-        let registered_type = registered_type_of(&registrations, entity_id);
-        // A retrieval knows no split entities (clause 5.7.3.4).
-        let targets = registrations
-            .into_iter()
-            .filter_map(|registration| {
-                ForwardedQuery::for_registration(client_query, &registration, SplitEntities::Complete).map(|query| (registration, query))
-            })
-            .collect::<Vec<_>>();
+        // A retrieval knows no split entities (clause 5.7.3.4); clause 4.3.6.3:
+        // each block covering the entity contributes its own attribute
+        // constraint.
+        let mut targets = Vec::with_capacity(registrations.len());
+        for registration in registrations {
+            let queries = ForwardedQuery::for_registration(client_query, &registration, SplitEntities::Complete);
+            expand_registration_targets(registration, queries, &mut targets);
+        }
         if targets.is_empty() {
             return Ok(ForwardReadOutcome::empty());
         }
@@ -234,6 +237,6 @@ impl FederationService {
                 },
             )
             .await;
-        Ok(read_outcome(answers, matched, registered_type))
+        Ok(read_outcome(answers, matched))
     }
 }

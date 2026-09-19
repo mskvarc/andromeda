@@ -29,7 +29,7 @@ use crate::{
         Value,
         public_error,
         request_entity_map::{LocalEntitySource, record_map_use, resolve_retrieval_map_use},
-        retrieve_forwarding::{RetrieveForwarding, registered_identity},
+        retrieve_forwarding::RetrieveForwarding,
         start_rendering,
         with_linked_resolution_warnings,
     },
@@ -184,18 +184,14 @@ pub(crate) async fn get(
             entity_map: EntityMapInUse::from(&map_use),
         };
         let retrieved = forwarding.run(local_entity).await?;
-        let entity = match retrieved.entity {
-            Some(entity) => entity,
-            // Clause 5.7.1.4: ResourceNotFound only when nothing is held
-            // locally and no registration matches. A matching registration
-            // that returned nothing leaves the entity known by its registered
-            // identity alone, so the response is the entity's `id` and `type`.
-            None => match registered_identity(&id, &retrieved.sources) {
-                Some(entity) => entity,
-                None => {
-                    return Err(public_error(NgsiLdErrorType::ResourceNotFound, format!("entity {id} not found"), &uri).with_warnings(retrieved.warnings));
-                }
-            },
+        // Clause 5.7.1.4: ResourceNotFound when the target Entity is held
+        // neither locally nor by any source a matching registration forwarded
+        // to. A registration that matched but whose sources returned no
+        // Attribute data leaves nothing to answer with -- the broker does not
+        // invent an Entity from the registration's id and type, and clause
+        // 6.3.17 does not treat a source's empty answer as abnormal.
+        let Some(entity) = retrieved.entity else {
+            return Err(public_error(NgsiLdErrorType::ResourceNotFound, format!("entity {id} not found"), &uri).with_warnings(retrieved.warnings));
         };
         // Table 6.5.3.1-1 `entityMap`: the map the retrieval used is returned,
         // created now when none was in use (clause 5.7.1.4), naming this

@@ -25,9 +25,11 @@ fn observed(value: i64, observed_at: &str) -> Value {
 /// The whole-history temporal query window: everything before 2030.
 const BEFORE_2030: &str = "timerel=before&timeAt=2030-01-01T00:00:00Z";
 
-/// Retrieve Temporal returns `404 ResourceNotFound` only when neither a local
-/// evolution nor a matching registration exists (clause 5.7.3.4). Confirms
-/// REQ-CONS-39.
+/// Retrieve Temporal returns `404 ResourceNotFound` whenever the evolution is
+/// held neither locally nor by any source a matching registration forwards to:
+/// a registration that matches but whose source answers 404 does not make the
+/// broker synthesise a temporal representation, and clause 6.3.17 does not treat
+/// the source's empty answer as abnormal (clause 5.7.3.4). Confirms REQ-CONS-39.
 #[tokio::test]
 async fn distop_retrieve_temporal_no_local_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -46,20 +48,14 @@ async fn distop_retrieve_temporal_no_local_no_registration_returns_404() {
         .operations(&["retrieveTemporal"])
         .build();
     assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
-    mock.set_stub_with_body(
-        Method::GET,
-        &format!("/ngsi-ld/v1/temporal/entities/{entity_id}"),
-        200,
-        &entity(&entity_id, "Vehicle", &[("speed", json!([observed(50, "2020-08-01T12:00:00Z")]))]),
-    )
-    .await;
+    mock.set_stub(Method::GET, &format!("/ngsi-ld/v1/temporal/entities/{entity_id}"), 404).await;
 
+    // A matching registration whose source returns no history leaves nothing to
+    // answer with: the broker does not invent a temporal representation from the
+    // registration's id and type, so the retrieval is still 404 (5.7.3.4 / 6.3.17).
     let with_registration = front.client().get_temporal_entity(&entity_id, BEFORE_2030, None).await.expect("retrieve");
-    assert!(
-        with_registration.status.as_u16() != 404,
-        "a matching registration suppresses the 404, got {}",
-        with_registration.status.as_u16()
-    );
+    assert_status(&with_registration, 404);
+    assert_problem_details(&with_registration, RESOURCE_NOT_FOUND);
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

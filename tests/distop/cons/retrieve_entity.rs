@@ -27,9 +27,11 @@ fn observed_dataset(value: i64, observed_at: &str, dataset_id: &str) -> Value {
     json!({ "type": "Property", "value": value, "observedAt": observed_at, "datasetId": dataset_id })
 }
 
-/// Retrieval returns `404 ResourceNotFound` only when neither a local entity nor
-/// any matching registration exists; a matching registration suppresses the 404
-/// even if the source itself has nothing (clause 5.7.1.4). Confirms REQ-CONS-1.
+/// Retrieval returns `404 ResourceNotFound` whenever the target Entity is held
+/// neither locally nor by any source a matching registration forwards to: a
+/// registration that matches but whose source answers 404 does not make the
+/// broker synthesise an `{id, type}` Entity, and clause 6.3.17 does not treat
+/// the source's empty answer as abnormal (clause 5.7.1.4). Confirms REQ-CONS-1.
 #[tokio::test]
 async fn distop_retrieve_entity_no_local_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -50,12 +52,12 @@ async fn distop_retrieve_entity_no_local_no_registration_returns_404() {
     assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
     mock.set_stub(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}"), 404).await;
 
+    // A matching registration whose source returns no data leaves nothing to
+    // answer with: the broker does not invent an Entity from the registration's
+    // id and type, so the retrieval is still 404 (clause 5.7.1.4 / 6.3.17).
     let with_registration = front.client().get_entity(&entity_id, "", "application/ld+json", None).await.expect("retrieve");
-    assert!(
-        with_registration.status.as_u16() != 404,
-        "a matching registration must suppress the 404, got {}",
-        with_registration.status.as_u16()
-    );
+    assert_status(&with_registration, 404);
+    assert_problem_details(&with_registration, RESOURCE_NOT_FOUND);
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

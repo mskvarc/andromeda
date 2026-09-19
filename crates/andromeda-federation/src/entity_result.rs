@@ -189,14 +189,74 @@ pub fn strip_attributes_from_value(fragment: &mut Value, attributes: &[Attribute
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_result::parse_forwarded_entities;
+    use crate::{
+        entity_result::{merge_retrieve_results, parse_forwarded_entities},
+        outcome::ForwardedEntities,
+    };
     use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_model::{entity::Entity, registration::forwarding_mode::ForwardingMode};
     use chrono::{TimeZone, Utc};
     use serde_json::json;
 
     fn registration_id() -> Uri {
         "urn:ngsi-ld:Registration:1".parse().expect("registration URI")
+    }
+
+    fn parsed_entity(value: serde_json::Value) -> Entity {
+        let (mut entities, _) = parse_forwarded_entities(&registration_id(), vec![value], Utc::now());
+        entities.pop().expect("one parsed entity")
+    }
+
+    fn source(mode: ForwardingMode, entities: Vec<Entity>) -> ForwardedEntities {
+        ForwardedEntities {
+            registration_id: Some(registration_id()),
+            mode,
+            entities,
+            warnings: Vec::new(),
+            linked_map: None,
+        }
+    }
+
+    /// Clause 5.7.1.4: with nothing held locally and every source returning no
+    /// data, the retrieval merges to nothing -- the broker synthesises no Entity
+    /// from a matching registration, so the operation is `ResourceNotFound`. A
+    /// source answering 404 contributes no `ForwardedEntities` entry at all; one
+    /// answering with an empty entity list contributes nothing either.
+    #[test]
+    fn a_retrieval_with_nothing_local_and_no_source_data_merges_to_none() {
+        assert!(merge_retrieve_results(None, Vec::new()).is_none());
+        assert!(merge_retrieve_results(None, vec![source(ForwardingMode::Inclusive, Vec::new())]).is_none());
+    }
+
+    /// Clause 5.7.1.4: an exclusive, redirect or inclusive source that returns
+    /// the entity is served with 200 even when nothing is held locally.
+    #[test]
+    fn a_retrieval_with_nothing_local_and_a_source_entity_serves_that_entity() {
+        for mode in [ForwardingMode::Exclusive, ForwardingMode::Redirect, ForwardingMode::Inclusive] {
+            let entity = parsed_entity(json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 50}}));
+            let merged = merge_retrieve_results(None, vec![source(mode, vec![entity])]).expect("the source entity is served");
+            pretty_assertions::assert_eq!(merged.id.as_str(), "urn:ngsi-ld:Vehicle:1");
+        }
+    }
+
+    /// Clause 4.3.6.2: an auxiliary source only supplements an entity already
+    /// present, so with nothing held locally an auxiliary-only answer serves no
+    /// entity of its own.
+    #[test]
+    fn a_retrieval_with_nothing_local_and_only_an_auxiliary_source_merges_to_none() {
+        let entity = parsed_entity(json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 50}}));
+        assert!(merge_retrieve_results(None, vec![source(ForwardingMode::Auxiliary, vec![entity])]).is_none());
+    }
+
+    /// A local entity is the merge base and is served even when no source
+    /// returns anything.
+    #[test]
+    fn a_retrieval_with_a_local_entity_and_no_source_keeps_the_local_entity() {
+        let local = parsed_entity(json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 42}}));
+        let merged = merge_retrieve_results(Some(local), Vec::new()).expect("the local entity is served");
+        pretty_assertions::assert_eq!(merged.id.as_str(), "urn:ngsi-ld:Vehicle:1");
+        assert!(merged.attrs.contains_key("speed"), "the local speed is kept");
     }
 
     #[test]

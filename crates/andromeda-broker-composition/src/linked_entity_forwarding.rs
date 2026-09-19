@@ -68,7 +68,7 @@ impl RemoteLinkedEntitySource for ForwardedLinkedEntitySource {
                 ForwardRetrieveRequest {
                     entity_id: id,
                     exclude_registration: None,
-                    client_query: ClientQuery::EntityRetrieve(&parameters),
+                    client_query: ClientQuery::EntityRetrieve { id, params: &parameters },
                     context,
                     // A linked retrieval starts at this broker rather than being a
                     // hop of an inbound one, so there is no `Via` chain to extend

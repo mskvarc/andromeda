@@ -167,7 +167,7 @@ impl FederationService {
             .buffer_unordered(self.csr_concurrency)
             .collect()
             .await;
-        Ok(read_outcome(answers, matched, None))
+        Ok(read_outcome(answers, matched))
     }
 
     /// The registrations a request that references a live `EntityMap` contacts:

@@ -130,6 +130,64 @@ async fn forward_narrows_to_registered_ids_attrs_geofence() {
     topology.finish().await.expect("topology cleanup");
 }
 
+/// Clause 4.3.6.3: an exclusive registration names one entity and its
+/// attributes, so a client query naming only the type still has the block's id
+/// and attribute added to the forwarded request -- the source is asked for
+/// exactly what the registration covers, never the broad `type=Vehicle` alone.
+/// Confirms REQ-FW-2.
+#[tokio::test]
+async fn forward_exclusive_block_names_its_id_and_attribute_for_a_type_only_query() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let mock = ContextSourceAdapter::start().await;
+    mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
+
+    let covered = topology.id("Vehicle:exclusive-block");
+    let endpoint = mock.url("");
+    let registration = CsrBuilder::new(&topology.id("registration:exclusive-block"), &endpoint)
+        .mode("exclusive")
+        .entity_id(&covered)
+        .property_names(&["speed"])
+        .operations(&["queryEntity"])
+        .build();
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .expect("topology broker A")
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
+        201,
+    );
+
+    let response = topology
+        .broker(BrokerRole::A)
+        .expect("topology broker A")
+        .client()
+        .query_entities("type=Vehicle", "application/ld+json", None)
+        .await
+        .expect("query");
+    assert_status(&response, 200);
+
+    let forwarded = mock.next_request(CAPTURE_TIMEOUT).await;
+    let forwarded_query = forwarded.uri.query().unwrap_or_default();
+    assert!(
+        forwarded_query.contains("exclusive-block"),
+        "the exclusive block's id is named in the forwarded request: {forwarded_query}"
+    );
+    assert!(
+        forwarded_query.contains("speed"),
+        "the exclusive block's attribute is named in the forwarded request: {forwarded_query}"
+    );
+    assert!(
+        forwarded_query.contains("Vehicle"),
+        "the covered type is named in the forwarded request: {forwarded_query}"
+    );
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
 /// Constraint enforcement happens at the broker, not the source: the request the
 /// source receives through the broker is already narrowed to the covered type,
 /// so the source is never asked for data outside the registration (clause

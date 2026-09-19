@@ -261,9 +261,30 @@ impl FederationService {
     }
 }
 
+/// Append one fan-out target per forwarded request a registration's blocks
+/// produce (clause 4.3.6.3). Each target carries the registration that reads its
+/// answer back, so the registration is cloned for every request but the last,
+/// which moves it; a registration with a single covering block -- the common
+/// case -- is never cloned.
+pub(crate) fn expand_registration_targets<Q>(registration: ContextSourceRegistration, requests: Vec<Q>, targets: &mut Vec<(ContextSourceRegistration, Q)>) {
+    let mut requests = requests.into_iter();
+    let Some(mut current) = requests.next() else {
+        return;
+    };
+    loop {
+        if let Some(next) = requests.next() {
+            targets.push((registration.clone(), current)); // clone: one target per forwarded request in a multi-block fan-out
+            current = next;
+        } else {
+            targets.push((registration, current));
+            break;
+        }
+    }
+}
+
 /// Fold the answers of `matched` contacted registrations into the outcome of
 /// the read.
-pub(crate) fn read_outcome<T>(answers: Vec<SourceAnswer<T>>, matched: usize, registered_type: Option<EntityTypeName>) -> ForwardReadOutcome<T> {
+pub(crate) fn read_outcome<T>(answers: Vec<SourceAnswer<T>>, matched: usize) -> ForwardReadOutcome<T> {
     let single_source_status = match answers.as_slice() {
         // Table 6.4.3.2-3: a registered source alone holding the data answers
         // 501 when it cannot serve the representation, and that answer is
@@ -278,7 +299,6 @@ pub(crate) fn read_outcome<T>(answers: Vec<SourceAnswer<T>>, matched: usize, reg
         results: answers.into_iter().filter_map(|answer| answer.entry).collect(),
         sources: MatchedSources {
             registrations: matched,
-            registered_type,
             single_source_status,
         },
     }
@@ -341,20 +361,16 @@ mod tests {
     /// one of several sources, is not.
     #[test]
     fn a_lone_proxied_source_declining_the_representation_surfaces_its_501() {
-        let exclusive = read_outcome(vec![answer(ForwardingMode::Exclusive, Some(501))], 1, None);
+        let exclusive = read_outcome(vec![answer(ForwardingMode::Exclusive, Some(501))], 1);
         pretty_assertions::assert_eq!(exclusive.sources.single_source_status, Some(501));
-        let redirect = read_outcome(vec![answer(ForwardingMode::Redirect, Some(501))], 1, None);
+        let redirect = read_outcome(vec![answer(ForwardingMode::Redirect, Some(501))], 1);
         pretty_assertions::assert_eq!(redirect.sources.single_source_status, Some(501));
 
-        let inclusive = read_outcome(vec![answer(ForwardingMode::Inclusive, Some(501))], 1, None);
+        let inclusive = read_outcome(vec![answer(ForwardingMode::Inclusive, Some(501))], 1);
         pretty_assertions::assert_eq!(inclusive.sources.single_source_status, None);
-        let forbidden = read_outcome(vec![answer(ForwardingMode::Exclusive, Some(403))], 1, None);
+        let forbidden = read_outcome(vec![answer(ForwardingMode::Exclusive, Some(403))], 1);
         pretty_assertions::assert_eq!(forbidden.sources.single_source_status, None);
-        let several = read_outcome(
-            vec![answer(ForwardingMode::Exclusive, Some(501)), answer(ForwardingMode::Inclusive, None)],
-            2,
-            None,
-        );
+        let several = read_outcome(vec![answer(ForwardingMode::Exclusive, Some(501)), answer(ForwardingMode::Inclusive, None)], 2);
         pretty_assertions::assert_eq!(several.sources.single_source_status, None);
         pretty_assertions::assert_eq!(several.sources.registrations, 2);
     }

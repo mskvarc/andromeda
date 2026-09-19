@@ -19,8 +19,15 @@ use andromeda_ngsi_ld_request::{
 pub enum ClientQuery<'a> {
     /// A Query Entities request (clause 5.7.2).
     EntityQuery(&'a EntityQueryParameters),
-    /// A Retrieve Entity request (clause 5.7.1).
-    EntityRetrieve(&'a GetEntityParams),
+    /// A Retrieve Entity request (clause 5.7.1), carrying the identifier of the
+    /// target entity so a per-block narrowing can tell which registration
+    /// blocks cover it (clause 4.3.6.3).
+    EntityRetrieve {
+        /// The identifier of the entity being retrieved.
+        id: &'a Uri,
+        /// The retrieval parameters as the client wrote them.
+        params: &'a GetEntityParams,
+    },
     /// A temporal query or retrieval (clauses 5.7.3 and 5.7.4).
     Temporal(&'a TemporalQueryParameters),
 }
@@ -32,7 +39,7 @@ impl ClientQuery<'_> {
         match self {
             ClientQuery::EntityQuery(params) => params.entity_type.as_ref(),
             ClientQuery::Temporal(params) => params.entity_type.as_ref(),
-            ClientQuery::EntityRetrieve(_) => None,
+            ClientQuery::EntityRetrieve { .. } => None,
         }
     }
 
@@ -42,7 +49,7 @@ impl ClientQuery<'_> {
         match self {
             ClientQuery::EntityQuery(params) => params.id.as_deref(),
             ClientQuery::Temporal(params) => params.id.as_deref(),
-            ClientQuery::EntityRetrieve(_) => None,
+            ClientQuery::EntityRetrieve { .. } => None,
         }
     }
 
@@ -53,7 +60,7 @@ impl ClientQuery<'_> {
         match self {
             ClientQuery::EntityQuery(params) => params.scope_q.as_ref(),
             ClientQuery::Temporal(params) => params.scope_q.as_ref(),
-            ClientQuery::EntityRetrieve(_) => None,
+            ClientQuery::EntityRetrieve { .. } => None,
         }
     }
 }

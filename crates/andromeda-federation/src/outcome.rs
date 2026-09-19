@@ -2,7 +2,7 @@
 
 use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, registration::forwarding_mode::ForwardingMode};
 use serde_json::Value;
 
@@ -173,18 +173,13 @@ impl ForwardedTemporalEntities {
 /// What a forwarded read learnt about the registrations it selected, beyond
 /// the entities they returned.
 ///
-/// Clause 5.7.1.4 and clause 5.7.3.4 raise `ResourceNotFound` only when
-/// "no matching registrations apply", and Table 6.4.3.2-3 lets a source's
-/// 501 stand for the operation when that source alone holds the data; both
-/// are facts about the selection rather than about any one answer.
+/// Table 6.4.3.2-3 lets a source's 501 stand for the operation when that source
+/// alone holds the data, which is a fact about the selection rather than about
+/// any one answer.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MatchedSources {
     /// How many registrations matched and were (or would have been) contacted.
     pub registrations: usize,
-    /// The entity type the matched registrations register the entity under,
-    /// when they all agree on exactly one (clause 5.2.10 `EntityInfo`); what a
-    /// retrieval answers `{id, type}` with when the sources return nothing.
-    pub registered_type: Option<EntityTypeName>,
     /// The error status of the one exclusive or redirect registration that
     /// holds all the data, when it declined the request in a way Table
     /// 6.4.3.2-3 lets the broker relay: a 501 for an unsupported representation.
@@ -210,7 +205,6 @@ impl<T> ForwardReadOutcome<T> {
             results: Vec::new(),
             sources: MatchedSources {
                 registrations: 0,
-                registered_type: None,
                 single_source_status: None,
             },
         }

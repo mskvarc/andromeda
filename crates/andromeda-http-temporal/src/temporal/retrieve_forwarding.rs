@@ -35,7 +35,7 @@ use andromeda_federation::{
     FederationService,
     entity_result::temporal_contributions_of,
     forwarded_query::client_query::ClientQuery,
-    outcome::{ForwardReadOutcome, MatchedSources},
+    outcome::ForwardReadOutcome,
     request::{EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
     temporal_last_n::truncate_to_last_n,
 };
@@ -48,7 +48,6 @@ use andromeda_temporal::{
     temporal_not_found_reason::TemporalNotFoundReason,
 };
 use axum::http::Uri as RequestUri;
-use serde_json::json;
 use tracing::warn;
 
 /// What a temporal retrieval assembled before its representation is rendered.
@@ -186,15 +185,15 @@ pub(crate) async fn distributed_retrieval(
             }
             value
         }
-        // Clause 5.7.3.4: ResourceNotFound only when nothing is held locally
-        // and no registration matches; a matching registration that returned
-        // nothing leaves the entity known by its registered identity alone.
-        None => match registered_identity(id, &forwarded.sources) {
-            Some(identity) => identity,
-            None => {
-                return Err(temporal_problem(&TemporalError::NotFound(TemporalNotFoundReason::Entity { id: id.clone() }), instance).with_warnings(warnings));
-            }
-        },
+        // Clause 5.7.3.4: ResourceNotFound when the target Entity's history is
+        // held neither locally nor by any source a matching registration
+        // forwarded to. A registration that matched but whose sources returned
+        // no history leaves nothing to answer with -- the broker does not
+        // invent a temporal representation from the registration's id and type,
+        // and clause 6.3.17 does not treat a source's empty answer as abnormal.
+        None => {
+            return Err(temporal_problem(&TemporalError::NotFound(TemporalNotFoundReason::Entity { id: id.clone() }), instance).with_warnings(warnings));
+        }
     };
     Ok(RetrievedHistory {
         value,
@@ -235,15 +234,4 @@ async fn record_retrieve_map(
             RecordingFailure::LocalEntities(problem) => problem,
             RecordingFailure::Store(error) => error.classify_for_temporal_http().with_instance(instance.clone()), // clone: the problem response owns the request URI it names
         })
-}
-
-/// The temporal representation a retrieval answers with when a registration
-/// matched but no source returned history (clause 5.7.3.4): the entity's `id`
-/// and the type the registration registers it under, with no attributes.
-fn registered_identity(id: &Uri, sources: &MatchedSources) -> Option<Value> {
-    if sources.registrations == 0 {
-        return None;
-    }
-    let registered_type = sources.registered_type.as_ref()?;
-    Some(json!({"id": id.as_str(), "type": registered_type.as_str()}))
 }
