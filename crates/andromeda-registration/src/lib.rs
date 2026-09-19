@@ -26,7 +26,7 @@ mod information_expansion;
 mod mode_rules;
 pub mod nullable_member;
 mod payload;
-mod query;
+pub mod query;
 /// The typed reasons a registration collides with existing context data.
 pub mod registration_conflict_reason;
 /// The masked operator diagnostic behind persistence and internal failures.

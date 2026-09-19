@@ -8,7 +8,7 @@ use crate::{
     registration_validation_reason::RegistrationValidationReason,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     registration::ContextSourceRegistration,
     registration_matching::{EntitySpecification, RegistrationMatchSpecification},
@@ -23,9 +23,30 @@ use andromeda_ngsi_ld_query::{
     term_expander::TermExpander,
     type_selection::grammar::TypeExprRaw,
 };
-use andromeda_ngsi_ld_request::query::{SharedQueryParams, csr::CsrQueryParameters};
+use andromeda_ngsi_ld_request::{
+    pagination_cursor::decode_cursor,
+    query::{SharedQueryParams, csr::CsrQueryParameters},
+};
 use iri_rs::IriBuf;
 use serde_json::Value;
+
+/// The registrations a discovery query answers with, and the pagination it
+/// reports around them (clause 5.10.2).
+pub struct DiscoveredRegistrations {
+    /// The clause-5.10.2.5-trimmed, response-ready registration documents.
+    pub registrations: Vec<Value>,
+    /// Total matches before pagination (clause 6.3.13).
+    pub total: u64,
+    /// The first and last registration identifiers of the raw store page,
+    /// ascending, from which a clause 5.5.9.1 cursor pointer is computed. Read
+    /// from the untrimmed page so the walk continues past every registration the
+    /// store scanned, not only the ones the clause-5.10.2.5 trim kept. Absent on
+    /// an empty page.
+    pub boundary: Option<(Uri, Uri)>,
+    /// Whether the raw store page filled the limit -- the clause 6.3.10
+    /// page-fullness signal a cursor walk uses in place of a total.
+    pub page_full: bool,
+}
 
 impl RegistrationService {
     /// Discover the registrations matching `params` (clause 5.10.2), excluding
@@ -51,12 +72,23 @@ impl RegistrationService {
         params: &CsrQueryParameters,
         encountered_sources: &[ContextSourcePseudonym],
         context: &ContextSpec,
-    ) -> Result<(Vec<Value>, u64), RegistrationError> {
+    ) -> Result<DiscoveredRegistrations, RegistrationError> {
         params
             .validate()
             .map_err(|error| RegistrationError::Validation(RegistrationValidationReason::QueryParameters(error)))?;
         let compiled = self.compile_csr_query(params, encountered_sources, context).await?;
         let page = self.repo.query_compiled(&compiled).await?;
+        // Clause 5.5.9.1: the cursor pointers are read from the raw store page,
+        // before the clause-5.10.2.5 trim below drops the registrations whose
+        // RegistrationInfo the query does not match. clone: the boundary
+        // outlives the page the loop consumes.
+        let boundary = page
+            .registrations
+            .first()
+            .map(|registration| registration.id.clone())
+            .zip(page.registrations.last().map(|registration| registration.id.clone()));
+        let page_full = page.registrations.len() >= compiled.pagination.limit as usize;
+        let total = page.total;
         let mut values = Vec::with_capacity(page.registrations.len());
         for registration in page.registrations {
             let Some(mut registration) = registration_matching_the_query(registration, &compiled)? else {
@@ -75,7 +107,12 @@ impl RegistrationService {
             }
             values.push(value);
         }
-        Ok((values, page.total))
+        Ok(DiscoveredRegistrations {
+            registrations: values,
+            total,
+            boundary,
+            page_full,
+        })
     }
 
     async fn compile_csr_query(
@@ -147,6 +184,11 @@ impl RegistrationService {
                 offset: params.effective_offset(),
                 count: CountPolicy::Omit,
             })
+            // Clause 5.5.9.1: an opaque cursor, if the discovery carried one,
+            // puts the store into keyset mode over the registration id.
+            .keyset(
+                decode_cursor(params.cursor.as_deref()).map_err(|error| RegistrationError::Validation(RegistrationValidationReason::QueryParameters(error)))?,
+            )
             .build())
     }
 }

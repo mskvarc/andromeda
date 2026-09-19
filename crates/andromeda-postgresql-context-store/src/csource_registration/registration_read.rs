@@ -7,7 +7,7 @@ use crate::csource_registration::{
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
+use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, cursor::PageCursor, pagination::Pagination};
 use andromeda_postgresql_context_query::csr::{
     coverage::{entity_id_coverage, entity_type_coverage},
     expiry_predicate::not_expired,
@@ -97,10 +97,16 @@ pub(super) async fn query_compiled(store: &PostgresRegistrationStore, compiled: 
         .fetch_all(&store.pool)
         .await
         .map_err(persistence_error)?;
-    let csrs = rows
+    let mut csrs = rows
         .iter()
         .map(|row| row_to_csr(row).map_err(persistence_error))
         .collect::<Result<Vec<_>, _>>()?;
+    // Clause 5.5.9.1: a backward or from-end keyset page was read descending so
+    // a single `id` index scan could serve it; it is reversed here to the
+    // ascending order the client sees on every page.
+    if matches!(compiled.keyset, Some(PageCursor::Before(_) | PageCursor::End)) {
+        csrs.reverse();
+    }
     Ok(RegistrationPage {
         registrations: csrs,
         total: registration_count(total)?,

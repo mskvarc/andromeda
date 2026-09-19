@@ -48,7 +48,11 @@ use andromeda_http_extraction::context_target;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::entity_selection::ConsideredEntities;
-use andromeda_ngsi_ld_request::{deferred_split_filters::DeferredSplitFilters, query::entity::parameters::EntityQueryParameters};
+use andromeda_ngsi_ld_request::{
+    deferred_split_filters::DeferredSplitFilters,
+    pagination_cursor::decode_cursor,
+    query::entity::parameters::EntityQueryParameters,
+};
 use axum::http::{HeaderMap, Uri as HttpUri};
 use std::sync::Arc;
 
@@ -180,7 +184,12 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         // Clause 5.7.2.4: with `splitEntities`, `q`, the geoquery and `scopeQ`
         // are decided on the merged entities rather than by any one source.
         let deferred = split_entities.then(|| query.defer_split_filters());
-        let page = QueryPage::of(&mut query, forwarded.as_ref(), binding.page_pointers());
+        // Clause 5.5.9.1: decode the opaque pagination cursor before the page is
+        // planned, so a malformed one is a BadRequestData here rather than
+        // surfacing from the store. Its mutual exclusion with offset was already
+        // held by validation.
+        let incoming_cursor = decode_cursor(query.cursor.as_deref()).with_entity_instance(&uri)?;
+        let page = QueryPage::of(&mut query, forwarded.as_ref(), binding.page_pointers(), is_local, incoming_cursor);
 
         let (local_entities, local_total) = service.query(&target, &query, &context).await.with_entity_instance(&uri)?;
         let MergedEntities {
@@ -225,6 +234,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         let representation = EntityRepresentation::new(language_filter.as_ref(), opts.render_mode, projection);
         apply_representation_names(service, &representation, &context, &mut entities, resolved.as_mut(), &uri).await?;
         let entities = entities;
+        let page_boundary = cursor_boundary(&entities);
         let payload = match &resolved {
             Some(resolved) => render_joined_entities(&entities, resolved, &representation, &uri)?,
             None => render_entities(&entities, &representation, &uri)?,
@@ -243,6 +253,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
                 total_count,
                 entity_map_uri,
                 returned: entities.len(),
+                boundary: page_boundary,
             },
             &page,
             accept.media_type(),
@@ -290,6 +301,14 @@ async fn merge_and_filter(
         warnings,
         contributions,
     })
+}
+
+/// The first and last identifiers of the page as displayed, from which a
+/// clause 5.5.9.1 cursor pointer is computed; absent when the page is empty.
+fn cursor_boundary(entities: &[Entity]) -> Option<(Uri, Uri)> {
+    // clone: the pagination links own the identifiers, while the entities are
+    // consumed by the rendering that follows.
+    entities.first().map(|entity| entity.id.clone()).zip(entities.last().map(|entity| entity.id.clone()))
 }
 
 /// How the map a `splitEntities` query ran under is pruned (clause 5.5.9.3).

@@ -58,6 +58,9 @@ impl TryFrom<Query> for TemporalQueryParameters {
             aggr_group_by: aggregation.2,
             limit: None,
             offset: None,
+            // The POST temporal query binding carries no dereferenceable pointer
+            // (clause 6.24.3.1), so it never carries an opaque cursor either.
+            cursor: None,
             count: None,
             ordering: query.ordering.unwrap_or_default(),
             pick: query.pick,

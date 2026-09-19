@@ -18,15 +18,20 @@ use andromeda_http_headers::via::Via;
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     headers::with_location,
-    pagination::{PageExtent, append_pagination_links},
+    pagination::{CursorPointers, PageExtent, PageLinks, append_pagination_links},
     problem_response::ProblemResponse,
     render::start_rendering_normalized,
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_query::cursor::PageCursor;
 use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, registration::RegistrationRenderer, response::ResponsePayload};
-use andromeda_ngsi_ld_request::query::{SharedQueryParams, csr::CsrQueryParameters};
+use andromeda_ngsi_ld_request::{
+    pagination_cursor::decode_cursor,
+    query::{SharedQueryParams, csr::CsrQueryParameters},
+};
+use andromeda_registration::query::DiscoveredRegistrations;
 use axum::{
     extract::OriginalUri,
     http::StatusCode,
@@ -94,10 +99,19 @@ pub(crate) async fn query(
     let options = params.parse_options().with_registration_instance(&uri)?;
     let limit = i64::from(params.effective_limit());
     let offset = i64::from(params.effective_offset());
+    // Clause 5.5.9.1: decode the opaque pagination cursor so a malformed one is
+    // a BadRequestData here; its mutual exclusion with offset is held by
+    // `CsrQueryParameters::validate`.
+    let incoming_cursor = decode_cursor(params.cursor.as_deref()).with_registration_instance(&uri)?;
     // Clause 4.3.6.4: the `Via` chain lists the context sources the request
     // already passed through; clause 5.12 excludes their registrations.
     let encountered_sources: Vec<_> = incoming_via.iter().flat_map(Via::pseudonyms).cloned().collect(); // clone: the discovery owns the listing across the store await
-    let (registrations, total) = state
+    let DiscoveredRegistrations {
+        registrations,
+        total,
+        boundary,
+        page_full,
+    } = state
         .registrations
         .query(&params, &encountered_sources, &context)
         .await
@@ -120,10 +134,28 @@ pub(crate) async fn query(
         .with_registration_instance(&uri)?;
     let total_count =
         usize::try_from(total).map_err(|error| internal_problem(format!("registration count does not fit the response platform: {error}"), &uri))?;
-    let pagination_total =
-        i64::try_from(total).map_err(|error| internal_problem(format!("registration count does not fit offset pagination: {error}"), &uri))?;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_total_count(total_count).into_response();
-    append_pagination_links(&mut response, &uri, limit, offset, PageExtent::Total(pagination_total), accept.media_type());
+    // Clause 5.5.9.1: a discovery in the default id order walks by opaque cursor
+    // by default; an explicit `offset` keeps the clause 5.5.9.2 offset pointers.
+    // `offset` and `cursor` are mutually exclusive (validated), so their absence
+    // together is the fresh first page of a cursor walk.
+    if params.offset.is_some() {
+        let pagination_total =
+            i64::try_from(total).map_err(|error| internal_problem(format!("registration count does not fit offset pagination: {error}"), &uri))?;
+        let links = PageLinks::Offset {
+            offset,
+            extent: PageExtent::Total(pagination_total),
+        };
+        append_pagination_links(&mut response, &uri, limit, links, accept.media_type());
+    } else if let Some((first, last)) = boundary {
+        let neighbours = PageCursor::neighbours(incoming_cursor.as_ref(), first, last, page_full);
+        let links = PageLinks::Cursor(CursorPointers {
+            prev: neighbours.prev.map(|cursor| cursor.encode()),
+            next: neighbours.next.map(|cursor| cursor.encode()),
+            last: Some(neighbours.last.encode()),
+        });
+        append_pagination_links(&mut response, &uri, limit, links, accept.media_type());
+    }
     Ok(response)
 }
 

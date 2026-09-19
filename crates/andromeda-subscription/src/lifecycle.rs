@@ -12,6 +12,7 @@ use crate::{
     error::SubscriptionError,
     fields,
     forwarding_hook::SubscriptionForwardingHook,
+    keyset_listing::KeysetListing,
     status::compute_updated_status,
     store::{StatusUpdateFields, SubscriptionStore},
     subscription_validation_reason::SubscriptionValidationReason,
@@ -29,6 +30,7 @@ use andromeda_ngsi_ld_lexicon::{
     uri::{NGSI_LD_URN_NID, Uri},
 };
 use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
+use andromeda_ngsi_ld_query::cursor::PageCursor;
 use andromeda_telemetry::subscription_ops::{self, SubscriptionOperation};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
@@ -236,6 +238,47 @@ where
             compacted.push(self.variant.serialize_for_response(&subscription, context).await?);
         }
         Ok((compacted, total))
+    }
+
+    /// List subscriptions by keyset for a stable-pagination response
+    /// (clause 5.5.9.1), serializing them and reporting the boundary the
+    /// neighbouring cursors are built from.
+    ///
+    /// `cursor` is the opaque position the request continued from, `None` on the
+    /// first page. The listing comes back in ascending identifier order (the
+    /// store reverses a backward or from-end page), so the first and last
+    /// identifiers are the page's boundary; they are captured before the
+    /// resources are serialized, which drops the typed identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubscriptionError::Persistence`] when the store cannot be
+    /// read, and [`SubscriptionError::JsonLd`] when `context` cannot be
+    /// resolved or one of the listed resources cannot be compacted against it.
+    pub async fn list_keyset_for_response(
+        &self,
+        target: &ContextTarget,
+        cursor: Option<&PageCursor>,
+        limit: i64,
+        context: &ContextSpec,
+    ) -> Result<KeysetListing, SubscriptionError> {
+        let (subscriptions, total) = self.repo.list_keyset(target, cursor, limit).await?;
+        // clone: the boundary owns the two identifiers the cursor pointers are
+        // built from, while the subscriptions themselves are consumed by the
+        // serialization below.
+        let boundary = subscriptions
+            .first()
+            .map(|subscription| subscription.id.clone())
+            .zip(subscriptions.last().map(|subscription| subscription.id.clone()));
+        let mut compacted = Vec::with_capacity(subscriptions.len());
+        for subscription in subscriptions {
+            compacted.push(self.variant.serialize_for_response(&subscription, context).await?);
+        }
+        Ok(KeysetListing {
+            subscriptions: compacted,
+            total,
+            boundary,
+        })
     }
 
     /// Update an existing subscription with the given fragment payload.

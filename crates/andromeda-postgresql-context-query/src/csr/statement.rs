@@ -12,12 +12,12 @@ use crate::csr::{
     temporal_partition::temporal_partition,
     unnesting::{entity_axis_covers, information_item_matches},
 };
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, geo::query::GeoQuery};
+use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, cursor::PageCursor, geo::query::GeoQuery};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBSERVATION_SPACE, OPERATION_SPACE};
 use andromeda_postgresql_query::{dictionary::resolved_names::ResolvedNames, error::RenderError, geo_predicate as geo_sql, geo_predicate::GeometrySource};
 use andromeda_postgresql_schema::csr::Csr;
 use andromeda_postgresql_seaquery::{aggregate::count_all, cast::cast, pg_type::PostgresType, postgis::geometry_as_geojson};
-use sea_query::{Condition, Expr as SeaExpr, Order, Query, SelectStatement};
+use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Order, Query, SelectStatement};
 
 /// A compiled CSR discovery query: the paginated result statement and its count,
 /// each a statement tree the store binds and executes on its own.
@@ -86,14 +86,8 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<CsrQuery, RenderError
         .column(Csr::AdditionalProperties)
         .from(Csr::Table)
         // clone: the count statement filters on the same condition
-        .cond_where(condition.clone())
-        // `id` breaks ties on `created_at`: two registrations minted in the same
-        // microsecond would otherwise straddle a page boundary inconsistently
-        // across executions (clause 5.5.9 requires a stable order).
-        .order_by(Csr::CreatedAt, Order::Asc)
-        .order_by(Csr::Id, Order::Asc)
-        .limit(u64::from(query.pagination.limit))
-        .offset(u64::from(query.pagination.offset));
+        .cond_where(condition.clone());
+    apply_csr_window(&mut select, query);
 
     // Count query always generated for CSR
     let mut count = Query::select();
@@ -103,6 +97,52 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<CsrQuery, RenderError
         select: select.take(),
         count: count.take(),
     })
+}
+
+/// Add the result window and its ordering to a discovery statement.
+///
+/// In offset mode (clause 5.5.9.2) the page is `LIMIT`/`OFFSET` over
+/// `created_at` with `id` breaking ties: two registrations minted in the same
+/// microsecond would otherwise straddle a page boundary inconsistently across
+/// executions, which clause 5.5.9 forbids. In keyset mode (clause 5.5.9.1) the
+/// page walks the registration `id` alone, dropping the `offset` for the
+/// direction-appropriate predicate and ordering.
+fn apply_csr_window(select: &mut SelectStatement, query: &CompiledCsrQuery) {
+    match &query.keyset {
+        None => {
+            select
+                .order_by(Csr::CreatedAt, Order::Asc)
+                .order_by(Csr::Id, Order::Asc)
+                .limit(u64::from(query.pagination.limit))
+                .offset(u64::from(query.pagination.offset));
+        }
+        Some(cursor) => {
+            apply_csr_keyset(select, cursor);
+            select.limit(u64::from(query.pagination.limit));
+        }
+    }
+}
+
+/// Add the keyset predicate and `id` ordering for one cursor direction
+/// (clause 5.5.9.1).
+///
+/// A backward or from-end page is ordered descending so a single `id` index
+/// scan serves it, and reversed to ascending where the store reads the rows
+/// back.
+fn apply_csr_keyset(select: &mut SelectStatement, cursor: &PageCursor) {
+    match cursor {
+        PageCursor::After(id) => {
+            select.and_where(SeaExpr::col(Csr::Id).gt(id.as_str()));
+            select.order_by(Csr::Id, Order::Asc);
+        }
+        PageCursor::Before(id) => {
+            select.and_where(SeaExpr::col(Csr::Id).lt(id.as_str()));
+            select.order_by(Csr::Id, Order::Desc);
+        }
+        PageCursor::End => {
+            select.order_by(Csr::Id, Order::Desc);
+        }
+    }
 }
 
 /// Builds sea-query Condition from compiled CSR query filters.
@@ -306,6 +346,47 @@ mod tests {
         let q = empty_query();
         let built = build(&q);
         assert!(built.sql.contains("ORDER BY \"created_at\" ASC, \"id\" ASC"), "{}", built.sql);
+    }
+
+    /// Clause 5.5.9.1: a forward cursor pages `id > boundary` ascending over the
+    /// registration id, replacing the offset window.
+    #[test]
+    fn a_forward_cursor_pages_id_ascending_past_the_boundary() {
+        let mut q = empty_query();
+        q.keyset = Some(PageCursor::After("urn:ngsi-ld:Csr:010".parse().expect("valid URI")));
+        let built = build(&q);
+        assert!(built.sql.contains(r#""id" > 'urn:ngsi-ld:Csr:010'"#), "{}", built.sql);
+        assert!(built.sql.contains(r#"ORDER BY "id" ASC"#), "{}", built.sql);
+        assert!(!built.sql.contains("OFFSET"), "keyset mode drops OFFSET: {}", built.sql);
+        assert!(!built.sql.contains(r#"ORDER BY "created_at""#), "keyset mode orders by id alone: {}", built.sql);
+    }
+
+    /// Clause 5.5.9.1: a backward cursor pages `id < boundary` descending (the
+    /// store reverses the rows to ascending for display).
+    #[test]
+    fn a_backward_cursor_pages_id_descending_before_the_boundary() {
+        let mut q = empty_query();
+        q.keyset = Some(PageCursor::Before("urn:ngsi-ld:Csr:010".parse().expect("valid URI")));
+        let built = build(&q);
+        assert!(built.sql.contains(r#""id" < 'urn:ngsi-ld:Csr:010'"#), "{}", built.sql);
+        assert!(built.sql.contains(r#"ORDER BY "id" DESC"#), "{}", built.sql);
+        assert!(!built.sql.contains("OFFSET"), "{}", built.sql);
+    }
+
+    /// Clause 5.5.9.1: the from-end cursor pages the last ids descending with no
+    /// boundary predicate.
+    #[test]
+    fn a_from_end_cursor_pages_the_last_ids_descending() {
+        let mut q = empty_query();
+        q.keyset = Some(PageCursor::End);
+        let built = build(&q);
+        assert!(built.sql.contains(r#"ORDER BY "id" DESC"#), "{}", built.sql);
+        assert!(
+            !built.sql.contains(r#""id" >"#) && !built.sql.contains(r#""id" <"#),
+            "no boundary predicate: {}",
+            built.sql
+        );
+        assert!(!built.sql.contains("OFFSET"), "{}", built.sql);
     }
 
     #[test]

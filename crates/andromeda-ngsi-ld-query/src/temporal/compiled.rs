@@ -1,6 +1,7 @@
 //! The compiled, context-expanded form of a temporal query.
 
 use crate::{
+    cursor::PageCursor,
     entity_selection::EntitySelection,
     pagination::Pagination,
     projection::compiled::Projection,
@@ -45,4 +46,15 @@ pub struct CompiledTemporalQuery {
     /// collation into the comparison.
     #[builder(default = Default::default())]
     pub ordering: Option<TemporalEntityOrdering>,
+    /// The keyset position a stable-pagination cursor resolved to, when the
+    /// request carried one (clause 5.5.9.1).
+    ///
+    /// `Some` puts stage 1 into keyset mode over the entity-`id` element order:
+    /// it replaces the `offset` in [`Pagination`] with the direction-appropriate
+    /// `WHERE`/`ORDER BY` over `temporal_entities.id`, and a backward or from-end
+    /// page is reversed to ascending where the identifiers are read back. It
+    /// governs only the element dimension of temporal pagination, never the
+    /// temporal-window (`Content-Range`) dimension.
+    #[builder(default = None)]
+    pub keyset: Option<PageCursor>,
 }

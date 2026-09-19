@@ -55,6 +55,8 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::DatasetIdWithDeleteAll
         | ParameterError::Projection(_)
         | ParameterError::LimitZeroWithoutCount
+        | ParameterError::CursorWithOffset
+        | ParameterError::CursorInvalid(_)
         | ParameterError::ProjectionLinkedTermsWithoutJoin
         | ParameterError::ProjectionDepthExceedsJoinLevel { .. }
         | ParameterError::FilterTraversalWithoutJoin

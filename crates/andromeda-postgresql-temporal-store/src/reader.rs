@@ -20,7 +20,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
-use andromeda_ngsi_ld_query::{pagination::CountPolicy, temporal::compiled::CompiledTemporalQuery};
+use andromeda_ngsi_ld_query::{cursor::PageCursor, pagination::CountPolicy, temporal::compiled::CompiledTemporalQuery};
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
@@ -193,7 +193,7 @@ impl TemporalHistoryReader for TemporalRepository {
             .await
             .map_err(|e| TemporalStoreError::Query(e.to_string()))?;
 
-        let entity_ids = entity_id_rows
+        let mut entity_ids = entity_id_rows
             .into_iter()
             .map(|row| {
                 let raw: String = row.try_get("entity_id")?;
@@ -201,6 +201,13 @@ impl TemporalHistoryReader for TemporalRepository {
                     .map_err(|error| TemporalStoreError::Decode(format!("Invalid temporal entity_id '{raw}': {error}")))
             })
             .collect::<Result<Vec<_>, _>>()?;
+        // Clause 5.5.9.1: a backward or from-end keyset page was read descending
+        // so one index scan could serve it; present it ascending, the order every
+        // element page shows.
+        if matches!(compiled.keyset, Some(PageCursor::Before(_) | PageCursor::End)) {
+            entity_ids.reverse();
+        }
+        let entity_ids = entity_ids;
 
         let total_count = if compiled.pagination.count == CountPolicy::Emit {
             let count = stage1.count.ok_or_else(|| TemporalStoreError::Query("Count SQL not built".to_string()))?;

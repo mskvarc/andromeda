@@ -1,6 +1,7 @@
 //! The compiled form of a Context Source Registration discovery query.
 
 use crate::{
+    cursor::PageCursor,
     dataset::DatasetSelector,
     filter::expression::Expr,
     geo::query::GeoQuery,
@@ -58,6 +59,15 @@ pub struct CompiledCsrQuery {
     /// Result window: limit, offset (count ignored for CSR queries).
     #[builder(default = Pagination::DEFAULT)]
     pub pagination: Pagination,
+    /// The keyset position a stable-pagination cursor resolved to, when the
+    /// discovery request carried one (clause 5.5.9.1).
+    ///
+    /// `Some` puts the store into keyset mode over the registration `id`: it
+    /// drops the `offset` for the direction-appropriate `WHERE`/`ORDER BY`, and
+    /// a backward or from-end page is reversed to ascending where the rows are
+    /// read back. Held beside [`Pagination`] because it is a per-request
+    /// position, not a compiled property of the discovery.
+    pub keyset: Option<PageCursor>,
 }
 
 /// Temporal filter component of a CSR query.

@@ -19,16 +19,16 @@ use andromeda_http_headers::via::Via;
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     headers::with_location,
-    pagination::{PageExtent, append_pagination_links},
+    pagination::{CursorPointers, PageExtent, PageLinks, append_pagination_links},
     problem_response::ProblemResponse,
     render::start_rendering_normalized,
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
-use andromeda_ngsi_ld_query::pagination::CountPolicy;
+use andromeda_ngsi_ld_query::{cursor::PageCursor, pagination::CountPolicy};
 use andromeda_ngsi_ld_render::{response::ResponsePayload, subscription::SubscriptionRenderer};
-use andromeda_ngsi_ld_request::{empty::EmptyParams, subscription::ListParams};
+use andromeda_ngsi_ld_request::{empty::EmptyParams, pagination_cursor::decode_cursor, subscription::ListParams};
 use axum::{
     extract::OriginalUri,
     http::StatusCode,
@@ -105,22 +105,36 @@ pub async fn query(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.subscriptions;
     let context: ContextSpec = context.into_inner();
+    // `list_options` also holds the clause 5.5.9 cursor/offset mutual exclusion.
     let options = params.list_options().with_subscription_instance(&uri)?;
+    let incoming = decode_cursor(params.cursor.as_deref()).with_subscription_instance(&uri)?;
 
-    let (limit, offset) = match (params.limit, params.offset) {
-        (Some(limit), Some(offset)) => (limit, offset),
-        (Some(limit), None) => (limit, 0),
-        (None, Some(offset)) => (100, offset),
-        (None, None) => (100, 0),
-    };
+    let limit = params.limit.unwrap_or(100);
     if limit == 0 && options.count == CountPolicy::Omit {
         return Err(public_problem("limit=0 requires the count option (clause 6.3.10)", &uri));
     }
 
-    let (subscriptions, total) = service
-        .list_for_response(&target, Some(i64::from(limit)), Some(i64::from(offset)), &context)
-        .await
-        .with_subscription_instance(&uri)?;
+    // Clause 5.5.9.1: the subscription listing is locally scoped and ordered by
+    // its identifier, so by default it walks by opaque cursor; an explicit
+    // `offset` keeps the clause 5.5.9.2 offset listing.
+    let (subscriptions, links, total) = if let Some(offset) = params.offset {
+        let (subscriptions, total) = service
+            .list_for_response(&target, Some(i64::from(limit)), Some(i64::from(offset)), &context)
+            .await
+            .with_subscription_instance(&uri)?;
+        let links = Some(PageLinks::Offset {
+            offset: i64::from(offset),
+            extent: PageExtent::Total(total),
+        });
+        (subscriptions, links, total)
+    } else {
+        let listing = service
+            .list_keyset_for_response(&target, incoming.as_ref(), i64::from(limit), &context)
+            .await
+            .with_subscription_instance(&uri)?;
+        let links = cursor_links(incoming.as_ref(), listing.boundary, listing.subscriptions.len(), limit);
+        (listing.subscriptions, links, listing.total)
+    };
 
     let subscriptions = subscriptions
         .into_iter()
@@ -141,15 +155,23 @@ pub async fn query(
     }
 
     let mut response = response.into_response();
-    append_pagination_links(
-        &mut response,
-        &uri,
-        i64::from(limit),
-        i64::from(offset),
-        PageExtent::Total(total),
-        accept.media_type(),
-    );
+    if let Some(links) = links {
+        append_pagination_links(&mut response, &uri, i64::from(limit), links, accept.media_type());
+    }
     Ok(response)
+}
+
+/// The opaque cursor pointers a keyset subscription page offers (clause
+/// 5.5.9.1), or `None` when the page is empty and points at nothing.
+fn cursor_links(incoming: Option<&PageCursor>, boundary: Option<(Uri, Uri)>, returned: usize, limit: u32) -> Option<PageLinks> {
+    let (first, last) = boundary?;
+    let full = returned == limit as usize;
+    let neighbours = PageCursor::neighbours(incoming, first, last, full);
+    Some(PageLinks::Cursor(CursorPointers {
+        prev: neighbours.prev.map(|cursor| cursor.encode()),
+        next: neighbours.next.map(|cursor| cursor.encode()),
+        last: Some(neighbours.last.encode()),
+    }))
 }
 
 /// PATCH /ngsi-ld/v1/subscriptions/{subscription_id} -- Update a subscription.

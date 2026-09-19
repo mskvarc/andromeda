@@ -5,6 +5,7 @@ use crate::{
     attribute_selection::{AttrsAdmission, validate_attrs},
     error::ParameterError,
     linked_retrieval_consistency::{validate_filter_join_depth, validate_projection_join_depth},
+    pagination_cursor::validate_cursor_offset_exclusion,
     query_narrowing::{AdmittedNarrowings, ExecutionScope, NarrowingInputs, require_narrowing},
     representation_parameter::{resolve_representation, supported_option},
 };
@@ -125,6 +126,9 @@ impl EntityQueryParameters {
         if self.limit == Some(0) && self.count != Some(true) {
             return Err(ParameterError::LimitZeroWithoutCount);
         }
+        // Clause 5.5.9: an opaque `cursor` (5.5.9.1) and an `offset` (5.5.9.2)
+        // page by different mechanisms and cannot both govern the same request.
+        validate_cursor_offset_exclusion(self.cursor.as_deref(), self.offset)?;
         validate_projection_join_depth(self.pick.as_deref(), self.omit.as_deref(), self.join, self.join_level)?;
         // Clause 5.7.2.4: a `q` hop walks into a Linked Entity, and how far the
         // broker may walk is what the join parameters state.

@@ -55,6 +55,9 @@ pub(crate) struct TemporalCollectionMetadata {
     /// How many matching entities that page carried, counted before a flat
     /// clause 4.5.23 join appended the entities they link to.
     pub(crate) returned: usize,
+    /// The first and last identifiers of the matching page, from which a cursor
+    /// pointer is computed (clause 5.5.9.1); absent when the page is empty.
+    pub(crate) boundary: Option<(NgsiLdUri, NgsiLdUri)>,
 }
 
 /// Render the queried collection and assemble the response around it.
@@ -80,6 +83,7 @@ pub(crate) fn query_response(
         entity_map_uri,
         page,
         returned,
+        boundary,
     } = metadata;
     // Table 6.18.3.2-2 carries the 203 row and clause 6.3.6 the
     // `Preference-Applied` echo, so the preference the request expressed is the
@@ -109,6 +113,6 @@ pub(crate) fn query_response(
     // links bound how many entities the page carries. Neither suppresses the
     // other, so a truncated page still says whether more matches follow.
     let mut response = response.into_response();
-    page.append_links(&mut response, instance, accept.media_type(), total_count, returned);
+    page.append_links(&mut response, instance, accept.media_type(), total_count, returned, boundary);
     Ok(response)
 }

@@ -20,6 +20,10 @@ pub(crate) struct QueryCollectionMetadata {
     /// How many matching entities the page carried, which decides whether a
     /// following page exists (clause 6.3.10).
     pub(crate) returned: usize,
+    /// The first and last identifiers of the page as displayed, from which a
+    /// cursor pointer is computed (clause 5.5.9.1); absent when the page is
+    /// empty.
+    pub(crate) boundary: Option<(Uri, Uri)>,
 }
 
 /// Assemble the response around a rendered collection.
@@ -36,6 +40,7 @@ pub(crate) fn query_response(
         total_count,
         entity_map_uri,
         returned,
+        boundary,
     } = metadata;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
     if let Some(count) = total_count
@@ -47,6 +52,6 @@ pub(crate) fn query_response(
         response = response.with_entity_map_uri(map_uri);
     }
     let mut response = response.into_response();
-    page.append_links(&mut response, instance, media_type, total_count, returned);
+    page.append_links(&mut response, instance, media_type, total_count, returned, boundary);
     response
 }

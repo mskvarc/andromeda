@@ -18,16 +18,17 @@ use andromeda_http_headers::via::Via;
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     headers::with_location,
-    pagination::{PageExtent, append_pagination_links},
+    pagination::{CursorPointers, PageExtent, PageLinks, append_pagination_links},
     problem_response::ProblemResponse,
     render::start_rendering_normalized,
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
-use andromeda_ngsi_ld_query::pagination::CountPolicy;
+use andromeda_ngsi_ld_query::{cursor::PageCursor, pagination::CountPolicy};
 use andromeda_ngsi_ld_render::{response::ResponsePayload, subscription::SubscriptionRenderer};
-use andromeda_ngsi_ld_request::{csource_subscription::ListParams, empty::EmptyParams};
+use andromeda_ngsi_ld_request::{csource_subscription::ListParams, empty::EmptyParams, pagination_cursor::decode_cursor};
+use andromeda_subscription::keyset_listing::KeysetListing;
 use axum::{
     extract::OriginalUri,
     http::StatusCode,
@@ -105,23 +106,43 @@ pub async fn query(
     let service = &state.csource_subscriptions;
     let context: ContextSpec = context.into_inner();
     let options = params.list_options().with_subscription_instance(&uri)?;
+    // Clause 5.5.9.1: the opaque cursor is decoded here so a malformed one is a
+    // BadRequestData rather than surfacing from the store; its exclusion with
+    // offset was already held by `list_options`.
+    let incoming = decode_cursor(params.cursor.as_deref()).with_subscription_instance(&uri)?;
 
-    let (limit, offset) = match (params.limit, params.offset) {
-        (Some(limit), Some(offset)) => (limit, offset),
-        (Some(limit), None) => (limit, 0),
-        (None, Some(offset)) => (100, offset),
-        (None, None) => (100, 0),
-    };
+    let limit = params.limit.unwrap_or(100);
     if limit == 0 && options.count == CountPolicy::Omit {
         return Err(public_problem("limit=0 requires the count option (clause 6.3.10)", &uri));
     }
 
-    let (subscriptions, total) = service
-        .list_for_response(&state.live_target, Some(i64::from(limit)), Some(i64::from(offset)), &context)
-        .await
-        .with_subscription_instance(&uri)?;
+    // Clause 5.5.9.2 vs 5.5.9.1: an explicit `offset` pages by offset, while its
+    // absence walks the collection by opaque cursor over the identifier order --
+    // the default, and what a followed `prev`/`next`/`last` continues.
+    let (compacted, total, links) = if let Some(offset) = params.offset {
+        let (subscriptions, total) = service
+            .list_for_response(&state.live_target, Some(i64::from(limit)), Some(i64::from(offset)), &context)
+            .await
+            .with_subscription_instance(&uri)?;
+        let links = PageLinks::Offset {
+            offset: i64::from(offset),
+            extent: PageExtent::Total(total),
+        };
+        (subscriptions, total, Some(links))
+    } else {
+        let KeysetListing {
+            subscriptions,
+            total,
+            boundary,
+        } = service
+            .list_keyset_for_response(&state.live_target, incoming.as_ref(), i64::from(limit), &context)
+            .await
+            .with_subscription_instance(&uri)?;
+        let links = keyset_page_links(incoming.as_ref(), boundary, subscriptions.len(), limit);
+        (subscriptions, total, links)
+    };
 
-    let subscriptions = subscriptions
+    let subscriptions = compacted
         .into_iter()
         .map(|sub| SubscriptionRenderer::new(sub).with_sys_attrs(options.sys_attrs).render())
         .collect::<Vec<_>>();
@@ -140,15 +161,29 @@ pub async fn query(
     }
 
     let mut response = response.into_response();
-    append_pagination_links(
-        &mut response,
-        &uri,
-        i64::from(limit),
-        i64::from(offset),
-        PageExtent::Total(total),
-        accept.media_type(),
-    );
+    // An empty cursor page has no boundary to walk from, so it carries no
+    // pointers, matching the offset path's silence on an empty collection.
+    if let Some(links) = links {
+        append_pagination_links(&mut response, &uri, i64::from(limit), links, accept.media_type());
+    }
     Ok(response)
+}
+
+/// Build the clause 5.5.9.1 cursor pointers for a keyset page from its boundary.
+///
+/// Returns `None` for an empty page, which has no boundary to page from and so
+/// carries no pointers. Otherwise the neighbouring cursors are computed from the
+/// first and last identifiers and whether the page filled the limit, then
+/// encoded into the opaque tokens the `Link` header carries.
+fn keyset_page_links(incoming: Option<&PageCursor>, boundary: Option<(Uri, Uri)>, returned: usize, limit: u32) -> Option<PageLinks> {
+    let (first, last) = boundary?;
+    let full = returned >= limit as usize;
+    let neighbours = PageCursor::neighbours(incoming, first, last, full);
+    Some(PageLinks::Cursor(CursorPointers {
+        prev: neighbours.prev.map(|cursor| cursor.encode()),
+        next: neighbours.next.map(|cursor| cursor.encode()),
+        last: Some(neighbours.last.encode()),
+    }))
 }
 
 /// PATCH /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Update a context source subscription.

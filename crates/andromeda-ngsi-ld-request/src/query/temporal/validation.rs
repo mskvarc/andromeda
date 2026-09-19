@@ -9,6 +9,7 @@ use crate::{
     attribute_selection::{AttrsAdmission, validate_attrs},
     error::ParameterError,
     linked_retrieval_consistency::{validate_filter_join_depth, validate_projection_join_depth},
+    pagination_cursor::validate_cursor_offset_exclusion,
     query::temporal::TemporalQueryParameters,
     query_narrowing::{AdmittedNarrowings, ExecutionScope, NarrowingInputs, require_narrowing},
     representation_parameter::{WrittenValue, resolve_representation, selected_representation},
@@ -220,6 +221,10 @@ impl TemporalQueryParameters {
             return Err(ParameterError::AggrMethodsRequired);
         }
         self.validate_grouping()?;
+        // Clause 5.5.9: an opaque `cursor` (5.5.9.1) and an `offset` (5.5.9.2)
+        // page the element dimension by different mechanisms and cannot both
+        // govern one request.
+        validate_cursor_offset_exclusion(self.cursor.as_deref(), self.offset)?;
         Ok(())
     }
 

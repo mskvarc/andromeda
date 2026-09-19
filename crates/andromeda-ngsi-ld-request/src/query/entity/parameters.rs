@@ -78,6 +78,14 @@ pub struct EntityQueryParameters {
     pub limit: Option<u32>,
     /// How many results to skip before the page (`offset`).
     pub offset: Option<u32>,
+    /// The opaque, keyset-backed pagination pointer (clause 5.5.9.1).
+    ///
+    /// A broker-emitted token carried inside a `prev`/`next`/`last` `Link`; the
+    /// client only passes it back by following the link and never authors or
+    /// reads it. It is declared here so `#[serde(deny_unknown_fields)]` admits it
+    /// and so its mutual exclusion with `offset` can be validated. Its contents
+    /// are opaque (see `docs/conformance/stable-pagination.md`).
+    pub cursor: Option<String>,
     /// Whether the response reports the total number of matches (`count`).
     pub count: Option<bool>,
     /// Typed representation and system-attribute options (`options`).

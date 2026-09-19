@@ -15,6 +15,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::{
+    cursor::PageCursor,
     dataset::DatasetFilter,
     entity_selection::{ConsideredEntities, EntitySelector},
     pagination::CountPolicy,
@@ -87,22 +88,33 @@ pub fn build_stage1_entity_ids(schema: Option<&DynIden>, compiled: &CompiledTemp
     // declared `COLLATE "C"`, so an unstated comparison is byte-wise and the
     // collation Table 6.18.3.2-1 says the payload "shall be ordered according
     // to" would have no effect at all.
-    if let Some(ordering) = compiled.ordering.as_ref() {
-        order_by_entity_identifier(
-            &mut select,
-            SeaExpr::col((E, TemporalEntities::Id)),
-            ordering.direction,
-            &ordering_collation(ordering.collation.as_ref()),
-        );
-    }
+    match &compiled.keyset {
+        None => {
+            if let Some(ordering) = compiled.ordering.as_ref() {
+                order_by_entity_identifier(
+                    &mut select,
+                    SeaExpr::col((E, TemporalEntities::Id)),
+                    ordering.direction,
+                    &ordering_collation(ordering.collation.as_ref()),
+                );
+            }
 
-    // Clause 5.5.9 asks for a consistent order across pages whether or not one
-    // was requested: `LIMIT`/`OFFSET` over an otherwise unordered result can
-    // repeat and skip rows between pages.
-    select
-        .order_by((E, TemporalEntities::Id), Order::Asc)
-        .limit(u64::from(compiled.pagination.limit))
-        .offset(u64::from(compiled.pagination.offset));
+            // Clause 5.5.9 asks for a consistent order across pages whether or not
+            // one was requested: `LIMIT`/`OFFSET` over an otherwise unordered
+            // result can repeat and skip rows between pages.
+            select
+                .order_by((E, TemporalEntities::Id), Order::Asc)
+                .limit(u64::from(compiled.pagination.limit))
+                .offset(u64::from(compiled.pagination.offset));
+        }
+        // Clause 5.5.9.1: keyset over the element dimension's default `id` order.
+        // Restricted to the default order, so no requested `orderBy` is present
+        // and the `OFFSET` gives way to the direction-appropriate predicate.
+        Some(cursor) => {
+            apply_stage1_keyset(&mut select, cursor);
+            select.limit(u64::from(compiled.pagination.limit));
+        }
+    }
 
     let count = if compiled.pagination.count == CountPolicy::Emit {
         let mut count_select = SelectStatement::new();
@@ -117,6 +129,31 @@ pub fn build_stage1_entity_ids(schema: Option<&DynIden>, compiled: &CompiledTemp
     };
 
     Ok(Stage1Query { select: select.take(), count })
+}
+
+/// Add the keyset predicate and ordering for one cursor direction over the
+/// element dimension (clause 5.5.9.1).
+///
+/// The predicate and the ordering both read `temporal_entities.id` bare, which
+/// is declared `COLLATE "C"`, so they share the byte-wise order of the implicit
+/// `id` tiebreaker in either direction. A backward or from-end page is ordered
+/// descending and reversed to ascending where the store reads the identifiers
+/// back. The count statement is built separately and never carries the keyset,
+/// so a counted cursor query still reports the whole collection's total.
+fn apply_stage1_keyset(select: &mut SelectStatement, cursor: &PageCursor) {
+    match cursor {
+        PageCursor::After(id) => {
+            select.and_where(SeaExpr::col((E, TemporalEntities::Id)).gt(SeaExpr::val(id.as_str())));
+            select.order_by((E, TemporalEntities::Id), Order::Asc);
+        }
+        PageCursor::Before(id) => {
+            select.and_where(SeaExpr::col((E, TemporalEntities::Id)).lt(SeaExpr::val(id.as_str())));
+            select.order_by((E, TemporalEntities::Id), Order::Desc);
+        }
+        PageCursor::End => {
+            select.order_by((E, TemporalEntities::Id), Order::Desc);
+        }
+    }
 }
 
 /// Build the correlated stream/history predicate shared by result and count.
@@ -358,6 +395,7 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
     use andromeda_ngsi_ld_query::{
+        cursor::PageCursor,
         entity_selection::{EntitySelection, EntitySelector},
         filter::parser,
         geo::query::GeoQuery,
@@ -839,5 +877,58 @@ mod tests {
         compiled.ordering = Some(TemporalEntityOrdering::builder().direction(SortDirection::Ascending).build());
         let sql = built_count(&compiled, &QueryNames::default());
         assert!(!sql.contains("ORDER BY"), "{sql}");
+    }
+
+    fn boundary(id: &str) -> Uri {
+        id.parse().expect("valid URI")
+    }
+
+    /// Clause 5.5.9.1: a forward cursor pages the element dimension past the
+    /// boundary id over the default order -- `WHERE id > $x ORDER BY id ASC` and
+    /// no `OFFSET`.
+    #[test]
+    fn stage1_keyset_after_pages_forward_ascending_without_offset() {
+        let mut compiled = minimal_compiled();
+        compiled.keyset = Some(PageCursor::After(boundary("urn:ngsi-ld:Vehicle:001")));
+        let (sql, _) = built(&compiled, &QueryNames::default());
+        assert!(sql.contains(r#""e"."id" > $"#), "{sql}");
+        assert!(sql.contains(r#"ORDER BY "e"."id" ASC"#), "{sql}");
+        assert!(!sql.contains("OFFSET"), "a keyset page never skips: {sql}");
+    }
+
+    /// Clause 5.5.9.1: a backward cursor pages before the boundary over the
+    /// reversed order -- `WHERE id < $x ORDER BY id DESC` -- which the store
+    /// reverses to ascending after fetching.
+    #[test]
+    fn stage1_keyset_before_pages_backward_descending_without_offset() {
+        let mut compiled = minimal_compiled();
+        compiled.keyset = Some(PageCursor::Before(boundary("urn:ngsi-ld:Vehicle:042")));
+        let (sql, _) = built(&compiled, &QueryNames::default());
+        assert!(sql.contains(r#""e"."id" < $"#), "{sql}");
+        assert!(sql.contains(r#"ORDER BY "e"."id" DESC"#), "{sql}");
+        assert!(!sql.contains("OFFSET"), "{sql}");
+    }
+
+    /// Clause 5.5.9.1: the from-end cursor takes the final page -- `ORDER BY id
+    /// DESC`, no boundary predicate -- which the store reverses to ascending.
+    #[test]
+    fn stage1_keyset_end_takes_the_final_page_descending() {
+        let mut compiled = minimal_compiled();
+        compiled.keyset = Some(PageCursor::End);
+        let (sql, _) = built(&compiled, &QueryNames::default());
+        assert!(sql.contains(r#"ORDER BY "e"."id" DESC"#), "{sql}");
+        assert!(!sql.contains(r#""e"."id" >"#) && !sql.contains(r#""e"."id" <"#), "no boundary predicate: {sql}");
+        assert!(!sql.contains("OFFSET"), "{sql}");
+    }
+
+    /// The count statement ignores the keyset, so a counted cursor page still
+    /// reports the whole collection's total rather than the remaining tail.
+    #[test]
+    fn a_keyset_count_still_counts_the_whole_collection() {
+        let mut compiled = minimal_compiled();
+        compiled.pagination.count = CountPolicy::Emit;
+        compiled.keyset = Some(PageCursor::After(boundary("urn:ngsi-ld:Vehicle:001")));
+        let sql = built_count(&compiled, &QueryNames::default());
+        assert!(!sql.contains(r#""e"."id" >"#), "the count is not narrowed by the cursor: {sql}");
     }
 }

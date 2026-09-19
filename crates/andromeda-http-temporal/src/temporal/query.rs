@@ -49,7 +49,7 @@ use andromeda_http_extraction::{context_target, prefer::PreferHeader};
 use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, via::Via};
 use andromeda_http_response::pagination::PagePointers;
 use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
-use andromeda_ngsi_ld_request::{error::ParameterError, join_traversal::RetrievingJoin};
+use andromeda_ngsi_ld_request::{error::ParameterError, join_traversal::RetrievingJoin, pagination_cursor::decode_cursor};
 use andromeda_temporal::{error::TemporalError, linked::candidates::TemporalLinkedCandidate, service::TemporalQueryWarning};
 use axum::{
     Extension,
@@ -260,10 +260,15 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     let AdmittedQuery { prefer, incoming_via, map_use } = admit_request(&state, &target, &context, protocol, &mut params, &uri).await?;
     let key_values = params.is_simplified();
 
+    // Clause 5.5.9.1: decode the opaque pagination cursor before the page is
+    // planned, so a malformed one is a BadRequestData here rather than surfacing
+    // from the store. Its mutual exclusion with offset was already held by
+    // validation.
+    let incoming_cursor = decode_cursor(params.cursor.as_deref()).with_instance(&uri)?;
     // Clause 6.3.10: the page the client asked for, read before the merge
     // widens the local query below, so the links point at the client's own
     // window rather than at the widened one.
-    let page = QueriedPage::of(&params, pointers);
+    let page = QueriedPage::of(&params, pointers, incoming_cursor);
 
     let scope = QueryScope::of(&target, &params);
 
@@ -316,6 +321,10 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     // Clause 6.3.10 pages the matching entities; a flat join appends the
     // entities they link to, which accompany the page rather than filling it.
     let returned = entities.len();
+    // Clause 5.5.9.1: the boundary a cursor pointer walks from is the first and
+    // last identifiers of the matching page, captured here before the flat join
+    // appends the linked entities the page must not point past.
+    let page_boundary = element_boundary(&entities);
 
     // Join mode (clause 4.5.23) is parsed at the query boundary. `@none` and an
     // absent `join` retrieve no linked entity at all, so neither reaches the
@@ -369,9 +378,22 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
             entity_map_uri,
             page,
             returned,
+            boundary: page_boundary,
         },
         &uri,
     )
+}
+
+/// The first and last entity identifiers of the matching element page, from
+/// which a clause 5.5.9.1 cursor pointer is computed.
+///
+/// Absent when the page is empty or when an entity carries no readable `id`, in
+/// which case the cursor pointers are not offered and the offset path stands.
+fn element_boundary(entities: &[Value]) -> Option<(NgsiLdUri, NgsiLdUri)> {
+    let id_of = |entity: &Value| entity.get("id").and_then(Value::as_str).and_then(|id| id.parse::<NgsiLdUri>().ok());
+    let first = entities.first().and_then(&id_of)?;
+    let last = entities.last().and_then(&id_of)?;
+    Some((first, last))
 }
 
 /// Record the non-fatal per-entity failures a temporal query collected.

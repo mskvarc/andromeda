@@ -17,12 +17,18 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, entity::compiled::CompiledEntityQuery, pagination::CountPolicy, projection::compiled::Projection};
+use andromeda_ngsi_ld_query::{
+    cursor::PageCursor,
+    dataset::DatasetSelector,
+    entity::compiled::CompiledEntityQuery,
+    pagination::CountPolicy,
+    projection::compiled::Projection,
+};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
+use andromeda_ngsi_ld_request::{pagination_cursor::decode_cursor, query::entity::parameters::EntityQueryParameters};
 use andromeda_telemetry::entity::{self, EntityOperation};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 /// What a clause 5.6.3 retrieval narrows the retrieved entity down to.
 ///
@@ -125,6 +131,18 @@ impl EntityQueryService {
         let timer = entity::start(EntityOperation::Query);
         let result: Result<(Vec<Entity>, Option<i64>), EntityError> = async {
             let compiled = self.compile_query_cached(query, context, LimitCap::Capped).await?;
+            // The opaque pagination cursor (clause 5.5.9.1) is a per-request
+            // position that never took part in compilation, so it is decoded and
+            // set on an owned copy here rather than being keyed into the compiled
+            // cache. A request without one keeps sharing the cached compilation.
+            let compiled = match decode_cursor(query.cursor.as_deref())? {
+                None => compiled,
+                Some(cursor) => {
+                    let mut owned = Arc::unwrap_or_clone(compiled);
+                    owned.keyset = Some(cursor);
+                    Arc::new(owned)
+                }
+            };
             // Gated on the narrowed selection, not the one the client wrote: the
             // spatial index *applies* a geo relation rather than declining it, so a
             // store that cannot narrow `georel` is never asked to when the index
@@ -144,7 +162,13 @@ impl EntityQueryService {
             };
             refuse_unnarrowable(*self.query_store.profile(), &narrowed.selection)?;
             let outcome = self.query_store.query_compiled(target, &narrowed).await?;
-            let page = finish_page(outcome, compiled.pagination)?;
+            let mut page = finish_page(outcome, compiled.pagination)?;
+            // Clause 5.5.9.1: a backward or from-end keyset page was read
+            // descending so a single index scan could serve it; it is reversed
+            // here to the ascending order the client sees on every page.
+            if matches!(compiled.keyset, Some(PageCursor::Before(_) | PageCursor::End)) {
+                page.rows.reverse();
+            }
             let sys_attrs = query.parse_options()?.sys_attrs;
 
             // One batch read rather than one per entity.

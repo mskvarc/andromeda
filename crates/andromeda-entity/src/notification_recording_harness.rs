@@ -39,6 +39,7 @@ use andromeda_ngsi_ld_model::{
     notification::{NotificationTrigger, SysAttrsSnapshot},
     subscription::{Subscription, SubscriptionStatus},
 };
+use andromeda_ngsi_ld_query::cursor::PageCursor;
 use andromeda_subscription::{
     cache::SubscriptionCache,
     error::SubscriptionError,
@@ -248,6 +249,10 @@ impl SubscriptionStore for SingleSubscriptionStore {
 
     async fn list(&self, _target: &ContextTarget, _limit: Option<i64>, _offset: Option<i64>) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
         Err(unused_store_call("list"))
+    }
+
+    async fn list_keyset(&self, _target: &ContextTarget, _cursor: Option<&PageCursor>, _limit: i64) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
+        Err(unused_store_call("list_keyset"))
     }
 
     async fn delete(&self, _target: &ContextTarget, _id: &Uri) -> Result<u64, SubscriptionError> {

@@ -41,6 +41,9 @@ impl TryFrom<Query> for EntityQueryParameters {
             geo: OptionalGeoQuery(query.geo_q),
             limit: None,
             offset: None,
+            // The POST query binding carries no dereferenceable pointer
+            // (clause 6.23.3.1), so it never carries an opaque cursor either.
+            cursor: None,
             count: None,
             options: None,
             local: None,

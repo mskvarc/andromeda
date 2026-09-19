@@ -141,6 +141,15 @@ pub struct TemporalQueryParameters {
     pub limit: Option<u32>,
     /// How many results to skip before the page (`offset`).
     pub offset: Option<u32>,
+    /// The opaque, keyset-backed pagination pointer (clause 5.5.9.1).
+    ///
+    /// A broker-emitted token carried inside a `prev`/`next`/`last` `Link` over
+    /// the element dimension of temporal pagination; the client only passes it
+    /// back by following the link and never authors or reads it. Declared here so
+    /// `#[serde(deny_unknown_fields)]` admits it and so its mutual exclusion with
+    /// `offset` can be validated. Its contents are opaque (see
+    /// `docs/conformance/stable-pagination.md`).
+    pub cursor: Option<String>,
     /// Whether the response reports the total number of matches (`count`).
     pub count: Option<bool>,
     /// Typed ordering semantics shared by GET and POST query bindings.
@@ -614,6 +623,25 @@ mod tests {
     fn effective_limit_caps_at_1000() {
         let p = params_from_query("limit=5000");
         pretty_assertions::assert_eq!(p.effective_limit(), 1000);
+    }
+
+    /// Clause 5.5.9: a keyset `cursor` (5.5.9.1) and an `offset` (5.5.9.2) cannot
+    /// both govern one temporal element page.
+    #[test]
+    fn cursor_with_offset_is_rejected() {
+        let window = "type=Vehicle&local=true&timerel=before&timeAt=2030-01-01T00:00:00Z";
+        let err = params_from_query(&format!("{window}&cursor=ZQ&offset=0"))
+            .validate(true)
+            .expect_err("cursor and offset are mutually exclusive");
+        assert!(matches!(err, ParameterError::CursorWithOffset), "got {err:?}");
+    }
+
+    /// A `cursor` without an `offset` passes validation; its opaque contents are
+    /// decoded later, during compilation.
+    #[test]
+    fn a_cursor_without_an_offset_is_admitted() {
+        let window = "type=Vehicle&local=true&timerel=before&timeAt=2030-01-01T00:00:00Z";
+        assert!(params_from_query(&format!("{window}&cursor=ZQ")).validate(true).is_ok());
     }
 
     #[test]

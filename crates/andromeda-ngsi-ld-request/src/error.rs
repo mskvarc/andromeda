@@ -12,7 +12,12 @@
 
 use crate::linked_retrieval_term::LinkedRetrievalTerm;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, temporal_format::TemporalFormat};
-use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict, temporal::grouping::GroupingParseError};
+use andromeda_ngsi_ld_query::{
+    cursor::CursorDecodeError,
+    error::QueryError,
+    projection::exclusivity::ProjectionConflict,
+    temporal::grouping::GroupingParseError,
+};
 use thiserror::Error;
 
 /// A query parameter the broker cannot act on.
@@ -72,6 +77,20 @@ pub enum ParameterError {
     /// 6.3.10-1 permits only when a count is requested.
     #[error("limit=0 is only allowed together with the count option")]
     LimitZeroWithoutCount,
+    /// `cursor` and `offset` were both supplied (clause 5.5.9).
+    ///
+    /// An opaque `cursor` is a keyset continuation (clause 5.5.9.1) and `offset`
+    /// its offset-based alternative (clause 5.5.9.2); the two page a collection
+    /// by different mechanisms and cannot both be honoured, so the pair is a
+    /// `BadRequestData`.
+    #[error("cursor and offset parameters are mutually exclusive")]
+    CursorWithOffset,
+    /// The opaque pagination `cursor` could not be decoded (clause 5.5.9.1).
+    ///
+    /// The cursor is broker-emitted and followed unchanged, so any decode
+    /// failure means the token was corrupted or forged; it is a `BadRequestData`.
+    #[error("invalid pagination cursor: {0}")]
+    CursorInvalid(#[source] CursorDecodeError),
     /// A `pick`/`omit` term nested a clause 4.21 sub-projection while the
     /// request asked for no join to retrieve the entity it describes.
     #[error("pick/omit select Linked Entity members but the request asks for no join to retrieve them")]

@@ -30,6 +30,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_request::{
     error::ParameterError,
+    pagination_cursor::decode_cursor,
     query::{SharedQueryParams, temporal::TemporalQueryParameters},
 };
 use std::collections::HashSet;
@@ -78,6 +79,12 @@ impl TemporalService {
         let last_n = compile_last_n(params, format, self.default_last_n);
         let grouping = compile_grouping(params, format, &expander).await?;
 
+        // Clause 5.5.9.1: the opaque pagination cursor is a per-request position
+        // decoded here; it never took part in expansion, so it is set on the
+        // compiled query rather than driving it. A malformed one is a
+        // BadRequestData, lifted from the parameter error.
+        let keyset = decode_cursor(params.cursor.as_deref())?;
+
         Ok(CompiledTemporalQuery::builder()
             .entities(
                 EntitySelection::builder()
@@ -115,6 +122,7 @@ impl TemporalService {
             // expansion: clause 5.7.4.3 confines it to the `id` member, which
             // names no term.
             .ordering(TemporalEntityOrdering::of_parameters(&params.ordering)?)
+            .keyset(keyset)
             .build())
     }
 

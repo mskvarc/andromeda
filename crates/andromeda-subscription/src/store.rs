@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     subscription::{EntitySelector, NotificationParams, Subscription, SubscriptionStatus},
 };
-use andromeda_ngsi_ld_query::{filter::expression::Expr, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::{cursor::PageCursor, filter::expression::Expr, scope::query::ScopeQuery};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use langtag::LangTagBuf;
@@ -114,6 +114,28 @@ pub trait SubscriptionStore: Send + Sync + 'static {
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
+        Self: 'async_trait;
+    /// List subscriptions by keyset over the identifier, for stable pagination
+    /// (clause 5.5.9.1).
+    ///
+    /// `cursor` is the opaque position: `None` is the first page, ascending from
+    /// the start; [`PageCursor::After`]/[`PageCursor::Before`] continue the walk
+    /// and [`PageCursor::End`] jumps to the final page. The order is the
+    /// subscription identifier -- unique, unlike the `createdAt` of the
+    /// [`SubscriptionStore::list`] offset listing, and a single-key keyset needs
+    /// a unique key. A backward or from-end page is read descending and reversed
+    /// to ascending before it is returned. The total is counted as `list` counts
+    /// it.
+    fn list_keyset<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        target: &'life1 ContextTarget,
+        cursor: Option<&'life2 PageCursor>,
+        limit: i64,
+    ) -> BoxFuture<'async_trait, Result<(Vec<Subscription>, i64), SubscriptionError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
         Self: 'async_trait;
     /// Delete a subscription by identifier. Returns rows affected.
     fn delete<'life0, 'life1, 'life2, 'async_trait>(

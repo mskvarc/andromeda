@@ -2,8 +2,9 @@
 
 use crate::{entity_relations::EntityRelations, result_ordering};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_query::{
+    cursor::PageCursor,
     entity::compiled::CompiledEntityQuery,
     entity_selection::{ConsideredEntities, EntitySelector},
     pagination::CountPolicy,
@@ -26,7 +27,7 @@ use andromeda_postgresql_seaquery::{
     operator::{array_contains_key, regex_match},
     pg_array::{any, text_array},
 };
-use sea_query::{Alias, Asterisk, Condition, Expr as SeaExpr, ExprTrait, Func, Query, SelectStatement};
+use sea_query::{Alias, Asterisk, Condition, Expr as SeaExpr, ExprTrait, Func, Order, Query, SelectStatement};
 
 /// A compiled entity query: the paginated result statement and its optional
 /// fallback count, each a statement tree the store binds and executes on its own.
@@ -85,9 +86,7 @@ pub fn build_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &
         select.expr_as(count_over_all(), Alias::new(TOTAL_COUNT_COLUMN));
     }
 
-    select.limit(u64::from(query.pagination.limit)).offset(u64::from(query.pagination.offset));
-
-    result_ordering::apply(&mut select, &rows, &query.ordering, query.selection.geo.as_ref(), &names.attributes)?;
+    apply_window_and_order(&mut select, &rows, query, &names.attributes)?;
 
     // Fallback count query covers the zero-row edge case described above.
     let count = if query.pagination.count == CountPolicy::Emit {
@@ -135,11 +134,66 @@ pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, name
     relations.apply_from(&mut select, schema.as_ref());
     select.cond_where(condition);
 
-    result_ordering::apply(&mut select, &rows, &query.ordering, query.selection.geo.as_ref(), &names.attributes)?;
-
-    select.limit(u64::from(query.pagination.limit)).offset(u64::from(query.pagination.offset));
+    apply_window_and_order(&mut select, &rows, query, &names.attributes)?;
 
     Ok(select.take())
+}
+
+/// Add the result window and its ordering, in offset mode or keyset mode.
+///
+/// In offset mode (clause 5.5.9.2) the statement carries `LIMIT`/`OFFSET` over
+/// the requested `orderBy` and its `id` tiebreaker. In keyset mode
+/// (clause 5.5.9.1) the `OFFSET` is dropped for the direction-appropriate
+/// predicate and ordering over the entity `id`: the same bare, C-collation `id`
+/// expression the implicit tiebreaker sorts on, which is why keyset mode is
+/// restricted to the default order. A backward or from-end page is ordered
+/// descending and reversed to ascending where the store reads the rows back.
+///
+/// # Errors
+///
+/// Propagates the [`RenderError`] a distance `orderBy` term raises when it has
+/// no reference geometry to measure from (clause 4.23); keyset mode carries no
+/// `orderBy` and so never fails here.
+fn apply_window_and_order(
+    select: &mut SelectStatement,
+    rows: &EntityRowRefs,
+    query: &CompiledEntityQuery,
+    attributes: &ResolvedNames<AttributeName>,
+) -> Result<(), RenderError> {
+    match &query.keyset {
+        None => {
+            select.limit(u64::from(query.pagination.limit)).offset(u64::from(query.pagination.offset));
+            result_ordering::apply(select, rows, &query.ordering, query.selection.geo.as_ref(), attributes)?;
+        }
+        Some(cursor) => {
+            apply_keyset(select, cursor);
+            select.limit(u64::from(query.pagination.limit));
+        }
+    }
+    Ok(())
+}
+
+/// Add the keyset predicate and ordering for one cursor direction (clause
+/// 5.5.9.1).
+///
+/// The predicate and the ordering both read `entities.id` bare, so they share
+/// the column's C collation with the implicit `id` tiebreaker and stay driven by
+/// its unique index in either direction -- an Index Scan Backward for the
+/// descending cases, no sort node and no new index.
+fn apply_keyset(select: &mut SelectStatement, cursor: &PageCursor) {
+    match cursor {
+        PageCursor::After(id) => {
+            select.and_where(SeaExpr::col((Entities::Table, Entities::Id)).gt(SeaExpr::val(id.as_str())));
+            select.order_by((Entities::Table, Entities::Id), Order::Asc);
+        }
+        PageCursor::Before(id) => {
+            select.and_where(SeaExpr::col((Entities::Table, Entities::Id)).lt(SeaExpr::val(id.as_str())));
+            select.order_by((Entities::Table, Entities::Id), Order::Desc);
+        }
+        PageCursor::End => {
+            select.order_by((Entities::Table, Entities::Id), Order::Desc);
+        }
+    }
 }
 
 /// Builds sea-query `Condition` from compiled entity query filters.
@@ -240,6 +294,7 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
     use andromeda_ngsi_ld_query::{
+        cursor::PageCursor,
         entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
         filter::{
             expression::Expr,
@@ -692,6 +747,77 @@ mod tests {
         assert!(built.sql.contains("OFFSET"));
         // sea-query parameterizes limit/offset as bind values
         assert!(!built.bind_values.is_empty(), "should have bind values for limit/offset");
+    }
+
+    fn boundary(id: &str) -> Uri {
+        id.parse().expect("valid URI")
+    }
+
+    /// Clause 5.5.9.1: a forward cursor pages past the boundary identifier over
+    /// the default `id` order -- `WHERE id > $x ORDER BY id ASC LIMIT n`, and no
+    /// `OFFSET`, because the keyset predicate replaces the skip.
+    #[test]
+    fn build_with_keyset_after_pages_forward_ascending_without_offset() {
+        let mut q = empty_query();
+        q.keyset = Some(PageCursor::After(boundary("urn:ngsi-ld:Building:001")));
+        let built = build(&q, &known_types());
+        assert!(built.sql.contains(r#""entities"."id" > $"#), "{}", built.sql);
+        assert!(built.sql.contains(r#"ORDER BY "entities"."id" ASC"#), "{}", built.sql);
+        assert!(built.sql.contains("LIMIT"), "{}", built.sql);
+        assert!(!built.sql.contains("OFFSET"), "a keyset page never skips: {}", built.sql);
+        assert!(
+            built
+                .bind_values
+                .iter()
+                .any(|value| matches!(value, Value::String(Some(text)) if text.as_str() == "urn:ngsi-ld:Building:001")),
+            "the boundary id is bound, not interpolated: {:?}",
+            built.bind_values
+        );
+    }
+
+    /// Clause 5.5.9.1: a backward cursor pages before the boundary over the
+    /// reversed order -- `WHERE id < $x ORDER BY id DESC LIMIT n` -- which the
+    /// store reverses to ascending after fetching.
+    #[test]
+    fn build_with_keyset_before_pages_backward_descending_without_offset() {
+        let mut q = empty_query();
+        q.keyset = Some(PageCursor::Before(boundary("urn:ngsi-ld:Building:042")));
+        let built = build(&q, &known_types());
+        assert!(built.sql.contains(r#""entities"."id" < $"#), "{}", built.sql);
+        assert!(built.sql.contains(r#"ORDER BY "entities"."id" DESC"#), "{}", built.sql);
+        assert!(!built.sql.contains("OFFSET"), "{}", built.sql);
+    }
+
+    /// Clause 5.5.9.1: the from-end cursor takes the final page -- `ORDER BY id
+    /// DESC LIMIT n`, no boundary predicate -- which the store reverses to
+    /// ascending. This is the Andromeda `last` anchor.
+    #[test]
+    fn build_with_keyset_end_takes_the_final_page_descending() {
+        let mut q = empty_query();
+        q.keyset = Some(PageCursor::End);
+        let built = build(&q, &known_types());
+        assert!(built.sql.contains(r#"ORDER BY "entities"."id" DESC"#), "{}", built.sql);
+        assert!(
+            !built.sql.contains(r#""entities"."id" >"#) && !built.sql.contains(r#""entities"."id" <"#),
+            "no boundary predicate: {}",
+            built.sql
+        );
+        assert!(built.sql.contains("LIMIT"), "{}", built.sql);
+        assert!(!built.sql.contains("OFFSET"), "{}", built.sql);
+    }
+
+    /// The ids-only statement pages by keyset the same way the payload one does.
+    #[test]
+    fn build_ids_query_pages_by_keyset() {
+        let mut q = empty_query();
+        q.keyset = Some(PageCursor::After(boundary("urn:ngsi-ld:Building:001")));
+        let target = ContextTarget::Live;
+        let (sql, _values) = build_ids_query(&target, &q, &known_types())
+            .expect("valid ids query")
+            .build(PostgresQueryBuilder);
+        assert!(sql.contains(r#""entities"."id" > $"#), "{sql}");
+        assert!(sql.contains(r#"ORDER BY "entities"."id" ASC"#), "{sql}");
+        assert!(!sql.contains("OFFSET"), "{sql}");
     }
 
     /// Clause 4.23.1 sorts by the attribute's value, which the statement reads

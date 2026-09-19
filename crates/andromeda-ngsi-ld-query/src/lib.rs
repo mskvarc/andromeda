@@ -23,6 +23,7 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod csr;
+pub mod cursor;
 pub mod dataset;
 pub mod entity;
 pub mod entity_selection;

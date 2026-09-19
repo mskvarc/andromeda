@@ -5,6 +5,7 @@ use crate::{
     impl_shared_query_params,
     language_filter::deserialize_optional_language_filter,
     options::SysAttrsOptions,
+    pagination_cursor::validate_cursor_offset_exclusion,
     query::{
         SharedQueryParams,
         deserialization::{
@@ -106,6 +107,13 @@ pub struct CsrQueryParameters {
     pub limit: Option<u32>,
     /// How many results to skip before the page (`offset`).
     pub offset: Option<u32>,
+    /// The opaque, keyset-backed pagination pointer (clause 5.5.9.1).
+    ///
+    /// A broker-emitted token carried inside a `prev`/`next`/`last` `Link`; the
+    /// client only passes it back by following the link and never authors or
+    /// reads it. Declared so `#[serde(deny_unknown_fields)]` admits it and so its
+    /// mutual exclusion with `offset` can be validated; its contents are opaque.
+    pub cursor: Option<String>,
     /// The legacy representation selector, comma-separated (`options`).
     pub options: Option<WrittenValue<SysAttrsOptions>>,
 }
@@ -166,6 +174,9 @@ impl CsrQueryParameters {
         // this operation's `options`.
         self.parse_options()?;
         require_narrowing(&self.narrowing_inputs())?;
+        // Clause 5.5.9: an opaque `cursor` (5.5.9.1) and an `offset` (5.5.9.2)
+        // page a collection by different mechanisms and cannot both govern it.
+        validate_cursor_offset_exclusion(self.cursor.as_deref(), self.offset)?;
 
         // The `timerel`/`timeAt`/`endTimeAt` combination rule is owned by the
         // query crate, so the request seam asks rather than re-deriving it.
@@ -293,6 +304,22 @@ mod tests {
     fn parse_options_default() {
         let p = params_from_query("type=Vehicle");
         pretty_assertions::assert_eq!(p.parse_options().expect("a supported options value").sys_attrs, SysAttrsInclusion::Strip);
+    }
+
+    /// Clause 5.5.9: an opaque `cursor` and an `offset` cannot both govern one
+    /// discovery request.
+    #[test]
+    fn validate_rejects_cursor_with_offset() {
+        let p = params_from_query("type=Vehicle&cursor=YWJj&offset=5");
+        let err = p.validate().expect_err("cursor and offset are mutually exclusive");
+        assert!(matches!(err, ParameterError::CursorWithOffset), "{err}");
+    }
+
+    /// A cursor alone (no offset) is accepted at the parameter level; its
+    /// contents are decoded later.
+    #[test]
+    fn validate_accepts_a_cursor_without_offset() {
+        assert!(params_from_query("type=Vehicle&cursor=YWJj").validate().is_ok());
     }
 
     #[test]

@@ -1,6 +1,12 @@
 //! The compiled, context-expanded form of an entity query.
 
-use crate::{entity_selection::EntitySelection, ordering::compiled::ResultOrdering, pagination::Pagination, projection::compiled::Projection};
+use crate::{
+    cursor::PageCursor,
+    entity_selection::EntitySelection,
+    ordering::compiled::ResultOrdering,
+    pagination::Pagination,
+    projection::compiled::Projection,
+};
 use typed_builder::TypedBuilder;
 
 /// A fully compiled entity query, ready to be lowered to a store query.
@@ -25,4 +31,15 @@ pub struct CompiledEntityQuery {
     /// Result window: limit, offset, and the total-count policy.
     #[builder(default = Pagination::DEFAULT)]
     pub pagination: Pagination,
+    /// The keyset position a stable-pagination cursor resolved to, when the
+    /// request carried one (clause 5.5.9.1).
+    ///
+    /// `Some` puts the store into keyset mode: it replaces the `offset` in
+    /// [`Pagination`] with the direction-appropriate `WHERE`/`ORDER BY` over the
+    /// entity `id`, and a backward or from-end page is reversed to ascending
+    /// where the rows are read back. Held beside [`Pagination`] rather than
+    /// inside it because it is a per-request position that never participates in
+    /// compilation caching, unlike the limit and count that do.
+    #[builder(default = None)]
+    pub keyset: Option<PageCursor>,
 }

@@ -31,6 +31,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
+use andromeda_ngsi_ld_query::cursor::PageCursor;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::{aggregate::count_all, cast::cast, literal::text_literal, pg_type::PostgresType};
@@ -103,6 +104,49 @@ fn one_of(id: &Uri, kind: StoredKind) -> sea_query::Cond {
         .add(of_kind(kind))
 }
 
+/// Count the subscriptions of one family, the total both the offset and the
+/// keyset listing report (clause 6.3.13).
+async fn count_of_kind(pool: &sqlx::PgPool, target: &ContextTarget, kind: StoredKind) -> Result<i64, SubscriptionError> {
+    let count = Query::select()
+        .expr(count_all())
+        .from(table_of(target, Subscriptions::Table))
+        .and_where(of_kind(kind))
+        .to_owned();
+    let (sql, values) = count.build_sqlx(PostgresQueryBuilder);
+    let row: (i64,) = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .fetch_one(pool)
+        .await
+        .map_err(persistence_error)?;
+    Ok(row.0)
+}
+
+/// Add the keyset predicate and ordering for one cursor direction over the
+/// subscription identifier (clause 5.5.9.1).
+///
+/// The keyset is over the identifier rather than the `createdAt` of the offset
+/// listing, because a single-key keyset needs a unique key. The predicate and
+/// the ordering read the same `id` column, so both stay driven by its index in
+/// either direction; a backward or from-end page is ordered descending and
+/// reversed to ascending by the caller.
+fn apply_subscription_keyset(select: &mut SelectStatement, cursor: Option<&PageCursor>) {
+    match cursor {
+        None => {
+            select.order_by((Subscriptions::Table, Subscriptions::Id), Order::Asc);
+        }
+        Some(PageCursor::After(boundary)) => {
+            select.and_where(Expr::col((Subscriptions::Table, Subscriptions::Id)).gt(Expr::val(boundary.as_str())));
+            select.order_by((Subscriptions::Table, Subscriptions::Id), Order::Asc);
+        }
+        Some(PageCursor::Before(boundary)) => {
+            select.and_where(Expr::col((Subscriptions::Table, Subscriptions::Id)).lt(Expr::val(boundary.as_str())));
+            select.order_by((Subscriptions::Table, Subscriptions::Id), Order::Desc);
+        }
+        Some(PageCursor::End) => {
+            select.order_by((Subscriptions::Table, Subscriptions::Id), Order::Desc);
+        }
+    }
+}
+
 /// Generates a `SubscriptionStore` implementation backed by the `subscriptions`
 /// table and its `subscription_delivery_state` row, its statements built
 /// through sea-query.
@@ -130,16 +174,7 @@ macro_rules! impl_subscription_store {
             async fn list(&self, target: &ContextTarget, limit: Option<i64>, offset: Option<i64>) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
                 let limit = limit.unwrap_or(100);
                 let offset = offset.unwrap_or(0);
-                let count = Query::select()
-                    .expr(count_all())
-                    .from(table_of(target, Subscriptions::Table))
-                    .and_where(of_kind($kind))
-                    .to_owned();
-                let (count_sql, count_values) = count.build_sqlx(PostgresQueryBuilder);
-                let count_row: (i64,) = sqlx::query_as_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
-                    .fetch_one(&self.pool)
-                    .await
-                    .map_err(persistence_error)?;
+                let total = count_of_kind(&self.pool, target, $kind).await?;
 
                 let mut select = projected_select($kind, target);
                 select
@@ -162,7 +197,39 @@ macro_rules! impl_subscription_store {
                     .into_iter()
                     .map(|stored| stored.subscription)
                     .collect();
-                Ok((subscriptions, count_row.0))
+                Ok((subscriptions, total))
+            }
+
+            async fn list_keyset(
+                &self,
+                target: &ContextTarget,
+                cursor: Option<&PageCursor>,
+                limit: i64,
+            ) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
+                let total = count_of_kind(&self.pool, target, $kind).await?;
+
+                let mut select = projected_select($kind, target);
+                select.and_where(of_kind($kind));
+                apply_subscription_keyset(&mut select, cursor);
+                // A negative window bound is an absent one, not a narrower one,
+                // so it clamps to zero rather than wrapping into a huge width.
+                select.limit(u64::try_from(limit).unwrap_or(0));
+                let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
+                let pg_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    .fetch_all(&self.pool)
+                    .await
+                    .map_err(persistence_error)?;
+                let mut subscriptions: Vec<Subscription> = rows_to_stored_subscriptions(&pg_rows, $hdi)
+                    .map_err(persistence_error)?
+                    .into_iter()
+                    .map(|stored| stored.subscription)
+                    .collect();
+                // Clause 5.5.9.1: a backward or from-end page was read descending
+                // so a single index scan could serve it; present it ascending.
+                if matches!(cursor, Some(PageCursor::Before(_) | PageCursor::End)) {
+                    subscriptions.reverse();
+                }
+                Ok((subscriptions, total))
             }
 
             async fn delete(&self, target: &ContextTarget, id: &Uri) -> Result<u64, SubscriptionError> {
@@ -357,13 +424,68 @@ mod tests {
     use crate::{
         csource_subscription::repo::CsourceSubscriptionRepository,
         subscription::repo::SubscriptionRepository,
-        subscription_store::{postgresql::projected_select, stored_kind::StoredKind},
+        subscription_store::{
+            postgresql::{apply_subscription_keyset, projected_select},
+            stored_kind::StoredKind,
+        },
     };
     use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_query::cursor::PageCursor;
     use andromeda_subscription::store::SubscriptionStore;
     use sea_query::PostgresQueryBuilder;
 
     fn assert_subscription_store<T: SubscriptionStore>() {}
+
+    /// The keyset SQL for one cursor direction over the subscription identifier
+    /// (clause 5.5.9.1).
+    fn keyset_sql(cursor: Option<&PageCursor>) -> String {
+        let mut select = projected_select(StoredKind::Entity, &ContextTarget::Live);
+        apply_subscription_keyset(&mut select, cursor);
+        select.to_string(PostgresQueryBuilder)
+    }
+
+    fn uri(value: &str) -> Uri {
+        value.parse().expect("valid URI")
+    }
+
+    /// The first page of a cursor walk sorts by identifier ascending with no
+    /// keyset bound and no offset (clause 5.5.9.1).
+    #[test]
+    fn a_first_page_orders_by_id_ascending_without_a_bound() {
+        let sql = keyset_sql(None);
+        assert!(sql.contains(r#"ORDER BY "subscriptions"."id" ASC"#), "{sql}");
+        assert!(!sql.contains(r#""id" >"#) && !sql.contains(r#""id" <"#), "{sql}");
+        assert!(!sql.contains("OFFSET"), "{sql}");
+    }
+
+    /// A forward cursor keeps the identifiers above the boundary, ascending.
+    #[test]
+    fn a_forward_cursor_bounds_above_and_orders_ascending() {
+        let sql = keyset_sql(Some(&PageCursor::After(uri("urn:ngsi-ld:Subscription:001"))));
+        assert!(sql.contains(r#""subscriptions"."id" > 'urn:ngsi-ld:Subscription:001'"#), "{sql}");
+        assert!(sql.contains(r#"ORDER BY "subscriptions"."id" ASC"#), "{sql}");
+        assert!(!sql.contains("OFFSET"), "{sql}");
+    }
+
+    /// A backward cursor keeps the identifiers below the boundary, descending,
+    /// so a single index scan serves the page before it is reversed.
+    #[test]
+    fn a_backward_cursor_bounds_below_and_orders_descending() {
+        let sql = keyset_sql(Some(&PageCursor::Before(uri("urn:ngsi-ld:Subscription:050"))));
+        assert!(sql.contains(r#""subscriptions"."id" < 'urn:ngsi-ld:Subscription:050'"#), "{sql}");
+        assert!(sql.contains(r#"ORDER BY "subscriptions"."id" DESC"#), "{sql}");
+        assert!(!sql.contains("OFFSET"), "{sql}");
+    }
+
+    /// The from-end cursor takes the final identifiers descending with no bound.
+    #[test]
+    fn a_from_end_cursor_orders_descending_without_a_bound() {
+        let sql = keyset_sql(Some(&PageCursor::End));
+        assert!(sql.contains(r#"ORDER BY "subscriptions"."id" DESC"#), "{sql}");
+        assert!(!sql.contains(r#""id" >"#) && !sql.contains(r#""id" <"#), "{sql}");
+        assert!(!sql.contains("OFFSET"), "{sql}");
+    }
 
     #[test]
     fn entity_subscription_repository_implements_the_policy_port_directly() {
