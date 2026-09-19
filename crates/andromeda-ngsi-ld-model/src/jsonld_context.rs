@@ -2,6 +2,7 @@
 
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use chrono::{DateTime, Utc};
+use iri_rs::IriBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use strum::{Display, EnumIter, EnumString, IntoStaticStr};
@@ -28,6 +29,17 @@ pub struct ContextMetadata {
     #[serde(rename = "URL")]
     #[builder(default = Default::default())]
     pub url: Option<Url>,
+    /// The serving URL exactly as stored in the `url` column, kept verbatim.
+    ///
+    /// Clause 5.13.3.5 keys `numberOfHits` on the stored URL, and the in-process
+    /// hit counter is bumped and flushed under that raw string. This field
+    /// carries it unparsed so a `numberOfHits` fold keys on the same bytes: the
+    /// re-serialized [`ContextMetadata::url`] cannot be used, because
+    /// `url::Url`'s normalization (trailing slash, default-port removal,
+    /// percent-encoding) would silently miss the counter for any serving URL
+    /// that does not round-trip. Internal only, never serialized.
+    #[serde(skip)]
+    pub serving_iri: Option<IriBuf>,
     /// Identifier under which the broker serves this context.
     pub local_id: Uri,
     /// How the broker came to hold this context.

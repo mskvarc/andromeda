@@ -5,7 +5,7 @@ use andromeda_jsonld::core_context::{NGSI_LD_CORE_CONTEXT_V19, is_ngsi_ld_core_c
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
 use chrono::Utc;
-use iri_rs::Iri;
+use iri_rs::{Iri, IriBuf};
 use serde_json::Value;
 
 /// Whether an identifier names one of the embedded NGSI-LD core Context versions.
@@ -29,9 +29,15 @@ pub(crate) fn metadata(identifier: &Uri) -> Result<ContextMetadata, ContextRegis
     };
     let url = url.clone(); // clone: metadata owns both the public URL and its URI identifier.
     let local_id = Uri::Url(url.clone()); // clone: the URL is also retained in the metadata URL field.
+    // The embedded core Context serves under its own URL; keep it verbatim as
+    // the hit-counter key, the same string a `numberOfHits` fold looks up.
+    let serving_iri = IriBuf::new(url.as_str().to_owned()).map_err(|error| ContextRegistryError::Invariant {
+        detail: format!("core Context URL is not an IRI reference: {}", error.0),
+    })?;
     let now = Utc::now();
     Ok(ContextMetadata::builder()
         .url(Some(url))
+        .serving_iri(Some(serving_iri))
         .local_id(local_id)
         .kind(ContextKind::ImplicitlyCreated)
         .created_at(now)

@@ -10,6 +10,7 @@ use crate::{
     list_query::ContextListQuery,
     listed_contexts::ListedContexts,
     mutation::ContextMutation,
+    pending_hits::fold_pending_hits,
     removal::ContextRemoval,
     store::ContextRegistryStore,
 };
@@ -174,20 +175,13 @@ impl ContextRegistryService {
 
     /// Add the accesses this process has counted but not yet flushed.
     ///
-    /// Clause 5.13.3.5 defines `numberOfHits` as "number of times the @context
-    /// was found in the storage", which is a fact about the accesses that have
-    /// happened rather than about the ones that have been written down. The
-    /// resolver accumulates them per URL and a background task folds them into
-    /// the stored row in batches, so a client reading the metadata in between
-    /// would otherwise be told a number that is already out of date.
+    /// The fold itself lives in [`crate::pending_hits`], which keys on the raw
+    /// serving URL and carries the clause 5.13.3.5 reasoning; this only supplies
+    /// the process-wide counter when one is configured.
     fn add_pending_hits(&self, metadata: &mut ContextMetadata) {
-        let Some(counter) = self.engine.hit_counter() else {
-            return;
-        };
-        let Some(url) = metadata.url.as_ref().and_then(|url| IriBuf::new(url.to_string()).ok()) else {
-            return;
-        };
-        metadata.number_of_hits = metadata.number_of_hits.saturating_add(counter.pending(&url));
+        if let Some(counter) = self.engine.hit_counter() {
+            fold_pending_hits(&counter, metadata);
+        }
     }
 
     /// Delete a Context or reload a cached Context from its source.

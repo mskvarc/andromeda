@@ -4,9 +4,19 @@
 //! Access-path assertions need enough rows for the planner to prefer an index
 //! over a sequential scan, and they need the statistics that decision reads.
 //! Creating that corpus through the API would take minutes per test, so the
-//! rows are written directly and removed again by the harness prefix cleanup.
+//! rows are written directly and cleared again by the exclusive serialized
+//! reset that runs before each test in this suite.
 
 use sqlx::PgPool;
+
+/// Identifier prefix every resource this suite seeds carries.
+///
+/// The suite holds the exclusive serialized lease, which resets the tenant to a
+/// clean slate before each test and serializes every holder, so one fixed
+/// prefix suffices: no per-test uniqueness is needed, the seeded corpus is the
+/// only data in the analyzed tables, and every unscoped `EXPLAIN` plan is
+/// therefore deterministic.
+pub const SEED_PREFIX: &str = "urn:ngsi-ld:test:query-access-paths";
 
 /// Entities written per seeded corpus.
 pub const SEEDED_ENTITIES: i64 = 20_000;

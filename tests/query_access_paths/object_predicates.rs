@@ -7,7 +7,7 @@
 //! the absent index has no silent consumer, and the two operator classes behave
 //! as declared when they are present.
 
-use andromeda_test_harness::environment::TestEnvironment;
+use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use pretty_assertions::assert_eq;
 use sqlx::{Executor, PgConnection};
 
@@ -35,7 +35,7 @@ async fn explain_on(connection: &mut PgConnection, statement: &str) -> String {
 
 #[tokio::test]
 async fn object_containment_uses_path_ops_and_key_existence_needs_the_default_class() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     // One transaction, so the temporary relation and its indexes live on a
     // single connection and disappear at rollback.
     let mut transaction = scope.database_pool().begin().await.expect("transaction must start");
@@ -74,7 +74,7 @@ async fn object_containment_uses_path_ops_and_key_existence_needs_the_default_cl
 
 #[tokio::test]
 async fn the_projection_carries_no_unconsumed_object_index() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
 
     let object_indexes: Vec<String> = sqlx::query_scalar(
         "SELECT c.relname FROM pg_index AS i \

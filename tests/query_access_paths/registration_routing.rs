@@ -9,8 +9,8 @@
 //! value (or declaring everything), instead of probing the projection once per
 //! registration to test for the absence of rows.
 
-use crate::seeded_corpus::explain;
-use andromeda_test_harness::environment::TestEnvironment;
+use crate::seeded_corpus::{SEED_PREFIX, explain};
+use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use pretty_assertions::assert_eq;
 use sqlx::PgPool;
 
@@ -93,9 +93,9 @@ fn type_preselect(entity_type: &str) -> String {
 
 #[tokio::test]
 async fn a_selective_type_preselect_is_driven_from_the_projection_index_not_a_registration_scan() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
-    seed_registrations(pool, scope.id_prefix()).await;
+    seed_registrations(pool, SEED_PREFIX).await;
 
     let plan = explain(pool, &type_preselect(RARE_TYPE)).await;
     assert!(
@@ -107,7 +107,7 @@ async fn a_selective_type_preselect_is_driven_from_the_projection_index_not_a_re
         "the projection must not be scanned once per registration: {plan}"
     );
 
-    let prefix = scope.id_prefix();
+    let prefix = SEED_PREFIX;
     let matched: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("{} AND csr.id LIKE '{prefix}%'", type_preselect(RARE_TYPE))))
         .fetch_all(pool)
         .await

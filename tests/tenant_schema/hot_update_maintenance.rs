@@ -23,7 +23,7 @@
 
 use crate::SUITE;
 use andromeda_test_fixtures::context::CORE_CONTEXT;
-use andromeda_test_harness::environment::TestEnvironment;
+use andromeda_test_harness::{environment::TestEnvironment, serialized_environment::SerializedEnvironment};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
@@ -93,6 +93,11 @@ const AUTOVACUUM_SETTINGS: &[&str] = &[
 /// Updates applied to the churn fixture, enough for the HOT ratio to be a
 /// measurement rather than a rounding of one or two tuples.
 const CHURN_UPDATES: i64 = 2_000;
+
+/// Identifier prefix of the projection-churn fixture. That test holds the
+/// exclusive serialized lease, so the tenant is reset to a clean slate before it
+/// runs and one fixed prefix suffices.
+const PROJECTION_CHURN_PREFIX: &str = "urn:ngsi-ld:test:tenant-schema:projection-churn";
 
 /// The pages `relation` occupies right now.
 async fn relation_pages(pool: &PgPool, relation: &str) -> i64 {
@@ -208,11 +213,17 @@ async fn every_hot_update_relation_still_declares_the_maintenance_settings_it_wa
 /// column, which is why the proposal makes vacuum cadence rather than fillfactor
 /// the primary defence. Both are measured so the tuning is judged on what it
 /// can reach.
+///
+/// This one test holds the exclusive serialized lease rather than the shared
+/// one: its page-growth assertion reads whole-table `pg_relation_size`, which a
+/// concurrent bulk writer in another suite could inflate past the slack, so it
+/// runs against a clean slate with no concurrent writer. The HOT-ratio asserts
+/// are transaction-local and would be safe either way.
 #[tokio::test]
 async fn sustained_projection_churn_stays_heap_only_and_leaves_bounded_dead_tuples() {
-    let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
-    let prefix = scope.id_prefix();
+    let prefix = PROJECTION_CHURN_PREFIX;
 
     let attribute_name_id: i32 = sqlx::query_scalar(
         "INSERT INTO attribute_names (name) VALUES ('https://example.test/tenant-schema/churn') \

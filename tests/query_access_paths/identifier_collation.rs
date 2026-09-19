@@ -5,8 +5,8 @@
 //! pattern-operator index, an unanchored one falls to the trigram index, and
 //! ordering is the byte order a test can reproduce in Rust.
 
-use crate::seeded_corpus::{explain, seed};
-use andromeda_test_harness::environment::TestEnvironment;
+use crate::seeded_corpus::{SEED_PREFIX, explain, seed};
+use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use pretty_assertions::assert_eq;
 use sqlx::PgPool;
 
@@ -29,7 +29,7 @@ async fn column_collation(pool: &PgPool, relation: &str, column: &str) -> Option
 
 #[tokio::test]
 async fn identifier_columns_declare_byte_wise_collation() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
 
     for (relation, column) in [
@@ -71,9 +71,9 @@ async fn identifier_columns_declare_byte_wise_collation() {
 
 #[tokio::test]
 async fn identifier_patterns_plan_as_a_range_scan_when_anchored_and_a_trigram_scan_otherwise() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
-    let corpus = seed(pool, scope.id_prefix()).await;
+    let corpus = seed(pool, SEED_PREFIX).await;
     let prefix = corpus.prefix();
 
     let anchored = explain(pool, &format!("SELECT e.id FROM entities AS e WHERE e.id LIKE '{prefix}:seed:0001%'")).await;
@@ -101,9 +101,9 @@ async fn identifier_patterns_plan_as_a_range_scan_when_anchored_and_a_trigram_sc
 
 #[tokio::test]
 async fn identifier_equality_and_ordering_match_the_byte_order_oracle() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
-    let corpus = seed(pool, scope.id_prefix()).await;
+    let corpus = seed(pool, SEED_PREFIX).await;
 
     let ordered: Vec<String> = sqlx::query_scalar("SELECT id FROM entities WHERE id LIKE $1::text || ':seed:%' ORDER BY id LIMIT 500")
         .bind(corpus.prefix())

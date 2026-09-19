@@ -25,6 +25,8 @@ pub mod list_query;
 pub mod listed_contexts;
 /// Outcomes of persistence mutations.
 pub mod mutation;
+/// Folding un-flushed context accesses into a served `numberOfHits`.
+mod pending_hits;
 /// Delete and reload lifecycle commands.
 pub mod removal;
 /// Hosted and cached Context lifecycle policy.

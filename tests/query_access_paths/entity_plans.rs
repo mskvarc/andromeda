@@ -5,8 +5,8 @@
 //! rows whose value column is null, and the two relations a value-only write
 //! must never touch an index of carry no index but their key.
 
-use crate::seeded_corpus::{SEEDED_ENTITIES, explain, seed};
-use andromeda_test_harness::environment::TestEnvironment;
+use crate::seeded_corpus::{SEED_PREFIX, SEEDED_ENTITIES, explain, seed};
+use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use chrono::Utc;
 use pretty_assertions::assert_eq;
 use sqlx::PgPool;
@@ -24,9 +24,9 @@ struct PlannedShape {
 
 #[tokio::test]
 async fn entity_access_paths_reach_their_intended_index_for_every_query_shape() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
-    let corpus = seed(pool, scope.id_prefix()).await;
+    let corpus = seed(pool, SEED_PREFIX).await;
     let reading = corpus.reading();
     let entrance = corpus.entrance();
     let alarm = corpus.alarm();
@@ -134,9 +134,9 @@ async fn entity_access_paths_reach_their_intended_index_for_every_query_shape() 
 
 #[tokio::test]
 async fn entity_access_path_for_a_type_filter_uses_the_types_gin_index() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
-    let corpus = seed(pool, scope.id_prefix()).await;
+    let corpus = seed(pool, SEED_PREFIX).await;
 
     // The type filter is the one shape whose compiled form decides whether
     // `idx_entity_search_type_ids` has a consumer at all: GIN `array_ops` serves
@@ -186,7 +186,7 @@ async fn entity_access_path_for_a_type_filter_uses_the_types_gin_index() {
 
 #[tokio::test]
 async fn typed_value_indexes_exclude_rows_whose_value_column_is_null() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
 
     for (index, column) in [
@@ -212,9 +212,9 @@ async fn typed_value_indexes_exclude_rows_whose_value_column_is_null() {
 /// thousand for the rare one.
 #[tokio::test]
 async fn attrs_terms_select_by_the_recorded_attribute_keys() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
-    let corpus = seed(pool, scope.id_prefix()).await;
+    let corpus = seed(pool, SEED_PREFIX).await;
 
     let count = |attribute: i32| {
         sqlx::query_scalar::<_, i64>(
@@ -236,7 +236,7 @@ async fn attrs_terms_select_by_the_recorded_attribute_keys() {
 /// index either, so a value-only write can never touch a search index.
 #[tokio::test]
 async fn the_document_row_carries_no_index_but_its_key_and_no_payload_column_is_indexed() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
 
     let document_indexes: Vec<String> =

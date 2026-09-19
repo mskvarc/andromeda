@@ -13,8 +13,11 @@
 //! exact and stay on the stream-led path — so a later index is added because a
 //! measurement asked for it rather than by accident.
 
-use crate::{seeded_corpus::explain, seeded_history::seed};
-use andromeda_test_harness::environment::TestEnvironment;
+use crate::{
+    seeded_corpus::{SEED_PREFIX, explain},
+    seeded_history::seed,
+};
+use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use pretty_assertions::assert_eq;
 use sqlx::PgPool;
 
@@ -72,9 +75,9 @@ async fn narrow_selection(pool: &PgPool, stream: i64, axis: &Axis, from: &str, t
 /// answers are decidable by arithmetic rather than by count alone.
 #[tokio::test]
 async fn every_axis_window_is_answered_from_its_own_column_over_a_narrow_selection() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
-    let corpus = seed(pool, scope.id_prefix()).await;
+    let corpus = seed(pool, SEED_PREFIX).await;
 
     let from = format!("{ORIGIN} + INTERVAL '1 hour'");
     let to = format!("{ORIGIN} + INTERVAL '11 hours'");
@@ -103,9 +106,9 @@ async fn every_axis_window_is_answered_from_its_own_column_over_a_narrow_selecti
 /// selection is exercised beside its narrow one.
 #[tokio::test]
 async fn every_axis_window_stays_exact_over_a_broad_selection() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
-    let corpus = seed(pool, scope.id_prefix()).await;
+    let corpus = seed(pool, SEED_PREFIX).await;
 
     for axis in AXES {
         let selected: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
@@ -146,9 +149,9 @@ async fn every_axis_window_stays_exact_over_a_broad_selection() {
 /// observed index rather than as a chunk scan.
 #[tokio::test]
 async fn a_narrow_observed_window_reaches_the_stream_led_observed_index() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
-    let corpus = seed(pool, scope.id_prefix()).await;
+    let corpus = seed(pool, SEED_PREFIX).await;
 
     let statement = format!(
         "SELECT ah.value_number FROM attribute_history AS ah \
@@ -175,7 +178,7 @@ async fn a_narrow_observed_window_reaches_the_stream_led_observed_index() {
 /// says so and the matrix row is re-measured.
 #[tokio::test]
 async fn every_semantic_axis_carries_exactly_one_brin_summary_and_no_btree() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
 
     let definitions: Vec<String> = sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'attribute_history'")
@@ -224,9 +227,9 @@ async fn every_semantic_axis_carries_exactly_one_brin_summary_and_no_btree() {
 /// answers the window.
 #[tokio::test]
 async fn a_broad_modified_window_can_be_answered_from_the_modified_at_summary() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
-    seed(pool, scope.id_prefix()).await;
+    seed(pool, SEED_PREFIX).await;
 
     let mut transaction = pool.begin().await.expect("the plan transaction must open");
     sqlx::query("SET LOCAL enable_seqscan = off")

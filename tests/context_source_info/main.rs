@@ -33,9 +33,16 @@ use axum::{
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
+use serial_test::serial;
 use std::time::Duration;
 
+// Both tests register a Context Source under `type=Vehicle`; that registration
+// namespace is global per tenant, so an unfiltered `type=Vehicle` forwarding
+// query fans out to every Vehicle registration a concurrent sibling test has
+// created, perturbing the first-request and status observations. Serialising
+// the two keeps exactly one Vehicle registration live at a time.
 #[tokio::test]
+#[serial]
 async fn context_source_info_round_trips_through_create_and_retrieve() {
     let scope = TestEnvironment::from_suite("context_source_info").await.expect("isolated test environment");
     let client = scope.client();
@@ -82,6 +89,7 @@ async fn context_source_info_round_trips_through_create_and_retrieve() {
 }
 
 #[tokio::test]
+#[serial]
 async fn context_source_info_forwarding_maps_reserved_and_custom_entries_to_http_headers() {
     let scope = TestEnvironment::from_suite("context-source-info-forwarding")
         .await

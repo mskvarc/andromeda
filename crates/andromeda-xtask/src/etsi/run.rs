@@ -46,12 +46,9 @@ pub(crate) struct RunArgs {
     /// What becomes of the report and the backing services once the run ends.
     #[command(flatten)]
     aftermath: RunAftermath,
-    /// Give each suite its own NGSI-LD tenant, so cases that list or aggregate
-    /// across a tenant are not polluted by other suites' data. The broker's
-    /// per-tenant pool cap and idle-runtime janitor keep the connection count
-    /// bounded as the run cycles through a fresh tenant per suite.
-    #[arg(long)]
-    isolate_tenants: bool,
+    /// How suites are assigned NGSI-LD tenants, from the two conflicting flags.
+    #[command(flatten)]
+    tenant_isolation: TenantIsolationArgs,
     /// Run only the distributed-operations tree (`dist-ops`) against the in-process
     /// mock context source; the default run excludes it.
     #[arg(long)]
@@ -73,6 +70,39 @@ struct RunAftermath {
     /// Leave the compose stack and broker running after the run.
     #[arg(long)]
     keep: bool,
+}
+
+/// The tenant-isolation choice, expressed as two conflicting flags so that
+/// neither one set leaves the decision to the topology default.
+#[derive(Args)]
+struct TenantIsolationArgs {
+    /// Force each suite onto its own materialised NGSI-LD tenant even for the
+    /// distributed tree, overriding the topology-derived default. Isolation is
+    /// already the single-broker default, so this only matters with `--distop`.
+    #[arg(long, conflicts_with = "shared_tenant")]
+    isolate_tenants: bool,
+    /// Run every suite against one shared NGSI-LD tenant, reproducing the raw
+    /// suite's cross-suite state accumulation. Isolation is on by default for
+    /// the single-broker tree because a shared tenant makes every case that
+    /// lists or aggregates across a tenant depend on suite execution order and
+    /// leftover state; pass this only to observe that unisolated behaviour
+    /// deliberately.
+    #[arg(long, conflicts_with = "isolate_tenants")]
+    shared_tenant: bool,
+}
+
+impl TenantIsolationArgs {
+    /// The forced isolation choice, or `None` when neither flag is set and the
+    /// topology default stands.
+    const fn forced(&self) -> Option<bool> {
+        if self.isolate_tenants {
+            Some(true)
+        } else if self.shared_tenant {
+            Some(false)
+        } else {
+            None
+        }
+    }
 }
 
 impl RunArgs {
@@ -109,7 +139,14 @@ impl RunArgs {
         // the checkout is still intact, before the stack is torn down.
         let _patches = patch::PatchGuard::apply(self.material())?;
 
-        let code = robot::run(&output, self.timeout, self.isolate_tenants, self.topology(), &self.robot_args, &targets)?;
+        let code = robot::run(
+            &output,
+            self.timeout,
+            self.resolve_isolate_tenants(),
+            self.topology(),
+            &self.robot_args,
+            &targets,
+        )?;
         println!("robot exited {code}; results in {}", output.display());
 
         if self.aftermath.open {
@@ -121,6 +158,19 @@ impl RunArgs {
     /// Which material the run judges the broker against.
     const fn material(&self) -> Material {
         if self.as_shipped { Material::AsShipped } else { Material::Corrected }
+    }
+
+    /// Whether each suite receives its own materialised tenant. `--isolate-tenants`
+    /// forces it on and `--shared-tenant` forces it off (the two conflict); with
+    /// neither, the single-broker tree isolates by default -- a shared tenant makes
+    /// every list/aggregate/discovery case depend on suite order and leftover state
+    /// -- while the distributed tree keeps the shared tenant its mock topology and
+    /// the authoritative four-broker tier were validated against.
+    const fn resolve_isolate_tenants(&self) -> bool {
+        match self.tenant_isolation.forced() {
+            Some(forced) => forced,
+            None => matches!(self.topology(), TopologyScope::SingleBroker),
+        }
     }
 
     /// Which topology the run targets, selecting the mutually exclusive `dist-ops`

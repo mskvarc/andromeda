@@ -6,8 +6,8 @@
 //! collected data, and must measurably improve the row estimate of a correlated
 //! predicate.
 
-use crate::seeded_corpus::{analyze, seed};
-use andromeda_test_harness::environment::TestEnvironment;
+use crate::seeded_corpus::{SEED_PREFIX, analyze, seed};
+use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use pretty_assertions::assert_eq;
 use sqlx::{Executor, PgConnection};
 
@@ -39,10 +39,10 @@ async fn estimated_rows(connection: &mut PgConnection, statement: &str) -> f64 {
 
 #[tokio::test]
 async fn declared_statistics_objects_exist_and_hold_collected_data() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
-    let corpus = seed(pool, scope.id_prefix()).await;
-    assert_eq!(corpus.prefix(), scope.id_prefix());
+    let corpus = seed(pool, SEED_PREFIX).await;
+    assert_eq!(corpus.prefix(), SEED_PREFIX);
     analyze(pool).await;
 
     for (name, columns) in [
@@ -81,7 +81,7 @@ async fn declared_statistics_objects_exist_and_hold_collected_data() {
 
 #[tokio::test]
 async fn correlated_predicates_are_estimated_more_accurately_with_extended_statistics() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let mut transaction = scope.database_pool().begin().await.expect("transaction must start");
     for statement in CORRELATED_FIXTURE {
         transaction.execute(statement).await.expect("fixture statement must succeed");

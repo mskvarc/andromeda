@@ -14,6 +14,8 @@ pub mod batch;
 pub mod batch_activity;
 /// Publication boundary for committed entity changes.
 pub mod change_sink;
+/// The change events a committed durable side effect publishes once its acknowledgement is confirmed.
+mod committed_side_effect;
 /// Cache of compiled entity queries, owned by the query service.
 pub mod compiled_cache;
 /// Entity execution and background-operation configuration.

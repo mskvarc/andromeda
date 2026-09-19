@@ -263,6 +263,18 @@ mod config_tests {
         }
     }
 
+    /// The shipped broker commits temporal history synchronously inside the
+    /// atomic write, so a POST followed by an immediate temporal aggregate GET
+    /// reads its own writes. That guarantee holds only in `Native` mode: the
+    /// `Deferred` overlay lands history through a sink and would expose a
+    /// write-then-read window. This pins the default so flipping it fails loudly
+    /// rather than silently reintroducing that staleness.
+    #[test]
+    fn the_default_append_mode_is_native() {
+        assert_eq!(TemporalConfig::default().append_mode, TemporalAppendMode::Native);
+        assert_eq!(TemporalAppendMode::default(), TemporalAppendMode::Native);
+    }
+
     #[test]
     fn a_retry_ceiling_below_the_base_delay_is_rejected() {
         let config = TemporalConfig {

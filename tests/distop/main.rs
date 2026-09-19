@@ -13,7 +13,11 @@
 //! documented in `docs/distributed-operations-test-plan.md` and the companion
 //! `docs/distributed-tests/` catalog.
 //!
-//! Bring the stack up and source the environment before running:
+//! The canonical runner is `cargo xtask itest distributed`, which brings the
+//! four-broker compose stack up, sources its environment, and runs this suite
+//! with `--test-threads=1` enforced by the xtask stack definition. That is the
+//! path CI takes and the authoritative distributed verdict. The manual
+//! equivalent, for iterating against an already-running stack:
 //!
 //! ```sh
 //! docker compose -f docker/compose/test/distributed/docker-compose.yaml up --build -d
@@ -28,7 +32,9 @@
 //! `Vehicle` CSR in one test would make another test's local `Vehicle` create
 //! fail with 409 Conflict. Prefix isolation namespaces entity ids, not the
 //! shared registration surface, so these tests are serialised rather than run in
-//! parallel against the shared stack.
+//! parallel against the shared stack. The suite carries no `#[serial]` marks
+//! because it is never run multi-threaded: the `--test-threads=1` contract above
+//! is the single-source guarantee, enforced by the xtask runner.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

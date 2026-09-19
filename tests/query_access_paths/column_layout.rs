@@ -6,7 +6,7 @@
 //! The catalog states the physical order, and a naive declaration order costs
 //! measurable padding for the same data.
 
-use andromeda_test_harness::environment::TestEnvironment;
+use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use pretty_assertions::assert_eq;
 use sqlx::{Executor, FromRow, PgPool};
 
@@ -57,7 +57,7 @@ async fn physical_columns(pool: &PgPool, relation: &str) -> Vec<PhysicalColumn> 
 
 #[tokio::test]
 async fn rebuilt_relations_declare_a_not_null_fixed_prefix_without_alignment_padding() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
 
     for relation in [
@@ -99,7 +99,7 @@ async fn rebuilt_relations_declare_a_not_null_fixed_prefix_without_alignment_pad
 
 #[tokio::test]
 async fn alignment_order_is_no_wider_than_a_naive_declaration_order() {
-    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let mut transaction = scope.database_pool().begin().await.expect("transaction must start");
 
     // The same five values twice: once in the projection's alignment order,

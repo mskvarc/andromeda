@@ -4,8 +4,8 @@
 //! Semantic-time plans need enough rows per stream for the planner to prefer an
 //! index over a chunk scan, and they need every one of the four axes populated
 //! with deliberately different instants. Writing that through the API would take
-//! minutes per test, so the rows are written directly and removed again by the
-//! harness prefix cleanup.
+//! minutes per test, so the rows are written directly and cleared again by the
+//! exclusive serialized reset that runs before each test in this suite.
 
 use sqlx::PgPool;
 

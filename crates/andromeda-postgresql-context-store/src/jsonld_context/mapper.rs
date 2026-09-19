@@ -3,6 +3,7 @@
 use crate::jsonld_context::rows::{ContextMetadataRow, ContextSummaryRow};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
+use iri_rs::IriBuf;
 use thiserror::Error;
 use url::Url;
 
@@ -34,6 +35,12 @@ pub enum ContextMapperError {
         /// Raw database value.
         value: String,
     },
+    /// Stored serving URL is not an IRI reference the hit counter can key on.
+    #[error("invalid serving URL in database: {value}")]
+    ServingIri {
+        /// Raw database value.
+        value: String,
+    },
 }
 
 /// Convert a detailed-projection row into the domain [`ContextMetadata`].
@@ -47,12 +54,22 @@ pub(crate) fn row_to_metadata(row: ContextMetadataRow) -> Result<ContextMetadata
         .transpose()
         .map_err(|source| ContextMapperError::Url { source })?;
 
+    // Kept verbatim, not re-serialized from `url`: the hit counter is keyed on
+    // this exact stored string (clause 5.13.3.5), so the `numberOfHits` fold
+    // must key on the same bytes.
+    let serving_iri = row
+        .url
+        .as_deref()
+        .map(|raw| IriBuf::new(raw.to_owned()).map_err(|error| ContextMapperError::ServingIri { value: error.0 }))
+        .transpose()?;
+
     let number_of_hits = u64::try_from(row.number_of_hits).map_err(|_| ContextMapperError::NegativeHits { value: row.number_of_hits })?;
 
     let kind: ContextKind = row.kind.parse().map_err(|_| ContextMapperError::Kind { value: row.kind.clone() })?;
 
     Ok(ContextMetadata::builder()
         .url(url)
+        .serving_iri(serving_iri)
         .local_id(local_id)
         .kind(kind)
         .created_at(row.created_at)

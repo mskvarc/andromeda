@@ -22,10 +22,7 @@ use andromeda_test_mocks::{callback_path::CallbackPath, jsonld_context_server::J
 use axum::{body::Bytes, http::HeaderMap};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, time::Duration};
 use tokio::time::sleep;
 use uuid::Uuid;
 
@@ -130,36 +127,16 @@ async fn get_context(client: &Client, id: &str, query: &str) -> (StatusCode, Val
     (status, body)
 }
 
-/// Upper bound on how long the broker may take to persist a context hit.
+/// Read `numberOfHits` for a context right now, with no waiting.
 ///
-/// `numberOfHits` is accumulated in memory and folded into the
-/// `jsonld_contexts` row by a background task every
-/// `database.context_hit_flush_secs` seconds (default 5). NGSI-LD 5.13.3.5
-/// requires the broker to maintain the counter, not to persist it
-/// synchronously per access, so a read taken immediately after a request that
-/// used the context legitimately still sees the old value. A hit landing just
-/// after a tick waits a full interval plus the flush write; three intervals
-/// leaves room for that without making a genuine failure hang.
-const HIT_FLUSH_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// Re-read cadence while waiting for a hit flush.
-const HIT_POLL_INTERVAL: Duration = Duration::from_millis(250);
-
-/// Read `numberOfHits` for a context, waiting for the periodic flush to carry
-/// it past `baseline`.
-///
-/// Returns the last value observed, so a caller whose wait times out asserts
-/// against the number the broker actually served rather than a sentinel.
-async fn wait_for_hits_above(client: &Client, ctx_id: &str, baseline: u64) -> u64 {
-    let deadline = Instant::now() + HIT_FLUSH_TIMEOUT;
-    loop {
-        let (_, body) = get_context(client, ctx_id, "details=true").await;
-        let hits = body["numberOfHits"].as_u64().unwrap_or(0);
-        if hits > baseline || Instant::now() >= deadline {
-            return hits;
-        }
-        sleep(HIT_POLL_INTERVAL).await;
-    }
+/// Clause 5.13.3.5 requires the broker to maintain the counter, and the served
+/// metadata folds this process's un-flushed accesses into the stored row before
+/// answering, so the number is current the instant a request that used the
+/// context returns -- a reader never has to wait for the periodic flush.
+async fn number_of_hits(client: &Client, ctx_id: &str) -> u64 {
+    let (status, body) = get_context(client, ctx_id, "details=true").await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK, "metadata read failed: {body:?}");
+    body["numberOfHits"].as_u64().unwrap_or(0)
 }
 
 /// GET /jsonldContexts with optional query params.

@@ -5,18 +5,19 @@
 //! under the job's stored write identity and ordinal base, which is what makes
 //! a crash-retried temporal write and notification event idempotent: the
 //! replay's rows collide with the first attempt's on their row-level `ON
-//! CONFLICT ... DO NOTHING` constraints. The in-memory
-//! [`EntityChangeSink`] republication this drain performs afterward has no
-//! equivalent row-level guard, though: it is a local fan-out, not a durable
-//! insert, so a job whose commit succeeded but whose acknowledgement was lost
-//! to a lease reclaim is redelivered by the worker that reclaims it, and both
-//! workers' change-event publications reach the sink. That residual is
-//! deliberate and documented here rather than solved: the durable side-effect
-//! queue's contract is at-least-once, and this is the one consequence that
-//! stays at-least-once end to end.
+//! CONFLICT ... DO NOTHING` constraints. The in-memory [`EntityChangeSink`]
+//! republication has no equivalent row-level guard -- it is a local fan-out,
+//! not a durable insert -- so it is held back until the acknowledgement is
+//! confirmed [`LeaseAcknowledgement::Applied`]: a job whose commit succeeded but
+//! whose acknowledgement was then lost to a lease reclaim publishes nothing
+//! here, and the reclaiming worker performs the single publication. The change
+//! events therefore reach the live channel exactly once per committed job, while
+//! the durable temporal and notification consequences keep their at-least-once,
+//! idempotent-on-replay contract.
 
 use crate::{
     change_sink::EntityChangeSink,
+    committed_side_effect::CommittedSideEffect,
     error::EntityError,
     side_effect_queue::{LeasedSideEffect, SideEffectLeaseOwner, SideEffectQueue},
 };
@@ -119,12 +120,20 @@ impl EntitySideEffectDrain {
             consequence_base,
         } = lease;
         match self.deliver(job, record, consequence_base).await {
-            Ok(()) => match self.queue.ack(id, &self.config.lease_owner).await? {
+            Ok(committed) => match self.queue.ack(id, &self.config.lease_owner).await? {
                 LeaseAcknowledgement::Applied => {
+                    // The commit is durably owned by this worker, so its live
+                    // change events are published exactly here, once.
+                    self.publish_changes(committed);
                     record_queue_outcome(QueueName::PendingSideEffects, QueueOutcome::Completed, 1);
                     Ok(true)
                 }
                 LeaseAcknowledgement::Lost => {
+                    // Another worker reclaimed the lease between the commit and
+                    // this acknowledgement and will redeliver the job; it owns
+                    // the single publication now, so nothing is published here.
+                    // The durable temporal and notification rows are idempotent
+                    // on replay, so its redelivery adds no duplicate there.
                     record_queue_outcome(QueueName::PendingSideEffects, QueueOutcome::LeaseLost, 1);
                     tracing::warn!(job_id = %id, event = "pending_side_effect_lease_lost_on_ack");
                     Ok(false)
@@ -156,7 +165,9 @@ impl EntitySideEffectDrain {
         }
     }
 
-    async fn deliver(&self, job: BatchSideEffectJob, record: WriteRecord, consequence_base: WriteOrdinal) -> Result<(), EntityError> {
+    /// Replay the job's durable consequences and hand back the live change
+    /// events to publish only once the acknowledgement is confirmed applied.
+    async fn deliver(&self, job: BatchSideEffectJob, record: WriteRecord, consequence_base: WriteOrdinal) -> Result<CommittedSideEffect, EntityError> {
         let BatchSideEffectJob {
             target,
             temporal_entities,
@@ -175,15 +186,27 @@ impl EntitySideEffectDrain {
         self.writes
             .commit_replayed(&target, CommitReplay::new(record, consequence_base), writes)
             .await?;
-        if let Some(ref sink) = self.changes {
-            for event in change_events {
-                sink.publish(ContextChangeEvent {
-                    target: target.clone(), // clone: every queued consumer owns the immutable branch selection.
-                    event,
-                });
-            }
+        Ok(CommittedSideEffect { target, change_events })
+    }
+
+    /// Publish a committed side effect's change events to the in-memory sink.
+    ///
+    /// Called only on the acknowledged-applied branch, so a delivery whose lease
+    /// was reclaimed publishes nothing. This mirrors the online inline path,
+    /// which never republishes a change it did not commit under its own lease,
+    /// and is why the best-effort live channel carries one publication per
+    /// committed job even though the durable queue is at-least-once.
+    fn publish_changes(&self, committed: CommittedSideEffect) {
+        let Some(ref sink) = self.changes else {
+            return;
+        };
+        let CommittedSideEffect { target, change_events } = committed;
+        for event in change_events {
+            sink.publish(ContextChangeEvent {
+                target: target.clone(), // clone: every queued consumer owns the immutable branch selection.
+                event,
+            });
         }
-        Ok(())
     }
 
     /// Remove dead-lettered jobs created before `cutoff`, returning how many
@@ -201,6 +224,7 @@ impl EntitySideEffectDrain {
 mod tests {
     use super::*;
     use andromeda_context_commit::{
+        change_event::ChangeEvent,
         committer::CommitFuture,
         error::CommitError,
         side_effect_job_id::SideEffectJobId,
@@ -208,10 +232,32 @@ mod tests {
         write_outcome::WriteOutcome,
     };
     use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_ngsi_ld_model::notification::NotificationTrigger;
     use chrono::TimeZone;
     use futures::future::BoxFuture;
     use std::{mem::take, sync::Mutex};
     use uuid::Uuid;
+
+    /// Records every change event published to the sink, so a test can assert
+    /// how many publications one delivery produced.
+    #[derive(Default)]
+    struct RecordingSink {
+        published: Mutex<Vec<ContextChangeEvent>>,
+    }
+
+    impl RecordingSink {
+        fn count(&self) -> Result<usize, EntityError> {
+            Ok(self.published.lock().map_err(|error| EntityError::internal(error.to_string()))?.len())
+        }
+    }
+
+    impl EntityChangeSink for RecordingSink {
+        fn publish(&self, event: ContextChangeEvent) {
+            if let Ok(mut published) = self.published.lock() {
+                published.push(event);
+            }
+        }
+    }
 
     #[derive(Clone, Copy)]
     enum CommitDisposition {
@@ -441,6 +487,41 @@ mod tests {
         drain_with_committer(queue, Arc::new(FixedCommitter::new(disposition)))
     }
 
+    fn drain_with_sink(queue: Arc<RecordingQueue>, disposition: CommitDisposition, sink: Arc<RecordingSink>) -> Result<EntitySideEffectDrain, EntityError> {
+        Ok(EntitySideEffectDrain::new(
+            queue,
+            Arc::new(FixedCommitter::new(disposition)),
+            Some(sink),
+            EntitySideEffectDrainConfig {
+                lease_seconds: 30,
+                batch_size: 1,
+                max_attempts: 3,
+                base_backoff: Duration::from_secs(5),
+                lease_owner: lease_owner()?,
+            },
+        ))
+    }
+
+    /// A lease whose job carries exactly one change event, so a test can count
+    /// how many times it reaches the sink.
+    fn lease_with_change_event() -> Result<LeasedSideEffect, EntityError> {
+        let entity_id = "urn:ngsi-ld:Building:side-effect"
+            .parse()
+            .map_err(|error| EntityError::internal(format!("invalid test entity id: {error}")))?;
+        let event = ChangeEvent::new(entity_id, Vec::new(), NotificationTrigger::EntityCreated);
+        Ok(LeasedSideEffect {
+            id: SideEffectJobId::mint(),
+            attempts: 0,
+            job: BatchSideEffectJob {
+                target: live_target(),
+                temporal_entities: Vec::new(),
+                change_events: vec![event],
+            },
+            record: fixed_record(),
+            consequence_base: WriteOrdinal::at(3),
+        })
+    }
+
     #[tokio::test]
     async fn successful_delivery_is_acknowledged_after_commit() -> Result<(), EntityError> {
         let lease = lease(0);
@@ -505,6 +586,59 @@ mod tests {
         pretty_assertions::assert_eq!(outcome.completed, 0);
         let acknowledged = queue.acknowledged.lock().map_err(|error| EntityError::internal(error.to_string()))?;
         assert!(acknowledged.is_empty(), "a lost lease must not be recorded as an applied acknowledgement");
+        Ok(())
+    }
+
+    /// A delivery whose acknowledgement is confirmed applied publishes its
+    /// change events to the live sink exactly once.
+    #[tokio::test]
+    async fn an_applied_delivery_publishes_its_change_events_once() -> Result<(), EntityError> {
+        let queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()?));
+        let sink = Arc::new(RecordingSink::default());
+        let outcome = drain_with_sink(queue, CommitDisposition::Applied, Arc::clone(&sink))?
+            .execute(Utc::now())
+            .await?;
+        pretty_assertions::assert_eq!(outcome.completed, 1);
+        pretty_assertions::assert_eq!(sink.count()?, 1, "an applied delivery must publish its one change event exactly once");
+        Ok(())
+    }
+
+    /// A delivery whose lease is reclaimed on acknowledgement publishes nothing:
+    /// the durable commit still succeeded and stays idempotent on replay, but
+    /// the live change events are the reclaiming worker's to publish.
+    #[tokio::test]
+    async fn a_lost_lease_publishes_no_change_events() -> Result<(), EntityError> {
+        let queue = Arc::new(RecordingQueue::with_lease_lost_on_acknowledgement(lease_with_change_event()?));
+        let sink = Arc::new(RecordingSink::default());
+        let outcome = drain_with_sink(queue, CommitDisposition::Applied, Arc::clone(&sink))?
+            .execute(Utc::now())
+            .await?;
+        pretty_assertions::assert_eq!(outcome.completed, 0);
+        pretty_assertions::assert_eq!(sink.count()?, 0, "a lease lost on acknowledgement must publish no change event");
+        Ok(())
+    }
+
+    /// End to end: the same job is delivered twice -- once by a worker that
+    /// commits and then loses its lease, and once by the worker that reclaims
+    /// and acknowledges it. Both commits are idempotent on replay, and the live
+    /// change event reaches the sink exactly once across the two deliveries.
+    #[tokio::test]
+    async fn a_reclaimed_redelivery_publishes_the_change_event_exactly_once() -> Result<(), EntityError> {
+        let sink = Arc::new(RecordingSink::default());
+
+        // First worker: commits, then finds its lease already reclaimed.
+        let lost_queue = Arc::new(RecordingQueue::with_lease_lost_on_acknowledgement(lease_with_change_event()?));
+        drain_with_sink(lost_queue, CommitDisposition::Applied, Arc::clone(&sink))?
+            .execute(Utc::now())
+            .await?;
+        pretty_assertions::assert_eq!(sink.count()?, 0, "the worker that lost its lease publishes nothing");
+
+        // Reclaiming worker: replays the same job and acknowledges it.
+        let applied_queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()?));
+        drain_with_sink(applied_queue, CommitDisposition::Applied, Arc::clone(&sink))?
+            .execute(Utc::now())
+            .await?;
+        pretty_assertions::assert_eq!(sink.count()?, 1, "the reclaiming worker performs the single publication");
         Ok(())
     }
 }

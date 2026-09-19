@@ -50,6 +50,17 @@ impl SerializedEnvironment {
         &self.client
     }
 
+    /// Borrow the database pool for assertions that inspect broker persistence state.
+    ///
+    /// The exclusive lease serializes every holder, so a plan or catalogue query
+    /// issued through this pool reads a tenant reset to a clean slate and holding
+    /// only what the test itself seeded -- whole-table `ANALYZE` and unscoped
+    /// `EXPLAIN` are therefore deterministic in a way the shared-lock environment
+    /// cannot promise.
+    pub const fn database_pool(&self) -> &PgPool {
+        &self.pool
+    }
+
     /// Reset all mutable tenant tables through the exclusive capability.
     ///
     /// # Errors
