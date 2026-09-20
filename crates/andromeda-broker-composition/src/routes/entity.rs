@@ -1,10 +1,15 @@
 //! Composition adapters that supply focused broker capabilities to entity HTTP routes.
 
-use crate::{routes::context_target::BrokerSnapshotTargetResolver, tenant_factory::BrokerTenantFactory, tenant_state::AndromedaState};
+use crate::{routes::context_target::BrokerSnapshotTargetResolver, tenant_factory::BrokerTenantFactory};
 use andromeda_http_entity::state::{EntityRouteServices, EntityStateResolver};
 use andromeda_http_extraction::context_target::SnapshotTargetResolver;
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
-use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::TenantRuntimeManager, tenant_ref::TenantRef};
+use andromeda_tenancy::{
+    creation_policy::TenantCreationPolicy,
+    error::TenancyError,
+    runtime::{TenantRuntimeManager, lease::LeasedState},
+    tenant_ref::TenantRef,
+};
 use futures::future::BoxFuture;
 use std::sync::Arc;
 
@@ -23,10 +28,11 @@ impl BrokerEntityStateResolver {
 impl EntityStateResolver for BrokerEntityStateResolver {
     fn resolve<'a>(&'a self, tenant: &'a TenantRef, creation_policy: TenantCreationPolicy) -> BoxFuture<'a, Result<Arc<EntityRouteServices>, TenancyError>> {
         Box::pin(async move {
-            let state: Arc<AndromedaState> = self.tenants.resolve_state(tenant, creation_policy).await?;
+            let LeasedState { state, lease } = self.tenants.resolve_state(tenant, creation_policy).await?;
             let snapshot_targets: Arc<dyn SnapshotTargetResolver> = Arc::new(BrokerSnapshotTargetResolver::new(Arc::clone(&state.snapshots)));
             Ok(Arc::new(
                 EntityRouteServices::builder()
+                    .runtime_lease(lease)
                     .entities(Arc::clone(&state.entities))
                     .entity_query(Arc::clone(&state.entity_query))
                     .entity_discovery(Arc::clone(&state.entity_discovery))

@@ -96,7 +96,7 @@ mod tests {
     use andromeda_http_health::routes::HealthRoutes;
     use andromeda_http_notification_receiver::{
         routes::NotificationReceiverRoutes,
-        state::{NotificationReceiverResolver, ReceiverResolutionError},
+        state::{LeasedForwarding, NotificationReceiverResolver, ReceiverResolutionError},
     };
     use andromeda_http_registration::{
         routes::RegistrationRoutes,
@@ -122,7 +122,6 @@ mod tests {
     };
     use andromeda_http_tenancy::routes::TenancyRoutes;
     use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, tenant::TenantName, uri::Uri};
-    use andromeda_subscription_forwarding::service::SubscriptionForwardingService;
     use andromeda_telemetry::recorder::TelemetryRecorder;
     use andromeda_tenancy::{
         administration::{OrphanTenantEvictor, TenantDirectory},
@@ -169,7 +168,7 @@ mod tests {
     struct RejectReceiver;
 
     impl NotificationReceiverResolver for RejectReceiver {
-        fn resolve<'a>(&'a self, subscription: &'a Uri) -> BoxFuture<'a, Result<Arc<SubscriptionForwardingService>, ReceiverResolutionError>> {
+        fn resolve<'a>(&'a self, subscription: &'a Uri) -> BoxFuture<'a, Result<LeasedForwarding, ReceiverResolutionError>> {
             Box::pin(async move {
                 Err(ReceiverResolutionError::Unknown {
                     subscription: subscription.clone(), // clone: the error owns the identifier

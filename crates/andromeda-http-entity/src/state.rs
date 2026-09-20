@@ -10,7 +10,7 @@ use andromeda_http_extraction::{
     tenant_state::TenantStateResolver,
 };
 use andromeda_http_response::problem_response::ProblemResponse;
-use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
+use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::lease::RuntimeLease, tenant_ref::TenantRef};
 use axum::http::Uri;
 use futures::future::BoxFuture;
 use std::sync::Arc;
@@ -19,6 +19,9 @@ use typed_builder::TypedBuilder;
 /// The complete, entity-only capability set one tenant exposes to the entity binding.
 #[derive(TypedBuilder)]
 pub struct EntityRouteServices {
+    /// Keeps the tenant runtime resident for the life of the request holding
+    /// this capability set, so eviction never closes its pools mid-request.
+    pub runtime_lease: RuntimeLease,
     /// Entity mutation policy.
     pub entities: Arc<EntityService>,
     /// Entity query policy.

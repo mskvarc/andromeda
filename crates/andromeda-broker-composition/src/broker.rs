@@ -212,7 +212,10 @@ async fn construct(
     ));
     let tenants = TenantRuntimeManager::new(config.tenancy.clone(), Arc::clone(&registry), Arc::clone(&factory)); // clone: manager owns its policy
     drop(tenants.spawn_janitor());
-    let _default_state = tenants.resolve_state(&TenantRef::UnnamedDefault, TenantCreationPolicy::MustExist).await?;
+    // Warm the unnamed default so its runtime is built before the first
+    // request. The returned lease is dropped at once: the default is never
+    // evicted, so it needs no hold to stay resident.
+    drop(tenants.resolve_state(&TenantRef::UnnamedDefault, TenantCreationPolicy::MustExist).await?);
 
     let database_indicator = DatabaseHealthIndicator::new(registry.main_pool().clone()); // clone: PgPool is a shared handle
     let mut health = Health::builder().with_indicator(database_indicator);

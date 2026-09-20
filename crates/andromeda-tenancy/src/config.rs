@@ -54,10 +54,15 @@ pub struct TenancyConfig {
     ///
     /// The cap is enforced both on the janitor tick and synchronously when a
     /// cold build inserts a runtime, so `runtime_max_cached *
-    /// tenant_max_connections` is an actual aggregate bound on live per-tenant
-    /// pools between sweeps -- not a limit that can be overshot until the next
-    /// tick -- modulo a transient when more than `runtime_max_cached` distinct
-    /// tenants are cold-built truly simultaneously.
+    /// tenant_max_connections` bounds the live per-tenant pool count between
+    /// sweeps rather than letting it climb until the next tick.
+    ///
+    /// The bound is honoured for runtimes nobody is using. A runtime a request
+    /// currently holds is leased and never evicted, so while more than
+    /// `runtime_max_cached` distinct tenants have requests in flight at once the
+    /// cache overshoots this cap transiently; the overshoot is bounded by the
+    /// number of concurrent requests and is trimmed back by the next sweep or
+    /// insert as those requests complete and drop their leases.
     pub runtime_max_cached: usize,
 
     /// How often the janitor sweeps for idle and orphaned runtimes.

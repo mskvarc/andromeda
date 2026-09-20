@@ -696,6 +696,7 @@ dependencies = [
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-problem-details",
  "andromeda-subscription-forwarding",
+ "andromeda-tenancy",
  "axum",
  "futures",
  "headers",

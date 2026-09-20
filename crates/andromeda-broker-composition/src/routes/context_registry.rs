@@ -1,9 +1,14 @@
 //! Composition of focused Context Registry HTTP capabilities.
 
-use crate::{tenant_factory::BrokerTenantFactory, tenant_state::AndromedaState};
+use crate::tenant_factory::BrokerTenantFactory;
 use andromeda_http_context_registry::state::{ContextRegistryRouteServices, ContextRegistryStateResolver};
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
-use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::TenantRuntimeManager, tenant_ref::TenantRef};
+use andromeda_tenancy::{
+    creation_policy::TenantCreationPolicy,
+    error::TenancyError,
+    runtime::{TenantRuntimeManager, lease::LeasedState},
+    tenant_ref::TenantRef,
+};
 use futures::future::BoxFuture;
 use std::sync::Arc;
 
@@ -26,8 +31,8 @@ impl ContextRegistryStateResolver for BrokerContextRegistryStateResolver {
         creation_policy: TenantCreationPolicy,
     ) -> BoxFuture<'a, Result<Arc<ContextRegistryRouteServices>, TenancyError>> {
         Box::pin(async move {
-            let state: Arc<AndromedaState> = self.tenants.resolve_state(tenant, creation_policy).await?;
-            Ok(Arc::new(ContextRegistryRouteServices::new(Arc::clone(&state.contexts))))
+            let LeasedState { state, lease } = self.tenants.resolve_state(tenant, creation_policy).await?;
+            Ok(Arc::new(ContextRegistryRouteServices::new(Arc::clone(&state.contexts), lease)))
         })
     }
 }

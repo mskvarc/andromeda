@@ -10,7 +10,7 @@ use andromeda_http_extraction::{
 };
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_temporal::service::TemporalService;
-use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
+use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::lease::RuntimeLease, tenant_ref::TenantRef};
 use axum::http::Uri;
 use futures::future::BoxFuture;
 use std::sync::Arc;
@@ -19,6 +19,9 @@ use typed_builder::TypedBuilder;
 /// The complete temporal-only capability set exposed to this binding.
 #[derive(TypedBuilder)]
 pub struct TemporalRouteServices {
+    /// Keeps the tenant runtime resident for the life of the request holding
+    /// this capability set, so eviction never closes its pools mid-request.
+    pub runtime_lease: RuntimeLease,
     /// Temporal lifecycle and history policy.
     pub temporal: Arc<TemporalService>,
     /// Distributed temporal forwarding policy.

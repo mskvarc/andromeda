@@ -1,9 +1,14 @@
 //! Composition of focused snapshot HTTP capabilities.
 
-use crate::{tenant_factory::BrokerTenantFactory, tenant_state::AndromedaState};
+use crate::tenant_factory::BrokerTenantFactory;
 use andromeda_http_snapshot::state::{SnapshotRouteServices, SnapshotStateResolver};
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
-use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::TenantRuntimeManager, tenant_ref::TenantRef};
+use andromeda_tenancy::{
+    creation_policy::TenantCreationPolicy,
+    error::TenancyError,
+    runtime::{TenantRuntimeManager, lease::LeasedState},
+    tenant_ref::TenantRef,
+};
 use futures::future::BoxFuture;
 use std::sync::Arc;
 
@@ -22,8 +27,8 @@ impl BrokerSnapshotStateResolver {
 impl SnapshotStateResolver for BrokerSnapshotStateResolver {
     fn resolve<'a>(&'a self, tenant: &'a TenantRef, creation_policy: TenantCreationPolicy) -> BoxFuture<'a, Result<Arc<SnapshotRouteServices>, TenancyError>> {
         Box::pin(async move {
-            let state: Arc<AndromedaState> = self.tenants.resolve_state(tenant, creation_policy).await?;
-            Ok(Arc::new(SnapshotRouteServices::new(Arc::clone(&state.snapshots))))
+            let LeasedState { state, lease } = self.tenants.resolve_state(tenant, creation_policy).await?;
+            Ok(Arc::new(SnapshotRouteServices::new(Arc::clone(&state.snapshots), lease)))
         })
     }
 }

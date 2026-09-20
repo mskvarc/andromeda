@@ -10,7 +10,7 @@ use andromeda_http_extraction::{
 };
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_temporal::service::TemporalService;
-use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
+use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::lease::RuntimeLease, tenant_ref::TenantRef};
 use axum::http::Uri;
 use futures::future::BoxFuture;
 use std::sync::Arc;
@@ -29,6 +29,9 @@ pub struct EntityMapRouteServices {
     pub forwarding: Arc<FederationService>,
     /// Tenant's live branch; Entity Map management does not accept Snapshot scoping.
     pub live_target: ContextTarget,
+    /// Keeps the tenant runtime resident for the life of the request holding
+    /// this capability set, so eviction never closes its pools mid-request.
+    pub runtime_lease: RuntimeLease,
 }
 
 impl EntityMapRouteServices {
@@ -40,6 +43,7 @@ impl EntityMapRouteServices {
         temporal: Arc<TemporalService>,
         forwarding: Arc<FederationService>,
         live_target: ContextTarget,
+        runtime_lease: RuntimeLease,
     ) -> EntityMapRouteServices {
         EntityMapRouteServices {
             entity_maps,
@@ -47,6 +51,7 @@ impl EntityMapRouteServices {
             temporal,
             forwarding,
             live_target,
+            runtime_lease,
         }
     }
 }

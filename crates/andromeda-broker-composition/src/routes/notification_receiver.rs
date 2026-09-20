@@ -4,12 +4,15 @@
 //! the platform route table says which tenant minted it, and that tenant's
 //! runtime holds the forwarding service that handles it.
 
-use crate::{tenant_factory::BrokerTenantFactory, tenant_state::AndromedaState};
-use andromeda_http_notification_receiver::state::{NotificationReceiverResolver, ReceiverResolutionError};
+use crate::tenant_factory::BrokerTenantFactory;
+use andromeda_http_notification_receiver::state::{LeasedForwarding, NotificationReceiverResolver, ReceiverResolutionError};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
-use andromeda_subscription_forwarding::{mapping::ForwardedSubscriptionRouter, service::SubscriptionForwardingService};
-use andromeda_tenancy::{creation_policy::TenantCreationPolicy, runtime::TenantRuntimeManager};
+use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
+use andromeda_tenancy::{
+    creation_policy::TenantCreationPolicy,
+    runtime::{TenantRuntimeManager, lease::LeasedState},
+};
 use futures::future::BoxFuture;
 use std::sync::Arc;
 
@@ -31,7 +34,7 @@ impl BrokerNotificationReceiverResolver {
 }
 
 impl NotificationReceiverResolver for BrokerNotificationReceiverResolver {
-    fn resolve<'a>(&'a self, subscription: &'a Uri) -> BoxFuture<'a, Result<Arc<SubscriptionForwardingService>, ReceiverResolutionError>> {
+    fn resolve<'a>(&'a self, subscription: &'a Uri) -> BoxFuture<'a, Result<LeasedForwarding, ReceiverResolutionError>> {
         Box::pin(async move {
             let tenant = self
                 .router
@@ -41,18 +44,19 @@ impl NotificationReceiverResolver for BrokerNotificationReceiverResolver {
                 .ok_or_else(|| ReceiverResolutionError::Unknown {
                     subscription: subscription.clone(), // clone: the error owns the identifier
                 })?;
-            let state: Arc<AndromedaState> = self
+            let LeasedState { state, lease } = self
                 .tenants
                 .resolve_state(&tenant, TenantCreationPolicy::MustExist)
                 .await
                 .map_err(|error| ReceiverResolutionError::Tenant { detail: error.to_string() })?;
-            state
+            let service = state
                 .subscription_forwarding
                 .as_ref()
                 .map(Arc::clone)
                 .ok_or_else(|| ReceiverResolutionError::ForwardingDisabled {
                     subscription: subscription.clone(), // clone: the error owns the identifier
-                })
+                })?;
+            Ok(LeasedForwarding { service, lease })
         })
     }
 }

@@ -89,7 +89,10 @@ pub(crate) async fn receive(
 ) -> Result<Response, ProblemResponse> {
     let received = Received::try_from(document).map_err(|error| bad_request_data(format!("not a notification: {error}"), &uri))?;
     let context = context.merge(body_context);
-    let service = state
+    // The resolved forwarding service carries a lease on its tenant's runtime;
+    // holding it across handling keeps the runtime resident so eviction cannot
+    // close its pools while the notification is processed.
+    let resolved = state
         .resolver
         .resolve(received.subscription_id())
         .await
@@ -98,8 +101,8 @@ pub(crate) async fn receive(
     // state it is merged into, which is far too large to keep inline in this
     // handler's own future; boxing keeps the request future small.
     match &received {
-        Received::Notification(notification) => Box::pin(service.handle_notification(notification, &context)).await,
-        Received::ContextSourceNotification(notification) => Box::pin(service.handle_csource_notification(notification, &context)).await,
+        Received::Notification(notification) => Box::pin(resolved.service.handle_notification(notification, &context)).await,
+        Received::ContextSourceNotification(notification) => Box::pin(resolved.service.handle_csource_notification(notification, &context)).await,
     }
     .map_err(|error| classify_forwarding(&error, &uri))?;
 

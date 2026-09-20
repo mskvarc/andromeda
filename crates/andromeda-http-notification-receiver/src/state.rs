@@ -6,8 +6,19 @@
 
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_subscription_forwarding::service::SubscriptionForwardingService;
+use andromeda_tenancy::runtime::lease::RuntimeLease;
 use futures::future::BoxFuture;
 use std::sync::Arc;
+
+/// A tenant's forwarding service together with the lease that keeps its runtime
+/// resident while the received notification is handled.
+pub struct LeasedForwarding {
+    /// The service handling notifications for the resolved subscription.
+    pub service: Arc<SubscriptionForwardingService>,
+    /// Keeps the resolved tenant's runtime resident until handling completes,
+    /// so eviction never closes its pools mid-notification.
+    pub lease: RuntimeLease,
+}
 
 /// Why a minted subscription identifier could not be resolved to a tenant's service.
 #[derive(Debug, thiserror::Error)]
@@ -34,8 +45,9 @@ pub enum ReceiverResolutionError {
 
 /// Resolves the forwarding service of the tenant that minted a subscription identifier.
 pub trait NotificationReceiverResolver: Send + Sync {
-    /// The service handling notifications for `subscription`.
-    fn resolve<'a>(&'a self, subscription: &'a Uri) -> BoxFuture<'a, Result<Arc<SubscriptionForwardingService>, ReceiverResolutionError>>;
+    /// The service handling notifications for `subscription`, leased so the
+    /// tenant runtime stays resident while the notification is handled.
+    fn resolve<'a>(&'a self, subscription: &'a Uri) -> BoxFuture<'a, Result<LeasedForwarding, ReceiverResolutionError>>;
 }
 
 /// Axum state for the receiver route.

@@ -9,7 +9,7 @@ use andromeda_http_extraction::{
 };
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_subscription::{csource::CsrSubscriptionVariant, entity::EntitySubscriptionVariant, lifecycle::SubscriptionService};
-use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
+use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::lease::RuntimeLease, tenant_ref::TenantRef};
 use axum::http::Uri;
 use futures::future::BoxFuture;
 use std::sync::Arc;
@@ -18,6 +18,9 @@ use typed_builder::TypedBuilder;
 /// The complete subscription capability set exposed by one tenant.
 #[derive(TypedBuilder)]
 pub struct SubscriptionRouteServices {
+    /// Keeps the tenant runtime resident for the life of the request holding
+    /// this capability set, so eviction never closes its pools mid-request.
+    pub runtime_lease: RuntimeLease,
     /// Tenant's ordinary live context branch.
     pub live_target: ContextTarget,
     /// Snapshot URI to durable branch resolution.

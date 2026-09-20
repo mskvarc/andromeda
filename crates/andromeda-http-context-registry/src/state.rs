@@ -6,7 +6,7 @@ use andromeda_http_extraction::{
     tenant_state::{ExistingTenantState, TenantStateResolver},
 };
 use andromeda_http_response::problem_response::ProblemResponse;
-use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
+use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::lease::RuntimeLease, tenant_ref::TenantRef};
 use axum::http::Uri;
 use futures::future::BoxFuture;
 use std::sync::Arc;
@@ -15,13 +15,16 @@ use std::sync::Arc;
 pub struct ContextRegistryRouteServices {
     /// Hosted and cached Context lifecycle policy.
     pub contexts: Arc<ContextRegistryService>,
+    /// Keeps the tenant runtime resident for the life of the request holding
+    /// this capability set, so eviction never closes its pools mid-request.
+    pub runtime_lease: RuntimeLease,
 }
 
 impl ContextRegistryRouteServices {
     /// Construct the focused capability set.
     #[must_use]
-    pub const fn new(contexts: Arc<ContextRegistryService>) -> ContextRegistryRouteServices {
-        ContextRegistryRouteServices { contexts }
+    pub const fn new(contexts: Arc<ContextRegistryService>, runtime_lease: RuntimeLease) -> ContextRegistryRouteServices {
+        ContextRegistryRouteServices { contexts, runtime_lease }
     }
 }
 

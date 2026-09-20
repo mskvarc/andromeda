@@ -32,10 +32,9 @@ impl NotificationReceiverRoutes {
 mod tests {
     use crate::{
         routes::NotificationReceiverRoutes,
-        state::{NotificationReceiverResolver, ReceiverResolutionError},
+        state::{LeasedForwarding, NotificationReceiverResolver, ReceiverResolutionError},
     };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
-    use andromeda_subscription_forwarding::service::SubscriptionForwardingService;
     use axum::{
         body::{Body, to_bytes},
         http::{Request, StatusCode},
@@ -47,7 +46,7 @@ mod tests {
     struct UnknownResolver;
 
     impl NotificationReceiverResolver for UnknownResolver {
-        fn resolve<'a>(&'a self, subscription: &'a Uri) -> BoxFuture<'a, Result<Arc<SubscriptionForwardingService>, ReceiverResolutionError>> {
+        fn resolve<'a>(&'a self, subscription: &'a Uri) -> BoxFuture<'a, Result<LeasedForwarding, ReceiverResolutionError>> {
             Box::pin(async move {
                 Err(ReceiverResolutionError::Unknown {
                     subscription: subscription.clone(), // clone: the error owns the identifier
