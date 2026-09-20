@@ -784,7 +784,10 @@ async fn evictions_overlap_up_to_the_bound() {
 
     let observed = peak.load(Ordering::SeqCst);
     assert!(observed <= BOUND, "no more than {BOUND} teardowns may overlap, but {observed} did");
-    assert!(observed > 1, "the teardowns must overlap for the bound to mean anything, but the peak was {observed}");
+    assert!(
+        observed > 1,
+        "the teardowns must overlap for the bound to mean anything, but the peak was {observed}"
+    );
 }
 
 /// A runtime whose shutdown blocks on a gate until the test opens it, so a

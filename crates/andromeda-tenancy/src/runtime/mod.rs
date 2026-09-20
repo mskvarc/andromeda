@@ -168,7 +168,11 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
 
         let build_started = Instant::now();
         let result = self.resolve_state_cold(tenant, policy).await;
-        let outcome = if result.is_ok() { ColdBuildOutcome::Succeeded } else { ColdBuildOutcome::Failed };
+        let outcome = if result.is_ok() {
+            ColdBuildOutcome::Succeeded
+        } else {
+            ColdBuildOutcome::Failed
+        };
         record_cold_build(outcome, build_started.elapsed().as_secs_f64());
 
         // Release the admission permit before the trim: the trim bounds only the

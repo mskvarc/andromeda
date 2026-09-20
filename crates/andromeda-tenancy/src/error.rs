@@ -49,4 +49,19 @@ pub enum TenancyError {
         /// What the composition root reported.
         detail: String,
     },
+
+    /// The tenant's backend connection pool was saturated while reaching or
+    /// building its runtime.
+    ///
+    /// This is backpressure, not a fault: the pooler or the PostgreSQL backend
+    /// cap left no connection to spare for a cold lookup, provision, or build
+    /// within the acquire deadline. Unlike the three fault variants it carries
+    /// no opaque `detail` — the condition is fully typed, and the caller's only
+    /// response is to retry with backoff, so it maps to a 503 with `Retry-After`
+    /// rather than a 500.
+    #[error("tenant {tenant} is temporarily saturated; retry with backoff")]
+    Saturated {
+        /// The tenant whose backend pool was saturated.
+        tenant: TenantRef,
+    },
 }

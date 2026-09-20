@@ -5,10 +5,17 @@ use crate::{
     tenant_database::{DatabaseUrl, create_database_if_missing, generate_db_name, migrate_main_db, migrate_single_tenant_db},
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
-use andromeda_postgresql_pool::configure_pool_options;
+use andromeda_postgresql_pool::{configure_pool_options, is_pool_saturated};
 use andromeda_postgresql_schema::tenancy::Tenants;
 use andromeda_postgresql_seaquery::advisory_lock::advisory_xact_lock;
-use andromeda_tenancy::{config::TenancyConfig, database::TenantDatabase, database_name::TenantDatabaseName, error::TenancyError, status::TenantStatus};
+use andromeda_tenancy::{
+    config::TenancyConfig,
+    database::TenantDatabase,
+    database_name::TenantDatabaseName,
+    error::TenancyError,
+    status::TenantStatus,
+    tenant_ref::TenantRef,
+};
 use async_trait::async_trait;
 use sea_query::{
     Expr,
@@ -116,9 +123,21 @@ impl PostgresTenantRegistry {
     }
 }
 
-/// The failure a registry read becomes.
+/// The failure a fleet-wide registry read becomes.
 fn registry_unavailable(error: &sqlx::Error) -> TenancyError {
     TenancyError::RegistryUnavailable { detail: error.to_string() }
+}
+
+/// The failure a per-tenant registry read becomes, telling a saturated backend
+/// pool (backpressure, shed as a 503) apart from a genuine registry fault (500).
+fn registry_read_failure(error: &sqlx::Error, name: &TenantName) -> TenancyError {
+    if is_pool_saturated(error) {
+        TenancyError::Saturated {
+            tenant: TenantRef::Named(name.clone()),
+        } // clone: the error outlives this borrow
+    } else {
+        registry_unavailable(error)
+    }
 }
 
 /// The failure a statement that could not be assembled becomes.
@@ -157,14 +176,24 @@ impl TenantDatabase for PostgresTenantRegistry {
         let db_name: Option<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_optional(&self.main_pool)
             .await
-            .map_err(|error| registry_unavailable(&error))?;
+            .map_err(|error| registry_read_failure(&error, name))?;
         Ok(db_name.map(TenantDatabaseName::from))
     }
 
     async fn provision(&self, name: &TenantName) -> Result<TenantDatabaseName, TenancyError> {
-        self.provision_inner(name).await.map_err(|error| TenancyError::ProvisioningFailed {
-            name: name.clone(), // clone: the error outlives this borrow
-            detail: error.to_string(),
+        self.provision_inner(name).await.map_err(|error| {
+            // A saturated backend pool while provisioning is backpressure, shed
+            // as a 503; every other failure is a genuine provisioning fault.
+            if matches!(error, ContextStoreError::Saturated) {
+                TenancyError::Saturated {
+                    tenant: TenantRef::Named(name.clone()),
+                } // clone: the error outlives this borrow
+            } else {
+                TenancyError::ProvisioningFailed {
+                    name: name.clone(), // clone: the error outlives this borrow
+                    detail: error.to_string(),
+                }
+            }
         })
     }
 }

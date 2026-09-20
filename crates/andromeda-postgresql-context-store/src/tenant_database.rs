@@ -432,10 +432,16 @@ mod tests {
     fn a_stamp_behind_the_contract_needs_migration() {
         let expected = SchemaVersion::try_from(5).expect("a valid schema version");
         let behind = SchemaVersion::try_from(4).expect("a valid schema version");
-        assert!(schema_error_is_migratable(&SchemaContractError::SchemaVersionMismatch { expected, found: behind }));
+        assert!(schema_error_is_migratable(&SchemaContractError::SchemaVersionMismatch {
+            expected,
+            found: behind
+        }));
 
         let ahead = SchemaVersion::try_from(6).expect("a valid schema version");
-        assert!(!schema_error_is_migratable(&SchemaContractError::SchemaVersionMismatch { expected, found: ahead }));
+        assert!(!schema_error_is_migratable(&SchemaContractError::SchemaVersionMismatch {
+            expected,
+            found: ahead
+        }));
     }
 
     /// A digest mismatch at the same version means the fleet runs two binaries,

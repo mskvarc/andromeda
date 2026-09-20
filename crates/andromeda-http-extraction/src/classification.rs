@@ -14,6 +14,11 @@ pub fn classify_tenancy_error(error: &TenancyError) -> ClassifiedReport {
     match error {
         TenancyError::MultiTenancyDisabled => ClassifiedReport::public(NgsiLdErrorType::NoMultiTenantSupport, error.to_string()),
         TenancyError::UnknownTenant { .. } => ClassifiedReport::public(NgsiLdErrorType::NonexistentTenant, error.to_string()),
+        // Backpressure, not a fault: a saturated backend pool during cold
+        // resolution is shed as a 503 with Retry-After, the same as the
+        // request-path stores, rather than reported as an internal 500 the
+        // client cannot act on.
+        TenancyError::Saturated { .. } => ClassifiedReport::store_saturated(error.to_string()),
         TenancyError::RegistryUnavailable { .. } | TenancyError::ProvisioningFailed { .. } | TenancyError::RuntimeUnavailable { .. } => {
             ClassifiedReport::internal(error)
         }
@@ -182,5 +187,26 @@ mod tests {
     fn valid_json_with_a_deserialization_error_is_bad_request_data() {
         let error = JsonLdError::Json(serde_json::from_value::<u64>(serde_json::json!("not a number")).expect_err("wrong JSON type"));
         pretty_assertions::assert_eq!(classify_jsonld_error(&error).error_type(), NgsiLdErrorType::BadRequestData);
+    }
+
+    #[test]
+    fn a_saturated_tenant_resolution_is_a_503_with_retry_after() {
+        use crate::classification::classify_tenancy_error;
+        use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+        use andromeda_ngsi_ld_problem_details::problem_detail::ProblemClassification;
+        use andromeda_tenancy::{error::TenancyError, tenant_ref::TenantRef};
+        use std::time::Duration;
+
+        let tenant = TenantRef::Named(TenantName::try_from("acme".to_owned()).expect("valid tenant name"));
+        let saturated = classify_tenancy_error(&TenancyError::Saturated { tenant: tenant.clone() });
+        pretty_assertions::assert_eq!(saturated.classification(), ProblemClassification::ServiceUnavailable);
+        pretty_assertions::assert_eq!(saturated.retry_after(), Some(Duration::from_secs(1)));
+
+        // A genuine construction fault stays an internal 500, not backpressure.
+        let fault = classify_tenancy_error(&TenancyError::RuntimeUnavailable {
+            tenant,
+            detail: "boom".to_owned(),
+        });
+        pretty_assertions::assert_eq!(fault.error_type(), NgsiLdErrorType::InternalError);
     }
 }
