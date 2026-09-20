@@ -181,9 +181,10 @@ async fn a_working_set_three_times_the_cache_is_served_without_a_single_failure(
         .map_or(0.0, |m| m.sum("andromeda_tenant_cold_builds_total"));
 
     println!(
-        "working-set 3x: {} requests, {} non-2xx, p50 {:?}, p99 {:?}, peak {} backends, cold builds {}",
+        "working-set 3x: {} requests, {} non-2xx, statuses {:?}, p50 {:?}, p99 {:?}, peak {} backends, cold builds {}",
         report.total,
         report.non_2xx,
+        report.statuses,
         report.p50,
         report.p99,
         series.max,
@@ -240,11 +241,13 @@ async fn a_zipf_working_set_keeps_hot_tenants_resident() {
         .map_or(0.0, |m| m.sum("andromeda_tenant_cold_builds_total"));
 
     println!(
-        "zipf: warmup {} req {} non-2xx; hot window {} req {} non-2xx; cold builds in hot window {}",
+        "zipf: warmup {} req {} non-2xx (statuses {:?}); hot window {} req {} non-2xx (statuses {:?}); cold builds in hot window {}",
         warm.total,
         warm.non_2xx,
+        warm.statuses,
         hot.total,
         hot.non_2xx,
+        hot.statuses,
         after - before
     );
     assert_eq!(warm.non_2xx, 0, "the Zipf working set must be served without a failure");
@@ -381,8 +384,8 @@ async fn two_replicas_share_one_pooler_without_doubling_backends() {
     };
 
     println!(
-        "replicas: single peak {} backends ({} non-2xx), dual peak {} backends ({} non-2xx), ryow write {} read {}",
-        single.1, single.0.non_2xx, dual.1, dual.0.non_2xx, write, read
+        "replicas: single peak {} backends ({} non-2xx, statuses {:?}), dual peak {} backends ({} non-2xx, statuses {:?}), ryow write {} read {}",
+        single.1, single.0.non_2xx, single.0.statuses, dual.1, dual.0.non_2xx, dual.0.statuses, write, read
     );
     assert_eq!(single.0.non_2xx, 0, "the single-replica run must have no failures");
     assert_eq!(dual.0.non_2xx, 0, "the dual-replica run must have no failures");
