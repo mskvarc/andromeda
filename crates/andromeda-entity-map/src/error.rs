@@ -25,6 +25,13 @@ pub enum EntityMapError {
         /// Human-readable backend-neutral failure detail.
         detail: String,
     },
+    /// A connection pool was saturated before the operation could run.
+    ///
+    /// Backpressure, not a fault: no backend became free within the acquire
+    /// deadline, so the well-formed request is shed and can be retried. It is
+    /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
+    #[error("the datastore connection pool is saturated; retry shortly")]
+    StoreSaturated,
     /// Policy generated a value that violated a domain invariant.
     #[error("entity map invariant failed: {detail}")]
     Invariant {

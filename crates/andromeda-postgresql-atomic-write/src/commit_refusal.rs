@@ -23,6 +23,16 @@ pub(crate) fn persistence(error: impl Display) -> CommitError {
     CommitError::Persistence { detail: error.to_string() }
 }
 
+/// Classify a raw database failure raised while beginning or committing the
+/// commit transaction.
+///
+/// Reuses the context store's saturation detection so a pool-acquire timeout at
+/// `BEGIN` or `COMMIT` becomes [`CommitError::StoreSaturated`] (a 503) rather
+/// than a persistence fault.
+pub(crate) fn database(error: sqlx::Error) -> CommitError {
+    context_store(ContextStoreError::from(error))
+}
+
 /// Classify a current-state store failure.
 ///
 /// Only the missing-type refusal names the submission: clause 4.5.1 requires at
@@ -31,6 +41,8 @@ pub(crate) fn persistence(error: impl Display) -> CommitError {
 pub(crate) fn context_store(error: ContextStoreError) -> CommitError {
     match error {
         ContextStoreError::EntityTypes(detail) => CommitError::Submission { detail: detail.to_string() },
+        // Pool saturation is backpressure the client can retry, not a fault.
+        ContextStoreError::Saturated => CommitError::StoreSaturated,
         ContextStoreError::Database(_)
         | ContextStoreError::Encoding(_)
         | ContextStoreError::Collation(_)
@@ -56,6 +68,8 @@ pub(crate) fn temporal(error: TemporalError) -> CommitError {
         // rendered text, as the commit port cannot hold the reason typed without
         // a dependency cycle.
         TemporalError::Validation(reason) => CommitError::Submission { detail: reason.to_string() },
+        // Pool saturation is backpressure the client can retry, not a fault.
+        TemporalError::StoreSaturated => CommitError::StoreSaturated,
         TemporalError::NotFound(_)
         | TemporalError::OperationNotSupported(_)
         | TemporalError::TooManyResults { .. }
@@ -154,5 +168,15 @@ mod tests {
     fn a_history_decode_failure_stays_a_persistence_failure() {
         let error = temporal_store(TemporalStoreError::Decode("unreadable column".to_string()));
         assert!(matches!(error, CommitError::Persistence { .. }), "{error}");
+    }
+
+    /// A pool-acquire timeout at `BEGIN` or `COMMIT` is backpressure the client
+    /// can retry, so the commit boundary reports it as `StoreSaturated` (a 503),
+    /// never a persistence fault.
+    #[test]
+    fn a_pool_timeout_becomes_store_saturated() {
+        use crate::commit_refusal::database;
+        assert!(matches!(database(sqlx::Error::PoolTimedOut), CommitError::StoreSaturated));
+        assert!(matches!(database(sqlx::Error::RowNotFound), CommitError::Persistence { .. }));
     }
 }

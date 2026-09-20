@@ -13,6 +13,7 @@ use andromeda_entity::{
     port::registry_types::{RegisteredAttribute, RegisteredType, RegistryTypeSource},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_postgresql_pool::is_pool_saturated;
 use andromeda_postgresql_schema::{
     csr::{Csr, RegistrationInformation},
     name_dictionary::AttributeNames,
@@ -21,7 +22,7 @@ use andromeda_postgresql_seaquery::{clock::now, pg_array::any};
 use async_trait::async_trait;
 use sea_query::{Alias, Cond, Expr as SeaExpr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement, extension::postgres::PgExpr};
 use sea_query_sqlx::SqlxBinder;
-use std::fmt::Display;
+use std::{any::Any, fmt::Display};
 
 /// The type-axis sentinel the projection stores where a row admits every type;
 /// it names no type and is not reported.
@@ -74,8 +75,16 @@ fn registered_pairs_sql() -> SelectStatement {
 }
 
 /// Erase an adapter-specific diagnostic at the entity port's boundary.
-fn persistence_error(error: impl Display) -> EntityError {
-    EntityError::persistence(error.to_string())
+///
+/// A `sqlx` pool-acquire timeout is backpressure, not a fault, so it becomes
+/// [`EntityError::StoreSaturated`] (a 503); every other failure stays a
+/// persistence fault. The concrete [`sqlx::Error`] is recovered by downcast
+/// because callers hand it in already erased behind `impl Display`.
+fn persistence_error(error: impl Display + Any) -> EntityError {
+    match (&error as &dyn Any).downcast_ref::<sqlx::Error>() {
+        Some(sqlx_error) if is_pool_saturated(sqlx_error) => EntityError::StoreSaturated,
+        Some(_) | None => EntityError::persistence(error),
+    }
 }
 
 /// Read a stored type name; the projection wrote it, so a malformed one is an

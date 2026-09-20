@@ -29,12 +29,13 @@ use andromeda_context_registry::{
 };
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
+use andromeda_postgresql_pool::is_pool_saturated;
 use iri_rs::IriBuf;
 use sea_query::PostgresQueryBuilder;
 use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
 use sqlx::types::Json;
-use std::fmt::Display;
+use std::{any::Any, fmt::Display};
 use url::Url;
 use urn_rs::{Urn, UrnBuilder};
 use uuid::Uuid;
@@ -188,8 +189,16 @@ async fn insert_context(
 }
 
 /// Collapse an implementation error into the policy's backend-neutral category.
-fn persistence_error(error: impl Display) -> ContextRegistryError {
-    ContextRegistryError::Persistence { detail: error.to_string() }
+///
+/// A `sqlx` pool-acquire timeout is backpressure, not a fault, so it becomes
+/// [`ContextRegistryError::StoreSaturated`] (a 503); every other failure stays a
+/// persistence fault. The concrete [`sqlx::Error`] is recovered by downcast
+/// because callers hand it in already erased behind `impl Display`.
+fn persistence_error(error: impl Display + Any) -> ContextRegistryError {
+    match (&error as &dyn Any).downcast_ref::<sqlx::Error>() {
+        Some(sqlx_error) if is_pool_saturated(sqlx_error) => ContextRegistryError::StoreSaturated,
+        Some(_) | None => ContextRegistryError::Persistence { detail: error.to_string() },
+    }
 }
 
 /// Convert affected-row counts into a named persistence outcome.
@@ -211,5 +220,13 @@ mod tests {
         pretty_assertions::assert_eq!(mutation(0), ContextMutation::Missing);
         pretty_assertions::assert_eq!(mutation(1), ContextMutation::Applied);
         pretty_assertions::assert_eq!(mutation(4), ContextMutation::Applied);
+    }
+
+    #[test]
+    fn a_pool_timeout_becomes_store_saturated() {
+        use crate::jsonld_context::registry_store::persistence_error;
+        use andromeda_context_registry::error::ContextRegistryError;
+        assert!(matches!(persistence_error(sqlx::Error::PoolTimedOut), ContextRegistryError::StoreSaturated));
+        assert!(matches!(persistence_error(sqlx::Error::RowNotFound), ContextRegistryError::Persistence { .. }));
     }
 }

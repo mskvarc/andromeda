@@ -16,6 +16,21 @@ use crate::{
 };
 use metrics::{Recorder, with_local_recorder};
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle, PrometheusRecorder};
+use metrics_util::MetricKindMask;
+use std::time::Duration;
+
+/// How long a per-tenant gauge series is kept after it stops being updated.
+///
+/// The per-tenant pool and storage gauges ([`crate::pool`], [`crate::storage`])
+/// carry a tenant label, so a broker holding thousands of tenants would grow
+/// one series per tenant without bound. Their sampling workers refresh them far
+/// more often than this while a tenant is cached, so a live tenant's series
+/// never lapses; once the tenant is evicted and sampling stops, the recorder
+/// reaps its series at the next render past this window. This is the retraction
+/// the eviction path relies on: it stops sampling, and the idle timeout drops
+/// the series. It is comfortably longer than any sampling interval so a brief
+/// stall never drops a live tenant's gauges.
+const TENANT_GAUGE_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Histogram bucket bounds, in seconds, for HTTP request latency.
 ///
@@ -74,7 +89,7 @@ impl TelemetryRecorder {
     /// one of the configured bucket sets, or when another recorder already
     /// holds the process-wide sink.
     pub fn install() -> Result<TelemetryRecorder, TelemetryError> {
-        let handle = builder()?.install_recorder()?;
+        let handle = builder(TENANT_GAUGE_IDLE_TIMEOUT)?.install_recorder()?;
         Ok(TelemetryRecorder { local: None, handle })
     }
 
@@ -88,7 +103,21 @@ impl TelemetryRecorder {
     /// one of the configured bucket sets. Nothing is registered globally, so no
     /// already-installed recorder can make this fail.
     pub fn detached() -> Result<TelemetryRecorder, TelemetryError> {
-        let recorder = builder()?.build_recorder();
+        Self::detached_with_gauge_idle_timeout(TENANT_GAUGE_IDLE_TIMEOUT)
+    }
+
+    /// Build a detached recorder with an explicit per-tenant gauge idle timeout.
+    ///
+    /// Behaves exactly like [`TelemetryRecorder::detached`] but lets a test pick
+    /// a short timeout to observe the gauge retraction the eviction path relies
+    /// on without waiting the production window.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TelemetryError::Recorder`] when the Prometheus builder rejects
+    /// one of the configured bucket sets.
+    fn detached_with_gauge_idle_timeout(gauge_idle_timeout: Duration) -> Result<TelemetryRecorder, TelemetryError> {
+        let recorder = builder(gauge_idle_timeout)?.build_recorder();
         let handle = recorder.handle();
         Ok(TelemetryRecorder { local: Some(recorder), handle })
     }
@@ -114,9 +143,13 @@ impl TelemetryRecorder {
     }
 }
 
-/// The builder carrying the broker's histogram bucket configuration.
-fn builder() -> Result<PrometheusBuilder, TelemetryError> {
+/// The builder carrying the broker's histogram bucket configuration and the
+/// per-tenant gauge idle timeout that bounds tenant-labelled series.
+fn builder(gauge_idle_timeout: Duration) -> Result<PrometheusBuilder, TelemetryError> {
     let builder = PrometheusBuilder::new()
+        // Reap a per-tenant gauge series once its tenant is evicted and sampling
+        // stops, so tenant-labelled gauge cardinality stays bounded.
+        .idle_timeout(MetricKindMask::GAUGE, Some(gauge_idle_timeout))
         .set_buckets_for_metric(Matcher::Full(HTTP_REQUEST_DURATION_SECONDS.to_owned()), &HTTP_REQUEST_SECONDS_BUCKETS)?
         .set_buckets_for_metric(Matcher::Full(ENTITY_OPERATION_SECONDS.to_owned()), &OPERATION_SECONDS_BUCKETS)?
         .set_buckets_for_metric(Matcher::Full(TEMPORAL_OPERATION_SECONDS.to_owned()), &OPERATION_SECONDS_BUCKETS)?
@@ -181,6 +214,34 @@ mod tests {
     fn a_detached_recorder_with_nothing_recorded_renders_empty() -> Result<(), TelemetryError> {
         let recorder = TelemetryRecorder::detached()?;
         pretty_assertions::assert_eq!(recorder.render().trim(), "");
+        Ok(())
+    }
+
+    /// The retraction the eviction path relies on: a tenant-labelled gauge that
+    /// stops being sampled (as it does once its tenant is evicted) is dropped at
+    /// the next render past the gauge idle timeout, so per-tenant cardinality
+    /// stays bounded.
+    #[test]
+    fn an_idle_tenant_gauge_series_is_reaped_after_the_gauge_idle_timeout() -> Result<(), TelemetryError> {
+        use crate::{
+            pool::{PoolGauges, PoolSample},
+            recorder::TelemetryRecorder,
+        };
+        use std::{thread::sleep, time::Duration};
+
+        let recorder = TelemetryRecorder::detached_with_gauge_idle_timeout(Duration::from_millis(50))?;
+        recorder.record_locally(|| PoolGauges::for_tenant("acme").record(PoolSample { open: 4, idle: 1 }));
+        assert!(
+            recorder.render().contains("tenant=\"acme\""),
+            "the series is present while the tenant is sampled"
+        );
+
+        sleep(Duration::from_millis(150));
+        let reaped = recorder.render();
+        assert!(
+            !reaped.contains("tenant=\"acme\""),
+            "the idle series was reaped once sampling stopped: {reaped}"
+        );
         Ok(())
     }
 }

@@ -2,7 +2,7 @@
 
 use crate::{
     columns::{columns_for, expectations},
-    commit_refusal::{context_store, persistence, temporal},
+    commit_refusal::{context_store, database, temporal},
     consequences::{notification_events, side_effects},
     deferred_history,
     entity_group::{EntityGroups, IndexedWrite, RowReturned, delete_outcome, group, insert_outcome, update_outcome},
@@ -290,7 +290,7 @@ impl PostgresAtomicCommitter {
             return Ok(Vec::new());
         }
         validate_submission(&writes)?;
-        let mut tx = self.pool.begin().await.map_err(persistence)?;
+        let mut tx = self.pool.begin().await.map_err(database)?;
         // Every fallible phase below borrows this owned transaction. SQLx
         // rolls it back when an early `?` drops it, so no entity mutation
         // can survive a failed history, projection, notification or side-effect
@@ -317,7 +317,7 @@ impl PostgresAtomicCommitter {
         let next = notification_events::apply(&mut tx, target, &landed, &record, next, self.attribute_names.as_ref()).await?;
         side_effects::apply(&mut tx, target, &landed, &record, next).await?;
 
-        tx.commit().await.map_err(persistence)?;
+        tx.commit().await.map_err(database)?;
         tracing::debug!(write_id = %record.write_id(), writes = writes.len(), "atomic context write committed");
         if !intents.is_empty()
             && let TemporalHistoryCommitMode::Deferred { publisher } = &self.history_mode

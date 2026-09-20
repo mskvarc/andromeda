@@ -78,6 +78,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-notification",
         "andromeda-postgresql-branch",
         "andromeda-postgresql-name-dictionary",
+        "andromeda-postgresql-pool",
         "andromeda-postgresql-codes",
         "andromeda-postgresql-collation",
         "andromeda-postgresql-context-query",

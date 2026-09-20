@@ -265,7 +265,7 @@ fn register_spatial_reconciliation(
 pub(super) fn classify_subscription_expiry_failure(error: &SubscriptionError) -> TaskFailure {
     let summary = error.to_string();
     match error {
-        SubscriptionError::Persistence(_) => TaskFailure::transient(summary),
+        SubscriptionError::Persistence(_) | SubscriptionError::StoreSaturated => TaskFailure::transient(summary),
         SubscriptionError::Internal(_) => TaskFailure::invariant_violation(summary),
         SubscriptionError::Validation(_)
         | SubscriptionError::NotFound { .. }
@@ -280,7 +280,7 @@ pub(super) fn classify_subscription_expiry_failure(error: &SubscriptionError) ->
 pub(super) fn classify_registration_expiry_failure(error: &RegistrationError) -> TaskFailure {
     let summary = error.to_string();
     match error {
-        RegistrationError::Persistence(_) => TaskFailure::transient(summary),
+        RegistrationError::Persistence(_) | RegistrationError::StoreSaturated => TaskFailure::transient(summary),
         RegistrationError::Internal(_) => TaskFailure::invariant_violation(summary),
         RegistrationError::Validation(_)
         | RegistrationError::NotFound { .. }
@@ -297,7 +297,9 @@ pub(super) fn classify_registration_expiry_failure(error: &RegistrationError) ->
 pub(super) fn classify_entity_expiry_failure(error: &EntityError) -> TaskFailure {
     let summary = error.to_string();
     match error {
-        EntityError::Commit(_) | EntityError::Persistence(_) | EntityError::Contention { identifier: _, attempts: _ } => TaskFailure::transient(summary),
+        EntityError::Commit(_) | EntityError::Persistence(_) | EntityError::StoreSaturated | EntityError::Contention { identifier: _, attempts: _ } => {
+            TaskFailure::transient(summary)
+        }
         EntityError::Internal(_) => TaskFailure::invariant_violation(summary),
         EntityError::Validation(_)
         | EntityError::NotFound { identifier: _ }

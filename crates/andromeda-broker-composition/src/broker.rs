@@ -41,9 +41,10 @@ use andromeda_postgresql_context_store::{
     error::ContextStoreError,
     forwarded_subscription_routes::PostgresForwardedSubscriptionRouter,
     health::DatabaseHealthIndicator,
-    tenant_database::{DatabaseUrl, configure_pool_options},
+    tenant_database::DatabaseUrl,
     tenant_registry::PostgresTenantRegistry,
 };
+use andromeda_postgresql_pool::configure_pool_options;
 use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
 use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_telemetry::{error::TelemetryError, recorder::TelemetryRecorder};
@@ -176,7 +177,7 @@ async fn construct(
     // maintenance sweep's session lock) that a transaction-pooling proxy breaks.
     let request_url = DatabaseUrl::new(config.database.request_url().clone()); // clone: the tenant factory retains the request base URL
     let direct_url = DatabaseUrl::new(config.database.direct_url().clone()); // clone: registry, maintenance and the tenant factory retain the direct base URL
-    let main_pool = configure_pool_options(config.database.max_connections)
+    let main_pool = configure_pool_options(config.database.max_connections, config.database.acquire_timeout())
         .connect(config.database.request_url().as_str())
         .await?;
     let registry = Arc::new(
@@ -185,13 +186,14 @@ async fn construct(
             direct_url.clone(),     // clone: the registry provisions and migrates over the direct base
             config.tenancy.clone(), // clone: registry owns its runtime tenancy policy
             config.database.synchronous_commit.as_postgres_setting(),
+            config.database.acquire_timeout(),
         )
         .await?,
     );
     let process_tasks = TaskSupervisor::process(Handle::current());
     // Maintenance holds a session advisory lock across a whole sweep, so it gets
     // its own direct platform pool rather than sharing the request-path pool.
-    let maintenance_platform_pool = configure_pool_options(MAINTENANCE_PLATFORM_POOL_CONNECTIONS)
+    let maintenance_platform_pool = configure_pool_options(MAINTENANCE_PLATFORM_POOL_CONNECTIONS, config.database.acquire_timeout())
         .connect(config.database.direct_url().as_str())
         .await?;
     register_postgresql_maintenance(
@@ -199,6 +201,7 @@ async fn construct(
         maintenance_platform_pool,
         direct_url.clone(), // clone: the process task derives tenant URLs over the direct base
         config.database.maintenance,
+        config.database.acquire_timeout(),
     )?;
     // The platform route from minted subscription identifiers to tenants is
     // shared by every tenant's forwarding service and by the receiver.

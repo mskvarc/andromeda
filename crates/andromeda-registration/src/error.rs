@@ -48,6 +48,13 @@ pub enum RegistrationError {
     /// The persistence adapter could not complete the requested operation.
     #[error("registration persistence failed: {0}")]
     Persistence(RegistrationDiagnostic),
+    /// A connection pool was saturated before the operation could run.
+    ///
+    /// Backpressure, not a fault: no backend became free within the acquire
+    /// deadline, so the well-formed request is shed and can be retried. It is
+    /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
+    #[error("the datastore connection pool is saturated; retry shortly")]
+    StoreSaturated,
     /// An internal registration invariant could not be satisfied.
     #[error("registration invariant failed: {0}")]
     Internal(RegistrationDiagnostic),

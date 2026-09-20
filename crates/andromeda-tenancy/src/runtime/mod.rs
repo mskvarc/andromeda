@@ -21,10 +21,14 @@ use crate::{
     tenant_ref::TenantRef,
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_telemetry::tenancy::{ColdBuildOutcome, record_build_admission_wait, record_cold_build, set_runtimes_cached};
 use async_trait::async_trait;
 use dashmap::{DashMap, mapref::entry::Entry};
-use std::sync::Arc;
-use tokio::{sync::Mutex, task::JoinHandle};
+use std::{sync::Arc, time::Instant};
+use tokio::{
+    sync::{Mutex, Semaphore},
+    task::{JoinHandle, JoinSet},
+};
 
 /// Manages per-tenant runtimes: builds them on demand, hands them out, and
 /// evicts the ones nobody is using.
@@ -49,17 +53,38 @@ pub struct TenantRuntimeManager<D: TenantDatabase, F: TenantStateFactory> {
     /// connection pools. Concurrent requests share one lock; the first builds,
     /// the rest re-check `runtimes` under the lock and reuse what it inserted.
     build_locks: DashMap<TenantRef, Arc<Mutex<()>>>,
+    /// Bounds how many tenant runtimes are cold-built at once.
+    ///
+    /// A permit is acquired only past the second cache check, so it is taken
+    /// for a genuine cold build and never for a cache hit. Held across the
+    /// build and released before the cache trim, so a burst of first requests
+    /// for distinct tenants cannot open more than this many connection pools
+    /// and migrator connections at once.
+    build_permits: Semaphore,
+    /// Bounds how many tenant runtimes are torn down at once, shared by the
+    /// request-path insert-trim and the janitor sweeps so their teardowns share
+    /// one global budget rather than each opening its own.
+    eviction_permits: Arc<Semaphore>,
+    /// Teardowns a request-path insert-trim detached, so the cold request that
+    /// triggered the trim does not wait on another tenant's shutdown. Drained by
+    /// [`shutdown_all`](Self::shutdown_all) after the server stops.
+    eviction_set: Mutex<JoinSet<()>>,
 }
 
 impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// A manager over the given registry and factory.
     pub fn new(config: TenancyConfig, database: Arc<D>, factory: Arc<F>) -> Arc<TenantRuntimeManager<D, F>> {
+        let build_permits = Semaphore::new(config.max_concurrent_builds);
+        let eviction_permits = Arc::new(Semaphore::new(config.eviction_concurrency));
         Arc::new(TenantRuntimeManager {
             config,
             database,
             factory,
             runtimes: DashMap::new(),
             build_locks: DashMap::new(),
+            build_permits,
+            eviction_permits,
+            eviction_set: Mutex::new(JoinSet::new()),
         })
     }
 
@@ -133,7 +158,31 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             });
         }
 
+        // Admission: only a genuine cold build past the second cache check waits
+        // here, so the number of runtimes being built at once -- and with it the
+        // direct migrator connections and pools they open -- is bounded. Requests
+        // past the bound wait for a permit rather than being refused.
+        let admission_started = Instant::now();
+        let permit = self.build_permits.acquire().await.ok();
+        record_build_admission_wait(admission_started.elapsed().as_secs_f64());
+
+        let build_started = Instant::now();
         let result = self.resolve_state_cold(tenant, policy).await;
+        let outcome = if result.is_ok() { ColdBuildOutcome::Succeeded } else { ColdBuildOutcome::Failed };
+        record_cold_build(outcome, build_started.elapsed().as_secs_f64());
+
+        // Release the admission permit before the trim: the trim bounds only the
+        // cache size, and holding a build permit across it would charge another
+        // tenant's teardown against the concurrent-build budget.
+        drop(permit);
+
+        // Enforce runtime_max_cached now the build is cached, detaching each
+        // victim's shutdown so this cold request never waits on another tenant's
+        // teardown. The freshly built runtime is leased and `protect`ed, so it is
+        // never itself the victim.
+        if result.is_ok() {
+            self.detach_trim_excess_runtimes(tenant).await;
+        }
 
         // Drop our build lock now the build is over. The pointer check removes
         // only this lock, never one a later request created after we released
@@ -150,6 +199,14 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         // before the caller awaits on the lock -- holding a shard guard across
         // an await deadlocks.
         Arc::clone(self.build_locks.entry(tenant.clone()).or_insert_with(|| Arc::new(Mutex::new(()))).value())
+    }
+
+    /// Publish the current number of cached runtimes to the tenancy gauge.
+    ///
+    /// Called after every insert and eviction so `andromeda_tenant_runtimes_cached`
+    /// tracks the live count without a per-tenant label.
+    fn record_cache_size(&self) {
+        set_runtimes_cached(self.runtimes.len());
     }
 
     /// Build a runtime for a tenant that has none open, returning it leased.
@@ -182,19 +239,12 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             Entry::Vacant(vacant) => {
                 // The runtime is leased before it enters the cache, so the trim
                 // any concurrent cold build runs -- which sees this entry the
-                // instant it is inserted -- observes the lease and spares it.
+                // instant it is inserted -- observes the lease and spares it. The
+                // caller enforces runtime_max_cached once the build permit is
+                // released, so the trim runs off the admission budget.
                 let (cached, leased) = CachedRuntime::newly_leased(Arc::clone(&state), runtime);
-                // Release the shard guard before awaiting: the trim iterates the
-                // map and awaits shutdown of evicted runtimes, and holding a
-                // DashMap guard across an await deadlocks (see build_lock_for).
                 drop(vacant.insert(cached));
-                // Enforce runtime_max_cached now, not only on the next janitor
-                // tick, so a burst of cold tenant builds cannot pile per-tenant
-                // pools past the configured bound between sweeps. Leased entries
-                // -- every in-flight cold build's own runtime among them -- are
-                // spared, so the cache overshoots transiently under a burst and
-                // is trimmed back as the leases drop.
-                self.trim_excess_runtimes(Some(tenant)).await;
+                self.record_cache_size();
                 Ok(LeasedState {
                     state,
                     lease: RuntimeLease::hold(leased),

@@ -30,6 +30,9 @@ fn classify(error: &ContextStoreError) -> EntityError {
                 collation: collation.to_string(),
             })
         }
+        // Pool saturation is backpressure, not a fault: the request is shed and
+        // can be retried, so it is a 503, never a 500.
+        ContextStoreError::Saturated => EntityError::StoreSaturated,
         ContextStoreError::Collation(CollationProvisioningError::Statement { .. })
         | ContextStoreError::Database(_)
         | ContextStoreError::Encoding(_)
@@ -70,5 +73,19 @@ mod tests {
         assert_discovery_store::<EntityRepository>();
         assert_expiry_source::<EntityRepository>();
         assert_spatial_snapshot_source::<EntityRepository>();
+    }
+
+    #[test]
+    fn a_pool_timeout_becomes_store_saturated() {
+        use crate::{entity::port::classify, error::ContextStoreError};
+        use andromeda_entity::error::EntityError;
+        assert!(matches!(
+            classify(&ContextStoreError::from(sqlx::Error::PoolTimedOut)),
+            EntityError::StoreSaturated
+        ));
+        assert!(!matches!(
+            classify(&ContextStoreError::from(sqlx::Error::RowNotFound)),
+            EntityError::StoreSaturated
+        ));
     }
 }

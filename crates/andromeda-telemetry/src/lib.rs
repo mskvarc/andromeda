@@ -26,6 +26,7 @@ pub mod subscription;
 pub mod subscription_ops;
 pub mod task_failure;
 pub mod temporal;
+pub mod tenancy;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

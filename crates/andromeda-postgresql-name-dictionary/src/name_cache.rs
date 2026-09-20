@@ -155,6 +155,17 @@ async fn read_schema_epoch<'e, E: Executor<'e, Database = Postgres>>(executor: E
     Ok(stamped.map(|applied_at| applied_at.timestamp_micros()))
 }
 
+/// Read the tenant schema stamp once over the tenant pool, for a caller warming
+/// several dictionaries against the same database so they share one read rather
+/// than each issuing its own. Feed the result to [`NameCache::adopt_epoch`].
+///
+/// # Errors
+///
+/// Returns [`NameLookupError::Statement`] when the stamp read fails.
+pub async fn read_established_epoch(pool: &PgPool) -> Result<Option<i64>, NameLookupError> {
+    read_schema_epoch(pool).await
+}
+
 impl<N: DictionaryRelation> NameCache<N> {
     /// Create a cache backed by the given tenant pool, bounded by
     /// [`DictionaryNameLimit::DEFAULT`].
@@ -230,23 +241,21 @@ impl<N: DictionaryRelation> NameCache<N> {
         }
     }
 
-    /// Establish the schema epoch by reading the tenant database oid once, at
-    /// warm-up.
+    /// Adopt a schema stamp read once at warm-up as this cache's baseline.
     ///
     /// Called after construction so that a later drop-and-recreate is a change
     /// from a known baseline rather than the first value ever observed: a cache
     /// that only learned its stamp lazily could adopt the recreated schema's
     /// stamp as its baseline while still holding the previous generation's keys.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`NameLookupError::Statement`] when the stamp read fails.
-    pub async fn establish_epoch(&self) -> Result<(), NameLookupError> {
-        if let Some(epoch) = read_schema_epoch(&self.pool).await? {
+    /// The stamp is read once by [`read_established_epoch`] and handed to every
+    /// dictionary the tenant opens, so the caches share one catalogue read. A
+    /// `None` -- a schema migrated but not yet stamped -- leaves the sentinel in
+    /// place and only records that the baseline probe ran.
+    pub fn adopt_epoch(&self, epoch: Option<i64>) {
+        if let Some(epoch) = epoch {
             self.schema_epoch.store(epoch, Ordering::Relaxed);
         }
         self.epoch_checked_at.store(now_millis(), Ordering::Relaxed);
-        Ok(())
     }
 
     /// Re-read the tenant database oid when the throttle interval has elapsed,

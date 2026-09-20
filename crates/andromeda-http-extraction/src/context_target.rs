@@ -29,6 +29,10 @@ pub enum ContextTargetResolutionError {
         /// Requested Snapshot URI.
         identifier: NgsiLdUri,
     },
+    /// A connection pool was saturated before the Snapshot target could be
+    /// resolved. Backpressure, not a fault: shed as 503 with `Retry-After`.
+    #[error("the datastore connection pool is saturated; retry shortly")]
+    Saturated,
     /// Durable target resolution failed internally.
     #[error("Snapshot target resolution failed: {detail}")]
     Internal {
@@ -49,6 +53,7 @@ impl ContextTargetResolutionError {
                     .with_retry_after(Duration::from_secs(1))
                     .with_instance(instance)
             }
+            ContextTargetResolutionError::Saturated => ClassifiedReport::store_saturated(self.to_string()).with_instance(instance),
             ContextTargetResolutionError::Internal { .. } => ClassifiedReport::internal(&self).with_instance(instance),
         }
     }

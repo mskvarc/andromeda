@@ -11,11 +11,13 @@ use crate::{
 use andromeda_postgresql_context_store::{
     maintenance_config::{MaintenanceConfig, MaintenanceMode},
     schema_contract::{contract::current_tenant_schema_contract, schema_metadata::verify_schema_contract},
-    tenant_database::{DatabaseUrl, configure_pool_options},
+    tenant_database::DatabaseUrl,
 };
+use andromeda_postgresql_pool::configure_pool_options;
 use andromeda_telemetry::maintenance::{MaintenanceDecision, record_decision};
 use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, PgPool};
+use std::time::Duration;
 use strum::Display;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -65,16 +67,20 @@ pub struct MaintenanceController {
     direct_url: DatabaseUrl,
     /// Mode and fixed profile selection.
     config: MaintenanceConfig,
+    /// How long a per-tenant inspection pool waits for its connection before it
+    /// gives up, matching the request path's acquire deadline.
+    acquire_timeout: Duration,
 }
 
 impl MaintenanceController {
     /// Construct a controller over the shared platform registry.
     #[must_use]
-    pub const fn new(platform_pool: PgPool, direct_url: DatabaseUrl, config: MaintenanceConfig) -> MaintenanceController {
+    pub const fn new(platform_pool: PgPool, direct_url: DatabaseUrl, config: MaintenanceConfig, acquire_timeout: Duration) -> MaintenanceController {
         MaintenanceController {
             platform_pool,
             direct_url,
             config,
+            acquire_timeout,
         }
     }
 
@@ -130,7 +136,7 @@ impl MaintenanceController {
         let tenant_url = self.direct_url.with_db_name(&tenant.database);
         let pool_result = tokio::select! {
             () = cancellation.cancelled() => return Ok(PassOutcome::Cancelled),
-            result = configure_pool_options(1).connect(tenant_url.as_str()) => result,
+            result = configure_pool_options(1, self.acquire_timeout).connect(tenant_url.as_str()) => result,
         };
         let tenant_pool = match pool_result {
             Ok(pool) => pool,

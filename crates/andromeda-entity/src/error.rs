@@ -95,6 +95,13 @@ pub enum EntityError {
     /// A persistence adapter could not complete the operation.
     #[error("entity persistence failed: {0}")]
     Persistence(EntityDiagnostic),
+    /// A connection pool was saturated before the operation could run.
+    ///
+    /// Backpressure, not a fault: no backend became free within the acquire
+    /// deadline, so the well-formed request is shed and can be retried. It is
+    /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
+    #[error("the datastore connection pool is saturated; retry shortly")]
+    StoreSaturated,
     /// An internal entity invariant could not be satisfied.
     #[error("entity invariant failed: {0}")]
     Internal(EntityDiagnostic),
@@ -111,6 +118,10 @@ impl From<CommitError> for EntityError {
             // cycle, so a refused submission arrives as opaque prose relayed into
             // the typed validation reason rather than as a typed cause.
             CommitError::Submission { detail } => EntityError::Validation(EntityValidationReason::CommitRefused { detail }),
+            // Saturation is backpressure the client can retry, so it keeps its
+            // own category rather than being folded into the internal-fault
+            // `Commit` variant.
+            CommitError::StoreSaturated => EntityError::StoreSaturated,
             failure @ (CommitError::DuplicateEntity { .. }
             | CommitError::Persistence { .. }
             | CommitError::Invariant { .. }

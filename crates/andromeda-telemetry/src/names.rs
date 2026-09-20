@@ -66,6 +66,18 @@ pub const POSTGRESQL_MAINTENANCE_ACTIONS_TOTAL: &str = "andromeda_postgresql_mai
 pub const POSTGRESQL_MAINTENANCE_ACTION_SECONDS: &str = "andromeda_postgresql_maintenance_action_seconds";
 /// Histogram of bytes physically reclaimed by PostgreSQL maintenance actions.
 pub const POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES: &str = "andromeda_postgresql_maintenance_reclaimed_bytes";
+/// Gauge of tenant runtimes currently held in the bounded runtime cache.
+pub const TENANT_RUNTIMES_CACHED: &str = "andromeda_tenant_runtimes_cached";
+/// Counter of cold tenant-runtime builds, labelled by outcome.
+pub const TENANT_COLD_BUILDS_TOTAL: &str = "andromeda_tenant_cold_builds_total";
+/// Histogram of cold tenant-runtime build durations in seconds.
+pub const TENANT_COLD_BUILD_SECONDS: &str = "andromeda_tenant_cold_build_seconds";
+/// Histogram of seconds a cold build waited for a build-admission permit.
+pub const TENANT_BUILD_ADMISSION_WAIT_SECONDS: &str = "andromeda_tenant_build_admission_wait_seconds";
+/// Counter of tenant-runtime evictions, labelled by reason.
+pub const TENANT_EVICTIONS_TOTAL: &str = "andromeda_tenant_evictions_total";
+/// Counter of dormant-tenant wake attempts, labelled by outcome.
+pub const TENANT_WAKES_TOTAL: &str = "andromeda_tenant_wakes_total";
 
 /// The `statement` label naming a database statement.
 pub const LABEL_STATEMENT: &str = "statement";
@@ -77,6 +89,8 @@ pub const LABEL_TABLE: &str = "table";
 pub const LABEL_QUEUE: &str = "queue";
 /// The `outcome` label naming what happened to a queue item.
 pub const LABEL_OUTCOME: &str = "outcome";
+/// The `reason` label naming why a tenant runtime was evicted.
+pub const LABEL_REASON: &str = "reason";
 /// The `operation` label naming a domain operation.
 pub const LABEL_OPERATION: &str = "operation";
 /// The `status` label naming an upstream HTTP status class.

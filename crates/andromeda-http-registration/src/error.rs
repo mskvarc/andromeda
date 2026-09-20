@@ -24,6 +24,8 @@ impl RegistrationHttpClassify for RegistrationError {
             RegistrationError::Conflict(reason) => ClassifiedReport::public(NgsiLdErrorType::Conflict, reason.to_string()),
             RegistrationError::JsonLd(source) => classify_jsonld_error(source),
             RegistrationError::Query(source) => classify_query_error(source),
+            // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
+            RegistrationError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
             RegistrationError::Representation(_) | RegistrationError::Identifier(_) | RegistrationError::Persistence(_) | RegistrationError::Internal(_) => {
                 ClassifiedReport::internal(self)
             }

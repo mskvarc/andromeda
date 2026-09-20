@@ -38,6 +38,7 @@ pub fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
         TemporalError::JsonLd(source) => classify_jsonld_error(source),
         TemporalError::Query(source) => classify_query_error(source),
         TemporalError::Request(source) => classify_parameter_error(source),
+        TemporalError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
         TemporalError::Commit(_) | TemporalError::Persistence(_) | TemporalError::Rendering(_) | TemporalError::Internal(_) => {
             ClassifiedReport::internal(error)
         }
@@ -56,6 +57,7 @@ impl TemporalHttpClassify for EntityMapError {
             // Clause 5.5.14 with clause 6.3.20: parameters incompatible with
             // the request that created the map are an invalid request.
             EntityMapError::RequestChanged { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, self.to_string()),
+            EntityMapError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
             EntityMapError::Persistence { .. } | EntityMapError::Invariant { .. } => ClassifiedReport::internal(self),
         }
     }

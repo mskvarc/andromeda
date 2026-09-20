@@ -21,6 +21,7 @@ pub(crate) fn classify_forwarding(error: &SubscriptionForwardingError, instance:
     let report = match error {
         SubscriptionForwardingError::UnknownSubscription { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, error.to_string()),
         SubscriptionForwardingError::Representation(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
+        SubscriptionForwardingError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
         SubscriptionForwardingError::Subscription(_)
         | SubscriptionForwardingError::Federation(_)
         | SubscriptionForwardingError::Entity(_)

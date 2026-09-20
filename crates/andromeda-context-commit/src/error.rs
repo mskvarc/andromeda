@@ -33,6 +33,13 @@ pub enum CommitError {
         /// Human-readable implementation failure detail.
         detail: String,
     },
+    /// A connection pool was saturated before the commit could run.
+    ///
+    /// Backpressure, not a fault: no backend became free within the acquire
+    /// deadline. The write is well-formed and can be retried, so it is answered
+    /// 503 with `Retry-After`, never the 500 a broker malfunction earns.
+    #[error("the datastore connection pool is saturated; retry shortly")]
+    StoreSaturated,
     /// An implementation violated the commit protocol's invariants.
     #[error("atomic context commit invariant failed: {detail}")]
     Invariant {

@@ -36,6 +36,7 @@ pub mod tenant_ref;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-ngsi-ld-lexicon",
+        "andromeda-telemetry",
     ],
     allow_workspace_dev_dependencies: [
     ],

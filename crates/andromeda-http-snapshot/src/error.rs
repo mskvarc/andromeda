@@ -24,6 +24,7 @@ pub fn classify_snapshot_error(error: &SnapshotError) -> ClassifiedReport {
         SnapshotError::Temporal(source) => classify_temporal_error(source),
         SnapshotError::Federation(source) => classify_federation_error(source),
         SnapshotError::Request(source) => classify_parameter_error(source),
+        SnapshotError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
         SnapshotError::Representation(_) | SnapshotError::Persistence { .. } | SnapshotError::Internal { .. } => ClassifiedReport::internal(error),
     }
 }
@@ -45,6 +46,7 @@ fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
         EntityError::Identifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
         EntityError::EntityTypeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
         EntityError::AttributeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
+        EntityError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
         EntityError::Commit(_) | EntityError::Persistence(_) | EntityError::Internal(_) => ClassifiedReport::internal(error),
     }
 }
@@ -60,6 +62,7 @@ fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
         TemporalError::JsonLd(source) => classify_jsonld_error(source),
         TemporalError::Query(source) => classify_query_error(source),
         TemporalError::Request(source) => classify_parameter_error(source),
+        TemporalError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
         TemporalError::Commit(_) | TemporalError::Persistence(_) | TemporalError::Rendering(_) | TemporalError::Internal(_) => {
             ClassifiedReport::internal(error)
         }

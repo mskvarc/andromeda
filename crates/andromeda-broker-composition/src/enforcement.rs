@@ -57,6 +57,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-notification",
         "andromeda-postgresql-atomic-write",
         "andromeda-postgresql-name-dictionary",
+        "andromeda-postgresql-pool",
         "andromeda-postgresql-context-query",
         "andromeda-postgresql-context-store",
         "andromeda-postgresql-encoding",

@@ -60,6 +60,13 @@ pub enum TemporalError {
     /// A persistence adapter could not complete the operation.
     #[error("temporal persistence failed: {0}")]
     Persistence(TemporalDiagnostic),
+    /// A connection pool was saturated before the operation could run.
+    ///
+    /// Backpressure, not a fault: no backend became free within the acquire
+    /// deadline, so the well-formed request is shed and can be retried. It is
+    /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
+    #[error("the datastore connection pool is saturated; retry shortly")]
+    StoreSaturated,
     /// Temporal representation construction failed.
     #[error("temporal rendering failed: {0}")]
     Rendering(TemporalDiagnostic),
@@ -79,6 +86,10 @@ impl From<CommitError> for TemporalError {
             // cycle, so a refused submission arrives as opaque prose relayed into
             // the typed validation reason rather than as a typed cause.
             CommitError::Submission { detail } => TemporalError::Validation(TemporalValidationReason::CommitRefused { detail }),
+            // Saturation is backpressure the client can retry, so it keeps its
+            // own category rather than being folded into the internal-fault
+            // `Commit` variant.
+            CommitError::StoreSaturated => TemporalError::StoreSaturated,
             failure @ (CommitError::DuplicateEntity { .. }
             | CommitError::Persistence { .. }
             | CommitError::Invariant { .. }

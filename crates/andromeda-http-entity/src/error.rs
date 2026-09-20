@@ -32,6 +32,7 @@ impl EntityHttpClassify for EntityMapError {
             // Clause 5.5.14 with clause 6.3.20: parameters incompatible with
             // the request that created the map are an invalid request.
             EntityMapError::RequestChanged { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, self.to_string()),
+            EntityMapError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
             EntityMapError::Persistence { .. } | EntityMapError::Invariant { .. } => ClassifiedReport::internal(self),
         }
     }

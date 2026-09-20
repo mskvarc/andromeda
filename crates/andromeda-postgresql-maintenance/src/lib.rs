@@ -27,6 +27,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-ngsi-ld-lexicon",
         "andromeda-postgresql-context-store",
+        "andromeda-postgresql-pool",
         "andromeda-postgresql-schema",
         "andromeda-postgresql-seaquery",
         "andromeda-telemetry",

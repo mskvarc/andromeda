@@ -2,9 +2,10 @@
 
 use crate::{
     error::ContextStoreError,
-    tenant_database::{DatabaseUrl, configure_pool_options, create_database_if_missing, generate_db_name, migrate_main_db, migrate_single_tenant_db},
+    tenant_database::{DatabaseUrl, create_database_if_missing, generate_db_name, migrate_main_db, migrate_single_tenant_db},
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_postgresql_pool::configure_pool_options;
 use andromeda_postgresql_schema::tenancy::Tenants;
 use andromeda_postgresql_seaquery::advisory_lock::advisory_xact_lock;
 use andromeda_tenancy::{config::TenancyConfig, database::TenantDatabase, database_name::TenantDatabaseName, error::TenancyError, status::TenantStatus};
@@ -24,6 +25,7 @@ use sea_query::{
 };
 use sea_query_sqlx::SqlxBinder;
 use sqlx::PgPool;
+use std::time::Duration;
 
 /// The tenant registry, backed by the platform database's `tenants` table.
 ///
@@ -47,6 +49,9 @@ pub struct PostgresTenantRegistry {
     /// The PostgreSQL `synchronous_commit` value installed on each database with
     /// `ALTER DATABASE ... SET` at creation (e.g. `"on"`, `"off"`, `"local"`).
     synchronous_commit_setting: &'static str,
+    /// How long a checkout waits for a connection before the migration and
+    /// provisioning pools give up, matching the request path's acquire deadline.
+    acquire_timeout: Duration,
 }
 
 impl PostgresTenantRegistry {
@@ -65,6 +70,7 @@ impl PostgresTenantRegistry {
         direct_url: DatabaseUrl,
         tenancy: TenancyConfig,
         synchronous_commit_setting: &'static str,
+        acquire_timeout: Duration,
     ) -> Result<PostgresTenantRegistry, ContextStoreError> {
         let default_database = direct_url.db_name()?;
         let registry = PostgresTenantRegistry {
@@ -73,13 +79,14 @@ impl PostgresTenantRegistry {
             default_database,
             tenancy,
             synchronous_commit_setting,
+            acquire_timeout,
         };
 
         // Migrate the platform database over a direct, one-connection pool: the
         // migrator's session advisory lock is unsafe through a pooler, so it
         // never runs on `main_pool`.
         let platform_url = registry.direct_url.with_db_name(&registry.default_database);
-        let platform_migration_pool = configure_pool_options(1).connect(platform_url.as_str()).await?;
+        let platform_migration_pool = configure_pool_options(1, registry.acquire_timeout).connect(platform_url.as_str()).await?;
         let migration_result = migrate_main_db(
             &platform_migration_pool,
             registry.default_database.as_str(),
@@ -192,7 +199,7 @@ impl PostgresTenantRegistry {
         tx.commit().await?;
 
         let tenant_url = self.direct_url.with_db_name(&db_name);
-        migrate_single_tenant_db(&tenant_url).await?;
+        migrate_single_tenant_db(&tenant_url, self.acquire_timeout).await?;
 
         Ok(db_name)
     }

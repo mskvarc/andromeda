@@ -23,6 +23,8 @@ impl SubscriptionHttpClassify for SubscriptionError {
             SubscriptionError::AlreadyExists { .. } => ClassifiedReport::public(NgsiLdErrorType::AlreadyExists, self.to_string()),
             SubscriptionError::JsonLd(source) => classify_jsonld_error(source),
             SubscriptionError::Query(source) => classify_query_error(source),
+            // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
+            SubscriptionError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
             SubscriptionError::Representation(_) | SubscriptionError::Identifier(_) | SubscriptionError::Persistence(_) | SubscriptionError::Internal(_) => {
                 ClassifiedReport::internal(self)
             }

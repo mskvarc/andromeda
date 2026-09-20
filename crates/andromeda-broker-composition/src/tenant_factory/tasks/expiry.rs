@@ -359,7 +359,7 @@ fn register_entity_map_expiry(supervisor: &TaskSupervisor, store: Arc<dyn Entity
 fn classify_entity_map_failure(error: &EntityMapError) -> TaskFailure {
     let summary = error.to_string();
     match error {
-        EntityMapError::Persistence { .. } => TaskFailure::transient(summary),
+        EntityMapError::Persistence { .. } | EntityMapError::StoreSaturated => TaskFailure::transient(summary),
         EntityMapError::Invariant { .. } => TaskFailure::invariant_violation(summary),
         EntityMapError::NotFound { .. } | EntityMapError::RequestChanged { .. } => TaskFailure::permanent(summary),
     }
@@ -368,7 +368,7 @@ fn classify_entity_map_failure(error: &EntityMapError) -> TaskFailure {
 fn classify_snapshot_failure(error: &SnapshotError) -> TaskFailure {
     let summary = error.to_string();
     match error {
-        SnapshotError::Persistence { .. } => TaskFailure::transient(summary),
+        SnapshotError::Persistence { .. } | SnapshotError::StoreSaturated => TaskFailure::transient(summary),
         SnapshotError::Internal { .. } => TaskFailure::invariant_violation(summary),
         SnapshotError::Validation { .. }
         | SnapshotError::NotFound { .. }

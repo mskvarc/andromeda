@@ -41,6 +41,7 @@ pub(crate) fn register_postgresql_maintenance(
     platform_pool: PgPool,
     direct_url: DatabaseUrl,
     config: MaintenanceConfig,
+    acquire_timeout: Duration,
 ) -> Result<(), MaintenanceRegistrationError> {
     if config.mode == MaintenanceMode::Disabled {
         return Ok(());
@@ -53,7 +54,7 @@ pub(crate) fn register_postgresql_maintenance(
         RestartPolicy::transient(u32::MAX, profile.cadence, profile.cadence),
         ShutdownPolicy::new(Duration::from_secs(30)),
     );
-    let controller = Arc::new(MaintenanceController::new(platform_pool, direct_url, config));
+    let controller = Arc::new(MaintenanceController::new(platform_pool, direct_url, config, acquire_timeout));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
         let controller = Arc::clone(&controller); // clone: each bounded pass owns the process controller while executing
         async move {

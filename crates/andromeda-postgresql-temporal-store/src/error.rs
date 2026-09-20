@@ -4,6 +4,7 @@ use crate::{duplicate_instance_claim::DuplicateInstanceClaimError, unit_code_met
 use andromeda_ngsi_ld_lexicon::ngsi_ld_date_time::NgsiLdDateTimeError;
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 use andromeda_postgresql_encoding::{copy::CopyFieldError, ewkb::EwkbError};
+use andromeda_postgresql_pool::is_pool_saturated;
 use andromeda_postgresql_temporal_query::aggregation_group::MixedAggregationGroup;
 use andromeda_temporal::{error::TemporalError, temporal_not_found_reason::TemporalNotFoundReason, temporal_validation_reason::TemporalValidationReason};
 
@@ -58,6 +59,15 @@ pub enum TemporalStoreError {
 
 impl From<TemporalStoreError> for TemporalError {
     fn from(error: TemporalStoreError) -> TemporalError {
+        // Pool saturation is backpressure, not a fault: shed the request as a
+        // 503 rather than reporting a persistence failure the client cannot act
+        // on. Detected before the classifying match so the acquire timeout is
+        // never miscategorised as a database error.
+        if let TemporalStoreError::Database(inner) = &error
+            && is_pool_saturated(inner)
+        {
+            return TemporalError::StoreSaturated;
+        }
         match error {
             TemporalStoreError::NotFound(detail) => TemporalError::NotFound(TemporalNotFoundReason::Store { detail }),
             TemporalStoreError::Validation(detail) => TemporalError::Validation(TemporalValidationReason::Store { detail }),
@@ -98,5 +108,23 @@ impl From<TemporalStoreError> for TemporalError {
             | TemporalStoreError::Collation(CollationProvisioningError::Statement { .. })
             | TemporalStoreError::NameLookup(_) => TemporalError::persistence(error.to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::TemporalStoreError;
+    use andromeda_temporal::error::TemporalError;
+
+    #[test]
+    fn a_pool_timeout_becomes_store_saturated() {
+        let saturated = TemporalError::from(TemporalStoreError::Database(sqlx::Error::PoolTimedOut));
+        assert!(matches!(saturated, TemporalError::StoreSaturated));
+    }
+
+    #[test]
+    fn another_database_failure_stays_a_persistence_fault() {
+        let persistence = TemporalError::from(TemporalStoreError::Database(sqlx::Error::RowNotFound));
+        assert!(matches!(persistence, TemporalError::Persistence(_)));
     }
 }

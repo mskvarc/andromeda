@@ -30,9 +30,13 @@ use andromeda_postgresql_context_store::{
     jsonld_context::repo::JsonLdContextRepository,
     snapshot::repo::SnapshotRepository,
     subscription::repo::SubscriptionRepository,
-    tenant_database::{configure_pool_options, migrate_single_tenant_db},
+    tenant_database::{TenantSchemaState, migrate_single_tenant_db, tenant_schema_state},
 };
-use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_lookup::NameLookup};
+use andromeda_postgresql_name_dictionary::{
+    name_cache::{NameCache, read_established_epoch},
+    name_lookup::NameLookup,
+};
+use andromeda_postgresql_pool::configure_pool_options;
 use andromeda_postgresql_temporal_store::{bulk_write_mode::BulkWriteMode as TemporalBulkWriteMode, repo::TemporalRepository};
 use andromeda_registration::store::RegistrationStore;
 use andromeda_snapshot::store::SnapshotStore;
@@ -115,8 +119,18 @@ pub(super) async fn initialize_storage(
         TenantRef::UnnamedDefault => config.database.max_connections,
         TenantRef::Named(_) => config.tenancy.tenant_max_connections,
     };
-    migrate_single_tenant_db(migration_url).await?;
-    let pool = configure_pool_options(max_connections).connect(serving_url.as_str()).await?;
+    // Open the serving pool first -- the pooler when one is configured -- and
+    // migrate only when the schema is not already current. A warm-schema cold
+    // load then never opens the direct migrator connection or takes its session
+    // advisory lock, which a transaction-pooling proxy would break; the pooler
+    // is left to serve every warm reopen.
+    let pool = configure_pool_options(max_connections, config.database.acquire_timeout())
+        .connect(serving_url.as_str())
+        .await?;
+    match tenant_schema_state(&pool).await? {
+        TenantSchemaState::Current => {}
+        TenantSchemaState::NeedsMigration => migrate_single_tenant_db(migration_url, config.database.acquire_timeout()).await?,
+    }
     let live_target = resolve_live_target();
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
     let engine = config.jsonld.build_engine(Arc::clone(&context_repo))?;
@@ -142,14 +156,16 @@ pub(super) async fn initialize_storage(
 
     let attribute_names = Arc::new(NameCache::<AttributeName>::new(&pool));
     let entity_type_names = Arc::new(NameCache::<EntityTypeName>::new(&pool));
-    // Establish each dictionary's schema epoch against the freshly migrated
-    // database, so a later out-of-band drop and recreate of this tenant is
-    // detected as a change from a known baseline rather than adopted silently.
-    if let Err(error) = attribute_names.establish_epoch().await {
-        tracing::warn!(%error, event = "attribute_names_epoch_unestablished");
-    }
-    if let Err(error) = entity_type_names.establish_epoch().await {
-        tracing::warn!(%error, event = "entity_type_names_epoch_unestablished");
+    // Read the schema stamp once and hand it to both dictionaries as their
+    // baseline, so a later out-of-band drop and recreate of this tenant is
+    // detected as a change from a known baseline rather than adopted silently,
+    // and the two caches share one catalogue read instead of each issuing its own.
+    match read_established_epoch(&pool).await {
+        Ok(epoch) => {
+            attribute_names.adopt_epoch(epoch);
+            entity_type_names.adopt_epoch(epoch);
+        }
+        Err(error) => tracing::warn!(%error, event = "name_dictionary_epoch_unestablished"),
     }
     if config.database.preload_name_dictionaries {
         if let Err(error) = attribute_names.preload().await {

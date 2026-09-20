@@ -10,6 +10,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
+use andromeda_postgresql_pool::is_pool_saturated;
 use andromeda_registration::{
     error::RegistrationError,
     resolved_update::ResolvedCsrUpdate,
@@ -19,7 +20,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use sqlx::postgres::PgPool;
-use std::{fmt::Display, sync::Arc};
+use std::{any::Any, fmt::Display, sync::Arc};
 
 /// PostgreSQL-backed registration persistence adapter.
 ///
@@ -49,8 +50,16 @@ impl PostgresRegistrationStore {
 }
 
 /// Erase an adapter-specific diagnostic at the policy error boundary.
-pub(super) fn persistence_error(error: impl Display) -> RegistrationError {
-    RegistrationError::persistence(error.to_string())
+///
+/// A `sqlx` pool-acquire timeout is backpressure, not a fault, so it becomes
+/// [`RegistrationError::StoreSaturated`] (a 503); every other failure stays a
+/// persistence fault. The concrete [`sqlx::Error`] is recovered by downcast
+/// because callers hand it in already erased behind `impl Display`.
+pub(super) fn persistence_error(error: impl Display + Any) -> RegistrationError {
+    match (&error as &dyn Any).downcast_ref::<sqlx::Error>() {
+        Some(sqlx_error) if is_pool_saturated(sqlx_error) => RegistrationError::StoreSaturated,
+        Some(_) | None => RegistrationError::persistence(error),
+    }
 }
 
 /// Preserve PostgreSQL unique violations as registration identifier conflicts.
@@ -166,5 +175,13 @@ mod tests {
     fn positive_affected_rows_map_to_applied() {
         assert_eq!(mutation_outcome(1), RegistrationMutation::Applied);
         assert_eq!(mutation_outcome(2), RegistrationMutation::Applied);
+    }
+
+    #[test]
+    fn a_pool_timeout_becomes_store_saturated() {
+        use crate::csource_registration::registration_store::persistence_error;
+        use andromeda_registration::error::RegistrationError;
+        assert!(matches!(persistence_error(sqlx::Error::PoolTimedOut), RegistrationError::StoreSaturated));
+        assert!(matches!(persistence_error(sqlx::Error::RowNotFound), RegistrationError::Persistence(_)));
     }
 }

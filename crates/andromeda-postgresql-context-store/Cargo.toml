@@ -35,6 +35,7 @@ andromeda-postgresql-collation.workspace = true
 andromeda-postgresql-context-query.workspace = true
 andromeda-postgresql-encoding.workspace = true
 andromeda-postgresql-name-dictionary.workspace = true
+andromeda-postgresql-pool.workspace = true
 andromeda-postgresql-query.workspace = true
 andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true

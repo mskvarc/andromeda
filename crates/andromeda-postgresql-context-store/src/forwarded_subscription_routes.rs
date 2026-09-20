@@ -2,6 +2,7 @@
 //! (clause 5.8.1.4), kept in the main database beside the tenant registry.
 
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
+use andromeda_postgresql_pool::is_pool_saturated;
 use andromeda_postgresql_schema::subscription_forwarding::ForwardedSubscriptionRoutes;
 use andromeda_subscription_forwarding::{error::SubscriptionForwardingError, mapping::ForwardedSubscriptionRouter};
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -9,11 +10,19 @@ use futures::future::BoxFuture;
 use sea_query::{Expr, ExprTrait, OnConflict, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Row};
-use std::fmt::Display;
+use std::{any::Any, fmt::Display};
 
 /// Erase an adapter failure into the forwarding policy's persistence category.
-fn persistence_error(error: impl Display) -> SubscriptionForwardingError {
-    SubscriptionForwardingError::persistence(error.to_string())
+///
+/// A `sqlx` pool-acquire timeout is backpressure, not a fault, so it becomes
+/// [`SubscriptionForwardingError::StoreSaturated`] (a 503); every other failure
+/// stays a persistence fault. The concrete [`sqlx::Error`] is recovered by
+/// downcast because callers hand it in already erased behind `impl Display`.
+fn persistence_error(error: impl Display + Any) -> SubscriptionForwardingError {
+    match (&error as &dyn Any).downcast_ref::<sqlx::Error>() {
+        Some(sqlx_error) if is_pool_saturated(sqlx_error) => SubscriptionForwardingError::StoreSaturated,
+        Some(_) | None => SubscriptionForwardingError::persistence(error.to_string()),
+    }
 }
 
 /// Repository over the platform `forwarded_subscription_routes` table.

@@ -6,44 +6,26 @@
 
 use crate::{
     error::ContextStoreError,
-    schema_contract::{contract::current_tenant_schema_contract, schema_metadata::ensure_schema_contract},
+    schema_contract::{
+        contract::current_tenant_schema_contract,
+        error::SchemaContractError,
+        schema_metadata::{ensure_schema_contract, verify_schema_contract},
+        server_requirements::ExtensionPresence,
+    },
     schema_ddl::{database::create_database, database_settings::set_database_synchronous_commit},
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_postgresql_pool::configure_pool_options;
 use andromeda_tenancy::{database_name::TenantDatabaseName, db_name_prefix::DbNamePrefix};
 use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{Connection, Executor, PgConnection, error::DatabaseError, postgres::PgPoolOptions};
+use sqlx::{Connection, Executor, PgConnection, PgPool, error::DatabaseError};
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
     time::Duration,
 };
 use tokio::time::sleep;
 use url::Url;
-
-/// How long an idle connection is kept before the pool closes it. Tenant
-/// pools outlive their bursts by design (the runtime cache holds them for
-/// minutes), so without this every tenant a broker ever touched would pin
-/// its full pool against the server's `max_connections`.
-const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Build a [`PgPoolOptions`] with the broker's shared pool tuning.
-///
-/// Centralised so every pool the broker opens (main, per-tenant, migration
-/// helpers) reclaims idle connections on the same schedule and keeps none warm.
-///
-/// Durability (`synchronous_commit`) is not set on the connection: it is a
-/// per-database default installed once with `ALTER DATABASE ... SET` (see
-/// [`set_database_synchronous_commit`]), so a connection borrowed from a
-/// transaction-pooling proxy inherits it without any session `SET` that the
-/// proxy could leak to the next client.
-#[must_use]
-pub fn configure_pool_options(max_connections: u32) -> PgPoolOptions {
-    PgPoolOptions::new()
-        .min_connections(0)
-        .max_connections(max_connections)
-        .idle_timeout(POOL_IDLE_TIMEOUT)
-}
 
 /// Parsed database URL wrapper used by tenancy helpers.
 #[derive(Debug, Clone)]
@@ -300,26 +282,92 @@ pub async fn migrate_tenant_db(pool: &sqlx::PgPool) -> Result<(), ContextStoreEr
 /// Returns [`ContextStoreError::Database`] when the pool cannot connect, and
 /// the errors [`migrate_tenant_db`] returns when the migration or the schema
 /// contract check fails.
-pub async fn migrate_single_tenant_db(database_url: &Url) -> Result<(), ContextStoreError> {
-    let pool = configure_pool_options(1).connect(database_url.as_str()).await?;
+pub async fn migrate_single_tenant_db(database_url: &Url, acquire_timeout: Duration) -> Result<(), ContextStoreError> {
+    let pool = configure_pool_options(1, acquire_timeout).connect(database_url.as_str()).await?;
     migrate_tenant_db(&pool).await?;
     pool.close().await;
     Ok(())
 }
 
+/// Whether a tenant's schema is the one this binary was built against, or must
+/// be migrated up to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TenantSchemaState {
+    /// The schema matches the binary's contract; no migration is needed and the
+    /// caller may serve over the pool it already opened.
+    Current,
+    /// The schema is absent or behind and must be migrated before serving.
+    NeedsMigration,
+}
+
+/// Decide whether a tenant's schema is current or must be migrated, without
+/// running the migrator.
+///
+/// Built on the read-only [`verify_schema_contract`], which issues only single
+/// statements and so is safe over a transaction pooler. A schema that is simply
+/// not there yet -- unstamped, a version behind, its `schema_metadata` relation
+/// undefined, or its versioned extensions not yet installed -- reads as
+/// [`TenantSchemaState::NeedsMigration`], so the caller runs the migrator over a
+/// direct connection. Genuine drift the migrator cannot resolve -- a digest
+/// mismatch at the same version, a stamp ahead of the contract, or a server or
+/// installed extension below the floor -- is returned as the refusal it is,
+/// rather than migrated over.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::SchemaContract`] for the drift cases above, and
+/// when the embedded migration set has no contract or the read itself fails for
+/// a reason other than an undefined relation.
+pub async fn tenant_schema_state(pool: &PgPool) -> Result<TenantSchemaState, ContextStoreError> {
+    let contract = current_tenant_schema_contract()?;
+    match verify_schema_contract(pool, &contract).await {
+        Ok(()) => Ok(TenantSchemaState::Current),
+        Err(error) if schema_error_is_migratable(&error) => Ok(TenantSchemaState::NeedsMigration),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Whether a schema-contract refusal is one the migrator resolves by bringing
+/// the schema up to the binary's contract.
+///
+/// True for a schema that is not there yet; false for drift the migrator cannot
+/// fix, which stays a refusal. See [`tenant_schema_state`].
+fn schema_error_is_migratable(error: &SchemaContractError) -> bool {
+    match error {
+        SchemaContractError::Unstamped { .. } => true,
+        SchemaContractError::SchemaVersionMismatch { expected, found } => found < expected,
+        SchemaContractError::Database(source) => code_is_undefined_relation(source.as_database_error().and_then(DatabaseError::code).as_deref()),
+        SchemaContractError::PostGisBelowMinimum { found, .. } | SchemaContractError::TimescaleDbBelowMinimum { found, .. } => {
+            matches!(found, ExtensionPresence::Absent)
+        }
+        SchemaContractError::MigrationsDigestMismatch { .. }
+        | SchemaContractError::PostgresBelowMinimum { .. }
+        | SchemaContractError::NoMigrations
+        | SchemaContractError::SchemaVersionValue(_)
+        | SchemaContractError::MigrationsDigestValue(_)
+        | SchemaContractError::ExtensionVersionValue(_) => false,
+    }
+}
+
+/// Whether a SQLSTATE names an undefined relation (`42P01`), which is how an
+/// unmigrated tenant's absent `schema_metadata` table surfaces on the read.
+fn code_is_undefined_relation(code: Option<&str>) -> bool {
+    code == Some("42P01")
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::tenant_database::{DatabaseUrl, POOL_IDLE_TIMEOUT, configure_pool_options, database_exists_statement};
+    use crate::{
+        schema_contract::{
+            error::SchemaContractError,
+            migrations_digest::MigrationsDigest,
+            schema_version::SchemaVersion,
+            server_requirements::{ExtensionPresence, ExtensionVersion, REQUIRED_POSTGIS_VERSION},
+        },
+        tenant_database::{DatabaseUrl, code_is_undefined_relation, database_exists_statement, schema_error_is_migratable},
+    };
     use andromeda_tenancy::database_name::TenantDatabaseName;
     use sea_query::PostgresQueryBuilder;
-
-    #[test]
-    fn pool_options_reclaim_idle_connections_and_keep_none_warm() {
-        let options = configure_pool_options(7);
-        assert_eq!(options.get_max_connections(), 7);
-        assert_eq!(options.get_min_connections(), 0);
-        assert_eq!(options.get_idle_timeout(), Some(POOL_IDLE_TIMEOUT));
-    }
 
     #[test]
     fn the_existence_probe_reads_the_catalog_by_bound_name() {
@@ -375,5 +423,55 @@ mod tests {
         assert!(is_duplicate_database_sqlstate(Some("42P04")));
         assert!(!is_duplicate_database_sqlstate(Some("55006")));
         assert!(!is_duplicate_database_sqlstate(None));
+    }
+
+    /// A version behind the contract is a completed-migration-away, so the cold
+    /// path migrates; a version ahead is a downgrade the migrator cannot make,
+    /// so it stays a refusal.
+    #[test]
+    fn a_stamp_behind_the_contract_needs_migration() {
+        let expected = SchemaVersion::try_from(5).expect("a valid schema version");
+        let behind = SchemaVersion::try_from(4).expect("a valid schema version");
+        assert!(schema_error_is_migratable(&SchemaContractError::SchemaVersionMismatch { expected, found: behind }));
+
+        let ahead = SchemaVersion::try_from(6).expect("a valid schema version");
+        assert!(!schema_error_is_migratable(&SchemaContractError::SchemaVersionMismatch { expected, found: ahead }));
+    }
+
+    /// A digest mismatch at the same version means the fleet runs two binaries,
+    /// which running the migrator cannot resolve: it is refused, not migrated.
+    #[test]
+    fn a_digest_mismatch_at_the_same_version_is_refused_not_migrated() {
+        let expected = MigrationsDigest::try_from("a".repeat(64).as_str()).expect("a valid digest");
+        let found = MigrationsDigest::try_from("b".repeat(64).as_str()).expect("a valid digest");
+        assert!(!schema_error_is_migratable(&SchemaContractError::MigrationsDigestMismatch { expected, found }));
+    }
+
+    /// The absent `schema_metadata` relation an unmigrated tenant carries reads
+    /// back as SQLSTATE 42P01, which routes to a migration; no other SQLSTATE
+    /// does.
+    #[test]
+    fn an_undefined_schema_metadata_relation_needs_migration() {
+        assert!(code_is_undefined_relation(Some("42P01")));
+        for other in [Some("42703"), Some("08006"), Some("23505"), None] {
+            assert!(!code_is_undefined_relation(other), "{other:?} is not an undefined relation");
+        }
+    }
+
+    /// An extension a migration installs (absent) needs migrating; one that is
+    /// installed but below the floor is a server upgrade and stays a refusal.
+    #[test]
+    fn an_absent_extension_needs_migration_but_one_below_the_floor_is_refused() {
+        let absent = SchemaContractError::PostGisBelowMinimum {
+            required: REQUIRED_POSTGIS_VERSION,
+            found: ExtensionPresence::Absent,
+        };
+        assert!(schema_error_is_migratable(&absent), "a migration installs an absent extension");
+
+        let too_old = SchemaContractError::PostGisBelowMinimum {
+            required: REQUIRED_POSTGIS_VERSION,
+            found: ExtensionPresence::Installed(ExtensionVersion::new(2, 5)),
+        };
+        assert!(!schema_error_is_migratable(&too_old), "an installed-but-too-old extension is a server upgrade");
     }
 }

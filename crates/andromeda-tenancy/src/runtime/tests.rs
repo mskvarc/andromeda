@@ -13,6 +13,7 @@ use crate::{
     tenant_ref::TenantRef,
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_telemetry::tenancy::EvictionReason;
 use async_trait::async_trait;
 use std::{
     sync::{
@@ -22,7 +23,10 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::{sync::Notify, time::sleep};
+use tokio::{
+    sync::Notify,
+    time::{sleep, timeout},
+};
 
 fn named(raw: &str) -> TenantName {
     TenantName::try_from(raw.to_string()).expect("a valid tenant name")
@@ -36,6 +40,18 @@ fn config(enabled: bool, max_cached: usize) -> TenancyConfig {
         runtime_idle_ttl_secs: 900,
         runtime_max_cached: max_cached,
         janitor_interval_secs: 30,
+        max_concurrent_builds: 8,
+        eviction_concurrency: 8,
+    }
+}
+
+/// A config with an explicit build-admission and eviction bound, for the tests
+/// that assert those bounds are honoured.
+fn bounded_config(max_cached: usize, max_concurrent_builds: usize, eviction_concurrency: usize) -> TenancyConfig {
+    TenancyConfig {
+        max_concurrent_builds,
+        eviction_concurrency,
+        ..config(true, max_cached)
     }
 }
 
@@ -266,7 +282,7 @@ async fn eviction_spares_a_runtime_used_since_it_was_chosen() {
 
     // A snapshot that no longer matches the runtime's last_used stands in for
     // a request that touched it after the sweep chose it: it must not evict.
-    let evicted = manager.evict_all(vec![(tenant.clone(), Instant::now())]).await;
+    let evicted = manager.evict_all(vec![(tenant.clone(), Instant::now())], EvictionReason::Idle).await;
     pretty_assertions::assert_eq!(evicted, 0, "a runtime used since the snapshot must be spared");
     pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 0);
     assert!(manager.runtimes.contains_key(&tenant), "the runtime is still held open");
@@ -275,7 +291,11 @@ async fn eviction_spares_a_runtime_used_since_it_was_chosen() {
     // snapshot (nothing touched it since), the idle sweep evicts it.
     drop(leased);
     let candidates = manager.idle_runtimes(Duration::ZERO);
-    pretty_assertions::assert_eq!(manager.evict_all(candidates).await, 1, "an untouched, unleased idle runtime is evicted");
+    pretty_assertions::assert_eq!(
+        manager.evict_all(candidates, EvictionReason::Idle).await,
+        1,
+        "an untouched, unleased idle runtime is evicted"
+    );
     pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 1);
 }
 
@@ -294,7 +314,7 @@ async fn a_leased_runtime_survives_idle_and_excess_eviction() {
 
     // Idle sweep at zero TTL: acme is idle but leased, so it is spared.
     let idle = manager.idle_runtimes(Duration::ZERO);
-    pretty_assertions::assert_eq!(manager.evict_all(idle).await, 0, "a leased idle runtime is spared");
+    pretty_assertions::assert_eq!(manager.evict_all(idle, EvictionReason::Idle).await, 0, "a leased idle runtime is spared");
     // Excess trim at cap one: acme is over the cap but leased, so it is spared.
     pretty_assertions::assert_eq!(manager.trim_excess_runtimes(None).await, 0, "a leased excess runtime is spared");
     pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 0);
@@ -303,7 +323,7 @@ async fn a_leased_runtime_survives_idle_and_excess_eviction() {
     // Once the lease drops, the idle sweep may take it.
     drop(leased);
     let idle = manager.idle_runtimes(Duration::ZERO);
-    pretty_assertions::assert_eq!(manager.evict_all(idle).await, 1, "an unleased idle runtime is evicted");
+    pretty_assertions::assert_eq!(manager.evict_all(idle, EvictionReason::Idle).await, 1, "an unleased idle runtime is evicted");
     pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 1);
 }
 
@@ -335,6 +355,9 @@ async fn excess_trim_skips_a_leased_lru_and_takes_the_next() {
         .await
         .expect("resolves");
 
+    // The insert-trim detaches the victim's teardown, so wait for it to settle
+    // before counting shutdowns; the removal itself is synchronous.
+    manager.await_evictions().await;
     pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 1, "exactly one runtime is trimmed");
     assert!(manager.runtimes.contains_key(&TenantRef::Named(named("a"))), "the leased LRU is spared");
     assert!(
@@ -364,7 +387,9 @@ async fn a_concurrent_cold_build_is_never_evicted_by_another_builds_insert_trim(
         shutdowns: Arc::clone(&shutdowns),
         gate: Arc::clone(&gate),
     });
-    let manager = TenantRuntimeManager::new(config(true, CAP), Arc::clone(&registry), Arc::clone(&factory));
+    // A build-admission bound above the tenant count so this test exercises the
+    // lease, not admission: all twelve must reach the gate at once.
+    let manager = TenantRuntimeManager::new(bounded_config(CAP, TENANTS, 8), Arc::clone(&registry), Arc::clone(&factory));
 
     let mut handles = Vec::new();
     for index in 0..TENANTS {
@@ -515,6 +540,9 @@ async fn resolving_past_the_limit_trims_the_lru_named_tenant_on_insert() {
     }
 
     pretty_assertions::assert_eq!(manager.runtimes.len(), 2);
+    // The removal is synchronous; the teardown is detached, so drain it before
+    // counting shutdowns.
+    manager.await_evictions().await;
     pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 1);
     assert!(
         !manager.runtimes.contains_key(&TenantRef::Named(named("a"))),
@@ -596,7 +624,7 @@ async fn a_runtime_older_than_the_ttl_is_idle_and_the_default_never_is() {
     let idle = manager.idle_runtimes(Duration::ZERO);
     let idle_tenants: Vec<TenantRef> = idle.iter().map(|(tenant, _)| tenant.clone()).collect();
     pretty_assertions::assert_eq!(idle_tenants, vec![TenantRef::Named(named("acme"))]);
-    pretty_assertions::assert_eq!(manager.evict_all(idle).await, 1);
+    pretty_assertions::assert_eq!(manager.evict_all(idle, EvictionReason::Idle).await, 1);
     pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 1);
 }
 
@@ -604,4 +632,248 @@ async fn a_runtime_older_than_the_ttl_is_idle_and_the_default_never_is() {
 async fn a_single_tenant_broker_starts_no_janitor() {
     let Harness { manager, .. } = harness(&[], false, 64);
     assert!(manager.spawn_janitor().is_none());
+}
+
+/// A factory that records how many builds run at once, so the admission bound
+/// is observable.
+struct BuildConcurrencyProbe {
+    /// Builds currently in flight.
+    active: AtomicUsize,
+    /// The highest concurrent build count observed.
+    peak: AtomicUsize,
+    /// How long each build is held so concurrent builds overlap.
+    hold: Duration,
+    /// Shared shutdown counter handed to every runtime it builds.
+    shutdowns: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl TenantStateFactory for BuildConcurrencyProbe {
+    type State = String;
+    type Runtime = FakeRuntime;
+
+    async fn build(&self, _tenant: &TenantRef, database: &TenantDatabaseName) -> Result<(Arc<String>, FakeRuntime), TenancyError> {
+        let concurrent = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(concurrent, Ordering::SeqCst);
+        sleep(self.hold).await;
+        self.active.fetch_sub(1, Ordering::SeqCst);
+        Ok((
+            Arc::new(database.as_str().to_owned()),
+            FakeRuntime {
+                shutdowns: Arc::clone(&self.shutdowns),
+            },
+        ))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cold_builds_across_tenants_never_exceed_the_configured_bound() {
+    // Twelve distinct tenants cold-build at once against a build-admission bound
+    // of three. Each build holds long enough to overlap the others, so without
+    // the semaphore all twelve would run at once; the bound must hold the peak
+    // at three. The cache is large enough that no trim interferes.
+    const TENANTS: usize = 12;
+    const BOUND: usize = 3;
+
+    let names: Vec<String> = (0..TENANTS).map(|index| format!("t{index}")).collect();
+    let registry = Arc::new(FakeRegistry::new(&names.iter().map(String::as_str).collect::<Vec<_>>()));
+    let shutdowns = Arc::new(AtomicUsize::new(0));
+    let factory = Arc::new(BuildConcurrencyProbe {
+        active: AtomicUsize::new(0),
+        peak: AtomicUsize::new(0),
+        hold: Duration::from_millis(50),
+        shutdowns: Arc::clone(&shutdowns),
+    });
+    let manager = TenantRuntimeManager::new(bounded_config(TENANTS, BOUND, 8), Arc::clone(&registry), Arc::clone(&factory));
+
+    let mut handles = Vec::new();
+    for index in 0..TENANTS {
+        let manager = Arc::clone(&manager);
+        let tenant = TenantRef::Named(named(&format!("t{index}")));
+        handles.push(tokio::spawn(async move {
+            drop(manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.expect("resolves"));
+        }));
+    }
+    for handle in handles {
+        handle.await.expect("task joins");
+    }
+
+    let peak = factory.peak.load(Ordering::SeqCst);
+    assert!(peak <= BOUND, "no more than {BOUND} cold builds may run at once, but {peak} did");
+    assert!(peak > 1, "the builds must overlap for the bound to mean anything, but the peak was {peak}");
+}
+
+/// A runtime whose shutdown records how many teardowns run at once, so the
+/// eviction bound is observable.
+struct ShutdownConcurrencyProbe {
+    /// Teardowns currently in flight.
+    active: Arc<AtomicUsize>,
+    /// The highest concurrent teardown count observed.
+    peak: Arc<AtomicUsize>,
+    /// How long each teardown is held so concurrent teardowns overlap.
+    hold: Duration,
+}
+
+#[async_trait]
+impl TenantRuntime for ShutdownConcurrencyProbe {
+    async fn shutdown(self) {
+        let concurrent = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(concurrent, Ordering::SeqCst);
+        sleep(self.hold).await;
+        self.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// A factory that builds [`ShutdownConcurrencyProbe`] runtimes sharing one pair
+/// of concurrency counters.
+struct ShutdownProbeFactory {
+    /// Teardowns currently in flight, shared by every runtime it builds.
+    active: Arc<AtomicUsize>,
+    /// The highest concurrent teardown count observed.
+    peak: Arc<AtomicUsize>,
+    /// How long each teardown is held.
+    hold: Duration,
+}
+
+#[async_trait]
+impl TenantStateFactory for ShutdownProbeFactory {
+    type State = String;
+    type Runtime = ShutdownConcurrencyProbe;
+
+    async fn build(&self, _tenant: &TenantRef, database: &TenantDatabaseName) -> Result<(Arc<String>, ShutdownConcurrencyProbe), TenancyError> {
+        Ok((
+            Arc::new(database.as_str().to_owned()),
+            ShutdownConcurrencyProbe {
+                active: Arc::clone(&self.active),
+                peak: Arc::clone(&self.peak),
+                hold: self.hold,
+            },
+        ))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn evictions_overlap_up_to_the_bound() {
+    // Six idle, unleased runtimes are evicted at once against an eviction bound
+    // of two. Their teardowns run concurrently, so the peak overlap must reach
+    // the bound but never exceed it.
+    const TENANTS: usize = 6;
+    const BOUND: usize = 2;
+
+    let names: Vec<String> = (0..TENANTS).map(|index| format!("t{index}")).collect();
+    let registry = Arc::new(FakeRegistry::new(&names.iter().map(String::as_str).collect::<Vec<_>>()));
+    let active = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let factory = Arc::new(ShutdownProbeFactory {
+        active: Arc::clone(&active),
+        peak: Arc::clone(&peak),
+        hold: Duration::from_millis(50),
+    });
+    let manager = TenantRuntimeManager::new(bounded_config(TENANTS, 8, BOUND), Arc::clone(&registry), factory);
+
+    for index in 0..TENANTS {
+        manager
+            .resolve_state(&TenantRef::Named(named(&format!("t{index}"))), TenantCreationPolicy::MustExist)
+            .await
+            .expect("resolves");
+    }
+
+    let idle = manager.idle_runtimes(Duration::ZERO);
+    pretty_assertions::assert_eq!(idle.len(), TENANTS, "every runtime is idle at zero TTL");
+    pretty_assertions::assert_eq!(manager.evict_all(idle, EvictionReason::Idle).await, TENANTS, "all six are evicted");
+
+    let observed = peak.load(Ordering::SeqCst);
+    assert!(observed <= BOUND, "no more than {BOUND} teardowns may overlap, but {observed} did");
+    assert!(observed > 1, "the teardowns must overlap for the bound to mean anything, but the peak was {observed}");
+}
+
+/// A runtime whose shutdown blocks on a gate until the test opens it, so a
+/// detached teardown can be observed to run off the request path.
+struct GatedShutdownRuntime {
+    /// The gate the teardown waits on before it completes.
+    gate: Arc<Notify>,
+    /// Incremented once the teardown passes the gate.
+    shutdowns: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl TenantRuntime for GatedShutdownRuntime {
+    async fn shutdown(self) {
+        self.gate.notified().await;
+        self.shutdowns.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// A factory building [`GatedShutdownRuntime`]s that share one gate.
+struct GatedShutdownFactory {
+    /// The gate every teardown waits on.
+    gate: Arc<Notify>,
+    /// Shared shutdown counter.
+    shutdowns: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl TenantStateFactory for GatedShutdownFactory {
+    type State = String;
+    type Runtime = GatedShutdownRuntime;
+
+    async fn build(&self, _tenant: &TenantRef, database: &TenantDatabaseName) -> Result<(Arc<String>, GatedShutdownRuntime), TenancyError> {
+        Ok((
+            Arc::new(database.as_str().to_owned()),
+            GatedShutdownRuntime {
+                gate: Arc::clone(&self.gate),
+                shutdowns: Arc::clone(&self.shutdowns),
+            },
+        ))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn insert_trim_does_not_await_victim_shutdown() {
+    // With a cap of one, resolving `b` past `a` trims `a`. Its teardown blocks
+    // on the gate, yet the resolve must return: the removal is synchronous, the
+    // teardown detached. Opening the gate then lets the detached teardown run.
+    let registry = Arc::new(FakeRegistry::new(&["a", "b"]));
+    let shutdowns = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(Notify::new());
+    let factory = Arc::new(GatedShutdownFactory {
+        gate: Arc::clone(&gate),
+        shutdowns: Arc::clone(&shutdowns),
+    });
+    let manager = TenantRuntimeManager::new(config(true, 1), Arc::clone(&registry), factory);
+
+    // Resolve `a`; its lease drops at the statement's end, so `a` is unleased.
+    manager
+        .resolve_state(&TenantRef::Named(named("a")), TenantCreationPolicy::MustExist)
+        .await
+        .expect("resolves");
+    // Space the resolves so `a` is unambiguously the least-recently-used entry.
+    sleep(Duration::from_millis(3)).await;
+
+    // Resolving `b` triggers the insert-trim of `a`. If the trim awaited `a`'s
+    // gated teardown this would hang, so a timeout turns that into a failure.
+    let resolved_b = timeout(
+        Duration::from_secs(2),
+        manager.resolve_state(&TenantRef::Named(named("b")), TenantCreationPolicy::MustExist),
+    )
+    .await
+    .expect("the cold insert returns without awaiting the blocked teardown")
+    .expect("resolves");
+    drop(resolved_b);
+
+    assert!(
+        !manager.runtimes.contains_key(&TenantRef::Named(named("a"))),
+        "the victim is removed synchronously"
+    );
+    assert!(manager.runtimes.contains_key(&TenantRef::Named(named("b"))), "the just-built runtime is kept");
+    pretty_assertions::assert_eq!(
+        shutdowns.load(Ordering::SeqCst),
+        0,
+        "the teardown is detached, so it has not run while the gate is shut"
+    );
+
+    // Open the gate and drain the eviction set: the detached teardown completes.
+    gate.notify_one();
+    manager.await_evictions().await;
+    pretty_assertions::assert_eq!(shutdowns.load(Ordering::SeqCst), 1, "the detached teardown eventually runs");
 }

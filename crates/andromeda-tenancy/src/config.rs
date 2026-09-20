@@ -21,6 +21,12 @@ pub enum TenancyConfigError {
     /// Runtime janitor cadence was configured as zero.
     #[error("tenancy.janitor_interval_secs must be at least 1")]
     ZeroJanitorInterval,
+    /// The concurrent cold-build admission bound was configured as zero.
+    #[error("tenancy.max_concurrent_builds must be at least 1")]
+    ZeroMaxConcurrentBuilds,
+    /// The concurrent-eviction bound was configured as zero.
+    #[error("tenancy.eviction_concurrency must be at least 1")]
+    ZeroEvictionConcurrency,
 }
 
 /// Multi-tenancy configuration.
@@ -67,6 +73,24 @@ pub struct TenancyConfig {
 
     /// How often the janitor sweeps for idle and orphaned runtimes.
     pub janitor_interval_secs: u64,
+
+    /// How many tenant runtimes may be cold-built at once.
+    ///
+    /// A cold build opens a connection pool and, on a schema that is behind or
+    /// absent, runs the migrator over a direct connection. Without a bound a
+    /// burst of first requests for distinct tenants would open that many pools
+    /// and migrator connections at once and exhaust the server. Requests past
+    /// the bound wait for a build permit rather than being refused; the wait is
+    /// reported as `andromeda_tenant_build_admission_wait_seconds`.
+    pub max_concurrent_builds: usize,
+
+    /// How many tenant runtimes may be torn down at once.
+    ///
+    /// Eviction closes a runtime's connection pool and stops its workers, which
+    /// is I/O the request that triggered a cache trim must not serialise behind.
+    /// Teardowns run concurrently up to this bound, off the request path, so a
+    /// cold insert never waits on another tenant's shutdown.
+    pub eviction_concurrency: usize,
 }
 
 impl Default for TenancyConfig {
@@ -78,6 +102,8 @@ impl Default for TenancyConfig {
             runtime_idle_ttl_secs: 900,
             runtime_max_cached: 64,
             janitor_interval_secs: 30,
+            max_concurrent_builds: 8,
+            eviction_concurrency: 8,
         }
     }
 }
@@ -89,7 +115,8 @@ impl TenancyConfig {
     ///
     /// Returns the [`TenancyConfigError`] naming the first setting configured
     /// as zero: the per-tenant pool size, the runtime idle retention, the
-    /// runtime cache capacity or the janitor cadence.
+    /// runtime cache capacity, the janitor cadence, the concurrent cold-build
+    /// bound or the concurrent-eviction bound.
     pub const fn validate(&self) -> Result<(), TenancyConfigError> {
         if self.tenant_max_connections == 0 {
             return Err(TenancyConfigError::ZeroTenantMaxConnections);
@@ -102,6 +129,12 @@ impl TenancyConfig {
         }
         if self.janitor_interval_secs == 0 {
             return Err(TenancyConfigError::ZeroJanitorInterval);
+        }
+        if self.max_concurrent_builds == 0 {
+            return Err(TenancyConfigError::ZeroMaxConcurrentBuilds);
+        }
+        if self.eviction_concurrency == 0 {
+            return Err(TenancyConfigError::ZeroEvictionConcurrency);
         }
         Ok(())
     }
@@ -122,7 +155,27 @@ mod config_tests {
             runtime_idle_ttl_secs: 900,
             runtime_max_cached: 0,
             janitor_interval_secs: 30,
+            max_concurrent_builds: 8,
+            eviction_concurrency: 8,
         };
         assert_eq!(config.validate(), Err(TenancyConfigError::ZeroRuntimeMaxCached));
+    }
+
+    #[test]
+    fn a_zero_concurrent_build_bound_is_rejected() {
+        let config = TenancyConfig {
+            max_concurrent_builds: 0,
+            ..TenancyConfig::default()
+        };
+        assert_eq!(config.validate(), Err(TenancyConfigError::ZeroMaxConcurrentBuilds));
+    }
+
+    #[test]
+    fn a_zero_eviction_concurrency_is_rejected() {
+        let config = TenancyConfig {
+            eviction_concurrency: 0,
+            ..TenancyConfig::default()
+        };
+        assert_eq!(config.validate(), Err(TenancyConfigError::ZeroEvictionConcurrency));
     }
 }

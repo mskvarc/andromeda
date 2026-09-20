@@ -18,6 +18,8 @@ pub fn classify_context_registry_error(error: &ContextRegistryError) -> Classifi
         // "shall give back OperationNotSupported".
         ContextRegistryError::CachedContextNotServed { .. } => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, error.to_string()),
         ContextRegistryError::ContextUnavailable { .. } => ClassifiedReport::public(NgsiLdErrorType::LdContextNotAvailable, error.to_string()),
+        // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
+        ContextRegistryError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
         ContextRegistryError::MissingSourceUrl { .. }
         | ContextRegistryError::Persistence { .. }
         | ContextRegistryError::Representation { .. }

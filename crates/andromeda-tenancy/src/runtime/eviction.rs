@@ -8,26 +8,30 @@ use crate::{
     tenant_ref::TenantRef,
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_telemetry::tenancy::{EvictionReason, record_eviction};
 use std::{
     collections::HashSet,
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::time::interval as tokio_interval;
+use tokio::{sync::Semaphore, task::JoinSet, time::interval as tokio_interval};
 use tracing::info;
 
 impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// Remove and orderly shut down every cached tenant runtime.
     ///
     /// Called after the HTTP server stops accepting traffic, so no new runtime
-    /// can be resolved while the cache is drained.
+    /// can be resolved while the cache is drained. Each runtime's teardown is
+    /// detached and then the whole eviction set is awaited, so this also joins
+    /// any teardown a request-path trim left running.
     pub async fn shutdown_all(&self) {
         let tenants = self.runtimes.iter().map(|entry| entry.key().clone()).collect::<Vec<_>>();
         for tenant in tenants {
             if let Some((_tenant, cached)) = self.runtimes.remove(&tenant) {
-                cached.runtime.shutdown().await;
+                self.detach_shutdown(cached.runtime).await;
             }
         }
+        self.await_evictions().await;
     }
 
     /// Sweep for orphaned, excess and idle runtimes until the process ends.
@@ -48,7 +52,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 info!(trimmed, max = self.config.runtime_max_cached, "Janitor trimmed excess tenant runtimes");
             }
 
-            let evicted = self.evict_all(self.idle_runtimes(ttl)).await;
+            let evicted = self.evict_all(self.idle_runtimes(ttl), EvictionReason::Idle).await;
             if evicted > 0 {
                 info!(evicted, "Janitor evicted idle tenant runtimes");
             }
@@ -81,7 +85,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             })
             .collect();
 
-        self.evict_all(orphans).await
+        self.evict_all(orphans, EvictionReason::Orphaned).await
     }
 
     /// Tenants to drop so the cache fits inside `runtime_max_cached`, each with
@@ -124,7 +128,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             Some(keep) => self.excess_runtimes().into_iter().filter(|(tenant, _)| tenant != keep).collect(),
             None => self.excess_runtimes(),
         };
-        self.evict_all(excess).await
+        self.evict_all(excess, EvictionReason::Excess).await
     }
 
     /// Tenants whose runtime has not been used within `ttl`, each with the
@@ -145,18 +149,86 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// is conditional on that instant still matching and on the runtime still
     /// being unleased, so a runtime a request touched or leased between the
     /// sweep's snapshot and this removal is spared -- a request holding its
-    /// `Arc` is never handed a torn-down runtime.
-    pub(super) async fn evict_all(&self, candidates: Vec<(TenantRef, Instant)>) -> usize {
+    /// `Arc` is never handed a torn-down runtime. `reason` is what the eviction
+    /// counter records for each release.
+    ///
+    /// The removed runtimes are torn down concurrently, up to the eviction
+    /// bound, and this call awaits them all: the janitor sweeps and the orphan
+    /// eviction have no request waiting on them, so they settle the teardown
+    /// here rather than detaching it. The request-path insert-trim detaches
+    /// instead -- see [`detach_trim_excess_runtimes`](Self::detach_trim_excess_runtimes).
+    pub(super) async fn evict_all(&self, candidates: Vec<(TenantRef, Instant)>, reason: EvictionReason) -> usize {
+        let mut teardowns = JoinSet::new();
         let mut evicted = 0;
         for (tenant, chosen_at) in candidates {
             let removed = self
                 .runtimes
                 .remove_if(&tenant, |_, cached| cached.last_used_instant() == chosen_at && !cached.is_leased());
             if let Some((_, cached)) = removed {
-                cached.runtime.shutdown().await;
+                record_eviction(reason);
+                teardowns.spawn(Self::bounded_shutdown(Arc::clone(&self.eviction_permits), cached.runtime));
                 evicted += 1;
             }
         }
+        while teardowns.join_next().await.is_some() {}
+        if evicted > 0 {
+            self.record_cache_size();
+        }
         evicted
+    }
+
+    /// Trim the cache back to `runtime_max_cached` after a cold insert, detaching
+    /// each victim's teardown so the resolving request does not wait on it.
+    ///
+    /// `protect` is the tenant this cold build just inserted: it is filtered out
+    /// of the candidates, and it is leased by the resolving request in any case,
+    /// so a request is never handed a runtime whose pool this trim closed. The
+    /// removals are synchronous, so the cache is back inside its bound the moment
+    /// this returns; only the teardown is deferred, onto the manager's eviction
+    /// set that [`shutdown_all`](Self::shutdown_all) later drains.
+    pub(super) async fn detach_trim_excess_runtimes(&self, protect: &TenantRef) {
+        let excess: Vec<(TenantRef, Instant)> = self.excess_runtimes().into_iter().filter(|(tenant, _)| tenant != protect).collect();
+        for (tenant, chosen_at) in excess {
+            let removed = self
+                .runtimes
+                .remove_if(&tenant, |_, cached| cached.last_used_instant() == chosen_at && !cached.is_leased());
+            if let Some((_, cached)) = removed {
+                record_eviction(EvictionReason::Excess);
+                self.detach_shutdown(cached.runtime).await;
+            }
+        }
+        self.record_cache_size();
+    }
+
+    /// Spawn a runtime's teardown onto the manager's eviction set.
+    ///
+    /// The task is bounded by the eviction permit, so no more than
+    /// `eviction_concurrency` teardowns run at once across every eviction path.
+    async fn detach_shutdown(&self, runtime: F::Runtime) {
+        self.eviction_set
+            .lock()
+            .await
+            .spawn(Self::bounded_shutdown(Arc::clone(&self.eviction_permits), runtime));
+    }
+
+    /// Shut one runtime down while holding an eviction permit.
+    ///
+    /// A closed semaphore never arises here -- nothing closes it -- so a permit
+    /// that cannot be acquired degrades to an unbounded teardown rather than a
+    /// panic or a leaked runtime.
+    async fn bounded_shutdown(permits: Arc<Semaphore>, runtime: F::Runtime) {
+        let permit = permits.acquire_owned().await.ok();
+        runtime.shutdown().await;
+        drop(permit);
+    }
+
+    /// Await every detached teardown the manager still holds.
+    ///
+    /// Used by [`shutdown_all`](Self::shutdown_all), and by tests that need the
+    /// request-path teardown to have settled before they inspect the shutdown
+    /// count.
+    pub(super) async fn await_evictions(&self) {
+        let mut set = self.eviction_set.lock().await;
+        while set.join_next().await.is_some() {}
     }
 }

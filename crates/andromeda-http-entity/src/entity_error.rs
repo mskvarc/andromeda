@@ -28,6 +28,8 @@ pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
         EntityError::Identifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
         EntityError::EntityTypeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
         EntityError::AttributeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
+        // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
+        EntityError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
         EntityError::Commit(_) | EntityError::Persistence(_) | EntityError::Internal(_) => ClassifiedReport::internal(error),
     }
 }
@@ -102,6 +104,15 @@ mod tests {
             pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
             pretty_assertions::assert_eq!(report.detail(), "internal error");
         }
+    }
+
+    #[test]
+    fn store_saturation_is_a_503_with_retry_after() {
+        use andromeda_ngsi_ld_problem_details::problem_detail::ProblemClassification;
+        use std::time::Duration;
+        let report = classify_entity_error(&EntityError::StoreSaturated);
+        pretty_assertions::assert_eq!(report.classification(), ProblemClassification::ServiceUnavailable);
+        pretty_assertions::assert_eq!(report.retry_after(), Some(Duration::from_secs(1)));
     }
 
     #[test]

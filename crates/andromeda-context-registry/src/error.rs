@@ -57,6 +57,13 @@ pub enum ContextRegistryError {
         /// Human-readable backend-neutral failure detail.
         detail: String,
     },
+    /// A connection pool was saturated before the operation could run.
+    ///
+    /// Backpressure, not a fault: no backend became free within the acquire
+    /// deadline, so the well-formed request is shed and can be retried. It is
+    /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
+    #[error("the datastore connection pool is saturated; retry shortly")]
+    StoreSaturated,
     /// A response could not be represented as JSON.
     #[error("context registry representation failed: {detail}")]
     Representation {

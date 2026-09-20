@@ -189,6 +189,7 @@ dependencies = [
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-maintenance",
  "andromeda-postgresql-name-dictionary",
+ "andromeda-postgresql-pool",
  "andromeda-postgresql-temporal-store",
  "andromeda-registration",
  "andromeda-snapshot",
@@ -1383,6 +1384,7 @@ dependencies = [
  "andromeda-postgresql-context-query",
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-name-dictionary",
+ "andromeda-postgresql-pool",
  "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
@@ -1445,6 +1447,7 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-postgresql-context-store",
+ "andromeda-postgresql-pool",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
  "andromeda-telemetry",
@@ -1481,6 +1484,14 @@ dependencies = [
  "strum",
  "thiserror 2.0.20",
  "tokio",
+]
+
+[[package]]
+name = "andromeda-postgresql-pool"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "sqlx",
 ]
 
 [[package]]
@@ -1566,6 +1577,7 @@ dependencies = [
  "andromeda-postgresql-collation",
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-name-dictionary",
+ "andromeda-postgresql-pool",
  "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
@@ -1755,6 +1767,7 @@ dependencies = [
  "andromeda-architecture-checks",
  "metrics",
  "metrics-exporter-prometheus",
+ "metrics-util",
  "pretty_assertions",
  "strum",
  "thiserror 2.0.20",
@@ -1804,6 +1817,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-telemetry",
  "async-trait",
  "dashmap",
  "derive_more",

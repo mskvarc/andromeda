@@ -25,6 +25,7 @@ impl SnapshotTargetResolver for BrokerSnapshotTargetResolver {
             self.snapshots.resolve_context_target(snapshot_id).await.map_err(|error| match error {
                 SnapshotError::NotFound { identifier } => ContextTargetResolutionError::NotFound { identifier },
                 SnapshotError::PreparationTimeout { identifier } => ContextTargetResolutionError::PreparationTimeout { identifier },
+                SnapshotError::StoreSaturated => ContextTargetResolutionError::Saturated,
                 SnapshotError::Validation { .. }
                 | SnapshotError::AlreadyExists { .. }
                 | SnapshotError::Entity(_)

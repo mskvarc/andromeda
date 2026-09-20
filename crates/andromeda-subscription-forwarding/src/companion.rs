@@ -307,6 +307,9 @@ impl SubscriptionForwardingHook for SubscriptionForwardingService {
 fn into_subscription_error(error: SubscriptionForwardingError) -> SubscriptionError {
     match error {
         SubscriptionForwardingError::Subscription(inner) => inner,
+        // Saturation stays saturation across the boundary so it is still shed as
+        // a 503 rather than folded into a persistence fault.
+        SubscriptionForwardingError::StoreSaturated => SubscriptionError::StoreSaturated,
         other @ (SubscriptionForwardingError::Federation(_)
         | SubscriptionForwardingError::Entity(_)
         | SubscriptionForwardingError::JsonLd(_)
