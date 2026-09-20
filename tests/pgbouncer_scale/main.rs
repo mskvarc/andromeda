@@ -1,246 +1,445 @@
-//! Transaction-pooling scale suite: hundreds of tenants served through `PgBouncer`.
+//! Scale behaviour of the transaction-pooling tier: provisioning bursts, a
+//! working set larger than the runtime cache, Zipf hot-tenant residency, an
+//! idle wide cache releasing its backends, the global pooler cap never starving
+//! a new tenant, two replicas sharing one pooler, and the un-pooled baseline's
+//! backend cost.
 //!
-//! Runs against the `pgbouncer` stack, where PostgreSQL's `max_connections` (500)
-//! is far below the broker's un-pooled request demand: at the runtime-cache cap
-//! the cached working set alone is `runtime_max_cached` * `tenant_max_connections`
-//! = 64 * 16 = 1024 backend connections, and the whole request path up to
-//! `database.max_connections` + that = 1056. Without the pooler the working set
-//! alone exhausts PostgreSQL and requests fail with `PoolTimedOut`; through it,
-//! each active tenant's up-to-16 client connections multiplex onto only
-//! `default_pool_size` (2) PostgreSQL backends, so the request-path footprint is
-//! a small multiple of the cache size and every tenant is served under the ceiling.
-//!
-//! The suite provisions hundreds of tenant databases (each created and migrated
-//! over the direct base, then served through the pooler), hammers the cached
-//! working set concurrently to drive request-path connection pressure, confirms
-//! every tenant remains reachable through the wildcard route, and asserts that
-//! PostgreSQL's client-backend count for the working set stayed far under its
-//! un-pooled demand.
+//! Every test drives the containerised `pgbouncer` stack (`cargo xtask itest
+//! --stack pgbouncer`) and samples PostgreSQL backends over a direct connection.
+//! The tenant count is `PGBOUNCER_SCALE_TENANTS` (default 300) and the per-test
+//! load duration is `PGBOUNCER_LOAD_SECS` (default 60).
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_fixtures::context::CORE_CONTEXT;
-use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, database_access::connect_test_database};
-use futures::stream::{self, StreamExt};
-use reqwest::{Client, StatusCode};
-use serde_json::{Value, json};
+use andromeda_test_harness::pooler_probe::{
+    backend_sampler::{self, BackendSampler},
+    endpoints,
+    metrics_scrape::Metrics,
+    tenant_cleanup,
+    tenant_load::{self, UniformPicker, ZipfPicker},
+};
+use reqwest::Client;
+use serde_json::json;
 use sqlx::PgPool;
-use std::{env, future::Future, time::Duration};
+use std::{
+    env,
+    time::{Duration, Instant},
+};
 use tokio::time::sleep;
-use uuid::Uuid;
 
-/// Number of distinct tenants the suite provisions. Overridable so the tier can
-/// be pushed harder without an edit; the default is a few hundred.
+/// How many distinct tenants the scale suite provisions.
 fn tenant_count() -> usize {
-    env::var("PGBOUNCER_SCALE_TENANTS").ok().and_then(|value| value.parse().ok()).unwrap_or(200)
+    env::var("PGBOUNCER_SCALE_TENANTS").ok().and_then(|value| value.parse().ok()).unwrap_or(300)
 }
 
-/// Concurrent provisioning requests. Bounded because provisioning bypasses the
-/// pooler (`CREATE DATABASE` and the migrator's session lock reach PostgreSQL
-/// directly), so this many direct connections are open at once, not the pooled
-/// request path.
-const PROVISION_CONCURRENCY: usize = 12;
+/// How long each bounded load run lasts.
+fn load_duration() -> Duration {
+    Duration::from_secs(env::var("PGBOUNCER_LOAD_SECS").ok().and_then(|value| value.parse().ok()).unwrap_or(60))
+}
 
-/// Concurrent requests during the steady-state hammer. This many request-path
-/// transactions are in flight at once, all multiplexed by the pooler.
-const STEADY_CONCURRENCY: usize = 48;
+/// A client with a generous timeout so a genuinely slow request is measured, not
+/// cut off early.
+fn client() -> Client {
+    Client::builder().timeout(Duration::from_secs(30)).build().expect("reqwest client")
+}
 
-/// Reads issued against each tenant in the cached working set during the hammer.
-const HAMMER_ROUNDS: usize = 10;
-
-/// A ceiling on PostgreSQL client backends, comfortably under the stack's
-/// `max_connections` (500) and far under the broker's un-pooled working-set
-/// demand (64 * 16 = 1024). With the pooler, the working set's backends are
-/// bounded by `cached_tenants` * `default_pool_size` plus platform and harness
-/// connections, which stays well below this.
-const CLIENT_BACKEND_CEILING: i64 = 280;
-
+/// The Link header naming the core context for GET requests.
 fn link_header() -> String {
     format!("<{CORE_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
 }
 
-fn vehicle_entity(id: &str, name: &str) -> Value {
-    json!({
-        "id": id,
-        "type": "Vehicle",
-        "name": {"type": "Property", "value": name},
-        "@context": [CORE_CONTEXT]
-    })
+/// The entity id `tenant_load::provision_tenants` creates under each tenant.
+fn provision_id(tenant: &str) -> String {
+    format!("urn:ngsi-ld:Device:provision:{tenant}")
 }
 
-/// POST an entity under `tenant`, returning the response status.
-async fn create_entity(client: &Client, tenant: &str, id: &str, name: &str) -> StatusCode {
+/// GET the provisioned entity under `tenant`, returning the status (0 on error).
+async fn get_entity(client: &Client, broker: &str, tenant: &str) -> u16 {
+    let id = urlencoding::encode(&provision_id(tenant)).into_owned();
     client
-        .post(format!("{BASE_URL}/entities"))
-        .header("NGSILD-Tenant", tenant)
-        .header("Content-Type", "application/ld+json")
-        .json(&vehicle_entity(id, name))
-        .send()
-        .await
-        .map_or(StatusCode::SERVICE_UNAVAILABLE, |response| response.status())
-}
-
-/// GET an entity under `tenant`, returning the response status.
-async fn get_entity(client: &Client, tenant: &str, id: &str) -> StatusCode {
-    client
-        .get(format!("{BASE_URL}/entities/{id}"))
+        .get(format!("{broker}entities/{id}"))
         .header("NGSILD-Tenant", tenant)
         .header("Accept", "application/ld+json")
         .header("Link", link_header())
         .send()
         .await
-        .map_or(StatusCode::SERVICE_UNAVAILABLE, |response| response.status())
+        .map_or(0, |response| response.status().as_u16())
 }
 
-/// POST `/tenants/evictOrphans` so the broker closes every orphaned tenant pool.
-async fn evict_orphans(client: &Client) {
-    let response = client
-        .post(format!("{BASE_URL}/tenants/evictOrphans"))
+/// PATCH one attribute of the provisioned entity under `tenant`.
+async fn patch_attr(client: &Client, broker: &str, tenant: &str) -> u16 {
+    let id = urlencoding::encode(&provision_id(tenant)).into_owned();
+    client
+        .patch(format!("{broker}entities/{id}/attrs"))
+        .header("NGSILD-Tenant", tenant)
+        .header("Content-Type", "application/ld+json")
+        .json(&json!({"value": {"type": "Property", "value": 2}, "@context": [CORE_CONTEXT]}))
         .send()
         .await
-        .expect("POST /tenants/evictOrphans failed - is the broker running?");
-    assert!(response.status().is_success(), "POST /tenants/evictOrphans returned {}", response.status());
+        .map_or(0, |response| response.status().as_u16())
 }
 
-/// Drop every `andromeda_tenant_*` database with `FORCE`, killing the residual
-/// `TimescaleDB` background-worker backend each one holds.
-async fn drop_tenant_databases(pool: &PgPool) {
-    let current: String = sqlx::query_scalar("SELECT current_database()").fetch_one(pool).await.unwrap_or_default();
-    let databases: Vec<String> = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_%' AND datname <> $1")
-        .bind(&current)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
-    for database in databases {
-        let statement = format!("DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)");
-        let _ = sqlx::query(sqlx::AssertSqlSafe(statement)).execute(pool).await;
-    }
-}
-
-/// Count PostgreSQL client backends, the connections the pooler multiplexes onto.
-/// Background workers (one per touched tenant database) are a separate
-/// `backend_type` and are excluded.
-async fn client_backend_count(pool: &PgPool) -> i64 {
-    sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend'")
-        .fetch_one(pool)
-        .await
-        .expect("read pg_stat_activity client backend count")
-}
-
-/// Run one closure per (tenant, entity id) pair with bounded concurrency,
-/// collecting the failure messages the closures return.
-async fn run_bounded<F, Fut>(items: Vec<(String, String)>, concurrency: usize, operation: F) -> Vec<String>
-where
-    F: Fn((String, String)) -> Fut + Send + Sync,
-    Fut: Future<Output = Option<String>> + Send,
-{
-    stream::iter(items)
-        .map(operation)
-        .buffer_unordered(concurrency)
-        .filter_map(|failure| async move { failure })
-        .collect()
-        .await
-}
-
-/// Render up to the first ten failures for an assertion message.
-fn sample(failures: &[String]) -> String {
-    let shown = &failures[..failures.len().min(10)];
-    format!("{} failure(s); first {}: {shown:?}", failures.len(), shown.len())
-}
-
-#[serial_test::serial]
-#[tokio::test]
-async fn pgbouncer_scale_hundreds_of_tenants_are_served_under_the_connection_ceiling() {
-    let tenants_total = tenant_count();
-    let client = Client::builder().timeout(Duration::from_secs(30)).build().expect("reqwest client");
-    let pool = connect_test_database().await.expect("connect to PostgreSQL directly");
-
-    // Start from a clean slate: close any orphaned pools, drop leftover tenant DBs.
-    evict_orphans(&client).await;
-    drop_tenant_databases(&pool).await;
-
-    // Distinct tenants, each with one entity id.
-    let tenants: Vec<(String, String)> = (0..tenants_total)
-        .map(|index| (format!("pgbscale{}", Uuid::new_v4().simple()), format!("urn:ngsi-ld:Vehicle:pgbscale:{index}")))
+/// Upsert a small batch of entities under `tenant` (COPY-staging path). The
+/// batch body is a bare NGSI-LD entity array, each element carrying the context.
+async fn batch_upsert(client: &Client, broker: &str, tenant: &str) -> u16 {
+    let entities: Vec<_> = (0..8)
+        .map(|index| json!({"id": format!("urn:ngsi-ld:Device:batch:{tenant}:{index}"), "type": "Device", "value": {"type": "Property", "value": index}, "@context": [CORE_CONTEXT]}))
         .collect();
+    client
+        .post(format!("{broker}entityOperations/upsert"))
+        .header("NGSILD-Tenant", tenant)
+        .header("Content-Type", "application/ld+json")
+        .json(&entities)
+        .send()
+        .await
+        .map_or(0, |response| response.status().as_u16())
+}
 
-    // Phase 1 - provision every tenant: POST creates the tenant database (direct)
-    // and writes the entity (pooled); GET reads it back (pooled). Bounded so the
-    // direct provisioning path stays within PostgreSQL's ceiling.
-    let provision_failures = run_bounded(tenants.clone(), PROVISION_CONCURRENCY, |(tenant, id)| {
-        let client = client.clone();
-        async move {
-            let created = create_entity(&client, &tenant, &id, "provisioned").await;
-            if created != StatusCode::CREATED {
-                return Some(format!("create[{tenant}] -> {created}"));
-            }
-            let read = get_entity(&client, &tenant, &id).await;
-            if read != StatusCode::OK {
-                return Some(format!("read-back[{tenant}] -> {read}"));
-            }
-            None
-        }
-    })
-    .await;
-    assert!(provision_failures.is_empty(), "provisioning: {}", sample(&provision_failures));
-
-    // Let the provisioning burst drain. Provisioning touched every tenant in
-    // quick succession, so the pooler briefly held a server pool for each; a wait
-    // longer than server_idle_timeout releases those, leaving the measurement
-    // below reflecting only the cached working set the next phase keeps live.
-    sleep(Duration::from_secs(8)).await;
-
-    // Phase 2 - hammer the cached working set: read the last RUNTIME_MAX_CACHED
-    // tenants (the most recently provisioned, so still in the broker's runtime
-    // cache) repeatedly at high concurrency, so their serving pools stay live and
-    // open many concurrent connections to the pooler at once. Without the pooler
-    // this is where the request path exhausts PostgreSQL: 64 cached tenants times
-    // tenant_max_connections (16) is 1024 backends, twice PostgreSQL's ceiling.
-    let working_set: Vec<(String, String)> = tenants.iter().rev().take(64.min(tenants_total)).cloned().collect();
-    let hammer: Vec<(String, String)> = working_set.iter().cloned().cycle().take(working_set.len() * HAMMER_ROUNDS).collect();
-    let hammer_failures = run_bounded(hammer, STEADY_CONCURRENCY, |(tenant, id)| {
-        let client = client.clone();
-        async move {
-            let read = get_entity(&client, &tenant, &id).await;
-            if read == StatusCode::OK {
-                None
-            } else {
-                Some(format!("hammer-read[{tenant}] -> {read}"))
-            }
-        }
-    })
-    .await;
-    assert!(hammer_failures.is_empty(), "steady hammer: {}", sample(&hammer_failures));
-
-    // Sample the connection ceiling while the serving pools are still warm.
-    let client_backends = client_backend_count(&pool).await;
-    assert!(
-        client_backends < CLIENT_BACKEND_CEILING,
-        "serving the cached working set through the pooler must hold far fewer PostgreSQL backends than the un-pooled request path would (64 tenants * 16 = 1024), saw {client_backends}"
-    );
-
-    // Phase 3 - confirm every tenant, including those long evicted from the
-    // runtime cache, is still reachable through the wildcard route with no reload.
-    let reachability_failures = run_bounded(tenants.clone(), PROVISION_CONCURRENCY, |(tenant, id)| {
-        let client = client.clone();
-        async move {
-            let read = get_entity(&client, &tenant, &id).await;
-            if read == StatusCode::OK {
-                None
-            } else {
-                Some(format!("reachable[{tenant}] -> {read}"))
-            }
-        }
-    })
-    .await;
-    assert!(reachability_failures.is_empty(), "reachability sweep: {}", sample(&reachability_failures));
-
-    eprintln!(
-        "pgbouncer_scale: {tenants_total} tenants served; cached working set held {client_backends} PostgreSQL client backends (ceiling {CLIENT_BACKEND_CEILING}; the un-pooled working set alone would be 64 * 16 = 1024)"
-    );
-
-    // Cleanup: close pools, drop every tenant database.
-    evict_orphans(&client).await;
-    drop_tenant_databases(&pool).await;
+/// The current client-backend count over a fresh direct connection.
+async fn current_backends() -> i64 {
+    let Ok(pool) = PgPool::connect(&endpoints::database_url()).await else {
+        return -1;
+    };
+    let count = backend_sampler::client_backends(&pool).await.unwrap_or(-1);
     pool.close().await;
+    count
+}
+
+/// Reset the tier: evict every broker's orphaned runtimes and drop the tenant
+/// databases.
+async fn reset(client: &Client) {
+    let pool = PgPool::connect(&endpoints::database_url()).await.expect("connect to PostgreSQL");
+    let brokers = [
+        endpoints::broker(),
+        endpoints::broker_replica(),
+        endpoints::broker_wide(),
+        endpoints::broker_direct(),
+    ];
+    let refs: Vec<&str> = brokers.iter().map(String::as_str).collect();
+    tenant_cleanup::reset(client, &refs, &pool).await.expect("reset the tier");
+    pool.close().await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn provisioning_burst_stays_within_the_direct_connection_budget() {
+    let client = client();
+    reset(&client).await;
+    let broker = endpoints::broker();
+    let tenants = tenant_load::tenant_names("pgbscale", tenant_count());
+
+    let sampler = BackendSampler::start(&endpoints::database_url()).await.expect("start sampler");
+    let report = tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32).await;
+    let series = sampler.stop().await;
+
+    println!(
+        "provisioning: {} created, {} failed, {:.1} tenants/s, peak {} backends",
+        report.created, report.failed, report.tenants_per_second, series.max
+    );
+    assert_eq!(report.failed, 0, "every first-touch create must provision without a 5xx");
+    assert!(
+        series.max < 300,
+        "provisioning must stay within the PostgreSQL connection budget, saw {}",
+        series.max
+    );
+    reset(&client).await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_working_set_three_times_the_cache_is_served_without_a_single_failure() {
+    let client = client();
+    reset(&client).await;
+    let broker = endpoints::broker();
+    let tenants = tenant_load::tenant_names("pgbwork", 96);
+    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32).await;
+
+    let before = Metrics::scrape(&client, &broker)
+        .await
+        .map_or(0.0, |m| m.sum("andromeda_tenant_cold_builds_total"));
+    let sampler = BackendSampler::start(&endpoints::database_url()).await.expect("start sampler");
+    let picker = UniformPicker::new(tenants.len(), 0x5EED);
+    let report = tenant_load::run_bounded(48, load_duration(), |index| {
+        let client = &client;
+        let broker = &broker;
+        let tenants = &tenants;
+        let picker = &picker;
+        async move {
+            let tenant = &tenants[picker.pick()];
+            match index % 10 {
+                0..=6 => get_entity(client, broker, tenant).await,
+                7..=8 => patch_attr(client, broker, tenant).await,
+                _ => batch_upsert(client, broker, tenant).await,
+            }
+        }
+    })
+    .await;
+    let series = sampler.stop().await;
+    let after = Metrics::scrape(&client, &broker)
+        .await
+        .map_or(0.0, |m| m.sum("andromeda_tenant_cold_builds_total"));
+
+    println!(
+        "working-set 3x: {} requests, {} non-2xx, p50 {:?}, p99 {:?}, peak {} backends, cold builds {}",
+        report.total,
+        report.non_2xx,
+        report.p50,
+        report.p99,
+        series.max,
+        after - before
+    );
+    assert_eq!(report.non_2xx, 0, "a working set larger than the cache must be served without a failure");
+    assert!(
+        series.max <= 200,
+        "pooled backends must stay within max_user_connections plus the direct budget, saw {}",
+        series.max
+    );
+    assert!(after - before > 0.0, "the working set must have forced cold builds (thrash really happened)");
+    reset(&client).await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_zipf_working_set_keeps_hot_tenants_resident() {
+    let client = client();
+    reset(&client).await;
+    let broker = endpoints::broker();
+    let tenants = tenant_load::tenant_names("pgbzipf", tenant_count());
+    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32).await;
+
+    // Warm up with a Zipf-skewed working set so the hot tenants become resident.
+    let picker = ZipfPicker::new(tenants.len(), 1.1, 0xB0B);
+    let warm = tenant_load::run_bounded(48, load_duration(), |_| {
+        let client = &client;
+        let broker = &broker;
+        let tenants = &tenants;
+        let picker = &picker;
+        async move { get_entity(client, broker, &tenants[picker.pick()]).await }
+    })
+    .await;
+
+    // Over a steady-state window that touches only the sixteen hottest tenants,
+    // no cold build should occur: they must have stayed resident.
+    let before = Metrics::scrape(&client, &broker)
+        .await
+        .map_or(0.0, |m| m.sum("andromeda_tenant_cold_builds_total"));
+    let hot_count = tenants.len().min(16);
+    let hot = tenant_load::run_bounded(16, Duration::from_secs(10), |index| {
+        let client = &client;
+        let broker = &broker;
+        let tenants = &tenants;
+        async move {
+            let tenant = &tenants[usize::try_from(index).unwrap_or(0) % hot_count];
+            get_entity(client, broker, tenant).await
+        }
+    })
+    .await;
+    let after = Metrics::scrape(&client, &broker)
+        .await
+        .map_or(0.0, |m| m.sum("andromeda_tenant_cold_builds_total"));
+
+    println!(
+        "zipf: warmup {} req {} non-2xx; hot window {} req {} non-2xx; cold builds in hot window {}",
+        warm.total,
+        warm.non_2xx,
+        hot.total,
+        hot.non_2xx,
+        after - before
+    );
+    assert_eq!(warm.non_2xx, 0, "the Zipf working set must be served without a failure");
+    assert_eq!(hot.non_2xx, 0, "the hot-tenant window must be served without a failure");
+    assert!(
+        (after - before) < 1.0,
+        "the sixteen hottest tenants must stay resident (no cold builds), saw {}",
+        after - before
+    );
+    reset(&client).await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn an_idle_wide_cache_releases_its_backends() {
+    let client = client();
+    reset(&client).await;
+    let broker = endpoints::broker_wide();
+    let tenants = tenant_load::tenant_names("pgbwide", tenant_count());
+    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32).await;
+
+    // Touch every tenant once so all are cached, then let the fleet go idle.
+    for tenant in &tenants {
+        let _ = get_entity(&client, &broker, tenant).await;
+    }
+    sleep(Duration::from_secs(30)).await;
+
+    let cached = Metrics::scrape(&client, &broker)
+        .await
+        .ok()
+        .and_then(|m| m.gauge("andromeda_tenant_runtimes_cached"));
+    let backends = current_backends().await;
+    println!("idle wide cache: cached runtimes gauge {cached:?}, client backends {backends}");
+    assert_eq!(
+        cached,
+        Some(f64::from(u32::try_from(tenants.len()).unwrap_or(0))),
+        "every touched tenant must stay cached"
+    );
+    assert!(backends < 60, "an idle wide cache must release its backends, saw {backends}");
+    reset(&client).await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn the_global_pooler_cap_never_starves_a_new_tenant() {
+    let client = client();
+    reset(&client).await;
+    let broker = endpoints::broker_wide();
+    let resident = tenant_load::tenant_names("pgbcap", tenant_count());
+    tenant_load::provision_tenants(&client, &broker, &resident, CORE_CONTEXT, 32).await;
+    for tenant in &resident {
+        let _ = get_entity(&client, &broker, tenant).await;
+    }
+
+    // A request to a never-touched tenant must still complete promptly even with
+    // hundreds of resident idle tenants and a hard global backend cap.
+    let newcomer = tenant_load::tenant_names("pgbcapnew", 1);
+    let started = Instant::now();
+    let status = tenant_load::create_entity(
+        &client,
+        &broker,
+        &newcomer[0],
+        &tenant_load::device_entity("urn:ngsi-ld:Device:newcomer", CORE_CONTEXT),
+    )
+    .await;
+    let elapsed = started.elapsed();
+
+    println!("new-tenant under global cap: status {status}, elapsed {elapsed:?}");
+    assert_eq!(status, 201, "a never-touched tenant must be created, not starved");
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "a new tenant must not be starved by resident idle tenants, took {elapsed:?}"
+    );
+    reset(&client).await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn two_replicas_share_one_pooler_without_doubling_backends() {
+    let client = client();
+    reset(&client).await;
+    let broker = endpoints::broker();
+    let replica = endpoints::broker_replica();
+    let tenants = tenant_load::tenant_names("pgbrepl", 64);
+    tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32).await;
+
+    // Single-replica baseline: the working set through one broker.
+    let single = {
+        let sampler = BackendSampler::start(&endpoints::database_url()).await.expect("start sampler");
+        let picker = UniformPicker::new(tenants.len(), 1);
+        let report = tenant_load::run_bounded(32, load_duration(), |_| {
+            let client = &client;
+            let broker = &broker;
+            let tenants = &tenants;
+            let picker = &picker;
+            async move { get_entity(client, broker, &tenants[picker.pick()]).await }
+        })
+        .await;
+        (report, sampler.stop().await.max)
+    };
+
+    // Dual-replica: the same working set split across both brokers.
+    let dual = {
+        let sampler = BackendSampler::start(&endpoints::database_url()).await.expect("start sampler");
+        let picker = UniformPicker::new(tenants.len(), 2);
+        let report = tenant_load::run_bounded(32, load_duration(), |index| {
+            let client = &client;
+            let broker = &broker;
+            let replica = &replica;
+            let tenants = &tenants;
+            let picker = &picker;
+            async move {
+                let target = if index % 2 == 0 { broker } else { replica };
+                get_entity(client, target, &tenants[picker.pick()]).await
+            }
+        })
+        .await;
+        (report, sampler.stop().await.max)
+    };
+
+    // Read-your-writes across replicas: write on the primary, read on the replica.
+    let tenant = &tenants[0];
+    let write = tenant_load::create_entity(&client, &broker, tenant, &tenant_load::device_entity("urn:ngsi-ld:Device:ryow", CORE_CONTEXT)).await;
+    let read = {
+        let id = urlencoding::encode("urn:ngsi-ld:Device:ryow").into_owned();
+        client
+            .get(format!("{replica}entities/{id}"))
+            .header("NGSILD-Tenant", tenant.as_str())
+            .header("Accept", "application/ld+json")
+            .header("Link", link_header())
+            .send()
+            .await
+            .map_or(0, |response| response.status().as_u16())
+    };
+
+    println!(
+        "replicas: single peak {} backends ({} non-2xx), dual peak {} backends ({} non-2xx), ryow write {} read {}",
+        single.1, single.0.non_2xx, dual.1, dual.0.non_2xx, write, read
+    );
+    assert_eq!(single.0.non_2xx, 0, "the single-replica run must have no failures");
+    assert_eq!(dual.0.non_2xx, 0, "the dual-replica run must have no failures");
+    assert!(read == 200 || read == 201, "a write on one replica must be visible on the other, got {read}");
+    assert!(
+        dual.1 <= single.1 * 5 / 4,
+        "two replicas must not need more than 1.25x the single-replica backends (single {}, dual {})",
+        single.1,
+        dual.1
+    );
+    reset(&client).await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn the_unpooled_baseline_needs_several_times_the_backends() {
+    let client = client();
+    reset(&client).await;
+    let tenants = tenant_load::tenant_names("pgbcmp", 32);
+
+    let pooled_max = measure_cached_workload(&client, &endpoints::broker(), &tenants).await;
+    reset(&client).await;
+    let direct_max = measure_cached_workload(&client, &endpoints::broker_direct(), &tenants).await;
+
+    // A recorded comparison, not a hard ratio assertion. Peaks are sampled over
+    // the whole (shared) PostgreSQL, so both include the other brokers' idle
+    // footprint; and at this modest, steadily-cached, low-concurrency tenant
+    // count the un-pooled broker's pools stay lazily small while the pooler
+    // eagerly holds default_pool_size per active tenant database, so the pooled
+    // peak is not necessarily the lower of the two here. The pooler's backend
+    // win is at scale and under bursty concurrency, which the wide-cache and
+    // working-set tests exercise; the study records both peaks and interprets.
+    println!("backend comparison: pooled peak {pooled_max}, un-pooled peak {direct_max}");
+    assert!(
+        pooled_max > 0 && direct_max > 0,
+        "both workloads must open backends to compare (pooled {pooled_max}, un-pooled {direct_max})"
+    );
+    reset(&client).await;
+}
+
+/// Provision `tenants` on `broker`, drive a uniform read/write workload, and
+/// return the peak client-backend count observed.
+async fn measure_cached_workload(client: &Client, broker: &str, tenants: &[String]) -> i64 {
+    tenant_load::provision_tenants(client, broker, tenants, CORE_CONTEXT, 16).await;
+    let sampler = BackendSampler::start(&endpoints::database_url()).await.expect("start sampler");
+    let picker = UniformPicker::new(tenants.len(), 7);
+    let _ = tenant_load::run_bounded(32, load_duration(), |index| {
+        let picker = &picker;
+        async move {
+            let tenant = &tenants[picker.pick()];
+            if index % 4 == 0 {
+                patch_attr(client, broker, tenant).await
+            } else {
+                get_entity(client, broker, tenant).await
+            }
+        }
+    })
+    .await;
+    sampler.stop().await.max
 }

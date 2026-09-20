@@ -16,6 +16,14 @@ pub(crate) const CONFORMANCE_BROKER_URL_ENV: &str = "ANDROMEDA_TEST_CONFORMANCE_
 pub(crate) const HTTP3_AUTHORITY_ENV: &str = "ANDROMEDA_TEST_HTTP3_AUTHORITY";
 /// Environment variable naming the HTTP/3 leaf certificate the client trusts.
 pub(crate) const HTTP3_CERT_ENV: &str = "ANDROMEDA_TEST_HTTP3_CERT";
+/// Environment variable naming the second pooled replica broker's API base.
+pub(crate) const BROKER_REPLICA_URL_ENV: &str = "ANDROMEDA_TEST_BROKER_REPLICA_URL";
+/// Environment variable naming the wide-cache pooled broker's API base.
+pub(crate) const BROKER_WIDE_URL_ENV: &str = "ANDROMEDA_TEST_BROKER_WIDE_URL";
+/// Environment variable naming the un-pooled baseline broker's API base.
+pub(crate) const BROKER_DIRECT_URL_ENV: &str = "ANDROMEDA_TEST_BROKER_DIRECT_URL";
+/// Environment variable naming the `PgBouncer` admin-console endpoint (db `pgbouncer`).
+pub(crate) const PGBOUNCER_ADMIN_URL_ENV: &str = "ANDROMEDA_TEST_PGBOUNCER_ADMIN_URL";
 
 /// The integration-test stacks the runner can drive.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -208,12 +216,18 @@ pub(crate) static STACKS: [Stack; 7] = [
         profile: Some("broker"),
         env: &[
             (BROKER_URL_ENV, "http://127.0.0.1:1067/ngsi-ld/v1/"),
-            // The suite's own verification and cleanup connect straight to
-            // PostgreSQL, bypassing the pooler, to read pg_stat_activity and
+            (BROKER_REPLICA_URL_ENV, "http://127.0.0.1:1068/ngsi-ld/v1/"),
+            (BROKER_WIDE_URL_ENV, "http://127.0.0.1:1069/ngsi-ld/v1/"),
+            (BROKER_DIRECT_URL_ENV, "http://127.0.0.1:1070/ngsi-ld/v1/"),
+            // The suites' own sampling, cleanup and verification connect straight
+            // to PostgreSQL, bypassing the pooler, to read pg_stat_activity and
             // drop tenant databases.
             (DATABASE_URL_ENV, "postgres://postgres:postgres@127.0.0.1:5467/postgres"),
+            // The pooler admin console (db `pgbouncer`) for SHOW POOLS/SERVERS and
+            // PAUSE/RESUME/RECONNECT/KILL.
+            (PGBOUNCER_ADMIN_URL_ENV, "postgres://postgres:postgres@127.0.0.1:6467/pgbouncer"),
         ],
-        suites: &["pgbouncer_scale"],
+        suites: &["pgbouncer_scale", "pgbouncer_semantics", "pgbouncer_resilience", "pgbouncer_dormant"],
         test_threads: 1,
     },
 ];

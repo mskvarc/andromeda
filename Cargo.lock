@@ -1861,6 +1861,8 @@ dependencies = [
  "http",
  "iri-rs",
  "pretty_assertions",
+ "reqwest",
+ "serde_json",
  "sqlx",
  "thiserror 2.0.20",
  "tokio",
