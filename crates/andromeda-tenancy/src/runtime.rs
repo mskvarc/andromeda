@@ -213,11 +213,18 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 Ok(winner)
             }
             Entry::Vacant(vacant) => {
-                vacant.insert(CachedRuntime {
+                // Release the shard guard before awaiting: the trim iterates the
+                // map and awaits shutdown of evicted runtimes, and holding a
+                // DashMap guard across an await deadlocks (see build_lock_for).
+                drop(vacant.insert(CachedRuntime {
                     state: Arc::clone(&state),
                     runtime,
                     last_used: AtomicU64::new(now_millis()),
-                });
+                }));
+                // Enforce runtime_max_cached now, not only on the next janitor
+                // tick, so a burst of cold tenant builds cannot pile per-tenant
+                // pools past the configured bound between sweeps.
+                self.trim_excess_runtimes(Some(tenant)).await;
                 Ok(state)
             }
         }
@@ -236,7 +243,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 info!(orphaned, "Janitor evicted tenant runtimes whose registry row was removed");
             }
 
-            let trimmed = self.evict_all(self.excess_runtimes()).await;
+            let trimmed = self.trim_excess_runtimes(None).await;
             if trimmed > 0 {
                 info!(trimmed, max = self.config.runtime_max_cached, "Janitor trimmed excess tenant runtimes");
             }
@@ -296,6 +303,26 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             .into_iter()
             .take(self.runtimes.len().saturating_sub(self.config.runtime_max_cached))
             .collect()
+    }
+
+    /// Release the least-recently-used named runtimes until the cache fits
+    /// inside `runtime_max_cached`, returning how many were released.
+    ///
+    /// Runs both on the janitor tick and synchronously after a cold build
+    /// inserts a runtime, so the live runtime count -- and with it the open
+    /// PostgreSQL connection count -- is bounded by
+    /// `runtime_max_cached * tenant_max_connections` between ticks rather than
+    /// left to climb until the next sweep. `protect` is the tenant a cold build
+    /// just inserted: it is never evicted here, so a request is never handed a
+    /// runtime whose pool this trim just closed (matters only when
+    /// `runtime_max_cached` is so small the freshly built runtime is itself over
+    /// the cap, e.g. a capacity of one beside the unnamed default).
+    async fn trim_excess_runtimes(&self, protect: Option<&TenantRef>) -> usize {
+        let excess = match protect {
+            Some(keep) => self.excess_runtimes().into_iter().filter(|(tenant, _)| tenant != keep).collect(),
+            None => self.excess_runtimes(),
+        };
+        self.evict_all(excess).await
     }
 
     /// Tenants whose runtime has not been used within `ttl`, each with the
@@ -717,7 +744,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_cache_over_its_limit_drops_the_least_recently_used_named_tenant() {
+    async fn resolving_past_the_limit_trims_the_lru_named_tenant_on_insert() {
+        // No janitor is spawned in these tests, so the synchronous insert-trim is
+        // the only trimming in effect: resolving a third tenant past a cap of two
+        // must release the least-recently-used one during that resolve, not wait
+        // for a sweep that never runs.
         let Harness { manager, shutdowns, .. } = harness(&["a", "b", "c"], true, 2);
         for name in ["a", "b", "c"] {
             manager
@@ -726,11 +757,56 @@ mod tests {
                 .expect("resolves");
         }
 
-        let excess = manager.excess_runtimes();
-        pretty_assertions::assert_eq!(excess.len(), 1);
-        pretty_assertions::assert_eq!(manager.evict_all(excess).await, 1);
-        pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 1);
         pretty_assertions::assert_eq!(manager.runtimes.len(), 2);
+        pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 1);
+        assert!(
+            !manager.runtimes.contains_key(&TenantRef::Named(named("a"))),
+            "the least-recently-used tenant is evicted"
+        );
+        assert!(manager.runtimes.contains_key(&TenantRef::Named(named("b"))));
+        assert!(manager.runtimes.contains_key(&TenantRef::Named(named("c"))));
+    }
+
+    #[tokio::test]
+    async fn insert_trim_keeps_the_just_built_runtime_at_capacity_one() {
+        // With a cap of one beside the unnamed default, the freshly built named
+        // runtime is itself over the cap. `protect` must spare it, so the resolve
+        // hands back a live runtime rather than one the trim just tore down.
+        let Harness { manager, shutdowns, .. } = harness(&[], true, 1);
+        manager
+            .resolve_state(&TenantRef::UnnamedDefault, TenantCreationPolicy::MustExist)
+            .await
+            .expect("the default resolves");
+        let acme = TenantRef::Named(named("acme"));
+        let built = manager.resolve_state(&acme, TenantCreationPolicy::CreateOnDemand).await.expect("resolves");
+
+        assert!(
+            manager.runtimes.contains_key(&TenantRef::UnnamedDefault),
+            "the unnamed default is never evicted"
+        );
+        assert!(manager.runtimes.contains_key(&acme), "the just-built runtime is protected from its own trim");
+        pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 0);
+
+        // The returned state is the live cached one: a follow-up hit resolves to
+        // the same Arc, proving the trim did not close the pool behind it.
+        let hit = manager.resolve_state(&acme, TenantCreationPolicy::MustExist).await.expect("resolves");
+        assert!(Arc::ptr_eq(&built, &hit));
+    }
+
+    #[tokio::test]
+    async fn insert_trim_is_a_noop_within_the_limit() {
+        // Resolving up to but not past the cap trims nothing: the boundary partner
+        // to the over-limit case, guarding against over-eager eviction.
+        let Harness { manager, shutdowns, .. } = harness(&["a", "b"], true, 2);
+        for name in ["a", "b"] {
+            manager
+                .resolve_state(&TenantRef::Named(named(name)), TenantCreationPolicy::MustExist)
+                .await
+                .expect("resolves");
+        }
+
+        pretty_assertions::assert_eq!(manager.runtimes.len(), 2);
+        pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]

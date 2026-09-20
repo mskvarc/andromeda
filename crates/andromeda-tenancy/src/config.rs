@@ -40,15 +40,24 @@ pub struct TenancyConfig {
 
     /// Maximum number of connections in per-tenant database pools.
     ///
-    /// Each tenant gets its own connection pool capped at this value,
-    /// preventing a single tenant from exhausting system-wide connection
-    /// limits.
+    /// Each tenant gets its own connection pool capped at this value. Combined
+    /// with `runtime_max_cached`, which caps how many per-tenant runtimes stay
+    /// open at once, this bounds the live connection count at
+    /// `runtime_max_cached * tenant_max_connections` (plus the platform pools),
+    /// so tenant churn cannot exhaust the server's connection limit.
     pub tenant_max_connections: u32,
 
     /// How long an unused tenant runtime is held open before eviction.
     pub runtime_idle_ttl_secs: u64,
 
     /// How many tenant runtimes may be held open at once.
+    ///
+    /// The cap is enforced both on the janitor tick and synchronously when a
+    /// cold build inserts a runtime, so `runtime_max_cached *
+    /// tenant_max_connections` is an actual aggregate bound on live per-tenant
+    /// pools between sweeps -- not a limit that can be overshot until the next
+    /// tick -- modulo a transient when more than `runtime_max_cached` distinct
+    /// tenants are cold-built truly simultaneously.
     pub runtime_max_cached: usize,
 
     /// How often the janitor sweeps for idle and orphaned runtimes.

@@ -34,18 +34,17 @@ const RUNTIME_MAX_CACHED: &str = "8";
 /// a `timeInterval` notification fires with no intervening request -- is not
 /// evicted before its timer fires (case `046_02` uses `timeInterval: 10`); a
 /// shorter retention would silence that notification. The connection pressure is
-/// bounded by the runtime-cache cap and the janitor cadence below, not by this
-/// idle window.
+/// bounded by the runtime-cache cap (enforced synchronously on cold insert), not
+/// by this idle window.
 const RUNTIME_IDLE_TTL_SECS: &str = "30";
-/// How often the janitor sweeps. The cache is trimmed back to `runtime_max_cached`
-/// only on this tick (not synchronously on insert), so under `--isolate-tenants`
-/// churn -- a fresh tenant per suite, each opening a pool -- the live runtime
-/// count, and with it the open PostgreSQL connection count, can climb until the
-/// next sweep. A one-second cadence keeps that window tight enough that the burst
-/// of per-tenant pools stays far below the server's `max_connections`, rather
-/// than accumulating across a five-second window into a `too many clients`
-/// provisioning failure surfaced to the suite as a spurious 500.
-const JANITOR_INTERVAL_SECS: &str = "1";
+/// How often the janitor sweeps. The runtime-cache cap is now enforced
+/// synchronously on cold insert (the trim runs as each fresh tenant's runtime is
+/// built, not only on the sweep), so the open PostgreSQL connection count is
+/// bounded per request rather than left to climb under `--isolate-tenants` churn.
+/// This cadence therefore governs only how responsively idle and orphaned
+/// runtimes are reclaimed; five seconds is ample for that under the suite's
+/// serial drive.
+const JANITOR_INTERVAL_SECS: &str = "5";
 /// The compound `@context` the suite's fixtures and queries reference, and the
 /// suite `@context` the compound pulls in by a relative reference. Both are
 /// served from the checkout so the broker never fetches them from forge: under
