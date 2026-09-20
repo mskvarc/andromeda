@@ -1,6 +1,6 @@
 //! Deferred side-effect jobs committed with the entity mutation.
 
-use crate::commit_refusal::persistence;
+use crate::{commit_refusal::persistence, consequences::ConsequenceWrite};
 use andromeda_context_commit::{atomic_write::AtomicWrite, error::CommitError, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_context_store::pending_side_effects::{
@@ -24,7 +24,7 @@ pub(crate) async fn apply(
     landed: &[&AtomicWrite],
     record: &WriteRecord,
     consequence_base: WriteOrdinal,
-) -> Result<(), CommitError> {
+) -> Result<ConsequenceWrite, CommitError> {
     let mut merged = PersistedBatchSideEffectJob {
         temporal_entities: Vec::new(),
         change_events: Vec::new(),
@@ -57,10 +57,10 @@ pub(crate) async fn apply(
         }));
     }
     if merged.temporal_entities.is_empty() && merged.change_events.is_empty() {
-        return Ok(());
+        return Ok(ConsequenceWrite::Nothing);
     }
     PendingSideEffectsRepository::enqueue_in_tx(tx, target, record, consequence_base, &merged)
         .await
         .map_err(persistence)?;
-    Ok(())
+    Ok(ConsequenceWrite::Written)
 }

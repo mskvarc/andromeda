@@ -1,20 +1,22 @@
-//! Entity, subscription, registration, and snapshot lifecycle task registration.
+//! Entity, subscription, registration, Snapshot and Entity Map `expiresAt`
+//! sweeps, and the clause 5.13.1 cached-context invalidation pass.
 
 use crate::{
-    event::{
-        registration_change_sink::BroadcastRegistrationChangeSink,
-        snapshot_notification_sink::{DeliverySnapshotNotificationSink, SnapshotStatusDeliveryDrain},
-    },
+    cached_context_invalidation::{CACHED_CONTEXT_INVALIDATION_INTERVAL, invalidate_once},
+    event::registration_change_sink::BroadcastRegistrationChangeSink,
     tenant_factory::{
         TenantFactoryConfig,
         error::TenantAssemblyError,
         storage::TenantStorage,
-        tasks::maintenance::{classify_entity_expiry_failure, classify_registration_expiry_failure, classify_subscription_expiry_failure},
+        tasks::{
+            maintenance::{classify_entity_expiry_failure, classify_registration_expiry_failure, classify_subscription_expiry_failure},
+            snapshot::register_snapshot_expiry,
+        },
     },
     tenant_state::AndromedaState,
 };
+use andromeda_context_registry::cached_context_invalidation::CachedContextInvalidation;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_entity::{
     EntityService,
     expiry::{EntityExpiryBatchSize, EntityExpiryOutcome, EntityExpirySweep},
@@ -22,15 +24,7 @@ use andromeda_entity::{
 };
 use andromeda_entity_map::{error::EntityMapError, expiry::EntityMapExpiry, store::EntityMapStore};
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
-use andromeda_notification::delivery_config::DeliveryConfig;
-use andromeda_postgresql_context_store::snapshot::status_outbox::SnapshotStatusOutbox;
 use andromeda_registration::{RegistrationChangeSink, expiry::RegistrationExpiry, store::RegistrationStore};
-use andromeda_snapshot::{
-    error::SnapshotError,
-    executor::{SnapshotPreparation, SnapshotPreparationOutcome},
-    expiry::SnapshotExpiry,
-    store::SnapshotStore,
-};
 use andromeda_subscription::{expiry::SubscriptionExpiry, lifecycle::SubscriptionService, variant::SubscriptionVariant};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
@@ -44,7 +38,6 @@ use andromeda_task_runtime::{
     task_name::TaskName,
 };
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;
 
@@ -91,31 +84,38 @@ pub(super) fn register_expiry_workers(
         config.entity.expiry_batch_size,
     )?;
     register_snapshot_expiry(supervisor, Arc::clone(&storage.snapshot_store), interval)?; // clone: every snapshot worker shares one store.
-    register_entity_map_expiry(supervisor, Arc::clone(&storage.entity_map_store), interval) // clone: request handling and the sweep share one store.
+    register_entity_map_expiry(supervisor, Arc::clone(&storage.entity_map_store), interval)?; // clone: request handling and the sweep share one store.
+    register_cached_context_invalidation(supervisor, Arc::clone(&storage.cached_context_invalidation)) // clone: the sweep and every other Context capability share one repository.
 }
 
-/// Register snapshot preparation and the durable delivery of the lifecycle
-/// notifications it produces.
+/// Register the clause 5.13.1 pass that reclaims lapsed cached `@contexts`.
 ///
-/// # Errors
-///
-/// Returns [`TenantAssemblyError`] when the configured delivery cadence is
-/// rejected or when the supervisor refuses either registration.
-pub(super) fn register_snapshot_workers(
-    supervisor: &TaskSupervisor,
-    pool: &PgPool,
-    preparation: Arc<SnapshotPreparation>,
-    transport: &Arc<TransportDispatcher>,
-    config: &DeliveryConfig,
-) -> Result<(), TenantAssemblyError> {
-    register_snapshot_preparation(supervisor, preparation)?;
-    let drain = SnapshotStatusDeliveryDrain::new(
-        Arc::new(SnapshotStatusOutbox::new(pool)),
-        Arc::new(DeliverySnapshotNotificationSink::new(Arc::clone(transport))), // clone: every worker delivers through one dispatcher.
-        config,
-    )
-    .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    register_snapshot_status_delivery(supervisor, Arc::new(drain), Duration::from_secs(config.poll_interval_secs))
+/// It runs immediately at start-up and then every
+/// [`CACHED_CONTEXT_INVALIDATION_INTERVAL`], on its own clock, so a broker that
+/// never writes another cache row still invalidates the rows it holds. The pass
+/// logs and swallows a failure rather than escalating: the rows it would reclaim
+/// are already refused by every read.
+fn register_cached_context_invalidation(supervisor: &TaskSupervisor, store: Arc<dyn CachedContextInvalidation>) -> Result<(), TenantAssemblyError> {
+    let schedule = PeriodicSchedule::new(CACHED_CONTEXT_INVALIDATION_INTERVAL, InitialExecution::Immediate, MissedTickPolicy::Skip)
+        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let name = TaskName::try_from("cached-context-invalidation").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let registration = TaskRegistration::new(
+        name,
+        TaskCriticality::Observed,
+        RestartPolicy::transient(u32::MAX, CACHED_CONTEXT_INVALIDATION_INTERVAL, CACHED_CONTEXT_INVALIDATION_INTERVAL),
+        ShutdownPolicy::new(CACHED_CONTEXT_INVALIDATION_INTERVAL),
+    );
+    let task = ScheduledTask::new(registration, schedule, move |_execution| {
+        let store = Arc::clone(&store); // clone: each scheduled pass owns the shared invalidation port while running.
+        async move {
+            invalidate_once(store.as_ref()).await;
+            Ok(())
+        }
+    });
+    supervisor
+        .register_scheduled(task)
+        .map(drop)
+        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
 }
 
 fn register_entity_expiry(
@@ -238,94 +238,6 @@ fn register_registration_expiry(
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
 }
 
-fn register_snapshot_preparation(supervisor: &TaskSupervisor, preparation: Arc<SnapshotPreparation>) -> Result<(), TenantAssemblyError> {
-    let cadence = Duration::from_secs(1);
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("snapshot-preparation").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let registration = TaskRegistration::new(
-        name,
-        TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, cadence, cadence),
-        ShutdownPolicy::new(cadence),
-    );
-    let task = ScheduledTask::new(registration, schedule, move |_execution| {
-        let preparation = Arc::clone(&preparation); // clone: each execution owns the bounded operation while running.
-        async move {
-            match preparation.execute().await.map_err(|error| classify_snapshot_failure(&error))? {
-                SnapshotPreparationOutcome::Idle => {}
-                SnapshotPreparationOutcome::Prepared { count } => tracing::info!(count, "snapshot preparation completed"),
-            }
-            Ok(())
-        }
-    });
-    supervisor
-        .register_scheduled(task)
-        .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
-}
-
-/// Register durable Snapshot lifecycle notification delivery.
-fn register_snapshot_status_delivery(
-    supervisor: &TaskSupervisor,
-    drain: Arc<SnapshotStatusDeliveryDrain>,
-    cadence: Duration,
-) -> Result<(), TenantAssemblyError> {
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("snapshot-status-delivery").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let registration = TaskRegistration::new(
-        name,
-        TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, cadence, cadence),
-        ShutdownPolicy::new(cadence),
-    );
-    let task = ScheduledTask::new(registration, schedule, move |execution| {
-        let drain = Arc::clone(&drain);
-        async move {
-            let delivered = drain
-                .execute(DateTime::<Utc>::from(execution.cutoff()))
-                .await
-                .map_err(|error| classify_snapshot_failure(&error))?;
-            if delivered > 0 {
-                tracing::info!(claimed = delivered, "snapshot status notification delivery completed");
-            }
-            Ok(())
-        }
-    });
-    supervisor
-        .register_scheduled(task)
-        .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
-}
-
-fn register_snapshot_expiry(supervisor: &TaskSupervisor, store: Arc<dyn SnapshotStore>, expiration_interval: u64) -> Result<(), TenantAssemblyError> {
-    let cadence = Duration::from_secs(expiration_interval);
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("snapshot-expiry").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let registration = TaskRegistration::new(
-        name,
-        TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, cadence, cadence),
-        ShutdownPolicy::new(cadence),
-    );
-    let expiry = Arc::new(SnapshotExpiry::new(store));
-    let task = ScheduledTask::new(registration, schedule, move |execution| {
-        let expiry = Arc::clone(&expiry); // clone: each execution owns the bounded operation while running.
-        async move {
-            let cutoff = DateTime::<Utc>::from(execution.cutoff());
-            let expired = expiry.execute(cutoff).await.map_err(|error| classify_snapshot_failure(&error))?;
-            tracing::info!(expired, "snapshot expiry completed");
-            Ok(())
-        }
-    });
-    supervisor
-        .register_scheduled(task)
-        .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
-}
-
 /// Register the sweep that removes Entity Maps past their `expiresAt`
 /// (clause 5.2.39); the maps are durable, so a stale one would otherwise stay
 /// referenceable across instances forever.
@@ -362,22 +274,5 @@ fn classify_entity_map_failure(error: &EntityMapError) -> TaskFailure {
         EntityMapError::Persistence { .. } | EntityMapError::StoreSaturated => TaskFailure::transient(summary),
         EntityMapError::Invariant { .. } => TaskFailure::invariant_violation(summary),
         EntityMapError::NotFound { .. } | EntityMapError::RequestChanged { .. } => TaskFailure::permanent(summary),
-    }
-}
-
-fn classify_snapshot_failure(error: &SnapshotError) -> TaskFailure {
-    let summary = error.to_string();
-    match error {
-        SnapshotError::Persistence { .. } | SnapshotError::StoreSaturated => TaskFailure::transient(summary),
-        SnapshotError::Internal { .. } => TaskFailure::invariant_violation(summary),
-        SnapshotError::Validation { .. }
-        | SnapshotError::NotFound { .. }
-        | SnapshotError::AlreadyExists { .. }
-        | SnapshotError::PreparationTimeout { .. }
-        | SnapshotError::Entity(_)
-        | SnapshotError::Temporal(_)
-        | SnapshotError::Federation(_)
-        | SnapshotError::Request(_)
-        | SnapshotError::Representation(_) => TaskFailure::permanent(summary),
     }
 }

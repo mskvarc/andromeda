@@ -30,7 +30,7 @@ use andromeda_task_runtime::{
     shutdown_policy::ShutdownPolicy,
     supervisor::TaskSupervisor,
     task_name::TaskName,
-    wake_trigger::{DrainFallbackCadence, WakeHandle},
+    wake_trigger::{DrainFallbackPolicy, DrainWakeReceiver},
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::{DateTime, Utc};
@@ -56,7 +56,8 @@ pub(super) fn register_entity_side_effects(
     storage: &TenantStorage,
     writes: &Arc<dyn ContextCommitter>,
     changes: &broadcast::Sender<ContextChangeEvent>,
-) -> Result<WakeHandle, TenantAssemblyError> {
+    wake: DrainWakeReceiver,
+) -> Result<(), TenantAssemblyError> {
     let entity_config = &config.entity;
     let change_sink = Arc::new(BroadcastEntityChangeSink::new(changes.clone())) as Arc<dyn EntityChangeSink>; // clone: services and the drain each own a sender handle.
     let drain = Arc::new(EntitySideEffectDrain::new(
@@ -71,11 +72,13 @@ pub(super) fn register_entity_side_effects(
             lease_owner: SideEffectLeaseOwner::for_tenant(&config.identity.source_id, Uuid::new_v4()),
         },
     ));
-    let wake = register_entity_side_effect_drain(
+    register_entity_side_effect_drain(
         supervisor,
         Arc::clone(&drain), // clone: the delivery and reap workers share one drain operation.
         Duration::from_secs(entity_config.pending_side_effects_poll_secs),
+        Duration::from_secs(entity_config.pending_side_effects_poll_max_secs),
         Duration::from_secs(entity_config.pending_side_effects_lease_secs),
+        wake,
     )?;
     register_entity_side_effect_reap(
         supervisor,
@@ -83,7 +86,7 @@ pub(super) fn register_entity_side_effects(
         Duration::from_secs(entity_config.pending_side_effects_cleanup_interval_secs),
         retention_duration(entity_config.pending_side_effects_dead_letter_after_secs, "pending side-effect dead-letter age")?,
     )?;
-    Ok(wake)
+    Ok(())
 }
 
 /// Register the spatial index workers: the resident synchronizer that applies
@@ -117,15 +120,17 @@ pub(super) fn register_spatial_workers(
 fn register_entity_side_effect_drain(
     supervisor: &TaskSupervisor,
     drain: Arc<EntitySideEffectDrain>,
-    fallback_duration: Duration,
+    fallback_floor: Duration,
+    fallback_ceiling: Duration,
     lease_duration: Duration,
-) -> Result<WakeHandle, TenantAssemblyError> {
-    let fallback = DrainFallbackCadence::new(fallback_duration).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    wake: DrainWakeReceiver,
+) -> Result<(), TenantAssemblyError> {
+    let fallback = DrainFallbackPolicy::new(fallback_floor, fallback_ceiling).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let name = TaskName::try_from("entity-side-effect-delivery").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::TenantDegrading,
-        RestartPolicy::transient(u32::MAX, fallback_duration, fallback_duration),
+        RestartPolicy::transient(u32::MAX, fallback_floor, fallback_ceiling),
         ShutdownPolicy::new(lease_duration),
     );
     let task = DrainTask::new(registration, fallback, move |execution| {
@@ -141,7 +146,7 @@ fn register_entity_side_effect_drain(
         }
     });
     supervisor
-        .register_drain(task)
+        .register_drain(task, wake)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
 }
 

@@ -14,6 +14,8 @@ pub mod atomic_write;
 pub mod batch_side_effect_job;
 /// The entity change event consumed after a commit.
 pub mod change_event;
+/// Commit-time edge notification that deferred consequences are available.
+pub mod commit_consequence_publisher;
 /// The record and ordinal base a replayed commit continues under.
 pub mod commit_replay;
 /// The atomic commit port and submission semantics.

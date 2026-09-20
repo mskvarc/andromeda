@@ -217,14 +217,47 @@ pub trait SubscriptionStore: Send + Sync + 'static {
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
-    /// Find active interval-based subscriptions that are due for their next notification.
+    /// Find active interval-based subscriptions due at or before an explicit
+    /// execution cutoff.
+    ///
+    /// The cutoff is the drain pass's own instant rather than the wall clock, so
+    /// the set found matches the pass the drain was scheduled for.
     fn find_due_interval_subscriptions<'life0, 'life1, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
+        cutoff: DateTime<Utc>,
     ) -> BoxFuture<'async_trait, Result<Vec<Subscription>, SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
+        Self: 'async_trait;
+    /// The earliest instant strictly after `cutoff` at which some active
+    /// interval subscription is next due, or `None` when the family has none.
+    ///
+    /// The interval drain sleeps until this instant instead of polling, so an
+    /// idle tenant issues no periodic-notification query between due times.
+    fn next_interval_due<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        target: &'life1 ContextTarget,
+        cutoff: DateTime<Utc>,
+    ) -> BoxFuture<'async_trait, Result<Option<DateTime<Utc>>, SubscriptionError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
+    /// Advance one active interval subscription's grid anchor to `cutoff` without
+    /// counting a notification, so a subscription that matched nothing this pass
+    /// is not re-read every pass.
+    fn advance_interval_anchor<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        target: &'life1 ContextTarget,
+        id: &'life2 Uri,
+        cutoff: DateTime<Utc>,
+    ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
         Self: 'async_trait;
     /// Create a new subscription with the given fields and status.
     fn create_subscription<'life0, 'life1, 'life2, 'life3, 'life4, 'async_trait>(

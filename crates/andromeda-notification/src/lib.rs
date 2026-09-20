@@ -33,6 +33,8 @@ pub mod delivery_store;
 pub mod error;
 /// Entity interval notification evaluation.
 pub mod interval;
+/// Matching an expanded entity payload against an interval subscription.
+mod interval_match;
 /// The immutable notification event a write produces.
 pub mod notification_event;
 /// Entity event notification evaluation.

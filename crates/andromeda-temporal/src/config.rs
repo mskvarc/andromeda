@@ -32,6 +32,9 @@ pub enum TemporalConfigError {
     /// Intent fallback cadence was configured as zero.
     #[error("temporal.intent_fallback_secs must be at least 1")]
     ZeroIntentFallback,
+    /// Intent fallback ceiling was configured below the fallback floor.
+    #[error("temporal.intent_fallback_max_secs must be at least temporal.intent_fallback_secs")]
+    IntentFallbackCeilingBelowFloor,
     /// Intent batch size was configured as zero.
     #[error("temporal.intent_batch_size must be at least 1")]
     ZeroIntentBatchSize,
@@ -99,7 +102,16 @@ pub struct TemporalConfig {
     /// API never serves one. The conformance stacks run this at 5 s.
     pub expiration_check_interval_secs: u64,
     /// Fallback poll cadence for committed temporal intents.
+    ///
+    /// The floor of the drain's idle backoff: after a commit's edge wake the
+    /// drain runs promptly, and while idle it backs off from here toward
+    /// `intent_fallback_max_secs`.
     pub intent_fallback_secs: u64,
+    /// Ceiling the intent drain's idle backoff reaches while no commit wakes it.
+    ///
+    /// Also the cross-replica pickup bound: a committed intent another replica
+    /// did not observe a wake for is claimed within this cadence.
+    pub intent_fallback_max_secs: u64,
     /// Maximum intents claimed by one bounded drain pass.
     pub intent_batch_size: u32,
     /// Lease duration for one claimed intent batch.
@@ -143,6 +155,7 @@ impl Default for TemporalConfig {
             default_last_n: 100,
             expiration_check_interval_secs: 30,
             intent_fallback_secs: 1,
+            intent_fallback_max_secs: 30,
             intent_batch_size: 64,
             intent_lease_secs: 30,
             intent_retry_secs: 2,
@@ -177,6 +190,9 @@ impl TemporalConfig {
         }
         if self.intent_fallback_secs == 0 {
             return Err(TemporalConfigError::ZeroIntentFallback);
+        }
+        if self.intent_fallback_max_secs < self.intent_fallback_secs {
+            return Err(TemporalConfigError::IntentFallbackCeilingBelowFloor);
         }
         if self.intent_batch_size == 0 {
             return Err(TemporalConfigError::ZeroIntentBatchSize);
@@ -251,6 +267,7 @@ mod config_tests {
             default_last_n: 19,
             expiration_check_interval_secs: 30,
             intent_fallback_secs: 1,
+            intent_fallback_max_secs: 30,
             intent_batch_size: 64,
             intent_lease_secs: 30,
             intent_retry_secs: 2,

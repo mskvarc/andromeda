@@ -11,7 +11,7 @@
 //! event no delivery references would be storing a notification payload nobody
 //! is waiting for, and reaping it later is work the write can simply not create.
 
-use crate::commit_refusal::persistence;
+use crate::{commit_refusal::persistence, consequences::ConsequenceWrite};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     error::CommitError,
@@ -41,7 +41,8 @@ struct EventGroup<'a> {
 }
 
 /// Persist the notification events of landed writes and the deliveries they
-/// owe, and report the ordinal one past the last event this phase consumed.
+/// owe, and report the ordinal one past the last event this phase consumed
+/// together with whether any event was written.
 ///
 /// `base` continues the commit's one running ordinal counter: temporal history
 /// entries have already drawn from it, and every event group here draws the
@@ -63,10 +64,10 @@ pub(crate) async fn apply(
     record: &WriteRecord,
     base: WriteOrdinal,
     attribute_names: &dyn NameLookup<AttributeName>,
-) -> Result<WriteOrdinal, CommitError> {
+) -> Result<(WriteOrdinal, ConsequenceWrite), CommitError> {
     let groups = group(landed);
     if groups.is_empty() {
-        return Ok(base);
+        return Ok((base, ConsequenceWrite::Nothing));
     }
     let dictionary = resolve_dictionary(tx, &groups, attribute_names).await?;
     let events = groups
@@ -78,9 +79,10 @@ pub(crate) async fn apply(
     let advance = u32::try_from(events.len()).map_err(|error| CommitError::Invariant {
         detail: format!("commit produced more notification events than an ordinal can number: {error}"),
     })?;
-    base.advanced_by(advance).map_err(|error| CommitError::Invariant {
+    let next = base.advanced_by(advance).map_err(|error| CommitError::Invariant {
         detail: format!("notification consequence ordinal overflowed: {error}"),
-    })
+    })?;
+    Ok((next, ConsequenceWrite::Written))
 }
 
 /// Fold every landed write's pending notifications into one group per change.

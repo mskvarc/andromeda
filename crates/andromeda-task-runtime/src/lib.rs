@@ -10,7 +10,10 @@ mod bounded_driver;
 pub mod control;
 /// The operational effect of an exhausted task.
 pub mod criticality;
+/// Pure idle-interval backoff schedule for wake-triggered drains.
+pub mod drain_backoff;
 mod drain_driver;
+mod drain_registration;
 /// Wake-triggered durable drain execution.
 pub mod drain_task;
 mod driver_supervision;
@@ -41,7 +44,7 @@ pub mod task_health;
 /// Validated task identifiers.
 pub mod task_name;
 mod task_observer;
-/// Coalescing wake control and fallback cadence for drains.
+/// Coalescing wake control and the fallback backoff policy for drains.
 pub mod wake_trigger;
 
 #[cfg(test)]

@@ -283,8 +283,16 @@ impl SubscriptionStore for SingleSubscriptionStore {
         Err(unused_store_call("expire_due"))
     }
 
-    async fn find_due_interval_subscriptions(&self, _target: &ContextTarget) -> Result<Vec<Subscription>, SubscriptionError> {
+    async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Subscription>, SubscriptionError> {
         Err(unused_store_call("find_due_interval_subscriptions"))
+    }
+
+    async fn next_interval_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Option<DateTime<Utc>>, SubscriptionError> {
+        Err(unused_store_call("next_interval_due"))
+    }
+
+    async fn advance_interval_anchor(&self, _target: &ContextTarget, _id: &Uri, _cutoff: DateTime<Utc>) -> Result<(), SubscriptionError> {
+        Err(unused_store_call("advance_interval_anchor"))
     }
 
     async fn create_subscription(

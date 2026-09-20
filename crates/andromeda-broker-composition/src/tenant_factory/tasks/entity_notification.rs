@@ -44,7 +44,7 @@ use andromeda_task_runtime::{
     shutdown_policy::ShutdownPolicy,
     supervisor::TaskSupervisor,
     task_name::TaskName,
-    wake_trigger::{DrainFallbackCadence, WakeHandle},
+    wake_trigger::{DrainFallbackPolicy, DrainWakeReceiver, wake_channel},
 };
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
@@ -108,7 +108,8 @@ pub(super) fn register_notification_workers(
     processor: Arc<NotificationProcessor>,
     entity_changes: &broadcast::Sender<ContextChangeEvent>,
     subscription_changes: broadcast::Sender<SubscriptionChange>,
-) -> Result<Option<WakeHandle>, TenantAssemblyError> {
+    wake: Option<DrainWakeReceiver>,
+) -> Result<(), TenantAssemblyError> {
     let delivery = if config.is_durable() {
         EntityNotificationDelivery::Durable
     } else {
@@ -122,12 +123,13 @@ pub(super) fn register_notification_workers(
         delivery,
     )?;
     if !config.is_durable() {
-        return Ok(None);
+        return Ok(());
     }
+    let wake = wake.ok_or_else(|| TenantAssemblyError::invariant("durable notification delivery requires a wake receiver"))?;
     let store = Arc::new(NotificationDeliveryQueue::new(pool)) as Arc<dyn DeliveryStore>;
     let drain = NotificationDeliveryDrain::new(store, processor as Arc<dyn NotificationDeliveryTransport>, config)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    register_notification_delivery(supervisor, Arc::new(drain), config).map(Some)
+    register_notification_delivery(supervisor, Arc::new(drain), config, wake)
 }
 
 /// Register the sweep delivering one tenant's `timeInterval` entity
@@ -141,6 +143,7 @@ pub(super) fn register_interval_notification(
     storage: &TenantStorage,
     transport: &Arc<TransportDispatcher>,
     subscriptions: Arc<dyn SubscriptionStore>,
+    interval_max_sleep_secs: u64,
 ) -> Result<(), TenantAssemblyError> {
     let operation = Arc::new(IntervalNotificationOperation::new(
         storage.live_target.clone(), // clone: interval delivery and expiry both operate on the tenant's live branch.
@@ -151,10 +154,20 @@ pub(super) fn register_interval_notification(
         Arc::clone(transport),  // clone: every worker delivers through one dispatcher.
         storage.tenant.clone(), // clone: interval policy owns its tenant partition.
     ));
-    register_notification_schedule(supervisor, "notification-interval", move || {
-        let operation = Arc::clone(&operation); // clone: each bounded execution owns the shared notification operation.
-        async move { operation.execute().await }
-    })
+    let (_interval_wake, receiver) = wake_channel();
+    register_notification_schedule(
+        supervisor,
+        "notification-interval",
+        Duration::from_secs(interval_max_sleep_secs),
+        receiver,
+        move |cutoff| {
+            let operation = Arc::clone(&operation); // clone: each bounded pass owns the shared notification operation.
+            async move {
+                operation.execute(cutoff).await?;
+                operation.next_due(cutoff).await
+            }
+        },
+    )
 }
 
 fn register_notification_processor(
@@ -225,15 +238,17 @@ fn register_notification_delivery(
     supervisor: &TaskSupervisor,
     drain: Arc<NotificationDeliveryDrain>,
     config: &DeliveryConfig,
-) -> Result<WakeHandle, TenantAssemblyError> {
-    let fallback_duration = Duration::from_secs(config.poll_interval_secs.max(1));
-    let fallback = DrainFallbackCadence::new(fallback_duration).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    wake: DrainWakeReceiver,
+) -> Result<(), TenantAssemblyError> {
+    let fallback_floor = Duration::from_secs(config.poll_interval_secs.max(1));
+    let fallback_ceiling = Duration::from_secs(config.poll_interval_max_secs.max(config.poll_interval_secs).max(1));
+    let fallback = DrainFallbackPolicy::new(fallback_floor, fallback_ceiling).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let name = TaskName::try_from("notification-delivery").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::TenantDegrading,
-        RestartPolicy::transient(u32::MAX, fallback_duration, fallback_duration),
-        ShutdownPolicy::new(fallback_duration),
+        RestartPolicy::transient(u32::MAX, fallback_floor, fallback_ceiling),
+        ShutdownPolicy::new(fallback_floor),
     );
     let operation = Arc::clone(&drain); // clone: delivery and cleanup executions share one stateless delivery operation.
     let task = DrainTask::new(registration, fallback, move |execution| {
@@ -248,8 +263,8 @@ fn register_notification_delivery(
             }
         }
     });
-    let wake = supervisor
-        .register_drain(task)
+    supervisor
+        .register_drain(task, wake)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
 
     let cleanup_cadence = Duration::from_secs(config.cleanup_interval_secs.max(1));
@@ -291,6 +306,5 @@ fn register_notification_delivery(
     supervisor
         .register_scheduled(task)
         .map(drop)
-        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    Ok(wake)
+        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
 }

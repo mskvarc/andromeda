@@ -6,3 +6,16 @@
 
 pub(crate) mod notification_events;
 pub(crate) mod side_effects;
+
+/// Whether a commit's consequence phase persisted anything worth waking a drain for.
+///
+/// The committer uses this to decide whether to fire the matching edge
+/// notification after the transaction commits: a phase that wrote nothing has no
+/// drain to wake.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ConsequenceWrite {
+    /// The phase persisted at least one row.
+    Written,
+    /// The phase had nothing to persist.
+    Nothing,
+}

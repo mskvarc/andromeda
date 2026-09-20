@@ -448,6 +448,7 @@ mod tests {
             max_attempts: 5,
             base_backoff_secs: 5,
             poll_interval_secs: 1,
+            poll_interval_max_secs: 30,
             batch_size: 1,
             concurrency: 4,
             lease_secs: 30,

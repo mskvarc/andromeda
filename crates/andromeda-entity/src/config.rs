@@ -37,6 +37,9 @@ pub enum EntityConfigError {
     /// Pending side-effect polling cadence was configured as zero.
     #[error("entity.pending_side_effects_poll_secs must be at least 1")]
     ZeroPendingSideEffectsPollCadence,
+    /// The idle side-effect polling ceiling was configured below the polling floor.
+    #[error("entity.pending_side_effects_poll_max_secs must be at least entity.pending_side_effects_poll_secs")]
+    PendingSideEffectsPollCeilingBelowFloor,
     /// Pending side-effect lease duration was configured as zero.
     #[error("entity.pending_side_effects_lease_secs must be at least 1")]
     ZeroPendingSideEffectsLeaseDuration,
@@ -76,8 +79,14 @@ pub struct EntityConfig {
     pub batch_async_side_effect_threshold: Option<usize>,
     /// Maximum entity or attribute-expiry candidates read per sweep phase.
     pub expiry_batch_size: usize,
-    /// Poll interval for durable pending side effects.
+    /// Poll interval for durable pending side effects: the floor of the drain's
+    /// idle backoff.
+    ///
+    /// After a commit's edge wake the drain runs promptly; while idle it backs
+    /// off from here toward `pending_side_effects_poll_max_secs`.
     pub pending_side_effects_poll_secs: u64,
+    /// Ceiling the side-effect drain's idle backoff reaches while no commit wakes it.
+    pub pending_side_effects_poll_max_secs: u64,
     /// Lease duration for a claimed side-effect job.
     pub pending_side_effects_lease_secs: u64,
     /// Maximum jobs claimed per poll.
@@ -107,6 +116,7 @@ impl Default for EntityConfig {
             batch_async_side_effect_threshold: None,
             expiry_batch_size: 1_000,
             pending_side_effects_poll_secs: 1,
+            pending_side_effects_poll_max_secs: 30,
             pending_side_effects_lease_secs: 30,
             pending_side_effects_batch_size: 32,
             pending_side_effects_max_attempts: 5,
@@ -154,6 +164,9 @@ impl EntityConfig {
         if self.pending_side_effects_poll_secs == 0 {
             return Err(EntityConfigError::ZeroPendingSideEffectsPollCadence);
         }
+        if self.pending_side_effects_poll_max_secs < self.pending_side_effects_poll_secs {
+            return Err(EntityConfigError::PendingSideEffectsPollCeilingBelowFloor);
+        }
         if self.pending_side_effects_lease_secs == 0 {
             return Err(EntityConfigError::ZeroPendingSideEffectsLeaseDuration);
         }
@@ -195,6 +208,7 @@ mod tests {
             batch_async_side_effect_threshold: None,
             expiry_batch_size: 1_000,
             pending_side_effects_poll_secs: 1,
+            pending_side_effects_poll_max_secs: 30,
             pending_side_effects_lease_secs: 30,
             pending_side_effects_batch_size: 32,
             pending_side_effects_max_attempts: 5,

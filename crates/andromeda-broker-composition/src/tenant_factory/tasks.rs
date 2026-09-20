@@ -7,6 +7,7 @@ mod maintenance;
 mod notification_schedule;
 mod pool_gauges;
 mod retention;
+mod snapshot;
 mod table_size_gauges;
 mod temporal_retention;
 
@@ -18,9 +19,10 @@ use crate::tenant_factory::{
     tasks::{
         csource_notification::{CsourceNotificationStreams, register_csource_notification_workers},
         entity_notification::{compose_notification_processor, register_interval_notification, register_notification_workers},
-        expiry::{register_expiry_workers, register_snapshot_workers},
+        expiry::register_expiry_workers,
         maintenance::{register_entity_side_effects, register_spatial_workers},
         pool_gauges::register_pool_gauges,
+        snapshot::register_snapshot_workers,
         table_size_gauges::register_table_size_gauges,
         temporal_retention::register_temporal_retention,
     },
@@ -33,7 +35,7 @@ use andromeda_subscription::{
     change::{CsourceSubscriptionChange, SubscriptionChange},
     store::SubscriptionStore,
 };
-use andromeda_task_runtime::{supervisor::TaskSupervisor, wake_trigger::WakeHandle};
+use andromeda_task_runtime::{supervisor::TaskSupervisor, wake_trigger::DrainWakeReceiver};
 use std::sync::Arc;
 use tokio::{
     sync::{broadcast, watch},
@@ -69,7 +71,17 @@ pub(super) struct TaskSupervision {
     pub(super) handles: Vec<JoinHandle<()>>,
     pub(super) health_shutdown: Option<watch::Sender<bool>>,
     pub(super) task_supervisor: TaskSupervisor,
-    pub(super) drain_wakes: Vec<WakeHandle>,
+}
+
+/// The change signals and consequence-drain wake receivers a tenant's tasks
+/// consume, bundled so supervision takes one input rather than several.
+pub(super) struct TenantTaskChannels {
+    /// The entity, subscription and registration change streams.
+    pub(super) signals: TenantSignals,
+    /// The notification-delivery drain's wake receiver, absent under live delivery.
+    pub(super) notification_wake: Option<DrainWakeReceiver>,
+    /// The entity side-effect drain's wake receiver.
+    pub(super) side_effect_wake: DrainWakeReceiver,
 }
 
 /// Whether entity notifications are delivered live or through the durable queue.
@@ -89,11 +101,16 @@ pub(super) fn supervise_tasks(
     config: &TenantFactoryConfig,
     storage: &TenantStorage,
     services: &ConstructedServices,
-    signals: TenantSignals,
     writes: &Arc<dyn ContextCommitter>,
     transport: &Arc<TransportDispatcher>,
     task_supervisor: TaskSupervisor,
+    channels: TenantTaskChannels,
 ) -> Result<TaskSupervision, TenantAssemblyError> {
+    let TenantTaskChannels {
+        signals,
+        notification_wake,
+        side_effect_wake,
+    } = channels;
     let TenantSignals {
         entity,
         subscription,
@@ -101,10 +118,9 @@ pub(super) fn supervise_tasks(
         csource_subscription,
     } = signals;
     let mut handles: Vec<JoinHandle<()>> = Vec::new();
-    let mut drain_wakes = Vec::new();
     register_pool_gauges(&task_supervisor, storage.pool.clone(), &storage.tenant)?; // clone: PgPool is a shared handle sampled by the gauge task.
     register_table_size_gauges(&task_supervisor, storage.pool.clone(), &storage.tenant)?; // clone: PgPool is a shared handle sampled by the size-gauge task.
-    drain_wakes.push(register_entity_side_effects(&task_supervisor, config, storage, writes, &entity)?);
+    register_entity_side_effects(&task_supervisor, config, storage, writes, &entity, side_effect_wake)?;
     let health_shutdown = if storage.tenant.is_unnamed_default() {
         let (shutdown, receiver) = watch::channel(false);
         handles.push(transport.mqtt_pool().spawn_health_probe(receiver));
@@ -115,16 +131,23 @@ pub(super) fn supervise_tasks(
     let entity_subscriptions = Arc::new(SubscriptionRepository::new(&storage.pool)) as Arc<dyn SubscriptionStore>;
     let csource_subscriptions = Arc::new(CsourceSubscriptionRepository::new(&storage.pool)) as Arc<dyn SubscriptionStore>;
     let notification_processor = compose_notification_processor(storage, &services.state.forwarding, transport, &entity_subscriptions);
-    drain_wakes.extend(register_notification_workers(
+    register_notification_workers(
         &task_supervisor,
         &storage.pool,
         &config.notifications.delivery,
         notification_processor,
         &entity,
         subscription,
-    )?);
+        notification_wake,
+    )?;
     register_expiry_workers(&task_supervisor, config, storage, &services.state, &registration)?;
-    register_interval_notification(&task_supervisor, storage, transport, entity_subscriptions)?;
+    register_interval_notification(
+        &task_supervisor,
+        storage,
+        transport,
+        entity_subscriptions,
+        config.notifications.interval_max_sleep_secs,
+    )?;
     register_csource_notification_workers(
         &task_supervisor,
         storage,
@@ -134,6 +157,7 @@ pub(super) fn supervise_tasks(
             registrations: registration,
             subscriptions: csource_subscription,
         },
+        config.notifications.interval_max_sleep_secs,
     )?;
     register_temporal_retention(&task_supervisor, Arc::clone(&storage.temporal_repo), &config.temporal)?; // clone: the sweep and the read stores share one repository.
     register_snapshot_workers(
@@ -142,12 +166,12 @@ pub(super) fn supervise_tasks(
         Arc::clone(&services.snapshot_preparation), // clone: the worker drives the same preparation the snapshot service schedules.
         transport,
         &config.notifications.delivery,
+        config.snapshot.preparation_recovery_secs,
     )?;
     register_spatial_workers(&task_supervisor, config, storage, entity)?;
     Ok(TaskSupervision {
         handles,
         health_shutdown,
         task_supervisor,
-        drain_wakes,
     })
 }

@@ -7,17 +7,18 @@
 use crate::{
     config::{notifications::NotificationsConfig, runtime::RuntimeConfig},
     tenant_factory::{
+        commit_consequence::RuntimeCommitConsequencePublisher,
         error::TenantAssemblyError,
         runtime::BrokerTenantRuntime,
         services::construct_services,
         storage::initialize_storage,
-        tasks::{TenantSignals, supervise_tasks},
+        tasks::{TenantSignals, TenantTaskChannels, supervise_tasks},
         temporal_history::compose_temporal_history,
         transport::construct_transports,
     },
     tenant_state::AndromedaState,
 };
-use andromeda_context_commit::committer::ContextCommitter;
+use andromeda_context_commit::{commit_consequence_publisher::CommitConsequencePublisher, committer::ContextCommitter};
 use andromeda_delivery::mqtt::pool::MqttTransportPool;
 use andromeda_entity::{config::EntityConfig, spatial_config::SpatialConfig};
 use andromeda_extensions::config::ExtensionsConfig;
@@ -31,7 +32,7 @@ use andromeda_postgresql_atomic_write::{
 use andromeda_postgresql_context_store::{config::DatabaseConfig, tenant_database::DatabaseUrl};
 use andromeda_snapshot::config::SnapshotConfig;
 use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
-use andromeda_task_runtime::supervisor::TaskSupervisor;
+use andromeda_task_runtime::{supervisor::TaskSupervisor, wake_trigger::wake_channel};
 use andromeda_temporal::config::TemporalConfig;
 use andromeda_tenancy::{
     config::TenancyConfig,
@@ -45,6 +46,7 @@ use std::sync::{Arc, OnceLock};
 use tracing::debug;
 use url::Url;
 
+mod commit_consequence;
 mod error;
 /// Runtime ownership and ordered shutdown.
 pub mod runtime;
@@ -198,16 +200,36 @@ async fn build_tenant_state(
         BulkWriteMode::Unnest => EntityInsertMode::Unnest,
         BulkWriteMode::CopyStaging => EntityInsertMode::CopyStaging,
     };
+    // The consequence drains' wake channels are created here, before the drains
+    // are registered, so the committer can hold their wake handles while the
+    // drains are still being assembled; a commit that races assembly and wakes
+    // through a retained handle is not lost, and the drain reads it on its first
+    // pass. The receivers are handed to registration below. Live delivery has no
+    // notification-delivery drain, so its notification channel is absent.
+    let (side_effect_wake, side_effect_receiver) = wake_channel();
+    let (notification_wake, notification_receiver) = if config.notifications.delivery.is_durable() {
+        let (handle, receiver) = wake_channel();
+        (Some(handle), Some(receiver))
+    } else {
+        (None, None)
+    };
+    let consequence_publisher: Arc<dyn CommitConsequencePublisher> = Arc::new(RuntimeCommitConsequencePublisher::new(notification_wake, side_effect_wake));
     let writes: Arc<dyn ContextCommitter> = Arc::new(PostgresAtomicCommitter::new(
         &storage.pool,
         temporal.history_mode,
         entity_insert_mode,
         Arc::clone(&storage.attribute_names),   // clone: the commit interns names through the tenant's one dictionary.
         Arc::clone(&storage.entity_type_names), // clone: the same dictionary, for entity types.
+        consequence_publisher,
     ));
     let transports = construct_transports(config.notifications.delivery.request_timeout())?;
     let services = construct_services(config, &storage, &signals, &transports, &temporal.ports, &writes, subscription_router)?;
-    let supervision = supervise_tasks(config, &storage, &services, signals, &writes, &transports.dispatcher, task_supervisor)?;
+    let channels = TenantTaskChannels {
+        signals,
+        notification_wake: notification_receiver,
+        side_effect_wake: side_effect_receiver,
+    };
+    let supervision = supervise_tasks(config, &storage, &services, &writes, &transports.dispatcher, task_supervisor, channels)?;
     Ok((
         services.state,
         BrokerTenantRuntime::new(
@@ -217,7 +239,6 @@ async fn build_tenant_state(
             storage.pool,
             supervision.health_shutdown,
             supervision.task_supervisor,
-            supervision.drain_wakes,
         ),
     ))
 }

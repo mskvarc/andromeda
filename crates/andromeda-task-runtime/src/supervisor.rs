@@ -3,8 +3,6 @@
 use crate::{
     control::{RunNowHandle, run_now_channel},
     criticality::TaskCriticality,
-    drain_driver,
-    drain_task::DrainTask,
     driver_supervision::DriverSupervision,
     failure::TaskFailure,
     lifecycle_event::{LifecycleEventKind, TaskLifecycleEvent},
@@ -17,7 +15,6 @@ use crate::{
     task_health::{TaskHealth, TaskHealthSnapshot, TaskHealthState},
     task_name::TaskName,
     task_observer::{DriverTerminal, TerminatedTask, apply_criticality, emit, join_failure, observe_terminal},
-    wake_trigger::{WakeHandle, wake_channel},
 };
 use andromeda_telemetry::task_failure::record_task_failure;
 use dashmap::{DashMap, mapref::entry::Entry};
@@ -41,15 +38,15 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone)]
 pub struct TaskSupervisor {
     /// Shared supervisor resources and task registry.
-    inner: Arc<SupervisorInner>,
+    pub(crate) inner: Arc<SupervisorInner>,
 }
 
 /// Resources shared by every clone of one supervisor.
-struct SupervisorInner {
+pub(crate) struct SupervisorInner {
     /// Primary process execution host supplied by composition.
-    host: Handle,
+    pub(crate) host: Handle,
     /// Cancellation root for this process or tenant scope.
-    cancellation: CancellationToken,
+    pub(crate) cancellation: CancellationToken,
     /// Process root used only for process-fatal escalation.
     process_cancellation: CancellationToken,
     /// Names reserved for the lifetime of this supervisor.
@@ -59,7 +56,7 @@ struct SupervisorInner {
     /// Active task handles and shutdown deadlines.
     active: DashMap<TaskName, Arc<ManagedTask>>,
     /// Completion-ordered lifecycle reporting channel.
-    lifecycle: broadcast::Sender<TaskLifecycleEvent>,
+    pub(crate) lifecycle: broadcast::Sender<TaskLifecycleEvent>,
     /// Wake-up for graceful shutdown progress.
     completion: Notify,
 }
@@ -223,37 +220,6 @@ impl TaskSupervisor {
         Ok(run_now)
     }
 
-    /// Register and start one wake-triggered durable drain task.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TaskRegistrationError`] when the task name is already reserved by this supervisor.
-    pub fn register_drain(&self, task: DrainTask) -> Result<WakeHandle, TaskRegistrationError> {
-        let (registration, fallback, operation) = task.into_parts();
-        let health = self.reserve(&registration)?;
-        let name = registration.name().clone(); // clone: the driver and supervisor registry both retain the stable task identity.
-        let cancellation = self.inner.cancellation.child_token();
-        let (wake, receiver) = wake_channel();
-        let wake_guard = wake.clone(); // clone: the driver retains a sender so dropping the external capability cannot close its trigger.
-        let driver_health = Arc::clone(&health); // clone: driver updates are observed through the supervisor health registry.
-        let lifecycle = self.inner.lifecycle.clone(); // clone: every driver publishes into the same completion-ordered channel.
-        let driver_name = name.clone(); // clone: the asynchronous driver owns its task identity.
-        let restart_policy = registration.restart_policy();
-        let supervision = DriverSupervision {
-            name: driver_name,
-            restart_policy,
-            cancellation,
-            health: driver_health,
-            lifecycle,
-        };
-        let driver = self.inner.host.spawn(async move {
-            let _wake_guard = wake_guard;
-            drain_driver::run(supervision, fallback, operation, receiver).await
-        });
-        self.observe(name, &registration, health, driver);
-        Ok(wake)
-    }
-
     /// Register and start one long-lived resident task.
     ///
     /// # Errors
@@ -322,7 +288,7 @@ impl TaskSupervisor {
     }
 
     /// Reserve one task name and create its registered health record.
-    fn reserve(&self, registration: &TaskRegistration) -> Result<Arc<RwLock<TaskHealth>>, TaskRegistrationError> {
+    pub(crate) fn reserve(&self, registration: &TaskRegistration) -> Result<Arc<RwLock<TaskHealth>>, TaskRegistrationError> {
         let name = registration.name().clone(); // clone: registration remains complete while the supervisor owns the lookup key.
         match self.inner.registered.entry(name.clone()) {
             Entry::Occupied(_) => Err(TaskRegistrationError { name }),
@@ -336,7 +302,7 @@ impl TaskSupervisor {
     }
 
     /// Spawn an observer that attributes every terminal driver result.
-    fn observe(&self, name: TaskName, registration: &TaskRegistration, health: Arc<RwLock<TaskHealth>>, driver: JoinHandle<DriverTerminal>) {
+    pub(crate) fn observe(&self, name: TaskName, registration: &TaskRegistration, health: Arc<RwLock<TaskHealth>>, driver: JoinHandle<DriverTerminal>) {
         let abort = driver.abort_handle();
         let forced = Arc::new(AtomicBool::new(false));
         let observer_forced = Arc::clone(&forced); // clone: shutdown sets the flag while the observer classifies cancellation.

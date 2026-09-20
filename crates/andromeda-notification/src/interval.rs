@@ -2,6 +2,7 @@
 
 use crate::{
     error::NotificationError,
+    interval_match::{apply_subscription_filters, entity_id_of, entity_types},
     processor::payload::{
         filtering::filter_entity_attributes,
         projection::apply_notification_projection,
@@ -19,20 +20,15 @@ use andromeda_ngsi_ld_lexicon::{
     entity_type_name::EntityTypeName,
     uri::{NGSI_LD_URN_NID, Uri},
 };
-use andromeda_ngsi_ld_model::{
-    expanded::query_match::{matches_geo_query, matches_scope_query},
-    notification::Notification,
-    subscription::Subscription,
-};
-use andromeda_ngsi_ld_query::filter::eval;
+use andromeda_ngsi_ld_model::{notification::Notification, subscription::Subscription};
 use andromeda_ngsi_ld_render::notification_conformance::amend_notification_entities;
 use andromeda_subscription::{
-    compilation::{compile_geo_q, notification_projection},
+    compilation::notification_projection,
     notification_slot::{NotificationSlot, NotificationSlotGate},
     store::SubscriptionStore,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use futures::{StreamExt, stream};
 use serde_json::Value;
 use std::sync::Arc;
@@ -85,6 +81,12 @@ impl IntervalNotificationOperation {
 
     /// Evaluate every interval subscription due at the execution boundary.
     ///
+    /// Every due subscription's grid anchor is advanced past `cutoff` before this
+    /// returns, whether or not it had anything to send: a subscription that
+    /// matched nothing still ticked, so its anchor moves and the sweep stops
+    /// re-reading it every pass (the clause 5.8.6 defect where a matches-nothing
+    /// subscription re-ran a paged scan every second).
+    ///
     /// # Errors
     ///
     /// Returns [`NotificationError::Subscription`] when the subscription store
@@ -92,8 +94,8 @@ impl IntervalNotificationOperation {
     /// entity lookup, payload assembly, slot claiming, serialization, endpoint
     /// parsing, and delivery outcome bookkeeping — are logged and skipped rather
     /// than aborting the sweep.
-    pub async fn execute(&self) -> Result<usize, NotificationError> {
-        let due_subs = self.sub_repo.find_due_interval_subscriptions(&self.target).await?;
+    pub async fn execute(&self, cutoff: DateTime<Utc>) -> Result<usize, NotificationError> {
+        let due_subs = self.sub_repo.find_due_interval_subscriptions(&self.target, cutoff).await?;
         let due_count = due_subs.len();
 
         let this = &self;
@@ -115,7 +117,10 @@ impl IntervalNotificationOperation {
                 let entities = apply_subscription_filters(&sub, entities);
 
                 if entities.is_empty() {
-                    // Per spec: if no matching entities, no notification is sent
+                    // Clause 5.8.6: no matching entities means no notification.
+                    // The anchor still advances so the interval is not re-read
+                    // every pass until it next comes due.
+                    this.advance_anchor(&sub, cutoff).await;
                     return;
                 }
 
@@ -128,6 +133,7 @@ impl IntervalNotificationOperation {
                 };
 
                 if data.is_empty() {
+                    this.advance_anchor(&sub, cutoff).await;
                     return;
                 }
 
@@ -135,8 +141,10 @@ impl IntervalNotificationOperation {
                 // Table 5.2.15-1: a periodic subscription carries no
                 // `throttling` (Table 5.2.12-1 makes the pair mutually
                 // exclusive), but its endpoint's `cooldown` still suppresses a
-                // notification that would follow too soon after a failure.
-                let gate = NotificationSlotGate::at(Utc::now(), None, sub.notification.endpoint.cooldown);
+                // notification that would follow too soon after a failure. The
+                // claim advances the anchor itself, so no separate advance is
+                // needed on the send path.
+                let gate = NotificationSlotGate::at(cutoff, None, sub.notification.endpoint.cooldown);
                 match this.sub_repo.claim_notification_slot(&this.target, &sub.id, gate).await {
                     Ok(NotificationSlot::Claimed) => {}
                     Ok(NotificationSlot::Suppressed) => return,
@@ -204,6 +212,25 @@ impl IntervalNotificationOperation {
             .collect()
             .await;
         Ok(due_count)
+    }
+
+    /// The earliest instant some active interval subscription is next due after
+    /// `cutoff`, or `None` when this tenant has none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NotificationError::Subscription`] when the store cannot report
+    /// the next due instant.
+    pub async fn next_due(&self, cutoff: DateTime<Utc>) -> Result<Option<DateTime<Utc>>, NotificationError> {
+        self.sub_repo.next_interval_due(&self.target, cutoff).await.map_err(NotificationError::from)
+    }
+
+    /// Advance a due subscription's grid anchor past `cutoff`, logging a store
+    /// failure rather than aborting the sweep.
+    async fn advance_anchor(&self, sub: &Subscription, cutoff: DateTime<Utc>) {
+        if let Err(error) = self.sub_repo.advance_interval_anchor(&self.target, &sub.id, cutoff).await {
+            debug!("Failed to advance interval anchor for {}: {}", sub.id, error);
+        }
     }
 
     async fn fetch_matching_entities(&self, sub: &Subscription) -> Result<Vec<Value>, NotificationError> {
@@ -309,69 +336,4 @@ impl IntervalNotificationOperation {
         // change-driven one is, so it is amended the same way too.
         Ok(amend_notification_entities(results, sub.delivery.ngsild_conformance, format))
     }
-}
-
-/// The node of an expanded entity payload, which the store hands back either
-/// bare or wrapped in a one-element array.
-fn entity_node(entity: &Value) -> Option<&Value> {
-    match entity {
-        Value::Array(arr) => arr.first(),
-        object @ Value::Object(_) => Some(object),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-    }
-}
-
-/// The expanded type IRIs an entity payload declares.
-fn entity_types(entity: &Value) -> Vec<EntityTypeName> {
-    entity_node(entity)
-        .and_then(|node| node.get("@type"))
-        .and_then(Value::as_array)
-        .map(|types| {
-            types
-                .iter()
-                .filter_map(Value::as_str)
-                .filter_map(|raw| raw.parse::<EntityTypeName>().ok())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// The validated `@id` an expanded entity payload carries.
-fn entity_id_of(entity: &Value) -> Option<Uri> {
-    entity_node(entity)?.get("@id")?.as_str()?.parse().ok()
-}
-
-/// Apply q, geoQ, and scopeQ filters from a subscription to a list of expanded entities.
-fn apply_subscription_filters(sub: &Subscription, entities: Vec<Value>) -> Vec<Value> {
-    let compiled_q = sub.filters.q.as_ref();
-
-    let compiled_geo = sub.filters.geo_q.as_ref().and_then(|v| compile_geo_q(v, sub.id.as_ref()));
-    let compiled_scope = sub.filters.scope_q.as_ref();
-
-    let has_filters = compiled_q.is_some() || compiled_geo.is_some() || compiled_scope.is_some();
-    if !has_filters {
-        return entities;
-    }
-
-    entities
-        .into_iter()
-        .filter(|entity| {
-            if let Some(expr) = compiled_q
-                && !eval::evaluate(expr, entity)
-            {
-                return false;
-            }
-            if let Some(ref geo_q) = compiled_geo
-                && !matches_geo_query(geo_q, entity)
-            {
-                return false;
-            }
-            if let Some(scope_q) = compiled_scope
-                && !matches_scope_query(scope_q, entity)
-            {
-                return false;
-            }
-            true
-        })
-        .collect()
 }

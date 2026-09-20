@@ -1,7 +1,6 @@
 //! Initialization of one tenant's database-backed storage graph.
 
 use crate::{
-    cached_context_invalidation::{CACHED_CONTEXT_INVALIDATION_INTERVAL, CachedContextInvalidationWorker},
     context_hit_flush::ContextHitFlushWorker,
     tenant_factory::{TenantFactoryConfig, error::TenantAssemblyError},
 };
@@ -55,6 +54,8 @@ pub(super) struct TenantStorage {
     pub(super) live_target: ContextTarget,
     pub(super) engine: JsonLdEngine,
     pub(super) context_workers: TenantContextWorkers,
+    /// The clause 5.13.1 invalidation port, driven by a supervised scheduled task.
+    pub(super) cached_context_invalidation: Arc<dyn CachedContextInvalidation>,
     pub(super) attribute_names: Arc<dyn NameLookup<AttributeName>>,
     pub(super) entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
     pub(super) temporal_repo: Arc<TemporalRepository>,
@@ -75,18 +76,15 @@ pub(super) struct TenantStorage {
 pub(super) struct TenantContextWorkers {
     /// Clause 5.13.3.5 hit accounting, when the engine attached a counter.
     hit_flush: Option<ContextHitFlushWorker>,
-    /// The clause 5.13.1 pass that invalidates lapsed cached `@contexts`.
-    invalidation: CachedContextInvalidationWorker,
 }
 
 impl TenantContextWorkers {
-    /// Stop both workers, waiting for the hit counter's final drain.
+    /// Stop the hit-counter flush, waiting for its final drain.
     ///
-    /// The invalidation pass stops first because it holds nothing: it reclaims
-    /// rows that are already unservable, so there is nothing to lose by ending
-    /// it, while the hit flush still owes the store its accumulated deltas.
+    /// The clause 5.13.1 invalidation pass is a supervised scheduled task rather
+    /// than a worker held here, so this stops only the hit flush, which still
+    /// owes the store its accumulated deltas.
     pub(super) async fn shutdown(self) {
-        self.invalidation.shutdown().await;
         if let Some(worker) = self.hit_flush {
             worker.shutdown().await;
         }
@@ -142,17 +140,13 @@ pub(super) async fn initialize_storage(
                 Duration::from_secs(config.database.context_hit_flush_secs),
             )
         }),
-        // Clause 5.13.1: "Implementations shall periodically invalidate the
-        // "Cached" @contexts." Unconditional, because the obligation is the
-        // broker's and not the resolver's: it holds whether or not a hit
-        // counter was attached, and whether or not another `@context` is ever
-        // downloaded.
-        // clone: the pass and every other Context capability share one repository.
-        invalidation: CachedContextInvalidationWorker::spawn(
-            Arc::clone(&context_repo) as Arc<dyn CachedContextInvalidation>,
-            CACHED_CONTEXT_INVALIDATION_INTERVAL,
-        ),
     };
+    // Clause 5.13.1: "Implementations shall periodically invalidate the "Cached"
+    // @contexts." The obligation is the broker's and not the resolver's, so the
+    // pass runs unconditionally as a supervised scheduled task registered from
+    // this port, whether or not a hit counter was attached.
+    // clone: the pass and every other Context capability share one repository.
+    let cached_context_invalidation = Arc::clone(&context_repo) as Arc<dyn CachedContextInvalidation>;
 
     let attribute_names = Arc::new(NameCache::<AttributeName>::new(&pool));
     let entity_type_names = Arc::new(NameCache::<EntityTypeName>::new(&pool));
@@ -226,6 +220,7 @@ pub(super) async fn initialize_storage(
         live_target,
         engine,
         context_workers,
+        cached_context_invalidation,
         attribute_names,
         entity_type_names,
         temporal_repo,

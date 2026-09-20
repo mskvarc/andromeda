@@ -24,6 +24,9 @@ pub enum DeliveryConfigError {
     /// Polling cadence was configured as zero.
     #[error("notifications.delivery.poll_interval_secs must be at least 1")]
     ZeroPollInterval,
+    /// The idle polling ceiling was configured below the polling floor.
+    #[error("notifications.delivery.poll_interval_max_secs must be at least notifications.delivery.poll_interval_secs")]
+    PollIntervalCeilingBelowFloor,
     /// The outbound notification request timeout was configured as zero.
     #[error("notifications.delivery.request_timeout_secs must be at least 1")]
     ZeroRequestTimeout,
@@ -92,8 +95,13 @@ pub struct DeliveryConfig {
     pub max_attempts: i32,
     /// Base exponential retry backoff.
     pub base_backoff_secs: u64,
-    /// Poll interval for the delivery worker.
+    /// Poll interval for the delivery worker: the floor of its idle backoff.
+    ///
+    /// After a commit's edge wake the worker delivers promptly; while idle it
+    /// backs off from here toward `poll_interval_max_secs`.
     pub poll_interval_secs: u64,
+    /// Ceiling the delivery worker's idle backoff reaches while no commit wakes it.
+    pub poll_interval_max_secs: u64,
     /// Deliveries claimed per poll.
     pub batch_size: i32,
     /// Claimed deliveries sent concurrently within one pass.
@@ -136,6 +144,7 @@ impl Default for DeliveryConfig {
             max_attempts: 5,
             base_backoff_secs: 5,
             poll_interval_secs: 1,
+            poll_interval_max_secs: 30,
             batch_size: 50,
             concurrency: 20,
             lease_secs: 30,
@@ -172,6 +181,9 @@ impl DeliveryConfig {
         }
         if self.poll_interval_secs == 0 {
             return Err(DeliveryConfigError::ZeroPollInterval);
+        }
+        if self.poll_interval_max_secs < self.poll_interval_secs {
+            return Err(DeliveryConfigError::PollIntervalCeilingBelowFloor);
         }
         if self.request_timeout_secs == 0 {
             return Err(DeliveryConfigError::ZeroRequestTimeout);
@@ -273,6 +285,7 @@ mod tests {
             max_attempts: 5,
             base_backoff_secs: 5,
             poll_interval_secs: 1,
+            poll_interval_max_secs: 30,
             batch_size: 50,
             concurrency: 20,
             lease_secs: 30,

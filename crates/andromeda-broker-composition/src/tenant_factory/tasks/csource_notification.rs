@@ -28,6 +28,7 @@ use andromeda_task_runtime::{
     shutdown_policy::ShutdownPolicy,
     supervisor::TaskSupervisor,
     task_name::TaskName,
+    wake_trigger::wake_channel,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use std::{sync::Arc, time::Duration};
@@ -80,6 +81,7 @@ pub(super) fn register_csource_notification_workers(
     transport: &Arc<TransportDispatcher>,
     csource_subscriptions: Arc<dyn SubscriptionStore>,
     streams: CsourceNotificationStreams,
+    interval_max_sleep_secs: u64,
 ) -> Result<(), TenantAssemblyError> {
     register_csource_notification_processor(
         supervisor,
@@ -103,6 +105,7 @@ pub(super) fn register_csource_notification_workers(
             Arc::clone(transport),                   // clone: every worker delivers through one dispatcher.
             storage.tenant.clone(),                  // clone: interval policy owns its tenant partition.
         )),
+        interval_max_sleep_secs,
     )
 }
 
@@ -186,9 +189,20 @@ fn register_csource_notification_processor(
 fn register_csource_interval_notification(
     supervisor: &TaskSupervisor,
     operation: Arc<CsourceIntervalNotificationOperation>,
+    interval_max_sleep_secs: u64,
 ) -> Result<(), TenantAssemblyError> {
-    register_notification_schedule(supervisor, "csource-notification-interval", move || {
-        let operation = Arc::clone(&operation); // clone: each bounded execution owns the shared notification operation.
-        async move { operation.execute().await }
-    })
+    let (_interval_wake, receiver) = wake_channel();
+    register_notification_schedule(
+        supervisor,
+        "csource-notification-interval",
+        Duration::from_secs(interval_max_sleep_secs),
+        receiver,
+        move |cutoff| {
+            let operation = Arc::clone(&operation); // clone: each bounded pass owns the shared notification operation.
+            async move {
+                operation.execute(cutoff).await?;
+                operation.next_due(cutoff).await
+            }
+        },
+    )
 }

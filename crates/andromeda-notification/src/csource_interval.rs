@@ -17,6 +17,7 @@ use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, registration::Cont
 use andromeda_registration::store::RegistrationStore;
 use andromeda_subscription::{compilation::compile_csource_subscription, store::SubscriptionStore};
 use andromeda_tenancy::tenant_ref::TenantRef;
+use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use tracing::error;
 
@@ -62,8 +63,8 @@ impl CsourceIntervalNotificationOperation {
     /// Returns [`NotificationError::Subscription`] when the subscription store cannot
     /// report the due interval subscriptions. Per-subscription failures -- registration
     /// lookup and serialization -- are logged and skipped rather than aborting the sweep.
-    pub async fn execute(&self) -> Result<usize, NotificationError> {
-        let due_subs = self.sub_repo.find_due_interval_subscriptions(&self.target).await?;
+    pub async fn execute(&self, cutoff: DateTime<Utc>) -> Result<usize, NotificationError> {
+        let due_subs = self.sub_repo.find_due_interval_subscriptions(&self.target, cutoff).await?;
         let due_count = due_subs.len();
 
         for sub in due_subs {
@@ -89,5 +90,16 @@ impl CsourceIntervalNotificationOperation {
             self.delivery.deliver(&compiled, data, CsrTriggerReason::NewlyMatching).await;
         }
         Ok(due_count)
+    }
+
+    /// The earliest instant some active context-source interval subscription is
+    /// next due after `cutoff`, or `None` when this tenant has none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NotificationError::Subscription`] when the store cannot report
+    /// the next due instant.
+    pub async fn next_due(&self, cutoff: DateTime<Utc>) -> Result<Option<DateTime<Utc>>, NotificationError> {
+        self.sub_repo.next_interval_due(&self.target, cutoff).await.map_err(NotificationError::from)
     }
 }

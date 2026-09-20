@@ -14,7 +14,7 @@ use crate::{
     supervisor::TaskSupervisor,
     task_health::TaskHealthState,
     task_name::{TaskName, TaskNameError},
-    wake_trigger::{DrainFallbackCadence, DrainFallbackCadenceError, WakeRequest},
+    wake_trigger::{DrainFallbackPolicy, DrainFallbackPolicyError, WakeRequest, wake_channel},
 };
 use pretty_assertions::assert_eq;
 use std::{
@@ -51,7 +51,7 @@ enum TestError {
     #[error(transparent)]
     Join(#[from] JoinError),
     #[error(transparent)]
-    DrainCadence(#[from] DrainFallbackCadenceError),
+    DrainPolicy(#[from] DrainFallbackPolicyError),
 }
 
 fn registration(name: &str, restart_policy: RestartPolicy, grace: Duration) -> Result<TaskRegistration, TestError> {
@@ -541,7 +541,7 @@ async fn drain_wake_runs_one_bounded_pass_and_acknowledges_only_after_processing
     let acknowledgements = Arc::new(AtomicUsize::new(0));
     let task = DrainTask::new(
         registration("drain-wake", RestartPolicy::Never, Duration::from_secs(1))?,
-        DrainFallbackCadence::new(Duration::from_secs(3_600))?,
+        DrainFallbackPolicy::new(Duration::from_secs(3_600), Duration::from_secs(3_600))?,
         {
             let durable_items = Arc::clone(&durable_items);
             let sink_effects = Arc::clone(&sink_effects);
@@ -564,13 +564,72 @@ async fn drain_wake_runs_one_bounded_pass_and_acknowledges_only_after_processing
             }
         },
     );
-    let wake = supervisor.register_drain(task)?;
+    let (wake, receiver) = wake_channel();
+    supervisor.register_drain(task, receiver)?;
     settle().await;
     assert_eq!(sink_effects.load(Ordering::SeqCst), 0);
     assert_eq!(wake.wake(), WakeRequest::Scheduled);
     settle().await;
     assert_eq!(sink_effects.load(Ordering::SeqCst), 1);
     assert_eq!(acknowledgements.load(Ordering::SeqCst), 1);
+    supervisor.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_idle_drain_runs_at_most_six_passes_in_thirty_seconds() -> Result<(), TestError> {
+    let supervisor = TaskSupervisor::process(Handle::current());
+    let passes = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&passes);
+    let task = DrainTask::new(
+        registration("idle-backoff", RestartPolicy::Never, Duration::from_secs(1))?,
+        DrainFallbackPolicy::new(Duration::from_secs(1), Duration::from_secs(8))?,
+        move |_| {
+            let observed = Arc::clone(&observed);
+            async move {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Ok(DrainPassOutcome::Idle)
+            }
+        },
+    );
+    let (_wake, receiver) = wake_channel();
+    supervisor.register_drain(task, receiver)?;
+    // Under a paused clock the runtime auto-advances to each drain timer, so this
+    // sleep lets exactly the passes due within thirty seconds run.
+    sleep(Duration::from_secs(30)).await;
+    settle().await;
+    let count = passes.load(Ordering::SeqCst);
+    assert!(
+        (1..=6).contains(&count),
+        "an idle drain backs off to at most six passes in thirty seconds, ran {count}"
+    );
+    supervisor.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_wake_sent_before_registration_is_not_lost() -> Result<(), TestError> {
+    let supervisor = TaskSupervisor::process(Handle::current());
+    let passes = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&passes);
+    let task = DrainTask::new(
+        registration("early-wake", RestartPolicy::Never, Duration::from_secs(1))?,
+        // A long fallback: without the retained wake, no pass would run for an hour.
+        DrainFallbackPolicy::new(Duration::from_secs(3_600), Duration::from_secs(3_600))?,
+        move |_| {
+            let observed = Arc::clone(&observed);
+            async move {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Ok(DrainPassOutcome::Idle)
+            }
+        },
+    );
+    let (wake, receiver) = wake_channel();
+    // The wake is sent before the task is registered; the one-slot channel retains it.
+    assert_eq!(wake.wake(), WakeRequest::Scheduled);
+    supervisor.register_drain(task, receiver)?;
+    settle().await;
+    assert_eq!(passes.load(Ordering::SeqCst), 1, "the wake sent before registration drove one prompt pass");
     supervisor.shutdown().await;
     Ok(())
 }

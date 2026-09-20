@@ -3,7 +3,7 @@
 use crate::{
     columns::{columns_for, expectations},
     commit_refusal::{context_store, database, temporal},
-    consequences::{notification_events, side_effects},
+    consequences::{ConsequenceWrite, notification_events, side_effects},
     deferred_history,
     entity_group::{EntityGroups, IndexedWrite, RowReturned, delete_outcome, group, insert_outcome, update_outcome},
     history,
@@ -13,6 +13,7 @@ use crate::{
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
+    commit_consequence_publisher::CommitConsequencePublisher,
     commit_replay::CommitReplay,
     committer::{CommitFuture, ContextCommitter, consequences_land, validate_submission},
     deleted_entity::DeletedEntity,
@@ -63,6 +64,8 @@ pub struct PostgresAtomicCommitter {
     attribute_names: Arc<dyn NameLookup<AttributeName>>,
     /// Dictionary the entity rows' type keys are minted through.
     entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
+    /// Edge notification woken when a commit writes notification events or side effects.
+    consequence_publisher: Arc<dyn CommitConsequencePublisher>,
 }
 
 impl PostgresAtomicCommitter {
@@ -73,6 +76,7 @@ impl PostgresAtomicCommitter {
         entity_insert_mode: EntityInsertMode,
         attribute_names: Arc<dyn NameLookup<AttributeName>>,
         entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
+        consequence_publisher: Arc<dyn CommitConsequencePublisher>,
     ) -> PostgresAtomicCommitter {
         PostgresAtomicCommitter {
             pool: pool.clone(), // clone: SQLx pools are shared reference-counted handles.
@@ -80,6 +84,7 @@ impl PostgresAtomicCommitter {
             entity_insert_mode,
             attribute_names,
             entity_type_names,
+            consequence_publisher,
         }
     }
 
@@ -314,8 +319,8 @@ impl PostgresAtomicCommitter {
         // only keys this transaction holds.
         let attribute_keys = resolve_attribute_names(&mut tx, &intents, self.attribute_names.as_ref()).await?;
         projection::apply(&mut tx, target, &intents, &keys, &attribute_keys).await?;
-        let next = notification_events::apply(&mut tx, target, &landed, &record, next, self.attribute_names.as_ref()).await?;
-        side_effects::apply(&mut tx, target, &landed, &record, next).await?;
+        let (next, notifications) = notification_events::apply(&mut tx, target, &landed, &record, next, self.attribute_names.as_ref()).await?;
+        let side_effects = side_effects::apply(&mut tx, target, &landed, &record, next).await?;
 
         tx.commit().await.map_err(database)?;
         tracing::debug!(write_id = %record.write_id(), writes = writes.len(), "atomic context write committed");
@@ -323,6 +328,14 @@ impl PostgresAtomicCommitter {
             && let TemporalHistoryCommitMode::Deferred { publisher } = &self.history_mode
         {
             publisher.intents_available();
+        }
+        // Wake the consequence drains only for the commit that enqueued their
+        // work, so an idle tenant's widened fallback stays quiet.
+        if notifications == ConsequenceWrite::Written {
+            self.consequence_publisher.notifications_available();
+        }
+        if side_effects == ConsequenceWrite::Written {
+            self.consequence_publisher.side_effects_available();
         }
         Ok(outcomes)
     }

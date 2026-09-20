@@ -59,7 +59,12 @@ impl SnapshotStatusDeliveryDrain {
         })
     }
 
-    /// Claim, deliver, acknowledge, and clean one bounded batch.
+    /// Claim, deliver and acknowledge one bounded batch, reporting how many were
+    /// claimed.
+    ///
+    /// Retention cleanup is a separate concern on its own cadence
+    /// ([`cleanup`](Self::cleanup)), so a wake-driven delivery pass issues no
+    /// `DELETE`: it does only the work its wake announced.
     pub async fn execute(&self, now: DateTime<Utc>) -> Result<usize, SnapshotError> {
         let lease_until = now
             .checked_add_signed(self.lease)
@@ -74,10 +79,27 @@ impl SnapshotStatusDeliveryDrain {
         for result in results {
             result?;
         }
+        Ok(claimed)
+    }
+
+    /// The batch size one [`execute`](Self::execute) pass claims at most.
+    ///
+    /// A pass that claimed a full batch may have more waiting, which is what
+    /// lets the drain driver run another pass immediately rather than sleep.
+    #[must_use]
+    pub const fn batch_size(&self) -> i32 {
+        self.batch_size
+    }
+
+    /// Remove acknowledged and exhausted deliveries past their retention.
+    ///
+    /// Runs on its own cadence rather than inside a delivery pass, so widening a
+    /// tenant's idle delivery interval does not also stop it reclaiming rows.
+    pub async fn cleanup(&self, now: DateTime<Utc>) -> Result<(), SnapshotError> {
         let delivered_before = now.checked_sub_signed(self.delivered_retention).unwrap_or(DateTime::<Utc>::MIN_UTC);
         let exhausted_before = now.checked_sub_signed(self.dead_retention).unwrap_or(DateTime::<Utc>::MIN_UTC);
         self.outbox.cleanup(delivered_before, exhausted_before).await?;
-        Ok(claimed)
+        Ok(())
     }
 
     async fn deliver_one(&self, entry: SnapshotStatusDelivery, now: DateTime<Utc>) -> Result<(), SnapshotError> {
@@ -140,5 +162,23 @@ impl DeliverySnapshotNotificationSink {
             subscription_id: delivery.snapshot_id.clone(),
         };
         self.transport.deliver(&EndpointTransport::Http, &request).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_delivery_pass_issues_no_cleanup() -> Result<(), &'static str> {
+        // The drain is database-backed, so this guards the split structurally:
+        // the delivery pass is defined before the cleanup pass, and the only
+        // outbox cleanup call sits inside the cleanup pass, so a wake-driven
+        // delivery pass issues no retention DELETE.
+        let source = include_str!("snapshot_notification_sink.rs");
+        let execute = source.find("pub async fn execute").ok_or("delivery pass missing")?;
+        let cleanup_fn = source.find("pub async fn cleanup").ok_or("cleanup pass missing")?;
+        let cleanup_call = source.find("self.outbox.cleanup(").ok_or("outbox cleanup call missing")?;
+        assert!(execute < cleanup_fn, "the delivery pass is defined before the cleanup pass");
+        assert!(cleanup_call > cleanup_fn, "the outbox cleanup is issued only from the cleanup pass");
+        Ok(())
     }
 }

@@ -11,7 +11,7 @@ use andromeda_task_runtime::{
     shutdown_policy::ShutdownPolicy,
     supervisor::TaskSupervisor,
     task_name::TaskName,
-    wake_trigger::{DrainFallbackCadence, WakeHandle, WakeRequest},
+    wake_trigger::{DrainFallbackPolicy, WakeHandle, WakeRequest, wake_channel},
 };
 use andromeda_temporal::{
     config::TemporalConfig,
@@ -67,8 +67,9 @@ pub(super) fn register_temporal_intent_drain(
     pending: Arc<dyn PendingTemporalIntentReader>,
     sink: Arc<dyn TemporalHistorySink>,
 ) -> Result<TemporalIntentRegistration, TenantAssemblyError> {
-    let fallback_duration = Duration::from_secs(config.intent_fallback_secs);
-    let fallback = DrainFallbackCadence::new(fallback_duration).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let fallback_floor = Duration::from_secs(config.intent_fallback_secs);
+    let fallback_ceiling = Duration::from_secs(config.intent_fallback_max_secs.max(config.intent_fallback_secs));
+    let fallback = DrainFallbackPolicy::new(fallback_floor, fallback_ceiling).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let batch_size = NonZeroU32::new(config.intent_batch_size)
         .map(TemporalIntentBatchSize::new)
         .ok_or_else(|| TenantAssemblyError::invariant("temporal intent batch size must be non-zero"))?;
@@ -97,7 +98,7 @@ pub(super) fn register_temporal_intent_drain(
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::TenantDegrading,
-        RestartPolicy::transient(u32::MAX, fallback_duration, fallback_duration),
+        RestartPolicy::transient(u32::MAX, fallback_floor, fallback_ceiling),
         ShutdownPolicy::new(Duration::from_secs(config.intent_lease_secs)),
     );
     let task = DrainTask::new(registration, fallback, move |execution| {
@@ -112,8 +113,9 @@ pub(super) fn register_temporal_intent_drain(
             }
         }
     });
-    let wake = supervisor
-        .register_drain(task)
+    let (wake, receiver) = wake_channel();
+    supervisor
+        .register_drain(task, receiver)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     Ok(TemporalIntentRegistration {
         publisher: Arc::new(RuntimeTemporalIntentPublisher { wake }),

@@ -21,7 +21,16 @@ use crate::{
             entity_create_sql,
             entity_update_sql,
         },
-        delivery_state::{DeliveryOutcome, claim_statement, interval_elapsed, join_delivery_state, mark_statement, state_insert_sql},
+        delivery_state::{
+            DeliveryOutcome,
+            advance_interval_anchor_statement,
+            claim_statement,
+            interval_anchor_select,
+            interval_elapsed,
+            join_delivery_state,
+            mark_statement,
+            state_insert_sql,
+        },
         failure::{create_error, persistence_error},
         mapper::{row_from_pg, row_to_stored_subscription, rows_to_stored_subscriptions, stored_subscription_uri},
         params::DatasetIdPresence,
@@ -37,11 +46,12 @@ use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::{aggregate::count_all, cast::cast, literal::text_literal, pg_type::PostgresType};
 use andromeda_subscription::{
     error::SubscriptionError,
+    interval_schedule::{interval_duration, next_interval_due as next_interval_grid_due},
     notification_slot::{NotificationSlot, NotificationSlotGate},
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
 };
-use sea_query::{Expr, ExprTrait, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use sea_query::{Expr, ExprTrait, Iden, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::Row;
 
@@ -375,13 +385,17 @@ macro_rules! impl_subscription_store {
                 Ok(result.rows_affected())
             }
 
-            async fn find_due_interval_subscriptions(&self, target: &ContextTarget) -> Result<Vec<Subscription>, SubscriptionError> {
+            async fn find_due_interval_subscriptions(
+                &self,
+                target: &ContextTarget,
+                cutoff: chrono::DateTime<chrono::Utc>,
+            ) -> Result<Vec<Subscription>, SubscriptionError> {
                 let mut select = projected_select($kind, target);
                 select
                     .and_where(Expr::col((Subscriptions::Table, Subscriptions::Status)).eq(text_literal("active")))
                     .and_where(of_kind($kind))
                     .and_where(Expr::col((Subscriptions::Table, Subscriptions::TimeInterval)).is_not_null())
-                    .cond_where(interval_elapsed());
+                    .cond_where(interval_elapsed(cutoff));
                 let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
                 let pg_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .fetch_all(&self.pool)
@@ -394,6 +408,45 @@ macro_rules! impl_subscription_store {
                     .into_iter()
                     .map(|stored| stored.subscription)
                     .collect())
+            }
+
+            async fn next_interval_due(
+                &self,
+                target: &ContextTarget,
+                cutoff: chrono::DateTime<chrono::Utc>,
+            ) -> Result<Option<chrono::DateTime<chrono::Utc>>, SubscriptionError> {
+                let mut select = interval_anchor_select(target);
+                select
+                    .and_where(Expr::col((Subscriptions::Table, Subscriptions::Status)).eq(text_literal("active")))
+                    .and_where(of_kind($kind))
+                    .and_where(Expr::col((Subscriptions::Table, Subscriptions::TimeInterval)).is_not_null());
+                let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
+                let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    .fetch_all(&self.pool)
+                    .await
+                    .map_err(persistence_error)?;
+                let mut earliest: Option<chrono::DateTime<chrono::Utc>> = None;
+                for row in &rows {
+                    let anchor: chrono::DateTime<chrono::Utc> = row.try_get("anchor").map_err(persistence_error)?;
+                    let interval_seconds: f64 = row.try_get(Subscriptions::TimeInterval.unquoted()).map_err(persistence_error)?;
+                    // A stored interval that no longer describes a valid grid is
+                    // skipped rather than scheduling an impossible wake.
+                    let Some(interval) = interval_duration(interval_seconds) else {
+                        continue;
+                    };
+                    let due = next_interval_grid_due(anchor, interval, cutoff);
+                    earliest = Some(earliest.map_or(due, |current| if due < current { due } else { current }));
+                }
+                Ok(earliest)
+            }
+
+            async fn advance_interval_anchor(&self, target: &ContextTarget, id: &Uri, cutoff: chrono::DateTime<chrono::Utc>) -> Result<(), SubscriptionError> {
+                let (sql, values) = advance_interval_anchor_statement(target, id, $kind, cutoff).build_sqlx(PostgresQueryBuilder);
+                sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(persistence_error)?;
+                Ok(())
             }
         }
     };

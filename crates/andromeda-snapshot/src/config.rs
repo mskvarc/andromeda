@@ -28,6 +28,9 @@ pub enum SnapshotConfigError {
     /// Preparation claims require a positive lease.
     #[error("snapshot.preparation_lease_secs must be at least 1")]
     ZeroPreparationLease,
+    /// The preparation recovery cadence must be positive.
+    #[error("snapshot.preparation_recovery_secs must be at least 1")]
+    ZeroPreparationRecovery,
     /// An enabled count quota must allow at least one Snapshot.
     #[error("snapshot.tenant_count_quota must be at least 1 when configured")]
     ZeroTenantCountQuota,
@@ -51,6 +54,12 @@ pub struct SnapshotConfig {
     pub scoped_operation_wait_secs: u64,
     /// Lease duration for a claimed preparation job.
     pub preparation_lease_secs: u64,
+    /// Cadence of the recovery sweep that prepares claimed-but-unfinished
+    /// Snapshots.
+    ///
+    /// Creation prepares its Snapshot immediately, so this sweep only recovers a
+    /// preparation a crash or missed run left behind; it need not be frequent.
+    pub preparation_recovery_secs: u64,
     /// Optional maximum number of Snapshots retained for a tenant.
     pub tenant_count_quota: Option<usize>,
     /// Optional maximum number of Snapshot bytes retained for a tenant.
@@ -66,6 +75,7 @@ impl Default for SnapshotConfig {
             preparation_concurrency: 4,
             scoped_operation_wait_secs: 30,
             preparation_lease_secs: 30,
+            preparation_recovery_secs: 30,
             tenant_count_quota: None,
             tenant_byte_quota: None,
         }
@@ -96,6 +106,8 @@ impl SnapshotConfig {
             Err(SnapshotConfigError::ZeroScopedOperationWait)
         } else if self.preparation_lease_secs == 0 {
             Err(SnapshotConfigError::ZeroPreparationLease)
+        } else if self.preparation_recovery_secs == 0 {
+            Err(SnapshotConfigError::ZeroPreparationRecovery)
         } else if self.tenant_count_quota == Some(0) {
             Err(SnapshotConfigError::ZeroTenantCountQuota)
         } else if self.tenant_byte_quota == Some(0) {
@@ -121,6 +133,7 @@ mod tests {
                 preparation_concurrency: 0,
                 scoped_operation_wait_secs: 30,
                 preparation_lease_secs: 30,
+                preparation_recovery_secs: 30,
                 tenant_count_quota: None,
                 tenant_byte_quota: None,
             }
@@ -139,6 +152,7 @@ mod tests {
                 preparation_concurrency: 4,
                 scoped_operation_wait_secs: 0,
                 preparation_lease_secs: 30,
+                preparation_recovery_secs: 30,
                 tenant_count_quota: None,
                 tenant_byte_quota: None,
             }
