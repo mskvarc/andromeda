@@ -9,6 +9,7 @@ pub mod notification_adapter;
 
 mod attribute_deleted;
 mod basic;
+mod delivery_after_commit;
 mod helpers;
 mod join;
 mod mqtt;

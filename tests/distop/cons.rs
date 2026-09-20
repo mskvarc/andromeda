@@ -23,6 +23,7 @@ mod available_types_attrs;
 mod entity_map_query;
 mod entity_map_reuse;
 mod entity_map_temporal;
+mod forward_binding;
 mod query_entities;
 mod query_entities_filters;
 mod query_temporal;

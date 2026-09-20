@@ -63,6 +63,42 @@ async fn distop_retrieve_entity_no_local_no_registration_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
+/// An exclusive or redirect registration whose single source answers the
+/// retrieve with `404` leaves the broker with nothing to serve: it does not
+/// synthesise an `{id, type}` entity from the registration, so the retrieval is
+/// `404 ResourceNotFound` in every proxied mode, not just inclusive. Clause
+/// 6.3.17 mandates "404 Not Found - if resources not found within the single
+/// registered source" (clause 5.7.1.4).
+#[tokio::test]
+async fn distop_retrieve_entity_exclusive_and_redirect_miss_return_404() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let mock = ContextSourceAdapter::start().await;
+
+    for mode in ["exclusive", "redirect"] {
+        let entity_id = topology.id(&format!("Vehicle:cons-miss-{mode}"));
+        let registration = CsrBuilder::new(&topology.id(&format!("registration:cons-miss-{mode}")), &mock.url(""))
+            .mode(mode)
+            .entity_id(&entity_id)
+            .property_names(&["speed"])
+            .operations(&["retrieveEntity"])
+            .build();
+        assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
+        mock.set_stub(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}"), 404).await;
+
+        let retrieved = front.client().get_entity(&entity_id, "", "application/ld+json", None).await.expect("retrieve");
+        assert_status(&retrieved, 404);
+        assert_problem_details(&retrieved, RESOURCE_NOT_FOUND);
+        assert!(
+            json_body(&retrieved).get("id").is_none(),
+            "a {mode} distributed miss never synthesises an entity from the registration"
+        );
+    }
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
 /// Local data is the merge base: a local attribute is served unmodified and
 /// remote attributes are merged on top (clause 5.7.1.4). Confirms REQ-CONS-2.
 #[tokio::test]

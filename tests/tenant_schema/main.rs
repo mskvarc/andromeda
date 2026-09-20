@@ -14,6 +14,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod code_registry;
+mod concurrent_provisioning;
 mod hot_update_maintenance;
 mod migration_failure;
 mod procedural_logic;

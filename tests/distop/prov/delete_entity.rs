@@ -10,7 +10,7 @@
 use crate::{
     context_source_adapter::ContextSourceAdapter,
     entity::{entity, property},
-    oracle::{assert_problem_details, assert_status},
+    oracle::{assert_problem_details, assert_status, json_body},
     prov::forwarding::{FORWARD_WAIT, request_path},
     registration::CsrBuilder,
     topology::{self, BrokerRole},
@@ -145,6 +145,63 @@ async fn delete_entity_op_unsupported_returns_409() {
     assert_status(&deleted, 409);
     assert_problem_details(&deleted, CONFLICT);
     assert_eq!(mock.get_count(Method::DELETE, &forward_path), 0, "no forward on an unsupported operation");
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A proxied registration that does not advertise `deleteEntity`, beside a local
+/// copy of the entity, is `207 Multi-Status`, not the bare `409` of the
+/// no-local-copy case. Clause 5.6.6.4 makes the local removal unconditional
+/// ("The input data shall be used to remove the entity locally if it exists")
+/// and answers Conflict "only in case the complete delete Entity failed", so a
+/// successful local removal beside a single unsupported proxied delete is a
+/// partial success: the entity is gone locally and the registration surfaces a
+/// keyed `409`. The registration precedes the local seed because clause 5.9.2.4
+/// rejects a proxied registration over an already-matching local entity.
+/// Confirms REQ-PROV-44 (partial success).
+#[tokio::test]
+async fn delete_entity_op_unsupported_with_local_copy_returns_207() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
+    let mock = ContextSourceAdapter::start().await;
+
+    for mode in ["redirect", "exclusive"] {
+        let entity_id = topology.id(&format!("Vehicle:prov-delete-local-{mode}"));
+        let reg_id = topology.id(&format!("registration:prov-delete-local-{mode}"));
+        let forward_path = format!("/ngsi-ld/v1/entities/{entity_id}");
+
+        let registration = CsrBuilder::new(&reg_id, &mock.url(""))
+            .mode(mode)
+            .entity_id(&entity_id)
+            .property_names(&["speed"])
+            .operations(&["retrieveEntity"])
+            .build();
+        assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
+        seed_local(client, &brand_and_speed(&entity_id)).await;
+
+        let deleted = client.delete_entity(&entity_id).await.expect("delete entity");
+        assert_status(&deleted, 207);
+        let body = json_body(&deleted);
+        let errors = body["errors"].as_array().expect("multi-status carries an errors array");
+        assert!(
+            errors
+                .iter()
+                .any(|entry| entry["registrationId"] == json!(reg_id) && entry["error"]["status"] == json!(409)),
+            "the unsupported proxied delete surfaces a keyed 409 for {mode}: {body}"
+        );
+
+        let local = client
+            .get_entity(&entity_id, "local=true", "application/ld+json", None)
+            .await
+            .expect("local read-back");
+        assert_status(&local, 404);
+        assert_eq!(
+            mock.get_count(Method::DELETE, &forward_path),
+            0,
+            "an unsupported operation is not forwarded for {mode}"
+        );
+    }
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

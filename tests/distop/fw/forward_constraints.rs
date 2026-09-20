@@ -130,6 +130,59 @@ async fn forward_narrows_to_registered_ids_attrs_geofence() {
     topology.finish().await.expect("topology cleanup");
 }
 
+/// A registration constrained by a relationship name narrows the forwarded
+/// request to that relationship: a client `attrs` naming the covered
+/// relationship and an uncovered property forwards only the covered one, the
+/// `relationshipNames` mirror of `forward_narrows_to_registered_ids_attrs_geofence`
+/// (clause 4.3.6.3). `isParked` is a Relationship term of the compound test
+/// context, so its narrowed name round-trips through compaction.
+#[tokio::test]
+async fn forward_narrows_to_registered_relationship_names() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let mock = ContextSourceAdapter::start().await;
+    mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
+
+    let covered = topology.id("Vehicle:narrow-rel");
+    let endpoint = mock.url("");
+    let registration = CsrBuilder::new(&topology.id("registration:narrow-rel"), &endpoint)
+        .mode("inclusive")
+        .entity_id(&covered)
+        .relationship_names(&["isParked"])
+        .operations(&["queryEntity"])
+        .build();
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .expect("topology broker A")
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
+        201,
+    );
+
+    let query = format!("type=Vehicle&id={covered}&attrs=isParked,speed");
+    let response = topology
+        .broker(BrokerRole::A)
+        .expect("topology broker A")
+        .client()
+        .query_entities(&query, "application/ld+json", None)
+        .await
+        .expect("query");
+    assert_status(&response, 200);
+
+    let forwarded = mock.next_request(CAPTURE_TIMEOUT).await;
+    let forwarded_query = forwarded.uri.query().unwrap_or_default();
+    assert!(forwarded_query.contains("isParked"), "the covered relationship is forwarded: {forwarded_query}");
+    assert!(
+        !forwarded_query.contains("speed"),
+        "the uncovered property is dropped before forwarding: {forwarded_query}"
+    );
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
 /// Clause 4.3.6.3: an exclusive registration names one entity and its
 /// attributes, so a client query naming only the type still has the block's id
 /// and attribute added to the forwarded request -- the source is asked for

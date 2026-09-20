@@ -86,6 +86,11 @@ async fn delete_unknown_with_reload_invalid_returns_400() {
 }
 
 /// `051_04_05`: Delete hosted + reload=true -> 400.
+///
+/// Clause 5.13.5.4: "If reload is true and the kind of the @context is not
+/// 'Cached', implementations shall return a `BadRequestData` error." A hosted
+/// @context is not Cached, so the refusal is `BadRequestData`, not merely any
+/// 400.
 #[tokio::test]
 #[serial]
 async fn delete_hosted_with_reload_true_returns_400() {
@@ -93,8 +98,9 @@ async fn delete_hosted_with_reload_true_returns_400() {
     let c = client();
     let ctx_id = create_hosted_context(&c).await;
 
-    let (status, _) = delete_context(&c, &ctx_id, "reload=true").await;
+    let (status, body) = delete_context(&c, &ctx_id, "reload=true").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str(), "a non-Cached reload is BadRequestData");
 }
 
 /// `051_06_01`: Delete `ImplicitlyCreated` @context without reload -> 204.
@@ -113,6 +119,9 @@ async fn delete_implicitly_created_context_returns_204() {
 }
 
 /// `051_07_01`: Delete `ImplicitlyCreated` @context with reload=true -> 400.
+///
+/// Clause 5.13.5.4: reload is refused with `BadRequestData` for any @context
+/// whose kind is not 'Cached'; an `ImplicitlyCreated` @context is not Cached.
 #[tokio::test]
 #[serial]
 async fn delete_implicitly_created_with_reload_returns_400() {
@@ -120,8 +129,9 @@ async fn delete_implicitly_created_with_reload_returns_400() {
     let c = client();
     let (sub_id, ctx_id) = create_implicit_context(&c).await;
 
-    let (status, _) = delete_context(&c, &ctx_id, "reload=true").await;
+    let (status, body) = delete_context(&c, &ctx_id, "reload=true").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str(), "a non-Cached reload is BadRequestData");
 
     crate::delete_subscription(&c, &sub_id).await;
 }

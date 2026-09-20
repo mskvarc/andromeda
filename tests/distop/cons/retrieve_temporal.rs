@@ -61,6 +61,42 @@ async fn distop_retrieve_temporal_no_local_no_registration_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
+/// An exclusive or redirect registration whose single source answers the
+/// temporal retrieve with `404` leaves the broker with nothing to serve: it does
+/// not synthesise a temporal representation from the registration, so the
+/// retrieval is `404 ResourceNotFound` in every proxied mode. Clause 6.3.17
+/// mandates "404 Not Found - if resources not found within the single registered
+/// source" (clause 5.7.3.4).
+#[tokio::test]
+async fn distop_retrieve_temporal_exclusive_and_redirect_miss_return_404() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let mock = ContextSourceAdapter::start().await;
+
+    for mode in ["exclusive", "redirect"] {
+        let entity_id = topology.id(&format!("Vehicle:cons-temporal-miss-{mode}"));
+        let registration = CsrBuilder::new(&topology.id(&format!("registration:cons-temporal-miss-{mode}")), &mock.url(""))
+            .mode(mode)
+            .entity_id(&entity_id)
+            .property_names(&["speed"])
+            .operations(&["retrieveTemporal"])
+            .build();
+        assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
+        mock.set_stub(Method::GET, &format!("/ngsi-ld/v1/temporal/entities/{entity_id}"), 404).await;
+
+        let retrieved = front.client().get_temporal_entity(&entity_id, BEFORE_2030, None).await.expect("retrieve");
+        assert_status(&retrieved, 404);
+        assert_problem_details(&retrieved, RESOURCE_NOT_FOUND);
+        assert!(
+            json_body(&retrieved).get("id").is_none(),
+            "a {mode} distributed temporal miss never synthesises a placeholder representation"
+        );
+    }
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
 /// The local temporal evolution is the base series onto which a remote attribute
 /// evolution is merged (clause 5.7.3.4). Confirms REQ-CONS-40.
 #[tokio::test]

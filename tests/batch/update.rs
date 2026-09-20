@@ -122,9 +122,16 @@ async fn batch_update_no_overwrite_new_returns_204() {
     pretty_assertions::assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
 }
 
+/// Clause 5.6.9.4/5.6.9.5: a `noOverwrite` batch update whose fragment names only
+/// attributes that are already present appends nothing, so the entity never
+/// enters the success set S and the batch answers 207. This fragment
+/// (`building_relationship_of_property`) redeclares the entity's existing
+/// top-level attributes and only adds a *sub*-attribute inside one of them, which
+/// a top-level `noOverwrite` append does not touch -- so no top-level attribute
+/// is appended and the batch is all-skipped, not a mix.
 #[tokio::test]
 #[serial]
-async fn batch_update_no_overwrite_mixed_returns_207() {
+async fn batch_update_no_overwrite_all_present_returns_207() {
     let _serialized_environment = clean_database().await;
     let c = client();
 
@@ -137,6 +144,44 @@ async fn batch_update_no_overwrite_mixed_returns_207() {
 
     let (status, _) = batch_update(&c, &updates, true).await;
     pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS);
+}
+
+/// Clause 5.6.9.4/5.6.9.5: a `noOverwrite` batch update whose fragment mixes an
+/// already-present attribute with a brand-new one appends the new one, so the
+/// entity is "successfully updated (Attributes appended)" and enters S -- an
+/// all-S batch answers 204. The present attribute keeps its original value
+/// (noOverwrite preserved it) and the new attribute is added.
+#[tokio::test]
+#[serial]
+async fn batch_update_no_overwrite_partial_append_returns_204() {
+    let _serialized_environment = clean_database().await;
+    let c = client();
+
+    let id = unique_id("urn:ngsi-ld:Building:005_02_04");
+    let entity = building_simple_attributes(&id);
+    create_entity(&c, &entity).await;
+
+    // `name` is already present (with the original value); `locatedAt` is new.
+    let fragment = json!({
+        "id": &id,
+        "type": "Building",
+        "name": {"type": "Property", "value": "Tour Eiffel"},
+        "locatedAt": {"type": "Relationship", "object": "urn:ngsi-ld:City:Paris"},
+        "@context": [CORE_CONTEXT]
+    });
+    let updates = json!([fragment]);
+
+    let (status, _) = batch_update(&c, &updates, true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT, "a fragment that appends at least one attribute is a 204");
+
+    let (status, _, body) = get_entity(&c, &id, "", true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(
+        body["name"]["value"],
+        "Eiffel Tower",
+        "noOverwrite preserved the present attribute's original value"
+    );
+    pretty_assertions::assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris", "the new attribute was appended");
 }
 
 #[tokio::test]

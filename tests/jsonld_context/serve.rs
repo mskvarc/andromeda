@@ -1,14 +1,19 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! Consumption: Serve @context tests (NGSI-LD 6.25.3.4)
 
+use andromeda_test_mocks::{callback_path::CallbackPath, jsonld_context_server::JsonLdContextServer, server_config::MockServerConfig};
+use axum::{body::Bytes, http::HeaderMap};
 use reqwest::StatusCode;
 use serial_test::serial;
 use std::{collections::HashMap, time::Duration};
 use tokio::time::sleep;
+use uuid::Uuid;
 
 use crate::{
     ContextServer,
+    LD_CONTEXT_NOT_AVAILABLE_TYPE,
     RESOURCE_NOT_FOUND_TYPE,
+    broker_url,
     clean_database,
     client,
     create_entity,
@@ -24,7 +29,7 @@ use crate::{
     setup_cached_context,
     unique_id,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 
 /// `053_01_01`: Serve @context without details parameter -> returns @context body.
 #[tokio::test]
@@ -226,6 +231,105 @@ async fn serve_cached_context_after_server_down() {
     pretty_assertions::assert_eq!(body["kind"], "Cached");
     assert!(body.get("URL").is_some());
     assert!(body.get("createdAt").is_some());
+}
+
+/// A remote `@context` resolved once is recorded as a durable `Cached` entry, so
+/// a second resolution in the same tenant reads it from storage rather than
+/// fetching it again: the mock is contacted exactly once for two entity creates,
+/// and the context is listed `Cached` (clauses 5.13.1, 5.13.3).
+#[tokio::test]
+#[serial]
+async fn serve_remote_context_second_resolution_does_not_refetch() {
+    let _serialized_environment = clean_database().await;
+    let c = client();
+
+    let server = JsonLdContextServer::start(MockServerConfig::from_environment().expect("valid callback configuration"))
+        .await
+        .expect("context server must start");
+    let path = CallbackPath::parse(format!("/second-resolution-{}.jsonld", Uuid::new_v4())).expect("absolute context path");
+    let context_url = server
+        .serve(
+            path.clone(), // clone: the server retains the route while the test reads its request count.
+            Bytes::from_static(br#"{"@context":{"X1":"urn:ngsi-ld:attributes:X1"}}"#),
+            HeaderMap::new(),
+        )
+        .await
+        .expect("context route must be configured")
+        .to_string();
+
+    for suffix in ["a", "b"] {
+        let entity = json!({
+            "id": unique_id(&format!("urn:ngsi-ld:Testing:second-resolution-{suffix}")),
+            "type": "Testing",
+            "X1": {"type": "Property", "value": suffix},
+            "@context": [&context_url]
+        });
+        let (status, _) = create_entity(&c, &entity).await;
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    }
+
+    pretty_assertions::assert_eq!(
+        server.request_count(&path),
+        1,
+        "a durably Cached remote context is fetched exactly once for both resolutions"
+    );
+
+    let (status, contexts) = list_contexts(&c, "details=true&kind=Cached").await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    let cached = contexts
+        .iter()
+        .find(|entry| entry.get("URL").and_then(|url| url.as_str()) == Some(context_url.as_str()));
+    assert!(cached.is_some(), "the resolved remote context is listed as Cached: {contexts:?}");
+    pretty_assertions::assert_eq!(cached.expect("cached entry")["kind"], "Cached");
+
+    server.shutdown().await.expect("context server shutdown failed");
+}
+
+/// A cold remote `@context` -- one never cached -- whose origin is unreachable
+/// fails the referencing operation with `504 LdContextNotAvailable`: the loader
+/// retries a transport failure a bounded number of times, then reports the
+/// deterministic unavailability (Table 6.3.2-1, clause 5.13).
+#[tokio::test]
+#[serial]
+async fn serve_remote_context_unavailable_maps_to_504() {
+    let _serialized_environment = clean_database().await;
+    let c = client();
+
+    // Serve a context, take its URL, then shut the origin down before anything
+    // references it, so the resolution is cold and must fetch and fail.
+    let server = JsonLdContextServer::start(MockServerConfig::from_environment().expect("valid callback configuration"))
+        .await
+        .expect("context server must start");
+    let path = CallbackPath::parse(format!("/unavailable-{}.jsonld", Uuid::new_v4())).expect("absolute context path");
+    let context_url = server
+        .serve(
+            path,
+            Bytes::from_static(br#"{"@context":{"X1":"urn:ngsi-ld:attributes:X1"}}"#),
+            HeaderMap::new(),
+        )
+        .await
+        .expect("context route must be configured")
+        .to_string();
+    server.shutdown().await.expect("context server shutdown failed");
+    sleep(Duration::from_millis(500)).await;
+
+    let entity = json!({
+        "id": unique_id("urn:ngsi-ld:Testing:unavailable"),
+        "type": "Testing",
+        "X1": {"type": "Property", "value": "cold"},
+        "@context": [&context_url]
+    });
+    let response = c
+        .post(broker_url("entities"))
+        .header("Content-Type", "application/ld+json")
+        .json(&entity)
+        .send()
+        .await
+        .expect("create entity request");
+    let status = response.status();
+    let body: Value = response.json().await.unwrap_or(Value::Null);
+    pretty_assertions::assert_eq!(status, StatusCode::GATEWAY_TIMEOUT, "a cold unavailable @context is a 504: {body}");
+    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE.as_str());
 }
 
 /// `053_06_01`: numberOfHits increases for cached context.

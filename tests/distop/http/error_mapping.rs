@@ -61,6 +61,46 @@ async fn dist_http_single_source_loop_back_returns_508() {
     topology.finish().await.expect("topology cleanup");
 }
 
+/// A single redirect source registered back onto the broker itself is a loop,
+/// mapped to `508 Loop Detected` for an unsafe method exactly as the exclusive
+/// case is: clause 6.3.17 scopes 508 to "the single registered source and tenant
+/// is registered to redirect back on to the Context Broker", which covers both
+/// the exclusive and redirect single-source shapes (clause 6.3.18).
+#[tokio::test]
+async fn dist_http_single_source_redirect_loop_back_returns_508() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let entity_id = topology.id("Vehicle:redirect-loop");
+    let reg_id = topology.id("registration:redirect-loop");
+
+    let loop_back = CsrBuilder::new(&reg_id, front.peer_url())
+        .mode("redirect")
+        .entity_id(&entity_id)
+        .property_names(&["speed"])
+        .operations(&["createEntity"])
+        .alias(front.alias())
+        .build();
+    assert_status(&front.client().create_registration(&loop_back).await.expect("register loop-back source"), 201);
+
+    let response = front
+        .client()
+        .post_entity(&vehicle(&entity_id, 5))
+        .with_ld_json()
+        .send()
+        .await
+        .expect("looping create");
+    assert_status(&response, 508);
+    let body = json_body(&response);
+    assert_eq!(
+        body["type"].as_str(),
+        Some("https://uri.etsi.org/ngsi-ld/errors/LoopDetected"),
+        "a redirect loop carries the dedicated LoopDetected type, not InternalError: {body}"
+    );
+    assert_eq!(body["title"].as_str(), Some("Loop detected"), "the title matches the dedicated type: {body}");
+
+    topology.finish().await.expect("topology cleanup");
+}
+
 /// A single source that does not answer within the registration's timeout is
 /// mapped to `504 Gateway Timeout` for an unsafe method (clause 6.3.17).
 /// Confirms REQ-HTTP-26.
