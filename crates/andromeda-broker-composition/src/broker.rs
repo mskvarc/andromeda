@@ -18,6 +18,7 @@ use crate::{
         temporal::BrokerTemporalStateResolver,
     },
     tenant_factory::BrokerTenantFactory,
+    tenant_waker::{TenantWakerRegistrationError, register_tenant_waker},
 };
 use andromeda_delivery::mqtt::indicator::MqttHealthIndicator;
 use andromeda_extensions::startup_log::log_conformance_override;
@@ -41,8 +42,10 @@ use andromeda_postgresql_context_store::{
     error::ContextStoreError,
     forwarded_subscription_routes::PostgresForwardedSubscriptionRouter,
     health::DatabaseHealthIndicator,
+    pending_work::PostgresPendingWorkProbe,
     tenant_database::DatabaseUrl,
     tenant_registry::PostgresTenantRegistry,
+    tenant_wake_schedule::PostgresTenantWakeSchedule,
 };
 use andromeda_postgresql_pool::configure_pool_options;
 use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
@@ -53,8 +56,10 @@ use andromeda_tenancy::{
     context_source_alias::ContextSourceAliases,
     creation_policy::TenantCreationPolicy,
     error::TenancyError,
+    pending_work::PendingWorkProbe,
     runtime::TenantRuntimeManager,
     tenant_ref::TenantRef,
+    wake_schedule::TenantWakeSchedule,
 };
 use chrono::{DateTime, Utc};
 use std::{io::Error as IoError, sync::Arc};
@@ -103,6 +108,9 @@ enum BrokerStartupError {
     /// The process-scoped maintenance task could not be registered.
     #[error(transparent)]
     MaintenanceTask(#[from] MaintenanceRegistrationError),
+    /// The dormant-tenant wake tasks could not be registered.
+    #[error(transparent)]
+    WakerTask(#[from] TenantWakerRegistrationError),
 }
 
 /// Construct the broker, serve HTTP, then close process resources in order.
@@ -206,6 +214,11 @@ async fn construct(
     // The platform route from minted subscription identifiers to tenants is
     // shared by every tenant's forwarding service and by the receiver.
     let forwarded_subscription_router: Arc<dyn ForwardedSubscriptionRouter> = Arc::new(PostgresForwardedSubscriptionRouter::new(registry.main_pool()));
+    // The dormant-tenant wake ports: the probe reads a tenant's own database
+    // over a transient request-path connection, and the schedule lives in the
+    // platform database beside the registry.
+    let pending_work_probe: Arc<dyn PendingWorkProbe> = Arc::new(PostgresPendingWorkProbe::new(request_url.clone(), config.database.acquire_timeout())); // clone: the factory retains the request base URL
+    let wake_schedule: Arc<dyn TenantWakeSchedule> = Arc::new(PostgresTenantWakeSchedule::new(registry.main_pool().clone())); // clone: PgPool is a shared handle
     let factory = Arc::new(BrokerTenantFactory::new(
         &config,
         request_url,
@@ -213,8 +226,18 @@ async fn construct(
         process_tasks.clone(), // clone: tenant scopes and process shutdown share supervision
         Arc::clone(&forwarded_subscription_router),
     ));
-    let tenants = TenantRuntimeManager::new(config.tenancy.clone(), Arc::clone(&registry), Arc::clone(&factory)); // clone: manager owns its policy
+    let tenants = TenantRuntimeManager::new(
+        config.tenancy.clone(), // clone: manager owns its policy
+        Arc::clone(&registry),
+        Arc::clone(&factory),
+        pending_work_probe,
+        Arc::clone(&wake_schedule),
+    );
     drop(tenants.spawn_janitor());
+    // The wake tasks share the schedule with the manager and run only when named
+    // tenancy is enabled; registered after the janitor so a woken runtime is
+    // subject to the same eviction sweeps.
+    register_tenant_waker(&process_tasks, Arc::clone(&tenants), wake_schedule, &config.tenancy)?;
     // Warm the unnamed default so its runtime is built before the first
     // request. The returned lease is dropped at once: the default is never
     // evicted, so it needs no hold to stay resident.

@@ -3,6 +3,7 @@
 
 use crate::{
     database::TenantDatabase,
+    pending_work::PendingWork,
     runtime::TenantRuntimeManager,
     state_factory::{TenantRuntime, TenantStateFactory},
     tenant_ref::TenantRef,
@@ -12,7 +13,7 @@ use andromeda_telemetry::tenancy::{EvictionReason, record_eviction};
 use std::{
     collections::HashSet,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use tokio::{sync::Semaphore, task::JoinSet, time::interval as tokio_interval};
 use tracing::info;
@@ -52,11 +53,60 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 info!(trimmed, max = self.config.runtime_max_cached, "Janitor trimmed excess tenant runtimes");
             }
 
-            let evicted = self.evict_all(self.idle_runtimes(ttl), EvictionReason::Idle).await;
+            let evicted = self.sweep_idle_dormant(ttl).await;
             if evicted > 0 {
-                info!(evicted, "Janitor evicted idle tenant runtimes");
+                info!(evicted, "Janitor evicted idle tenant runtimes with no imminent work");
             }
         }
+    }
+
+    /// Sweep idle runtimes: retain any with work due within the TTL, evict the
+    /// rest, and record when each evicted tenant is next due to be woken.
+    ///
+    /// A tenant with an obligation falling due within the idle TTL is kept
+    /// resident and its last use bumped -- the background work counts as use, so
+    /// a tenant busy draining its outbox is not evicted as idle. A tenant with
+    /// nothing imminent is evicted and its next wake recorded, so the wake loop
+    /// reloads it exactly when its work next falls due.
+    pub(super) async fn sweep_idle_dormant(&self, ttl: Duration) -> usize {
+        let now = SystemTime::now();
+        let mut evicted = 0;
+        for (tenant, chosen_at) in self.idle_runtimes(ttl) {
+            // Take the database to probe while the shard guard is briefly held,
+            // then drop the guard before awaiting; a leased runtime is skipped.
+            let database = match self.runtimes.get(&tenant) {
+                Some(cached) if !cached.is_leased() => cached.database().clone(), // clone: the probe outlives the guard
+                Some(_) | None => continue,
+            };
+
+            let probe = self.probe.earliest_pending_work(&database).await;
+            if matches!(&probe, Ok(PendingWork::DueAt(due)) if *due <= now + ttl) {
+                if let Some(cached) = self.runtimes.get(&tenant) {
+                    cached.touch();
+                }
+                continue;
+            }
+
+            let removed = self
+                .runtimes
+                .remove_if(&tenant, |_, cached| cached.last_used_instant() == chosen_at && !cached.is_leased());
+            if let Some((_, cached)) = removed {
+                record_eviction(EvictionReason::Dormant);
+                self.detach_shutdown(cached.runtime).await;
+                if let TenantRef::Named(name) = &tenant {
+                    let wake_at = match probe {
+                        Ok(work) => self.waker.next_wake(work, now),
+                        Err(_) => Some(self.waker.retry_wake(now)),
+                    };
+                    self.record_schedule(name, now, wake_at).await;
+                }
+                evicted += 1;
+            }
+        }
+        if evicted > 0 {
+            self.record_cache_size();
+        }
+        evicted
     }
 
     /// Evict every cached runtime whose tenant is no longer registered.

@@ -1,6 +1,7 @@
 //! One tenant's live runtime, when it was last reached for, and the hold a
 //! request takes against its eviction.
 
+use crate::database_name::TenantDatabaseName;
 use std::{
     sync::{
         Arc,
@@ -32,6 +33,9 @@ pub(super) struct CachedRuntime<S, R> {
     pub(super) state: Arc<S>,
     /// The resources to release on eviction.
     pub(super) runtime: R,
+    /// The database this tenant's data lives in, kept so the janitor can probe
+    /// it for due work after evicting the runtime.
+    database: TenantDatabaseName,
     /// Milliseconds since [`EPOCH`] at the last use.
     pub(super) last_used: AtomicU64,
     /// The eviction hold's origin.
@@ -49,7 +53,7 @@ impl<S, R> CachedRuntime<S, R> {
     /// The origin is created here so the caller's lease and this runtime's
     /// field are the first two owners: the runtime is leased from the instant
     /// it enters the cache, before any concurrent trim can observe it.
-    pub(super) fn newly_leased(state: Arc<S>, runtime: R) -> (CachedRuntime<S, R>, Arc<()>) {
+    pub(super) fn newly_leased(state: Arc<S>, runtime: R, database: TenantDatabaseName) -> (CachedRuntime<S, R>, Arc<()>) {
         let origin = Arc::new(());
         // clone: the lease is a second owner of the origin by construction; the
         // cache field and the returned handle are the two owners that make the
@@ -59,6 +63,7 @@ impl<S, R> CachedRuntime<S, R> {
             CachedRuntime {
                 state,
                 runtime,
+                database,
                 last_used: AtomicU64::new(now_millis()),
                 origin,
             },
@@ -66,14 +71,44 @@ impl<S, R> CachedRuntime<S, R> {
         )
     }
 
+    /// Build a runtime that no request holds, for the waker to insert a dormant
+    /// tenant it woke to run due work.
+    ///
+    /// Unleased from the start, so a sweep may evict it once it has idled past
+    /// its residency; the waker backdates its last use so it is the first idle
+    /// victim and never displaces a request-touched runtime.
+    pub(super) fn unleased(state: Arc<S>, runtime: R, database: TenantDatabaseName) -> CachedRuntime<S, R> {
+        CachedRuntime {
+            state,
+            runtime,
+            database,
+            last_used: AtomicU64::new(now_millis()),
+            origin: Arc::new(()),
+        }
+    }
+
     /// Record that this runtime was just used.
     pub(super) fn touch(&self) {
         self.last_used.store(now_millis(), Ordering::Relaxed);
     }
 
+    /// Age this runtime's last use by `age`, so it sorts older for eviction.
+    ///
+    /// A woken runtime is backdated by the idle TTL minus its residency, leaving
+    /// it exactly the residency of idle life before a sweep reclaims it.
+    pub(super) fn backdate(&self, age: Duration) {
+        let age_millis = u64::try_from(age.as_millis()).unwrap_or(u64::MAX);
+        self.last_used.store(now_millis().saturating_sub(age_millis), Ordering::Relaxed);
+    }
+
     /// When this runtime was last used.
     pub(super) fn last_used_instant(&self) -> Instant {
         *EPOCH + Duration::from_millis(self.last_used.load(Ordering::Relaxed))
+    }
+
+    /// The database this tenant's data lives in.
+    pub(super) const fn database(&self) -> &TenantDatabaseName {
+        &self.database
     }
 
     /// Whether a request currently holds a lease on this runtime.

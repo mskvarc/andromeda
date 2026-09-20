@@ -30,6 +30,20 @@ pub enum Tenants {
     ModifiedAt,
 }
 
+/// The `tenant_wake_schedule` table - when each tenant should next be loaded to
+/// run background work while no request is touching it.
+#[derive(Iden, Clone, Copy)]
+pub enum TenantWakeSchedule {
+    /// Table name: `tenant_wake_schedule`
+    Table,
+    /// Foreign key to the owning `tenants` row
+    TenantId,
+    /// Instant the tenant next has work due, `NULL` when nothing is pending
+    WakeAt,
+    /// Instant the schedule was last written
+    ProbedAt,
+}
+
 /// The `schema_metadata` table - the per-database schema-contract stamp.
 #[derive(Iden, Clone, Copy)]
 pub enum SchemaMetadata {
@@ -47,7 +61,7 @@ pub enum SchemaMetadata {
 
 #[cfg(test)]
 mod tests {
-    use crate::tenancy::{SchemaMetadata, Tenants};
+    use crate::tenancy::{SchemaMetadata, TenantWakeSchedule, Tenants};
     use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
@@ -63,6 +77,14 @@ mod tests {
     #[test]
     fn tenants_table_name() {
         assert_eq!(Tenants::Table.to_string(), "tenants");
+    }
+
+    #[test]
+    fn tenant_wake_schedule_table_and_columns() {
+        assert_eq!(TenantWakeSchedule::Table.to_string(), "tenant_wake_schedule");
+        assert_eq!(TenantWakeSchedule::TenantId.to_string(), "tenant_id");
+        assert_eq!(TenantWakeSchedule::WakeAt.to_string(), "wake_at");
+        assert_eq!(TenantWakeSchedule::ProbedAt.to_string(), "probed_at");
     }
 
     #[test]

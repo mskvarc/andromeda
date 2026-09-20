@@ -11,7 +11,7 @@
 /// The create and replace statements of the subscription row.
 mod create_update_sql;
 /// The delivery counters and the statements that read and move them.
-mod delivery_state;
+pub(crate) mod delivery_state;
 /// How adapter failures surface at the policy boundary.
 mod failure;
 /// PgRow-to-domain conversion for subscriptions.

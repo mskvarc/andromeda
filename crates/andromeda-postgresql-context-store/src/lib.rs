@@ -40,11 +40,12 @@ pub mod maintenance_config;
 pub mod notification_delivery;
 /// Durable side-effect queue for opt-in async batch processing.
 pub mod pending_side_effects;
+/// Persistence layer for snapshot records.
+pub mod pending_work;
 /// The schema contract one tenant database carries, and what it is checked against.
 pub mod schema_contract;
 /// Dialect DDL and session statements SeaQuery cannot express.
 pub mod schema_ddl;
-/// Persistence layer for snapshot records.
 pub mod snapshot;
 /// Filling the entity spatial index from the store.
 /// Repository for NGSI-LD entity subscriptions.
@@ -57,6 +58,8 @@ pub mod subscription_store;
 pub mod tenant_database;
 /// The `tenants` table, behind the tenancy crate's registry port.
 pub mod tenant_registry;
+/// The `tenant_wake_schedule` table, behind the tenancy crate's wake-schedule port.
+pub mod tenant_wake_schedule;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

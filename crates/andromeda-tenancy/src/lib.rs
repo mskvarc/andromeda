@@ -27,10 +27,13 @@ pub mod database;
 pub mod database_name;
 pub mod db_name_prefix;
 pub mod error;
+pub mod pending_work;
 pub mod runtime;
 pub mod state_factory;
 pub mod status;
 pub mod tenant_ref;
+pub mod wake_schedule;
+pub mod waker;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

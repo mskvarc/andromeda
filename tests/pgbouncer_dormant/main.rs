@@ -247,13 +247,20 @@ async fn an_entity_expires_on_a_dormant_tenant() {
 /// Count entities in a tenant database over a direct connection.
 async fn count_entities(database: &str) -> i64 {
     let url = endpoints::database_url().replace("/postgres", &format!("/{database}"));
-    let Ok(tenant_pool) = PgPool::connect(&url).await else {
-        return -1;
+    let tenant_pool = match PgPool::connect(&url).await {
+        Ok(pool) => pool,
+        Err(error) => {
+            eprintln!("count_entities connect to {database} failed: {error}");
+            return -1;
+        }
     };
-    let count = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM entities")
-        .fetch_one(&tenant_pool)
-        .await
-        .unwrap_or(-1);
+    let count = match sqlx::query_scalar::<_, i64>("SELECT count(*) FROM entities").fetch_one(&tenant_pool).await {
+        Ok(count) => count,
+        Err(error) => {
+            eprintln!("count_entities query on {database} failed: {error}");
+            -1
+        }
+    };
     tenant_pool.close().await;
     count
 }

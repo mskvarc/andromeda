@@ -27,6 +27,15 @@ pub enum TenancyConfigError {
     /// The concurrent-eviction bound was configured as zero.
     #[error("tenancy.eviction_concurrency must be at least 1")]
     ZeroEvictionConcurrency,
+    /// The dormant-tenant re-wake floor was configured as zero.
+    #[error("tenancy.min_dormancy_secs must be at least 1")]
+    ZeroMinDormancy,
+    /// The woken-runtime residency was configured as zero.
+    #[error("tenancy.wake_residency_secs must be at least 1")]
+    ZeroWakeResidency,
+    /// The per-pass wake bound was configured as zero.
+    #[error("tenancy.waker_max_wakes_per_pass must be at least 1")]
+    ZeroWakerMaxWakesPerPass,
 }
 
 /// Multi-tenancy configuration.
@@ -91,6 +100,31 @@ pub struct TenancyConfig {
     /// Teardowns run concurrently up to this bound, off the request path, so a
     /// cold insert never waits on another tenant's shutdown.
     pub eviction_concurrency: usize,
+
+    /// The shortest delay before a just-evicted dormant tenant is woken again.
+    ///
+    /// When the janitor evicts a tenant it probes for the earliest instant the
+    /// tenant has work due and records a wake for it. A due instant sooner than
+    /// `now + min_dormancy_secs` is clamped up to it, so evicting a tenant that
+    /// is only a little overdue and immediately reloading it cannot thrash. A
+    /// failed probe records a retry this far out rather than leaving the tenant
+    /// unscheduled.
+    pub min_dormancy_secs: u64,
+
+    /// How long a woken runtime is held resident to do its due work.
+    ///
+    /// A runtime the waker loads exists only to drain the work its probe found.
+    /// Its last use is backdated so it is the first idle-eviction victim yet
+    /// keeps this much idle life, so it never displaces a runtime a request
+    /// touched. Must be below `runtime_idle_ttl_secs` to have that effect.
+    pub wake_residency_secs: u64,
+
+    /// How many dormant tenants a single wake pass loads at most.
+    ///
+    /// Woken runtimes are cold-built through the same admission bound as request
+    /// cold builds; this caps how much of a pass's budget the waker takes so a
+    /// wake burst cannot starve request-driven cold loads.
+    pub waker_max_wakes_per_pass: usize,
 }
 
 impl Default for TenancyConfig {
@@ -104,6 +138,9 @@ impl Default for TenancyConfig {
             janitor_interval_secs: 30,
             max_concurrent_builds: 8,
             eviction_concurrency: 8,
+            min_dormancy_secs: 30,
+            wake_residency_secs: 60,
+            waker_max_wakes_per_pass: 4,
         }
     }
 }
@@ -116,7 +153,8 @@ impl TenancyConfig {
     /// Returns the [`TenancyConfigError`] naming the first setting configured
     /// as zero: the per-tenant pool size, the runtime idle retention, the
     /// runtime cache capacity, the janitor cadence, the concurrent cold-build
-    /// bound or the concurrent-eviction bound.
+    /// bound, the concurrent-eviction bound, the dormant re-wake floor, the
+    /// woken-runtime residency or the per-pass wake bound.
     pub const fn validate(&self) -> Result<(), TenancyConfigError> {
         if self.tenant_max_connections == 0 {
             return Err(TenancyConfigError::ZeroTenantMaxConnections);
@@ -135,6 +173,15 @@ impl TenancyConfig {
         }
         if self.eviction_concurrency == 0 {
             return Err(TenancyConfigError::ZeroEvictionConcurrency);
+        }
+        if self.min_dormancy_secs == 0 {
+            return Err(TenancyConfigError::ZeroMinDormancy);
+        }
+        if self.wake_residency_secs == 0 {
+            return Err(TenancyConfigError::ZeroWakeResidency);
+        }
+        if self.waker_max_wakes_per_pass == 0 {
+            return Err(TenancyConfigError::ZeroWakerMaxWakesPerPass);
         }
         Ok(())
     }
@@ -157,6 +204,9 @@ mod config_tests {
             janitor_interval_secs: 30,
             max_concurrent_builds: 8,
             eviction_concurrency: 8,
+            min_dormancy_secs: 30,
+            wake_residency_secs: 60,
+            waker_max_wakes_per_pass: 4,
         };
         assert_eq!(config.validate(), Err(TenancyConfigError::ZeroRuntimeMaxCached));
     }
@@ -177,5 +227,32 @@ mod config_tests {
             ..TenancyConfig::default()
         };
         assert_eq!(config.validate(), Err(TenancyConfigError::ZeroEvictionConcurrency));
+    }
+
+    #[test]
+    fn a_zero_min_dormancy_is_rejected() {
+        let config = TenancyConfig {
+            min_dormancy_secs: 0,
+            ..TenancyConfig::default()
+        };
+        assert_eq!(config.validate(), Err(TenancyConfigError::ZeroMinDormancy));
+    }
+
+    #[test]
+    fn a_zero_wake_residency_is_rejected() {
+        let config = TenancyConfig {
+            wake_residency_secs: 0,
+            ..TenancyConfig::default()
+        };
+        assert_eq!(config.validate(), Err(TenancyConfigError::ZeroWakeResidency));
+    }
+
+    #[test]
+    fn a_zero_per_pass_wake_bound_is_rejected() {
+        let config = TenancyConfig {
+            waker_max_wakes_per_pass: 0,
+            ..TenancyConfig::default()
+        };
+        assert_eq!(config.validate(), Err(TenancyConfigError::ZeroWakerMaxWakesPerPass));
     }
 }

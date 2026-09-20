@@ -23,6 +23,7 @@ mod routes;
 mod temporal_linked_forwarding;
 mod tenant_factory;
 mod tenant_state;
+mod tenant_waker;
 
 use crate::{config::runtime::RuntimeConfig, outcome::ProcessExitOutcome};
 

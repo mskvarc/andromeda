@@ -12,23 +12,31 @@ use crate::{
     config::TenancyConfig,
     creation_policy::TenantCreationPolicy,
     database::TenantDatabase,
+    database_name::TenantDatabaseName,
     error::TenancyError,
+    pending_work::{PendingWork, PendingWorkProbe},
     runtime::{
         cached_runtime::CachedRuntime,
         lease::{LeasedState, RuntimeLease},
     },
     state_factory::{TenantRuntime, TenantStateFactory},
     tenant_ref::TenantRef,
+    wake_schedule::TenantWakeSchedule,
+    waker::WakerPolicy,
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
-use andromeda_telemetry::tenancy::{ColdBuildOutcome, record_build_admission_wait, record_cold_build, set_runtimes_cached};
+use andromeda_telemetry::tenancy::{ColdBuildOutcome, WakeOutcome, record_build_admission_wait, record_cold_build, record_wake, set_runtimes_cached};
 use async_trait::async_trait;
 use dashmap::{DashMap, mapref::entry::Entry};
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Instant, SystemTime},
+};
 use tokio::{
     sync::{Mutex, Semaphore},
     task::{JoinHandle, JoinSet},
 };
+use tracing::warn;
 
 /// Manages per-tenant runtimes: builds them on demand, hands them out, and
 /// evicts the ones nobody is using.
@@ -69,13 +77,34 @@ pub struct TenantRuntimeManager<D: TenantDatabase, F: TenantStateFactory> {
     /// triggered the trim does not wait on another tenant's shutdown. Drained by
     /// [`shutdown_all`](Self::shutdown_all) after the server stops.
     eviction_set: Mutex<JoinSet<()>>,
+    /// Reads a dormant tenant's database for the earliest instant it has work
+    /// due, so the janitor retains a tenant with imminent work and the waker
+    /// loads only a tenant that has some.
+    probe: Arc<dyn PendingWorkProbe>,
+    /// The persistent, replica-shared record of when each tenant is next woken.
+    schedule: Arc<dyn TenantWakeSchedule>,
+    /// The timing policy the janitor and the waker follow.
+    waker: WakerPolicy,
 }
 
 impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
-    /// A manager over the given registry and factory.
-    pub fn new(config: TenancyConfig, database: Arc<D>, factory: Arc<F>) -> Arc<TenantRuntimeManager<D, F>> {
+    /// A manager over the given registry, factory, pending-work probe and wake
+    /// schedule.
+    pub fn new(
+        config: TenancyConfig,
+        database: Arc<D>,
+        factory: Arc<F>,
+        probe: Arc<dyn PendingWorkProbe>,
+        schedule: Arc<dyn TenantWakeSchedule>,
+    ) -> Arc<TenantRuntimeManager<D, F>> {
         let build_permits = Semaphore::new(config.max_concurrent_builds);
         let eviction_permits = Arc::new(Semaphore::new(config.eviction_concurrency));
+        let waker = WakerPolicy::new(
+            config.min_dormancy_secs,
+            config.wake_residency_secs,
+            config.runtime_idle_ttl_secs,
+            config.waker_max_wakes_per_pass,
+        );
         Arc::new(TenantRuntimeManager {
             config,
             database,
@@ -85,6 +114,9 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             build_permits,
             eviction_permits,
             eviction_set: Mutex::new(JoinSet::new()),
+            probe,
+            schedule,
+            waker,
         })
     }
 
@@ -213,6 +245,126 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         set_runtimes_cached(self.runtimes.len());
     }
 
+    /// Wake a dormant tenant to run background work its probe finds due,
+    /// reporting how the attempt resolved.
+    ///
+    /// Never touches an already-cached tenant: a wake is not a request, so it
+    /// must not extend a runtime's residency. Probes before loading, so a
+    /// tenant a request or another replica already serviced is not cold-loaded
+    /// again. A woken runtime is loaded through the same admission bound as a
+    /// request cold build and inserted as the first idle-eviction victim, so it
+    /// never displaces a request-touched tenant.
+    pub async fn wake(&self, tenant: &TenantName) -> WakeOutcome {
+        let outcome = self.wake_inner(tenant).await;
+        record_wake(outcome);
+        outcome
+    }
+
+    /// The wake decision, without the metric the public [`wake`](Self::wake)
+    /// records around it.
+    async fn wake_inner(&self, tenant: &TenantName) -> WakeOutcome {
+        let tenant_ref = TenantRef::Named(tenant.clone()); // clone: the ref outlives this call
+        let now = SystemTime::now();
+
+        // A cached tenant runs its own drains; clear its schedule without
+        // touching its last use, so a wake never keeps it artificially resident.
+        if self.runtimes.contains_key(&tenant_ref) {
+            self.settle_schedule(tenant, now, None).await;
+            return WakeOutcome::AlreadyCached;
+        }
+
+        let database = match self.database.lookup(tenant).await {
+            Ok(Some(database)) => database,
+            Ok(None) => return WakeOutcome::Unregistered,
+            // A registry read failure is transient; leave the leased claim to
+            // re-fire and report nothing loaded.
+            Err(_) => return WakeOutcome::NothingDue,
+        };
+
+        match self.probe.earliest_pending_work(&database).await {
+            Ok(PendingWork::DueAt(due)) if due <= now => self.load_woken(&tenant_ref, database, tenant).await,
+            Ok(PendingWork::DueAt(due)) => {
+                self.settle_schedule(tenant, now, self.waker.next_wake(PendingWork::DueAt(due), now)).await;
+                WakeOutcome::NothingDue
+            }
+            Ok(PendingWork::None) => {
+                self.settle_schedule(tenant, now, None).await;
+                WakeOutcome::NothingDue
+            }
+            Err(_) => {
+                self.settle_schedule(tenant, now, Some(self.waker.retry_wake(now))).await;
+                WakeOutcome::NothingDue
+            }
+        }
+    }
+
+    /// Build and cache a woken tenant's runtime, unless the cache is full of
+    /// fresher runtimes, in which case the wake defers.
+    async fn load_woken(&self, tenant_ref: &TenantRef, database: TenantDatabaseName, tenant: &TenantName) -> WakeOutcome {
+        let now = SystemTime::now();
+        if self.cache_full_of_fresher() {
+            self.settle_schedule(tenant, now, Some(self.waker.retry_wake(now))).await;
+            return WakeOutcome::Deferred;
+        }
+
+        // Load under the same admission bound as a request cold build.
+        let permit = self.build_permits.acquire().await.ok();
+        let built = self.factory.build(tenant_ref, &database).await;
+        drop(permit);
+
+        let Ok((state, runtime)) = built else {
+            self.settle_schedule(tenant, now, Some(self.waker.retry_wake(now))).await;
+            return WakeOutcome::Deferred;
+        };
+
+        match self.runtimes.entry(tenant_ref.clone()) {
+            Entry::Occupied(_) => {
+                // A request cold-loaded the tenant while we built; discard ours.
+                runtime.shutdown().await;
+                self.settle_schedule(tenant, now, None).await;
+                WakeOutcome::AlreadyCached
+            }
+            Entry::Vacant(vacant) => {
+                let cached = CachedRuntime::unleased(state, runtime, database);
+                cached.backdate(self.waker.woken_backdate());
+                drop(vacant.insert(cached));
+                self.record_cache_size();
+                // Resident now and running its drains; clear the wake so it is
+                // not re-claimed until its next eviction re-probes it.
+                self.settle_schedule(tenant, now, None).await;
+                WakeOutcome::Loaded
+            }
+        }
+    }
+
+    /// Whether the cache is full and holds only runtimes fresher than a woken
+    /// one would be, so loading a woken tenant would only churn a pool.
+    fn cache_full_of_fresher(&self) -> bool {
+        if self.runtimes.len() < self.config.runtime_max_cached {
+            return false;
+        }
+        match Instant::now().checked_sub(self.waker.woken_backdate()) {
+            Some(threshold) => self.runtimes.iter().all(|entry| entry.value().last_used_instant() >= threshold),
+            None => false,
+        }
+    }
+
+    /// Record a fresh eviction's next wake, logging a schedule write failure
+    /// rather than failing the sweep: the leased claim re-fires regardless.
+    pub(super) async fn record_schedule(&self, tenant: &TenantName, probed_at: SystemTime, wake_at: Option<SystemTime>) {
+        if let Err(error) = self.schedule.record(tenant, probed_at, wake_at).await {
+            warn!(tenant = tenant.as_str(), error = %error, "failed to record the tenant wake schedule");
+        }
+    }
+
+    /// Settle a wake attempt's next schedule, logging a write failure rather
+    /// than propagating it.
+    async fn settle_schedule(&self, tenant: &TenantName, probed_at: SystemTime, wake_at: Option<SystemTime>) {
+        if let Err(error) = self.schedule.settle(tenant, probed_at, wake_at).await {
+            warn!(tenant = tenant.as_str(), error = %error, "failed to settle the tenant wake schedule");
+        }
+    }
+
     /// Build a runtime for a tenant that has none open, returning it leased.
     async fn resolve_state_cold(&self, tenant: &TenantRef, policy: TenantCreationPolicy) -> Result<LeasedState<F::State>, TenancyError> {
         let database = match tenant {
@@ -246,7 +398,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 // instant it is inserted -- observes the lease and spares it. The
                 // caller enforces runtime_max_cached once the build permit is
                 // released, so the trim runs off the admission budget.
-                let (cached, leased) = CachedRuntime::newly_leased(Arc::clone(&state), runtime);
+                let (cached, leased) = CachedRuntime::newly_leased(Arc::clone(&state), runtime, database);
                 drop(vacant.insert(cached));
                 self.record_cache_size();
                 Ok(LeasedState {

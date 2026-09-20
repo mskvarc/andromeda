@@ -8,12 +8,14 @@ use crate::{
     database_name::TenantDatabaseName,
     db_name_prefix::DbNamePrefix,
     error::TenancyError,
+    pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
     runtime::TenantRuntimeManager,
     state_factory::{TenantRuntime, TenantStateFactory},
     tenant_ref::TenantRef,
+    wake_schedule::{TenantWakeSchedule, WakeScheduleError},
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
-use andromeda_telemetry::tenancy::EvictionReason;
+use andromeda_telemetry::tenancy::{EvictionReason, WakeOutcome};
 use async_trait::async_trait;
 use std::{
     sync::{
@@ -21,12 +23,79 @@ use std::{
         Mutex as StdMutex,
         atomic::{AtomicUsize, Ordering},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use tokio::{
     sync::Notify,
     time::{sleep, timeout},
 };
+
+/// A probe that answers every tenant with one fixed pending-work reading.
+struct FakeProbe {
+    /// The reading returned for every database.
+    work: PendingWork,
+}
+
+impl FakeProbe {
+    /// A probe reporting nothing due.
+    fn none() -> FakeProbe {
+        FakeProbe { work: PendingWork::None }
+    }
+
+    /// A probe reporting work due at `due`.
+    fn due_at(due: SystemTime) -> FakeProbe {
+        FakeProbe { work: PendingWork::DueAt(due) }
+    }
+}
+
+#[async_trait]
+impl PendingWorkProbe for FakeProbe {
+    async fn earliest_pending_work(&self, _database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
+        Ok(self.work)
+    }
+}
+
+/// A wake schedule that records its writes and hands back configured claims.
+struct FakeSchedule {
+    /// Every `settle` call's tenant and next wake.
+    settled: StdMutex<Vec<(String, Option<SystemTime>)>>,
+}
+
+impl FakeSchedule {
+    /// A schedule that records writes and claims nothing.
+    fn inert() -> FakeSchedule {
+        FakeSchedule {
+            settled: StdMutex::new(Vec::new()),
+        }
+    }
+
+    /// How many times `settle` was called.
+    fn settle_count(&self) -> usize {
+        self.settled.lock().map(|settled| settled.len()).unwrap_or_default()
+    }
+}
+
+#[async_trait]
+impl TenantWakeSchedule for FakeSchedule {
+    async fn record(&self, _tenant: &TenantName, _probed_at: SystemTime, _wake_at: Option<SystemTime>) -> Result<(), WakeScheduleError> {
+        Ok(())
+    }
+
+    async fn claim_due(&self, _now: SystemTime, _lease_until: SystemTime, _limit: usize) -> Result<Vec<TenantName>, WakeScheduleError> {
+        Ok(Vec::new())
+    }
+
+    async fn settle(&self, tenant: &TenantName, _probed_at: SystemTime, wake_at: Option<SystemTime>) -> Result<(), WakeScheduleError> {
+        if let Ok(mut settled) = self.settled.lock() {
+            settled.push((tenant.as_str().to_string(), wake_at));
+        }
+        Ok(())
+    }
+
+    async fn next_unprobed(&self, _limit: usize) -> Result<Vec<TenantName>, WakeScheduleError> {
+        Ok(Vec::new())
+    }
+}
 
 fn named(raw: &str) -> TenantName {
     TenantName::try_from(raw.to_string()).expect("a valid tenant name")
@@ -42,6 +111,9 @@ fn config(enabled: bool, max_cached: usize) -> TenancyConfig {
         janitor_interval_secs: 30,
         max_concurrent_builds: 8,
         eviction_concurrency: 8,
+        min_dormancy_secs: 30,
+        wake_residency_secs: 60,
+        waker_max_wakes_per_pass: 4,
     }
 }
 
@@ -169,7 +241,13 @@ fn harness(registered: &[&str], enabled: bool, max_cached: usize) -> Harness {
         shutdowns: Arc::clone(&shutdowns),
         built: AtomicUsize::new(0),
     });
-    let manager = TenantRuntimeManager::new(config(enabled, max_cached), Arc::clone(&registry), Arc::clone(&factory));
+    let manager = TenantRuntimeManager::new(
+        config(enabled, max_cached),
+        Arc::clone(&registry),
+        Arc::clone(&factory),
+        Arc::new(FakeProbe::none()),
+        Arc::new(FakeSchedule::inert()),
+    );
     Harness {
         manager,
         registry,
@@ -241,7 +319,13 @@ async fn concurrent_first_requests_for_one_tenant_trigger_a_single_build() {
         shutdowns: Arc::clone(&shutdowns),
         gate: Arc::clone(&gate),
     });
-    let manager = TenantRuntimeManager::new(config(true, 64), Arc::clone(&registry), Arc::clone(&factory));
+    let manager = TenantRuntimeManager::new(
+        config(true, 64),
+        Arc::clone(&registry),
+        Arc::clone(&factory),
+        Arc::new(FakeProbe::none()),
+        Arc::new(FakeSchedule::inert()),
+    );
     let tenant = TenantRef::Named(named("acme"));
 
     let mut handles = Vec::new();
@@ -389,7 +473,13 @@ async fn a_concurrent_cold_build_is_never_evicted_by_another_builds_insert_trim(
     });
     // A build-admission bound above the tenant count so this test exercises the
     // lease, not admission: all twelve must reach the gate at once.
-    let manager = TenantRuntimeManager::new(bounded_config(CAP, TENANTS, 8), Arc::clone(&registry), Arc::clone(&factory));
+    let manager = TenantRuntimeManager::new(
+        bounded_config(CAP, TENANTS, 8),
+        Arc::clone(&registry),
+        Arc::clone(&factory),
+        Arc::new(FakeProbe::none()),
+        Arc::new(FakeSchedule::inert()),
+    );
 
     let mut handles = Vec::new();
     for index in 0..TENANTS {
@@ -511,7 +601,13 @@ async fn a_registry_that_cannot_be_read_evicts_nothing_rather_than_everything() 
         shutdowns: Arc::clone(&shutdowns),
         built: AtomicUsize::new(0),
     });
-    let manager = TenantRuntimeManager::new(config(true, 64), Arc::new(UnreadableRegistry), factory);
+    let manager = TenantRuntimeManager::new(
+        config(true, 64),
+        Arc::new(UnreadableRegistry),
+        factory,
+        Arc::new(FakeProbe::none()),
+        Arc::new(FakeSchedule::inert()),
+    );
     manager
         .resolve_state(&TenantRef::Named(named("acme")), TenantCreationPolicy::MustExist)
         .await
@@ -684,7 +780,13 @@ async fn cold_builds_across_tenants_never_exceed_the_configured_bound() {
         hold: Duration::from_millis(50),
         shutdowns: Arc::clone(&shutdowns),
     });
-    let manager = TenantRuntimeManager::new(bounded_config(TENANTS, BOUND, 8), Arc::clone(&registry), Arc::clone(&factory));
+    let manager = TenantRuntimeManager::new(
+        bounded_config(TENANTS, BOUND, 8),
+        Arc::clone(&registry),
+        Arc::clone(&factory),
+        Arc::new(FakeProbe::none()),
+        Arc::new(FakeSchedule::inert()),
+    );
 
     let mut handles = Vec::new();
     for index in 0..TENANTS {
@@ -769,7 +871,13 @@ async fn evictions_overlap_up_to_the_bound() {
         peak: Arc::clone(&peak),
         hold: Duration::from_millis(50),
     });
-    let manager = TenantRuntimeManager::new(bounded_config(TENANTS, 8, BOUND), Arc::clone(&registry), factory);
+    let manager = TenantRuntimeManager::new(
+        bounded_config(TENANTS, 8, BOUND),
+        Arc::clone(&registry),
+        factory,
+        Arc::new(FakeProbe::none()),
+        Arc::new(FakeSchedule::inert()),
+    );
 
     for index in 0..TENANTS {
         manager
@@ -843,7 +951,13 @@ async fn insert_trim_does_not_await_victim_shutdown() {
         gate: Arc::clone(&gate),
         shutdowns: Arc::clone(&shutdowns),
     });
-    let manager = TenantRuntimeManager::new(config(true, 1), Arc::clone(&registry), factory);
+    let manager = TenantRuntimeManager::new(
+        config(true, 1),
+        Arc::clone(&registry),
+        factory,
+        Arc::new(FakeProbe::none()),
+        Arc::new(FakeSchedule::inert()),
+    );
 
     // Resolve `a`; its lease drops at the statement's end, so `a` is unleased.
     manager
@@ -879,4 +993,131 @@ async fn insert_trim_does_not_await_victim_shutdown() {
     gate.notify_one();
     manager.await_evictions().await;
     pretty_assertions::assert_eq!(shutdowns.load(Ordering::SeqCst), 1, "the detached teardown eventually runs");
+}
+
+/// A manager over the given probe and schedule, plus its factory and shutdown
+/// counter, for the dormant-wake tests.
+fn wake_manager(
+    registered: &[&str],
+    max_cached: usize,
+    probe: Arc<FakeProbe>,
+    schedule: Arc<FakeSchedule>,
+) -> (Arc<TenantRuntimeManager<FakeRegistry, FakeFactory>>, Arc<FakeFactory>, Arc<AtomicUsize>) {
+    let registry = Arc::new(FakeRegistry::new(registered));
+    let shutdowns = Arc::new(AtomicUsize::new(0));
+    let factory = Arc::new(FakeFactory {
+        shutdowns: Arc::clone(&shutdowns),
+        built: AtomicUsize::new(0),
+    });
+    let manager = TenantRuntimeManager::new(config(true, max_cached), registry, Arc::clone(&factory), probe, schedule);
+    (manager, factory, shutdowns)
+}
+
+#[tokio::test]
+async fn an_idle_tenant_with_work_due_inside_the_ttl_is_retained() {
+    // A dormant-eligible tenant whose probe reports work already due is kept
+    // resident, not evicted: background work counts as use.
+    let (manager, _factory, shutdowns) = wake_manager(
+        &["acme"],
+        64,
+        Arc::new(FakeProbe::due_at(SystemTime::UNIX_EPOCH)),
+        Arc::new(FakeSchedule::inert()),
+    );
+    let acme = TenantRef::Named(named("acme"));
+    // Resolve then drop the lease so acme is unleased and idle at zero TTL.
+    drop(manager.resolve_state(&acme, TenantCreationPolicy::MustExist).await.expect("resolves"));
+
+    let evicted = manager.sweep_idle_dormant(Duration::ZERO).await;
+    pretty_assertions::assert_eq!(evicted, 0, "a tenant with imminent work is retained, not evicted");
+    assert!(manager.runtimes.contains_key(&acme), "the tenant stays resident to do its work");
+    pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test]
+async fn waking_a_cached_tenant_settles_the_row_without_touching_last_used() {
+    let schedule = Arc::new(FakeSchedule::inert());
+    let (manager, factory, _shutdowns) = wake_manager(&["acme"], 64, Arc::new(FakeProbe::none()), Arc::clone(&schedule));
+    let acme = TenantRef::Named(named("acme"));
+    drop(manager.resolve_state(&acme, TenantCreationPolicy::MustExist).await.expect("resolves"));
+    let before = manager.runtimes.get(&acme).expect("cached").last_used_instant();
+    sleep(Duration::from_millis(5)).await;
+
+    let outcome = manager.wake(&named("acme")).await;
+    pretty_assertions::assert_eq!(outcome, WakeOutcome::AlreadyCached);
+    let after = manager.runtimes.get(&acme).expect("still cached").last_used_instant();
+    pretty_assertions::assert_eq!(before, after, "waking a cached tenant does not touch its last use");
+    pretty_assertions::assert_eq!(schedule.settle_count(), 1, "the schedule row is settled");
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 1, "a cached tenant is not rebuilt");
+}
+
+#[tokio::test]
+async fn a_claimed_tenant_with_nothing_due_is_not_loaded() {
+    let (manager, factory, _shutdowns) = wake_manager(&["acme"], 64, Arc::new(FakeProbe::none()), Arc::new(FakeSchedule::inert()));
+
+    let outcome = manager.wake(&named("acme")).await;
+    pretty_assertions::assert_eq!(outcome, WakeOutcome::NothingDue);
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 0, "nothing due, so nothing is loaded");
+    assert!(!manager.runtimes.contains_key(&TenantRef::Named(named("acme"))), "the tenant is not cached");
+}
+
+#[tokio::test]
+async fn the_waker_defers_when_the_cache_is_full_of_recently_used_runtimes() {
+    // At capacity with every entry request-fresh, a woken tenant would be the
+    // immediate eviction victim, so the wake defers without loading.
+    let (manager, factory, _shutdowns) = wake_manager(
+        &["a", "b", "woken"],
+        2,
+        Arc::new(FakeProbe::due_at(SystemTime::now())),
+        Arc::new(FakeSchedule::inert()),
+    );
+    for name in ["a", "b"] {
+        drop(
+            manager
+                .resolve_state(&TenantRef::Named(named(name)), TenantCreationPolicy::MustExist)
+                .await
+                .expect("resolves"),
+        );
+    }
+    pretty_assertions::assert_eq!(manager.runtimes.len(), 2, "the cache is at capacity with fresh runtimes");
+
+    let outcome = manager.wake(&named("woken")).await;
+    pretty_assertions::assert_eq!(outcome, WakeOutcome::Deferred);
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 2, "the deferred wake builds nothing");
+    assert!(
+        !manager.runtimes.contains_key(&TenantRef::Named(named("woken"))),
+        "the deferred tenant is not cached"
+    );
+}
+
+#[tokio::test]
+async fn a_woken_runtime_is_the_first_lru_victim() {
+    // A woken runtime is inserted backdated, so it sorts older than any
+    // request-touched runtime and is the first to be trimmed.
+    let (manager, factory, _shutdowns) = wake_manager(
+        &["fresh", "woken"],
+        64,
+        Arc::new(FakeProbe::due_at(SystemTime::now())),
+        Arc::new(FakeSchedule::inert()),
+    );
+    let fresh = TenantRef::Named(named("fresh"));
+    drop(manager.resolve_state(&fresh, TenantCreationPolicy::MustExist).await.expect("resolves"));
+    // Space and re-touch so the request-touched runtime's last use is a clear
+    // positive offset from the process epoch, above the backdated woken stamp.
+    sleep(Duration::from_millis(10)).await;
+    drop(manager.resolve_state(&fresh, TenantCreationPolicy::MustExist).await.expect("resolves"));
+
+    let outcome = manager.wake(&named("woken")).await;
+    pretty_assertions::assert_eq!(outcome, WakeOutcome::Loaded);
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 2, "the woken tenant is built");
+
+    let woken_used = manager
+        .runtimes
+        .get(&TenantRef::Named(named("woken")))
+        .expect("woken cached")
+        .last_used_instant();
+    let fresh_used = manager.runtimes.get(&fresh).expect("fresh cached").last_used_instant();
+    assert!(
+        woken_used < fresh_used,
+        "the woken runtime sorts older than a request-touched one, so it is the first victim"
+    );
 }
