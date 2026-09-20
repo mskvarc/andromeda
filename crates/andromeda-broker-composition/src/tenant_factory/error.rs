@@ -47,7 +47,7 @@ impl TenantAssemblyError {
     pub(super) const fn is_saturation(&self) -> bool {
         match self {
             TenantAssemblyError::Database(error) => is_pool_saturated(error),
-            TenantAssemblyError::ContextStore(error) => matches!(error, ContextStoreError::Saturated),
+            TenantAssemblyError::ContextStore(error) => error.is_pool_saturation(),
             TenantAssemblyError::TemporalStoragePolicy(error) => matches!(error, TemporalStoreError::Database(inner) if is_pool_saturated(inner)),
             TenantAssemblyError::Migration(_) | TenantAssemblyError::JsonLd(_) | TenantAssemblyError::Invariant(_) => false,
         }

@@ -28,6 +28,12 @@ x-broker-env: &broker-env
   # behaviour are exercised within a test's lifetime.
   ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL_SECS: "120"
   ANDROMEDA__TENANCY__JANITOR_INTERVAL_SECS: "5"
+  # A short dormancy floor so a dormant tenant with an imminent obligation (a
+  # five-second interval notification, an outbox retry) is re-woken promptly
+  # enough to be observed within a test's lifetime. Production keeps the longer
+  # default as an anti-thrash floor; a deployment with sub-30s obligations lowers
+  # it just as this tier does.
+  ANDROMEDA__TENANCY__MIN_DORMANCY_SECS: "3"
   ANDROMEDA__OBSERVABILITY__METRICS: "prometheus"
   ANDROMEDA__OBSERVABILITY__LOG_LEVEL: "info"
 

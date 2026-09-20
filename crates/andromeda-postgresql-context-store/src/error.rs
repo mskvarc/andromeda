@@ -85,9 +85,39 @@ impl From<sqlx::Error> for ContextStoreError {
     }
 }
 
+impl ContextStoreError {
+    /// Whether this failure is a saturated connection pool anywhere in a cold
+    /// build's error tree, rather than a genuine fault.
+    ///
+    /// A pool-acquire timeout can surface as [`ContextStoreError::Saturated`], as
+    /// a raw [`ContextStoreError::Database`], or wrapped inside the schema-contract
+    /// read a cold load runs before serving. All are backpressure the caller sheds
+    /// as a 503 with `Retry-After`, so a cold build that times out acquiring a
+    /// connection at any of these points is classified the same way.
+    #[must_use]
+    pub const fn is_pool_saturation(&self) -> bool {
+        match self {
+            ContextStoreError::Saturated => true,
+            ContextStoreError::Database(error) => is_pool_saturated(error),
+            ContextStoreError::SchemaContract(error) => error.is_pool_saturation(),
+            ContextStoreError::UniqueViolation(_)
+            | ContextStoreError::InvalidRegex(_)
+            | ContextStoreError::Encoding(_)
+            | ContextStoreError::Collation(_)
+            | ContextStoreError::CopyField(_)
+            | ContextStoreError::Render(_)
+            | ContextStoreError::NameLookup(_)
+            | ContextStoreError::EntityTypes(_)
+            | ContextStoreError::ContextMapper(_)
+            | ContextStoreError::Migration(_)
+            | ContextStoreError::Internal(_) => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::error::ContextStoreError;
+    use crate::{error::ContextStoreError, schema_contract::error::SchemaContractError};
 
     #[test]
     fn a_pool_timeout_becomes_store_saturated() {
@@ -98,5 +128,19 @@ mod tests {
     fn other_database_failures_are_not_saturation() {
         assert!(matches!(ContextStoreError::from(sqlx::Error::RowNotFound), ContextStoreError::Database(_)));
         assert!(matches!(ContextStoreError::from(sqlx::Error::PoolClosed), ContextStoreError::Database(_)));
+    }
+
+    #[test]
+    fn a_cold_build_pool_timeout_is_saturation() {
+        // A pool-acquire timeout inside the cold-load schema-contract read arrives
+        // wrapped, not as the flat `Saturated` variant; it must still classify as
+        // saturation so the cold build is shed as a 503 rather than a 500.
+        let wrapped = ContextStoreError::SchemaContract(SchemaContractError::Database(sqlx::Error::PoolTimedOut));
+        assert!(wrapped.is_pool_saturation());
+        assert!(ContextStoreError::Saturated.is_pool_saturation());
+        // A genuine schema drift and an unrelated database fault are not saturation.
+        let drift = ContextStoreError::SchemaContract(SchemaContractError::NoMigrations);
+        assert!(!drift.is_pool_saturation());
+        assert!(!ContextStoreError::Database(sqlx::Error::RowNotFound).is_pool_saturation());
     }
 }

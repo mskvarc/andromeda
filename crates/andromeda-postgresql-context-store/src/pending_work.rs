@@ -28,7 +28,7 @@ use andromeda_postgresql_schema::{
     subscriptions::Subscriptions,
 };
 use andromeda_postgresql_seaquery::{clock::now, literal::text_literal, queue::claimable_at};
-use andromeda_subscription::interval_schedule::{interval_duration, next_interval_due};
+use andromeda_subscription::interval_schedule::interval_duration;
 use andromeda_tenancy::{
     database_name::TenantDatabaseName,
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
@@ -37,6 +37,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sea_query::{Alias, Expr, ExprTrait, Func, IntoColumnRef, IntoTableRef, PostgresQueryBuilder, Query, QueryStatementBuilder, SelectStatement, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
+use sqlx::error::DatabaseError;
 use std::time::{Duration, SystemTime};
 
 /// Reads a tenant's own database for the earliest instant it has work due.
@@ -59,10 +60,13 @@ impl PostgresPendingWorkProbe {
         PostgresPendingWorkProbe { request_url, acquire_timeout }
     }
 
-    /// Classify a `sqlx` failure the probe hit as saturation or a genuine fault.
+    /// Classify a `sqlx` failure the probe hit as saturation, a gone database,
+    /// or a genuine fault.
     fn classify(error: &sqlx::Error, database: &TenantDatabaseName) -> PendingWorkError {
         if is_pool_saturated(error) {
             PendingWorkError::Saturated { database: database.clone() } // clone: the error outlives this borrow
+        } else if code_is_undefined_database(error.as_database_error().and_then(DatabaseError::code).as_deref()) {
+            PendingWorkError::DatabaseGone { database: database.clone() } // clone: the error outlives this borrow
         } else {
             PendingWorkError::ProbeFailed {
                 database: database.clone(), // clone: the error outlives this borrow
@@ -70,6 +74,13 @@ impl PostgresPendingWorkProbe {
             }
         }
     }
+}
+
+/// Whether a SQLSTATE is `3D000` (`invalid_catalog_name` -- the database the
+/// probe tried to open does not exist), which a deprovisioned tenant's stale
+/// wake-schedule row produces on connect.
+fn code_is_undefined_database(code: Option<&str>) -> bool {
+    code == Some("3D000")
 }
 
 #[async_trait]
@@ -96,21 +107,32 @@ impl PostgresPendingWorkProbe {
             .await
             .map_err(|error| Self::classify(&error, database))?;
 
-        let cutoff = Utc::now();
         let (interval_sql, interval_values) = interval_probe_select().build_sqlx(PostgresQueryBuilder);
         let anchors: Vec<(DateTime<Utc>, f64)> = sqlx::query_as_with(sqlx::AssertSqlSafe(interval_sql.as_str()), interval_values)
             .fetch_all(pool)
             .await
             .map_err(|error| Self::classify(&error, database))?;
 
-        let interval_due = anchors
-            .into_iter()
-            .filter_map(|(anchor, seconds)| interval_duration(seconds).map(|interval| next_interval_due(anchor, interval, cutoff)))
-            .min();
-
+        let interval_due = earliest_interval_due(anchors);
         let earliest = [queue_due, interval_due].into_iter().flatten().min();
         Ok(earliest.map_or(PendingWork::None, |due| PendingWork::DueAt(SystemTime::from(due))))
     }
+}
+
+/// The earliest instant any periodic subscription owes a notification.
+///
+/// A subscription's earliest owed notification is the first grid point after its
+/// last delivery, `anchor + interval`. When the tenant has been dormant across
+/// missed periods this is in the past, so the probe reports the subscription as
+/// due now and the tenant is woken to deliver -- rather than the next grid point
+/// after now, which would always be a period in the future and would never wake
+/// an overdue subscription. The delivery drain advances the anchor once it runs,
+/// so the next probe sees the following grid point.
+fn earliest_interval_due(anchors: Vec<(DateTime<Utc>, f64)>) -> Option<DateTime<Utc>> {
+    anchors
+        .into_iter()
+        .filter_map(|(anchor, seconds)| interval_duration(seconds).and_then(|interval| anchor.checked_add_signed(interval)))
+        .min()
 }
 
 /// `SELECT LEAST(...)` of the earliest due instant in each queue and expiry
@@ -248,8 +270,56 @@ fn scalar(select: SelectStatement) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::pending_work::{interval_probe_select, least_due_select};
+    use crate::pending_work::{PostgresPendingWorkProbe, code_is_undefined_database, earliest_interval_due, interval_probe_select, least_due_select};
+    use andromeda_tenancy::{database_name::TenantDatabaseName, pending_work::PendingWorkError};
+    use chrono::{Duration, Utc};
     use sea_query::PostgresQueryBuilder;
+    use sqlx::Error as SqlxError;
+
+    #[test]
+    fn a_probe_error_is_classified_database_gone_for_3d000() {
+        // SQLSTATE 3D000 (invalid_catalog_name) is the deprovisioned-tenant signal.
+        assert!(code_is_undefined_database(Some("3D000")));
+        assert!(!code_is_undefined_database(Some("42P01")), "an undefined relation is not a gone database");
+        assert!(!code_is_undefined_database(None), "an error with no SQLSTATE is not a gone database");
+
+        // A pool-acquire timeout stays saturation; any other non-3D000 fault stays
+        // a generic probe failure. (A synthesized 3D000 Database error cannot be
+        // built without a driver connection, so the code path above covers it.)
+        let database = TenantDatabaseName::from("andromeda_tenant_gone".to_string());
+        assert!(matches!(
+            PostgresPendingWorkProbe::classify(&SqlxError::PoolTimedOut, &database),
+            PendingWorkError::Saturated { .. }
+        ));
+        assert!(matches!(
+            PostgresPendingWorkProbe::classify(&SqlxError::RowNotFound, &database),
+            PendingWorkError::ProbeFailed { .. }
+        ));
+    }
+
+    #[test]
+    fn the_probe_reports_an_overdue_interval_as_due_now() {
+        let now = Utc::now();
+        // A subscription last delivered well over an interval ago is overdue, so
+        // its earliest owed notification is in the past and the tenant is woken.
+        let overdue = now - Duration::seconds(100);
+        let due = earliest_interval_due(vec![(overdue, 5.0)]);
+        assert_eq!(due, overdue.checked_add_signed(Duration::seconds(5)));
+        assert!(
+            due.is_some_and(|instant| instant <= now),
+            "an overdue interval subscription is due now, got {due:?}"
+        );
+
+        // A subscription whose first grid point is still ahead is due in the future.
+        let ahead = earliest_interval_due(vec![(now, 5.0)]);
+        assert!(
+            ahead.is_some_and(|instant| instant > now),
+            "a fresh interval subscription is due a period ahead, got {ahead:?}"
+        );
+
+        // A non-positive interval yields no due instant.
+        assert_eq!(earliest_interval_due(vec![(now, 0.0)]), None);
+    }
 
     fn least_sql() -> String {
         least_due_select().to_string(PostgresQueryBuilder)

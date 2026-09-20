@@ -37,10 +37,17 @@ use tracing::debug;
 const WAKER_INTERVAL: Duration = Duration::from_secs(5);
 /// How often the reconciliation sweep re-probes the least-recently-probed
 /// tenants, and the jitter that spreads it across replicas.
-const RECONCILIATION_CADENCE: Duration = Duration::from_secs(60);
+///
+/// The eviction path schedules a tenant's wake directly (probing after the
+/// runtime's shutdown has settled its database), so reconciliation is a
+/// backstop: it re-probes a tenant a crashed replica never settled, or one whose
+/// eviction-time probe read a transient state. Kept brisk so a straggler is
+/// picked up in tens of seconds rather than minutes, and jittered so replicas do
+/// not sweep in lockstep.
+const RECONCILIATION_CADENCE: Duration = Duration::from_secs(15);
 /// The jitter applied to the reconciliation cadence so replicas do not sweep in
 /// lockstep.
-const RECONCILIATION_JITTER: Duration = Duration::from_secs(15);
+const RECONCILIATION_JITTER: Duration = Duration::from_secs(5);
 /// How long a claimed wake is leased before it re-fires, covering a replica that
 /// crashes between claiming a tenant and settling its schedule.
 const CLAIM_LEASE: Duration = Duration::from_secs(60);
@@ -125,7 +132,7 @@ fn register_reconciliation(
         ShutdownPolicy::new(Duration::from_secs(10)),
     );
     let schedule_pass =
-        PeriodicSchedule::new(RECONCILIATION_CADENCE, InitialExecution::AfterCadence, MissedTickPolicy::Skip)?.with_jitter(RECONCILIATION_JITTER)?;
+        PeriodicSchedule::new(RECONCILIATION_CADENCE, InitialExecution::Immediate, MissedTickPolicy::Skip)?.with_jitter(RECONCILIATION_JITTER)?;
     let task = ScheduledTask::new(registration, schedule_pass, move |_execution| {
         let manager = Arc::clone(&manager); // clone: each pass owns the manager while executing
         let schedule = Arc::clone(&schedule); // clone: each pass owns the schedule handle

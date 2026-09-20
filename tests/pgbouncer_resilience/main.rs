@@ -13,7 +13,7 @@ use andromeda_test_harness::pooler_probe::{endpoints, pooler_console::PoolerCons
 use reqwest::Client;
 use sqlx::PgPool;
 use std::{future::Future, slice, time::Duration};
-use tokio::time::sleep;
+use tokio::time::{Instant, sleep};
 
 /// A client with a generous timeout so a hung request is measured, not cut short.
 fn client() -> Client {
@@ -276,9 +276,24 @@ async fn a_killed_database_pool_recovers() {
     let _ = console.kill(&target_db).await;
     sleep(Duration::from_secs(1)).await;
     let _ = console.resume_database(&target_db).await;
-    sleep(Duration::from_secs(1)).await;
 
-    let status = get_provisioned(&client, &broker, &tenant).await;
+    // PgBouncer caches a killed pool's login failure for a few seconds, so the
+    // first request after RESUME may still be shed as 503 backpressure. Recovery
+    // is "serves again", not "serves instantly": poll until a 2xx within a bound,
+    // never a 5xx-other-than-503 and never a hang.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut status = 0;
+    while Instant::now() < deadline {
+        status = get_provisioned(&client, &broker, &tenant).await;
+        if (200..300).contains(&status) {
+            break;
+        }
+        assert!(
+            status == 503 || status == 0,
+            "a killed pool must recover through 503 backpressure, never another 5xx, saw {status}"
+        );
+        sleep(Duration::from_millis(500)).await;
+    }
     println!("killed database pool: post-recovery status {status}");
     assert!(
         (200..300).contains(&status),

@@ -14,7 +14,7 @@ use crate::{
     database::TenantDatabase,
     database_name::TenantDatabaseName,
     error::TenancyError,
-    pending_work::{PendingWork, PendingWorkProbe},
+    pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
     runtime::{
         cached_runtime::CachedRuntime,
         lease::{LeasedState, RuntimeLease},
@@ -287,11 +287,17 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 self.settle_schedule(tenant, now, self.waker.next_wake(PendingWork::DueAt(due), now)).await;
                 WakeOutcome::NothingDue
             }
-            Ok(PendingWork::None) => {
+            // Nothing is due, or the tenant's database is gone (deprovisioned
+            // under a stale schedule row). Both clear the schedule: a gone tenant
+            // must not be re-armed, or it would churn the wake pass every
+            // dormancy interval and starve the tenants that really have work.
+            Ok(PendingWork::None) | Err(PendingWorkError::DatabaseGone { .. }) => {
                 self.settle_schedule(tenant, now, None).await;
                 WakeOutcome::NothingDue
             }
-            Err(_) => {
+            // Transient: the probe could not read this pass. Re-arm a retry
+            // rather than treating the tenant as having nothing due.
+            Err(PendingWorkError::Saturated { .. } | PendingWorkError::ProbeFailed { .. }) => {
                 self.settle_schedule(tenant, now, Some(self.waker.retry_wake(now))).await;
                 WakeOutcome::NothingDue
             }

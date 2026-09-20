@@ -5,6 +5,7 @@ use crate::schema_contract::{
     schema_version::{SchemaVersion, SchemaVersionError},
     server_requirements::{ExtensionPresence, ExtensionVersion, ExtensionVersionError, PostgresVersion},
 };
+use andromeda_postgresql_pool::is_pool_saturated;
 
 /// Why a tenant database is not the one this binary was built against.
 ///
@@ -81,4 +82,29 @@ pub enum SchemaContractError {
         /// What the extension catalogue reports.
         found: ExtensionPresence,
     },
+}
+
+impl SchemaContractError {
+    /// Whether this refusal is really a saturated connection pool rather than a
+    /// schema fault.
+    ///
+    /// The contract read acquires a connection, and under a tight pooler that
+    /// acquire can time out. Such a timeout is backpressure, not drift, so the
+    /// caller sheds it as a 503 rather than refusing the tenant its schema.
+    #[must_use]
+    pub const fn is_pool_saturation(&self) -> bool {
+        match self {
+            SchemaContractError::Database(error) => is_pool_saturated(error),
+            SchemaContractError::NoMigrations
+            | SchemaContractError::SchemaVersionValue(_)
+            | SchemaContractError::MigrationsDigestValue(_)
+            | SchemaContractError::ExtensionVersionValue(_)
+            | SchemaContractError::Unstamped { .. }
+            | SchemaContractError::SchemaVersionMismatch { .. }
+            | SchemaContractError::MigrationsDigestMismatch { .. }
+            | SchemaContractError::PostgresBelowMinimum { .. }
+            | SchemaContractError::PostGisBelowMinimum { .. }
+            | SchemaContractError::TimescaleDbBelowMinimum { .. } => false,
+        }
+    }
 }

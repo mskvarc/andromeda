@@ -161,8 +161,13 @@ async fn a_failed_durable_delivery_is_retried_after_eviction() {
     evict_by_pressure(&client, &broker).await;
 
     // The durable retry must arrive after eviction, without touching the tenant.
+    // A failed delivery holds its claim lease for the full term (30s by default,
+    // preventing a second worker double-delivering), so the retry is gated by the
+    // lease, not the shorter backoff -- the dormant wake fires only once the lease
+    // lapses. The window therefore allows for the lease term plus the wake chain
+    // (probe cadence, admission, the drain's first pass), not merely the backoff.
     let mut attempts = 0;
-    let deadline = Instant::now() + Duration::from_secs(40);
+    let deadline = Instant::now() + Duration::from_secs(75);
     while Instant::now() < deadline {
         if server.next_request(Duration::from_secs(6)).await.is_ok() {
             attempts += 1;
@@ -246,7 +251,13 @@ async fn an_entity_expires_on_a_dormant_tenant() {
 
 /// Count entities in a tenant database over a direct connection.
 async fn count_entities(database: &str) -> i64 {
-    let url = endpoints::database_url().replace("/postgres", &format!("/{database}"));
+    // Swap only the trailing database segment; a blind replace of "/postgres"
+    // would also rewrite the "//postgres" user-info and connect as the wrong role.
+    let base = endpoints::database_url();
+    let url = match base.rsplit_once('/') {
+        Some((prefix, _)) => format!("{prefix}/{database}"),
+        None => base,
+    };
     let tenant_pool = match PgPool::connect(&url).await {
         Ok(pool) => pool,
         Err(error) => {

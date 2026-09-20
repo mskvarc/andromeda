@@ -21,7 +21,7 @@ use std::{
     sync::{
         Arc,
         Mutex as StdMutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant, SystemTime},
 };
@@ -30,33 +30,57 @@ use tokio::{
     time::{sleep, timeout},
 };
 
-/// A probe that answers every tenant with one fixed pending-work reading.
+/// What a [`FakeProbe`] answers with for every database.
+enum FakeProbeOutcome {
+    /// A pending-work reading.
+    Work(PendingWork),
+    /// The tenant's database is gone (SQLSTATE 3D000 at the store).
+    DatabaseGone,
+}
+
+/// A probe that answers every tenant with one fixed outcome.
 struct FakeProbe {
-    /// The reading returned for every database.
-    work: PendingWork,
+    /// The outcome returned for every database.
+    outcome: FakeProbeOutcome,
 }
 
 impl FakeProbe {
     /// A probe reporting nothing due.
     fn none() -> FakeProbe {
-        FakeProbe { work: PendingWork::None }
+        FakeProbe {
+            outcome: FakeProbeOutcome::Work(PendingWork::None),
+        }
     }
 
     /// A probe reporting work due at `due`.
     fn due_at(due: SystemTime) -> FakeProbe {
-        FakeProbe { work: PendingWork::DueAt(due) }
+        FakeProbe {
+            outcome: FakeProbeOutcome::Work(PendingWork::DueAt(due)),
+        }
+    }
+
+    /// A probe whose tenant database no longer exists.
+    fn database_gone() -> FakeProbe {
+        FakeProbe {
+            outcome: FakeProbeOutcome::DatabaseGone,
+        }
     }
 }
 
 #[async_trait]
 impl PendingWorkProbe for FakeProbe {
-    async fn earliest_pending_work(&self, _database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
-        Ok(self.work)
+    async fn earliest_pending_work(&self, database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
+        match &self.outcome {
+            FakeProbeOutcome::Work(work) => Ok(*work),
+            FakeProbeOutcome::DatabaseGone => Err(PendingWorkError::DatabaseGone { database: database.clone() }), // clone: the error outlives this borrow
+        }
     }
 }
 
 /// A wake schedule that records its writes and hands back configured claims.
 struct FakeSchedule {
+    /// Every `record` call's tenant and next wake.
+    recorded: StdMutex<Vec<(String, Option<SystemTime>)>>,
     /// Every `settle` call's tenant and next wake.
     settled: StdMutex<Vec<(String, Option<SystemTime>)>>,
 }
@@ -65,6 +89,7 @@ impl FakeSchedule {
     /// A schedule that records writes and claims nothing.
     fn inert() -> FakeSchedule {
         FakeSchedule {
+            recorded: StdMutex::new(Vec::new()),
             settled: StdMutex::new(Vec::new()),
         }
     }
@@ -73,11 +98,19 @@ impl FakeSchedule {
     fn settle_count(&self) -> usize {
         self.settled.lock().map(|settled| settled.len()).unwrap_or_default()
     }
+
+    /// Every `record` call's tenant name and recorded wake instant.
+    fn recorded(&self) -> Vec<(String, Option<SystemTime>)> {
+        self.recorded.lock().map(|recorded| recorded.clone()).unwrap_or_default()
+    }
 }
 
 #[async_trait]
 impl TenantWakeSchedule for FakeSchedule {
-    async fn record(&self, _tenant: &TenantName, _probed_at: SystemTime, _wake_at: Option<SystemTime>) -> Result<(), WakeScheduleError> {
+    async fn record(&self, tenant: &TenantName, _probed_at: SystemTime, wake_at: Option<SystemTime>) -> Result<(), WakeScheduleError> {
+        if let Ok(mut recorded) = self.recorded.lock() {
+            recorded.push((tenant.as_str().to_string(), wake_at));
+        }
         Ok(())
     }
 
@@ -1119,5 +1152,211 @@ async fn a_woken_runtime_is_the_first_lru_victim() {
     assert!(
         woken_used < fresh_used,
         "the woken runtime sorts older than a request-touched one, so it is the first victim"
+    );
+}
+
+#[tokio::test]
+async fn a_claimed_tenant_with_due_work_is_loaded() {
+    // The positive counterpart to `a_claimed_tenant_with_nothing_due_is_not_loaded`:
+    // a non-cached tenant whose probe reports work due now is loaded by the wake.
+    let (manager, factory, _shutdowns) = wake_manager(&["acme"], 64, Arc::new(FakeProbe::due_at(SystemTime::now())), Arc::new(FakeSchedule::inert()));
+
+    let outcome = manager.wake(&named("acme")).await;
+    pretty_assertions::assert_eq!(outcome, WakeOutcome::Loaded);
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 1, "a claimed tenant with due work is loaded");
+    assert!(manager.runtimes.contains_key(&TenantRef::Named(named("acme"))), "the woken tenant is cached");
+}
+
+#[tokio::test]
+async fn a_database_gone_probe_clears_the_schedule_rather_than_retrying() {
+    // A tenant whose database no longer exists (deprovisioned under a stale
+    // schedule row) must have its schedule cleared, not re-armed with a retry --
+    // otherwise it churns the wake pass every dormancy interval and starves the
+    // tenants that really have work.
+    let schedule = Arc::new(FakeSchedule::inert());
+    let (manager, factory, _shutdowns) = wake_manager(&["acme"], 64, Arc::new(FakeProbe::database_gone()), Arc::clone(&schedule));
+
+    let outcome = manager.wake(&named("acme")).await;
+    pretty_assertions::assert_eq!(outcome, WakeOutcome::NothingDue);
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 0, "a gone tenant is not loaded");
+    let settled = schedule.settled.lock().expect("settled lock").clone();
+    pretty_assertions::assert_eq!(settled.len(), 1, "the gone tenant's schedule is settled once");
+    assert!(
+        settled.iter().all(|(_, wake_at)| wake_at.is_none()),
+        "a gone tenant's schedule is cleared, never re-armed with a retry instant, got {settled:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_excess_evicted_tenant_with_due_work_is_scheduled_for_wake() {
+    // Cache pressure evicts through the excess path, not the idle sweep, so an
+    // excess victim with due work must still be scheduled for a wake -- otherwise
+    // a dormant tenant evicted under pressure is only found by the slow
+    // reconciliation sweep. A victim with nothing due records a null wake and is
+    // never claimed, so an obligation-free workload adds no wake load.
+    let due = SystemTime::now() + Duration::from_secs(5);
+    let schedule = Arc::new(FakeSchedule::inert());
+    let (manager, _factory, _shutdowns) = wake_manager(&["keep", "victim"], 1, Arc::new(FakeProbe::due_at(due)), Arc::clone(&schedule));
+    // Resolve the victim first so it is the older, unleased entry; the second cold
+    // insert trims it back to the cache bound of one.
+    drop(
+        manager
+            .resolve_state(&TenantRef::Named(named("victim")), TenantCreationPolicy::MustExist)
+            .await
+            .expect("resolves"),
+    );
+    sleep(Duration::from_millis(5)).await;
+    drop(
+        manager
+            .resolve_state(&TenantRef::Named(named("keep")), TenantCreationPolicy::MustExist)
+            .await
+            .expect("resolves"),
+    );
+    manager.trim_excess_runtimes(None).await;
+    manager.await_evictions().await;
+    let recorded = schedule.recorded();
+    assert!(
+        recorded.iter().any(|(tenant, wake_at)| tenant == "victim" && wake_at.is_some()),
+        "an excess victim with due work is scheduled for a wake, recorded {recorded:?}"
+    );
+
+    let nothing = Arc::new(FakeSchedule::inert());
+    let (manager, _factory, _shutdowns) = wake_manager(&["keep2", "victim2"], 1, Arc::new(FakeProbe::none()), Arc::clone(&nothing));
+    drop(
+        manager
+            .resolve_state(&TenantRef::Named(named("victim2")), TenantCreationPolicy::MustExist)
+            .await
+            .expect("resolves"),
+    );
+    sleep(Duration::from_millis(5)).await;
+    drop(
+        manager
+            .resolve_state(&TenantRef::Named(named("keep2")), TenantCreationPolicy::MustExist)
+            .await
+            .expect("resolves"),
+    );
+    manager.trim_excess_runtimes(None).await;
+    manager.await_evictions().await;
+    let recorded = nothing.recorded();
+    assert!(
+        recorded.iter().any(|(tenant, wake_at)| tenant == "victim2" && wake_at.is_none()),
+        "a nothing-due excess victim records a null wake and is not claimed, recorded {recorded:?}"
+    );
+}
+
+/// A runtime that marks a shared flag committed as it shuts down, modelling an
+/// in-flight delivery that becomes visible in the database only once the runtime
+/// has drained.
+struct CommitOnShutdownRuntime {
+    /// Set true once this runtime has finished shutting down.
+    committed: Arc<AtomicBool>,
+    /// Incremented once the teardown completes.
+    shutdowns: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl TenantRuntime for CommitOnShutdownRuntime {
+    async fn shutdown(self) {
+        // A brief drain, so a probe that ran before this shutdown would observe
+        // the obligation as not yet committed.
+        sleep(Duration::from_millis(20)).await;
+        self.committed.store(true, Ordering::SeqCst);
+        self.shutdowns.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// A factory building [`CommitOnShutdownRuntime`]s that share one commit flag.
+struct CommitOnShutdownFactory {
+    /// The flag every runtime it builds marks committed on shutdown.
+    committed: Arc<AtomicBool>,
+    /// The shared shutdown counter every runtime it builds increments.
+    shutdowns: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl TenantStateFactory for CommitOnShutdownFactory {
+    type State = String;
+    type Runtime = CommitOnShutdownRuntime;
+
+    async fn build(&self, _tenant: &TenantRef, database: &TenantDatabaseName) -> Result<(Arc<String>, CommitOnShutdownRuntime), TenancyError> {
+        Ok((
+            Arc::new(database.as_str().to_owned()),
+            CommitOnShutdownRuntime {
+                committed: Arc::clone(&self.committed),
+                shutdowns: Arc::clone(&self.shutdowns),
+            },
+        ))
+    }
+}
+
+/// A probe that reports work due only once a shared flag is committed, modelling
+/// an obligation that lands in the database as the runtime drains: a probe run
+/// before the shutdown sees nothing, one run after sees the due work.
+struct CommitGatedProbe {
+    /// The flag a [`CommitOnShutdownRuntime`] sets as it shuts down.
+    committed: Arc<AtomicBool>,
+    /// The instant the work is due once it is visible.
+    due: SystemTime,
+}
+
+#[async_trait]
+impl PendingWorkProbe for CommitGatedProbe {
+    async fn earliest_pending_work(&self, _database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
+        if self.committed.load(Ordering::SeqCst) {
+            Ok(PendingWork::DueAt(self.due))
+        } else {
+            Ok(PendingWork::None)
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_eviction_probe_runs_after_shutdown_so_a_committed_obligation_is_seen() {
+    // An excess-evicted tenant's obligation may commit only as its runtime drains
+    // (a durable delivery mid-flight). A wake probe that ran before the shutdown
+    // would see nothing and record a null wake, stranding the tenant until the
+    // slow reconciliation sweep. Modelled with a probe that reports due work only
+    // once the runtime's shutdown has set the shared commit flag: the recorded
+    // wake must be due, never null, proving the probe read after the shutdown.
+    let committed = Arc::new(AtomicBool::new(false));
+    let shutdowns = Arc::new(AtomicUsize::new(0));
+    let due = SystemTime::now();
+    let registry = Arc::new(FakeRegistry::new(&["keep", "victim"]));
+    let factory = Arc::new(CommitOnShutdownFactory {
+        committed: Arc::clone(&committed),
+        shutdowns: Arc::clone(&shutdowns),
+    });
+    let schedule = Arc::new(FakeSchedule::inert());
+    let probe = Arc::new(CommitGatedProbe {
+        committed: Arc::clone(&committed),
+        due,
+    });
+    let schedule_concrete = Arc::clone(&schedule);
+    let schedule_handle: Arc<dyn TenantWakeSchedule> = schedule_concrete;
+    let manager = TenantRuntimeManager::new(config(true, 1), Arc::clone(&registry), factory, probe, schedule_handle);
+
+    // Resolve the victim first so it is the older, unleased entry; the cold insert
+    // of `keep` trims it back to the cache bound of one.
+    drop(
+        manager
+            .resolve_state(&TenantRef::Named(named("victim")), TenantCreationPolicy::MustExist)
+            .await
+            .expect("resolves"),
+    );
+    sleep(Duration::from_millis(5)).await;
+    drop(
+        manager
+            .resolve_state(&TenantRef::Named(named("keep")), TenantCreationPolicy::MustExist)
+            .await
+            .expect("resolves"),
+    );
+    manager.trim_excess_runtimes(None).await;
+    manager.await_evictions().await;
+
+    assert!(shutdowns.load(Ordering::SeqCst) >= 1, "the excess victim is shut down");
+    let recorded = schedule.recorded();
+    assert!(
+        recorded.iter().any(|(tenant, wake_at)| tenant == "victim" && wake_at.is_some()),
+        "the wake probe runs after shutdown, so a just-committed obligation is scheduled with a due wake, recorded {recorded:?}"
     );
 }

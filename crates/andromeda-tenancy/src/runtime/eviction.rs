@@ -3,10 +3,12 @@
 
 use crate::{
     database::TenantDatabase,
-    pending_work::PendingWork,
+    database_name::TenantDatabaseName,
+    pending_work::{PendingWork, PendingWorkError},
     runtime::TenantRuntimeManager,
     state_factory::{TenantRuntime, TenantStateFactory},
     tenant_ref::TenantRef,
+    waker::WakerPolicy,
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_telemetry::tenancy::{EvictionReason, record_eviction};
@@ -16,7 +18,17 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 use tokio::{sync::Semaphore, task::JoinSet, time::interval as tokio_interval};
-use tracing::info;
+use tracing::{debug, info};
+
+/// When a tenant should next be woken given what its probe found: the policy's
+/// due instant when it read cleanly, or a retry instant when the probe failed
+/// (a failed probe is retried, never left unscheduled).
+fn next_wake_at(waker: &WakerPolicy, work: &Result<PendingWork, PendingWorkError>, now: SystemTime) -> Option<SystemTime> {
+    match work {
+        Ok(work) => waker.next_wake(*work, now),
+        Err(_) => Some(waker.retry_wake(now)),
+    }
+}
 
 impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// Remove and orderly shut down every cached tenant runtime.
@@ -42,6 +54,10 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         let mut ticker = tokio_interval(interval);
         loop {
             ticker.tick().await;
+
+            // Reap teardowns and wake probes the request path detached, so the
+            // eviction set does not accumulate finished tasks between shutdowns.
+            self.reap_evictions().await;
 
             let orphaned = self.evict_orphan_runtimes().await;
             if orphaned > 0 {
@@ -94,10 +110,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 record_eviction(EvictionReason::Dormant);
                 self.detach_shutdown(cached.runtime).await;
                 if let TenantRef::Named(name) = &tenant {
-                    let wake_at = match probe {
-                        Ok(work) => self.waker.next_wake(work, now),
-                        Err(_) => Some(self.waker.retry_wake(now)),
-                    };
+                    let wake_at = next_wake_at(&self.waker, &probe, now);
                     self.record_schedule(name, now, wake_at).await;
                 }
                 evicted += 1;
@@ -216,7 +229,21 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 .remove_if(&tenant, |_, cached| cached.last_used_instant() == chosen_at && !cached.is_leased());
             if let Some((_, cached)) = removed {
                 record_eviction(reason);
-                teardowns.spawn(Self::bounded_shutdown(Arc::clone(&self.eviction_permits), cached.runtime));
+                // An excess eviction leaves a still-registered tenant dormant, so
+                // it is shut down and its due work scheduled on the eviction set --
+                // the probe reads the database only after shutdown has committed
+                // any in-flight delivery. An orphan (or the unnamed default) is
+                // deregistered and its schedule row cascades away, so it is torn
+                // down on this call's awaited set with no wake scheduled.
+                if matches!(reason, EvictionReason::Excess)
+                    && let TenantRef::Named(name) = &tenant
+                {
+                    let name = name.clone(); // clone: the detached task outlives this loop
+                    let database = cached.database().clone(); // clone: the detached task outlives this loop
+                    self.detach_shutdown_then_schedule(cached.runtime, name, database).await;
+                } else {
+                    teardowns.spawn(Self::bounded_shutdown(Arc::clone(&self.eviction_permits), cached.runtime));
+                }
                 evicted += 1;
             }
         }
@@ -244,7 +271,17 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 .remove_if(&tenant, |_, cached| cached.last_used_instant() == chosen_at && !cached.is_leased());
             if let Some((_, cached)) = removed {
                 record_eviction(EvictionReason::Excess);
-                self.detach_shutdown(cached.runtime).await;
+                // The evicted tenant is still registered, so it is shut down and
+                // its due work scheduled -- detached so the cold request waits on
+                // neither, and with the probe reading only after shutdown has
+                // committed any in-flight delivery.
+                if let TenantRef::Named(name) = &tenant {
+                    let name = name.clone(); // clone: the detached task outlives this loop
+                    let database = cached.database().clone(); // clone: the detached task outlives this loop
+                    self.detach_shutdown_then_schedule(cached.runtime, name, database).await;
+                } else {
+                    self.detach_shutdown(cached.runtime).await;
+                }
             }
         }
         self.record_cache_size();
@@ -259,6 +296,43 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             .lock()
             .await
             .spawn(Self::bounded_shutdown(Arc::clone(&self.eviction_permits), runtime));
+    }
+
+    /// Shut a runtime down, then probe its database for when its due work should
+    /// wake it and record that, all on one detached task on the eviction set.
+    ///
+    /// The shutdown precedes the probe deliberately. A delivery the runtime was
+    /// mid-flight commits and releases its pool during shutdown, so a probe that
+    /// ran first could snapshot the database before the obligation landed and
+    /// record a null wake -- stranding the evicted tenant until the slow
+    /// reconciliation sweep found it. Probing after shutdown reads the settled
+    /// state instead. Bounded by the same eviction permit as a plain teardown, so
+    /// a thrashing cache cannot flood the pooler with probes; a tenant whose probe
+    /// then finds nothing due records a null wake and is not claimed, so an
+    /// obligation-free workload adds no wake load.
+    async fn detach_shutdown_then_schedule(&self, runtime: F::Runtime, tenant: TenantName, database: TenantDatabaseName) {
+        let probe = Arc::clone(&self.probe);
+        let schedule = Arc::clone(&self.schedule);
+        let permits = Arc::clone(&self.eviction_permits);
+        let waker = self.waker;
+        self.eviction_set.lock().await.spawn(async move {
+            let permit = permits.acquire_owned().await.ok();
+            runtime.shutdown().await;
+            let now = SystemTime::now();
+            let wake_at = next_wake_at(&waker, &probe.earliest_pending_work(&database).await, now);
+            if let Err(error) = schedule.record(&tenant, now, wake_at).await {
+                debug!(%error, %tenant, "recording an excess-evicted tenant's wake failed");
+            }
+            drop(permit);
+        });
+    }
+
+    /// Reap finished teardowns and wake probes from the eviction set without
+    /// blocking, so detached request-path work does not accumulate between the
+    /// full drains [`shutdown_all`](Self::shutdown_all) performs.
+    async fn reap_evictions(&self) {
+        let mut set = self.eviction_set.lock().await;
+        while set.try_join_next().is_some() {}
     }
 
     /// Shut one runtime down while holding an eviction permit.

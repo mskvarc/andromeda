@@ -35,6 +35,7 @@ use crate::{
     },
     read_rendering::{EntityRepresentation, apply_representation_names, render_entity, render_joined_entities},
 };
+use andromeda_entity::error::EntityError;
 use andromeda_entity_map::recording::PageMatches;
 use andromeda_federation::request::{EntityMapInUse, TriggeringRequest};
 use andromeda_http_extraction::context_target;
@@ -110,6 +111,22 @@ fn retrieval_response(
     }
 }
 
+/// The local entity to fold into a federated retrieval, or `None` when the local
+/// store genuinely holds no such entity so the matching registrations answer.
+///
+/// A local failure that is not a genuine not-found -- a saturated pool
+/// ([`EntityError::StoreSaturated`]), a persistence fault -- is not evidence the
+/// entity is held nowhere, so it propagates unchanged to be classified on its
+/// own terms (a saturated read answers 503 with `Retry-After`) rather than
+/// masked as the `ResourceNotFound` an empty forwarding result would produce.
+fn local_entity_for_forwarding(result: Result<Entity, EntityError>) -> Result<Option<Entity>, EntityError> {
+    match result {
+        Ok(entity) => Ok(Some(entity)),
+        Err(EntityError::NotFound { .. }) => Ok(None),
+        Err(other) => Err(other),
+    }
+}
+
 pub(crate) async fn get(
     context_target::ExistingTargetedTenantState {
         services: state,
@@ -168,7 +185,7 @@ pub(crate) async fn get(
     let (mut entity, warnings, entity_map_uri) = if is_local {
         (local_result.with_entity_instance(&uri)?, Vec::new(), None)
     } else {
-        let local_entity = local_result.ok();
+        let local_entity = local_entity_for_forwarding(local_result).with_entity_instance(&uri)?;
         let held_locally = local_entity.is_some();
         let forwarding = RetrieveForwarding {
             forwarding: &state.forwarding,
@@ -237,4 +254,33 @@ pub(crate) async fn get(
         GeometrySelection::new(params.geometry_property.as_ref(), params.dataset_id.as_deref().unwrap_or_default()),
     );
     retrieval_response(payload, rendering, warnings, entity_map_uri, &uri)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{entity::retrieve::local_entity_for_forwarding, entity_error::classify_entity_error};
+    use andromeda_entity::error::EntityError;
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_problem_details::problem_detail::ProblemClassification;
+
+    #[test]
+    fn a_saturated_local_read_is_a_503_not_a_404() {
+        // A saturated local read propagates as StoreSaturated rather than being
+        // swallowed into the not-found a federated retrieval would answer 404.
+        let saturated = local_entity_for_forwarding(Err(EntityError::StoreSaturated));
+        assert!(
+            matches!(saturated, Err(EntityError::StoreSaturated)),
+            "a saturated local read must propagate, not be masked as not-found"
+        );
+        assert_eq!(
+            classify_entity_error(&EntityError::StoreSaturated).classification(),
+            ProblemClassification::ServiceUnavailable,
+            "a saturated read is a 503, never a 404"
+        );
+
+        // A genuine not-found yields no local entity, so the registrations answer.
+        let identifier = "urn:ngsi-ld:Entity:absent".parse::<Uri>().expect("valid test URI");
+        let missing = local_entity_for_forwarding(Err(EntityError::NotFound { identifier }));
+        assert!(matches!(missing, Ok(None)), "a genuine not-found forwards to the registrations");
+    }
 }

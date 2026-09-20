@@ -54,6 +54,17 @@ pub enum PendingWorkError {
         /// What the store reported.
         detail: String,
     },
+    /// The tenant's database no longer exists.
+    ///
+    /// The tenant was deprovisioned (or its database dropped out from under the
+    /// broker) while a stale wake-schedule row survived. This is permanent, not
+    /// backpressure: the caller clears the schedule rather than re-arming a
+    /// retry, so a gone tenant does not churn the wake pass forever.
+    #[error("the pending-work probe for {database} found no such database")]
+    DatabaseGone {
+        /// The database that no longer exists.
+        database: TenantDatabaseName,
+    },
 }
 
 /// Reads a tenant's own database for the earliest instant it has work due,
