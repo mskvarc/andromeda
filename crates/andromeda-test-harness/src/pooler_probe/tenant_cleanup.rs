@@ -1,10 +1,11 @@
-//! Cleaning up between tier runs: evicting cached runtimes and dropping the
-//! tenant databases they refer to.
+//! Cleaning up between tier runs: suspending tenants to close their pools, then
+//! dropping the tenant databases they refer to.
 //!
-//! A tenant database cannot be dropped while a broker holds its pool open, so
-//! cleanup first asks every broker to evict the runtimes whose registry row is
-//! gone, then force-drops the databases. Every step is best-effort: a run's
-//! setup calls it to start from a clean slate and its teardown to leave one.
+//! A tenant database cannot be dropped gracefully while a broker holds its pool
+//! open, so cleanup first suspends every tenant -- which synchronously evicts its
+//! runtime and closes its pool -- then force-drops the databases. Every step is
+//! best-effort: a run's setup calls it to start from a clean slate and its
+//! teardown to leave one, and the force drop closes any backend a suspend missed.
 
 use reqwest::Client;
 use sqlx::PgPool;
@@ -12,16 +13,42 @@ use sqlx::PgPool;
 /// The default per-tenant database name prefix the broker provisions under.
 pub const DEFAULT_TENANT_DB_PREFIX: &str = "andromeda_tenant";
 
-/// Ask one broker to evict every runtime whose registry row was removed, so it
-/// closes those tenants' pools. Best-effort: the outcome is ignored.
-pub async fn evict_orphans(client: &Client, broker_base: &str) {
-    let _ = client.post(format!("{broker_base}tenants/evictOrphans")).send().await;
+/// Suspend every named tenant on one broker, closing their pools cleanly while
+/// their databases still exist.
+///
+/// Best-effort throughout: an unreachable broker, a tenant-management extension
+/// that is off (the listing 404s) and a malformed listing are all ignored, since
+/// [`drop_tenant_databases`] force-closes any backend a suspend did not. The
+/// suspend is the deterministic pool-close that replaced the retired orphan
+/// eviction sweep.
+pub async fn suspend_tenants(client: &Client, broker_base: &str) {
+    let Ok(response) = client.get(format!("{broker_base}tenants")).send().await else {
+        return;
+    };
+    let Ok(body) = response.json::<serde_json::Value>().await else {
+        return;
+    };
+    let names: Vec<String> = body
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|tenant| tenant.get("tenantName").and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    for name in names {
+        let _ = client
+            .patch(format!("{broker_base}tenants/{name}"))
+            .header("Content-Type", "application/json")
+            .body("{\"isActive\":false}")
+            .send()
+            .await;
+    }
 }
 
-/// Ask every broker to evict its orphaned runtimes.
-pub async fn evict_orphans_on(client: &Client, broker_bases: &[&str]) {
+/// Suspend every named tenant on every broker.
+pub async fn suspend_tenants_on(client: &Client, broker_bases: &[&str]) {
     for broker_base in broker_bases {
-        evict_orphans(client, broker_base).await;
+        suspend_tenants(client, broker_base).await;
     }
 }
 
@@ -31,8 +58,8 @@ pub async fn evict_orphans_on(client: &Client, broker_bases: &[&str]) {
 ///
 /// Dropping a tenant database out from under a live broker (as the tests do) does
 /// not touch the registry, so the broker keeps a dead runtime whose pool still
-/// counts against the pooler's backend budget. Deleting the registry row first is
-/// what lets [`evict_orphans_on`] close that pool. The delete cascades to the
+/// counts against the pooler's backend budget. [`suspend_tenants_on`] closes those
+/// pools before this deprovision removes the rows. The delete cascades to the
 /// wake-schedule and maintenance rows that reference the tenant. The unnamed
 /// default is never removed.
 ///
@@ -85,7 +112,10 @@ pub async fn drop_tenant_databases(pool: &PgPool, prefix: &str) -> Result<(), sq
 /// Returns the [`sqlx::Error`] from the registry deprovision or the database drop
 /// step.
 pub async fn reset(client: &Client, broker_bases: &[&str], pool: &PgPool) -> Result<(), sqlx::Error> {
+    // Suspend first, while the registry rows still exist: a suspend needs the row
+    // to flip, and it closes the pool cleanly before the row is deprovisioned and
+    // the database force-dropped.
+    suspend_tenants_on(client, broker_bases).await;
     deprovision_registry(pool, DEFAULT_TENANT_DB_PREFIX).await?;
-    evict_orphans_on(client, broker_bases).await;
     drop_tenant_databases(pool, DEFAULT_TENANT_DB_PREFIX).await
 }

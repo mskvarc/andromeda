@@ -87,6 +87,16 @@ pub struct ExtensionsConfig {
     /// and `groupedValues` are rejected with `InvalidRequest`.
     #[toml_comment(inline)]
     pub temporal_aggregation_grouping: HttpFeatureMode,
+    /// Tenant management on `/tenants` (non-standard).
+    ///
+    /// ETSI GS CIM 009 v1.9.1 leaves tenant management implementation-specific
+    /// (clause 5.5.10). This routes the per-tenant introspection resource, the
+    /// paginated tenant collection and suspend/resume via `PATCH isActive`, and
+    /// advertises the surface at `/info/sourceIdentity`. When disabled, the
+    /// `/tenants/{tenantName}` and `PATCH` routes are absent and nothing is
+    /// advertised. No API operation ever drops a tenant's physical database.
+    #[toml_comment(inline)]
+    pub tenant_management: HttpFeatureMode,
     /// The upper bound on the temporal history instances one delete-by-query may
     /// remove before it is refused with `TooManyResults` (403).
     ///
@@ -108,6 +118,7 @@ impl Default for ExtensionsConfig {
             temporal_delete_by_query: HttpFeatureMode::Disabled,
             purge_dataset_scope: HttpFeatureMode::Disabled,
             temporal_aggregation_grouping: HttpFeatureMode::Disabled,
+            tenant_management: HttpFeatureMode::Disabled,
             temporal_delete_by_query_max_matches: DEFAULT_TEMPORAL_DELETE_MAX_MATCHES,
             temporal_aggregation_grouping_max_groups: DEFAULT_TEMPORAL_AGGREGATION_MAX_GROUPS,
         }
@@ -149,6 +160,7 @@ impl ExtensionsConfig {
         matches!(self.temporal_delete_by_query, HttpFeatureMode::Enabled)
             || matches!(self.purge_dataset_scope, HttpFeatureMode::Enabled)
             || matches!(self.temporal_aggregation_grouping, HttpFeatureMode::Enabled)
+            || matches!(self.tenant_management, HttpFeatureMode::Enabled)
     }
 }
 
@@ -197,6 +209,7 @@ mod tests {
             temporal_delete_by_query: HttpFeatureMode::Enabled,
             purge_dataset_scope: HttpFeatureMode::Enabled,
             temporal_aggregation_grouping: HttpFeatureMode::Enabled,
+            tenant_management: HttpFeatureMode::Enabled,
             temporal_delete_by_query_max_matches: 42,
             temporal_aggregation_grouping_max_groups: 7,
         };

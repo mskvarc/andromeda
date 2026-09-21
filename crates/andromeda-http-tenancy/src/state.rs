@@ -1,32 +1,37 @@
-//! Focused tenant-administration route state.
+//! Focused tenant-management route state.
 
-use andromeda_tenancy::administration::{OrphanTenantEvictor, TenantDirectory};
+use andromeda_tenancy::{administration::TenantAdministration, usage_probe::TenantUsageProbe};
 use std::sync::Arc;
 
-/// State exposing only tenant listing and orphan-runtime eviction.
+/// State exposing the tenant-administration view and the opt-in usage probe.
+///
+/// Two capabilities from two owners: the administration port (implemented by the
+/// runtime cache) answers the cheap-by-default reads and the suspend/resume
+/// write, while the usage probe (implemented by the store) is consulted only when
+/// a request asks for `?options=usage`.
 #[derive(Clone)]
 pub struct TenancyRouteState {
-    /// Registered-tenant query capability.
-    directory: Arc<dyn TenantDirectory>,
-    /// Orphan-runtime eviction capability.
-    evictor: Arc<dyn OrphanTenantEvictor>,
+    /// The tenant listing, introspection and lifecycle capability.
+    administration: Arc<dyn TenantAdministration>,
+    /// The opt-in operational-usage capability.
+    usage: Arc<dyn TenantUsageProbe>,
 }
 
 impl TenancyRouteState {
-    /// Construct focused tenant-administration state.
-    pub const fn new(directory: Arc<dyn TenantDirectory>, evictor: Arc<dyn OrphanTenantEvictor>) -> TenancyRouteState {
-        TenancyRouteState { directory, evictor }
+    /// Construct focused tenant-management state.
+    pub const fn new(administration: Arc<dyn TenantAdministration>, usage: Arc<dyn TenantUsageProbe>) -> TenancyRouteState {
+        TenancyRouteState { administration, usage }
     }
 
-    /// Borrow the registered-tenant query capability.
+    /// Borrow the tenant-administration capability.
     #[must_use]
-    pub fn directory(&self) -> &dyn TenantDirectory {
-        self.directory.as_ref()
+    pub fn administration(&self) -> &dyn TenantAdministration {
+        self.administration.as_ref()
     }
 
-    /// Borrow the orphan-runtime eviction capability.
+    /// Borrow the operational-usage capability.
     #[must_use]
-    pub fn evictor(&self) -> &dyn OrphanTenantEvictor {
-        self.evictor.as_ref()
+    pub fn usage(&self) -> &dyn TenantUsageProbe {
+        self.usage.as_ref()
     }
 }

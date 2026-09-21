@@ -223,6 +223,28 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         }
     }
 
+    /// Evict the named tenant's runtime at once, returning whether one was
+    /// released.
+    ///
+    /// The synchronous replacement for the retired orphan-eviction endpoint on
+    /// the suspend path: a suspend must close the tenant's pool deterministically
+    /// rather than wait for the next janitor tick. It funnels through the
+    /// lease-aware [`evict_all`](Self::evict_all), so a runtime a request still
+    /// holds is spared and drops only when its lease releases; the tenant's now
+    /// `Suspended` administrative state keeps admission from re-loading it in the
+    /// meantime. No wake is scheduled -- a suspended tenant must never be woken,
+    /// which the non-`Excess` reason guarantees.
+    pub(super) async fn evict_named(&self, tenant: &TenantRef) -> bool {
+        // Snapshot the last-used stamp under the shard guard, then drop it before
+        // awaiting; a request that touches the runtime after this snapshot bumps
+        // the stamp and the conditional removal spares it, so an in-flight request
+        // is never handed a torn-down runtime.
+        let Some(chosen_at) = self.runtimes.get(tenant).map(|cached| cached.last_used_instant()) else {
+            return false;
+        };
+        self.evict_all(vec![(tenant.clone(), chosen_at)], EvictionReason::Suspended).await > 0 // clone: the eviction list owns the key
+    }
+
     /// Tenants whose runtime has not been used within `ttl`, each with the
     /// last-used instant it was chosen at.
     pub(super) fn idle_runtimes(&self, ttl: Duration) -> Vec<(TenantRef, Instant)> {

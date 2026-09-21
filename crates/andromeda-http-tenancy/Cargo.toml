@@ -14,18 +14,19 @@ andromeda-http-headers.workspace = true
 andromeda-http-response.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
+andromeda-ngsi-ld-problem-details.workspace = true
+andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-request.workspace = true
 andromeda-tenancy.workspace = true
 axum = "0.8.9"
 headers = "0.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
-urn-rs = "0.9.2"
-uuid = { version = "1.26.1", features = ["v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 async-trait = "0.1.92"
+chrono = { version = "0.4.45", features = ["clock"] }
 pretty_assertions = "1.4.1"
 tokio = { version = "1.53.1", features = ["macros", "rt"] }
 tower = { version = "0.5.3", features = ["util"] }

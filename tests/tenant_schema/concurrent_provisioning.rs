@@ -67,10 +67,32 @@ async fn retrieve_under_tenant(client: &Client, tenant: &str, id: &str) -> Statu
         .map_or(StatusCode::SERVICE_UNAVAILABLE, |response| response.status())
 }
 
-/// Ask the broker to close its per-tenant pools so the tenant databases can be
-/// dropped, ignoring the outcome (a best-effort cleanup step).
-async fn evict_orphans(client: &Client) {
-    let _ = client.post(format!("{BASE_URL}/tenants/evictOrphans")).send().await;
+/// Suspend every named tenant so the broker closes its per-tenant pools before
+/// the tenant databases are dropped, ignoring the outcome (a best-effort cleanup
+/// step; the force drop closes any backend a suspend did not, or that a broker
+/// without the tenant-management extension left open).
+async fn suspend_tenants(client: &Client) {
+    let Ok(response) = client.get(format!("{BASE_URL}/tenants")).send().await else {
+        return;
+    };
+    let Ok(body) = response.json::<serde_json::Value>().await else {
+        return;
+    };
+    let names: Vec<String> = body
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|tenant| tenant.get("tenantName").and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    for name in names {
+        let _ = client
+            .patch(format!("{BASE_URL}/tenants/{name}"))
+            .header("Content-Type", "application/json")
+            .body("{\"isActive\":false}")
+            .send()
+            .await;
+    }
 }
 
 /// Drop every `andromeda_tenant_%` database, forcing off the permanent
@@ -98,7 +120,7 @@ async fn concurrent_first_touch_tenant_creation_never_500s() {
     let pool = connect_test_database().await.expect("connect to PostgreSQL directly");
 
     // Start from a clean slate in case a prior run leaked tenant databases.
-    evict_orphans(&client).await;
+    suspend_tenants(&client).await;
     drop_tenant_databases(&pool).await;
 
     let tenants: Vec<(String, String)> = (0..TENANT_COUNT)
@@ -131,7 +153,7 @@ async fn concurrent_first_touch_tenant_creation_never_500s() {
         assert_eq!(*status, StatusCode::OK, "tenant {tenant} must be independently retrievable after provisioning");
     }
 
-    evict_orphans(&client).await;
+    suspend_tenants(&client).await;
     drop_tenant_databases(&pool).await;
     pool.close().await;
 }

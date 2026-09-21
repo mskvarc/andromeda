@@ -38,7 +38,7 @@ pub mod snapshot_input;
 pub mod snapshot_patch;
 pub mod subscription;
 pub mod temporal;
-pub mod tenant_list;
+pub mod tenant;
 pub mod time_interval;
 
 #[cfg(test)]

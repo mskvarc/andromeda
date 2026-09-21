@@ -58,6 +58,8 @@ pub mod subscription_store;
 pub mod tenant_database;
 /// The `tenants` table, behind the tenancy crate's registry port.
 pub mod tenant_registry;
+/// Per-tenant operational usage, behind the tenancy crate's usage-probe port.
+pub mod tenant_usage;
 /// The `tenant_wake_schedule` table, behind the tenancy crate's wake-schedule port.
 pub mod tenant_wake_schedule;
 

@@ -26,7 +26,7 @@ use crate::{
     tenant_waker::{TenantWakerRegistrationError, register_tenant_waker},
 };
 use andromeda_delivery::mqtt::indicator::MqttHealthIndicator;
-use andromeda_extensions::startup_log::log_conformance_override;
+use andromeda_extensions::{enabled::EnabledExtensions, startup_log::log_conformance_override};
 use andromeda_health::aggregate::Health;
 use andromeda_http_api::{
     api::HttpApi,
@@ -46,7 +46,7 @@ use andromeda_http_stack::stack::{HttpStack, HttpStackBuildError};
 use andromeda_http_subscription::routes::SubscriptionRoutes;
 use andromeda_http_telemetry::{error::TelemetryHttpError, routes::TelemetryRoutes};
 use andromeda_http_temporal::routes::TemporalRoutes;
-use andromeda_http_tenancy::routes::TenancyRoutes;
+use andromeda_http_tenancy::routes::{TenancyRoutes, TenantManagement};
 use andromeda_postgresql_context_store::{
     error::ContextStoreError,
     forwarded_subscription_routes::PostgresForwardedSubscriptionRouter,
@@ -54,6 +54,7 @@ use andromeda_postgresql_context_store::{
     pending_work::PostgresPendingWorkProbe,
     tenant_database::DatabaseUrl,
     tenant_registry::PostgresTenantRegistry,
+    tenant_usage::PostgresTenantUsageProbe,
     tenant_wake_schedule::PostgresTenantWakeSchedule,
 };
 use andromeda_postgresql_pool::configure_pool_options;
@@ -61,13 +62,14 @@ use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
 use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_telemetry::{error::TelemetryError, recorder::TelemetryRecorder};
 use andromeda_tenancy::{
-    administration::{OrphanTenantEvictor, TenantDirectory},
+    administration::TenantAdministration,
     context_source_alias::ContextSourceAliases,
     creation_policy::TenantCreationPolicy,
     error::TenancyError,
     pending_work::PendingWorkProbe,
     runtime::TenantRuntimeManager,
     tenant_ref::TenantRef,
+    usage_probe::TenantUsageProbe,
     wake_schedule::TenantWakeSchedule,
 };
 use chrono::{DateTime, Utc};
@@ -191,6 +193,39 @@ fn install_telemetry(exposure: MetricsExposure) -> Result<Option<Arc<TelemetryRe
     }
 }
 
+/// The tenant-management routing switch the HTTP crate gates on.
+///
+/// Derived here rather than in the HTTP crate, which may not depend on the
+/// extension set (the HTTP stack depends on it, so the reverse would be a cycle).
+fn tenant_management_mode(enabled: EnabledExtensions) -> TenantManagement {
+    if enabled.tenant_management_enabled() {
+        TenantManagement::Enabled
+    } else {
+        TenantManagement::Disabled
+    }
+}
+
+/// The manager as the HTTP tenant-administration capability.
+///
+/// A focused coercion helper: the HTTP tenant routes and process shutdown share
+/// the one runtime manager, which implements the administration port.
+fn tenant_administration(tenants: &Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>) -> Arc<dyn TenantAdministration> {
+    tenants.clone() // clone: HTTP administration and shutdown share the one manager
+}
+
+/// The tenant-management usage probe.
+///
+/// Reads a tenant's own database over a transient request-path connection (the
+/// same shape as the wake probe) and reports the configured snapshot-count
+/// ceiling as `snapshotQuota`.
+fn tenant_usage_probe(request_url: DatabaseUrl, config: &RuntimeConfig) -> Arc<dyn TenantUsageProbe> {
+    Arc::new(PostgresTenantUsageProbe::new(
+        request_url,
+        config.database.acquire_timeout(),
+        config.snapshot.tenant_count_quota.map(|quota| u64::try_from(quota).unwrap_or(u64::MAX)),
+    ))
+}
+
 /// Construct tenant composition, focused route fragments and the complete HTTP API.
 async fn construct(
     config: Arc<RuntimeConfig>,
@@ -237,6 +272,7 @@ async fn construct(
     // over a transient request-path connection, and the schedule lives in the
     // platform database beside the registry.
     let pending_work_probe: Arc<dyn PendingWorkProbe> = Arc::new(PostgresPendingWorkProbe::new(request_url.clone(), config.database.acquire_timeout())); // clone: the factory retains the request base URL
+    let tenant_usage_probe = tenant_usage_probe(request_url.clone(), &config); // clone: the factory retains the request base URL
     let wake_schedule: Arc<dyn TenantWakeSchedule> = Arc::new(PostgresTenantWakeSchedule::new(registry.main_pool().clone())); // clone: PgPool is a shared handle
     let factory = Arc::new(BrokerTenantFactory::new(
         &config,
@@ -281,10 +317,10 @@ async fn construct(
     let subscription_routes = SubscriptionRoutes::new(Arc::new(BrokerSubscriptionStateResolver::new(Arc::clone(&tenants))));
     let entity_map_routes = EntityMapRoutes::new(Arc::new(BrokerEntityMapStateResolver::new(Arc::clone(&tenants))));
     let snapshot_routes = SnapshotRoutes::new(Arc::new(BrokerSnapshotStateResolver::new(Arc::clone(&tenants))));
-    let directory: Arc<dyn TenantDirectory> = tenants.clone(); // clone: HTTP administration and shutdown share the manager
-    let evictor: Arc<dyn OrphanTenantEvictor> = tenants.clone(); // clone: both focused capabilities share the manager
     let telemetry_routes = telemetry.map(TelemetryRoutes::new).transpose()?;
     let health = health.build();
+    let tenant_administration = tenant_administration(&tenants);
+    let tenant_management = tenant_management_mode(enabled_extensions);
     let routes = ApiRoutes::builder()
         .entity(entity_routes)
         .temporal(temporal_routes)
@@ -306,7 +342,7 @@ async fn construct(
             Arc::clone(&tenants),
             forwarded_subscription_router,
         ))))
-        .tenancy(TenancyRoutes::new(directory, evictor))
+        .tenancy(TenancyRoutes::new(tenant_administration, tenant_usage_probe, tenant_management))
         .health(HealthRoutes::new(health.clone())) // clone: the data plane and the management plane each own a health-route fragment over the same indicators
         .component_report(ComponentReportRoutes::new(component_reports))
         .build();

@@ -18,6 +18,7 @@ workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-telemetry.workspace = true
 async-trait = "0.1.92"
+chrono = { version = "0.4.45", features = ["clock"] }
 dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "display", "from", "into"] }
 serde = { version = "1.0.229", features = ["derive"] }

@@ -396,6 +396,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-http-stack",
+ "enumset",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -951,18 +952,19 @@ dependencies = [
  "andromeda-http-response",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-problem-details",
+ "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-request",
  "andromeda-tenancy",
  "async-trait",
  "axum",
+ "chrono",
  "headers",
  "pretty_assertions",
  "serde",
  "thiserror 2.0.20",
  "tokio",
  "tower",
- "urn-rs",
- "uuid",
 ]
 
 [[package]]
@@ -1825,6 +1827,7 @@ dependencies = [
  "andromeda-ngsi-ld-lexicon",
  "andromeda-telemetry",
  "async-trait",
+ "chrono",
  "dashmap",
  "derive_more",
  "pretty_assertions",

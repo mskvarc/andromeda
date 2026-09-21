@@ -56,8 +56,8 @@ struct MultitenancyEnvironment {
 
 impl MultitenancyEnvironment {
     async fn finish(mut self) {
+        suspend_all_tenants().await;
         clean_named_tenant_registry(&self.cleanup_pool).await;
-        evict_broker_orphans().await;
         drop_orphan_tenant_databases(&self.cleanup_pool).await;
         self.serialized.reset().await.expect("serialized test database final reset failed");
         self.cleanup_pool.close().await;
@@ -70,14 +70,14 @@ async fn reset_broker_state() -> MultitenancyEnvironment {
         .await
         .expect("serialized test database environment");
     let pool = connect_test_database().await.expect("connect to test database");
-    clean_named_tenant_registry(&pool).await;
-    // Delete order: registry row first so the broker considers runtimes
-    // orphans, then evictOrphans so it closes its own sqlx pools, then
+    // Order: suspend every tenant first, while its registry row still exists, so
+    // the broker closes its sqlx pools cleanly; then remove the rows; then
     // DROP DATABASE to kill the per-tenant TimescaleDB background-worker
     // processes that otherwise hold a `max_connections` slot each for the
     // lifetime of the database. TRUNCATE must run last on a server with
     // free slots.
-    evict_broker_orphans().await;
+    suspend_all_tenants().await;
+    clean_named_tenant_registry(&pool).await;
     drop_orphan_tenant_databases(&pool).await;
     environment.reset().await.expect("serialized test database reset failed");
     MultitenancyEnvironment {
@@ -86,22 +86,34 @@ async fn reset_broker_state() -> MultitenancyEnvironment {
     }
 }
 
-/// POST `/tenants/evictOrphans` and assert the broker accepted it.
+/// Suspend every named tenant so the broker closes its per-tenant pools before
+/// the registry rows are removed and the databases dropped.
 ///
-/// A silent failure here (network error, 404 because the broker predates
-/// commit `acb1dcd`, 5xx) would leave orphan tenant pools in place. Panic
-/// with the actual error so the failure mode stays visible.
-async fn evict_broker_orphans() {
-    let response = client()
-        .post(format!("{BASE_URL}/tenants/evictOrphans"))
-        .send()
-        .await
-        .expect("POST /tenants/evictOrphans failed - is the broker running and up to date?");
-    let status = response.status();
-    assert!(
-        status.is_success(),
-        "POST /tenants/evictOrphans returned {status} - broker likely predates the evictOrphans endpoint (commit acb1dcd)"
-    );
+/// Best-effort: a broker without the tenant-management extension lists nothing,
+/// and the subsequent force drop closes any backend a suspend did not, so a
+/// silent failure here does not strand the cleanup.
+async fn suspend_all_tenants() {
+    let Ok(response) = client().get(format!("{BASE_URL}/tenants")).send().await else {
+        return;
+    };
+    let Ok(body) = response.json::<Value>().await else {
+        return;
+    };
+    let names: Vec<String> = body
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|tenant| tenant.get("tenantName").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    for name in names {
+        let _ = client()
+            .patch(format!("{BASE_URL}/tenants/{name}"))
+            .header("Content-Type", "application/json")
+            .body("{\"isActive\":false}")
+            .send()
+            .await;
+    }
 }
 
 /// Drop every `andromeda_tenant_*` database (except the current one).
@@ -610,7 +622,7 @@ async fn multitenancy_subscription_does_not_receive_events_from_different_tenant
 
 #[serial_test::serial]
 #[tokio::test]
-async fn multitenancy_tenants_endpoint_returns_tenant_list_object_shape() {
+async fn multitenancy_tenants_endpoint_returns_a_tenant_array() {
     let http_client = client();
     let environment = reset_broker_state().await;
 
@@ -641,21 +653,27 @@ async fn multitenancy_tenants_endpoint_returns_tenant_list_object_shape() {
 
     let (status, body) = list_tenants(&http_client).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
-    pretty_assertions::assert_eq!(body["type"], "TenantList");
 
-    let id = body["id"].as_str().unwrap_or_default();
-    assert!(id.starts_with("urn:ngsi-ld:TenantList:"), "expected TenantList URN id, got: {id}");
-
-    let tenant_list = body["tenantList"].as_array().cloned().unwrap_or_default();
-    let tenant_values: Vec<&str> = tenant_list.iter().filter_map(|value| value.as_str()).collect();
+    // The collection is now an array of `Tenant` resources, not the retired
+    // `TenantList` wrapper object.
+    let tenants = body.as_array().cloned().unwrap_or_default();
+    let tenant_names: Vec<&str> = tenants.iter().filter_map(|tenant| tenant["tenantName"].as_str()).collect();
     assert!(
-        tenant_values.contains(&tenant_a.as_str()),
-        "tenantList must contain {tenant_a}, got: {tenant_values:?}"
+        tenant_names.contains(&tenant_a.as_str()),
+        "the tenant array must contain {tenant_a}, got: {tenant_names:?}"
     );
     assert!(
-        tenant_values.contains(&tenant_b.as_str()),
-        "tenantList must contain {tenant_b}, got: {tenant_values:?}"
+        tenant_names.contains(&tenant_b.as_str()),
+        "the tenant array must contain {tenant_b}, got: {tenant_names:?}"
     );
+
+    // Every element carries the fixed `Tenant` type and a `urn:ngsi-ld:Tenant:`
+    // identifier.
+    for tenant in &tenants {
+        pretty_assertions::assert_eq!(tenant["type"], "Tenant");
+        let id = tenant["id"].as_str().unwrap_or_default();
+        assert!(id.starts_with("urn:ngsi-ld:Tenant:"), "expected a Tenant URN id, got: {id}");
+    }
 
     environment.finish().await;
 }

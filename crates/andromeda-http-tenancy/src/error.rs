@@ -1,18 +1,20 @@
-//! Focused failures produced by tenant administration over HTTP.
+//! Focused failures produced by tenant management over HTTP.
 
 use andromeda_http_extraction::classification::classify_tenancy_error;
 use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
+use andromeda_ngsi_ld_lexicon::uri::UriParseError;
 use andromeda_tenancy::error::TenancyError;
 
 /// Failures local to the tenancy HTTP binding.
 #[derive(Debug, thiserror::Error)]
 pub enum TenancyHttpError {
-    /// Tenant registry or visibility policy rejected the operation.
+    /// The tenant registry, runtime cache or usage probe rejected the operation.
     #[error(transparent)]
     Tenancy(#[from] TenancyError),
-    /// The tenant-list response identifier could not be constructed.
-    #[error("tenant-list response identifier construction failed")]
-    Identifier(#[from] urn_rs::Error),
+    /// The tenant resource identifier could not be constructed from its name,
+    /// which a validated tenant name never triggers in practice.
+    #[error("the tenant resource identifier could not be constructed")]
+    TenantId(#[from] UriParseError),
 }
 
 /// Classify every tenancy-binding failure exhaustively.
@@ -20,6 +22,6 @@ pub enum TenancyHttpError {
 pub fn classify(error: &TenancyHttpError) -> ClassifiedReport {
     match error {
         TenancyHttpError::Tenancy(source) => classify_tenancy_error(source),
-        TenancyHttpError::Identifier(_) => ClassifiedReport::internal(error, InternalFailureSummary::IDENTIFIER_RESOLUTION),
+        TenancyHttpError::TenantId(_) => ClassifiedReport::internal(error, InternalFailureSummary::IDENTIFIER_RESOLUTION),
     }
 }

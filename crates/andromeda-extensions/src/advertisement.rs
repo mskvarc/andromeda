@@ -24,6 +24,8 @@ const TEMPORAL_DELETE_BY_QUERY_TOKEN: &str = "temporal-delete-by-query";
 const PURGE_DATASET_SCOPE_TOKEN: &str = "purge-dataset-scope";
 /// The advertised token for the grouped temporal aggregation extension.
 const TEMPORAL_AGGREGATION_GROUPING_TOKEN: &str = "temporal-aggregation-grouping";
+/// The advertised token for the tenant-management extension.
+const TENANT_MANAGEMENT_TOKEN: &str = "tenant-management";
 
 /// Merge the enabled extension tokens into the operator's `contextSourceExtras`.
 ///
@@ -65,6 +67,9 @@ fn enabled_tokens(enabled: EnabledExtensions) -> Vec<&'static str> {
     if enabled.temporal_aggregation_grouping_enabled() {
         tokens.push(TEMPORAL_AGGREGATION_GROUPING_TOKEN);
     }
+    if enabled.tenant_management_enabled() {
+        tokens.push(TENANT_MANAGEMENT_TOKEN);
+    }
     tokens
 }
 
@@ -76,6 +81,7 @@ mod tests {
             PURGE_DATASET_SCOPE_TOKEN,
             TEMPORAL_AGGREGATION_GROUPING_TOKEN,
             TEMPORAL_DELETE_BY_QUERY_TOKEN,
+            TENANT_MANAGEMENT_TOKEN,
             enabled_extension_extras,
         },
         config::ExtensionsConfig,
@@ -90,6 +96,7 @@ mod tests {
             temporal_delete_by_query: HttpFeatureMode::Enabled,
             purge_dataset_scope: HttpFeatureMode::Enabled,
             temporal_aggregation_grouping: HttpFeatureMode::Enabled,
+            tenant_management: HttpFeatureMode::Enabled,
             temporal_delete_by_query_max_matches: 100,
             temporal_aggregation_grouping_max_groups: 100,
         }
@@ -104,6 +111,22 @@ mod tests {
         assert!(rendered.contains(&TEMPORAL_DELETE_BY_QUERY_TOKEN), "{rendered:?}");
         assert!(rendered.contains(&PURGE_DATASET_SCOPE_TOKEN), "{rendered:?}");
         assert!(rendered.contains(&TEMPORAL_AGGREGATION_GROUPING_TOKEN), "{rendered:?}");
+        assert!(rendered.contains(&TENANT_MANAGEMENT_TOKEN), "{rendered:?}");
+    }
+
+    #[test]
+    fn tenant_management_is_advertised_only_when_it_is_enabled() {
+        let config = ExtensionsConfig {
+            tenant_management: HttpFeatureMode::Enabled,
+            ..ExtensionsConfig::default()
+        };
+        let extras = enabled_extension_extras(None, config.resolve()).expect("extras present");
+        let tokens = extras.get(EXTENSION_KEY).and_then(Value::as_array).expect("token array");
+        let rendered: Vec<&str> = tokens.iter().filter_map(Value::as_str).collect();
+        pretty_assertions::assert_eq!(rendered, vec![TENANT_MANAGEMENT_TOKEN]);
+
+        // With the extension off, nothing about it is advertised.
+        assert!(enabled_extension_extras(None, ExtensionsConfig::default().resolve()).is_none());
     }
 
     #[test]

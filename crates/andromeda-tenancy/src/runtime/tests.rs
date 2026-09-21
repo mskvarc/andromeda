@@ -11,12 +11,16 @@ use crate::{
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
     runtime::TenantRuntimeManager,
     state_factory::{TenantRuntime, TenantStateFactory},
+    status::TenantStatus,
+    tenant_keyset::TenantKeyset,
+    tenant_record::TenantRecord,
     tenant_ref::TenantRef,
     wake_schedule::{TenantWakeSchedule, WakeScheduleError},
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_telemetry::tenancy::{EvictionReason, WakeOutcome};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use std::{
     sync::{
         Arc,
@@ -164,8 +168,16 @@ fn bounded_config(max_cached: usize, max_concurrent_builds: usize, eviction_conc
 struct FakeRegistry {
     /// Tenants that are already registered.
     registered: StdMutex<Vec<String>>,
+    /// Registered tenants whose administrative state is suspended.
+    suspended: StdMutex<Vec<String>>,
     /// How many times `provision` was called.
     provisioned: AtomicUsize,
+}
+
+/// A fixed timestamp for a fake registry row, since these tests never assert on
+/// tenant timestamps.
+fn epoch() -> DateTime<Utc> {
+    DateTime::from_timestamp(0, 0).expect("the Unix epoch is representable")
 }
 
 impl FakeRegistry {
@@ -173,6 +185,7 @@ impl FakeRegistry {
     fn new(names: &[&str]) -> FakeRegistry {
         FakeRegistry {
             registered: StdMutex::new(names.iter().map(|name| (*name).to_string()).collect()),
+            suspended: StdMutex::new(Vec::new()),
             provisioned: AtomicUsize::new(0),
         }
     }
@@ -188,6 +201,34 @@ impl FakeRegistry {
             names.retain(|held| held != name);
         }
     }
+
+    /// Mark a registered tenant as administratively suspended.
+    fn suspend(&self, name: &str) {
+        if let Ok(mut names) = self.suspended.lock() {
+            names.push(name.to_string());
+        }
+    }
+
+    /// Whether a tenant is administratively suspended.
+    fn is_suspended(&self, name: &str) -> bool {
+        self.suspended.lock().is_ok_and(|names| names.iter().any(|held| held == name))
+    }
+
+    /// The registry row a registered tenant projects.
+    fn record_for(&self, name: &TenantName) -> TenantRecord {
+        let status = if self.is_suspended(name.as_str()) {
+            TenantStatus::Suspended
+        } else {
+            TenantStatus::Active
+        };
+        TenantRecord::new(
+            name.clone(), // clone: the record owns its name
+            status,
+            TenantDatabaseName::from(format!("db_{}", name.as_str())),
+            epoch(),
+            epoch(),
+        )
+    }
 }
 
 #[async_trait]
@@ -200,12 +241,36 @@ impl TenantDatabase for FakeRegistry {
         Ok(self.all().into_iter().filter_map(|name| TenantName::try_from(name).ok()).collect())
     }
 
-    async fn lookup(&self, name: &TenantName) -> Result<Option<TenantDatabaseName>, TenancyError> {
-        Ok(self
-            .all()
-            .iter()
-            .any(|held| held == name.as_str())
-            .then(|| TenantDatabaseName::from(format!("db_{}", name.as_str()))))
+    async fn tenant_record(&self, name: &TenantName) -> Result<Option<TenantRecord>, TenancyError> {
+        Ok(self.all().iter().any(|held| held == name.as_str()).then(|| self.record_for(name)))
+    }
+
+    async fn list_tenant_records(&self, keyset: &TenantKeyset, limit: i64) -> Result<(Vec<TenantRecord>, i64), TenancyError> {
+        let mut names = self.all();
+        names.sort();
+        let total = i64::try_from(names.len()).unwrap_or(i64::MAX);
+        let window = usize::try_from(limit).unwrap_or(0);
+        let selected: Vec<String> = match keyset {
+            TenantKeyset::Forward { after } => names
+                .into_iter()
+                .filter(|held| after.as_ref().is_none_or(|bound| held.as_str() > bound.as_str()))
+                .take(window)
+                .collect(),
+            TenantKeyset::Backward { before } => {
+                let below: Vec<String> = names.into_iter().filter(|held| held.as_str() < before.as_str()).collect();
+                let start = below.len().saturating_sub(window);
+                below.into_iter().skip(start).collect()
+            }
+            TenantKeyset::FromEnd => {
+                let start = names.len().saturating_sub(window);
+                names.into_iter().skip(start).collect()
+            }
+        };
+        let records = selected
+            .into_iter()
+            .filter_map(|name| TenantName::try_from(name).ok().map(|name| self.record_for(&name)))
+            .collect();
+        Ok((records, total))
     }
 
     async fn provision(&self, name: &TenantName) -> Result<TenantDatabaseName, TenancyError> {
@@ -575,6 +640,58 @@ async fn a_named_tenant_is_refused_when_multi_tenancy_is_disabled() {
 }
 
 #[tokio::test]
+async fn a_suspended_tenant_is_refused_on_admission_and_never_cold_loaded() {
+    // A data request bearing a suspended tenant's header is answered as if the
+    // tenant did not exist (clause 5.5.10): admission refuses it with the
+    // unknown-tenant error even under create-on-demand, and never provisions or
+    // caches a runtime for it.
+    let Harness { manager, registry, .. } = harness(&["acme"], true, 64);
+    registry.suspend("acme");
+    let tenant = TenantRef::Named(named("acme"));
+
+    let refused = manager.resolve_state(&tenant, TenantCreationPolicy::CreateOnDemand).await;
+    assert!(matches!(refused, Err(TenancyError::UnknownTenant { .. })));
+    pretty_assertions::assert_eq!(registry.provisioned.load(Ordering::Relaxed), 0, "a suspended tenant is never provisioned");
+    assert!(!manager.runtimes.contains_key(&tenant), "a suspended tenant is never cached");
+}
+
+#[tokio::test]
+async fn a_suspended_tenant_is_not_woken() {
+    // The waker skips a suspended tenant whose probe would otherwise report work
+    // due, and clears its schedule so it is not re-claimed until it is resumed.
+    let registry = Arc::new(FakeRegistry::new(&["acme"]));
+    registry.suspend("acme");
+    let shutdowns = Arc::new(AtomicUsize::new(0));
+    let factory = Arc::new(FakeFactory {
+        shutdowns: Arc::clone(&shutdowns),
+        built: AtomicUsize::new(0),
+    });
+    let schedule = Arc::new(FakeSchedule::inert());
+    let schedule_concrete = Arc::clone(&schedule);
+    let schedule_handle: Arc<dyn TenantWakeSchedule> = schedule_concrete;
+    let manager = TenantRuntimeManager::new(
+        config(true, 64),
+        Arc::clone(&registry),
+        Arc::clone(&factory),
+        Arc::new(FakeProbe::due_at(SystemTime::now())),
+        schedule_handle,
+    );
+
+    let outcome = manager.wake(&named("acme")).await;
+    pretty_assertions::assert_eq!(outcome, WakeOutcome::NothingDue);
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 0, "a suspended tenant is not built");
+    assert!(
+        !manager.runtimes.contains_key(&TenantRef::Named(named("acme"))),
+        "a suspended tenant is not cached"
+    );
+    let settled = schedule.settled.lock().expect("settled lock").clone();
+    assert!(
+        settled.iter().all(|(_, wake_at)| wake_at.is_none()),
+        "a suspended tenant's schedule is cleared, never re-armed, got {settled:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_tenant_removed_from_the_registry_has_its_runtime_released() {
     let Harness {
         manager, registry, shutdowns, ..
@@ -620,8 +737,20 @@ async fn a_registry_that_cannot_be_read_evicts_nothing_rather_than_everything() 
             })
         }
 
-        async fn lookup(&self, name: &TenantName) -> Result<Option<TenantDatabaseName>, TenancyError> {
-            Ok(Some(TenantDatabaseName::from(format!("db_{}", name.as_str()))))
+        async fn tenant_record(&self, name: &TenantName) -> Result<Option<TenantRecord>, TenancyError> {
+            Ok(Some(TenantRecord::new(
+                name.clone(), // clone: the record owns its name
+                TenantStatus::Active,
+                TenantDatabaseName::from(format!("db_{}", name.as_str())),
+                epoch(),
+                epoch(),
+            )))
+        }
+
+        async fn list_tenant_records(&self, _keyset: &TenantKeyset, _limit: i64) -> Result<(Vec<TenantRecord>, i64), TenancyError> {
+            Err(TenancyError::RegistryUnavailable {
+                detail: "connection refused".to_string(),
+            })
         }
 
         async fn provision(&self, name: &TenantName) -> Result<TenantDatabaseName, TenancyError> {

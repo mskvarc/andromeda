@@ -40,6 +40,9 @@ pub enum EvictionReason {
     Dormant,
     /// The tenant's registry row was removed, so its runtime is orphaned.
     Orphaned,
+    /// The tenant was administratively suspended, so its runtime is released at
+    /// once and never rescheduled for a wake while it stays suspended.
+    Suspended,
 }
 
 /// How a dormant-tenant wake attempt resolved.
@@ -117,6 +120,7 @@ mod tests {
             (EvictionReason::Excess, "excess"),
             (EvictionReason::Dormant, "dormant"),
             (EvictionReason::Orphaned, "orphaned"),
+            (EvictionReason::Suspended, "suspended"),
         ] {
             let rendered: &'static str = reason.into();
             assert_eq!(rendered, expected);

@@ -132,15 +132,24 @@ mod tests {
         routes::TemporalRoutes,
         state::{TemporalRouteServices, TemporalStateResolver},
     };
-    use andromeda_http_tenancy::routes::TenancyRoutes;
+    use andromeda_http_tenancy::routes::{TenancyRoutes, TenantManagement};
     use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, tenant::TenantName, uri::Uri};
     use andromeda_telemetry::recorder::TelemetryRecorder;
     use andromeda_tenancy::{
-        administration::{OrphanTenantEvictor, TenantDirectory},
+        administration::TenantAdministration,
         context_source_alias::ContextSourceAliases,
         creation_policy::TenantCreationPolicy,
+        database_name::TenantDatabaseName,
         error::TenancyError,
+        residency::TenantResidency,
+        status::TenantStatus,
+        tenant_keyset::TenantKeyset,
+        tenant_listing::TenantListing,
+        tenant_record::TenantRecord,
         tenant_ref::TenantRef,
+        tenant_usage::TenantUsage,
+        tenant_view::TenantView,
+        usage_probe::TenantUsageProbe,
     };
     use async_trait::async_trait;
     use axum::{
@@ -189,26 +198,52 @@ mod tests {
         }
     }
 
-    struct TenantAdministration;
+    fn fake_tenant_view(name: &TenantName) -> TenantView {
+        let record = TenantRecord::new(
+            name.clone(), // clone: the record owns its name
+            TenantStatus::Active,
+            TenantDatabaseName::from(format!("db_{}", name.as_str())),
+            Utc::now(),
+            Utc::now(),
+        );
+        TenantView::new(record, TenantResidency::NotResident)
+    }
+
+    struct FakeTenantAdministration;
 
     #[async_trait]
-    impl TenantDirectory for TenantAdministration {
-        async fn registered_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {
-            Ok(Vec::new())
+    impl TenantAdministration for FakeTenantAdministration {
+        async fn tenant(&self, name: &TenantName) -> Result<Option<TenantView>, TenancyError> {
+            Ok(Some(fake_tenant_view(name)))
+        }
+
+        async fn list_tenants(&self, _keyset: &TenantKeyset, _limit: i64) -> Result<TenantListing, TenancyError> {
+            Ok(TenantListing::new(Vec::new(), 0))
+        }
+
+        async fn set_admin_status(&self, name: &TenantName, _status: TenantStatus) -> Result<Option<TenantView>, TenancyError> {
+            Ok(Some(fake_tenant_view(name)))
         }
     }
 
+    struct FakeTenantUsage;
+
     #[async_trait]
-    impl OrphanTenantEvictor for TenantAdministration {
-        async fn evict_orphan_runtimes(&self) -> usize {
-            0
+    impl TenantUsageProbe for FakeTenantUsage {
+        async fn usage(&self, _database: &TenantDatabaseName) -> Result<TenantUsage, TenancyError> {
+            Ok(TenantUsage {
+                pool_connections: 0,
+                database_size: 0,
+                entity_count: 0,
+                snapshot_count: 0,
+                snapshot_quota: None,
+            })
         }
     }
 
     fn build_routes() -> Result<ApiRoutes, Box<dyn Error>> {
-        let administration = Arc::new(TenantAdministration);
-        let directory: Arc<dyn TenantDirectory> = administration.clone();
-        let evictor: Arc<dyn OrphanTenantEvictor> = administration;
+        let administration: Arc<dyn TenantAdministration> = Arc::new(FakeTenantAdministration);
+        let usage: Arc<dyn TenantUsageProbe> = Arc::new(FakeTenantUsage);
         Ok(ApiRoutes::builder()
             .entity(EntityRoutes::new(Arc::new(RejectEntity), EnabledExtensions::none()))
             .temporal(TemporalRoutes::new(Arc::new(RejectTemporal), EnabledExtensions::none()))
@@ -225,7 +260,7 @@ mod tests {
                 EnabledExtensions::none(),
             )))
             .notification_receiver(NotificationReceiverRoutes::new(Arc::new(RejectReceiver)))
-            .tenancy(TenancyRoutes::new(directory, evictor))
+            .tenancy(TenancyRoutes::new(administration, usage, TenantManagement::Enabled))
             .health(HealthRoutes::new(Health::builder().build()))
             .component_report(ComponentReportRoutes::new(vec![ComponentReport::PostgreSql {
                 version: ComponentVersion::from("16.2".to_owned()),
@@ -357,7 +392,8 @@ mod tests {
             (Method::POST, "/ngsi-ld/v1/snapshots/urn:ngsi-ld:Snapshot:1/clone"),
             (Method::GET, "/ngsi-ld/v1/info/sourceIdentity"),
             (Method::GET, "/ngsi-ld/v1/tenants"),
-            (Method::POST, "/ngsi-ld/v1/tenants/evictOrphans"),
+            (Method::GET, "/ngsi-ld/v1/tenants/acme"),
+            (Method::PATCH, "/ngsi-ld/v1/tenants/acme"),
             (Method::GET, "/ngsi-ld/v1/health"),
             (Method::GET, "/ngsi-ld/v1/ready"),
             (Method::GET, "/ngsi-ld/v1/live"),
@@ -367,6 +403,19 @@ mod tests {
             assert_ne!(response.status(), StatusCode::NOT_FOUND, "{method} {path} was not routed");
             assert_ne!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{method} {path} lost its method");
         }
+        Ok(())
+    }
+
+    /// The orphan-eviction endpoint was retired: the janitor sweeps orphaned
+    /// runtimes automatically, and suspend/resume replaced its only public use.
+    /// `POST /tenants/evictOrphans` now falls under the `/tenants/{tenantName}`
+    /// resource, which serves only `GET` and `PATCH`, so the `POST` is answered
+    /// `405` rather than reaching any handler.
+    #[tokio::test]
+    async fn the_retired_evict_orphans_route_is_absent() -> Result<(), Box<dyn Error>> {
+        let service = test_api()?.into_service();
+        let response = service.oneshot(request(Method::POST, "/ngsi-ld/v1/tenants/evictOrphans")?).await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
         Ok(())
     }
 

@@ -8,19 +8,25 @@ mod eviction;
 mod tests;
 
 use crate::{
-    administration::{OrphanTenantEvictor, TenantDirectory},
+    administration::TenantAdministration,
     config::TenancyConfig,
     creation_policy::TenantCreationPolicy,
     database::TenantDatabase,
     database_name::TenantDatabaseName,
     error::TenancyError,
+    lifecycle::TenantLifecycle,
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
+    residency::TenantResidency,
     runtime::{
         cached_runtime::CachedRuntime,
         lease::{LeasedState, RuntimeLease},
     },
     state_factory::{TenantRuntime, TenantStateFactory},
+    status::TenantStatus,
+    tenant_keyset::TenantKeyset,
+    tenant_listing::TenantListing,
     tenant_ref::TenantRef,
+    tenant_view::TenantView,
     wake_schedule::TenantWakeSchedule,
     waker::WakerPolicy,
 };
@@ -133,16 +139,6 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         Some(tokio::spawn(async move { manager.run_janitor().await }))
     }
 
-    /// Every named tenant currently in the registry.
-    ///
-    /// # Errors
-    ///
-    /// Returns whatever the registry reports, which for a store that cannot be
-    /// reached is [`TenancyError::RegistryUnavailable`].
-    pub async fn registered_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {
-        self.database.registered_tenants().await
-    }
-
     /// The state for one tenant, building its runtime if none is open, together
     /// with the lease that keeps it resident for the life of the caller's hold.
     ///
@@ -245,6 +241,19 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         set_runtimes_cached(self.runtimes.len());
     }
 
+    /// Whether a runtime for `tenant` is currently held open in the cache.
+    ///
+    /// The residency half of a tenant's computed
+    /// [`TenantState`](crate::tenant_state::TenantState): a cheap in-memory read
+    /// that never touches a tenant database.
+    fn residency(&self, tenant: &TenantRef) -> TenantResidency {
+        if self.runtimes.contains_key(tenant) {
+            TenantResidency::Resident
+        } else {
+            TenantResidency::NotResident
+        }
+    }
+
     /// Wake a dormant tenant to run background work its probe finds due,
     /// reporting how the attempt resolved.
     ///
@@ -273,13 +282,20 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             return WakeOutcome::AlreadyCached;
         }
 
-        let database = match self.database.lookup(tenant).await {
-            Ok(Some(database)) => database,
+        let record = match self.database.tenant_record(tenant).await {
+            Ok(Some(record)) => record,
             Ok(None) => return WakeOutcome::Unregistered,
             // A registry read failure is transient; leave the leased claim to
             // re-fire and report nothing loaded.
             Err(_) => return WakeOutcome::NothingDue,
         };
+        // A suspended tenant is never woken: clear its schedule so it is not
+        // re-claimed until it is resumed and next accessed.
+        if matches!(record.status, TenantStatus::Suspended) {
+            self.settle_schedule(tenant, now, None).await;
+            return WakeOutcome::NothingDue;
+        }
+        let database = record.database;
 
         match self.probe.earliest_pending_work(&database).await {
             Ok(PendingWork::DueAt(due)) if due <= now => self.load_woken(&tenant_ref, database, tenant).await,
@@ -371,8 +387,16 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     async fn resolve_state_cold(&self, tenant: &TenantRef, policy: TenantCreationPolicy) -> Result<LeasedState<F::State>, TenancyError> {
         let database = match tenant {
             TenantRef::UnnamedDefault => self.database.default_database(),
-            TenantRef::Named(name) => match self.database.lookup(name).await? {
-                Some(found) => found,
+            TenantRef::Named(name) => match self.database.tenant_record(name).await? {
+                // A suspended tenant is refused on the data path exactly as an
+                // absent one is (clause 5.5.10): it is never cold-loaded, so a
+                // request bearing its `NGSILD-Tenant` header sees a 404
+                // `NonexistentTenant`, and the suspension cannot be probed by
+                // whether a request succeeds.
+                Some(record) if matches!(record.status, TenantStatus::Suspended) => {
+                    return Err(TenancyError::UnknownTenant { name: name.clone() }); // clone: the error outlives this borrow
+                }
+                Some(record) => record.database,
                 None => match policy {
                     TenantCreationPolicy::MustExist => return Err(TenancyError::UnknownTenant { name: name.clone() }), // clone: the error outlives this borrow
                     TenantCreationPolicy::CreateOnDemand => self.database.provision(name).await?,
@@ -413,15 +437,41 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
 }
 
 #[async_trait]
-impl<D: TenantDatabase, F: TenantStateFactory> TenantDirectory for TenantRuntimeManager<D, F> {
-    async fn registered_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {
-        TenantRuntimeManager::registered_tenants(self).await
+impl<D: TenantDatabase + TenantLifecycle, F: TenantStateFactory> TenantAdministration for TenantRuntimeManager<D, F> {
+    async fn tenant(&self, name: &TenantName) -> Result<Option<TenantView>, TenancyError> {
+        let Some(record) = self.database.tenant_record(name).await? else {
+            return Ok(None);
+        };
+        let residency = self.residency(&TenantRef::Named(name.clone())); // clone: the residency probe keys the cache
+        Ok(Some(TenantView::new(record, residency)))
     }
-}
 
-#[async_trait]
-impl<D: TenantDatabase, F: TenantStateFactory> OrphanTenantEvictor for TenantRuntimeManager<D, F> {
-    async fn evict_orphan_runtimes(&self) -> usize {
-        TenantRuntimeManager::evict_orphan_runtimes(self).await
+    async fn list_tenants(&self, keyset: &TenantKeyset, limit: i64) -> Result<TenantListing, TenancyError> {
+        let (records, total) = self.database.list_tenant_records(keyset, limit).await?;
+        let views = records
+            .into_iter()
+            .map(|record| {
+                let residency = self.residency(&TenantRef::Named(record.tenant_name.clone())); // clone: the residency probe keys the cache
+                TenantView::new(record, residency)
+            })
+            .collect();
+        Ok(TenantListing::new(views, total))
+    }
+
+    async fn set_admin_status(&self, name: &TenantName, status: TenantStatus) -> Result<Option<TenantView>, TenancyError> {
+        // A status change on a tenant that does not exist is a 404 for the
+        // caller, so nothing is written for an unregistered name.
+        if self.database.tenant_record(name).await?.is_none() {
+            return Ok(None);
+        }
+        self.database.set_status(name, status).await?;
+        // Suspending releases the runtime at once so its pool closes
+        // deterministically. A leased runtime drops when its lease releases, and
+        // admission now refuses the suspended tenant, so nothing re-admits it in
+        // the meantime.
+        if matches!(status, TenantStatus::Suspended) {
+            self.evict_named(&TenantRef::Named(name.clone())).await; // clone: the eviction key outlives this borrow
+        }
+        self.tenant(name).await
     }
 }

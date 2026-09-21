@@ -367,3 +367,131 @@ async fn a_busy_outbox_keeps_its_tenant_serviced_after_eviction() {
     reset(&client, &pool).await;
     pool.close().await;
 }
+
+/// Suspend a tenant through the tenant-management extension.
+async fn suspend(client: &Client, broker: &str, tenant: &str, is_active: bool) {
+    let status = client
+        .patch(format!("{broker}tenants/{tenant}"))
+        .header("Content-Type", "application/json")
+        .body(json!({"isActive": is_active}).to_string())
+        .send()
+        .await
+        .expect("suspend/resume request")
+        .status();
+    assert_eq!(status, StatusCode::NO_CONTENT, "PATCH isActive must return 204, got {status}");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn suspending_a_tenant_closes_its_backends_synchronously() {
+    // The deterministic replacement for the retired orphan-eviction sweep: a
+    // suspend evicts the tenant's runtime at once, so its backends drop without
+    // waiting for a janitor tick. The janitor never touches it -- it is still
+    // registered (status suspended), so it is neither an orphan nor idle -- so a
+    // prompt drop to zero can only be the suspend's own synchronous eviction.
+    let client = client();
+    let pool = control_pool().await;
+    reset(&client, &pool).await;
+    let broker = endpoints::broker();
+    let tenant = tenant_load::tenant_names("pgbsuspend", 1).remove(0);
+    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1).await;
+
+    // Touch the tenant so a runtime and its pool are resident.
+    let id = urlencoding::encode(&format!("urn:ngsi-ld:Device:provision:{tenant}")).into_owned();
+    let _ = client
+        .get(format!("{broker}entities/{id}"))
+        .header("NGSILD-Tenant", tenant.as_str())
+        .send()
+        .await;
+    let database = only_tenant_database(&pool).await;
+    let before = backend_sampler::client_backends_for(&pool, &database).await.unwrap_or(0);
+    assert!(before > 0, "an active tenant holds backends, saw {before}");
+
+    suspend(&client, &broker, &tenant, false).await;
+
+    // Poll briefly for the detached pool close to settle -- well inside a janitor
+    // interval, and the janitor would not evict a suspended-but-registered tenant.
+    let mut after = backend_sampler::client_backends_for(&pool, &database).await.unwrap_or(0);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while after > 0 && Instant::now() < deadline {
+        sleep(Duration::from_millis(200)).await;
+        after = backend_sampler::client_backends_for(&pool, &database).await.unwrap_or(0);
+    }
+    assert_eq!(after, 0, "a suspend closes the tenant's backends synchronously, saw {after}");
+
+    reset(&client, &pool).await;
+    pool.close().await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_suspended_tenant_is_inert_until_resumed() {
+    // Contrast with the dormant-wake tests above: an evicted-but-active tenant's
+    // interval subscription keeps firing, but a suspended tenant's must not -- the
+    // waker skips it entirely. Once resumed and next accessed, its obligations run
+    // again.
+    let client = client();
+    let pool = control_pool().await;
+    reset(&client, &pool).await;
+    let broker = endpoints::broker();
+    let server = NotificationServer::start(MockServerConfig::from_environment().expect("mock config"))
+        .await
+        .expect("notification server");
+    let callback = server.endpoint_url().expect("callback url");
+    let tenant = tenant_load::tenant_names("pgbsuspinert", 1).remove(0);
+    tenant_load::provision_tenants(&client, &broker, slice::from_ref(&tenant), CORE_CONTEXT, 1).await;
+
+    // A periodic notification every five seconds (clause 5.8.6).
+    let _ = client
+        .post(format!("{broker}subscriptions"))
+        .header("NGSILD-Tenant", tenant.as_str())
+        .header("Content-Type", "application/ld+json")
+        .json(&json!({
+            "type": "Subscription",
+            "entities": [{"type": "Device"}],
+            "notification": {"endpoint": {"uri": callback, "accept": "application/json"}},
+            "timeInterval": 5,
+            "@context": [CORE_CONTEXT]
+        }))
+        .send()
+        .await;
+
+    suspend(&client, &broker, &tenant, false).await;
+    // Drain any in-flight notification, then require silence: the waker must not
+    // drain a suspended tenant.
+    let _ = server.next_request(Duration::from_secs(1)).await;
+    let mut while_suspended = 0;
+    let deadline = Instant::now() + Duration::from_secs(18);
+    while Instant::now() < deadline {
+        if server.next_request(Duration::from_secs(6)).await.is_ok() {
+            while_suspended += 1;
+        }
+    }
+    assert_eq!(
+        while_suspended, 0,
+        "a suspended tenant's interval subscription must not be drained, saw {while_suspended}"
+    );
+
+    // Resume and touch so the runtime cold-loads and its drains re-arm.
+    suspend(&client, &broker, &tenant, true).await;
+    let id = urlencoding::encode(&format!("urn:ngsi-ld:Device:provision:{tenant}")).into_owned();
+    let _ = client
+        .get(format!("{broker}entities/{id}"))
+        .header("NGSILD-Tenant", tenant.as_str())
+        .send()
+        .await;
+
+    let mut after_resume = 0;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline {
+        if server.next_request(Duration::from_secs(6)).await.is_ok() {
+            after_resume += 1;
+            break;
+        }
+    }
+    server.shutdown().await.expect("shutdown");
+    assert!(after_resume >= 1, "a resumed tenant's interval subscription runs again, saw {after_resume}");
+
+    reset(&client, &pool).await;
+    pool.close().await;
+}

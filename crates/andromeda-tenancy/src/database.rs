@@ -1,11 +1,11 @@
 //! The tenant registry this crate asks for and does not provide.
 
-use crate::{database_name::TenantDatabaseName, error::TenancyError};
+use crate::{database_name::TenantDatabaseName, error::TenancyError, tenant_keyset::TenantKeyset, tenant_record::TenantRecord};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use async_trait::async_trait;
 
-/// Where each tenant's data lives, and how a new one is brought into
-/// existence.
+/// Where each tenant's data lives, how a new one is brought into existence, and
+/// what the registry knows about each.
 ///
 /// Declared here rather than beside an implementation because the crate that
 /// calls a port owns it: whether a tenant is a PostgreSQL database, a schema
@@ -19,17 +19,26 @@ pub trait TenantDatabase: Send + Sync + 'static {
     /// serve and never finished starting.
     fn default_database(&self) -> TenantDatabaseName;
 
-    /// Every named tenant currently in the registry.
+    /// Every named tenant currently in the registry, by name.
     ///
-    /// Also the source of truth for eviction: a cached runtime whose tenant is
+    /// The source of truth for orphan eviction: a cached runtime whose tenant is
     /// no longer listed has been removed underneath the broker and is holding
     /// connections open for nothing.
     #[must_use = "tenant registry reads must be awaited"]
     async fn registered_tenants(&self) -> Result<Vec<TenantName>, TenancyError>;
 
-    /// The database a named tenant's data lives in, if it is registered.
+    /// A named tenant's registry row, if it is registered.
+    ///
+    /// Carries both where the tenant's data lives and its administrative status,
+    /// so a cold admission learns in one read whether the tenant may be served
+    /// at all — a suspended tenant is refused rather than provisioned or woken.
     #[must_use = "tenant lookups must be awaited"]
-    async fn lookup(&self, name: &TenantName) -> Result<Option<TenantDatabaseName>, TenancyError>;
+    async fn tenant_record(&self, name: &TenantName) -> Result<Option<TenantRecord>, TenancyError>;
+
+    /// A page of named-tenant registry rows in name order, with the collection
+    /// total, positioned by `keyset` and capped at `limit`.
+    #[must_use = "tenant listings must be awaited"]
+    async fn list_tenant_records(&self, keyset: &TenantKeyset, limit: i64) -> Result<(Vec<TenantRecord>, i64), TenancyError>;
 
     /// Register the tenant and prepare its database.
     ///

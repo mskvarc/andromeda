@@ -49,6 +49,11 @@ x-broker-base: &broker-base
     ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL_SECS: "60"
     ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "4"
     ANDROMEDA__TENANCY__JANITOR_INTERVAL_SECS: "1"
+    # The tenant-management extension (non-standard) backs the tenant_management
+    # suite and the multitenancy tenant-collection assertion; the cleanup between
+    # runs suspends tenants through it to close their pools before the databases
+    # are dropped.
+    ANDROMEDA__EXTENSIONS__TENANT_MANAGEMENT: "enabled"
   healthcheck:
     # 127.0.0.1, not localhost: the broker listens on IPv4 0.0.0.0, but localhost
     # resolves to IPv6 ::1 first in the image, giving a false "connection refused".

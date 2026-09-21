@@ -138,6 +138,7 @@ const BASE_SUITES: &[&str] = &[
     "temporal_entity",
     "temporal_entity_attributes",
     "temporal_semantics",
+    "tenant_management",
     "tenant_schema",
     "unit_catalog",
 ];
