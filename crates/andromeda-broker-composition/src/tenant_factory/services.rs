@@ -66,7 +66,9 @@ pub(super) fn construct_services(
 ) -> Result<ConstructedServices, TenantAssemblyError> {
     let pool_size = match storage.tenant {
         TenantRef::UnnamedDefault => config.database.max_connections as usize,
-        TenantRef::Named(_) => config.tenancy.tenant_max_connections as usize,
+        // Match the serving pool's actual size, which is the pooler's small
+        // per-tenant cap when one fronts the request path.
+        TenantRef::Named(_) => config.database.named_serving_max_connections(config.tenancy.tenant_max_connections) as usize,
     };
     let entities = compose_entity_service(config, storage, signals, writes, pool_size);
     // Table 5.2.40-1: the alias this tenant writes into the outgoing `Via`

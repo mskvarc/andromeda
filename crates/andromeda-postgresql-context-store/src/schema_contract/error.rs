@@ -92,7 +92,7 @@ impl SchemaContractError {
     /// acquire can time out. Such a timeout is backpressure, not drift, so the
     /// caller sheds it as a 503 rather than refusing the tenant its schema.
     #[must_use]
-    pub const fn is_pool_saturation(&self) -> bool {
+    pub fn is_pool_saturation(&self) -> bool {
         match self {
             SchemaContractError::Database(error) => is_pool_saturated(error),
             SchemaContractError::NoMigrations

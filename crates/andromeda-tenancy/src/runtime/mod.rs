@@ -304,11 +304,19 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         }
     }
 
-    /// Build and cache a woken tenant's runtime, unless the cache is full of
-    /// fresher runtimes, in which case the wake defers.
+    /// Build and cache a woken tenant's runtime, displacing the
+    /// least-recently-used runtime when the cache is full.
+    ///
+    /// A tenant reaches here only with work already due (see
+    /// [`wake_inner`](Self::wake_inner)), so it must run rather than defer behind
+    /// runtimes that may have no work at all. When the cache is at capacity it
+    /// evicts one unleased runtime -- the least recently used, whose own next wake
+    /// is rescheduled as it goes -- so the connection budget stays flat while the
+    /// due work is admitted. Only genuine backpressure, every cached runtime held
+    /// by an in-flight request so no slot can be freed, defers the wake.
     async fn load_woken(&self, tenant_ref: &TenantRef, database: TenantDatabaseName, tenant: &TenantName) -> WakeOutcome {
         let now = SystemTime::now();
-        if self.cache_full_of_fresher() {
+        if self.runtimes.len() >= self.config.runtime_max_cached && !self.evict_one_for_wake().await {
             self.settle_schedule(tenant, now, Some(self.waker.retry_wake(now))).await;
             return WakeOutcome::Deferred;
         }
@@ -340,18 +348,6 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 self.settle_schedule(tenant, now, None).await;
                 WakeOutcome::Loaded
             }
-        }
-    }
-
-    /// Whether the cache is full and holds only runtimes fresher than a woken
-    /// one would be, so loading a woken tenant would only churn a pool.
-    fn cache_full_of_fresher(&self) -> bool {
-        if self.runtimes.len() < self.config.runtime_max_cached {
-            return false;
-        }
-        match Instant::now().checked_sub(self.waker.woken_backdate()) {
-            Some(threshold) => self.runtimes.iter().all(|entry| entry.value().last_used_instant() >= threshold),
-            None => false,
         }
     }
 

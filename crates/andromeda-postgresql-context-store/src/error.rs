@@ -95,7 +95,7 @@ impl ContextStoreError {
     /// as a 503 with `Retry-After`, so a cold build that times out acquiring a
     /// connection at any of these points is classified the same way.
     #[must_use]
-    pub const fn is_pool_saturation(&self) -> bool {
+    pub fn is_pool_saturation(&self) -> bool {
         match self {
             ContextStoreError::Saturated => true,
             ContextStoreError::Database(error) => is_pool_saturated(error),

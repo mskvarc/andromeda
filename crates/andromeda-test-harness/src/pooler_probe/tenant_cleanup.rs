@@ -25,6 +25,29 @@ pub async fn evict_orphans_on(client: &Client, broker_bases: &[&str]) {
     }
 }
 
+/// Remove every named tenant's platform registry row so the brokers treat its
+/// runtime as an orphan and evict it, releasing the pool that would otherwise
+/// keep the tenant's database from being dropped.
+///
+/// Dropping a tenant database out from under a live broker (as the tests do) does
+/// not touch the registry, so the broker keeps a dead runtime whose pool still
+/// counts against the pooler's backend budget. Deleting the registry row first is
+/// what lets [`evict_orphans_on`] close that pool. The delete cascades to the
+/// wake-schedule and maintenance rows that reference the tenant. The unnamed
+/// default is never removed.
+///
+/// # Errors
+///
+/// Returns the [`sqlx::Error`] the delete reported.
+pub async fn deprovision_registry(pool: &PgPool, prefix: &str) -> Result<(), sqlx::Error> {
+    let pattern = format!("{prefix}%");
+    sqlx::query("DELETE FROM tenants WHERE is_unnamed_default = FALSE AND db_name LIKE $1")
+        .bind(&pattern)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Drop every database whose name begins with `prefix`, forcing off any
 /// remaining backends. The control database is never dropped.
 ///
@@ -48,13 +71,21 @@ pub async fn drop_tenant_databases(pool: &PgPool, prefix: &str) -> Result<(), sq
     Ok(())
 }
 
-/// Evict orphaned runtimes on every broker, then drop every tenant database
-/// under the default prefix. The one call a run makes on entry and exit.
+/// Deprovision the tenant registry, evict the now-orphaned runtimes on every
+/// broker, then drop every tenant database under the default prefix. The one call
+/// a run makes on entry and exit.
+///
+/// The order matters: removing the registry rows before asking the brokers to
+/// evict is what makes them close the tenants' pools, so the databases can then
+/// be dropped without a backend still holding them and without leaving dead
+/// runtimes whose pools accumulate against the pooler's budget across a run.
 ///
 /// # Errors
 ///
-/// Returns the [`sqlx::Error`] from the database drop step.
+/// Returns the [`sqlx::Error`] from the registry deprovision or the database drop
+/// step.
 pub async fn reset(client: &Client, broker_bases: &[&str], pool: &PgPool) -> Result<(), sqlx::Error> {
+    deprovision_registry(pool, DEFAULT_TENANT_DB_PREFIX).await?;
     evict_orphans_on(client, broker_bases).await;
     drop_tenant_databases(pool, DEFAULT_TENANT_DB_PREFIX).await
 }

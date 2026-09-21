@@ -41,6 +41,14 @@ pub struct TaskSupervisor {
     pub(crate) inner: Arc<SupervisorInner>,
 }
 
+/// The default per-tenant spread applied to a scheduled task that sets no jitter
+/// of its own, capped at half each task's cadence.
+///
+/// A fleet of tenant runtimes built in one provisioning burst would otherwise run
+/// every shared background task in lockstep, stampeding the database in periodic
+/// waves; a per-tenant seed spreads each task's phase across this window instead.
+const TENANT_STARTUP_JITTER: Duration = Duration::from_secs(10);
+
 /// Resources shared by every clone of one supervisor.
 pub(crate) struct SupervisorInner {
     /// Primary process execution host supplied by composition.
@@ -49,6 +57,13 @@ pub(crate) struct SupervisorInner {
     pub(crate) cancellation: CancellationToken,
     /// Process root used only for process-fatal escalation.
     process_cancellation: CancellationToken,
+    /// Seed folded into each scheduled task's jitter so this scope's tasks do not
+    /// fire in lockstep with the same task in another scope. Zero for the process
+    /// scope, which keeps its singleton tasks on their exact cadence.
+    scope_seed: u64,
+    /// Default jitter given to a scheduled task in this scope that sets none of
+    /// its own. Zero for the process scope.
+    scope_default_jitter: Duration,
     /// Names reserved for the lifetime of this supervisor.
     registered: DashMap<TaskName, ()>,
     /// Health records retained after task termination.
@@ -86,27 +101,41 @@ impl TaskSupervisor {
     #[must_use]
     pub fn process(host: Handle) -> TaskSupervisor {
         let process_cancellation = CancellationToken::new();
-        TaskSupervisor::with_tokens(host, process_cancellation.clone(), process_cancellation)
+        TaskSupervisor::with_tokens(host, process_cancellation.clone(), process_cancellation, 0, Duration::ZERO)
     }
 
     /// Construct an isolated tenant supervisor whose cancellation is a child of this process scope.
+    ///
+    /// `jitter_seed` distinguishes this tenant's scheduled tasks from the same
+    /// tasks in every other tenant so a provisioning burst does not stampede the
+    /// database with synchronized background work; pass a stable per-tenant value.
     #[must_use]
-    pub fn tenant(&self) -> TaskSupervisor {
+    pub fn tenant(&self, jitter_seed: u64) -> TaskSupervisor {
         TaskSupervisor::with_tokens(
             self.inner.host.clone(), // clone: process and tenant supervisors spawn on the same runtime handle.
             self.inner.process_cancellation.child_token(),
             self.inner.process_cancellation.clone(), // clone: tenant-fatal cancellation stays local while process-fatal cancellation reaches the root.
+            jitter_seed,
+            TENANT_STARTUP_JITTER,
         )
     }
 
     /// Construct one supervisor over explicit scope and process tokens.
-    fn with_tokens(host: Handle, cancellation: CancellationToken, process_cancellation: CancellationToken) -> TaskSupervisor {
+    fn with_tokens(
+        host: Handle,
+        cancellation: CancellationToken,
+        process_cancellation: CancellationToken,
+        scope_seed: u64,
+        scope_default_jitter: Duration,
+    ) -> TaskSupervisor {
         let (lifecycle, _) = broadcast::channel(256);
         TaskSupervisor {
             inner: Arc::new(SupervisorInner {
                 host,
                 cancellation,
                 process_cancellation,
+                scope_seed,
+                scope_default_jitter,
                 registered: DashMap::new(),
                 health: DashMap::new(),
                 active: DashMap::new(),
@@ -196,6 +225,11 @@ impl TaskSupervisor {
     /// Returns [`TaskRegistrationError`] when the task name is already reserved by this supervisor.
     pub fn register_scheduled(&self, task: ScheduledTask) -> Result<RunNowHandle, TaskRegistrationError> {
         let (registration, schedule, operation) = task.into_parts();
+        // Spread this scope's tasks: the seed distinguishes them from the same
+        // task in other scopes, and a scope with a default fills in a spread for
+        // any task that chose none. The process scope leaves both zero, so its
+        // singleton tasks keep their exact cadence.
+        let schedule = schedule.seeded(self.inner.scope_seed).with_default_jitter(self.inner.scope_default_jitter);
         let health = self.reserve(&registration)?;
         let name = registration.name().clone(); // clone: the driver and supervisor registry both retain the stable task identity.
         let cancellation = self.inner.cancellation.child_token();

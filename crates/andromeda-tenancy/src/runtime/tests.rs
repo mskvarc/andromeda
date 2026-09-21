@@ -1094,32 +1094,64 @@ async fn a_claimed_tenant_with_nothing_due_is_not_loaded() {
 }
 
 #[tokio::test]
-async fn the_waker_defers_when_the_cache_is_full_of_recently_used_runtimes() {
-    // At capacity with every entry request-fresh, a woken tenant would be the
-    // immediate eviction victim, so the wake defers without loading.
+async fn a_full_cache_of_unleased_runtimes_yields_its_lru_to_a_due_wake() {
+    // A tenant whose work is due now must run rather than defer behind runtimes
+    // that may have no work at all, so at capacity it displaces the
+    // least-recently-used unleased runtime and the connection budget stays flat.
     let (manager, factory, _shutdowns) = wake_manager(
-        &["a", "b", "woken"],
+        &["lru", "fresh", "woken"],
         2,
         Arc::new(FakeProbe::due_at(SystemTime::now())),
         Arc::new(FakeSchedule::inert()),
     );
-    for name in ["a", "b"] {
-        drop(
-            manager
-                .resolve_state(&TenantRef::Named(named(name)), TenantCreationPolicy::MustExist)
-                .await
-                .expect("resolves"),
-        );
-    }
-    pretty_assertions::assert_eq!(manager.runtimes.len(), 2, "the cache is at capacity with fresh runtimes");
+    let lru = TenantRef::Named(named("lru"));
+    drop(manager.resolve_state(&lru, TenantCreationPolicy::MustExist).await.expect("resolves"));
+    // Space the two touches so `lru` sorts strictly older than `fresh` and is the
+    // unambiguous displacement victim.
+    sleep(Duration::from_millis(10)).await;
+    drop(
+        manager
+            .resolve_state(&TenantRef::Named(named("fresh")), TenantCreationPolicy::MustExist)
+            .await
+            .expect("resolves"),
+    );
+    pretty_assertions::assert_eq!(manager.runtimes.len(), 2, "the cache is at capacity");
+
+    let outcome = manager.wake(&named("woken")).await;
+    pretty_assertions::assert_eq!(outcome, WakeOutcome::Loaded);
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 3, "the due wake builds its runtime");
+    assert!(manager.runtimes.contains_key(&TenantRef::Named(named("woken"))), "the woken tenant is cached");
+    assert!(!manager.runtimes.contains_key(&lru), "the least-recently-used runtime was displaced");
+    assert!(manager.runtimes.contains_key(&TenantRef::Named(named("fresh"))), "the fresher runtime is kept");
+    pretty_assertions::assert_eq!(manager.runtimes.len(), 2, "the connection budget stays flat: one in, one out");
+}
+
+#[tokio::test]
+async fn a_due_wake_defers_only_when_every_runtime_is_leased() {
+    // Genuine backpressure: the cache is full and every runtime is held by an
+    // in-flight request, so no slot can be freed and the wake defers rather than
+    // exceeding the connection budget.
+    let (manager, factory, _shutdowns) = wake_manager(
+        &["held", "woken"],
+        1,
+        Arc::new(FakeProbe::due_at(SystemTime::now())),
+        Arc::new(FakeSchedule::inert()),
+    );
+    // Keep the lease alive: an in-flight request still holds `held`.
+    let _lease = manager
+        .resolve_state(&TenantRef::Named(named("held")), TenantCreationPolicy::MustExist)
+        .await
+        .expect("resolves");
+    pretty_assertions::assert_eq!(manager.runtimes.len(), 1, "the cache is at capacity with a leased runtime");
 
     let outcome = manager.wake(&named("woken")).await;
     pretty_assertions::assert_eq!(outcome, WakeOutcome::Deferred);
-    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 2, "the deferred wake builds nothing");
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 1, "the deferred wake builds nothing");
     assert!(
         !manager.runtimes.contains_key(&TenantRef::Named(named("woken"))),
         "the deferred tenant is not cached"
     );
+    assert!(manager.runtimes.contains_key(&TenantRef::Named(named("held"))), "the leased runtime is spared");
 }
 
 #[tokio::test]

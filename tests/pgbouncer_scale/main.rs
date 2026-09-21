@@ -106,6 +106,28 @@ async fn current_backends() -> i64 {
     count
 }
 
+/// The lowest client-backend count seen over `window`, sampling twice a second.
+///
+/// The idle backend level oscillates -- per-tenant background tasks fire in waves
+/// and the count dips to the platform-pool baseline between them -- so the trough,
+/// not any single reading, is what shows the backends were released. Samples that
+/// error (a returned `-1`) are ignored; an all-error window returns `-1`.
+async fn min_backends_over(window: Duration) -> i64 {
+    let deadline = Instant::now() + window;
+    let mut minimum = i64::MAX;
+    loop {
+        let sample = current_backends().await;
+        if sample >= 0 {
+            minimum = minimum.min(sample);
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        sleep(Duration::from_millis(500)).await;
+    }
+    if minimum == i64::MAX { -1 } else { minimum }
+}
+
 /// Reset the tier: evict every broker's orphaned runtimes and drop the tenant
 /// databases.
 async fn reset(client: &Client) {
@@ -301,8 +323,13 @@ async fn an_idle_wide_cache_releases_its_backends() {
         .await
         .ok()
         .and_then(|m| m.gauge("andromeda_tenant_runtimes_cached"));
-    let backends = current_backends().await;
-    println!("idle wide cache: cached runtimes gauge {cached:?}, client backends {backends}");
+    // Per-tenant background tasks fire in loose waves rather than continuously, so
+    // the server-wide backend count oscillates: it dips to the platform-pool
+    // baseline between waves and rises while one is in flight. Releasing the
+    // backends is proved by the trough reaching the baseline, not by any single
+    // instantaneous reading, so sample across a window and assert on the minimum.
+    let backends = min_backends_over(Duration::from_secs(20)).await;
+    println!("idle wide cache: cached runtimes gauge {cached:?}, trough client backends {backends}");
     // A wide cache evicts nothing, so every touched tenant is still resident;
     // the gauge is the touched count, plus at most the always-resident unnamed
     // default depending on whether it is counted. Fewer means a touched tenant
@@ -313,7 +340,7 @@ async fn an_idle_wide_cache_releases_its_backends() {
         "every touched tenant must stay cached in a wide cache, saw {cached:?} for {} tenants",
         tenants.len()
     );
-    assert!(backends < 60, "an idle wide cache must release its backends, saw {backends}");
+    assert!(backends < 60, "an idle wide cache must release its backends to baseline, trough was {backends}");
     reset(&client).await;
 }
 

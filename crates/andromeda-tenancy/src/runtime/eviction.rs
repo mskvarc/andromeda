@@ -194,6 +194,35 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         self.evict_all(excess, EvictionReason::Excess).await
     }
 
+    /// The least-recently-used named runtime no request currently holds, with
+    /// the last-used instant it was chosen at, or `None` when every named runtime
+    /// is leased (or the cache holds only the never-evicted unnamed default).
+    ///
+    /// Used to free one slot for a woken tenant whose work is due now: the coldest
+    /// unleased runtime yields to the tenant that has work to run.
+    fn lru_unleased_named(&self) -> Option<(TenantRef, Instant)> {
+        self.runtimes
+            .iter()
+            .filter(|entry| !entry.key().is_unnamed_default() && !entry.value().is_leased())
+            .map(|entry| (entry.key().clone(), entry.value().last_used_instant())) // clone: the choice outlives the iteration
+            .min_by_key(|(_, touched)| *touched)
+    }
+
+    /// Evict one unleased runtime to make room for a woken tenant, returning
+    /// whether a slot was freed.
+    ///
+    /// The victim is the least-recently-used unleased runtime; it is shut down and
+    /// its own next wake rescheduled through the same excess-eviction path a cache
+    /// trim uses, so nothing it still owes is lost. Returns `false` when there is
+    /// no unleased victim to take -- every runtime is held by an in-flight request
+    /// -- so the caller defers rather than exceeding the connection budget.
+    pub(super) async fn evict_one_for_wake(&self) -> bool {
+        match self.lru_unleased_named() {
+            Some(victim) => self.evict_all(vec![victim], EvictionReason::Excess).await > 0,
+            None => false,
+        }
+    }
+
     /// Tenants whose runtime has not been used within `ttl`, each with the
     /// last-used instant it was chosen at.
     pub(super) fn idle_runtimes(&self, ttl: Duration) -> Vec<(TenantRef, Instant)> {

@@ -11,8 +11,11 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
-use sqlx::postgres::PgPoolOptions;
-use std::time::Duration;
+use sqlx::{error::DatabaseError, postgres::PgPoolOptions};
+use std::{
+    io::{Error as IoError, ErrorKind},
+    time::Duration,
+};
 
 /// How long an idle connection is kept before the pool closes it.
 ///
@@ -44,17 +47,75 @@ pub fn configure_pool_options(max_connections: u32, acquire_timeout: Duration) -
         .acquire_timeout(acquire_timeout)
 }
 
-/// Whether a [`sqlx::Error`] reports that no connection could be acquired from
-/// the pool within its acquire deadline.
+/// `PgBouncer`'s message when it disconnects a client whose transaction could
+/// not be assigned a server backend within `query_wait_timeout`.
 ///
-/// This is backpressure, not a fault: the pool is at capacity and the request
-/// was shed before it ran. Callers turn it into a 503 with `Retry-After` rather
-/// than a 500, because the request is well-formed and can be retried unchanged.
-/// Every other `sqlx::Error` — a closed pool, a crashed worker, a protocol or
-/// database error — is a genuine failure and is not saturation.
+/// This is the pooled-deployment form of pool exhaustion: the fleet-wide backend
+/// budget (`max_user_connections`) is spent, so the pooler queues the client and,
+/// once the wait elapses, closes it with a FATAL carrying this message under
+/// SQLSTATE `08P01`. That code is shared with genuine protocol violations, so the
+/// message -- not the code -- is what identifies pooler backpressure.
+const POOLER_QUERY_WAIT_TIMEOUT: &str = "query_wait_timeout";
+
+/// Whether a [`sqlx::Error`] reports that a connection could not be obtained
+/// because the pool -- the broker's own or a transaction pooler in front of
+/// PostgreSQL -- is at capacity.
+///
+/// This is backpressure, not a fault: the request never ran and can be retried
+/// unchanged, so callers turn it into a 503 with `Retry-After` rather than a 500.
+/// Two shapes count as saturation:
+///
+/// - [`sqlx::Error::PoolTimedOut`]: the broker's own pool could not hand out a
+///   connection within its acquire deadline.
+/// - a [`sqlx::Error::Database`] carrying `PgBouncer`'s [`POOLER_QUERY_WAIT_TIMEOUT`]
+///   message: the pooler could not assign a server backend within its
+///   `query_wait_timeout` and closed the client. Without this, pooled-mode
+///   saturation surfaces as a raw database error and is answered 500, defeating
+///   the very backpressure contract the pooler tier exists to prove.
+/// - a [`sqlx::Error::Io`] reporting that the host has no local socket to open
+///   another connection ([`is_connection_resource_exhausted`]): a working set
+///   larger than the runtime cache churns per-tenant pools fast enough to exhaust
+///   the host's ephemeral ports, which is load, not a transport fault.
+///
+/// Every other `sqlx::Error` -- a closed pool, a crashed worker, any other
+/// protocol or database error, or any other I/O fault -- is a genuine failure and
+/// is not saturation.
 #[must_use]
-pub const fn is_pool_saturated(error: &sqlx::Error) -> bool {
-    matches!(error, sqlx::Error::PoolTimedOut)
+pub fn is_pool_saturated(error: &sqlx::Error) -> bool {
+    if matches!(error, sqlx::Error::PoolTimedOut) {
+        return true;
+    }
+    if let sqlx::Error::Database(database_error) = error {
+        return is_pooler_backpressure(database_error.as_ref());
+    }
+    if let sqlx::Error::Io(io_error) = error {
+        return is_connection_resource_exhausted(io_error);
+    }
+    false
+}
+
+/// Whether a database error is a transaction pooler's saturation signal.
+///
+/// Matches `PgBouncer`'s [`POOLER_QUERY_WAIT_TIMEOUT`] message rather than its
+/// SQLSTATE, which it shares with unrelated protocol violations.
+fn is_pooler_backpressure(error: &dyn DatabaseError) -> bool {
+    error.message().contains(POOLER_QUERY_WAIT_TIMEOUT)
+}
+
+/// Whether an I/O error is the host running out of the local sockets a new
+/// connection needs, rather than a genuine transport fault.
+///
+/// A working set larger than the runtime cache opens and closes per-tenant pools
+/// continuously; the churn can exhaust the host's ephemeral ports
+/// (`EADDRNOTAVAIL`) or transiently collide on one (`EADDRINUSE`). Both are
+/// load-induced and clear as the churn subsides and sockets leave `TIME_WAIT`, so
+/// the request is shed as retryable backpressure rather than reported an internal
+/// fault. A persistent misconfiguration fails every connection alike at startup;
+/// only load makes this appear intermittently mid-flight. Any other I/O error --
+/// a reset, a broken pipe, an unexpected EOF -- may be a real transport failure
+/// and is left a fault.
+fn is_connection_resource_exhausted(error: &IoError) -> bool {
+    matches!(error.kind(), ErrorKind::AddrNotAvailable | ErrorKind::AddrInUse)
 }
 
 #[cfg(test)]
@@ -69,8 +130,68 @@ andromeda_architecture_checks::forbid_sql!();
 
 #[cfg(test)]
 mod tests {
-    use crate::{POOL_IDLE_TIMEOUT, configure_pool_options, is_pool_saturated};
-    use std::time::Duration;
+    use crate::{POOL_IDLE_TIMEOUT, POOLER_QUERY_WAIT_TIMEOUT, configure_pool_options, is_pool_saturated, is_pooler_backpressure};
+    use sqlx::error::{DatabaseError, ErrorKind as SqlxErrorKind};
+    use std::{
+        borrow::Cow,
+        error::Error as StdError,
+        fmt,
+        io::{Error as IoError, ErrorKind},
+        time::Duration,
+    };
+
+    /// A minimal [`DatabaseError`] carrying a fixed message and SQLSTATE, so the
+    /// pooler-backpressure classification can be exercised without a live driver
+    /// connection (a real `PgDatabaseError` cannot be constructed without one).
+    #[derive(Debug)]
+    struct FakeDatabaseError {
+        /// The error message the classifier inspects.
+        message: String,
+        /// The SQLSTATE the error reports.
+        code: String,
+    }
+
+    impl fmt::Display for FakeDatabaseError {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(formatter, "{}: {}", self.code, self.message)
+        }
+    }
+
+    impl StdError for FakeDatabaseError {}
+
+    impl DatabaseError for FakeDatabaseError {
+        fn message(&self) -> &str {
+            &self.message
+        }
+
+        fn code(&self) -> Option<Cow<'_, str>> {
+            Some(Cow::Borrowed(&self.code))
+        }
+
+        fn as_error(&self) -> &(dyn StdError + Send + Sync + 'static) {
+            self
+        }
+
+        fn as_error_mut(&mut self) -> &mut (dyn StdError + Send + Sync + 'static) {
+            self
+        }
+
+        fn into_error(self: Box<Self>) -> Box<dyn StdError + Send + Sync + 'static> {
+            self
+        }
+
+        fn kind(&self) -> SqlxErrorKind {
+            SqlxErrorKind::Other
+        }
+    }
+
+    /// A PgBouncer-shaped database error: SQLSTATE `08P01` with the given message.
+    fn pgbouncer_error(message: &str) -> sqlx::Error {
+        sqlx::Error::Database(Box::new(FakeDatabaseError {
+            message: message.to_string(),
+            code: "08P01".to_string(),
+        }))
+    }
 
     #[test]
     fn pool_options_reclaim_idle_connections_keep_none_warm_and_bound_the_acquire() {
@@ -82,8 +203,46 @@ mod tests {
     }
 
     #[test]
-    fn a_pool_acquire_timeout_is_the_one_saturation_signal() {
+    fn a_pool_acquire_timeout_is_a_saturation_signal() {
         assert!(is_pool_saturated(&sqlx::Error::PoolTimedOut));
+    }
+
+    #[test]
+    fn a_pgbouncer_query_wait_timeout_is_a_saturation_signal() {
+        // PgBouncer closes a client it queued past query_wait_timeout with this
+        // message under SQLSTATE 08P01: pooled-mode pool exhaustion, answered 503,
+        // not the 500 an unrecognised database error would produce.
+        let error = FakeDatabaseError {
+            message: POOLER_QUERY_WAIT_TIMEOUT.to_string(),
+            code: "08P01".to_string(),
+        };
+        assert!(is_pooler_backpressure(&error));
+        assert!(is_pool_saturated(&pgbouncer_error(POOLER_QUERY_WAIT_TIMEOUT)));
+    }
+
+    #[test]
+    fn a_database_error_sharing_the_sqlstate_is_not_saturation() {
+        // 08P01 (protocol_violation) is shared with genuine protocol faults, so a
+        // database error under that code with an unrelated message is a real
+        // failure, not backpressure: the message is what distinguishes them.
+        assert!(!is_pool_saturated(&pgbouncer_error("insufficient data left in message")));
+    }
+
+    #[test]
+    fn ephemeral_port_exhaustion_is_a_saturation_signal() {
+        // The host cannot allocate a local socket for another connection under the
+        // pool churn of a working set larger than the cache: load, not a fault.
+        assert!(is_pool_saturated(&sqlx::Error::Io(IoError::from(ErrorKind::AddrNotAvailable))));
+        assert!(is_pool_saturated(&sqlx::Error::Io(IoError::from(ErrorKind::AddrInUse))));
+    }
+
+    #[test]
+    fn an_ordinary_io_fault_is_not_saturation() {
+        // A reset, a broken pipe or an unexpected EOF may be a genuine transport
+        // failure, so it stays a fault rather than being shed as retryable.
+        assert!(!is_pool_saturated(&sqlx::Error::Io(IoError::from(ErrorKind::ConnectionReset))));
+        assert!(!is_pool_saturated(&sqlx::Error::Io(IoError::from(ErrorKind::UnexpectedEof))));
+        assert!(!is_pool_saturated(&sqlx::Error::Io(IoError::from(ErrorKind::BrokenPipe))));
     }
 
     #[test]

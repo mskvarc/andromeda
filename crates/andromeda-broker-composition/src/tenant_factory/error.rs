@@ -44,7 +44,7 @@ impl TenantAssemblyError {
     /// pool, and under a tight pooler budget that acquire can time out. The
     /// timeout arrives either as a raw [`SqlxError`] the pool returned, or
     /// already funnelled into a store error's saturation category.
-    pub(super) const fn is_saturation(&self) -> bool {
+    pub(super) fn is_saturation(&self) -> bool {
         match self {
             TenantAssemblyError::Database(error) => is_pool_saturated(error),
             TenantAssemblyError::ContextStore(error) => error.is_pool_saturation(),

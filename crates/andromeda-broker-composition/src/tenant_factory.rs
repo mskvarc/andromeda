@@ -42,7 +42,11 @@ use andromeda_tenancy::{
     tenant_ref::TenantRef,
 };
 use async_trait::async_trait;
-use std::sync::{Arc, OnceLock};
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::Hasher,
+    sync::{Arc, OnceLock},
+};
 use tracing::debug;
 use url::Url;
 
@@ -153,7 +157,7 @@ impl TenantStateFactory for BrokerTenantFactory {
             &serving_url,
             &migration_url,
             tenant,
-            self.process_tasks.tenant(),
+            self.process_tasks.tenant(tenant_jitter_seed(tenant)),
             &self.subscription_router,
         )
         .await
@@ -175,6 +179,21 @@ impl TenantStateFactory for BrokerTenantFactory {
         }
 
         Ok((Arc::new(state), runtime))
+    }
+}
+
+/// A stable per-tenant seed that spreads a tenant's scheduled background tasks
+/// away from every other tenant's, so a burst of freshly provisioned tenants does
+/// not run every shared task in lockstep and stampede the database. The unnamed
+/// default is a singleton that never bursts, so it takes a fixed zero seed.
+fn tenant_jitter_seed(tenant: &TenantRef) -> u64 {
+    match tenant.tenant_name() {
+        None => 0,
+        Some(name) => {
+            let mut hasher = DefaultHasher::new();
+            hasher.write(name.as_str().as_bytes());
+            hasher.finish()
+        }
     }
 }
 

@@ -428,7 +428,7 @@ async fn permanent_failure_does_not_restart() -> Result<(), TestError> {
 #[tokio::test(start_paused = true)]
 async fn tenant_fatal_invariant_cancels_siblings_but_not_process_scope() -> Result<(), TestError> {
     let process = TaskSupervisor::process(Handle::current());
-    let tenant = process.tenant();
+    let tenant = process.tenant(1);
     let sibling_cancelled = Arc::new(AtomicBool::new(false));
     let observed = Arc::clone(&sibling_cancelled);
     tenant.register_resident(ResidentTask::new(
@@ -462,8 +462,8 @@ async fn tenant_fatal_invariant_cancels_siblings_but_not_process_scope() -> Resu
 #[tokio::test(start_paused = true)]
 async fn tenant_cancellation_is_isolated_from_sibling_tenant() -> Result<(), TestError> {
     let process = TaskSupervisor::process(Handle::current());
-    let first = process.tenant();
-    let second = process.tenant();
+    let first = process.tenant(1);
+    let second = process.tenant(2);
     for (name, supervisor) in [("first-tenant", &first), ("second-tenant", &second)] {
         supervisor.register_resident(ResidentTask::new(
             registration(name, RestartPolicy::Never, Duration::from_secs(1))?,
@@ -486,8 +486,8 @@ async fn tenant_cancellation_is_isolated_from_sibling_tenant() -> Result<(), Tes
 #[tokio::test(start_paused = true)]
 async fn process_cancellation_reaches_process_and_all_tenant_tasks() -> Result<(), TestError> {
     let process = TaskSupervisor::process(Handle::current());
-    let first = process.tenant();
-    let second = process.tenant();
+    let first = process.tenant(1);
+    let second = process.tenant(2);
     for (name, supervisor) in [("process-task", &process), ("tenant-one", &first), ("tenant-two", &second)] {
         supervisor.register_resident(ResidentTask::new(
             registration(name, RestartPolicy::Never, Duration::from_secs(1))?,

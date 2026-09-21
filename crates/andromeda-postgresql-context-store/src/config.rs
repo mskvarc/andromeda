@@ -21,6 +21,9 @@ pub enum DatabaseConfigError {
     /// The connection acquire deadline requires a positive number of seconds.
     #[error("database.acquire_timeout_secs must be at least 1")]
     ZeroAcquireTimeout,
+    /// The pooled per-tenant serving pool requires at least one connection.
+    #[error("database.pooler.tenant_max_connections must be at least 1")]
+    ZeroPoolerTenantMaxConnections,
 }
 
 /// A transaction-pooling proxy (pgbouncer) fronting PostgreSQL on the request path.
@@ -38,6 +41,27 @@ pub struct PoolerConfig {
     /// normally identical and only the host and port differ.
     #[toml_comment(inline)]
     pub url: Url,
+
+    /// How many connections a named tenant's serving pool opens to the pooler.
+    ///
+    /// Deliberately small: the pooler multiplexes every tenant's client
+    /// connections onto its own bounded set of PostgreSQL backends, so the broker
+    /// needs only enough per-tenant client connections for that tenant's
+    /// concurrent in-flight requests -- not the larger real backend pool a direct
+    /// deployment sizes with [`TenancyConfig::tenant_max_connections`](andromeda_tenancy::config::TenancyConfig).
+    /// Keeping it small is what stops a working set larger than the runtime cache
+    /// from churning the host's sockets: each cold load opens this many
+    /// connections rather than a full backend pool, so a thrash does not exhaust
+    /// the host's ephemeral ports.
+    #[serde(default = "default_pooler_tenant_max_connections")]
+    pub tenant_max_connections: u32,
+}
+
+/// The default number of client connections a named tenant's serving pool opens
+/// to the pooler: two is enough to overlap a read with a write while the pooler
+/// does the real backend pooling.
+const fn default_pooler_tenant_max_connections() -> u32 {
+    2
 }
 
 impl Default for PoolerConfig {
@@ -49,6 +73,7 @@ impl Default for PoolerConfig {
     fn default() -> PoolerConfig {
         PoolerConfig {
             url: url!("postgres://postgres:postgres@localhost:6432/postgres"),
+            tenant_max_connections: default_pooler_tenant_max_connections(),
         }
     }
 }
@@ -164,6 +189,11 @@ impl DatabaseConfig {
         if self.acquire_timeout_secs == 0 {
             return Err(DatabaseConfigError::ZeroAcquireTimeout);
         }
+        if let Some(pooler) = &self.pooler
+            && pooler.tenant_max_connections == 0
+        {
+            return Err(DatabaseConfigError::ZeroPoolerTenantMaxConnections);
+        }
         Ok(())
     }
 
@@ -200,6 +230,19 @@ impl DatabaseConfig {
     pub const fn is_pooled(&self) -> bool {
         self.pooler.is_some()
     }
+
+    /// How many connections a named tenant's serving pool should open.
+    ///
+    /// When a [`pooler`](Self::pooler) fronts the request path, the pooler
+    /// multiplexes onto its own backends, so the serving pool holds only the
+    /// pooler's small [`tenant_max_connections`](PoolerConfig::tenant_max_connections)
+    /// -- keeping a working set larger than the runtime cache from churning the
+    /// host's sockets. Without a pooler the serving pool is the real backend pool,
+    /// so it takes `direct`, the tenancy-configured size.
+    #[must_use]
+    pub fn named_serving_max_connections(&self, direct: u32) -> u32 {
+        self.pooler.as_ref().map_or(direct, |pooler| pooler.tenant_max_connections)
+    }
 }
 
 #[cfg(test)]
@@ -211,6 +254,38 @@ mod tests {
     #[test]
     fn the_built_in_default_database_url_is_valid() {
         pretty_assertions::assert_eq!(DatabaseConfig::default().url.as_str(), "postgres://postgres:postgres@localhost:5432/postgres");
+    }
+
+    fn pooled(tenant_max_connections: u32) -> DatabaseConfig {
+        DatabaseConfig {
+            url: "postgres://localhost/postgres".parse().expect("database URL"),
+            pooler: Some(PoolerConfig {
+                url: "postgres://localhost:6432/postgres".parse().expect("pooler URL"),
+                tenant_max_connections,
+            }),
+            max_connections: 16,
+            acquire_timeout_secs: 5,
+            synchronous_commit: SynchronousCommit::Off,
+            preload_name_dictionaries: true,
+            context_hit_flush_secs: 60,
+            maintenance: MaintenanceConfig::default(),
+        }
+    }
+
+    #[test]
+    fn a_pooled_named_tenant_serves_on_the_small_pooler_cap_not_the_direct_size() {
+        // The pooler multiplexes, so the serving pool holds only its small cap; a
+        // direct deployment sizes the serving pool at the tenancy value instead.
+        assert_eq!(pooled(2).named_serving_max_connections(16), 2);
+        let mut direct = pooled(2);
+        direct.pooler = None;
+        assert_eq!(direct.named_serving_max_connections(16), 16);
+    }
+
+    #[test]
+    fn a_zero_pooler_tenant_max_connections_is_rejected() {
+        assert_eq!(pooled(0).validate(), Err(DatabaseConfigError::ZeroPoolerTenantMaxConnections));
+        assert!(pooled(2).validate().is_ok());
     }
 
     #[test]
@@ -274,6 +349,7 @@ mod tests {
             url: "postgres://postgres:postgres@postgres:5432/postgres".parse().expect("direct URL"),
             pooler: Some(PoolerConfig {
                 url: "postgres://postgres:postgres@pgbouncer:6432/postgres".parse().expect("pooler URL"),
+                tenant_max_connections: 2,
             }),
             ..DatabaseConfig::default()
         };

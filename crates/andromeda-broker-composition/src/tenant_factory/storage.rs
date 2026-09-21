@@ -115,7 +115,12 @@ pub(super) async fn initialize_storage(
 ) -> Result<TenantStorage, TenantAssemblyError> {
     let max_connections = match tenant {
         TenantRef::UnnamedDefault => config.database.max_connections,
-        TenantRef::Named(_) => config.tenancy.tenant_max_connections,
+        // Through a pooler a named tenant's serving pool holds only a couple of
+        // client connections -- the pooler does the real backend pooling -- so a
+        // working set larger than the runtime cache cannot churn the host's
+        // sockets into ephemeral-port exhaustion. Direct, it is the real backend
+        // pool and takes the tenancy-configured size.
+        TenantRef::Named(_) => config.database.named_serving_max_connections(config.tenancy.tenant_max_connections),
     };
     // Open the serving pool first -- the pooler when one is configured -- and
     // migrate only when the schema is not already current. A warm-schema cold
