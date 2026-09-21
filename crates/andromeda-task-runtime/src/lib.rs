@@ -26,11 +26,13 @@ pub mod periodic_trigger;
 /// Complete metadata required before task execution.
 pub mod registration;
 mod resident_driver;
+mod resident_registration;
 /// Long-lived task execution.
 pub mod resident_task;
 /// Restart decisions after task failures.
 pub mod restart_policy;
 mod scheduled_driver;
+mod scheduled_registration;
 /// Periodically triggered bounded task execution.
 pub mod scheduled_task;
 /// Grace periods for cooperative task shutdown.

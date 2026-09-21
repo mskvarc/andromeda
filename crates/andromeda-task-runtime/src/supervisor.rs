@@ -1,16 +1,10 @@
 //! Named task supervision on a supplied Tokio execution host.
 
 use crate::{
-    control::{RunNowHandle, run_now_channel},
     criticality::TaskCriticality,
-    driver_supervision::DriverSupervision,
     failure::TaskFailure,
     lifecycle_event::{LifecycleEventKind, TaskLifecycleEvent},
     registration::{TaskRegistration, TaskRegistrationError},
-    resident_driver,
-    resident_task::ResidentTask,
-    scheduled_driver,
-    scheduled_task::ScheduledTask,
     startup_task::{StartupTask, StartupTaskError},
     task_health::{TaskHealth, TaskHealthSnapshot, TaskHealthState},
     task_name::TaskName,
@@ -60,10 +54,10 @@ pub(crate) struct SupervisorInner {
     /// Seed folded into each scheduled task's jitter so this scope's tasks do not
     /// fire in lockstep with the same task in another scope. Zero for the process
     /// scope, which keeps its singleton tasks on their exact cadence.
-    scope_seed: u64,
+    pub(crate) scope_seed: u64,
     /// Default jitter given to a scheduled task in this scope that sets none of
     /// its own. Zero for the process scope.
-    scope_default_jitter: Duration,
+    pub(crate) scope_default_jitter: Duration,
     /// Names reserved for the lifetime of this supervisor.
     registered: DashMap<TaskName, ()>,
     /// Health records retained after task termination.
@@ -216,68 +210,6 @@ impl TaskSupervisor {
                 Err(StartupTaskError { name, failure })
             }
         }
-    }
-
-    /// Register and start one periodic bounded task.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TaskRegistrationError`] when the task name is already reserved by this supervisor.
-    pub fn register_scheduled(&self, task: ScheduledTask) -> Result<RunNowHandle, TaskRegistrationError> {
-        let (registration, schedule, operation) = task.into_parts();
-        // Spread this scope's tasks: the seed distinguishes them from the same
-        // task in other scopes, and a scope with a default fills in a spread for
-        // any task that chose none. The process scope leaves both zero, so its
-        // singleton tasks keep their exact cadence.
-        let schedule = schedule.seeded(self.inner.scope_seed).with_default_jitter(self.inner.scope_default_jitter);
-        let health = self.reserve(&registration)?;
-        let name = registration.name().clone(); // clone: the driver and supervisor registry both retain the stable task identity.
-        let cancellation = self.inner.cancellation.child_token();
-        let (run_now, receiver) = run_now_channel();
-        let run_now_guard = run_now.clone(); // clone: keeping a sender in the driver prevents a dropped external handle from closing the select branch.
-        let driver_health = Arc::clone(&health); // clone: driver updates are observed through the supervisor's health registry.
-        let lifecycle = self.inner.lifecycle.clone(); // clone: each driver publishes into the same completion-ordered channel.
-        let driver_name = name.clone(); // clone: the asynchronous driver owns its task identity.
-        let restart_policy = registration.restart_policy();
-        let supervision = DriverSupervision {
-            name: driver_name,
-            restart_policy,
-            cancellation,
-            health: driver_health,
-            lifecycle,
-        };
-        let driver = self.inner.host.spawn(async move {
-            let _run_now_guard = run_now_guard;
-            scheduled_driver::run(supervision, schedule, operation, receiver).await
-        });
-        self.observe(name, &registration, health, driver);
-        Ok(run_now)
-    }
-
-    /// Register and start one long-lived resident task.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TaskRegistrationError`] when the task name is already reserved by this supervisor.
-    pub fn register_resident(&self, task: ResidentTask) -> Result<(), TaskRegistrationError> {
-        let (registration, operation) = task.into_parts();
-        let health = self.reserve(&registration)?;
-        let name = registration.name().clone(); // clone: the driver and supervisor registry both retain the stable task identity.
-        let cancellation = self.inner.cancellation.child_token();
-        let driver_health = Arc::clone(&health); // clone: driver updates are observed through the supervisor's health registry.
-        let lifecycle = self.inner.lifecycle.clone(); // clone: each driver publishes into the same completion-ordered channel.
-        let driver_name = name.clone(); // clone: the asynchronous driver owns its task identity.
-        let restart_policy = registration.restart_policy();
-        let supervision = DriverSupervision {
-            name: driver_name,
-            restart_policy,
-            cancellation,
-            health: driver_health,
-            lifecycle,
-        };
-        let driver = self.inner.host.spawn(async move { resident_driver::run(supervision, operation).await });
-        self.observe(name, &registration, health, driver);
-        Ok(())
     }
 
     /// Cooperatively stop every active task and forcibly terminate deadline violators.
