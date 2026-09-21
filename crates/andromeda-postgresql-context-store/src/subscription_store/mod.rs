@@ -6,6 +6,7 @@
 //! - [`stored_kind`] — which family a statement addresses.
 //! - [`create_update_sql`] — the create and replace statements and binders.
 //! - [`delivery_state`] — the delivery counters and their statements.
+//! - [`projection`] — the read-side projection every subscription query shares.
 //! - [`failure`] — how adapter failures surface at the policy boundary.
 
 /// The create and replace statements of the subscription row.
@@ -20,6 +21,8 @@ pub mod mapper;
 pub mod params;
 /// Direct PostgreSQL implementations of the subscription persistence ports.
 mod postgresql;
+/// The read-side projection every subscription query shares.
+mod projection;
 /// Row structures for subscriptions.
 pub mod rows;
 /// Which subscription family a statement addresses.

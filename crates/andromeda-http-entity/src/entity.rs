@@ -10,9 +10,9 @@ use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_federation::{
     entity_result::{collect_proxied_attrs, collect_warnings, contributions_of, strip_attributes_from_value},
     operation::{ForwardingOperation, ProvisionResource},
-    provision::single_source_failure,
     provision_purge::{ForwardPurgeRequest, ForwardedPurgeResult},
     request::{CsrModeFilter, ForwardProvisionRequest, ForwardQueryRequest},
+    single_source_failure::single_source_failure,
 };
 use andromeda_http_extraction::{
     accept::AcceptFormat,

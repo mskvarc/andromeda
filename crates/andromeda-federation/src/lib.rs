@@ -58,6 +58,8 @@ pub mod read_fan_out;
 pub mod registration_selection;
 /// Typed forwarding inputs.
 pub mod request;
+/// Clause 6.3.17 single-source failure classification.
+pub mod single_source_failure;
 /// Subscription forwarding to registered context sources (clause 5.8).
 pub mod subscription;
 /// Temporal query and retrieve execution.

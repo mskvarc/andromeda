@@ -8,7 +8,7 @@
 //! same way, so the decision lives here, between them.
 
 use crate::{batch_projection::forwarded_write_error, classified_report::ClassifiedReport, problem_response::ProblemResponse};
-use andromeda_federation::{error::FederationError, outcome::ForwardedWriteResult, provision::single_source_failure};
+use andromeda_federation::{error::FederationError, outcome::ForwardedWriteResult, single_source_failure::single_source_failure};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_problem_details::{
     batch_operation::{BatchEntityError, BatchOperationResult},

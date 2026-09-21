@@ -4,10 +4,11 @@
 //! infra patch set (`suite-delta/infra`) bakes them into the checkout instead.
 
 use crate::{error::XtaskError, etsi};
+use iri_rs::{Iri, iri};
 use std::{fs, path::Path, process::Command};
 
 /// Upstream origin of the official ETSI NGSI-LD test suite.
-const SUITE_ORIGIN: &str = "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite.git";
+const SUITE_ORIGIN: Iri<&str> = iri!("https://forge.etsi.org/rep/cim/ngsi-ld-test-suite.git");
 /// The commit the test-case matrix in `docs/official-ngsi-ld-tests.md` is recorded
 /// against; every corrected-material patch is authored to apply at this revision.
 const PINNED_COMMIT: &str = "48d5ff4e5c6f83527d64d0960703a25939521308";
@@ -32,7 +33,7 @@ fn clone(checkout: &Path) -> Result<(), XtaskError> {
     if let Some(parent) = checkout.parent() {
         fs::create_dir_all(parent)?;
     }
-    let status = Command::new("git").args(["clone", "--quiet", SUITE_ORIGIN]).arg(checkout).status()?;
+    let status = Command::new("git").args(["clone", "--quiet", SUITE_ORIGIN.as_str()]).arg(checkout).status()?;
     if !status.success() {
         return Err(XtaskError::SuiteClone);
     }

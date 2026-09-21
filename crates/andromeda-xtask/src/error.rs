@@ -40,28 +40,28 @@ pub(crate) enum XtaskError {
     #[error("failed to build the health-probe HTTP client: {0}")]
     HealthClient(#[from] reqwest::Error),
     /// Cloning the ETSI suite checkout failed.
-    #[error("git clone of the ETSI test suite failed")]
+    #[error("git clone of the test suite failed")]
     SuiteClone,
     /// Resetting the ETSI checkout to its pinned commit failed.
-    #[error("git reset of the ETSI checkout to {0} failed")]
+    #[error("git reset of the suite checkout to {0} failed")]
     SuiteReset(String),
     /// Fetching the pinned commit into an existing checkout failed.
-    #[error("git fetch of the ETSI test suite failed")]
+    #[error("git fetch of the test suite failed")]
     SuiteFetch,
     /// `python3` is not on `PATH`, so the robot virtualenv cannot be built.
-    #[error("python3 was not found on PATH; it is required to run the ETSI suite")]
+    #[error("python3 was not found on PATH; it is required to run the test suite")]
     PythonMissing,
     /// Creating the robot virtualenv failed.
-    #[error("creating the ETSI robot virtualenv failed")]
+    #[error("creating the robot virtualenv failed")]
     VenvCreate,
     /// Installing the suite's Python requirements into the virtualenv failed.
-    #[error("installing the ETSI suite's Python requirements failed")]
+    #[error("installing the suite's Python requirements failed")]
     PipInstall,
     /// A patch did not apply cleanly to the pristine checkout.
-    #[error("patch did not apply cleanly to the ETSI checkout: {0}")]
+    #[error("patch did not apply cleanly to the suite checkout: {0}")]
     PatchApply(String),
     /// A requested suite subtree exists nowhere under the checkout.
-    #[error("no such suite subtree under the ETSI checkout: {0}")]
+    #[error("no such suite subtree under the checkout: {0}")]
     UnknownSubtree(String),
     /// The broker process exited while the runner was waiting for readiness.
     #[error("the broker exited during startup; see broker.log in the output directory")]

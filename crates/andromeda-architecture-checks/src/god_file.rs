@@ -45,7 +45,6 @@ pub const GOD_FILE_BASELINE: &[&str] = &[
     "crates/andromeda-postgresql-temporal-store/src/instance_mutation.rs",
     "crates/andromeda-postgresql-temporal-store/src/temporal_catalog_read.rs",
     "crates/andromeda-snapshot/src/service.rs",
-    "crates/andromeda-task-runtime/src/supervisor.rs",
     "crates/andromeda-temporal/src/linked.rs",
 ];
 

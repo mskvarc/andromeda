@@ -3,6 +3,7 @@
 //! the temporal page size the suite's pagination precondition requires.
 
 use crate::{error::XtaskError, etsi, local_broker, readiness};
+use iri_rs::{Iri, iri};
 use reqwest::blocking::Client;
 use serde_json::{Value, json};
 use std::{
@@ -52,11 +53,12 @@ const JANITOR_INTERVAL_SECS: &str = "5";
 /// URLs (the remote-context cache is per-tenant), and the resulting burst of
 /// identical requests draws the occasional dropped connection that surfaces as a
 /// spurious `LdContextNotAvailable` (504) on an entity create.
-const SUITE_COMPOUND_CONTEXT_URL: &str =
-    "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld";
+const SUITE_COMPOUND_CONTEXT_URL: Iri<&str> =
+    iri!("https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld");
 /// The suite `@context` the compound references relatively; the loader resolves
 /// the relative reference against the compound's URL to exactly this URL.
-const SUITE_CONTEXT_URL: &str = "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite.jsonld";
+const SUITE_CONTEXT_URL: Iri<&str> =
+    iri!("https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite.jsonld");
 /// The checkout-relative directory holding both suite context documents.
 const SUITE_CONTEXT_DIR: &str = "resources/jsonld-contexts";
 
@@ -98,9 +100,11 @@ fn suite_context_preload() -> String {
     let contexts = etsi::checkout_dir().join(SUITE_CONTEXT_DIR);
     let compound = contexts.join("ngsi-ld-test-suite-compound.jsonld");
     let suite = contexts.join("ngsi-ld-test-suite.jsonld");
+    let compound_url = SUITE_COMPOUND_CONTEXT_URL.as_str();
+    let suite_url = SUITE_CONTEXT_URL.as_str();
     let map = json!({
-        SUITE_COMPOUND_CONTEXT_URL: Value::from(compound.to_string_lossy().into_owned()),
-        SUITE_CONTEXT_URL: Value::from(suite.to_string_lossy().into_owned()),
+        compound_url: Value::from(compound.to_string_lossy().into_owned()),
+        suite_url: Value::from(suite.to_string_lossy().into_owned()),
     });
     map.to_string()
 }
