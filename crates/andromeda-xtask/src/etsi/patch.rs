@@ -1,8 +1,9 @@
-//! Applying and reverting the ETSI patch sets. The endpoint patch corrects a
-//! suite-infrastructure fault and is always applied; the corrected-material set
-//! adjudicates expectation defects and is applied unless the run asks for the
-//! material as-shipped. A guard reverts everything when the run ends, so an
-//! inspected checkout is left pristine.
+//! Applying and reverting the ETSI patch sets. Both sets are `git format-patch`
+//! output of the `andromeda-corrections` commit series. The infra set bakes the
+//! run configuration and the suite-infrastructure corrections into the checkout and
+//! is always applied; the corrected-material set adjudicates expectation defects and
+//! is applied unless the run asks for the material as-shipped. A guard reverts
+//! everything when the run ends, so an inspected checkout is left pristine.
 
 use crate::{error::XtaskError, etsi};
 use std::{
@@ -12,7 +13,7 @@ use std::{
 };
 
 /// Whether the corrected-material patch set is applied on top of the
-/// always-applied endpoint patch.
+/// always-applied infra set.
 #[derive(Clone, Copy)]
 pub(crate) enum Material {
     /// Apply the corrected-material patches: the default, spec-adjudicated run.
@@ -38,16 +39,18 @@ pub(crate) struct PatchGuard {
 }
 
 impl PatchGuard {
-    /// Apply the endpoint patch and, unless the run is as-shipped, the
-    /// corrected-material set, recording each for reversal on drop.
+    /// Apply the infra set and, unless the run is as-shipped, the corrected-material
+    /// set, recording each for reversal on drop.
     ///
     /// # Errors
     ///
     /// Returns [`XtaskError::PatchApply`] for the first patch that does not apply
-    /// cleanly, and an I/O error if the patch directory cannot be read.
+    /// cleanly, and an I/O error if a patch directory cannot be read.
     pub(crate) fn apply(material: Material) -> Result<PatchGuard, XtaskError> {
         let mut guard = PatchGuard { applied: Vec::new() };
-        guard.apply_one(etsi::resource_dir().join("endpoint.patch"))?;
+        for patch in infra_patches()? {
+            guard.apply_one(patch)?;
+        }
         match material {
             Material::Corrected => {
                 for patch in material_patches()? {
@@ -80,10 +83,23 @@ impl Drop for PatchGuard {
     }
 }
 
+/// The infra patch files (run configuration and suite-infrastructure corrections),
+/// sorted by file name so their application order matches the commit series.
+fn infra_patches() -> Result<Vec<PathBuf>, XtaskError> {
+    patches_in("infra")
+}
+
 /// The corrected-material patch files, sorted by file name so their application
 /// order is deterministic across platforms.
 fn material_patches() -> Result<Vec<PathBuf>, XtaskError> {
-    let dir = etsi::resource_dir().join("patches");
+    patches_in("corrected")
+}
+
+/// Every `.patch` file directly under `suite-delta/<subdir>`, sorted by file name.
+/// The `NNNN-` prefix `git format-patch` writes makes lexical order the commit
+/// order, so a plain sort reproduces the series' application sequence.
+fn patches_in(subdir: &str) -> Result<Vec<PathBuf>, XtaskError> {
+    let dir = etsi::resource_dir().join("suite-delta").join(subdir);
     let mut patches: Vec<PathBuf> = fs::read_dir(dir)?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
@@ -112,18 +128,22 @@ fn git_apply(patch: &Path, direction: Direction) -> Result<bool, XtaskError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{etsi, etsi::patch::material_patches};
+    use crate::etsi::patch::{infra_patches, material_patches};
 
     #[test]
-    fn the_endpoint_patch_ships_beside_the_material_patch_directory() {
-        assert!(etsi::resource_dir().join("endpoint.patch").is_file());
+    fn the_two_infra_patches_ship_in_sorted_order() {
+        let patches = infra_patches().expect("the infra patch directory is readable");
+        // The two infra commits: run configuration then the csr-endpoint correction.
+        assert_eq!(patches.len(), 2);
+        assert!(patches.iter().all(|path| path.extension().is_some_and(|extension| extension == "patch")));
+        assert!(patches.is_sorted());
     }
 
     #[test]
     fn every_material_patch_is_a_dot_patch_file_in_sorted_order() {
         let patches = material_patches().expect("the patch directory is readable");
         // The crate ships exactly the corrected-material set the matrix records.
-        assert_eq!(patches.len(), 83);
+        assert_eq!(patches.len(), 66);
         assert!(patches.iter().all(|path| path.extension().is_some_and(|extension| extension == "patch")));
         assert!(patches.is_sorted());
     }

@@ -3,11 +3,13 @@
 //! Builds the pagination `Link` headers for every collection endpoint -- entity
 //! query, temporal query, subscription, CSR subscription, and CSR registration.
 //! There are two ways a page points at its neighbours. The clause 5.5.9.2
-//! offset pointers carry `limit`/`offset`, and a `first`/`last` pair whenever the
-//! total is known. The clause 5.5.9.1 opaque pointers carry a `cursor` token the
-//! client only follows, and are what a stable, keyset-backed walk emits; a
-//! handler chooses between the two per request (see
-//! `docs/conformance/stable-pagination.md`).
+//! offset pointers carry `limit`/`offset`, plus a `first`/`last` extension when
+//! the total is known and the relation does not name the current page. The clause
+//! 5.5.9.1 opaque pointers carry a `cursor` token the client only follows, and are
+//! what a stable, keyset-backed walk emits; a handler chooses between the two per
+//! request (see `docs/conformance/stable-pagination.md`). Clause 5.5.9.1 forbids a
+//! page pointing at itself, so `first` is dropped on the first page and `last` on
+//! the last in both modes.
 
 use andromeda_http_headers::{
     link::{header::Link, relation_type::RelationType, value::LinkValue},
@@ -88,8 +90,10 @@ pub enum PagePointers {
 /// Each token is a `cursor` value the client passes back by following the link;
 /// it is computed and encoded by the handler, which owns the boundary
 /// identifiers the store returned. An absent `prev`/`next` marks a boundary of
-/// the collection (clause 5.5.9.1's "previous"/"next" pair); `last` is the
-/// from-end anchor Andromeda adds.
+/// the collection (clause 5.5.9.1's "previous"/"next" pair): `prev` is absent
+/// exactly on the first page, `next` exactly on the last. `last` is the from-end
+/// anchor Andromeda adds; the rendered `first`/`last` relations track `prev`/`next`
+/// so that neither self-points on a boundary page.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CursorPointers {
     /// The opaque token of the previous page, absent on the first page.
@@ -108,15 +112,16 @@ pub struct CursorPointers {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PageLinks {
     /// Classic offset pointers: `limit`/`offset`, with `first`/`last` when the
-    /// total is known.
+    /// total is known and the relation does not name this page (clause 5.5.9.1).
     Offset {
         /// The page start the request paged from.
         offset: i64,
         /// How the presence of a following page is decided.
         extent: PageExtent,
     },
-    /// Opaque keyset cursors: `first` plus whichever of `prev`/`next`/`last`
-    /// apply, each carrying a `cursor` token in place of an `offset`.
+    /// Opaque keyset cursors: whichever of `first`/`prev`/`next`/`last` apply,
+    /// the boundary relations each carrying a `cursor` token in place of an
+    /// `offset` and `first`/`last` suppressed where they would name this page.
     Cursor(CursorPointers),
 }
 
@@ -155,12 +160,13 @@ fn build_page_link(uri: &Uri, set: &[(&str, &str)]) -> String {
 
 /// Append pagination `Link` headers to a response.
 ///
-/// In offset mode a `first`/`last` pair is emitted when the total is known, and
-/// the clause 6.3.10 `prev`/`next` pointers apply as they do today. In cursor
-/// mode `first` is always emitted (the collection start is always reachable),
-/// alongside whichever of `prev`/`next`/`last` the page offers. `first`/`last`
-/// are an Andromeda extension over the spec's `prev`/`next`, which RFC 8288
-/// permits as additional relation types.
+/// The clause 6.3.10 `prev`/`next` pointers apply as they do today. `first`/`last`
+/// are an Andromeda extension over them, which RFC 8288 permits as additional
+/// relation types, emitted only when a total (offset mode) or the keyset boundary
+/// cursors (cursor mode) are known. Clause 5.5.9.1 forbids a page pointing at
+/// itself, so neither is emitted where it would name the current page: `first` is
+/// dropped on the first page and `last` on the last, and a single page carries
+/// neither.
 pub fn append_pagination_links(response: &mut Response, uri: &Uri, limit: i64, links: PageLinks, media_type: ResponseMediaType) {
     if limit <= 0 {
         return;
@@ -210,13 +216,21 @@ fn offset_targets(uri: &Uri, limit: i64, offset: i64, extent: PageExtent) -> Vec
     // `first`/`last` need a known total, so they are emitted only when one is
     // present. They are an Andromeda extension over the clause 6.3.10 `prev`/
     // `next` pointers, which RFC 8288 permits as additional relation types.
+    // Clause 5.5.9.1 forbids a page pointing at itself: on the last page "only the
+    // pointer to the previous page shall be provided". So `first` is suppressed on
+    // the first page (`offset == 0`) and `last` on the last page (its offset equals
+    // this page's), leaving a single page with neither.
     if let PageExtent::Total(total) = extent {
         let last_offset = ((total - 1) / limit.max(1)) * limit;
-        links.push((RelationType::First, build_page_link(uri, &[("limit", &limit_str), ("offset", "0")])));
-        links.push((
-            RelationType::Last,
-            build_page_link(uri, &[("limit", &limit_str), ("offset", &last_offset.to_string())]),
-        ));
+        if offset != 0 {
+            links.push((RelationType::First, build_page_link(uri, &[("limit", &limit_str), ("offset", "0")])));
+        }
+        if last_offset != offset {
+            links.push((
+                RelationType::Last,
+                build_page_link(uri, &[("limit", &limit_str), ("offset", &last_offset.to_string())]),
+            ));
+        }
     }
     if has_prev {
         let prev_offset = (offset - limit).max(0);
@@ -234,23 +248,37 @@ fn offset_targets(uri: &Uri, limit: i64, offset: i64, extent: PageExtent) -> Vec
     links
 }
 
-/// The cursor-mode pointer targets: `first` with no cursor (the collection
-/// start), plus whichever of `prev`/`next`/`last` the page offers, each carrying
-/// its opaque `cursor` token.
+/// The cursor-mode pointer targets: whichever of `first`/`prev`/`next`/`last`
+/// the page offers. `prev`/`next`/`last` each carry an opaque `cursor` token;
+/// `first` carries neither `cursor` nor `offset` (it is the bare query).
+///
+/// Clause 5.5.9.1 forbids a page pointing at itself, so the boundary relations
+/// track the page's position: `prev` is absent exactly on the first page and
+/// `next` exactly on the last (`CursorPointers` mirrors `PageCursor::neighbours`).
+/// `first` is therefore suppressed on the first page -- where it would self-point
+/// -- and `last` on the last page, leaving a single page with neither.
 fn cursor_targets(uri: &Uri, limit: i64, cursors: &CursorPointers) -> Vec<(RelationType, String)> {
     let limit_str = limit.to_string();
+    let mut links: Vec<(RelationType, String)> = Vec::new();
     // `first` carries neither `offset` nor `cursor`: it is the bare query, whose
     // cursor-mode first page starts at the collection's beginning. Emitting no
     // `offset` keeps a client that follows `first` in cursor mode rather than
-    // dropping it to the offset path.
-    let mut links: Vec<(RelationType, String)> = vec![(RelationType::First, build_page_link(uri, &[("limit", &limit_str)]))];
+    // dropping it to the offset path. Its presence tracks `prev`: only a page that
+    // has a previous page is not itself the first, so only then is `first` a
+    // pointer elsewhere rather than at the current page.
+    if cursors.prev.is_some() {
+        links.push((RelationType::First, build_page_link(uri, &[("limit", &limit_str)])));
+    }
     if let Some(token) = &cursors.prev {
         links.push((RelationType::Prev, build_page_link(uri, &[("limit", &limit_str), ("cursor", token)])));
     }
     if let Some(token) = &cursors.next {
         links.push((RelationType::Next, build_page_link(uri, &[("limit", &limit_str), ("cursor", token)])));
     }
-    if let Some(token) = &cursors.last {
+    // `last` is the from-end anchor and is only a pointer elsewhere while a
+    // following page exists; on the last page it would self-point, so it tracks
+    // `next` rather than being emitted unconditionally.
+    if let (true, Some(token)) = (cursors.next.is_some(), &cursors.last) {
         links.push((RelationType::Last, build_page_link(uri, &[("limit", &limit_str), ("cursor", token)])));
     }
     links
@@ -277,13 +305,15 @@ mod tests {
         response.headers().get("Link").expect("Link header").to_str().expect("valid string").to_string()
     }
 
+    /// The first page names no `first` (that would self-point, clause 5.5.9.1) and
+    /// no `prev`; it carries `last` (a later page exists) and `next`.
     #[test]
-    fn counted_page_adds_first_last_and_next_on_first_page() {
+    fn counted_first_page_adds_last_and_next_without_first_or_prev() {
         let mut response = empty_response();
         let uri = parse_uri("/subscriptions?limit=10&offset=0");
         append_pagination_links(&mut response, &uri, 10, offset(0, PageExtent::Total(25)), ResponseMediaType::JsonLd);
         let link_str = link_header(&response);
-        assert!(link_str.contains("rel=\"first\""));
+        assert!(!link_str.contains("rel=\"first\""));
         assert!(link_str.contains("rel=\"last\""));
         assert!(link_str.contains("rel=\"next\""));
         assert!(!link_str.contains("rel=\"prev\""));
@@ -301,19 +331,16 @@ mod tests {
         assert!(link_str.contains("rel=\"next\""));
     }
 
-    /// A counted collection that fits in one page still knows its total, so it
-    /// carries the `first`/`last` pair (both pointing at the single page) with
-    /// no `prev`/`next`.
+    /// A counted collection that fits in one page is at once the first and last
+    /// page, so every relation would name it: `first`/`last` self-point (clause
+    /// 5.5.9.1 forbids it) and there is no `prev`/`next`. It emits no pagination
+    /// `Link` header at all.
     #[test]
-    fn counted_single_page_emits_first_last_without_prev_or_next() {
+    fn counted_single_page_emits_no_pagination_links() {
         let mut response = empty_response();
         let uri = parse_uri("/subscriptions");
         append_pagination_links(&mut response, &uri, 10, offset(0, PageExtent::Total(5)), ResponseMediaType::JsonLd);
-        let link_str = link_header(&response);
-        assert!(link_str.contains("rel=\"first\""));
-        assert!(link_str.contains("rel=\"last\""));
-        assert!(!link_str.contains("rel=\"prev\""));
-        assert!(!link_str.contains("rel=\"next\""));
+        assert!(response.headers().get("Link").is_none());
     }
 
     /// NGSI-LD offset pagination is limit/offset only (clause 5.5.9.2): no
@@ -461,11 +488,10 @@ mod tests {
         assert!(!link_str.contains("cursor=AURN"), "the incoming cursor is replaced: {link_str}");
     }
 
-    /// The first page of a cursor walk offers no `prev`; its `first` link carries
-    /// neither `cursor` nor `offset` (it is the bare query), and `next`/`last`
-    /// carry cursors.
+    /// The first page of a cursor walk offers no `prev` and no `first` (both would
+    /// name this page, clause 5.5.9.1); it carries `next` and `last`, each a cursor.
     #[test]
-    fn cursor_first_page_omits_prev_and_first_link_has_no_cursor() {
+    fn cursor_first_page_omits_prev_and_first() {
         let mut response = empty_response();
         let uri = parse_uri("/entities?type=Vehicle&limit=10");
         let cursors = CursorPointers {
@@ -475,18 +501,16 @@ mod tests {
         };
         append_pagination_links(&mut response, &uri, 10, PageLinks::Cursor(cursors), ResponseMediaType::JsonLd);
         let link_str = link_header(&response);
-        assert!(link_str.contains("rel=\"first\""), "{link_str}");
+        assert!(!link_str.contains("rel=\"first\""), "{link_str}");
         assert!(!link_str.contains("rel=\"prev\""), "{link_str}");
         assert!(link_str.contains("rel=\"next\""), "{link_str}");
-        // The `first` target must carry no cursor: isolate it and check.
-        let first = link_str.split(',').find(|value| value.contains("rel=\"first\"")).expect("a first link");
-        assert!(!first.contains("cursor="), "first must be the bare query: {first}");
-        assert!(!first.contains("offset="), "first must carry no offset: {first}");
+        assert!(link_str.contains("rel=\"last\""), "{link_str}");
     }
 
-    /// The last page of a cursor walk offers no `next`.
+    /// The last page of a cursor walk offers no `next` and no `last` (both would
+    /// name this page, clause 5.5.9.1); it carries `prev` and `first`.
     #[test]
-    fn cursor_last_page_omits_next() {
+    fn cursor_last_page_omits_next_and_last() {
         let mut response = empty_response();
         let uri = parse_uri("/entities?type=Vehicle&limit=10&cursor=AURN");
         let cursors = CursorPointers {
@@ -498,7 +522,8 @@ mod tests {
         let link_str = link_header(&response);
         assert!(link_str.contains("rel=\"prev\""), "{link_str}");
         assert!(!link_str.contains("rel=\"next\""), "{link_str}");
-        assert!(link_str.contains("rel=\"last\""), "{link_str}");
+        assert!(!link_str.contains("rel=\"last\""), "{link_str}");
+        assert!(link_str.contains("rel=\"first\""), "{link_str}");
     }
 
     /// Cursor-mode links preserve the non-pagination query parameters so the

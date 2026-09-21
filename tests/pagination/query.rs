@@ -157,14 +157,16 @@ async fn pagination_subscriptions_middle_page_returns_prev_and_next_in_single_li
 
 #[tokio::test]
 #[serial(global)]
-async fn pagination_subscriptions_first_page_has_first_last_next_without_prev() {
+async fn pagination_subscriptions_first_page_has_last_next_without_first_or_prev() {
     let (scope, client) = make_scope().await;
     create_subscriptions(&client, 3, "first").await;
 
+    // The first page names no `first` (clause 5.5.9.1 forbids the self-pointer) and
+    // no `prev`; it carries `last` (a later page exists) and `next`.
     let (status, headers, _) = query_subscriptions(&client, "limit=1&offset=0", "application/ld+json").await;
     assert_eq!(status, StatusCode::OK);
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
-    assert!(pagination.contains("rel=\"first\""));
+    assert!(!pagination.contains("rel=\"first\""));
     assert!(pagination.contains("rel=\"last\""));
     assert!(pagination.contains("rel=\"next\""));
     assert!(!pagination.contains("rel=\"prev\""));
@@ -173,15 +175,17 @@ async fn pagination_subscriptions_first_page_has_first_last_next_without_prev() 
 
 #[tokio::test]
 #[serial(global)]
-async fn pagination_subscriptions_last_page_has_first_last_prev_without_next() {
+async fn pagination_subscriptions_last_page_has_first_prev_without_last_or_next() {
     let (scope, client) = make_scope().await;
     create_subscriptions(&client, 3, "last").await;
 
+    // The last page names no `last` (clause 5.5.9.1 forbids the self-pointer) and
+    // no `next`; it carries `first` and `prev`.
     let (status, headers, _) = query_subscriptions(&client, "limit=1&offset=2", "application/ld+json").await;
     assert_eq!(status, StatusCode::OK);
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     assert!(pagination.contains("rel=\"first\""));
-    assert!(pagination.contains("rel=\"last\""));
+    assert!(!pagination.contains("rel=\"last\""));
     assert!(pagination.contains("rel=\"prev\""));
     assert!(!pagination.contains("rel=\"next\""));
     scope.reset_and_finish().await.expect("post-test reset failed");
@@ -189,19 +193,16 @@ async fn pagination_subscriptions_last_page_has_first_last_prev_without_next() {
 
 #[tokio::test]
 #[serial(global)]
-async fn pagination_subscriptions_single_page_has_first_last_without_prev_or_next() {
+async fn pagination_subscriptions_single_page_has_no_pagination_link() {
     let (scope, client) = make_scope().await;
     create_subscriptions(&client, 3, "single").await;
 
-    // A counted collection that fits in one page still knows its total, so it
-    // carries the `first`/`last` pair (both at offset 0) with no `prev`/`next`.
+    // A collection that fits in one page is at once the first and last page, so
+    // every relation would name it: `first`/`last` self-point (clause 5.5.9.1
+    // forbids it) and there is no `prev`/`next`. No pagination `Link` is emitted.
     let (status, headers, _) = query_subscriptions(&client, "limit=10&offset=0", "application/ld+json").await;
     assert_eq!(status, StatusCode::OK);
-    let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
-    assert!(pagination.contains("rel=\"first\""));
-    assert!(pagination.contains("rel=\"last\""));
-    assert!(!pagination.contains("rel=\"prev\""));
-    assert!(!pagination.contains("rel=\"next\""));
+    assert!(find_pagination_link_header(&headers).is_none(), "single page emits no pagination Link header");
     scope.reset_and_finish().await.expect("post-test reset failed");
 }
 
@@ -255,14 +256,16 @@ async fn pagination_registrations_middle_page_returns_first_last_prev_next() {
 
 #[tokio::test]
 #[serial(global)]
-async fn pagination_registrations_first_page_has_first_last_next_without_prev() {
+async fn pagination_registrations_first_page_has_last_next_without_first_or_prev() {
     let (scope, client) = make_scope().await;
     create_registrations(&client, 5, "full-first").await;
 
+    // First page: no self-pointing `first` (clause 5.5.9.1) and no `prev`; `last`
+    // and `next` both point at later pages.
     let (status, headers, _) = query_registrations(&client, "type=Building&limit=1&offset=0", "application/ld+json").await;
     assert_eq!(status, StatusCode::OK);
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
-    assert!(pagination.contains("rel=\"first\""));
+    assert!(!pagination.contains("rel=\"first\""));
     assert!(pagination.contains("rel=\"last\""));
     assert!(pagination.contains("rel=\"next\""));
     assert!(!pagination.contains("rel=\"prev\""));
@@ -271,15 +274,17 @@ async fn pagination_registrations_first_page_has_first_last_next_without_prev() 
 
 #[tokio::test]
 #[serial(global)]
-async fn pagination_registrations_last_page_has_first_last_prev_without_next() {
+async fn pagination_registrations_last_page_has_first_prev_without_last_or_next() {
     let (scope, client) = make_scope().await;
     create_registrations(&client, 5, "full-last").await;
 
+    // Last page: no self-pointing `last` (clause 5.5.9.1) and no `next`; `first`
+    // and `prev` both point at earlier pages.
     let (status, headers, _) = query_registrations(&client, "type=Building&limit=1&offset=4", "application/ld+json").await;
     assert_eq!(status, StatusCode::OK);
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     assert!(pagination.contains("rel=\"first\""));
-    assert!(pagination.contains("rel=\"last\""));
+    assert!(!pagination.contains("rel=\"last\""));
     assert!(pagination.contains("rel=\"prev\""));
     assert!(!pagination.contains("rel=\"next\""));
     scope.reset_and_finish().await.expect("post-test reset failed");

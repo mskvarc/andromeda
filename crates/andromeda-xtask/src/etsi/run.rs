@@ -26,6 +26,11 @@ use std::{
 const COMPOSE_FILE: &str = "docker/compose/dev/docker-compose.yaml";
 /// The robot artifacts cleared from the output directory before a run.
 const ROBOT_ARTIFACTS: [&str; 4] = ["output.xml", "log.html", "report.html", "errors.log"];
+/// The broker's listen port. This must equal the `localhost:1056` the infra patch
+/// (`suite-delta/infra` i01 `variables.py`) bakes into the checkout: the harness no
+/// longer rewrites the suite's configuration at runtime, so the two are only kept in
+/// step by both naming the same fixed port.
+const BROKER_PORT: u16 = 1056;
 
 /// Arguments to `xtask etsi run`.
 #[derive(Args)]
@@ -37,9 +42,6 @@ pub(crate) struct RunArgs {
     /// the corrected-material patch set.
     #[arg(long)]
     as_shipped: bool,
-    /// Broker listen port.
-    #[arg(long, default_value_t = 1056)]
-    port: u16,
     /// Seconds any one test may run before robot times it out.
     #[arg(long, default_value_t = 300)]
     timeout: u16,
@@ -117,7 +119,6 @@ impl RunArgs {
         let output = prepare_output_dir(&self.output)?;
 
         suite::provision()?;
-        suite::configure(self.port)?;
         venv::ensure()?;
         let targets = robot::resolve_targets(&etsi::checkout_dir(), &self.subtrees)?;
 
@@ -131,8 +132,8 @@ impl RunArgs {
         };
         compose::up(&repository_root, &teardown.compose_file, None, ImageBuild::Build)?;
 
-        let mut broker = broker::spawn(&repository_root, self.port, &output.join("broker.log"))?;
-        broker::await_ready(&mut broker, self.port)?;
+        let mut broker = broker::spawn(&repository_root, BROKER_PORT, &output.join("broker.log"))?;
+        broker::await_ready(&mut broker, BROKER_PORT)?;
         teardown.broker = Some(broker);
 
         // Held to the end of the run: dropping the guard reverts the patches while

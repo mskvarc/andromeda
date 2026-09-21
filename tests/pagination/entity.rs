@@ -152,7 +152,7 @@ async fn pagination_entities_default_first_page_offers_opaque_cursor_pointers() 
     let (status, headers) = query(&client, "type=Building&local=true&limit=2", "application/ld+json").await;
     assert_eq!(status, StatusCode::OK);
     let links = joined_links(&headers);
-    assert!(links.contains("rel=\"first\""), "{links}");
+    assert!(!links.contains("rel=\"first\""), "the first page has no self-pointing first: {links}");
     assert!(links.contains("rel=\"next\""), "{links}");
     assert!(links.contains("rel=\"last\""), "{links}");
     assert!(!links.contains("rel=\"prev\""), "the first page has no prev: {links}");

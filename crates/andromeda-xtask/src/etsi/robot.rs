@@ -104,8 +104,9 @@ pub(crate) fn run(
     extra: &[String],
     targets: &[String],
 ) -> Result<i32, XtaskError> {
-    let modifier = etsi::resource_dir().join("EtsiTestTimeout.py");
-    let listener = isolate_tenants.then(|| etsi::resource_dir().join("TenantIsolation.py"));
+    let plugins = etsi::resource_dir().join("robot-plugins");
+    let modifier = plugins.join("EtsiTestTimeout.py");
+    let listener = isolate_tenants.then(|| plugins.join("TenantIsolation.py"));
     let args = robot_args(output_dir, timeout_seconds, &modifier, listener.as_deref(), scope, extra, targets);
     let status = Command::new(venv::robot_binary()).current_dir(etsi::checkout_dir()).args(&args).status()?;
     Ok(status.code().unwrap_or(1))

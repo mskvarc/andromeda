@@ -231,21 +231,18 @@ mod tests {
         assert!(link.contains("rel=\"next\""), "{link}");
     }
 
-    /// A counted query whose total is exhausted by the current page offers no
-    /// `next`, even though the page came back full. It still knows its total, so
-    /// it carries the Andromeda `first`/`last` pair (both at offset 0 here).
+    /// A counted query whose total is exhausted by the current page is at once the
+    /// first and last page: `next`/`prev` are absent and the Andromeda `first`/
+    /// `last` would self-point, which clause 5.5.9.1 forbids. It emits no pagination
+    /// `Link` header at all.
     #[test]
-    fn a_counted_query_whose_total_is_exhausted_offers_first_last_but_no_next() {
+    fn a_counted_query_whose_total_is_exhausted_offers_no_pagination_links() {
         let page = QueriedPage::of(&paged_query(Some(2), Some(0)), PagePointers::OverRequestUri, None);
         let mut response = StatusCode::OK.into_response();
 
         page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(2), 2, None);
 
-        let link = links(&response);
-        assert!(link.contains("rel=\"first\""), "{link}");
-        assert!(link.contains("rel=\"last\""), "{link}");
-        assert!(!link.contains("rel=\"prev\""), "{link}");
-        assert!(!link.contains("rel=\"next\""), "{link}");
+        pretty_assertions::assert_eq!(links(&response), String::new());
     }
 
     /// A counted middle page knows its total and sits past the first page with
@@ -310,8 +307,8 @@ mod tests {
     }
 
     /// Clause 5.5.9.1: the first element page of a local, default-order query
-    /// offers opaque cursor pointers -- `first`/`next`/`last` carrying a
-    /// `cursor`, never an `offset`, and no `prev`.
+    /// offers opaque cursor pointers -- `next`/`last` carrying a `cursor`, never
+    /// an `offset`, and neither `prev` nor `first` (both would name this page).
     #[test]
     fn a_local_default_first_page_offers_opaque_cursor_pointers() {
         let page = QueriedPage::of(&local_default_query(), PagePointers::OverRequestUri, None);
@@ -321,7 +318,7 @@ mod tests {
         page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, 2, boundary);
 
         let link = links(&response);
-        assert!(link.contains("rel=\"first\""), "{link}");
+        assert!(!link.contains("rel=\"first\""), "{link}");
         assert!(link.contains("rel=\"next\""), "{link}");
         assert!(link.contains("rel=\"last\""), "{link}");
         assert!(!link.contains("rel=\"prev\""), "{link}");

@@ -85,7 +85,7 @@ async fn pagination_registrations_default_first_page_offers_opaque_cursor_pointe
 
     let (_, headers) = query_page(&client, "type=Building&limit=2").await;
     let links = joined_links(&headers);
-    assert!(links.contains("rel=\"first\""), "{links}");
+    assert!(!links.contains("rel=\"first\""), "the first page has no self-pointing first: {links}");
     assert!(links.contains("rel=\"next\""), "{links}");
     assert!(links.contains("rel=\"last\""), "{links}");
     assert!(!links.contains("rel=\"prev\""), "the first page has no prev: {links}");
