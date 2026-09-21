@@ -1,7 +1,6 @@
 //! Focused failures produced while rendering source identity.
 
-use andromeda_http_response::classified_report::ClassifiedReport;
-use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_ngsi_ld_render::error::RenderError;
 
 /// Failures local to the source-identity HTTP binding.
@@ -19,10 +18,7 @@ pub enum SourceIdentityError {
 #[must_use]
 pub fn classify(error: &SourceIdentityError) -> ClassifiedReport {
     match error {
-        SourceIdentityError::Serialization(_) | SourceIdentityError::Rendering(_) => {
-            let report = ClassifiedReport::internal(error);
-            debug_assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
-            report
-        }
+        SourceIdentityError::Serialization(_) => ClassifiedReport::internal(error, InternalFailureSummary::RESPONSE_ENCODING),
+        SourceIdentityError::Rendering(_) => ClassifiedReport::internal(error, InternalFailureSummary::RESPONSE_RENDERING),
     }
 }

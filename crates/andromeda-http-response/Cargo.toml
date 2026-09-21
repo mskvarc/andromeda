@@ -19,6 +19,7 @@ andromeda-ngsi-ld-render.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 axum = "0.8.9"
 chrono = "0.4.45"
+derive_more = { version = "2.1.1", features = ["display"] }
 headers = "0.4.1"
 iri-rs = "3.4.1"
 mediatype = "0.23.0"

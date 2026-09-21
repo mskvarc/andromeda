@@ -15,6 +15,7 @@ use andromeda_http_extraction::{accept::AcceptFormatNoGeo, prefer::PreferHeader}
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{
     declined_representation::single_source_declined,
+    internal_failure_summary::InternalFailureSummary,
     problem_response::ProblemResponse,
     render::start_rendering_normalized,
     single::NgsiLdResponse,
@@ -117,7 +118,7 @@ pub(crate) async fn create_map(
 /// (Table 6.34.3.1-1).
 fn render_created(map: &EntityMap, resource: &str, rendering: &CreationRendering<'_>, warnings: Vec<NgsiLdWarning>) -> Result<Response, ProblemResponse> {
     let location = format!("/ngsi-ld/v1/{resource}/{}", map.id);
-    let value = serde_json::to_value(map).map_err(|error| internal_problem(&error, rendering.uri))?;
+    let value = serde_json::to_value(map).map_err(|error| internal_problem(&error, InternalFailureSummary::RESPONSE_ENCODING, rendering.uri))?;
     let rendered = start_rendering_normalized(rendering.accept.media_type(), rendering.context, rendering.prefer.rendering_preferences())
         .with_payload(ResponsePayload::Single(value))
         .render()

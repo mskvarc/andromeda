@@ -1,6 +1,6 @@
 //! Focused failures produced by the health binding.
 
-use andromeda_http_response::classified_report::ClassifiedReport;
+use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 
 /// Failures local to health-response construction.
 #[derive(Debug, thiserror::Error)]
@@ -14,6 +14,6 @@ pub enum HealthHttpError {
 #[must_use]
 pub fn classify(error: &HealthHttpError) -> ClassifiedReport {
     match error {
-        HealthHttpError::Identifier(_) => ClassifiedReport::internal(error),
+        HealthHttpError::Identifier(_) => ClassifiedReport::internal(error, InternalFailureSummary::IDENTIFIER_RESOLUTION),
     }
 }

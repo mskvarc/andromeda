@@ -3,7 +3,12 @@
 use andromeda_entity_map::error::EntityMapError;
 use andromeda_federation::error::FederationError;
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error, classify_tenancy_error};
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse, provision::classify_forwarding_error};
+use andromeda_http_response::{
+    classified_report::ClassifiedReport,
+    internal_failure_summary::InternalFailureSummary,
+    problem_response::ProblemResponse,
+    provision::classify_forwarding_error,
+};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_render::{error::RenderError, temporal::simplify::TemporalSimplifyError};
@@ -39,9 +44,10 @@ pub fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
         TemporalError::Query(source) => classify_query_error(source),
         TemporalError::Request(source) => classify_parameter_error(source),
         TemporalError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
-        TemporalError::Commit(_) | TemporalError::Persistence(_) | TemporalError::Rendering(_) | TemporalError::Internal(_) => {
-            ClassifiedReport::internal(error)
-        }
+        TemporalError::Commit(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to persist temporal history")),
+        TemporalError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("the temporal store is unavailable")),
+        TemporalError::Rendering(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to render the temporal representation")),
+        TemporalError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("internal temporal error")),
     }
 }
 
@@ -58,7 +64,9 @@ impl TemporalHttpClassify for EntityMapError {
             // the request that created the map are an invalid request.
             EntityMapError::RequestChanged { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, self.to_string()),
             EntityMapError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
-            EntityMapError::Persistence { .. } | EntityMapError::Invariant { .. } => ClassifiedReport::internal(self),
+            EntityMapError::Persistence { .. } | EntityMapError::Invariant { .. } => {
+                ClassifiedReport::internal(self, InternalFailureSummary::new("the entity store is unavailable"))
+            }
         }
     }
 }
@@ -97,13 +105,13 @@ impl TemporalHttpClassify for QueryError {
 
 impl TemporalHttpClassify for RenderError {
     fn classify_for_temporal_http(&self) -> ClassifiedReport {
-        ClassifiedReport::internal(self)
+        ClassifiedReport::internal(self, InternalFailureSummary::new("failed to render the temporal representation"))
     }
 }
 
 impl TemporalHttpClassify for TemporalSimplifyError {
     fn classify_for_temporal_http(&self) -> ClassifiedReport {
-        ClassifiedReport::internal(self)
+        ClassifiedReport::internal(self, InternalFailureSummary::new("failed to render the temporal representation"))
     }
 }
 
@@ -152,13 +160,15 @@ mod tests {
 
     #[test]
     fn every_temporal_error_variant_has_one_typed_http_classification() {
-        for (name, error, expected) in [
+        // Every internal variant discloses its own operation summary and never the operator diagnostic it carries.
+        for (name, error, expected, internal_disclosure) in [
             (
                 "Validation",
                 TemporalError::Validation(TemporalValidationReason::Store {
                     detail: "invalid window".to_string(),
                 }),
                 NgsiLdErrorType::BadRequestData,
+                None,
             ),
             (
                 "NotFound",
@@ -166,23 +176,32 @@ mod tests {
                     detail: "missing history".to_string(),
                 }),
                 NgsiLdErrorType::ResourceNotFound,
+                None,
             ),
             (
                 "OperationNotSupported",
                 TemporalError::OperationNotSupported(TemporalOperationUnsupported::RecordingSinkNoAggregation),
                 NgsiLdErrorType::OperationNotSupported,
+                None,
             ),
-            ("TooManyResults", TemporalError::too_many_results(500, 100), NgsiLdErrorType::TooManyResults),
+            (
+                "TooManyResults",
+                TemporalError::too_many_results(500, 100),
+                NgsiLdErrorType::TooManyResults,
+                None,
+            ),
             (
                 "JsonLd",
                 TemporalError::JsonLd(JsonLdError::invalid_document("bad document")),
                 NgsiLdErrorType::BadRequestData,
+                None,
             ),
-            ("Query", TemporalError::Query(QueryError::QEmpty), NgsiLdErrorType::InvalidRequest),
+            ("Query", TemporalError::Query(QueryError::QEmpty), NgsiLdErrorType::InvalidRequest, None),
             (
                 "Request",
                 TemporalError::Request(ParameterError::OptionsInvalid("bad".to_string())),
                 NgsiLdErrorType::InvalidRequest,
+                None,
             ),
             (
                 "Commit",
@@ -190,16 +209,33 @@ mod tests {
                     detail: "db-7.internal".to_string(),
                 }),
                 NgsiLdErrorType::InternalError,
+                Some(("failed to persist temporal history", "db-7.internal")),
             ),
-            ("Persistence", TemporalError::persistence("db-7.internal"), NgsiLdErrorType::InternalError),
-            ("Rendering", TemporalError::rendering("secret row"), NgsiLdErrorType::InternalError),
-            ("Internal", TemporalError::internal("secret invariant"), NgsiLdErrorType::InternalError),
+            (
+                "Persistence",
+                TemporalError::persistence("db-7.internal"),
+                NgsiLdErrorType::InternalError,
+                Some(("the temporal store is unavailable", "db-7.internal")),
+            ),
+            (
+                "Rendering",
+                TemporalError::rendering("secret row"),
+                NgsiLdErrorType::InternalError,
+                Some(("failed to render the temporal representation", "secret row")),
+            ),
+            (
+                "Internal",
+                TemporalError::internal("secret invariant"),
+                NgsiLdErrorType::InternalError,
+                Some(("internal temporal error", "secret invariant")),
+            ),
         ] {
             let report = classify_temporal_error(&error);
             pretty_assertions::assert_eq!(report.error_type(), expected, "wrong category for {name}");
             pretty_assertions::assert_eq!(report.classification().status_code(), expected.status_code(), "wrong status for {name}");
-            if expected == NgsiLdErrorType::InternalError {
-                pretty_assertions::assert_eq!(report.detail(), "internal error", "internal detail leaked for {name}");
+            if let Some((expected_detail, secret)) = internal_disclosure {
+                pretty_assertions::assert_eq!(report.detail(), expected_detail, "wrong internal detail for {name}");
+                assert!(!report.detail().contains(secret), "internal detail leaked for {name}: {}", report.detail());
             }
         }
     }

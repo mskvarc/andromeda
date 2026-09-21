@@ -1,6 +1,6 @@
 //! Focused failures produced by component-report response construction.
 
-use andromeda_http_response::classified_report::ClassifiedReport;
+use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 
 /// Failures local to the component-report HTTP binding.
 #[derive(Debug, thiserror::Error)]
@@ -14,6 +14,6 @@ pub enum ComponentReportError {
 #[must_use]
 pub fn classify(error: &ComponentReportError) -> ClassifiedReport {
     match error {
-        ComponentReportError::Identifier(_) => ClassifiedReport::internal(error),
+        ComponentReportError::Identifier(_) => ClassifiedReport::internal(error, InternalFailureSummary::IDENTIFIER_RESOLUTION),
     }
 }

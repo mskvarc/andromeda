@@ -8,6 +8,7 @@ use andromeda_http_extraction::{accept::AcceptFormatNoGeo, jsonld::JsonLd, snaps
 use andromeda_http_response::{
     classified_report::ClassifiedReport,
     headers::with_location,
+    internal_failure_summary::InternalFailureSummary,
     problem_response::ProblemResponse,
     render::{RenderingPreferences, start_rendering_normalized},
     single::NgsiLdResponse,
@@ -53,11 +54,11 @@ pub async fn get(
 ) -> Result<Response, ProblemResponse> {
     let snapshot = state.snapshots.get(&snapshot_id).await.with_snapshot_instance(&uri)?;
 
-    let body = serde_json::to_value(&snapshot).map_err(|error| internal_problem(&error, &uri))?;
+    let body = serde_json::to_value(&snapshot).map_err(|error| internal_problem(&error, InternalFailureSummary::RESPONSE_ENCODING, &uri))?;
     let rendered = start_rendering_normalized(accept.media_type(), &ContextSpec::none(), RenderingPreferences::default())
         .with_payload(ResponsePayload::Single(body))
         .render()
-        .map_err(|error| internal_problem(&error, &uri))?;
+        .map_err(|error| internal_problem(&error, InternalFailureSummary::new("failed to render the snapshot"), &uri))?;
     Ok(NgsiLdResponse::ok(rendered).into_response())
 }
 
@@ -71,11 +72,11 @@ pub async fn update(
 ) -> Result<Response, ProblemResponse> {
     let updated = state.snapshots.update(&snapshot_id, patch).await.with_snapshot_instance(&uri)?;
 
-    let body = serde_json::to_value(&updated).map_err(|error| internal_problem(&error, &uri))?;
+    let body = serde_json::to_value(&updated).map_err(|error| internal_problem(&error, InternalFailureSummary::RESPONSE_ENCODING, &uri))?;
     let rendered = start_rendering_normalized(accept.media_type(), &ContextSpec::none(), RenderingPreferences::default())
         .with_payload(ResponsePayload::Single(body))
         .render()
-        .map_err(|error| internal_problem(&error, &uri))?;
+        .map_err(|error| internal_problem(&error, InternalFailureSummary::new("failed to render the snapshot"), &uri))?;
     Ok(NgsiLdResponse::ok(rendered).into_response())
 }
 

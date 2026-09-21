@@ -2,7 +2,12 @@
 
 use crate::{snapshot::SnapshotHeader, tenant::TenantHeader, tenant_state::TenantStateResolver};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse, tenant_state_rejection::TenantStateRejection};
+use andromeda_http_response::{
+    classified_report::ClassifiedReport,
+    internal_failure_summary::InternalFailureSummary,
+    problem_response::ProblemResponse,
+    tenant_state_rejection::TenantStateRejection,
+};
 use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
 use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, tenant_ref::TenantRef};
@@ -54,7 +59,9 @@ impl ContextTargetResolutionError {
                     .with_instance(instance)
             }
             ContextTargetResolutionError::Saturated => ClassifiedReport::store_saturated(self.to_string()).with_instance(instance),
-            ContextTargetResolutionError::Internal { .. } => ClassifiedReport::internal(&self).with_instance(instance),
+            ContextTargetResolutionError::Internal { .. } => {
+                ClassifiedReport::internal(&self, InternalFailureSummary::new("failed to resolve the request's snapshot target")).with_instance(instance)
+            }
         }
     }
 }

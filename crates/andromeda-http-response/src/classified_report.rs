@@ -1,6 +1,6 @@
 //! Client-safe classification and disclosure before response construction.
 
-use crate::problem_response::ProblemResponse;
+use crate::{internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::{
     error_type::NgsiLdErrorType,
     problem_detail::{ProblemClassification, ProblemDetail},
@@ -16,7 +16,7 @@ const STORE_SATURATED_RETRY_AFTER: Duration = Duration::from_secs(1);
 
 /// A classified, client-safe failure without request-boundary state.
 ///
-/// Route bindings construct public reports from deliberate detail or use [`ClassifiedReport::internal`] to log a typed source exactly once and replace its disclosure with `internal error`.
+/// Route bindings construct public reports from deliberate detail or use [`ClassifiedReport::internal`] to log a typed source exactly once and replace its disclosure with a coarse, client-safe operation summary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClassifiedReport {
     /// Typed category and binding-specific status.
@@ -52,19 +52,25 @@ impl ClassifiedReport {
     /// momentarily at capacity — a saturated connection pool is the canonical
     /// case. The request is well-formed and can be retried unchanged, so it is
     /// answered 503, never the 500 an internal fault earns, and its detail is
-    /// disclosed rather than sanitized to `internal error`. Clause 6.3.2 defines
+    /// disclosed rather than masked to a coarse operation summary. Clause 6.3.2 defines
     /// no `ProblemDetails` type for 503, so the existing `ServiceUnavailable`
     /// classification handling applies.
     pub fn store_saturated(detail: impl Into<String>) -> ClassifiedReport {
         ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, detail).with_retry_after(STORE_SATURATED_RETRY_AFTER)
     }
 
-    /// Sanitize an internal failure after logging its typed source at the disclosure boundary.
-    pub fn internal(source: &impl Display) -> ClassifiedReport {
+    /// Mask an internal failure with a vetted operation summary after logging its typed source at the disclosure boundary.
+    ///
+    /// The real cause is logged once here, inside the surrounding `http-request`
+    /// span whose `x-request-id` the client already holds, so an operator can
+    /// correlate the coarse summary back to the fully-detailed line. `summary` is
+    /// a compile-time literal (see [`InternalFailureSummary`]) and never carries
+    /// any part of the cause.
+    pub fn internal(source: &impl Display, summary: InternalFailureSummary) -> ClassifiedReport {
         tracing::error!(error = %source, "Internal error sanitized before sending to the client");
         ClassifiedReport {
             classification: ProblemClassification::Category(NgsiLdErrorType::InternalError),
-            detail: "internal error".to_string(),
+            detail: summary.to_string(),
             retry_after: None,
         }
     }
@@ -177,12 +183,16 @@ mod tests {
     }
 
     #[test]
-    fn internal_detail_is_always_sanitized() {
+    fn internal_discloses_its_summary_but_never_the_raw_cause() {
+        use crate::internal_failure_summary::InternalFailureSummary;
+
         let errors = Arc::new(AtomicUsize::new(0));
         let subscriber = CountingSubscriber { errors: Arc::clone(&errors) };
-        let report = with_default(subscriber, || ClassifiedReport::internal(&"database db-7.internal failed"));
+        let report = with_default(subscriber, || {
+            ClassifiedReport::internal(&"database db-7.internal failed", InternalFailureSummary::new("the entity store is unavailable"))
+        });
         pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
-        pretty_assertions::assert_eq!(report.detail(), "internal error");
+        pretty_assertions::assert_eq!(report.detail(), "the entity store is unavailable");
         assert!(!report.detail().contains("db-7.internal"));
         pretty_assertions::assert_eq!(errors.load(Ordering::SeqCst), 1);
     }

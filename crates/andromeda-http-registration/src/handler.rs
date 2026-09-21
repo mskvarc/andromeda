@@ -18,6 +18,7 @@ use andromeda_http_headers::via::Via;
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     headers::with_location,
+    internal_failure_summary::InternalFailureSummary,
     pagination::{CursorPointers, PageExtent, PageLinks, append_pagination_links},
     problem_response::ProblemResponse,
     render::start_rendering_normalized,
@@ -132,16 +133,26 @@ pub(crate) async fn query(
         .with_payload(ResponsePayload::Collection(registrations))
         .render()
         .with_registration_instance(&uri)?;
-    let total_count =
-        usize::try_from(total).map_err(|error| internal_problem(format!("registration count does not fit the response platform: {error}"), &uri))?;
+    let total_count = usize::try_from(total).map_err(|error| {
+        internal_problem(
+            format!("registration count does not fit the response platform: {error}"),
+            InternalFailureSummary::new("internal registration error"),
+            &uri,
+        )
+    })?;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_total_count(total_count).into_response();
     // Clause 5.5.9.1: a discovery in the default id order walks by opaque cursor
     // by default; an explicit `offset` keeps the clause 5.5.9.2 offset pointers.
     // `offset` and `cursor` are mutually exclusive (validated), so their absence
     // together is the fresh first page of a cursor walk.
     if params.offset.is_some() {
-        let pagination_total =
-            i64::try_from(total).map_err(|error| internal_problem(format!("registration count does not fit offset pagination: {error}"), &uri))?;
+        let pagination_total = i64::try_from(total).map_err(|error| {
+            internal_problem(
+                format!("registration count does not fit offset pagination: {error}"),
+                InternalFailureSummary::new("internal registration error"),
+                &uri,
+            )
+        })?;
         let links = PageLinks::Offset {
             offset,
             extent: PageExtent::Total(pagination_total),

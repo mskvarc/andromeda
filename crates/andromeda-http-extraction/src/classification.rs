@@ -1,7 +1,7 @@
 //! Exhaustive classification shared by HTTP extractors.
 
 use crate::origin::RequestOriginError;
-use andromeda_http_response::classified_report::ClassifiedReport;
+use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::error::QueryError;
@@ -20,7 +20,7 @@ pub fn classify_tenancy_error(error: &TenancyError) -> ClassifiedReport {
         // client cannot act on.
         TenancyError::Saturated { .. } => ClassifiedReport::store_saturated(error.to_string()),
         TenancyError::RegistryUnavailable { .. } | TenancyError::ProvisioningFailed { .. } | TenancyError::RuntimeUnavailable { .. } => {
-            ClassifiedReport::internal(error)
+            ClassifiedReport::internal(error, InternalFailureSummary::new("failed to resolve the tenant"))
         }
     }
 }
@@ -143,7 +143,7 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         // The expander's own failure is the one arm that can still be a broker
         // fault: it carries whatever the JSON-LD processor raised, which
         // includes conditions no request text can provoke.
-        QueryError::TermExpansion { .. } => ClassifiedReport::internal(error),
+        QueryError::TermExpansion { .. } => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to expand a query term against the context")),
     }
 }
 

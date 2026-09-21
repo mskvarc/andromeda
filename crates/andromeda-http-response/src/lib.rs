@@ -13,6 +13,7 @@ pub mod content_range;
 pub mod declined_representation;
 pub mod extraction_rejection;
 pub mod headers;
+pub mod internal_failure_summary;
 pub mod linked_resolution_warning;
 pub mod not_acceptable;
 pub mod pagination;

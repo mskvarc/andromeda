@@ -4,8 +4,9 @@
 //! and [`RegistrationError::Internal`](crate::error::RegistrationError::Internal)
 //! both carry one of these. The text is an operator diagnostic — a persistence
 //! adapter's own error, a serialization fault on the broker's own output, a
-//! broken internal invariant — and is always masked to `internal error` before
-//! any client sees it (see `ClassifiedReport::internal`). It stays coarse
+//! broken internal invariant — and is always masked to a coarse, client-safe
+//! operation summary before any client sees it (see `ClassifiedReport::internal`).
+//! It stays coarse
 //! deliberately: some of the adapters that raise it live in crates this one
 //! cannot depend on without a cycle, so their cause arrives as opaque prose
 //! rather than a typed source. The value never reaches a client.

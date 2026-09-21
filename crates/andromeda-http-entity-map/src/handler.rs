@@ -21,7 +21,12 @@ use andromeda_http_extraction::{
     tenant_state,
     typed_path::TypedPath,
 };
-use andromeda_http_response::{problem_response::ProblemResponse, render::start_rendering_normalized, single::NgsiLdResponse};
+use andromeda_http_response::{
+    internal_failure_summary::InternalFailureSummary,
+    problem_response::ProblemResponse,
+    render::start_rendering_normalized,
+    single::NgsiLdResponse,
+};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::query::body::Query;
@@ -52,7 +57,7 @@ pub async fn get(
 
     let map = state.entity_maps.retrieve(&entity_map_id).await.with_entity_map_instance(&uri)?;
 
-    let value = serde_json::to_value(&map).map_err(|error| internal_problem(&error, &uri))?;
+    let value = serde_json::to_value(&map).map_err(|error| internal_problem(&error, InternalFailureSummary::RESPONSE_ENCODING, &uri))?;
     let rendered = start_rendering_normalized(accept.media_type(), &context, prefer.rendering_preferences())
         .with_payload(ResponsePayload::Single(value))
         .render()

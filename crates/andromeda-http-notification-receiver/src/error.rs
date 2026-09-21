@@ -1,7 +1,7 @@
 //! HTTP classification of receiver failures.
 
 use crate::state::ReceiverResolutionError;
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_subscription_forwarding::error::SubscriptionForwardingError;
 use axum::http::Uri;
@@ -11,7 +11,7 @@ pub(crate) fn classify_resolution(error: &ReceiverResolutionError, instance: &Ur
     let report = match error {
         ReceiverResolutionError::Unknown { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, error.to_string()),
         ReceiverResolutionError::ForwardingDisabled { .. } => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, error.to_string()),
-        ReceiverResolutionError::Tenant { .. } => ClassifiedReport::internal(error),
+        ReceiverResolutionError::Tenant { .. } => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to resolve the notification tenant")),
     };
     report.with_instance(instance.clone())
 }
@@ -27,7 +27,9 @@ pub(crate) fn classify_forwarding(error: &SubscriptionForwardingError, instance:
         | SubscriptionForwardingError::Entity(_)
         | SubscriptionForwardingError::JsonLd(_)
         | SubscriptionForwardingError::Persistence { .. }
-        | SubscriptionForwardingError::Internal { .. } => ClassifiedReport::internal(error),
+        | SubscriptionForwardingError::Internal { .. } => {
+            ClassifiedReport::internal(error, InternalFailureSummary::new("internal notification-forwarding error"))
+        }
     };
     report.with_instance(instance.clone())
 }

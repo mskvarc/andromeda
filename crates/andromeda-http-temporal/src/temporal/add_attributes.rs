@@ -31,7 +31,7 @@ use crate::{
     written_evolution_admission::admit_written_evolution,
 };
 use andromeda_http_extraction::context_target;
-use andromeda_http_response::classified_report::ClassifiedReport;
+use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 
 pub async fn add_attrs(
     context_target::ExistingTargetedTenantState {
@@ -64,7 +64,8 @@ pub async fn add_attrs(
     }
 
     let entity_type = payload_entity_type(&payload);
-    let body = serde_json::to_vec(&payload).map_err(|error| ClassifiedReport::internal(&error).with_instance(uri.clone()))?;
+    let body = serde_json::to_vec(&payload)
+        .map_err(|error| ClassifiedReport::internal(&error, InternalFailureSummary::RESPONSE_ENCODING).with_instance(uri.clone()))?;
     let forwarded = state
         .forwarding
         .forward_provision(

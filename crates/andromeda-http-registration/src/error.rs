@@ -1,7 +1,7 @@
 //! Exhaustive HTTP classification for context-source registration failures.
 
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
@@ -26,8 +26,9 @@ impl RegistrationHttpClassify for RegistrationError {
             RegistrationError::Query(source) => classify_query_error(source),
             // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
             RegistrationError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
-            RegistrationError::Representation(_) | RegistrationError::Identifier(_) | RegistrationError::Persistence(_) | RegistrationError::Internal(_) => {
-                ClassifiedReport::internal(self)
+            RegistrationError::Persistence(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("the registration store is unavailable")),
+            RegistrationError::Representation(_) | RegistrationError::Identifier(_) | RegistrationError::Internal(_) => {
+                ClassifiedReport::internal(self, InternalFailureSummary::new("internal registration error"))
             }
         }
     }
@@ -43,7 +44,7 @@ impl RegistrationHttpClassify for ParameterError {
 
 impl RegistrationHttpClassify for RenderError {
     fn classify_for_registration_http(&self) -> ClassifiedReport {
-        ClassifiedReport::internal(self)
+        ClassifiedReport::internal(self, InternalFailureSummary::RESPONSE_RENDERING)
     }
 }
 
@@ -68,8 +69,8 @@ where
 }
 
 /// Sanitize a binding invariant and attach the request URI.
-pub(crate) fn internal_problem(detail: impl Display, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::internal(&detail).with_instance(instance.clone())
+pub(crate) fn internal_problem(detail: impl Display, summary: InternalFailureSummary, instance: &Uri) -> ProblemResponse {
+    ClassifiedReport::internal(&detail, summary).with_instance(instance.clone())
 }
 
 #[cfg(test)]
@@ -108,7 +109,8 @@ mod tests {
             let report = error.classify_for_registration_http();
             pretty_assertions::assert_eq!(report.error_type(), expected);
             if expected == NgsiLdErrorType::InternalError {
-                pretty_assertions::assert_eq!(report.detail(), "internal error");
+                pretty_assertions::assert_eq!(report.detail(), "the registration store is unavailable");
+                assert!(!report.detail().contains("database host"), "the raw cause leaked: {}", report.detail());
             }
         }
         Ok(())

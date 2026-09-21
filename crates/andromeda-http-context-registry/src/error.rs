@@ -1,7 +1,7 @@
 //! Exhaustive HTTP classification for Context Registry failures.
 
 use andromeda_context_registry::error::ContextRegistryError;
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::http::Uri;
 
@@ -23,7 +23,7 @@ pub fn classify_context_registry_error(error: &ContextRegistryError) -> Classifi
         ContextRegistryError::MissingSourceUrl { .. }
         | ContextRegistryError::Persistence { .. }
         | ContextRegistryError::Representation { .. }
-        | ContextRegistryError::Invariant { .. } => ClassifiedReport::internal(error),
+        | ContextRegistryError::Invariant { .. } => ClassifiedReport::internal(error, InternalFailureSummary::new("internal context-registry error")),
     }
 }
 
@@ -75,7 +75,8 @@ mod tests {
             let report = classify_context_registry_error(&error);
             pretty_assertions::assert_eq!(report.error_type(), expected);
             if expected == NgsiLdErrorType::InternalError {
-                pretty_assertions::assert_eq!(report.detail(), "internal error");
+                pretty_assertions::assert_eq!(report.detail(), "internal context-registry error");
+                assert!(!report.detail().contains("database host"), "the raw cause leaked: {}", report.detail());
             }
         }
         Ok(())

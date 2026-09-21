@@ -1,7 +1,7 @@
 //! Exhaustive HTTP classification for subscription failures.
 
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
@@ -25,8 +25,9 @@ impl SubscriptionHttpClassify for SubscriptionError {
             SubscriptionError::Query(source) => classify_query_error(source),
             // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
             SubscriptionError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
-            SubscriptionError::Representation(_) | SubscriptionError::Identifier(_) | SubscriptionError::Persistence(_) | SubscriptionError::Internal(_) => {
-                ClassifiedReport::internal(self)
+            SubscriptionError::Persistence(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("the subscription store is unavailable")),
+            SubscriptionError::Representation(_) | SubscriptionError::Identifier(_) | SubscriptionError::Internal(_) => {
+                ClassifiedReport::internal(self, InternalFailureSummary::new("internal subscription error"))
             }
         }
     }
@@ -42,7 +43,7 @@ impl SubscriptionHttpClassify for ParameterError {
 
 impl SubscriptionHttpClassify for RenderError {
     fn classify_for_subscription_http(&self) -> ClassifiedReport {
-        ClassifiedReport::internal(self)
+        ClassifiedReport::internal(self, InternalFailureSummary::RESPONSE_RENDERING)
     }
 }
 
@@ -72,8 +73,8 @@ pub(crate) fn public_problem(detail: impl Into<String>, instance: &Uri) -> Probl
 }
 
 /// Sanitize a failure that no client input can provoke, attaching `instance`.
-pub(crate) fn internal_problem(error: &impl Display, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::internal(error).with_instance(instance.clone())
+pub(crate) fn internal_problem(error: &impl Display, summary: InternalFailureSummary, instance: &Uri) -> ProblemResponse {
+    ClassifiedReport::internal(error, summary).with_instance(instance.clone())
 }
 
 #[cfg(test)]
@@ -104,7 +105,8 @@ mod tests {
             let report = error.classify_for_subscription_http();
             pretty_assertions::assert_eq!(report.error_type(), expected);
             if expected == NgsiLdErrorType::InternalError {
-                pretty_assertions::assert_eq!(report.detail(), "internal error");
+                pretty_assertions::assert_eq!(report.detail(), "the subscription store is unavailable");
+                assert!(!report.detail().contains("database host"), "the raw cause leaked: {}", report.detail());
             }
         }
         Ok(())

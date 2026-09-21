@@ -1,7 +1,7 @@
 //! Focused failures produced by tenant administration over HTTP.
 
 use andromeda_http_extraction::classification::classify_tenancy_error;
-use andromeda_http_response::classified_report::ClassifiedReport;
+use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_tenancy::error::TenancyError;
 
 /// Failures local to the tenancy HTTP binding.
@@ -20,6 +20,6 @@ pub enum TenancyHttpError {
 pub fn classify(error: &TenancyHttpError) -> ClassifiedReport {
     match error {
         TenancyHttpError::Tenancy(source) => classify_tenancy_error(source),
-        TenancyHttpError::Identifier(_) => ClassifiedReport::internal(error),
+        TenancyHttpError::Identifier(_) => ClassifiedReport::internal(error, InternalFailureSummary::IDENTIFIER_RESOLUTION),
     }
 }

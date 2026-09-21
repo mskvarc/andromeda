@@ -19,6 +19,7 @@ use andromeda_http_headers::via::Via;
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     headers::with_location,
+    internal_failure_summary::InternalFailureSummary,
     pagination::{CursorPointers, PageExtent, PageLinks, append_pagination_links},
     problem_response::ProblemResponse,
     render::start_rendering_normalized,
@@ -150,7 +151,7 @@ pub async fn query(
     if options.count == CountPolicy::Emit {
         // The store counts rows, so the total is never negative; a conversion
         // that fails here is an internal inconsistency, not client input.
-        let total_count = usize::try_from(total).map_err(|error| internal_problem(&error, &uri))?;
+        let total_count = usize::try_from(total).map_err(|error| internal_problem(&error, InternalFailureSummary::new("internal subscription error"), &uri))?;
         response = response.with_total_count(total_count);
     }
 

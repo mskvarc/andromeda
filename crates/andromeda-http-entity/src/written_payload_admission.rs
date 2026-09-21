@@ -59,7 +59,7 @@ use andromeda_entity::{
     error::EntityError,
     write_admission::{AttributeWrite, BatchWrite, EntityWrite},
 };
-use andromeda_http_response::{batch_projection::batch_entity_error, classified_report::ClassifiedReport};
+use andromeda_http_response::{batch_projection::batch_entity_error, classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity::Entity;
@@ -95,7 +95,7 @@ impl EntityHttpClassify for WrittenPayloadRefusal {
         match self {
             // Clause 5.5.6: a failure of the broker's own is an InternalError,
             // logged at the disclosure boundary rather than handed to the client.
-            WrittenPayloadRefusal::Rendering(source) => ClassifiedReport::internal(source),
+            WrittenPayloadRefusal::Rendering(source) => ClassifiedReport::internal(source, InternalFailureSummary::RESPONSE_RENDERING),
             // Clause 5.5.4: data that is not syntactically correct according to
             // the API data type definitions is BadRequestData.
             WrittenPayloadRefusal::AttributeType(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),

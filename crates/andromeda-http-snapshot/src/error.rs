@@ -3,7 +3,7 @@
 use andromeda_entity::error::EntityError;
 use andromeda_federation::error::FederationError;
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
 use andromeda_snapshot::{error::SnapshotError, service::SnapshotPurgeFailure};
 use andromeda_temporal::error::TemporalError;
@@ -25,7 +25,9 @@ pub fn classify_snapshot_error(error: &SnapshotError) -> ClassifiedReport {
         SnapshotError::Federation(source) => classify_federation_error(source),
         SnapshotError::Request(source) => classify_parameter_error(source),
         SnapshotError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
-        SnapshotError::Representation(_) | SnapshotError::Persistence { .. } | SnapshotError::Internal { .. } => ClassifiedReport::internal(error),
+        SnapshotError::Representation(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to render the snapshot")),
+        SnapshotError::Persistence { .. } => ClassifiedReport::internal(error, InternalFailureSummary::new("the snapshot store is unavailable")),
+        SnapshotError::Internal { .. } => ClassifiedReport::internal(error, InternalFailureSummary::new("internal snapshot error")),
     }
 }
 
@@ -47,7 +49,9 @@ fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
         EntityError::EntityTypeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
         EntityError::AttributeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
         EntityError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
-        EntityError::Commit(_) | EntityError::Persistence(_) | EntityError::Internal(_) => ClassifiedReport::internal(error),
+        EntityError::Commit(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to commit the entity write")),
+        EntityError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("the entity store is unavailable")),
+        EntityError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("internal entity error")),
     }
 }
 
@@ -63,9 +67,10 @@ fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
         TemporalError::Query(source) => classify_query_error(source),
         TemporalError::Request(source) => classify_parameter_error(source),
         TemporalError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
-        TemporalError::Commit(_) | TemporalError::Persistence(_) | TemporalError::Rendering(_) | TemporalError::Internal(_) => {
-            ClassifiedReport::internal(error)
-        }
+        TemporalError::Commit(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to persist temporal history")),
+        TemporalError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("the temporal store is unavailable")),
+        TemporalError::Rendering(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to render the temporal representation")),
+        TemporalError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("internal temporal error")),
     }
 }
 
@@ -79,7 +84,9 @@ fn classify_federation_error(error: &FederationError) -> ClassifiedReport {
         FederationError::BadGateway { .. } => ClassifiedReport::public_binding(ProblemClassification::BadGateway, error.to_string()),
         FederationError::JsonLd(source) => classify_jsonld_error(source),
         FederationError::Query(source) => classify_query_error(source),
-        FederationError::Registration(_) | FederationError::Representation(_) | FederationError::Internal(_) => ClassifiedReport::internal(error),
+        FederationError::Registration(_) | FederationError::Representation(_) | FederationError::Internal(_) => {
+            ClassifiedReport::internal(error, InternalFailureSummary::CONTEXT_FEDERATION)
+        }
     }
 }
 
@@ -105,8 +112,8 @@ pub(crate) fn project_purge_failure(failure: SnapshotPurgeFailure) -> BatchEntit
     BatchEntityError::new(failure.identifier, report.error_type(), report.detail())
 }
 
-pub(crate) fn internal_problem(source: &impl Display, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::internal(source).with_instance(instance.clone())
+pub(crate) fn internal_problem(source: &impl Display, summary: InternalFailureSummary, instance: &Uri) -> ProblemResponse {
+    ClassifiedReport::internal(source, summary).with_instance(instance.clone())
 }
 
 #[cfg(test)]
@@ -139,8 +146,25 @@ mod tests {
         ] {
             let report = classify_snapshot_error(&error);
             pretty_assertions::assert_eq!(report.error_type(), expected);
-            if expected == NgsiLdErrorType::InternalError {
-                pretty_assertions::assert_eq!(report.detail(), "internal error");
+            match &error {
+                SnapshotError::Persistence { detail } => {
+                    pretty_assertions::assert_eq!(report.detail(), "the snapshot store is unavailable");
+                    assert!(!report.detail().contains(detail.as_str()), "the raw cause leaked: {}", report.detail());
+                }
+                SnapshotError::Internal { detail } => {
+                    pretty_assertions::assert_eq!(report.detail(), "internal snapshot error");
+                    assert!(!report.detail().contains(detail.as_str()), "the raw cause leaked: {}", report.detail());
+                }
+                SnapshotError::Validation { .. }
+                | SnapshotError::NotFound { .. }
+                | SnapshotError::AlreadyExists { .. }
+                | SnapshotError::PreparationTimeout { .. }
+                | SnapshotError::Entity(_)
+                | SnapshotError::Temporal(_)
+                | SnapshotError::Federation(_)
+                | SnapshotError::Request(_)
+                | SnapshotError::Representation(_)
+                | SnapshotError::StoreSaturated => {}
             }
         }
         Ok(())

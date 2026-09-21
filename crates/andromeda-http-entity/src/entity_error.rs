@@ -2,7 +2,7 @@
 
 use andromeda_entity::error::EntityError;
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
-use andromeda_http_response::classified_report::ClassifiedReport;
+use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 
 /// Classify one entity-policy failure for both single and batch HTTP reporting.
@@ -30,7 +30,9 @@ pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
         EntityError::AttributeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
         // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
         EntityError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
-        EntityError::Commit(_) | EntityError::Persistence(_) | EntityError::Internal(_) => ClassifiedReport::internal(error),
+        EntityError::Commit(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to commit the entity write")),
+        EntityError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("the entity store is unavailable")),
+        EntityError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("internal entity error")),
     }
 }
 
@@ -99,10 +101,14 @@ mod tests {
 
     #[test]
     fn internal_entity_variants_never_disclose_their_detail() {
-        for error in [EntityError::persistence("db-7.internal"), EntityError::internal("secret invariant")] {
+        for (error, secret, expected_detail) in [
+            (EntityError::persistence("db-7.internal"), "db-7.internal", "the entity store is unavailable"),
+            (EntityError::internal("secret invariant"), "secret invariant", "internal entity error"),
+        ] {
             let report = classify_entity_error(&error);
             pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
-            pretty_assertions::assert_eq!(report.detail(), "internal error");
+            pretty_assertions::assert_eq!(report.detail(), expected_detail);
+            assert!(!report.detail().contains(secret), "the raw cause leaked: {}", report.detail());
         }
     }
 

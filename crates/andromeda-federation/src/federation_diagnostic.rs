@@ -3,8 +3,9 @@
 //! [`FederationError::Internal`](crate::error::FederationError::Internal) carries
 //! one of these. The text is an operator diagnostic — an HTTP client that would
 //! not build, a registration whose `contextSourceInfo` cannot be turned into
-//! headers, a broken internal invariant — and is always masked to `internal
-//! error` before any client sees it (see `ClassifiedReport::internal`). It stays
+//! headers, a broken internal invariant — and is always masked to a coarse,
+//! client-safe operation summary before any client sees it (see
+//! `ClassifiedReport::internal`). It stays
 //! coarse deliberately: some sources that raise it live in crates this one
 //! cannot depend on without a cycle, so their cause arrives as opaque prose
 //! rather than a typed source. The value never reaches a client.

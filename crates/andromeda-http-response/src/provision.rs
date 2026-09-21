@@ -7,7 +7,12 @@
 //! operation failed. The current-entity and the temporal bindings answer the
 //! same way, so the decision lives here, between them.
 
-use crate::{batch_projection::forwarded_write_error, classified_report::ClassifiedReport, problem_response::ProblemResponse};
+use crate::{
+    batch_projection::forwarded_write_error,
+    classified_report::ClassifiedReport,
+    internal_failure_summary::InternalFailureSummary,
+    problem_response::ProblemResponse,
+};
 use andromeda_federation::{error::FederationError, outcome::ForwardedWriteResult, single_source_failure::single_source_failure};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_problem_details::{
@@ -154,7 +159,7 @@ pub fn classify_forwarding_error(error: &FederationError) -> ClassifiedReport {
         | FederationError::JsonLd(_)
         | FederationError::Query(_)
         | FederationError::Representation(_)
-        | FederationError::Internal(_) => ClassifiedReport::internal(error),
+        | FederationError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::CONTEXT_FEDERATION),
     }
 }
 

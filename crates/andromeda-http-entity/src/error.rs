@@ -5,7 +5,12 @@ use andromeda_entity::error::EntityError;
 use andromeda_entity_map::error::EntityMapError;
 use andromeda_federation::error::FederationError;
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error, classify_tenancy_error};
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse, provision::classify_forwarding_error};
+use andromeda_http_response::{
+    classified_report::ClassifiedReport,
+    internal_failure_summary::InternalFailureSummary,
+    problem_response::ProblemResponse,
+    provision::classify_forwarding_error,
+};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_render::error::RenderError;
@@ -33,7 +38,9 @@ impl EntityHttpClassify for EntityMapError {
             // the request that created the map are an invalid request.
             EntityMapError::RequestChanged { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, self.to_string()),
             EntityMapError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
-            EntityMapError::Persistence { .. } | EntityMapError::Invariant { .. } => ClassifiedReport::internal(self),
+            EntityMapError::Persistence { .. } | EntityMapError::Invariant { .. } => {
+                ClassifiedReport::internal(self, InternalFailureSummary::new("the entity store is unavailable"))
+            }
         }
     }
 }
@@ -60,7 +67,7 @@ impl EntityHttpClassify for FederationError {
 
 impl EntityHttpClassify for RenderError {
     fn classify_for_entity_http(&self) -> ClassifiedReport {
-        ClassifiedReport::internal(self)
+        ClassifiedReport::internal(self, InternalFailureSummary::RESPONSE_RENDERING)
     }
 }
 
@@ -78,7 +85,7 @@ impl EntityHttpClassify for QueryError {
 
 impl EntityHttpClassify for serde_json::Error {
     fn classify_for_entity_http(&self) -> ClassifiedReport {
-        ClassifiedReport::internal(self)
+        ClassifiedReport::internal(self, InternalFailureSummary::RESPONSE_ENCODING)
     }
 }
 

@@ -4,7 +4,7 @@ use andromeda_entity::error::EntityError;
 use andromeda_entity_map::error::EntityMapError;
 use andromeda_federation::error::FederationError;
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
@@ -26,7 +26,9 @@ impl EntityMapHttpClassify for EntityMapError {
             // the request that created the map are an invalid request.
             EntityMapError::RequestChanged { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, self.to_string()),
             EntityMapError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
-            EntityMapError::Persistence { .. } | EntityMapError::Invariant { .. } => ClassifiedReport::internal(self),
+            EntityMapError::Persistence { .. } | EntityMapError::Invariant { .. } => {
+                ClassifiedReport::internal(self, InternalFailureSummary::new("the entity store is unavailable"))
+            }
         }
     }
 }
@@ -50,7 +52,9 @@ impl EntityMapHttpClassify for EntityError {
             EntityError::EntityTypeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
             EntityError::AttributeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
             EntityError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
-            EntityError::Commit(_) | EntityError::Persistence(_) | EntityError::Internal(_) => ClassifiedReport::internal(self),
+            EntityError::Commit(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("failed to commit the entity write")),
+            EntityError::Persistence(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("the entity store is unavailable")),
+            EntityError::Internal(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("internal entity error")),
         }
     }
 }
@@ -63,7 +67,7 @@ impl EntityMapHttpClassify for ParameterError {
 
 impl EntityMapHttpClassify for RenderError {
     fn classify_for_entity_map_http(&self) -> ClassifiedReport {
-        ClassifiedReport::internal(self)
+        ClassifiedReport::internal(self, InternalFailureSummary::RESPONSE_RENDERING)
     }
 }
 
@@ -80,9 +84,10 @@ impl EntityMapHttpClassify for TemporalError {
             TemporalError::Query(source) => classify_query_error(source),
             TemporalError::Request(source) => classify_parameter_error(source),
             TemporalError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
-            TemporalError::Commit(_) | TemporalError::Persistence(_) | TemporalError::Rendering(_) | TemporalError::Internal(_) => {
-                ClassifiedReport::internal(self)
-            }
+            TemporalError::Commit(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("failed to persist temporal history")),
+            TemporalError::Persistence(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("the temporal store is unavailable")),
+            TemporalError::Rendering(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("failed to render the temporal representation")),
+            TemporalError::Internal(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("internal temporal error")),
         }
     }
 }
@@ -98,7 +103,9 @@ impl EntityMapHttpClassify for FederationError {
             FederationError::BadGateway { .. } => ClassifiedReport::public_binding(ProblemClassification::BadGateway, self.to_string()),
             FederationError::JsonLd(source) => classify_jsonld_error(source),
             FederationError::Query(source) => classify_query_error(source),
-            FederationError::Registration(_) | FederationError::Representation(_) | FederationError::Internal(_) => ClassifiedReport::internal(self),
+            FederationError::Registration(_) | FederationError::Representation(_) | FederationError::Internal(_) => {
+                ClassifiedReport::internal(self, InternalFailureSummary::CONTEXT_FEDERATION)
+            }
         }
     }
 }
@@ -132,8 +139,8 @@ pub(crate) fn bad_request_data(detail: impl Into<String>, instance: &Uri) -> Pro
     ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail).with_instance(instance.clone())
 }
 
-pub(crate) fn internal_problem(source: &impl Display, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::internal(source).with_instance(instance.clone())
+pub(crate) fn internal_problem(source: &impl Display, summary: InternalFailureSummary, instance: &Uri) -> ProblemResponse {
+    ClassifiedReport::internal(source, summary).with_instance(instance.clone())
 }
 
 #[cfg(test)]
@@ -166,7 +173,10 @@ mod tests {
             let report = error.classify_for_entity_map_http();
             pretty_assertions::assert_eq!(report.error_type(), expected);
             if expected == NgsiLdErrorType::InternalError {
-                pretty_assertions::assert_eq!(report.detail(), "internal error");
+                // Both internal Entity Map variants disclose the store summary and never their operator diagnostic.
+                pretty_assertions::assert_eq!(report.detail(), "the entity store is unavailable");
+                assert!(!report.detail().contains("database host"), "the raw cause leaked: {}", report.detail());
+                assert!(!report.detail().contains("broken"), "the raw cause leaked: {}", report.detail());
             }
         }
         Ok(())
