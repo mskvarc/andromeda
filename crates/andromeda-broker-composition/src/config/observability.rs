@@ -23,18 +23,6 @@ pub enum LogLevel {
     Trace,
 }
 
-/// Whether, and in which format, the broker exposes its metrics.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString)]
-#[serde(rename_all = "kebab-case")]
-#[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
-pub enum MetricsExposure {
-    /// No recorder is installed and no scrape endpoint is mounted.
-    #[default]
-    Disabled,
-    /// A Prometheus recorder is installed and served at `GET /metrics`.
-    Prometheus,
-}
-
 /// Whether the broker also writes a structured log to a file.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString)]
 #[serde(rename_all = "kebab-case")]
@@ -147,9 +135,6 @@ pub struct ObservabilityConfig {
     /// Maximum emitted log verbosity.
     #[toml_comment(inline)]
     pub log_level: LogLevel,
-    /// Metrics exposure mode.
-    #[toml_comment(inline)]
-    pub metrics: MetricsExposure,
     /// Structured file-logging configuration.
     pub file_logging: FileLoggingConfig,
 }

@@ -1,6 +1,7 @@
 use crate::{
     config::{
         error::ConfigurationError,
+        management::ManagementConfig,
         notifications::NotificationsConfig,
         observability::ObservabilityConfig,
         validation::{normalize_preload_context_paths, validate_config},
@@ -117,6 +118,9 @@ pub struct RuntimeConfig {
 
     /// Composition-owned tracing configuration.
     pub observability: ObservabilityConfig,
+
+    /// Management-plane topology and metrics-exposure configuration.
+    pub management: ManagementConfig,
 
     /// Opt-in, non-standard extension configuration (off by default).
     pub extensions: ExtensionsConfig,
@@ -672,5 +676,14 @@ port = 1600
         assert!(rendered.contains("[server]"), "{rendered}");
         assert!(rendered.contains("[database.maintenance]"), "{rendered}");
         assert!(rendered.lines().any(|line| line.starts_with('#')), "{rendered}");
+    }
+
+    #[test]
+    fn default_toml_contains_the_management_table() {
+        let rendered = <RuntimeConfig as TomlComment>::default_toml();
+        assert!(rendered.contains("[management]"), "{rendered}");
+        assert!(rendered.contains("mode = \"separate-port\""), "{rendered}");
+        assert!(rendered.contains("port = 1086"), "{rendered}");
+        assert!(rendered.contains("metrics = \"disabled\""), "{rendered}");
     }
 }

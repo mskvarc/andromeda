@@ -21,7 +21,7 @@ pub(crate) fn http_metric_layer() -> PrometheusMetricLayer<'static> {
         .get_or_init(|| {
             PrometheusMetricLayerBuilder::new()
                 .with_prefix("andromeda")
-                .with_ignore_pattern("/ngsi-ld/v1/metrics")
+                .with_ignore_pattern("/metrics")
                 .build()
         })
         .clone()

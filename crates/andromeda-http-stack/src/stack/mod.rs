@@ -127,8 +127,16 @@ impl HttpStack {
         router
     }
 
-    /// Apply process-wide middleware in deterministic order and normalize paths before routing.
-    pub fn apply_process(&self, router: Router) -> NormalizePath<Router> {
+    /// Apply the shared diagnostic layers common to every listener.
+    ///
+    /// Request-id assignment and propagation, sensitive-header redaction, the
+    /// request/response trace, and the per-request timeout are diagnostics every
+    /// plane needs regardless of its edge policy, so both the process stack and
+    /// the bare management stack build on this one core rather than duplicating
+    /// it. The request-metric layer is intentionally excluded: only the process
+    /// stack instruments requests, and it adds the metric layer outside this
+    /// core so the metric spans the same requests it did before the split.
+    fn apply_diagnostic_layers(&self, router: Router) -> Router {
         let sensitive_request_headers = Arc::<[_]>::from([header::AUTHORIZATION, header::COOKIE, header::PROXY_AUTHORIZATION]);
         let sensitive_response_headers = Arc::<[_]>::from([header::SET_COOKIE]);
         let trace_layer = TraceLayer::new_for_http()
@@ -174,17 +182,18 @@ impl HttpStack {
                     .map_or_else(String::new, |id| id.as_str().to_owned());
                 tracing::info!(request_id = %request_id, status = %response.status(), latency_us = latency.as_micros(), "finished request");
             });
-        let core = ServiceBuilder::new()
-            // Outermost so the matched route is populated by the time the layer
-            // records the response, giving the `endpoint` label its low-cardinality
-            // `MatchedPath` value rather than the raw URI.
-            .layer(http_metric_layer())
+        let diagnostic = ServiceBuilder::new()
             .layer(SetSensitiveRequestHeadersLayer::from_shared(sensitive_request_headers))
             .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
             .layer(trace_layer)
             .layer(SetSensitiveResponseHeadersLayer::from_shared(sensitive_response_headers))
             .layer(PropagateRequestIdLayer::x_request_id())
             .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, self.request_timeout));
+        router.layer(diagnostic)
+    }
+
+    /// Apply process-wide middleware in deterministic order and normalize paths before routing.
+    pub fn apply_process(&self, router: Router) -> NormalizePath<Router> {
         let mut router = router.layer(middleware::from_fn(echo_tenant_header));
         router = apply_server_timing(router, &self.server_timing);
         if let Some(compression) = &self.compression {
@@ -193,13 +202,30 @@ impl HttpStack {
         if let Some(decompression) = &self.decompression {
             router = router.layer(decompression.clone());
         }
-        router = router.layer(core);
+        router = self.apply_diagnostic_layers(router);
+        // Outermost of the diagnostic core so the matched route is populated by
+        // the time the layer records the response, giving the `endpoint` label its
+        // low-cardinality `MatchedPath` value rather than the raw URI.
+        router = router.layer(http_metric_layer());
         if let Some(cors) = &self.cors {
             router = router.layer(cors.clone());
         }
         if let Some(csrf) = &self.csrf {
             router = router.layer(csrf.clone());
         }
+        NormalizePathLayer::trim_trailing_slash().layer(router)
+    }
+
+    /// Apply the bare management-plane middleware and normalize paths before routing.
+    ///
+    /// The management plane serves observability endpoints to operators and
+    /// scrapers, so it carries only the shared diagnostic layers and path
+    /// normalization -- no CORS, CSRF, helmet, compression, decompression,
+    /// server-timing, tenant echo, or request-metric layer. A scraper or kubelet
+    /// therefore reaches `/metrics`, `/livez` and `/readyz` unencumbered, and the
+    /// endpoints keep answering while the data plane is saturated or draining.
+    pub fn apply_management(&self, router: Router) -> NormalizePath<Router> {
+        let router = self.apply_diagnostic_layers(router);
         NormalizePathLayer::trim_trailing_slash().layer(router)
     }
 }
@@ -451,6 +477,47 @@ mod tests {
         let service = stack.apply_process(Router::new().route("/health", get(|| async { StatusCode::OK })));
         let response = service.oneshot(Request::get("/health/").body(Body::empty())?).await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
+        Ok(())
+    }
+
+    /// The bare management stack answers without the edge-policy headers the
+    /// process stack applies, while the process stack still emits them.
+    #[tokio::test]
+    async fn apply_management_installs_no_cors_csrf_or_helmet() -> Result<(), Box<dyn Error>> {
+        let stack = HttpStack::new(HttpStackConfig {
+            cors: CorsConfig {
+                mode: CorsMode::Permissive,
+                ..CorsConfig::default()
+            },
+            ..disabled_config()
+        })?;
+        let route = || Router::new().route("/livez", get(|| async { StatusCode::OK }));
+
+        let management = stack.apply_management(route());
+        let management_response = management
+            .oneshot(Request::get("/livez").header("origin", "https://scraper.example").body(Body::empty())?)
+            .await?;
+        pretty_assertions::assert_eq!(management_response.status(), StatusCode::OK);
+        assert!(
+            !management_response.headers().contains_key("access-control-allow-origin"),
+            "the bare management stack must not answer with a CORS header, found {:?}",
+            management_response.headers()
+        );
+        assert!(
+            !management_response.headers().contains_key("x-content-type-options"),
+            "the bare management stack must not answer with a helmet header, found {:?}",
+            management_response.headers()
+        );
+
+        let process = stack.apply_process(route());
+        let process_response = process
+            .oneshot(Request::get("/livez").header("origin", "https://scraper.example").body(Body::empty())?)
+            .await?;
+        assert!(
+            process_response.headers().contains_key("access-control-allow-origin"),
+            "the process stack still applies CORS, found {:?}",
+            process_response.headers()
+        );
         Ok(())
     }
 }

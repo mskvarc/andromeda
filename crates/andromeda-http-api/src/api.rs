@@ -1,6 +1,6 @@
 //! Assembly of named state-complete fragments under the public API root.
 
-use crate::routes::ApiRoutes;
+use crate::{management::ManagementRoutes, routes::ApiRoutes};
 use andromeda_http_extraction::operation_hit_scope::scope_operation_hits;
 use andromeda_http_stack::stack::HttpStack;
 use axum::{Router, middleware::from_fn};
@@ -8,10 +8,11 @@ use tower_http::normalize_path::NormalizePath;
 
 /// Fully assembled, state-complete public HTTP API.
 ///
-/// The NGSI-LD families and the metrics scrape route, when present, all live
-/// under `/ngsi-ld/v1`; a scraper therefore targets `/ngsi-ld/v1/metrics`. The
-/// scrape route is merged after the operation-hit scope so a scrape is never
-/// counted as an NGSI-LD operation.
+/// The NGSI-LD families live under `/ngsi-ld/v1`; metrics have moved off the
+/// data plane to the management plane. In merged mode the management probes
+/// (`/livez`, `/readyz`) and the optional scrape (`/metrics`) sit at the root as
+/// siblings of the `/ngsi-ld/v1` nest, behind the full process stack -- the
+/// documented cost of collapsing both planes onto one port.
 pub struct HttpApi {
     /// Process-stacked service with path normalization outside Axum routing.
     service: NormalizePath<Router>,
@@ -19,8 +20,12 @@ pub struct HttpApi {
 
 impl HttpApi {
     /// Merge every required route family under `/ngsi-ld/v1` and apply the configured stack.
+    ///
+    /// When `merged_management` is `Some`, the management endpoints are mounted at
+    /// the root of the assembled service, sharing the data-plane listener and its
+    /// full middleware stack; when `None`, only the NGSI-LD data plane is served.
     #[must_use]
-    pub fn assemble(routes: ApiRoutes, stack: &HttpStack) -> HttpApi {
+    pub fn assemble(routes: ApiRoutes, merged_management: Option<ManagementRoutes>, stack: &HttpStack) -> HttpApi {
         let ngsi = Router::new()
             .merge(routes.entity.into_router())
             .nest("/temporal", routes.temporal.into_router())
@@ -38,13 +43,13 @@ impl HttpApi {
         // several times internally (write screening, then the write itself);
         // an operation scope makes those internal resolutions count as one use.
         let ngsi = ngsi.layer(from_fn(scope_operation_hits));
-        // The scrape route is merged after the operation-hit scope, so a metrics
-        // scrape at `/ngsi-ld/v1/metrics` is never counted as an NGSI-LD operation.
-        let v1 = match routes.telemetry {
-            Some(telemetry) => ngsi.merge(telemetry.into_router()),
-            None => ngsi,
-        };
-        let api_root = Router::new().nest("/ngsi-ld/v1", stack.apply_api(v1));
+        let mut api_root = Router::new().nest("/ngsi-ld/v1", stack.apply_api(ngsi));
+        // Merged mode mounts the management endpoints as root siblings of the
+        // NGSI-LD nest, outside the operation-hit scope, so a metrics scrape is
+        // never counted as an NGSI-LD operation.
+        if let Some(management) = merged_management {
+            api_root = api_root.merge(management.into_root_router());
+        }
         HttpApi {
             service: stack.apply_process(api_root),
         }
@@ -75,7 +80,7 @@ impl HttpApi {
 
 #[cfg(test)]
 mod tests {
-    use crate::{api::HttpApi, routes::ApiRoutes};
+    use crate::{api::HttpApi, management::ManagementRoutes, routes::ApiRoutes};
     use andromeda_component_report::{ComponentReport, ComponentVersion};
     use andromeda_extensions::enabled::EnabledExtensions;
     use andromeda_health::aggregate::Health;
@@ -200,15 +205,11 @@ mod tests {
         }
     }
 
-    fn test_api() -> Result<HttpApi, Box<dyn Error>> {
-        test_api_with_telemetry(None)
-    }
-
-    fn test_api_with_telemetry(telemetry: Option<TelemetryRoutes>) -> Result<HttpApi, Box<dyn Error>> {
+    fn build_routes() -> Result<ApiRoutes, Box<dyn Error>> {
         let administration = Arc::new(TenantAdministration);
         let directory: Arc<dyn TenantDirectory> = administration.clone();
         let evictor: Arc<dyn OrphanTenantEvictor> = administration;
-        let routes = ApiRoutes::builder()
+        Ok(ApiRoutes::builder()
             .entity(EntityRoutes::new(Arc::new(RejectEntity), EnabledExtensions::none()))
             .temporal(TemporalRoutes::new(Arc::new(RejectTemporal), EnabledExtensions::none()))
             .context_registry(ContextRegistryRoutes::new(Arc::new(RejectContextRegistry)))
@@ -229,8 +230,10 @@ mod tests {
             .component_report(ComponentReportRoutes::new(vec![ComponentReport::PostgreSql {
                 version: ComponentVersion::from("16.2".to_owned()),
             }]))
-            .telemetry(telemetry)
-            .build();
+            .build())
+    }
+
+    fn test_stack() -> Result<HttpStack, Box<dyn Error>> {
         // Every optional edge feature is switched off so the routing assertions
         // observe fragment dispatch, not middleware side effects.
         let http_config = HttpStackConfig {
@@ -252,8 +255,18 @@ mod tests {
             forwarded_headers: ForwardedHeaderTrust::Untrusted,
             ..HttpStackConfig::default()
         };
-        let stack = HttpStack::new(http_config)?;
-        Ok(HttpApi::assemble(routes, &stack))
+        Ok(HttpStack::new(http_config)?)
+    }
+
+    fn test_api() -> Result<HttpApi, Box<dyn Error>> {
+        Ok(HttpApi::assemble(build_routes()?, None, &test_stack()?))
+    }
+
+    fn management_routes(metrics: Option<TelemetryRoutes>) -> ManagementRoutes {
+        ManagementRoutes {
+            health: HealthRoutes::new(Health::builder().build()),
+            metrics,
+        }
     }
 
     fn request(method: Method, path: &str) -> Result<Request<Body>, http::Error> {
@@ -346,6 +359,8 @@ mod tests {
             (Method::GET, "/ngsi-ld/v1/tenants"),
             (Method::POST, "/ngsi-ld/v1/tenants/evictOrphans"),
             (Method::GET, "/ngsi-ld/v1/health"),
+            (Method::GET, "/ngsi-ld/v1/ready"),
+            (Method::GET, "/ngsi-ld/v1/live"),
             (Method::GET, "/ngsi-ld/v1/version"),
         ] {
             let response = service.clone().oneshot(request(method.clone(), path)?).await?;
@@ -355,21 +370,33 @@ mod tests {
         Ok(())
     }
 
+    /// Metrics have left the data plane for the management plane, so the scrape
+    /// never answers under `/ngsi-ld/v1` -- neither on the plain data plane nor
+    /// in merged mode, where the scrape lives at the root `/metrics` instead.
     #[tokio::test]
-    async fn the_metrics_route_is_absent_under_the_api_prefix_unless_telemetry_is_supplied() -> Result<(), Box<dyn Error>> {
-        let response = test_api()?.into_service().oneshot(request(Method::GET, "/ngsi-ld/v1/metrics")?).await?;
-        pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    async fn the_data_plane_never_serves_metrics_under_the_api_prefix() -> Result<(), Box<dyn Error>> {
+        let plain = test_api()?.into_service().oneshot(request(Method::GET, "/ngsi-ld/v1/metrics")?).await?;
+        pretty_assertions::assert_eq!(plain.status(), StatusCode::NOT_FOUND);
+
+        let telemetry = TelemetryRoutes::new(Arc::new(TelemetryRecorder::detached()?))?;
+        let merged = HttpApi::assemble(build_routes()?, Some(management_routes(Some(telemetry))), &test_stack()?)
+            .into_service()
+            .oneshot(request(Method::GET, "/ngsi-ld/v1/metrics")?)
+            .await?;
+        pretty_assertions::assert_eq!(merged.status(), StatusCode::NOT_FOUND);
         Ok(())
     }
 
     #[tokio::test]
-    async fn the_metrics_route_is_served_under_the_api_prefix_when_supplied() -> Result<(), Box<dyn Error>> {
+    async fn merged_mode_mounts_livez_readyz_and_metrics_at_the_root() -> Result<(), Box<dyn Error>> {
         let telemetry = TelemetryRoutes::new(Arc::new(TelemetryRecorder::detached()?))?;
-        let response = test_api_with_telemetry(Some(telemetry))?
-            .into_service()
-            .oneshot(request(Method::GET, "/ngsi-ld/v1/metrics")?)
-            .await?;
-        pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
+        let service = HttpApi::assemble(build_routes()?, Some(management_routes(Some(telemetry))), &test_stack()?).into_service();
+        for path in ["/livez", "/readyz", "/metrics"] {
+            let response = service.clone().oneshot(request(Method::GET, path)?).await?;
+            assert_ne!(response.status(), StatusCode::NOT_FOUND, "{path} was not routed at the root");
+        }
+        let nested = service.oneshot(request(Method::GET, "/ngsi-ld/v1/metrics")?).await?;
+        pretty_assertions::assert_eq!(nested.status(), StatusCode::NOT_FOUND);
         Ok(())
     }
 
@@ -381,18 +408,6 @@ mod tests {
         let router = test_api()?.h3_router();
         let response = router.oneshot(request(Method::GET, "/ngsi-ld/v1/health/")?).await?;
         assert_ne!(response.status(), StatusCode::NOT_FOUND, "trailing slash was not trimmed for HTTP/3");
-        Ok(())
-    }
-
-    /// The scrape must no longer answer at the process root now that it is nested.
-    #[tokio::test]
-    async fn the_metrics_route_is_not_served_at_the_process_root() -> Result<(), Box<dyn Error>> {
-        let telemetry = TelemetryRoutes::new(Arc::new(TelemetryRecorder::detached()?))?;
-        let response = test_api_with_telemetry(Some(telemetry))?
-            .into_service()
-            .oneshot(request(Method::GET, "/metrics")?)
-            .await?;
-        pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_FOUND);
         Ok(())
     }
 }

@@ -1,6 +1,10 @@
 //! Runtime configuration validation and path normalization.
 
-use crate::config::{error::ConfigurationError, runtime::RuntimeConfig};
+use crate::config::{
+    error::ConfigurationError,
+    management::{ManagementConfigError, ManagementMode},
+    runtime::RuntimeConfig,
+};
 use std::{
     fmt::Display,
     path::{Path, PathBuf},
@@ -19,8 +23,24 @@ pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), Configuratio
     config.snapshot.validate().map_err(owner_configuration_error)?;
     config.notifications.validate().map_err(owner_configuration_error)?;
     config.spatial.validate().map_err(owner_configuration_error)?;
+    config.management.validate().map_err(owner_configuration_error)?;
     config.extensions.validate().map_err(owner_configuration_error)?;
     validate_acquire_timeout_below_request_timeout(config)?;
+    validate_management_port_distinct_from_server(config)?;
+    Ok(())
+}
+
+/// A separate management plane must not bind the data-plane port.
+///
+/// A cross-section invariant no single config owner can check, because it spans
+/// `management` and `server`. A wildcard listener host overlaps every host, so
+/// two planes sharing a port always collide regardless of the hosts each is
+/// configured with; the ports alone are compared.
+fn validate_management_port_distinct_from_server(config: &RuntimeConfig) -> Result<(), ConfigurationError> {
+    let management = &config.management;
+    if matches!(management.mode, ManagementMode::SeparatePort) && management.port == config.server.port {
+        return Err(owner_configuration_error(ManagementConfigError::PortCollision { port: management.port }));
+    }
     Ok(())
 }
 
@@ -56,8 +76,38 @@ pub(super) fn normalize_preload_context_paths(config: &mut RuntimeConfig, config
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{runtime::RuntimeConfig, validation::validate_acquire_timeout_below_request_timeout};
+    use crate::config::{
+        management::ManagementMode,
+        runtime::RuntimeConfig,
+        validation::{validate_acquire_timeout_below_request_timeout, validate_management_port_distinct_from_server},
+    };
     use andromeda_http_stack::config::human_duration::HumanDuration;
+
+    #[test]
+    fn management_port_colliding_with_server_port_is_rejected() {
+        let mut config = RuntimeConfig::default();
+        config.management.mode = ManagementMode::SeparatePort;
+
+        config.management.port = config.server.port + 1;
+        assert!(
+            validate_management_port_distinct_from_server(&config).is_ok(),
+            "a separate management port distinct from the data-plane port is accepted"
+        );
+
+        config.management.port = config.server.port;
+        assert!(
+            validate_management_port_distinct_from_server(&config).is_err(),
+            "a separate management port equal to the data-plane port is rejected"
+        );
+
+        // In merged mode the management endpoints ride the data-plane listener,
+        // so the two ports matching is expected rather than a collision.
+        config.management.mode = ManagementMode::Merged;
+        assert!(
+            validate_management_port_distinct_from_server(&config).is_ok(),
+            "a merged plane sharing the data-plane port is accepted"
+        );
+    }
 
     #[test]
     fn acquire_timeout_must_be_below_the_request_timeout() {

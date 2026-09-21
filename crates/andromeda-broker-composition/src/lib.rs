@@ -20,6 +20,8 @@ mod postgresql_maintenance;
 mod registered_entity_probe;
 mod retry_delay;
 mod routes;
+mod shutdown_signal;
+mod startup_report;
 mod temporal_linked_forwarding;
 mod tenant_factory;
 mod tenant_state;

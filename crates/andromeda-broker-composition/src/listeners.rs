@@ -5,23 +5,30 @@
 //! a QUIC listener carrying HTTP/3. Both are driven from the single process
 //! shutdown future here, and while HTTP/3 is served the TCP responses carry an
 //! `Alt-Svc` header advertising the QUIC endpoint so a client that first arrives
-//! over TCP can upgrade. The two listeners run concurrently; either one failing
-//! cancels the other so the process never keeps serving on just one transport.
+//! over TCP can upgrade. In `separate-port` management mode a third, TCP-only
+//! listener carries the observability endpoints on their own host and port, with
+//! no QUIC and no `Alt-Svc`. Every listener runs concurrently under one shutdown
+//! token; the first to fail cancels the rest so the process never keeps serving
+//! on a subset of them.
 
 use crate::config::runtime::RuntimeConfig;
-use andromeda_http_api::api::HttpApi;
+use andromeda_http_api::{api::HttpApi, management::ManagementApi};
 use andromeda_http_headers::alt_svc::{AltSvcAdvertisement, InvalidAdvertisement};
-use andromeda_http_server::{error::HttpServerError, execution::serve as serve_tcp};
+use andromeda_http_server::{config::ServerConfig, error::HttpServerError, execution::serve as serve_tcp};
 use andromeda_http3_server::{
     config::Http3ConfigError,
     endpoint::{self, Http3EndpointError},
     execution::{Http3ServeError, serve_endpoint},
 };
-use std::{future::Future, net::SocketAddr, num::NonZeroU16, time::Duration};
+use futures::future::try_join_all;
+use std::{future::Future, net::SocketAddr, num::NonZeroU16, pin::Pin, time::Duration};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tower::{Layer, util::option_layer};
 use tower_http::set_header::SetResponseHeaderLayer;
+
+/// A boxed, error-unified listener future driven under the shared shutdown token.
+type ListenerFuture<'a> = Pin<Box<dyn Future<Output = Result<(), ListenerError>> + Send + 'a>>;
 
 /// Failure to serve one of the broker's HTTP listeners.
 #[derive(Debug, Error)]
@@ -48,15 +55,22 @@ pub enum ListenerError {
 
 /// Serve the broker's HTTP listeners until `shutdown` resolves.
 ///
-/// The TCP listener is always served. When [`RuntimeConfig::http3`] is enabled,
-/// a QUIC listener is bound on the same host and port over UDP and served
-/// concurrently, and the TCP responses advertise it through `Alt-Svc`.
+/// The data-plane TCP listener is always served. When [`RuntimeConfig::http3`]
+/// is enabled, a QUIC listener is bound on the same host and port over UDP and
+/// served concurrently, and the TCP responses advertise it through `Alt-Svc`.
+/// When `management` is `Some` (the `separate-port` mode), a third TCP-only
+/// listener serves the observability endpoints on the management host and port.
 ///
 /// # Errors
 ///
-/// Returns a [`ListenerError`] when either listener cannot be bound or fails
-/// while serving, or when the HTTP/3 advertisement cannot be built.
-pub async fn serve(config: &RuntimeConfig, api: HttpApi, shutdown: impl Future<Output = ()> + Send + 'static) -> Result<(), ListenerError> {
+/// Returns a [`ListenerError`] when any listener cannot be bound or fails while
+/// serving, or when the HTTP/3 advertisement cannot be built.
+pub async fn serve(
+    config: &RuntimeConfig,
+    api: HttpApi,
+    management: Option<ManagementApi>,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> Result<(), ListenerError> {
     let address = SocketAddr::from((config.server.host, config.server.port));
     // Validated identically at configuration load; re-read here to bind with.
     let activation = config.http3.activation()?;
@@ -86,18 +100,32 @@ pub async fn serve(config: &RuntimeConfig, api: HttpApi, shutdown: impl Future<O
         signal_token.cancel();
     });
 
+    // At most three listeners share the shutdown token: the data-plane TCP
+    // listener always, the QUIC listener when HTTP/3 is enabled, and the
+    // management listener in `separate-port` mode.
+    let mut listeners: Vec<ListenerFuture<'_>> = Vec::new();
     let tcp = serve_tcp(&config.server, tcp_service, wait_for(&shutdown_token));
+    listeners.push(Box::pin(async move { tcp.await.map_err(ListenerError::from) }));
 
-    let result = match (activation, h3_router) {
-        (Some(activation), Some(router)) => {
-            let endpoint = endpoint::bind(activation, address)?;
-            let http3 = serve_endpoint(endpoint, router, wait_for(&shutdown_token));
-            let tcp = async { tcp.await.map_err(ListenerError::from) };
-            let http3 = async { http3.await.map_err(ListenerError::from) };
-            tokio::try_join!(tcp, http3).map(|((), ())| ())
-        }
-        _ => tcp.await.map_err(ListenerError::from),
-    };
+    if let (Some(activation), Some(router)) = (activation, h3_router) {
+        let endpoint = endpoint::bind(activation, address)?;
+        let http3 = serve_endpoint(endpoint, router, wait_for(&shutdown_token));
+        listeners.push(Box::pin(async move { http3.await.map_err(ListenerError::from) }));
+    }
+
+    if let Some(management) = management {
+        // The management listener is TCP-only and reuses the data plane's
+        // graceful-drain deadline on its own host and port.
+        let management_config = ServerConfig {
+            host: config.management.host,
+            port: config.management.port,
+            graceful_drain_secs: config.server.graceful_drain_secs,
+        };
+        let management_serve = serve_management(management_config, management, wait_for(&shutdown_token));
+        listeners.push(Box::pin(async move { management_serve.await.map_err(ListenerError::from) }));
+    }
+
+    let result = try_join_all(listeners).await.map(|_outcomes| ());
 
     // If a listener returned an error before the shutdown signal fired, cancel
     // so the spawned signal task can complete rather than leak.
@@ -106,6 +134,15 @@ pub async fn serve(config: &RuntimeConfig, api: HttpApi, shutdown: impl Future<O
         tracing::warn!(event = "shutdown_signal_task_panicked");
     }
     result
+}
+
+/// Serve the management plane on its own owned listener configuration.
+///
+/// A thin wrapper that owns the synthesized [`ServerConfig`] so the returned
+/// future borrows nothing from the caller and can be boxed alongside the
+/// data-plane listeners under one shutdown token.
+async fn serve_management(config: ServerConfig, management: ManagementApi, shutdown: impl Future<Output = ()> + Send + 'static) -> Result<(), HttpServerError> {
+    serve_tcp(&config, management.into_service(), shutdown).await
 }
 
 /// A future that resolves when `token` is cancelled, owning a clone of it so it

@@ -4,6 +4,7 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod api;
+pub mod management;
 pub mod routes;
 
 #[cfg(test)]

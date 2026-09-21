@@ -2,7 +2,10 @@
 
 use crate::{
     component_report::{ComponentReportError, collect as collect_component_reports},
-    config::{observability::MetricsExposure, runtime::RuntimeConfig},
+    config::{
+        management::{ManagementMode, MetricsExposure},
+        runtime::RuntimeConfig,
+    },
     listeners,
     logging,
     outcome::ProcessExitOutcome,
@@ -17,13 +20,19 @@ use crate::{
         subscription::BrokerSubscriptionStateResolver,
         temporal::BrokerTemporalStateResolver,
     },
+    shutdown_signal::shutdown_signal,
+    startup_report::report_startup,
     tenant_factory::BrokerTenantFactory,
     tenant_waker::{TenantWakerRegistrationError, register_tenant_waker},
 };
 use andromeda_delivery::mqtt::indicator::MqttHealthIndicator;
 use andromeda_extensions::startup_log::log_conformance_override;
 use andromeda_health::aggregate::Health;
-use andromeda_http_api::{api::HttpApi, routes::ApiRoutes};
+use andromeda_http_api::{
+    api::HttpApi,
+    management::{ManagementApi, ManagementRoutes},
+    routes::ApiRoutes,
+};
 use andromeda_http_component_report::routes::ComponentReportRoutes;
 use andromeda_http_context_registry::routes::ContextRegistryRoutes;
 use andromeda_http_entity::routes::EntityRoutes;
@@ -62,7 +71,7 @@ use andromeda_tenancy::{
     wake_schedule::TenantWakeSchedule,
 };
 use chrono::{DateTime, Utc};
-use std::{io::Error as IoError, sync::Arc};
+use std::sync::Arc;
 use thiserror::Error;
 use tokio::runtime::Handle;
 use tracing::{error, info};
@@ -78,6 +87,8 @@ const MAINTENANCE_PLATFORM_POOL_CONNECTIONS: u32 = 2;
 struct BrokerExecution {
     /// Fully assembled state-complete HTTP API.
     api: HttpApi,
+    /// Standalone management-plane service, present only in `separate-port` mode.
+    management: Option<ManagementApi>,
     /// Tenant runtimes served by the API.
     tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
     /// Process task scope coordinating cancellation across tenants.
@@ -129,7 +140,7 @@ pub async fn run(config: RuntimeConfig) -> ProcessExitOutcome {
     };
     report_startup(&config);
     let config = Arc::new(config);
-    let telemetry = match install_telemetry(config.observability.metrics) {
+    let telemetry = match install_telemetry(config.management.metrics) {
         Ok(telemetry) => telemetry,
         Err(startup_error) => {
             error!(error = %startup_error, event = "broker_startup_failed");
@@ -139,14 +150,19 @@ pub async fn run(config: RuntimeConfig) -> ProcessExitOutcome {
     // Table 5.2.40-1: `contextSourceUptime` counts from the instant the
     // broker became available, captured once here.
     let started_at = Utc::now();
-    let BrokerExecution { api, tenants, process_tasks } = match construct(Arc::clone(&config), telemetry, started_at).await {
+    let BrokerExecution {
+        api,
+        management,
+        tenants,
+        process_tasks,
+    } = match construct(Arc::clone(&config), telemetry, started_at).await {
         Ok(execution) => execution,
         Err(startup_error) => {
             error!(error = %startup_error, event = "broker_startup_failed");
             return ProcessExitOutcome::StartupFailure;
         }
     };
-    let serve_result = listeners::serve(config.as_ref(), api, shutdown_signal()).await;
+    let serve_result = listeners::serve(config.as_ref(), api, management, shutdown_signal()).await;
     match &serve_result {
         Ok(()) => info!(event = "http_traffic_drained", "HTTP listener stopped after draining accepted requests"),
         Err(server_error) => error!(error = %server_error, event = "http_server_failed"),
@@ -268,6 +284,7 @@ async fn construct(
     let directory: Arc<dyn TenantDirectory> = tenants.clone(); // clone: HTTP administration and shutdown share the manager
     let evictor: Arc<dyn OrphanTenantEvictor> = tenants.clone(); // clone: both focused capabilities share the manager
     let telemetry_routes = telemetry.map(TelemetryRoutes::new).transpose()?;
+    let health = health.build();
     let routes = ApiRoutes::builder()
         .entity(entity_routes)
         .temporal(temporal_routes)
@@ -290,76 +307,41 @@ async fn construct(
             forwarded_subscription_router,
         ))))
         .tenancy(TenancyRoutes::new(directory, evictor))
-        .health(HealthRoutes::new(health.build()))
+        .health(HealthRoutes::new(health.clone())) // clone: the data plane and the management plane each own a health-route fragment over the same indicators
         .component_report(ComponentReportRoutes::new(component_reports))
-        .telemetry(telemetry_routes)
         .build();
     let stack = HttpStack::new(config.http.clone())?; // clone: the assembled stack owns its process-wide configuration
+    let (api, management) = assemble_planes(config.management.mode, routes, health, telemetry_routes, &stack);
     Ok(BrokerExecution {
-        api: HttpApi::assemble(routes, &stack),
+        api,
+        management,
         tenants,
         process_tasks,
     })
 }
 
-/// Report the active construction profile before broker resources are opened.
-fn report_startup(config: &RuntimeConfig) {
-    info!(
-        host = %config.server.host,
-        port = config.server.port,
-        tenancy_enabled = config.tenancy.enabled,
-        database_transaction_pooled = config.database.is_pooled(),
-        notification_delivery_mode = %config.notifications.delivery.mode,
-        log_level = %config.observability.log_level,
-        metrics = %config.observability.metrics,
-        precedence = RuntimeConfig::precedence_summary(),
-        "Starting Andromeda"
-    );
-}
-
-/// Wait for Ctrl-C or SIGTERM, whichever arrives first.
-async fn shutdown_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::{
-            ctrl_c,
-            unix::{SignalKind, signal},
-        };
-
-        match signal(SignalKind::terminate()) {
-            Ok(mut terminate) => {
-                tokio::select! {
-                    result = ctrl_c() => report_ctrl_c(result),
-                    received = terminate.recv() => report_sigterm(received),
-                }
-            }
-            Err(error) => {
-                tracing::error!(error = %error, "SIGTERM signal listener failed; waiting for Ctrl-C");
-                report_ctrl_c(ctrl_c().await);
-            }
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        report_ctrl_c(tokio::signal::ctrl_c().await);
-    }
-}
-
-/// Report the terminal result of the Ctrl-C listener.
-fn report_ctrl_c(result: Result<(), IoError>) {
-    match result {
-        Ok(()) => tracing::info!(signal = "ctrl-c", event = "shutdown_signal_received"),
-        Err(error) => tracing::error!(error = %error, "Ctrl-C signal listener failed"),
-    }
-}
-
-/// Report whether the SIGTERM stream produced a signal before closing.
-#[cfg(unix)]
-fn report_sigterm(received: Option<()>) {
-    if let Some(()) = received {
-        tracing::info!(signal = "sigterm", event = "shutdown_signal_received");
-    } else {
-        tracing::error!("SIGTERM signal stream ended before receiving a signal");
+/// Assemble the data plane and, when it stands alone, the management plane, per
+/// the configured topology.
+///
+/// `separate-port` isolates the observability endpoints behind their own
+/// listener; `merged` mounts them at the root of the data-plane listener;
+/// `disabled` serves no management plane, and validation has already forced
+/// metrics off in that case. The management probes are backed by the same
+/// registered indicators as the data-plane probes, over one shared `Arc`.
+fn assemble_planes(
+    mode: ManagementMode,
+    routes: ApiRoutes,
+    health: Health,
+    metrics: Option<TelemetryRoutes>,
+    stack: &HttpStack,
+) -> (HttpApi, Option<ManagementApi>) {
+    let management_routes = ManagementRoutes {
+        health: HealthRoutes::new(health),
+        metrics,
+    };
+    match mode {
+        ManagementMode::SeparatePort => (HttpApi::assemble(routes, None, stack), Some(ManagementApi::assemble(management_routes, stack))),
+        ManagementMode::Merged => (HttpApi::assemble(routes, Some(management_routes), stack), None),
+        ManagementMode::Disabled => (HttpApi::assemble(routes, None, stack), None),
     }
 }
