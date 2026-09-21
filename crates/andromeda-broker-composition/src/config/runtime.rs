@@ -323,7 +323,7 @@ pub fn generate_default_reported(output: Option<PathBuf>) -> ProcessExitOutcome 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_http_stack::config::{CorsMode, HttpFeatureMode};
+    use andromeda_http_stack::config::{compression::CompressionQuality, cors::CorsMode, human_duration::HumanDuration};
     use serial_test::serial;
     use std::{
         env,
@@ -422,20 +422,20 @@ mod tests {
 
     #[test]
     #[serial]
-    fn env_parses_http_response_compression_mode() {
-        unsafe { env::set_var("ANDROMEDA__HTTP__RESPONSE_COMPRESSION", "disabled") };
+    fn env_parses_http_compression_quality() {
+        unsafe { env::set_var("ANDROMEDA__HTTP__COMPRESSION__QUALITY", "best") };
         let config = load_env_only();
-        unsafe { env::remove_var("ANDROMEDA__HTTP__RESPONSE_COMPRESSION") };
-        pretty_assertions::assert_eq!(config.http.response_compression, HttpFeatureMode::Disabled);
+        unsafe { env::remove_var("ANDROMEDA__HTTP__COMPRESSION__QUALITY") };
+        pretty_assertions::assert_eq!(config.http.compression.quality, CompressionQuality::Best);
     }
 
     #[test]
     #[serial]
     fn env_parses_http_cors_mode() {
-        unsafe { env::set_var("ANDROMEDA__HTTP__CORS", "disabled") };
+        unsafe { env::set_var("ANDROMEDA__HTTP__CORS__MODE", "disabled") };
         let config = load_env_only();
-        unsafe { env::remove_var("ANDROMEDA__HTTP__CORS") };
-        pretty_assertions::assert_eq!(config.http.cors, CorsMode::Disabled);
+        unsafe { env::remove_var("ANDROMEDA__HTTP__CORS__MODE") };
+        pretty_assertions::assert_eq!(config.http.cors.mode, CorsMode::Disabled);
     }
 
     #[test]
@@ -605,7 +605,7 @@ port = 1600
     #[test]
     fn validate_rejects_zero_http_request_timeout() {
         let mut config = test_runtime_config_with_preload("contexts/test.jsonld");
-        config.http.request_timeout_secs = 0;
+        config.http.request_timeout = HumanDuration::from_secs(0);
 
         assert!(validate_config(&config).is_err());
     }

@@ -108,7 +108,14 @@ mod tests {
     };
     use andromeda_http_source_identity::{routes::SourceIdentityRoutes, state::SourceIdentityState};
     use andromeda_http_stack::{
-        config::{CorsMode, HttpFeatureMode, HttpStackConfig},
+        config::{
+            HttpStackConfig,
+            cors::{CorsConfig, CorsMode},
+            csrf::CsrfConfig,
+            feature_mode::HttpFeatureMode,
+            helmet::HelmetConfig,
+            server_timing::ServerTimingConfig,
+        },
         stack::HttpStack,
     };
     use andromeda_http_subscription::{
@@ -224,15 +231,28 @@ mod tests {
             }]))
             .telemetry(telemetry)
             .build();
-        let stack = HttpStack::new(HttpStackConfig {
-            request_timeout_secs: 30,
-            response_compression: HttpFeatureMode::Disabled,
-            server_timing: HttpFeatureMode::Disabled,
-            request_decompression: HttpFeatureMode::Disabled,
-            cors: CorsMode::Disabled,
-            max_request_body_bytes: 1024 * 1024,
+        // Every optional edge feature is switched off so the routing assertions
+        // observe fragment dispatch, not middleware side effects.
+        let http_config = HttpStackConfig {
+            cors: CorsConfig {
+                mode: CorsMode::Disabled,
+                ..CorsConfig::default()
+            },
+            server_timing: ServerTimingConfig {
+                mode: HttpFeatureMode::Disabled,
+                ..ServerTimingConfig::default()
+            },
+            helmet: HelmetConfig {
+                mode: HttpFeatureMode::Disabled,
+            },
+            csrf: CsrfConfig {
+                mode: HttpFeatureMode::Disabled,
+                trusted_origins: Vec::new(),
+            },
             forwarded_headers: ForwardedHeaderTrust::Untrusted,
-        });
+            ..HttpStackConfig::default()
+        };
+        let stack = HttpStack::new(http_config)?;
         Ok(HttpApi::assemble(routes, &stack))
     }
 

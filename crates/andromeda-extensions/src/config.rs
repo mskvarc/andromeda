@@ -11,7 +11,7 @@
 //! of the individual fields, so "the shipping binary passes the suite" is a
 //! claim about the artifact operators run rather than about a special build.
 
-use andromeda_http_stack::config::HttpFeatureMode;
+use andromeda_http_stack::config::feature_mode::HttpFeatureMode;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use toml_comment::TomlComment;
@@ -155,7 +155,7 @@ impl ExtensionsConfig {
 #[cfg(test)]
 mod tests {
     use crate::config::{ExtensionsConfig, ExtensionsConfigError};
-    use andromeda_http_stack::config::HttpFeatureMode;
+    use andromeda_http_stack::config::feature_mode::HttpFeatureMode;
     use toml_comment::TomlComment;
 
     #[test]

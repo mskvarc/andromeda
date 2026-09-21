@@ -33,7 +33,7 @@ use andromeda_http_notification_receiver::routes::NotificationReceiverRoutes;
 use andromeda_http_registration::routes::RegistrationRoutes;
 use andromeda_http_snapshot::routes::SnapshotRoutes;
 use andromeda_http_source_identity::{routes::SourceIdentityRoutes, state::SourceIdentityState};
-use andromeda_http_stack::stack::HttpStack;
+use andromeda_http_stack::stack::{HttpStack, HttpStackBuildError};
 use andromeda_http_subscription::routes::SubscriptionRoutes;
 use andromeda_http_telemetry::{error::TelemetryHttpError, routes::TelemetryRoutes};
 use andromeda_http_temporal::routes::TemporalRoutes;
@@ -111,6 +111,9 @@ enum BrokerStartupError {
     /// The dormant-tenant wake tasks could not be registered.
     #[error(transparent)]
     WakerTask(#[from] TenantWakerRegistrationError),
+    /// A fallible inbound HTTP middleware layer could not be built.
+    #[error(transparent)]
+    HttpStack(#[from] HttpStackBuildError),
 }
 
 /// Construct the broker, serve HTTP, then close process resources in order.
@@ -291,7 +294,7 @@ async fn construct(
         .component_report(ComponentReportRoutes::new(component_reports))
         .telemetry(telemetry_routes)
         .build();
-    let stack = HttpStack::new(config.http.clone()); // clone: the assembled stack owns its process-wide configuration
+    let stack = HttpStack::new(config.http.clone())?; // clone: the assembled stack owns its process-wide configuration
     Ok(BrokerExecution {
         api: HttpApi::assemble(routes, &stack),
         tenants,

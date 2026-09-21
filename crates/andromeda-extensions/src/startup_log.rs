@@ -27,7 +27,7 @@ pub fn log_conformance_override(config: &ExtensionsConfig) {
 #[cfg(test)]
 mod tests {
     use crate::{config::ExtensionsConfig, startup_log::log_conformance_override};
-    use andromeda_http_stack::config::HttpFeatureMode;
+    use andromeda_http_stack::config::feature_mode::HttpFeatureMode;
 
     /// The reporter must not panic in any of the four combinations of the two
     /// conditions it guards on; the message content is a `tracing` concern.

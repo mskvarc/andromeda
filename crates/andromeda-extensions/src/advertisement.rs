@@ -81,7 +81,7 @@ mod tests {
         config::ExtensionsConfig,
         enabled::EnabledExtensions,
     };
-    use andromeda_http_stack::config::HttpFeatureMode;
+    use andromeda_http_stack::config::feature_mode::HttpFeatureMode;
     use serde_json::{Value, json};
 
     fn both_enabled() -> EnabledExtensions {

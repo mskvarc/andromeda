@@ -1,10 +1,27 @@
 //! Deterministic application of API-wide and process-wide middleware.
 
+mod compression_layer;
+mod cors_layer;
+pub mod csrf_layer;
+mod decompression_layer;
+mod helmet_layer;
+mod metric_layer;
+mod server_timing;
+
 use crate::{
-    config::{CorsMode, HttpFeatureMode, HttpStackConfig},
+    config::{HttpStackConfig, server_timing::ServerTimingConfig},
     request_body_limit::RequestBodyLimit,
+    stack::{
+        compression_layer::build_compression_layer,
+        cors_layer::build_cors_layer,
+        csrf_layer::{CsrfLayerError, build_csrf_layer},
+        decompression_layer::build_decompression_layer,
+        helmet_layer::build_helmet_layer,
+        metric_layer::http_metric_layer,
+        server_timing::apply_server_timing,
+    },
 };
-use andromeda_http_headers::{ngsild_tenant::NgsiLdTenant, x_request_id::XRequestId};
+use andromeda_http_headers::{forwarded_header_trust::ForwardedHeaderTrust, ngsild_tenant::NgsiLdTenant, x_request_id::XRequestId};
 use andromeda_http_tenancy::propagation::echo_tenant_header;
 use axum::{
     Extension,
@@ -14,18 +31,15 @@ use axum::{
     middleware,
     response::Response,
 };
-use axum_prometheus::{PrometheusMetricLayer, PrometheusMetricLayerBuilder};
-use axum_server_timing::ServerTimingLayer;
+use axum_helmet::{HelmetError, HelmetLayer};
 use headers::{Header, HeaderMapExt};
-use std::{
-    sync::{Arc, OnceLock},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
+use thiserror::Error;
 use tower::{Layer, ServiceBuilder};
-use tower_helmet::HelmetLayer;
 use tower_http::{
     compression::CompressionLayer,
     cors::CorsLayer,
+    csrf::CsrfLayer,
     decompression::RequestDecompressionLayer,
     normalize_path::{NormalizePath, NormalizePathLayer},
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer},
@@ -34,57 +48,83 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-/// The process-wide axum request-metric layer, built at most once.
-///
-/// [`PrometheusMetricLayerBuilder::with_prefix`] sets a global prefix that may be
-/// configured only once per process and panics on a second call, so the built
-/// layer is memoised here and cloned into every stack the process assembles.
-static HTTP_METRIC_LAYER: OnceLock<PrometheusMetricLayer<'static>> = OnceLock::new();
-
-/// Build (once) and clone the axum request-metric layer.
-///
-/// The layer emits `andromeda_http_requests_*` through the `metrics` facade into
-/// whichever recorder the process installed; it registers no route and installs
-/// no recorder of its own. Its ignore pattern excludes the scrape endpoint so a
-/// scrape does not instrument itself.
-fn http_metric_layer() -> PrometheusMetricLayer<'static> {
-    HTTP_METRIC_LAYER
-        .get_or_init(|| {
-            PrometheusMetricLayerBuilder::new()
-                .with_prefix("andromeda")
-                .with_ignore_pattern("/ngsi-ld/v1/metrics")
-                .build()
-        })
-        .clone()
+/// A fallible middleware layer could not be built from its configuration.
+#[derive(Debug, Error)]
+pub enum HttpStackBuildError {
+    /// The security-header layer could not be rendered.
+    #[error("failed to build the security-header layer: {0}")]
+    Helmet(#[from] HelmetError),
+    /// A CSRF trusted origin could not be admitted.
+    #[error(transparent)]
+    Csrf(#[from] CsrfLayerError),
 }
 
 /// Explicitly ordered inbound HTTP stack.
+///
+/// The fallible layers (security headers, CSRF) are built once at construction
+/// and stored, so no per-request rebuild happens and no build failure can occur
+/// after the broker starts serving. The prebuilt optional layers are `None` when
+/// the configuration switched the feature off.
 #[derive(Clone)]
 pub struct HttpStack {
-    /// Process-wide middleware configuration.
-    config: HttpStackConfig,
     /// API-wide body admission limit.
     request_body_limit: RequestBodyLimit,
+    /// The operator's forwarded-header trust decision.
+    forwarded_headers: ForwardedHeaderTrust,
+    /// Maximum wall-clock time for one HTTP request.
+    request_timeout: Duration,
+    /// `Server-Timing` policy, applied per assembled router.
+    server_timing: ServerTimingConfig,
+    /// The prebuilt security-header layer, absent when disabled.
+    helmet: Option<HelmetLayer>,
+    /// The prebuilt CORS layer, absent when disabled.
+    cors: Option<CorsLayer>,
+    /// The prebuilt response-compression layer, absent when disabled.
+    compression: Option<CompressionLayer>,
+    /// The prebuilt request-decompression layer, absent when disabled.
+    decompression: Option<RequestDecompressionLayer>,
+    /// The prebuilt CSRF layer, absent when disabled.
+    csrf: Option<CsrfLayer>,
 }
 
 impl HttpStack {
     /// Construct an HTTP stack from its owner-defined configuration.
-    #[must_use]
-    pub const fn new(config: HttpStackConfig) -> HttpStack {
-        let request_body_limit = RequestBodyLimit::new(config.max_request_body_bytes);
-        HttpStack { config, request_body_limit }
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HttpStackBuildError`] when the security-header layer cannot be
+    /// rendered or a CSRF trusted origin is not one the CSRF layer accepts.
+    pub fn new(config: HttpStackConfig) -> Result<HttpStack, HttpStackBuildError> {
+        // A 64-bit host has `usize == u64`, so the conversion is exact; the
+        // saturating fallback keeps a hypothetical 32-bit build from panicking on
+        // an over-large configured ceiling rather than silently truncating it.
+        let request_body_limit = RequestBodyLimit::new(usize::try_from(config.max_request_body.as_u64()).unwrap_or(usize::MAX));
+        Ok(HttpStack {
+            request_body_limit,
+            forwarded_headers: config.forwarded_headers,
+            request_timeout: config.request_timeout.duration(),
+            helmet: build_helmet_layer(config.helmet)?,
+            cors: build_cors_layer(&config.cors),
+            compression: build_compression_layer(&config.compression),
+            decompression: build_decompression_layer(&config.decompression),
+            csrf: build_csrf_layer(&config.csrf)?,
+            server_timing: config.server_timing,
+        })
     }
 
     /// Apply middleware scoped to the complete NGSI-LD API subtree.
     pub fn apply_api(&self, router: Router) -> Router {
+        // Every absolute URL the broker mints from a request origin reads the
+        // operator's trust decision from this extension, so a router assembled
+        // without the stack treats every forwarded-protocol field as untrusted
+        // rather than inheriting a permissive default.
+        let mut router = router
+            .layer(Extension(self.forwarded_headers))
+            .layer(DefaultBodyLimit::max(self.request_body_limit.bytes()));
+        if let Some(helmet) = &self.helmet {
+            router = router.layer(helmet.clone());
+        }
         router
-            // Every absolute URL the broker mints from a request origin reads
-            // the operator's trust decision from this extension, so a router
-            // assembled without the stack treats every forwarded-protocol field
-            // as untrusted rather than inheriting a permissive default.
-            .layer(Extension(self.config.forwarded_headers))
-            .layer(DefaultBodyLimit::max(self.request_body_limit.bytes()))
-            .layer(HelmetLayer::with_defaults())
     }
 
     /// Apply process-wide middleware in deterministic order and normalize paths before routing.
@@ -144,23 +184,21 @@ impl HttpStack {
             .layer(trace_layer)
             .layer(SetSensitiveResponseHeadersLayer::from_shared(sensitive_response_headers))
             .layer(PropagateRequestIdLayer::x_request_id())
-            .layer(TimeoutLayer::with_status_code(
-                StatusCode::REQUEST_TIMEOUT,
-                Duration::from_secs(self.config.request_timeout_secs),
-            ));
+            .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, self.request_timeout));
         let mut router = router.layer(middleware::from_fn(echo_tenant_header));
-        if let HttpFeatureMode::Enabled = self.config.server_timing {
-            router = router.layer(ServerTimingLayer::new("andromeda"));
+        router = apply_server_timing(router, &self.server_timing);
+        if let Some(compression) = &self.compression {
+            router = router.layer(compression.clone());
         }
-        if let HttpFeatureMode::Enabled = self.config.response_compression {
-            router = router.layer(CompressionLayer::new());
-        }
-        if let HttpFeatureMode::Enabled = self.config.request_decompression {
-            router = router.layer(RequestDecompressionLayer::new());
+        if let Some(decompression) = &self.decompression {
+            router = router.layer(decompression.clone());
         }
         router = router.layer(core);
-        if let CorsMode::Permissive = self.config.cors {
-            router = router.layer(CorsLayer::permissive());
+        if let Some(cors) = &self.cors {
+            router = router.layer(cors.clone());
+        }
+        if let Some(csrf) = &self.csrf {
+            router = router.layer(csrf.clone());
         }
         NormalizePathLayer::trim_trailing_slash().layer(router)
     }
@@ -169,7 +207,17 @@ impl HttpStack {
 #[cfg(test)]
 mod tests {
     use crate::{
-        config::{CorsMode, HttpFeatureMode, HttpStackConfig},
+        config::{
+            HttpStackConfig,
+            compression::{CompressionConfig, CompressionQuality},
+            cors::{CorsConfig, CorsMode},
+            csrf::CsrfConfig,
+            decompression::DecompressionConfig,
+            feature_mode::HttpFeatureMode,
+            helmet::HelmetConfig,
+            human_duration::HumanDuration,
+            server_timing::{ServerTimingConfig, ServerTimingPhase},
+        },
         stack::HttpStack,
     };
     use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
@@ -183,6 +231,8 @@ mod tests {
         response::Response,
         routing::get,
     };
+    use bytesize::ByteSize;
+    use enumset::EnumSet;
     use std::{error::Error, sync::Arc};
     use tokio::sync::Mutex;
     use tower::{Layer, ServiceExt};
@@ -190,13 +240,32 @@ mod tests {
     /// A stack configuration with every optional feature switched off.
     fn disabled_config() -> HttpStackConfig {
         HttpStackConfig {
-            request_timeout_secs: 30,
-            response_compression: HttpFeatureMode::Disabled,
-            server_timing: HttpFeatureMode::Disabled,
-            request_decompression: HttpFeatureMode::Disabled,
-            cors: CorsMode::Disabled,
-            max_request_body_bytes: 1024,
+            request_timeout: HumanDuration::from_secs(30),
+            max_request_body: ByteSize::kib(1),
             forwarded_headers: ForwardedHeaderTrust::Untrusted,
+            cors: CorsConfig {
+                mode: CorsMode::Disabled,
+                ..CorsConfig::default()
+            },
+            compression: CompressionConfig {
+                algorithms: EnumSet::empty(),
+                quality: CompressionQuality::Default,
+            },
+            decompression: DecompressionConfig {
+                algorithms: EnumSet::empty(),
+                pass_through_unaccepted: false,
+            },
+            server_timing: ServerTimingConfig {
+                mode: HttpFeatureMode::Disabled,
+                phases: ServerTimingPhase::Total.into(),
+            },
+            helmet: HelmetConfig {
+                mode: HttpFeatureMode::Disabled,
+            },
+            csrf: CsrfConfig {
+                mode: HttpFeatureMode::Disabled,
+                trusted_origins: Vec::new(),
+            },
         }
     }
 
@@ -344,7 +413,7 @@ mod tests {
             let stack = HttpStack::new(HttpStackConfig {
                 forwarded_headers: declared,
                 ..disabled_config()
-            });
+            })?;
             let router = stack.apply_api(Router::new().route(
                 "/probe",
                 get(|Extension(trust): Extension<ForwardedHeaderTrust>| async move { trust.to_string() }),
@@ -357,9 +426,28 @@ mod tests {
         Ok(())
     }
 
+    /// The API subtree carries the security headers when helmet is enabled.
+    #[tokio::test]
+    async fn helmet_layer_is_installed_on_the_api_subtree() -> Result<(), Box<dyn Error>> {
+        let stack = HttpStack::new(HttpStackConfig {
+            helmet: HelmetConfig {
+                mode: HttpFeatureMode::Enabled,
+            },
+            ..disabled_config()
+        })?;
+        let router = stack.apply_api(Router::new().route("/probe", get(|| async { StatusCode::OK })));
+        let response = router.oneshot(Request::get("/probe").body(Body::empty())?).await?;
+        assert!(
+            response.headers().contains_key("x-content-type-options"),
+            "expected a helmet security header, found {:?}",
+            response.headers()
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn process_stack_normalizes_paths_before_route_matching() -> Result<(), Box<dyn Error>> {
-        let stack = HttpStack::new(disabled_config());
+        let stack = HttpStack::new(disabled_config())?;
         let service = stack.apply_process(Router::new().route("/health", get(|| async { StatusCode::OK })));
         let response = service.oneshot(Request::get("/health/").body(Body::empty())?).await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::OK);

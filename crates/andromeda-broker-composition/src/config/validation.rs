@@ -34,10 +34,10 @@ pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), Configuratio
 /// `Retry-After` the acquire deadline exists to produce.
 fn validate_acquire_timeout_below_request_timeout(config: &RuntimeConfig) -> Result<(), ConfigurationError> {
     let acquire = config.database.acquire_timeout_secs;
-    let request = config.http.request_timeout_secs;
+    let request = config.http.request_timeout.duration().as_secs();
     if acquire >= request {
         return Err(ConfigurationError::invalid(format!(
-            "database.acquire_timeout_secs ({acquire}) must be below http.request_timeout_secs ({request}) so a saturated pool answers 503 before the request deadline"
+            "database.acquire_timeout_secs ({acquire}) must be below http.request_timeout ({request}s) so a saturated pool answers 503 before the request deadline"
         )));
     }
     Ok(())
@@ -57,11 +57,12 @@ pub(super) fn normalize_preload_context_paths(config: &mut RuntimeConfig, config
 #[cfg(test)]
 mod tests {
     use crate::config::{runtime::RuntimeConfig, validation::validate_acquire_timeout_below_request_timeout};
+    use andromeda_http_stack::config::human_duration::HumanDuration;
 
     #[test]
     fn acquire_timeout_must_be_below_the_request_timeout() {
         let mut config = RuntimeConfig::default();
-        config.http.request_timeout_secs = 10;
+        config.http.request_timeout = HumanDuration::from_secs(10);
 
         config.database.acquire_timeout_secs = 9;
         assert!(

@@ -135,7 +135,7 @@ pub struct DatabaseConfig {
     /// Maximum connections in the main pool.
     pub max_connections: u32,
     /// How long a request-path connection checkout waits for a free connection
-    /// before it is shed as backpressure. Kept below `http.request_timeout_secs`
+    /// before it is shed as backpressure. Kept below `http.request_timeout`
     /// so a saturated pool surfaces as a 503 with `Retry-After` before the HTTP
     /// request deadline races it, rather than as a 500 after a long stall.
     pub acquire_timeout_secs: u64,

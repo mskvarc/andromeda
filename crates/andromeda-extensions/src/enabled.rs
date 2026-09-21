@@ -7,7 +7,7 @@
 //! reads the raw per-feature field, so none of them can forget the override.
 
 use crate::config::ExtensionsConfig;
-use andromeda_http_stack::config::HttpFeatureMode;
+use andromeda_http_stack::config::feature_mode::HttpFeatureMode;
 
 /// The extensions that are actually on for this process.
 ///
@@ -102,7 +102,7 @@ impl EnabledExtensions {
 #[cfg(test)]
 mod tests {
     use crate::{config::ExtensionsConfig, enabled::EnabledExtensions};
-    use andromeda_http_stack::config::HttpFeatureMode;
+    use andromeda_http_stack::config::feature_mode::HttpFeatureMode;
 
     fn both_on() -> ExtensionsConfig {
         ExtensionsConfig {
