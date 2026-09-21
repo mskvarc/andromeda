@@ -31,11 +31,18 @@ pub const REQUIRED_POSTGIS_VERSION: ExtensionVersion = ExtensionVersion::new(3, 
 /// The `TimescaleDB` version the tenant schema requires.
 ///
 /// `attribute_history` and `scope_history` are hypertables created with
-/// `create_hypertable(..., by_range(...))` and aged out with the columnstore
-/// API — `enable_columnstore`, `add_columnstore_policy` — rather than the
-/// legacy compression calls those replaced. Both are `TimescaleDB` 2.18 surface,
-/// and neither has a fallback: a migration that reaches an older server has no
-/// second path to take.
+/// `create_hypertable(..., by_range(...))`, chunk-managed with
+/// `set_chunk_time_interval` and aged out with `drop_chunks` — all Apache-2.0
+/// core surface. The floor is 2.18 because the TSL columnstore path the TSL
+/// edition additionally takes — `enable_columnstore`, `add_columnstore_policy` —
+/// is 2.18 surface, and both editions ship the same package version, so one
+/// floor covers both.
+///
+/// The floor is a version floor only, never a license floor. The Apache-2.0
+/// core is fully supported: its migrations skip the columnstore DDL behind a
+/// `pg_proc` capability probe and its hypertables run uncompressed, so no
+/// edition is refused here. The columnstore is a TSL benefit that rides along
+/// where present, not a requirement.
 pub const REQUIRED_TIMESCALEDB_VERSION: ExtensionVersion = ExtensionVersion::new(2, 18);
 
 /// PostgreSQL's `server_version_num`: `major * 10000 + minor`.

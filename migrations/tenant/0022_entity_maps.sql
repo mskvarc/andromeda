@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0024: Entity Maps
+-- 0022: Entity Maps
 -- ============================================================================
 -- NGSI-LD EntityMap (clauses 4.5.25, 5.2.39, 5.5.14, 5.14). An EntityMap pins
 -- the entities a distributed query matched so follow-up pages, which may reach

@@ -15,6 +15,11 @@ use sea_query::{Alias, Expr, ExprTrait, Func, Iden, QueryStatementBuilder, Selec
 #[iden = "pg_extension"]
 struct PgExtension;
 
+/// The `pg_proc` system catalog of registered routines.
+#[derive(Iden, Clone, Copy)]
+#[iden = "pg_proc"]
+struct PgProc;
+
 /// `current_setting(name)` - the value of a runtime configuration setting.
 ///
 /// The setting name is bound rather than interpolated. This form errors if the
@@ -51,6 +56,24 @@ pub fn extension_version(name: &str) -> SimpleExpr {
         .and_where(Expr::col(Alias::new("extname")).eq(name.to_owned()))
         .to_owned();
     SimpleExpr::SubQuery(None, Box::new(subquery.into_sub_query_statement()))
+}
+
+/// `EXISTS (SELECT 1 FROM pg_proc WHERE proname = name)` - whether a routine of
+/// that name is registered in the current database.
+///
+/// The routine name is bound. A `TimescaleDB` edition ships a TSL-only procedure
+/// exactly when it is the licensed build, so probing one procedure's presence
+/// distinguishes the edition without reading any license marker; that is a
+/// different question, and a different catalog, from
+/// [`current_setting_missing_ok`] over `timescaledb.license`.
+#[must_use]
+pub fn function_exists(name: &str) -> SimpleExpr {
+    let subquery = SelectStatement::new()
+        .expr(Expr::val(1))
+        .from(PgProc)
+        .and_where(Expr::col(Alias::new("proname")).eq(name.to_owned()))
+        .to_owned();
+    Expr::exists(subquery)
 }
 
 /// The `current_setting` system function.
@@ -95,7 +118,7 @@ struct PgColumnSize;
 
 #[cfg(test)]
 mod tests {
-    use crate::introspection::{current_setting, current_setting_missing_ok, extension_version, transaction_has_not_written};
+    use crate::introspection::{current_setting, current_setting_missing_ok, extension_version, function_exists, transaction_has_not_written};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
 
@@ -126,6 +149,18 @@ mod tests {
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains("current_setting('timescaledb.license', TRUE)"), "{sql}");
+    }
+
+    #[test]
+    fn a_function_presence_probe_binds_the_routine_name_over_pg_proc() {
+        let sql = Query::select()
+            .expr_as(function_exists("add_columnstore_policy"), Alias::new("present"))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains("EXISTS(SELECT 1 FROM \"pg_proc\" WHERE \"proname\" = 'add_columnstore_policy')"),
+            "{sql}"
+        );
     }
 
     #[test]

@@ -26,6 +26,10 @@
 --   * pg_stat_statements -- query performance monitoring; requires
 --                           shared_preload_libraries configuration, graceful
 --                           fallback if unavailable
+--   * pgstattuple        -- physical relation diagnostics (bloat and free
+--                           space) for the opt-in maintenance controller; a
+--                           supplied module managed installs may omit, so it is
+--                           installed only when its control file is present
 -- ============================================================================
 
 CREATE EXTENSION IF NOT EXISTS postgis;
@@ -41,5 +45,18 @@ BEGIN
 EXCEPTION
     WHEN OTHERS THEN
         RAISE NOTICE 'pg_stat_statements requires shared_preload_libraries -- skipping';
+END
+$$;
+
+-- pgstattuple is a PostgreSQL supplied module, but managed installations may
+-- omit its control file. Install it when available and let the opt-in
+-- maintenance controller report a per-database capability deferral otherwise.
+-- This never grants execution or MAINTAIN privileges to the broker role; those
+-- remain explicit operator decisions.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pgstattuple') THEN
+        CREATE EXTENSION IF NOT EXISTS pgstattuple;
+    END IF;
 END
 $$;

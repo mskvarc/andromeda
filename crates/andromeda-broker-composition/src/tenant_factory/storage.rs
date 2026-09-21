@@ -36,7 +36,11 @@ use andromeda_postgresql_name_dictionary::{
     name_lookup::NameLookup,
 };
 use andromeda_postgresql_pool::configure_pool_options;
-use andromeda_postgresql_temporal_store::{bulk_write_mode::BulkWriteMode as TemporalBulkWriteMode, repo::TemporalRepository};
+use andromeda_postgresql_temporal_store::{
+    bulk_write_mode::BulkWriteMode as TemporalBulkWriteMode,
+    columnstore_capability::ColumnstoreSupport,
+    repo::TemporalRepository,
+};
 use andromeda_registration::store::RegistrationStore;
 use andromeda_snapshot::store::SnapshotStore;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
@@ -183,11 +187,17 @@ pub(super) async fn initialize_storage(
     // read path and the entity rows and projection the commit writes.
     let attribute_names = Arc::clone(&attribute_names) as Arc<dyn NameLookup<AttributeName>>; // clone: the cache outlives each port that holds it.
     let entity_type_names = Arc::clone(&entity_type_names) as Arc<dyn NameLookup<EntityTypeName>>; // clone: the cache outlives each port that holds it.
+    // Probe the edition once: the TSL build converts aged chunks to the hypercore
+    // columnstore, the Apache-2.0 core runs the hypertables uncompressed. The
+    // reconciler below gates its columnstore statements on this so an Apache
+    // tenant never calls a procedure its edition does not ship.
+    let columnstore = ColumnstoreSupport::detect(&pool).await?;
     let temporal_repo = Arc::new(TemporalRepository::new(
         &pool,
         bulk_write_mode,
         Arc::clone(&attribute_names),
         Arc::clone(&entity_type_names),
+        columnstore,
     ));
     // The migrations declare the default chunk interval and columnstore lag;
     // an operator override is applied here, after migration and before any

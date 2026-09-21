@@ -25,14 +25,14 @@
 -- The path keeps its `ltree` type and its GiST index, which is what scopeQ
 -- matching reads (clause 4.18).
 --
--- Chunks span seven days, chunks older than thirty days are converted to the
--- columnstore and merged into four-week spans, for the reasons migration 0011
--- gives for attribute history;
--- both intervals are reconciled at startup against the broker's temporal
--- configuration together with the attribute-history ones. Scope history has no
--- stream, so its segment is the temporal entity: a scope query names entities,
--- and one entity's scope rows in a chunk are the rows it reads. The order
--- within a segment is the write-deduplication key of `uq_scope_history_write`.
+-- Chunks span seven days, reconciled at startup against the broker's temporal
+-- configuration together with the attribute-history interval. Hypercore
+-- columnstore compression is configured separately, in migration 0023, and only
+-- on the TSL edition of the image; on the Apache-2.0 core this stays a plain
+-- hypertable. Scope history has no stream, so its columnstore segment is the
+-- temporal entity -- a scope query names entities, and one entity's scope rows
+-- in a chunk are the rows it reads -- but that segment-and-order choice lives
+-- with migration 0023.
 --
 -- Every semantic axis carries a BRIN block summary and no B-tree, again as
 -- migration 0011 explains: the entity-led B-trees answer entity-scoped reads,
@@ -95,12 +95,3 @@ CREATE INDEX idx_scope_history_modified_at_brin
 
 CREATE INDEX idx_scope_history_deleted_at_brin
     ON scope_history USING BRIN (deleted_at timestamptz_minmax_multi_ops);
-
-ALTER TABLE scope_history SET (
-    timescaledb.enable_columnstore,
-    timescaledb.segmentby = 'temporal_entity_key',
-    timescaledb.orderby = 'recorded_at DESC, write_id, write_ordinal',
-    timescaledb.compress_chunk_time_interval = '28 days'
-);
-
-CALL add_columnstore_policy('scope_history', after => INTERVAL '30 days', if_not_exists => true);

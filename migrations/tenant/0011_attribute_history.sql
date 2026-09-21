@@ -88,27 +88,15 @@
 -- Chunks span seven days. The stream-led B-trees are per chunk, and only the
 -- chunks still receiving rows have index pages that must stay in memory; a
 -- shorter chunk keeps that active set bounded regardless of how far back the
--- table reaches, while `compress_chunk_time_interval` below merges chunks back
--- into four-week spans once they are converted, so the compressed tail is not
--- fragmented by the write-side interval. The merge span is 28 rather than 30
--- days because TimescaleDB requires it to be a whole multiple of the chunk
--- interval. The chunk interval and the policy lag are defaults the broker
--- reconciles at startup against its temporal configuration, so an operator
--- change does not need a migration; an operator who changes the chunk interval
--- to a value that does not divide 28 days must expect the merge to be refused
--- with a warning rather than applied.
+-- table reaches. The chunk interval is a default the broker reconciles at
+-- startup against its temporal configuration, so an operator change does not
+-- need a migration.
 --
--- Columnstore. Chunks older than thirty days are converted to the columnstore
--- by the policy added at the end of this migration; thirty days is the horizon
--- within which history is expected to be mutated in place (instance
--- modification and deletion, clauses 5.6.14 and 5.6.15, and the verbatim
--- instanceId dedup that precedes a replacing write) and past which it is read
--- as an immutable archive. Rows are segmented by `stream_key`: a temporal query
--- names streams, so a segment holds exactly the rows one stream contributed to
--- the chunk and a stream-led scan touches only its own segments. Within a
--- segment rows are ordered by `recorded_at DESC, write_id, write_ordinal` --
--- the write-deduplication key of `uq_attribute_history_write` -- so the newest
--- observation of a stream leads its segment and a batch's rows stay contiguous.
+-- Hypercore columnstore compression is configured separately, in migration
+-- 0023, and only on the TSL edition of the image; on the Apache-2.0 core this
+-- stays a plain hypertable. The columnstore's segment-and-order rationale, its
+-- four-week chunk-merge span and its conversion horizon all live with that
+-- migration.
 -- ============================================================================
 
 CREATE TABLE attribute_history (
@@ -239,21 +227,6 @@ CREATE INDEX idx_attribute_history_modified_at_brin
 
 CREATE INDEX idx_attribute_history_deleted_at_brin
     ON attribute_history USING BRIN (deleted_at timestamptz_minmax_multi_ops);
-
--- ----------------------------------------------------------------------------
--- Columnstore
--- ----------------------------------------------------------------------------
--- The rationale is in the header. Configured after the indexes so that every
--- index exists before the first chunk could ever be converted; the policy's
--- lag is what the broker's temporal configuration overrides at startup.
-ALTER TABLE attribute_history SET (
-    timescaledb.enable_columnstore,
-    timescaledb.segmentby = 'stream_key',
-    timescaledb.orderby = 'recorded_at DESC, write_id, write_ordinal',
-    timescaledb.compress_chunk_time_interval = '28 days'
-);
-
-CALL add_columnstore_policy('attribute_history', after => INTERVAL '30 days', if_not_exists => true);
 
 -- ----------------------------------------------------------------------------
 -- Verbatim instanceId uniqueness

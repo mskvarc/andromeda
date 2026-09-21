@@ -23,6 +23,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_postgresql_name_dictionary::name_cache::NameCache;
 use andromeda_postgresql_temporal_store::{
     bulk_write_mode::BulkWriteMode,
+    columnstore_capability::ColumnstoreSupport,
     repo::TemporalRepository,
     retention_sweep::{TemporalRetention, TemporalRetentionHorizon, TemporalRetentionOutcome},
 };
@@ -109,11 +110,13 @@ async fn temporal_semantics_operator_retention_ages_storage_out_without_deletion
     assert_eq!(stored_history(&pool, &aged_id).await.len(), 1, "the aged fixture is in storage");
     let tombstones_before = tombstone_rows(&pool).await;
 
+    let columnstore = ColumnstoreSupport::detect(&pool).await.expect("the columnstore capability probe runs");
     let repository = TemporalRepository::new(
         &pool,
         BulkWriteMode::Unnest,
         Arc::new(NameCache::<AttributeName>::new(&pool)),
         Arc::new(NameCache::<EntityTypeName>::new(&pool)),
+        columnstore,
     );
     let horizon = TemporalRetentionHorizon::new(TimeDelta::days(RETENTION_DAYS)).expect("a positive retention horizon");
     let outcome = repository
@@ -171,11 +174,13 @@ async fn temporal_semantics_operator_retention_is_off_until_a_horizon_is_configu
     .await;
     assert_eq!(created, StatusCode::CREATED);
 
+    let columnstore = ColumnstoreSupport::detect(&pool).await.expect("the columnstore capability probe runs");
     let repository = TemporalRepository::new(
         &pool,
         BulkWriteMode::Unnest,
         Arc::new(NameCache::<AttributeName>::new(&pool)),
         Arc::new(NameCache::<EntityTypeName>::new(&pool)),
+        columnstore,
     );
     let outcome = repository
         .sweep_retention(TemporalRetention::Disabled, Utc::now())

@@ -13,6 +13,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_postgresql_name_dictionary::name_cache::NameCache;
 use andromeda_postgresql_temporal_store::{
     bulk_write_mode::BulkWriteMode,
+    columnstore_capability::ColumnstoreSupport,
     repo::TemporalRepository,
     schema_ddl::timescale_policy::HypertableName,
     storage_policy::PolicyReconciliation,
@@ -58,12 +59,14 @@ async fn columnstore_after_days(pool: &PgPool, hypertable: &str) -> f64 {
 }
 
 /// A repository over the suite's tenant, with throwaway dictionary caches.
-fn repository(pool: &PgPool) -> TemporalRepository {
+async fn repository(pool: &PgPool) -> TemporalRepository {
+    let columnstore = ColumnstoreSupport::detect(pool).await.expect("the columnstore capability probe runs");
     TemporalRepository::new(
         pool,
         BulkWriteMode::Unnest,
         Arc::new(NameCache::<AttributeName>::new(pool)),
         Arc::new(NameCache::<EntityTypeName>::new(pool)),
+        columnstore,
     )
 }
 
@@ -90,6 +93,7 @@ async fn a_fresh_tenant_carries_the_declared_chunk_interval_columnstore_settings
     // nothing and leaves the assertions below meaningful even after another
     // test of this suite has moved the policy and moved it back.
     let outcome = repository(pool)
+        .await
         .reconcile_storage_policy(&policy(7, 30))
         .await
         .expect("the reconciliation runs");
@@ -132,7 +136,7 @@ async fn a_fresh_tenant_carries_the_declared_chunk_interval_columnstore_settings
 async fn an_override_moves_both_hypertables_once_and_the_defaults_move_them_back() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let pool = scope.database_pool();
-    let repository = repository(pool);
+    let repository = repository(pool).await;
 
     let overridden = repository.reconcile_storage_policy(&policy(1, 3)).await.expect("the override reconciles");
     assert_eq!(overridden.hypertables.len(), 2, "both hypertables are reconciled");
