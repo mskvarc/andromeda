@@ -4,7 +4,7 @@ use crate::{entity::types_present::EntityTypesMissing, jsonld_context::mapper::C
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 use andromeda_postgresql_encoding::{copy::CopyFieldError, ewkb::EwkbError};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
-use andromeda_postgresql_pool::is_pool_saturated;
+use andromeda_postgresql_pool::{is_pool_saturated, is_transaction_rolled_back};
 use andromeda_postgresql_query::error::RenderError;
 use sqlx::migrate::MigrateError;
 
@@ -113,6 +113,33 @@ impl ContextStoreError {
             | ContextStoreError::Internal(_) => false,
         }
     }
+
+    /// Whether this failure is a transient transaction rollback -- a deadlock or
+    /// a serialization failure -- that re-running the transaction can clear.
+    ///
+    /// A Snapshot branch-schema `DROP ... CASCADE` can deadlock against the
+    /// notification delivery worker draining that branch; PostgreSQL rolls the
+    /// victim transaction back whole, so the caller retries it from a fresh
+    /// transaction rather than surfacing a 500.
+    #[must_use]
+    pub fn is_transaction_rolled_back(&self) -> bool {
+        match self {
+            ContextStoreError::Database(error) => is_transaction_rolled_back(error),
+            ContextStoreError::SchemaContract(_)
+            | ContextStoreError::Saturated
+            | ContextStoreError::UniqueViolation(_)
+            | ContextStoreError::InvalidRegex(_)
+            | ContextStoreError::Encoding(_)
+            | ContextStoreError::Collation(_)
+            | ContextStoreError::CopyField(_)
+            | ContextStoreError::Render(_)
+            | ContextStoreError::NameLookup(_)
+            | ContextStoreError::EntityTypes(_)
+            | ContextStoreError::ContextMapper(_)
+            | ContextStoreError::Migration(_)
+            | ContextStoreError::Internal(_) => false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -142,5 +169,17 @@ mod tests {
         let drift = ContextStoreError::SchemaContract(SchemaContractError::NoMigrations);
         assert!(!drift.is_pool_saturation());
         assert!(!ContextStoreError::Database(sqlx::Error::RowNotFound).is_pool_saturation());
+    }
+
+    #[test]
+    fn a_non_contention_failure_is_not_a_transaction_rollback() {
+        // A row absence, a saturated pool and a schema drift are not deadlocks, so
+        // the branch-reaping retry does not fire for them. The 40P01/40001
+        // classification itself is exercised in andromeda-postgresql-pool, whose
+        // fake database error can carry a SQLSTATE a bare `sqlx::Error` cannot.
+        assert!(!ContextStoreError::Database(sqlx::Error::RowNotFound).is_transaction_rolled_back());
+        assert!(!ContextStoreError::Saturated.is_transaction_rolled_back());
+        let drift = ContextStoreError::SchemaContract(SchemaContractError::NoMigrations);
+        assert!(!drift.is_transaction_rolled_back());
     }
 }

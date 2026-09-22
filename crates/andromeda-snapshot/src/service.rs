@@ -4,6 +4,7 @@ use crate::{
     prepare::to_insert_params,
     query_validation::validate_snapshot_query_shapes,
     status::{ScopingEligibility, scoping_eligibility},
+    status_delivery_signal::StatusDeliverySignal,
     store::SnapshotStore,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -23,38 +24,47 @@ use std::{sync::Arc, time::Duration};
 use tokio::time::{MissedTickBehavior, interval, timeout};
 use tracing::{info, warn};
 
+/// Lifetime and tenant-quota policy for a [`SnapshotService`].
+#[derive(Clone, Copy, Debug)]
+pub struct SnapshotServiceConfig {
+    /// Lifetime applied when a create request omits `snapshotLifetime`.
+    pub default_lifetime: Duration,
+    /// Upper bound a requested lifetime is capped to.
+    pub maximum_lifetime: Duration,
+    /// How long a scoped operation waits for a still-`preparing` Snapshot.
+    pub scoped_operation_wait: Duration,
+    /// Optional per-tenant Snapshot count quota.
+    pub tenant_count_quota: Option<usize>,
+    /// Optional per-tenant Snapshot byte quota.
+    pub tenant_byte_quota: Option<u64>,
+}
+
 /// Service for managing NGSI-LD entity snapshots.
 pub struct SnapshotService {
     repo: Arc<dyn SnapshotStore>,
     preparation: Option<Arc<SnapshotPreparation>>,
-    default_lifetime: Duration,
-    maximum_lifetime: Duration,
-    scoped_operation_wait: Duration,
-    tenant_count_quota: Option<usize>,
-    tenant_byte_quota: Option<u64>,
+    delivery_signal: Option<Arc<dyn StatusDeliverySignal>>,
+    config: SnapshotServiceConfig,
 }
 
 impl SnapshotService {
     /// Create a new snapshot service backed by the given store. `preparation`
     /// is the bounded executor [`SnapshotService::prepare_now`] kicks so a
     /// freshly created snapshot does not wait for the next scheduled sweep.
+    /// `delivery_signal` wakes the durable status-delivery drain after a
+    /// create-time preparation or a metadata update enqueues notifications, so
+    /// they are not left to the drain's idle fallback interval.
     pub const fn new(
         repo: Arc<dyn SnapshotStore>,
         preparation: Option<Arc<SnapshotPreparation>>,
-        default_lifetime: Duration,
-        maximum_lifetime: Duration,
-        scoped_operation_wait: Duration,
-        tenant_count_quota: Option<usize>,
-        tenant_byte_quota: Option<u64>,
+        delivery_signal: Option<Arc<dyn StatusDeliverySignal>>,
+        config: SnapshotServiceConfig,
     ) -> SnapshotService {
         SnapshotService {
             repo,
             preparation,
-            default_lifetime,
-            maximum_lifetime,
-            scoped_operation_wait,
-            tenant_count_quota,
-            tenant_byte_quota,
+            delivery_signal,
+            config,
         }
     }
 
@@ -69,10 +79,22 @@ impl SnapshotService {
             return;
         };
         let preparation = Arc::clone(preparation);
+        // clone: the spawned pass owns its own handle to the delivery signal,
+        // which it raises once it has enqueued this creation's notifications.
+        let delivery_signal = self.delivery_signal.clone();
         tokio::spawn(async move {
             match preparation.execute().await {
                 Ok(SnapshotPreparationOutcome::Idle) => {}
-                Ok(SnapshotPreparationOutcome::Prepared { count }) => info!(count, "snapshot preparation completed on create"),
+                Ok(SnapshotPreparationOutcome::Prepared { count }) => {
+                    info!(count, "snapshot preparation completed on create");
+                    // The preparation committed its status rows before returning,
+                    // so wake delivery now instead of leaving them to the drain's
+                    // idle fallback (the scheduled sweep will not, having found no
+                    // preparing Snapshot left to complete).
+                    if let Some(delivery_signal) = &delivery_signal {
+                        delivery_signal.signal();
+                    }
+                }
                 Err(error) => warn!(%error, "snapshot preparation on create failed; the scheduled sweep will retry"),
             }
         });
@@ -114,9 +136,9 @@ impl SnapshotService {
         let now = Utc::now();
         let requested_lifetime = match input.snapshot_lifetime {
             Some(lifetime) => lifetime,
-            None => iso8601_lifetime(self.default_lifetime)?,
+            None => iso8601_lifetime(self.config.default_lifetime)?,
         };
-        let (snapshot_lifetime, expires_at) = effective_snapshot_lifetime(now, &requested_lifetime, self.maximum_lifetime)?;
+        let (snapshot_lifetime, expires_at) = effective_snapshot_lifetime(now, &requested_lifetime, self.config.maximum_lifetime)?;
 
         let snapshot = Snapshot::builder()
             .id(id)
@@ -206,7 +228,7 @@ impl SnapshotService {
         let effective_lifetime = patch
             .snapshot_lifetime
             .as_ref()
-            .map(|lifetime| effective_snapshot_lifetime(Utc::now(), lifetime, self.maximum_lifetime))
+            .map(|lifetime| effective_snapshot_lifetime(Utc::now(), lifetime, self.config.maximum_lifetime))
             .transpose()?;
         let persisted_lifetime = effective_lifetime.as_ref().map(|(lifetime, _)| lifetime);
         let new_expires_at = effective_lifetime.as_ref().map(|(_, expires_at)| *expires_at);
@@ -214,6 +236,13 @@ impl SnapshotService {
         self.repo
             .update_metadata(id, persisted_lifetime, patch_priority, endpoint, receiver_info, new_expires_at)
             .await?;
+
+        // A metadata update commits a fresh status notification for an
+        // endpoint-bearing Snapshot, outside the preparation sweep that would
+        // otherwise wake delivery, so signal the drain directly.
+        if let Some(delivery_signal) = &self.delivery_signal {
+            delivery_signal.signal();
+        }
 
         self.get(id).await
     }
@@ -343,7 +372,7 @@ impl SnapshotService {
                 }
             }
         };
-        timeout(self.scoped_operation_wait, wait)
+        timeout(self.config.scoped_operation_wait, wait)
             .await
             .map_err(|_| SnapshotError::preparation_timeout(id))?
     }
@@ -372,10 +401,10 @@ impl SnapshotService {
 
         let requested_lifetime = match input.snapshot_lifetime.or(source.snapshot_lifetime) {
             Some(lifetime) => lifetime,
-            None => iso8601_lifetime(self.default_lifetime)?,
+            None => iso8601_lifetime(self.config.default_lifetime)?,
         };
         let now = Utc::now();
-        let (lifetime, expires_at) = effective_snapshot_lifetime(now, &requested_lifetime, self.maximum_lifetime)?;
+        let (lifetime, expires_at) = effective_snapshot_lifetime(now, &requested_lifetime, self.config.maximum_lifetime)?;
         let cloned = Snapshot::builder()
             .id(new_id)
             .snapshot_queries(source.snapshot_queries)
@@ -402,7 +431,7 @@ impl SnapshotService {
     }
 
     async fn enforce_quotas(&self) -> Result<(), SnapshotError> {
-        let evicted = self.repo.enforce_quotas(self.tenant_count_quota, self.tenant_byte_quota).await?;
+        let evicted = self.repo.enforce_quotas(self.config.tenant_count_quota, self.config.tenant_byte_quota).await?;
         for id in evicted {
             info!(snapshot_id = %id, "Snapshot evicted by tenant resource quota");
         }

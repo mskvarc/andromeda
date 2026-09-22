@@ -102,6 +102,21 @@ fn is_pooler_backpressure(error: &dyn DatabaseError) -> bool {
     error.message().contains(POOLER_QUERY_WAIT_TIMEOUT)
 }
 
+/// Whether a `sqlx` error is a transient transaction rollback that re-running
+/// the transaction can clear.
+///
+/// PostgreSQL rolls the whole transaction back on a deadlock (SQLSTATE 40P01) or
+/// a serialization failure (40001) and reports it to whichever transaction it
+/// chose as the victim, so the operation is safely retryable from a fresh
+/// transaction rather than a fault. The caller owns the bounded retry budget.
+#[must_use]
+pub fn is_transaction_rolled_back(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .and_then(DatabaseError::code)
+        .is_some_and(|code| matches!(code.as_ref(), "40001" | "40P01"))
+}
+
 /// Whether an I/O error is the host running out of the local sockets a new
 /// connection needs, rather than a genuine transport fault.
 ///
@@ -130,7 +145,7 @@ andromeda_architecture_checks::forbid_sql!();
 
 #[cfg(test)]
 mod tests {
-    use crate::{POOL_IDLE_TIMEOUT, POOLER_QUERY_WAIT_TIMEOUT, configure_pool_options, is_pool_saturated, is_pooler_backpressure};
+    use crate::{POOL_IDLE_TIMEOUT, POOLER_QUERY_WAIT_TIMEOUT, configure_pool_options, is_pool_saturated, is_pooler_backpressure, is_transaction_rolled_back};
     use sqlx::error::{DatabaseError, ErrorKind as SqlxErrorKind};
     use std::{
         borrow::Cow,
@@ -250,5 +265,28 @@ mod tests {
         assert!(!is_pool_saturated(&sqlx::Error::PoolClosed));
         assert!(!is_pool_saturated(&sqlx::Error::RowNotFound));
         assert!(!is_pool_saturated(&sqlx::Error::WorkerCrashed));
+    }
+
+    /// A database error reporting the given SQLSTATE.
+    fn database_error(code: &str) -> sqlx::Error {
+        sqlx::Error::Database(Box::new(FakeDatabaseError {
+            message: "contended".to_string(),
+            code: code.to_string(),
+        }))
+    }
+
+    #[test]
+    fn a_deadlock_or_serialization_failure_is_a_transaction_rollback() {
+        // PostgreSQL rolls the victim transaction back whole on a deadlock (40P01)
+        // or a serialization failure (40001), so re-running it can clear the race.
+        assert!(is_transaction_rolled_back(&database_error("40P01")));
+        assert!(is_transaction_rolled_back(&database_error("40001")));
+    }
+
+    #[test]
+    fn an_unrelated_database_error_or_transport_fault_is_not_a_transaction_rollback() {
+        assert!(!is_transaction_rolled_back(&database_error("23505")));
+        assert!(!is_transaction_rolled_back(&sqlx::Error::PoolTimedOut));
+        assert!(!is_transaction_rolled_back(&sqlx::Error::RowNotFound));
     }
 }

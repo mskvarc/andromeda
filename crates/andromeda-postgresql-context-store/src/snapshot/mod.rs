@@ -1,6 +1,7 @@
 //! Persistence layer for snapshot records.
 
-use andromeda_postgresql_pool::is_pool_saturated;
+use crate::error::ContextStoreError;
+use andromeda_postgresql_pool::{is_pool_saturated, is_transaction_rolled_back};
 use andromeda_snapshot::error::SnapshotError;
 use std::{any::Any, fmt::Display};
 
@@ -26,15 +27,32 @@ pub mod store;
 
 /// Erase an adapter failure into the snapshot policy's persistence category.
 ///
-/// A `sqlx` pool-acquire timeout is backpressure, not a fault, so it becomes
-/// [`SnapshotError::StoreSaturated`] (a 503); every other failure stays a
-/// persistence fault. The concrete [`sqlx::Error`] is recovered by downcast
-/// because callers hand it in already erased behind `impl Display`.
+/// A pool-acquire timeout is backpressure, not a fault, so it becomes
+/// [`SnapshotError::StoreSaturated`] (a 503); a deadlock or serialization
+/// rollback is transient contention the store can retry, so it becomes
+/// [`SnapshotError::Contended`]; every other failure stays a persistence fault.
+/// Callers hand the error in already erased behind `impl Display`, so the
+/// concrete failure is recovered by downcast -- as a raw [`sqlx::Error`] from the
+/// statements this module runs directly, or as a [`ContextStoreError`] from the
+/// branch-schema DDL, which is where a `DROP SCHEMA` deadlock surfaces.
 fn persistence_error(error: impl Display + Any) -> SnapshotError {
-    match (&error as &dyn Any).downcast_ref::<sqlx::Error>() {
-        Some(sqlx_error) if is_pool_saturated(sqlx_error) => SnapshotError::StoreSaturated,
-        Some(_) | None => SnapshotError::persistence(error.to_string()),
+    let erased = &error as &dyn Any;
+    if let Some(sqlx_error) = erased.downcast_ref::<sqlx::Error>() {
+        if is_pool_saturated(sqlx_error) {
+            return SnapshotError::StoreSaturated;
+        }
+        if is_transaction_rolled_back(sqlx_error) {
+            return SnapshotError::Contended;
+        }
+    } else if let Some(store_error) = erased.downcast_ref::<ContextStoreError>() {
+        if store_error.is_pool_saturation() {
+            return SnapshotError::StoreSaturated;
+        }
+        if store_error.is_transaction_rolled_back() {
+            return SnapshotError::Contended;
+        }
     }
+    SnapshotError::persistence(error.to_string())
 }
 
 #[cfg(test)]

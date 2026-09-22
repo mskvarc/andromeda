@@ -28,6 +28,8 @@ use iso8601_duration::Duration as Iso8601Duration;
 use sea_query::{Expr, ExprTrait, Func, JoinType, Keyword, LockType, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Postgres, Row, Transaction};
+use std::time::Duration;
+use tokio::time::sleep;
 use url::Url;
 use uuid::Uuid;
 
@@ -385,9 +387,34 @@ pub(crate) async fn match_snapshots_by_filter(pool: &PgPool, filter: &SnapshotPu
     Ok(ids)
 }
 
+/// Bounded retries for a branch-reaping transaction that a deadlock rolls back.
+///
+/// Dropping a Snapshot's branch schema takes locks that can deadlock against the
+/// notification delivery worker draining that branch's pending deliveries;
+/// PostgreSQL rolls the victim's whole transaction back, so re-running it from a
+/// fresh transaction clears the contention. Kept small because heavy contention
+/// is rare and each attempt re-runs the entire delete.
+const BRANCH_REAP_ATTEMPTS: u32 = 5;
+/// Backoff between contended branch-reaping attempts.
+const BRANCH_REAP_BACKOFF: Duration = Duration::from_millis(50);
+
 /// Delete one snapshot by identifier: drop its branch schemas, then delete the
-/// control record, which cascades the preparation and outbox rows.
+/// control record, which cascades the preparation and outbox rows. Retries a
+/// transaction a deadlock with branch delivery rolls back.
 pub(crate) async fn delete_snapshot(pool: &PgPool, id: &Uri) -> Result<u64, SnapshotError> {
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        match delete_snapshot_once(pool, id).await {
+            Err(SnapshotError::Contended) if attempt < BRANCH_REAP_ATTEMPTS => sleep(BRANCH_REAP_BACKOFF).await,
+            outcome => return outcome,
+        }
+    }
+}
+
+/// Delete one Snapshot's control record and branch schema in a single
+/// transaction, returning the number of control rows removed.
+async fn delete_snapshot_once(pool: &PgPool, id: &Uri) -> Result<u64, SnapshotError> {
     let mut transaction = pool.begin().await.map_err(persistence_error)?;
     let statement = Query::select()
         .column(Snapshots::SnapshotKey)
@@ -413,6 +440,19 @@ pub(crate) async fn delete_snapshot(pool: &PgPool, id: &Uri) -> Result<u64, Snap
 
 /// Delete every snapshot whose expiry has passed `cutoff`.
 pub(crate) async fn delete_expired_snapshots(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, SnapshotError> {
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        match delete_expired_snapshots_once(pool, cutoff).await {
+            Err(SnapshotError::Contended) if attempt < BRANCH_REAP_ATTEMPTS => sleep(BRANCH_REAP_BACKOFF).await,
+            outcome => return outcome,
+        }
+    }
+}
+
+/// Delete every Snapshot past `cutoff` and its branch schema in a single
+/// transaction, returning the number of control rows removed.
+async fn delete_expired_snapshots_once(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, SnapshotError> {
     let mut transaction = pool.begin().await.map_err(persistence_error)?;
     let statement = Query::select()
         .column(Snapshots::SnapshotKey)

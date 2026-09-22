@@ -24,7 +24,7 @@ pub fn classify_snapshot_error(error: &SnapshotError) -> ClassifiedReport {
         SnapshotError::Temporal(source) => classify_temporal_error(source),
         SnapshotError::Federation(source) => classify_federation_error(source),
         SnapshotError::Request(source) => classify_parameter_error(source),
-        SnapshotError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
+        SnapshotError::StoreSaturated | SnapshotError::Contended => ClassifiedReport::store_saturated(error.to_string()),
         SnapshotError::Representation(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to render the snapshot")),
         SnapshotError::Persistence { .. } => ClassifiedReport::internal(error, InternalFailureSummary::new("the snapshot store is unavailable")),
         SnapshotError::Internal { .. } => ClassifiedReport::internal(error, InternalFailureSummary::new("internal snapshot error")),
@@ -164,7 +164,8 @@ mod tests {
                 | SnapshotError::Federation(_)
                 | SnapshotError::Request(_)
                 | SnapshotError::Representation(_)
-                | SnapshotError::StoreSaturated => {}
+                | SnapshotError::StoreSaturated
+                | SnapshotError::Contended => {}
             }
         }
         Ok(())

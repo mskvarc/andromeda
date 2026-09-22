@@ -12,6 +12,7 @@ use andromeda_snapshot::{
     error::SnapshotError,
     executor::{SnapshotPreparation, SnapshotPreparationOutcome},
     expiry::SnapshotExpiry,
+    status_delivery_signal::StatusDeliverySignal,
     store::SnapshotStore,
 };
 use andromeda_task_runtime::{
@@ -25,7 +26,7 @@ use andromeda_task_runtime::{
     shutdown_policy::ShutdownPolicy,
     supervisor::TaskSupervisor,
     task_name::TaskName,
-    wake_trigger::{DrainFallbackPolicy, DrainWakeReceiver, WakeHandle, WakeRequest, wake_channel},
+    wake_trigger::{DrainFallbackPolicy, DrainWakeReceiver, WakeHandle, WakeRequest},
 };
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
@@ -38,6 +39,19 @@ use std::{sync::Arc, time::Duration};
 ///
 /// Returns [`TenantAssemblyError`] when the configured delivery cadence is
 /// rejected or when the supervisor refuses either registration.
+/// The wake endpoints the Snapshot status-delivery workers share.
+///
+/// The scheduled sweep and the create-time preparation path both wake through
+/// `sweep_wake`; the delivery drain reads `receiver`. Both are created by the
+/// tenant assembly so the create-time path can hold its own clone of the handle
+/// while the drain is still being registered.
+pub(super) struct SnapshotStatusWake {
+    /// Handle the scheduled sweep and create-time preparation wake through.
+    pub(super) sweep_wake: WakeHandle,
+    /// The delivery drain's wake receiver.
+    pub(super) receiver: DrainWakeReceiver,
+}
+
 pub(super) fn register_snapshot_workers(
     supervisor: &TaskSupervisor,
     pool: &PgPool,
@@ -45,11 +59,15 @@ pub(super) fn register_snapshot_workers(
     transport: &Arc<TransportDispatcher>,
     config: &DeliveryConfig,
     preparation_recovery_secs: u64,
+    wake: SnapshotStatusWake,
 ) -> Result<(), TenantAssemblyError> {
-    // Preparation wakes status delivery the moment it prepares a Snapshot, so
-    // the delivery drain's idle interval can widen without adding latency.
-    let (status_wake, status_receiver) = wake_channel();
-    register_snapshot_preparation(supervisor, preparation, status_wake, Duration::from_secs(preparation_recovery_secs))?;
+    // The scheduled sweep wakes status delivery the moment it prepares a
+    // Snapshot, so the delivery drain's idle interval can widen without adding
+    // latency. The create-time preparation path shares the same channel through
+    // its own clone of the handle, so a freshly created Snapshot's notification
+    // does not wait for the drain's fallback either.
+    let SnapshotStatusWake { sweep_wake, receiver } = wake;
+    register_snapshot_preparation(supervisor, preparation, sweep_wake, Duration::from_secs(preparation_recovery_secs))?;
     let drain = Arc::new(
         SnapshotStatusDeliveryDrain::new(
             Arc::new(SnapshotStatusOutbox::new(pool)),
@@ -60,7 +78,7 @@ pub(super) fn register_snapshot_workers(
     );
     let floor = Duration::from_secs(config.poll_interval_secs.max(1));
     let ceiling = Duration::from_secs(config.poll_interval_max_secs.max(config.poll_interval_secs).max(1));
-    register_snapshot_status_delivery(supervisor, Arc::clone(&drain), floor, ceiling, status_receiver)?; // clone: delivery and cleanup share one drain.
+    register_snapshot_status_delivery(supervisor, Arc::clone(&drain), floor, ceiling, receiver)?; // clone: delivery and cleanup share one drain.
     register_snapshot_status_cleanup(supervisor, drain, Duration::from_secs(config.cleanup_interval_secs.max(1)))
 }
 
@@ -137,6 +155,27 @@ fn register_snapshot_preparation(
         .register_scheduled(task)
         .map(drop)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+}
+
+/// Wakes the Snapshot status-delivery drain from the service paths that enqueue
+/// notifications outside the scheduled preparation sweep: a create-time
+/// preparation and a metadata update.
+pub(crate) struct StatusDeliveryWaker {
+    /// A clone of the drain's wake handle, shared with the scheduled sweep.
+    wake: WakeHandle,
+}
+
+impl StatusDeliveryWaker {
+    /// Wrap a drain wake handle as the service's delivery signal.
+    pub(crate) const fn new(wake: WakeHandle) -> StatusDeliveryWaker {
+        StatusDeliveryWaker { wake }
+    }
+}
+
+impl StatusDeliverySignal for StatusDeliveryWaker {
+    fn signal(&self) {
+        report_status_wake(self.wake.wake());
+    }
 }
 
 /// Log a status-delivery wake that reached a stopped drain; a queued or
@@ -225,7 +264,7 @@ fn register_snapshot_status_cleanup(
 fn classify_snapshot_failure(error: &SnapshotError) -> TaskFailure {
     let summary = error.to_string();
     match error {
-        SnapshotError::Persistence { .. } | SnapshotError::StoreSaturated => TaskFailure::transient(summary),
+        SnapshotError::Persistence { .. } | SnapshotError::StoreSaturated | SnapshotError::Contended => TaskFailure::transient(summary),
         SnapshotError::Internal { .. } => TaskFailure::invariant_violation(summary),
         SnapshotError::Validation { .. }
         | SnapshotError::NotFound { .. }
@@ -236,5 +275,29 @@ fn classify_snapshot_failure(error: &SnapshotError) -> TaskFailure {
         | SnapshotError::Federation(_)
         | SnapshotError::Request(_)
         | SnapshotError::Representation(_) => TaskFailure::permanent(summary),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tenant_factory::tasks::snapshot::StatusDeliveryWaker;
+    use andromeda_snapshot::status_delivery_signal::StatusDeliverySignal;
+    use andromeda_task_runtime::wake_trigger::{WakeRequest, wake_channel};
+
+    /// The create-time and update paths reach delivery only through this signal,
+    /// so raising it must place a wake on the drain's one-slot channel. A probe
+    /// handle sharing that channel then coalesces rather than schedules, which it
+    /// could only do if the signal had already filled the slot.
+    #[test]
+    fn signalling_the_delivery_waker_places_a_wake_on_the_drain_channel() {
+        let (handle, _receiver) = wake_channel();
+        let probe = handle.clone(); // clone: a second producer observes the channel state the signal leaves.
+        let waker = StatusDeliveryWaker::new(handle);
+        waker.signal();
+        assert_eq!(
+            probe.wake(),
+            WakeRequest::Coalesced,
+            "the delivery signal must have filled the drain's one-slot wake channel"
+        );
     }
 }

@@ -13,6 +13,8 @@ pub mod query_validation;
 /// Snapshot lifecycle service and purge outcomes.
 pub mod service;
 pub mod status;
+/// Port for waking durable Snapshot status-notification delivery.
+pub mod status_delivery_signal;
 pub mod store;
 
 #[cfg(test)]

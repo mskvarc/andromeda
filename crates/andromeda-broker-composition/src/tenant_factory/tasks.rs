@@ -22,7 +22,7 @@ use crate::tenant_factory::{
         expiry::register_expiry_workers,
         maintenance::{register_entity_side_effects, register_spatial_workers},
         pool_gauges::register_pool_gauges,
-        snapshot::register_snapshot_workers,
+        snapshot::{SnapshotStatusWake, register_snapshot_workers},
         table_size_gauges::register_table_size_gauges,
         temporal_retention::register_temporal_retention,
     },
@@ -31,11 +31,15 @@ use andromeda_context_commit::{committer::ContextCommitter, context_change_event
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use andromeda_postgresql_context_store::{csource_subscription::repo::CsourceSubscriptionRepository, subscription::repo::SubscriptionRepository};
+use andromeda_snapshot::status_delivery_signal::StatusDeliverySignal;
 use andromeda_subscription::{
     change::{CsourceSubscriptionChange, SubscriptionChange},
     store::SubscriptionStore,
 };
-use andromeda_task_runtime::{supervisor::TaskSupervisor, wake_trigger::DrainWakeReceiver};
+use andromeda_task_runtime::{
+    supervisor::TaskSupervisor,
+    wake_trigger::{DrainWakeReceiver, WakeHandle},
+};
 use std::sync::Arc;
 use tokio::{
     sync::{broadcast, watch},
@@ -82,6 +86,18 @@ pub(super) struct TenantTaskChannels {
     pub(super) notification_wake: Option<DrainWakeReceiver>,
     /// The entity side-effect drain's wake receiver.
     pub(super) side_effect_wake: DrainWakeReceiver,
+    /// The Snapshot status-delivery drain's wake handle, shared with the
+    /// scheduled preparation sweep and the create-time preparation path.
+    pub(super) snapshot_status_wake: WakeHandle,
+    /// The Snapshot status-delivery drain's wake receiver.
+    pub(super) snapshot_status_receiver: DrainWakeReceiver,
+}
+
+/// Build the delivery signal the Snapshot service raises after enqueuing status
+/// notifications outside the scheduled preparation sweep, wrapping a clone of the
+/// status-delivery drain's wake handle.
+pub(super) fn snapshot_delivery_signal(wake: WakeHandle) -> Arc<dyn StatusDeliverySignal> {
+    Arc::new(snapshot::StatusDeliveryWaker::new(wake))
 }
 
 /// Whether entity notifications are delivered live or through the durable queue.
@@ -110,6 +126,8 @@ pub(super) fn supervise_tasks(
         signals,
         notification_wake,
         side_effect_wake,
+        snapshot_status_wake,
+        snapshot_status_receiver,
     } = channels;
     let TenantSignals {
         entity,
@@ -172,6 +190,10 @@ pub(super) fn supervise_tasks(
         transport,
         &config.notifications.delivery,
         config.snapshot.preparation_recovery_secs,
+        SnapshotStatusWake {
+            sweep_wake: snapshot_status_wake,
+            receiver: snapshot_status_receiver,
+        },
     )?;
     register_spatial_workers(&task_supervisor, config, storage, entity)?;
     Ok(TaskSupervision {

@@ -10,9 +10,9 @@ use crate::{
         commit_consequence::RuntimeCommitConsequencePublisher,
         error::TenantAssemblyError,
         runtime::BrokerTenantRuntime,
-        services::construct_services,
+        services::{TenantServiceCollaborators, construct_services},
         storage::initialize_storage,
-        tasks::{TenantSignals, TenantTaskChannels, supervise_tasks},
+        tasks::{TenantSignals, TenantTaskChannels, snapshot_delivery_signal, supervise_tasks},
         temporal_history::compose_temporal_history,
         transport::construct_transports,
     },
@@ -232,6 +232,14 @@ async fn build_tenant_state(
     } else {
         (None, None)
     };
+    // The Snapshot status-delivery drain's wake channel follows the same
+    // pattern: created before the service and drain exist so the create-time and
+    // update paths can hold a wake handle while the drain is still assembling. A
+    // wake raised before the drain's first read is retained by the one-slot
+    // channel, so a Snapshot created the instant a tenant loads is not left to
+    // the drain's idle fallback.
+    let (snapshot_status_wake, snapshot_status_receiver) = wake_channel();
+    let snapshot_delivery_signal = snapshot_delivery_signal(snapshot_status_wake.clone()); // clone: the sweep keeps the handle while the service holds its own.
     let consequence_publisher: Arc<dyn CommitConsequencePublisher> = Arc::new(RuntimeCommitConsequencePublisher::new(notification_wake, side_effect_wake));
     let writes: Arc<dyn ContextCommitter> = Arc::new(PostgresAtomicCommitter::new(
         &storage.pool,
@@ -242,11 +250,24 @@ async fn build_tenant_state(
         consequence_publisher,
     ));
     let transports = construct_transports(config.notifications.delivery.request_timeout())?;
-    let services = construct_services(config, &storage, &signals, &transports, &temporal.ports, &writes, subscription_router)?;
+    let services = construct_services(
+        config,
+        &storage,
+        &signals,
+        &transports,
+        &temporal.ports,
+        TenantServiceCollaborators {
+            writes: &writes,
+            subscription_router,
+            snapshot_delivery_signal,
+        },
+    )?;
     let channels = TenantTaskChannels {
         signals,
         notification_wake: notification_receiver,
         side_effect_wake: side_effect_receiver,
+        snapshot_status_wake,
+        snapshot_status_receiver,
     };
     let supervision = supervise_tasks(config, &storage, &services, &writes, &transports.dispatcher, task_supervisor, channels)?;
     Ok((

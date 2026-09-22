@@ -37,7 +37,8 @@ use andromeda_registration::{RegistrationService, entity_probe::RegisteredEntity
 use andromeda_snapshot::{
     config::SnapshotConfig,
     executor::{SnapshotPreparation, SnapshotPreparationConfig, capture_sources::SnapshotCaptureSources},
-    service::SnapshotService,
+    service::{SnapshotService, SnapshotServiceConfig},
+    status_delivery_signal::StatusDeliverySignal,
 };
 use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
 use andromeda_temporal::{
@@ -54,6 +55,20 @@ pub(super) struct ConstructedServices {
     pub(super) snapshot_preparation: Arc<SnapshotPreparation>,
 }
 
+/// Broker-level collaborators handed down to every tenant's services: the atomic
+/// commit implementation each write path reaches, the router outgoing forwarded
+/// subscriptions traverse, and the wake signal that keeps create-time and
+/// updated Snapshot notifications prompt.
+pub(super) struct TenantServiceCollaborators<'a> {
+    /// The complete atomic commit implementation every write path reaches.
+    pub(super) writes: &'a Arc<dyn ContextCommitter>,
+    /// The router outgoing forwarded subscriptions traverse.
+    pub(super) subscription_router: &'a Arc<dyn ForwardedSubscriptionRouter>,
+    /// Wakes the Snapshot status-delivery drain after a create-time preparation
+    /// or a metadata update enqueues notifications outside the scheduled sweep.
+    pub(super) snapshot_delivery_signal: Arc<dyn StatusDeliverySignal>,
+}
+
 /// Construct all request-facing services for one tenant.
 pub(super) fn construct_services(
     config: &TenantFactoryConfig,
@@ -61,9 +76,13 @@ pub(super) fn construct_services(
     signals: &TenantSignals,
     transports: &TenantTransports,
     temporal_ports: &TemporalPorts,
-    writes: &Arc<dyn ContextCommitter>,
-    subscription_router: &Arc<dyn ForwardedSubscriptionRouter>,
+    collaborators: TenantServiceCollaborators<'_>,
 ) -> Result<ConstructedServices, TenantAssemblyError> {
+    let TenantServiceCollaborators {
+        writes,
+        subscription_router,
+        snapshot_delivery_signal,
+    } = collaborators;
     let pool_size = match storage.tenant {
         TenantRef::UnnamedDefault => config.database.max_connections as usize,
         // Match the serving pool's actual size, which is the pooler's small
@@ -92,7 +111,15 @@ pub(super) fn construct_services(
     let entity_query = compose_entity_query_service(storage, &forwarding);
     let context_store = Arc::new(JsonLdContextRepository::new(&storage.pool)) as Arc<dyn ContextRegistryStore>;
     let contexts = Arc::new(ContextRegistryService::new(context_store, storage.engine.clone()));
-    let (snapshot_preparation, snapshots) = compose_snapshot_services(&config.snapshot, storage, writes, &entity_query, &temporal, &forwarding);
+    let (snapshot_preparation, snapshots) = compose_snapshot_services(
+        &config.snapshot,
+        storage,
+        writes,
+        &entity_query,
+        &temporal,
+        &forwarding,
+        snapshot_delivery_signal,
+    );
     let edge = DistributedSubscriptionEdge::resolve(&config.identity, subscription_router, &forwarding, &storage.tenant);
     let subscriptions = compose_subscription_services(storage, signals, transports, edge, &entity_query, &contexts);
     let state = AndromedaState {
@@ -225,6 +252,7 @@ fn compose_snapshot_services(
     entity_query: &Arc<EntityQueryService>,
     temporal: &Arc<TemporalService>,
     forwarding: &Arc<FederationService>,
+    delivery_signal: Arc<dyn StatusDeliverySignal>,
 ) -> (Arc<SnapshotPreparation>, Arc<SnapshotService>) {
     let preparation = Arc::new(SnapshotPreparation::new(
         SnapshotCaptureSources {
@@ -246,11 +274,14 @@ fn compose_snapshot_services(
     let service = Arc::new(SnapshotService::new(
         Arc::clone(&storage.snapshot_store),
         Some(Arc::clone(&preparation)), // clone: the service schedules the same preparation the worker drives.
-        Duration::from_secs(config.default_lifetime_secs),
-        Duration::from_secs(config.maximum_lifetime_secs),
-        Duration::from_secs(config.scoped_operation_wait_secs),
-        config.tenant_count_quota,
-        config.tenant_byte_quota,
+        Some(delivery_signal),
+        SnapshotServiceConfig {
+            default_lifetime: Duration::from_secs(config.default_lifetime_secs),
+            maximum_lifetime: Duration::from_secs(config.maximum_lifetime_secs),
+            scoped_operation_wait: Duration::from_secs(config.scoped_operation_wait_secs),
+            tenant_count_quota: config.tenant_count_quota,
+            tenant_byte_quota: config.tenant_byte_quota,
+        },
     ));
     (preparation, service)
 }

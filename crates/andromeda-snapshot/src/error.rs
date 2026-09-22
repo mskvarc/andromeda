@@ -66,6 +66,16 @@ pub enum SnapshotError {
     /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
     #[error("the datastore connection pool is saturated; retry shortly")]
     StoreSaturated,
+    /// A transaction lost a deadlock or serialization race and was rolled back.
+    ///
+    /// Not a fault: PostgreSQL aborts the whole transaction (SQLSTATE 40P01 or
+    /// 40001) and picks one contender as the victim, so the operation is safely
+    /// retryable from a fresh transaction. Reaping a Snapshot's branch schema
+    /// takes locks that can deadlock against the notification delivery worker
+    /// draining that branch, which this classifies so the store can retry it and,
+    /// if the budget is exhausted, the client is shed a 503 rather than a 500.
+    #[error("the snapshot store transaction was rolled back by contention; retry shortly")]
+    Contended,
     /// Policy produced an invalid internal value or transition.
     #[error("snapshot invariant failed: {detail}")]
     Internal {
