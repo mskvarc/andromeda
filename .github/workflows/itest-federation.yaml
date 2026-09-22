@@ -1,13 +1,27 @@
 name: federation
 
-# Nightly integration run for the federation stack. Its status badge is per
-# workflow, so each stack owns a thin workflow file over the shared composite
-# action; the release gate calls the same composite for a matrix leg. Crons are
-# staggered across the stacks so their broker-image builds do not contend for
-# the gha cache at once.
+# Integration run for the federation stack. Its status badge is per workflow, so
+# each stack owns a thin workflow file over the shared composite action; the release
+# gate calls the same composite for a matrix leg. It runs weekly against the
+# published ghcr images (a smoke test of the shipped artifact) and on any change to
+# the harness that drives it (a source build, so a change is caught before it
+# ships). Weekly crons are staggered across the stacks, on Sunday, away from the
+# Monday postgresql.yaml and deny.yaml slots, so their broker-image builds do not
+# contend for the gha cache at once.
 on:
   schedule:
-    - cron: "23 3 * * *"
+    - cron: "23 3 * * 0"
+  pull_request:
+    paths: &harness
+      - .github/actions/itest/**
+      - .github/actions/free-disk-space/**
+      - .github/workflows/itest-federation.yaml
+      - docker/images/andromeda/**
+      - docker/compose/test/federation/**
+      - crates/andromeda-xtask/**
+  push:
+    branches: [master]
+    paths: *harness
   workflow_dispatch:
 
 concurrency:
@@ -27,3 +41,6 @@ jobs:
       - uses: ./.github/actions/itest
         with:
           stack: federation
+          # Weekly runs exercise the published image; on-change and manual runs
+          # build the broker from the branch under test.
+          image-source: ${{ github.event_name == 'schedule' && 'ghcr' || 'build' }}

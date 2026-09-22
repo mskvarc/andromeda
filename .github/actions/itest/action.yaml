@@ -1,14 +1,24 @@
 name: Integration test stack
 description: >
-  Build the broker image once, tag it and the PostgreSQL image into the named
-  stack's compose `image:` targets, then drive the stack through `cargo xtask
-  itest` with rebuilding disabled. Shared by the nightly per-stack workflows and
-  the release gate so both exercise the byte-identical image.
+  Provide the broker image -- built from the Dockerfile or pulled from GHCR --
+  tag it and the PostgreSQL image into the named stack's compose `image:` targets,
+  then drive the stack through `cargo xtask itest` with rebuilding disabled. Shared
+  by the per-stack workflows and the release gate. The integration test binaries
+  always compile from source; `image-source` selects only where the broker image
+  comes from.
 
 inputs:
   stack:
     description: The xtask stack name (base, distributed, federation, snapshot, http3, extensions).
     required: true
+  image-source:
+    description: >
+      Where the broker image comes from. `build` (default) builds it from the
+      Dockerfile with the shared gha cache; `ghcr` pulls the published
+      `ghcr.io/mskvarc/andromeda:latest` and falls back to a build when it 404s
+      (the published image does not exist until the first clean release).
+    required: false
+    default: build
 
 runs:
   using: composite
@@ -20,33 +30,53 @@ runs:
 
     - uses: docker/setup-buildx-action@v4
 
-    # Build the broker image once with the shared gha cache and load it into the
-    # local docker so compose can reuse it by tag. The cache scope is stable
-    # across stacks: the Dockerfile and context are identical, so every stack
-    # warms and reuses the same `broker` scope. The tag matches each stack's
-    # compose `image:` (andromeda-<stack>) exactly, so `docker compose up` under
-    # ANDROMEDA_XTASK_NO_BUILD reuses it instead of rebuilding.
-    - name: Build broker image
-      shell: bash
-      run: |
-        set -euo pipefail
-        docker buildx build --load -t andromeda-ci:broker \
-          -f docker/images/andromeda/Dockerfile \
-          --cache-from type=gha,scope=broker \
-          --cache-to type=gha,mode=max,scope=broker \
-          .
-        docker tag andromeda-ci:broker "andromeda-${{ inputs.stack }}:latest"
-
-    # Authenticate to GHCR so the published PostgreSQL image can be pulled even
-    # while the repository (and thus its packages) is private. github.token is
-    # the job's GITHUB_TOKEN, available to composite steps without a secrets
-    # reference; it needs only the default `packages: read` scope.
+    # Authenticate to GHCR before the image steps so the published PostgreSQL image
+    # and, in `ghcr` mode, the published broker image can be pulled even while the
+    # repository (and thus its packages) is private. github.token is the job's
+    # GITHUB_TOKEN, available to composite steps without a secrets reference; it
+    # needs only the default `packages: read` scope.
     - name: Log in to GHCR
       uses: docker/login-action@v4
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ github.token }}
+
+    # Provide the broker image under each stack's compose `image:` tag
+    # (andromeda-<stack>) exactly, so `docker compose up` under
+    # ANDROMEDA_XTASK_NO_BUILD reuses it instead of rebuilding. In `build` mode the
+    # image is built once with the shared gha cache and loaded into the local
+    # docker; the cache scope is stable across stacks since the Dockerfile and
+    # context are identical, so every stack warms and reuses the same `broker`
+    # scope. In `ghcr` mode the published `latest` image is pulled and retagged;
+    # until the first clean release publishes it the pull 404s and the build path
+    # runs instead, mirroring the PostgreSQL fallback below.
+    - name: Provide broker image
+      shell: bash
+      env:
+        IMAGE_SOURCE: ${{ inputs.image-source }}
+      run: |
+        set -euo pipefail
+        broker_tag="andromeda-${{ inputs.stack }}:latest"
+        published="ghcr.io/${{ github.repository_owner }}/andromeda:latest"
+        build_broker() {
+          docker buildx build --load -t andromeda-ci:broker \
+            -f docker/images/andromeda/Dockerfile \
+            --cache-from type=gha,scope=broker \
+            --cache-to type=gha,mode=max,scope=broker \
+            .
+          docker tag andromeda-ci:broker "$broker_tag"
+        }
+        if [ "$IMAGE_SOURCE" = ghcr ]; then
+          if docker pull "$published"; then
+            docker tag "$published" "$broker_tag"
+          else
+            echo "andromeda:latest not published yet; building from source"
+            build_broker
+          fi
+        else
+          build_broker
+        fi
 
     # The PostgreSQL image is published by postgresql.yaml; its `latest` tag is
     # the tsl edition, matching the compose files' default build. Pull and retag

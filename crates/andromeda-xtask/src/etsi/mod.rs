@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 mod broker;
 mod diff;
+mod merge;
 mod patch;
 mod robot;
 mod run;

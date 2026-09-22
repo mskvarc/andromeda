@@ -28,7 +28,7 @@ const HTTPCTRL_FORK_PYTHONPATH: &str = "libraries/robotframework-httpctrl/src";
 /// filter so the single-broker run and the distributed run never share a case.
 /// The `dist-ops` test-level tag is carried by every `DistributedOperations` case
 /// and nowhere else in the suite, so the two scopes partition it exactly.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TopologyScope {
     /// The default run: the whole suite minus the distributed-operations tree.
     SingleBroker,
@@ -45,6 +45,25 @@ impl TopologyScope {
             TopologyScope::SingleBroker => ["--exclude", "dist-ops"],
             TopologyScope::Distributed => ["--include", "dist-ops"],
         }
+    }
+
+    /// The output subdirectory this scope's pass writes into, keeping the two passes'
+    /// robot artifacts (`output.xml` and its siblings) from overwriting each other
+    /// when both run under one output directory.
+    pub(crate) const fn output_subdir(self) -> &'static str {
+        match self {
+            TopologyScope::SingleBroker => "single-broker",
+            TopologyScope::Distributed => "distributed",
+        }
+    }
+
+    /// Whether this scope isolates each suite onto its own materialised tenant by
+    /// default. The single-broker tree isolates -- a shared tenant makes every
+    /// list/aggregate/discovery case depend on suite order and leftover state --
+    /// while the distributed tree keeps the shared tenant its mock topology and the
+    /// authoritative four-broker tier were validated against.
+    pub(crate) const fn isolates_tenants_by_default(self) -> bool {
+        matches!(self, TopologyScope::SingleBroker)
     }
 
     /// The checkout-relative import root prepended to robot's Python path for this

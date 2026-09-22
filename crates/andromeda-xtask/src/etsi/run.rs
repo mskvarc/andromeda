@@ -9,13 +9,14 @@ use crate::{
     etsi::{
         self,
         broker,
+        merge,
         patch::{self, Material},
         robot::{self, TopologyScope},
         suite,
         venv,
     },
 };
-use clap::Args;
+use clap::{Args, ValueEnum};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -42,6 +43,12 @@ pub(crate) struct RunArgs {
     /// the corrected-material patch set.
     #[arg(long)]
     as_shipped: bool,
+    /// Return a non-zero exit when any test case fails, turning the run from
+    /// report-only into a hard gate. Without it the run reports failures and still
+    /// succeeds; the `etsi` CI job passes it (scoped to `--scope base`) so a broker
+    /// regression against the single-broker tree turns the job red.
+    #[arg(long)]
+    strict: bool,
     /// Seconds any one test may run before robot times it out.
     #[arg(long, default_value_t = 300)]
     timeout: u16,
@@ -51,16 +58,42 @@ pub(crate) struct RunArgs {
     /// How suites are assigned NGSI-LD tenants, from the two conflicting flags.
     #[command(flatten)]
     tenant_isolation: TenantIsolationArgs,
-    /// Run only the distributed-operations tree (`dist-ops`) against the in-process
-    /// mock context source; the default run excludes it.
-    #[arg(long)]
-    distop: bool,
+    /// Which topology passes to drive against the one spawned broker; defaults to the
+    /// whole suite (both passes).
+    #[arg(long, value_enum, default_value_t = EtsiScope::All)]
+    scope: EtsiScope,
     /// An argument forwarded to robot, before the resolved targets; repeatable.
     #[arg(long = "robot-arg", value_name = "ARG")]
     robot_args: Vec<String>,
     /// Suite subtrees to run; defaults to the whole suite.
     #[arg(value_name = "SUBTREE")]
     subtrees: Vec<String>,
+}
+
+/// Which topology passes an `xtask etsi run` drives against the single spawned
+/// broker. The suite partitions on the `dist-ops` tag, so each pass runs a disjoint
+/// slice of cases; a run drives one slice or both, in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub(crate) enum EtsiScope {
+    /// The single-broker tree only: the whole suite minus the distributed tree.
+    Base,
+    /// The distributed-operations tree only, against the in-process mock context source.
+    Distop,
+    /// Both passes in order: the single-broker tree, then the distributed tree.
+    All,
+}
+
+impl EtsiScope {
+    /// The ordered topology passes this scope drives. `All` runs the single-broker
+    /// tree then the distributed tree; `Base` and `Distop` run one pass each.
+    fn passes(self) -> Vec<TopologyScope> {
+        match self {
+            EtsiScope::Base => vec![TopologyScope::SingleBroker],
+            EtsiScope::Distop => vec![TopologyScope::Distributed],
+            EtsiScope::All => vec![TopologyScope::SingleBroker, TopologyScope::Distributed],
+        }
+    }
 }
 
 /// What becomes of the run's artifacts and backing services once it finishes.
@@ -78,9 +111,9 @@ struct RunAftermath {
 /// neither one set leaves the decision to the topology default.
 #[derive(Args)]
 struct TenantIsolationArgs {
-    /// Force each suite onto its own materialised NGSI-LD tenant even for the
-    /// distributed tree, overriding the topology-derived default. Isolation is
-    /// already the single-broker default, so this only matters with `--distop`.
+    /// Force each suite onto its own materialised NGSI-LD tenant for every pass that
+    /// runs, overriding the topology-derived default. Isolation is already the
+    /// single-broker default, so this only changes the distributed pass.
     #[arg(long, conflicts_with = "shared_tenant")]
     isolate_tenants: bool,
     /// Run every suite against one shared NGSI-LD tenant, reproducing the raw
@@ -112,8 +145,9 @@ impl RunArgs {
     ///
     /// # Errors
     ///
-    /// Propagates any provisioning, virtualenv, compose, build, readiness, patch, or
-    /// robot-spawn failure.
+    /// Propagates any provisioning, virtualenv, compose, build, readiness, patch,
+    /// robot-spawn, or merge failure, and under `--strict`
+    /// [`XtaskError::EtsiTestsFailed`] when any test case failed.
     pub(crate) fn execute(self) -> Result<(), XtaskError> {
         let repository_root = cli::repository_root();
         let output = prepare_output_dir(&self.output)?;
@@ -137,21 +171,56 @@ impl RunArgs {
         teardown.broker = Some(broker);
 
         // Held to the end of the run: dropping the guard reverts the patches while
-        // the checkout is still intact, before the stack is torn down.
+        // the checkout is still intact, before the stack is torn down. The corrected
+        // material covers the whole suite, so both passes judge the broker against
+        // this one patched checkout.
         let _patches = patch::PatchGuard::apply(self.material())?;
 
-        let code = robot::run(
-            &output,
-            self.timeout,
-            self.resolve_isolate_tenants(),
-            self.topology(),
-            &self.robot_args,
-            &targets,
-        )?;
-        println!("robot exited {code}; results in {}", output.display());
+        // Each pass writes into its own subdirectory so the two robot runs never
+        // overwrite each other's output.xml; the merged report is written across
+        // them afterwards.
+        let forced = self.tenant_isolation.forced();
+        let mut pass_outputs = Vec::new();
+        let mut total_failed: usize = 0;
+        for scope in self.scope.passes() {
+            let pass_output = prepare_pass_dir(&output, scope)?;
+            let code = robot::run(
+                &pass_output,
+                self.timeout,
+                resolve_isolate_tenants(forced, scope),
+                scope,
+                &self.robot_args,
+                &targets,
+            )?;
+            println!("robot [{}] exited {code}; results in {}", scope.output_subdir(), pass_output.display());
+            // robot's exit code is the number of failed cases (capped at 250), so any
+            // positive code is a failing pass; accumulate it for the strict gate.
+            total_failed = total_failed.saturating_add(usize::try_from(code).unwrap_or(0));
+            pass_outputs.push(pass_output.join("output.xml"));
+        }
+
+        let merged = pass_outputs.len() > 1;
+        if merged {
+            merge::merge(&output, &pass_outputs)?;
+            println!("merged report in {}", output.display());
+        }
 
         if self.aftermath.open {
-            open_report(&output);
+            // The unified report sits at the top of the output directory once passes
+            // are merged; a single-pass run's report stays in its one subdirectory.
+            let report_dir: &Path = if merged {
+                output.as_path()
+            } else {
+                pass_outputs.first().and_then(|output_xml| output_xml.parent()).unwrap_or(output.as_path())
+            };
+            open_report(report_dir);
+        }
+
+        // Report-only by default: failing cases are reported and the run still
+        // succeeds, so only an infrastructure error is a failure. `--strict` turns a
+        // failing case into a failing run for the CI gate.
+        if self.strict && total_failed > 0 {
+            return Err(XtaskError::EtsiTestsFailed(total_failed));
         }
         Ok(())
     }
@@ -160,28 +229,15 @@ impl RunArgs {
     const fn material(&self) -> Material {
         if self.as_shipped { Material::AsShipped } else { Material::Corrected }
     }
+}
 
-    /// Whether each suite receives its own materialised tenant. `--isolate-tenants`
-    /// forces it on and `--shared-tenant` forces it off (the two conflict); with
-    /// neither, the single-broker tree isolates by default -- a shared tenant makes
-    /// every list/aggregate/discovery case depend on suite order and leftover state
-    /// -- while the distributed tree keeps the shared tenant its mock topology and
-    /// the authoritative four-broker tier were validated against.
-    const fn resolve_isolate_tenants(&self) -> bool {
-        match self.tenant_isolation.forced() {
-            Some(forced) => forced,
-            None => matches!(self.topology(), TopologyScope::SingleBroker),
-        }
-    }
-
-    /// Which topology the run targets, selecting the mutually exclusive `dist-ops`
-    /// tag filter.
-    const fn topology(&self) -> TopologyScope {
-        if self.distop {
-            TopologyScope::Distributed
-        } else {
-            TopologyScope::SingleBroker
-        }
+/// Whether a pass of `scope` isolates each suite onto its own materialised tenant:
+/// the forced choice when either conflicting flag is set (`--isolate-tenants` forces
+/// it on, `--shared-tenant` off), otherwise the scope's topology default.
+const fn resolve_isolate_tenants(forced: Option<bool>, scope: TopologyScope) -> bool {
+    match forced {
+        Some(forced) => forced,
+        None => scope.isolates_tenants_by_default(),
     }
 }
 
@@ -208,17 +264,33 @@ impl Drop for RunTeardown<'_> {
 }
 
 /// Create the output directory if absent, resolve it to an absolute path so robot's
-/// checkout-relative working directory cannot confuse it, and clear prior artifacts.
+/// checkout-relative working directory cannot confuse it, and clear prior artifacts
+/// (including any merged report from an earlier run).
 fn prepare_output_dir(output: &Path) -> Result<PathBuf, XtaskError> {
     fs::create_dir_all(output)?;
     let output = fs::canonicalize(output)?;
+    clear_artifacts(&output)?;
+    Ok(output)
+}
+
+/// Create and clear one pass's subdirectory under the run's output directory, so a
+/// prior run's robot artifacts for this pass never bleed into the current one.
+fn prepare_pass_dir(output: &Path, scope: TopologyScope) -> Result<PathBuf, XtaskError> {
+    let pass_output = output.join(scope.output_subdir());
+    fs::create_dir_all(&pass_output)?;
+    clear_artifacts(&pass_output)?;
+    Ok(pass_output)
+}
+
+/// Remove any robot artifacts left in `dir` by an earlier run.
+fn clear_artifacts(dir: &Path) -> Result<(), XtaskError> {
     for artifact in ROBOT_ARTIFACTS {
-        let path = output.join(artifact);
+        let path = dir.join(artifact);
         if path.exists() {
             fs::remove_file(path)?;
         }
     }
-    Ok(output)
+    Ok(())
 }
 
 /// Open `report.html` in the default browser, warning rather than failing when it
@@ -231,5 +303,80 @@ fn open_report(output: &Path) {
     }
     if let Err(error) = open::that(&report) {
         eprintln!("xtask: could not open {}: {error}", report.display());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::etsi::{
+        robot::TopologyScope,
+        run::{EtsiScope, TenantIsolationArgs, resolve_isolate_tenants},
+    };
+    use clap::ValueEnum;
+
+    #[test]
+    fn base_scope_runs_the_single_broker_pass_only() {
+        assert_eq!(EtsiScope::Base.passes(), vec![TopologyScope::SingleBroker]);
+    }
+
+    #[test]
+    fn distop_scope_runs_the_distributed_pass_only() {
+        assert_eq!(EtsiScope::Distop.passes(), vec![TopologyScope::Distributed]);
+    }
+
+    #[test]
+    fn all_scope_runs_the_single_broker_pass_then_the_distributed_pass() {
+        assert_eq!(EtsiScope::All.passes(), vec![TopologyScope::SingleBroker, TopologyScope::Distributed]);
+    }
+
+    #[test]
+    fn each_scope_parses_from_its_kebab_case_value() {
+        for (value, expected) in [("base", EtsiScope::Base), ("distop", EtsiScope::Distop), ("all", EtsiScope::All)] {
+            let parsed = EtsiScope::from_str(value, false).expect("the kebab-case value parses");
+            assert_eq!(parsed, expected);
+            let name = expected.to_possible_value().expect("every variant has a value").get_name().to_owned();
+            assert_eq!(name, value, "the value round-trips to its kebab-case spelling");
+        }
+    }
+
+    #[test]
+    fn with_no_override_each_pass_takes_its_topology_default() {
+        // The single-broker tree isolates; the distributed tree keeps the shared tenant.
+        assert!(resolve_isolate_tenants(None, TopologyScope::SingleBroker));
+        assert!(!resolve_isolate_tenants(None, TopologyScope::Distributed));
+    }
+
+    #[test]
+    fn shared_tenant_forces_isolation_off_for_both_passes() {
+        let forced = TenantIsolationArgs {
+            isolate_tenants: false,
+            shared_tenant: true,
+        }
+        .forced();
+        assert_eq!(forced, Some(false));
+        assert!(!resolve_isolate_tenants(forced, TopologyScope::SingleBroker));
+        assert!(!resolve_isolate_tenants(forced, TopologyScope::Distributed));
+    }
+
+    #[test]
+    fn isolate_tenants_forces_isolation_on_for_both_passes() {
+        let forced = TenantIsolationArgs {
+            isolate_tenants: true,
+            shared_tenant: false,
+        }
+        .forced();
+        assert_eq!(forced, Some(true));
+        assert!(resolve_isolate_tenants(forced, TopologyScope::SingleBroker));
+        assert!(resolve_isolate_tenants(forced, TopologyScope::Distributed));
+    }
+
+    #[test]
+    fn neither_flag_leaves_the_choice_to_the_topology_default() {
+        let forced = TenantIsolationArgs {
+            isolate_tenants: false,
+            shared_tenant: false,
+        }
+        .forced();
+        assert_eq!(forced, None);
     }
 }

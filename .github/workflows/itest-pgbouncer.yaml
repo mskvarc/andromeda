@@ -1,14 +1,15 @@
 name: pgbouncer
 
-# Nightly integration run for the transaction-pooling tier. It is heavy (one
-# PostgreSQL, one PgBouncer, four brokers, and hundreds of tenants), so it is
-# nightly-only and deliberately NOT part of the release gate matrix. Its status
-# badge is per workflow, so like every other stack it is a thin workflow file
-# over the shared composite action. The cron is staggered away from the other
-# stacks so their broker-image builds do not contend for the gha cache at once.
+# Integration run for the transaction-pooling tier. It is heavy (one PostgreSQL,
+# one PgBouncer, four brokers, and hundreds of tenants), so it is weekly and manual
+# only -- no on-change trigger -- and deliberately NOT part of the release gate
+# matrix. Its status badge is per workflow, so like every other stack it is a thin
+# workflow file over the shared composite action. The cron is staggered away from
+# the other stacks so their broker-image builds do not contend for the gha cache at
+# once.
 on:
   schedule:
-    - cron: "27 4 * * *"
+    - cron: "27 4 * * 0"
   workflow_dispatch:
 
 concurrency:
@@ -28,3 +29,6 @@ jobs:
       - uses: ./.github/actions/itest
         with:
           stack: pgbouncer
+          # Weekly runs exercise the published image; a manual run builds the
+          # broker from the branch under test.
+          image-source: ${{ github.event_name == 'schedule' && 'ghcr' || 'build' }}

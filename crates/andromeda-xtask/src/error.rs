@@ -66,6 +66,12 @@ pub(crate) enum XtaskError {
     /// The broker process exited while the runner was waiting for readiness.
     #[error("the broker exited during startup; see broker.log in the output directory")]
     BrokerStartupExit,
+    /// `rebot` could not be spawned to merge the per-pass reports into one.
+    #[error("failed to spawn rebot to merge the reports: {0}")]
+    RebotSpawn(#[source] io::Error),
+    /// `rebot` exited non-zero while merging the per-pass reports.
+    #[error("rebot failed to merge the per-pass reports")]
+    RebotFailed,
     /// A run's `output.xml` is absent, so a diff has nothing to read.
     #[error("robot output.xml not found at {0}")]
     OutputXmlMissing(String),
@@ -75,6 +81,9 @@ pub(crate) enum XtaskError {
     /// A diff found test cases that pass in the baseline but fail in the candidate.
     #[error("{0} test case(s) newly failing since the baseline")]
     NewlyFailing(usize),
+    /// A `--strict` run recorded failing test cases, so the run fails as a gate.
+    #[error("{0} ETSI test case(s) failed")]
+    EtsiTestsFailed(usize),
     /// An underlying process could not be spawned or waited on.
     #[error("process error: {0}")]
     Io(#[from] io::Error),

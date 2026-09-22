@@ -9,6 +9,13 @@ pub(crate) fn robot_binary() -> PathBuf {
     etsi::checkout_dir().join(".venv").join("bin").join("robot")
 }
 
+/// Path to the rebot executable inside the checkout's virtualenv. rebot is
+/// robotframework's report combiner and ships with it, so [`ensure`] installs it
+/// alongside `robot` with no extra requirement.
+pub(crate) fn rebot_binary() -> PathBuf {
+    etsi::checkout_dir().join(".venv").join("bin").join("rebot")
+}
+
 /// Ensure the virtualenv exists with robot installed, building it when absent.
 ///
 /// The virtualenv lives at `.venv` inside the checkout. A hard reset of the
