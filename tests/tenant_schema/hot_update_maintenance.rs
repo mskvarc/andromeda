@@ -28,8 +28,6 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 use sqlx::{PgPool, Row};
-use std::time::Duration;
-use tokio::time::sleep;
 
 /// One relation the redesign tunes, and the storage parameters it declares.
 struct TunedRelation {
@@ -366,31 +364,25 @@ async fn sustained_document_churn_stays_heap_only() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The cumulative update counter of `relation`, from the statistics collector.
-async fn tuples_updated(pool: &PgPool, relation: &str) -> i64 {
-    sqlx::query_scalar::<_, Option<i64>>("SELECT n_tup_upd FROM pg_stat_user_tables WHERE relname = $1")
-        .bind(relation)
+/// The transaction that last wrote this entity's row in `relation`.
+///
+/// `xmin` is the system column naming the inserting or updating transaction of
+/// the row version currently visible, so it changes exactly when the row is
+/// rewritten: at commit, for this one entity's row, and independent of the
+/// statistics collector's flush latency or of concurrent writes to any other
+/// entity. Reading it before and after a write is a precise, race-free test of
+/// whether that write touched the row -- unlike the table-wide cumulative
+/// `n_tup_upd`, which lags behind the write and counts every entity at once.
+async fn row_writer(pool: &PgPool, relation: &str, entity_id: &str) -> i64 {
+    // `relation` is one of this module's own relation-name constants, never
+    // caller input, so interpolating it is safe; `AssertSqlSafe` is used the
+    // same way by the churn statements above.
+    let statement = format!("SELECT r.xmin::text::bigint FROM {relation} AS r JOIN entities AS e ON e.entity_key = r.entity_key WHERE e.id = $1");
+    sqlx::query_scalar(sqlx::AssertSqlSafe(statement))
+        .bind(entity_id)
         .fetch_one(pool)
         .await
-        .expect("the relation must report its statistics")
-        .unwrap_or_default()
-}
-
-/// Wait until `relation` reports more than `before` updates, or give up.
-///
-/// A backend flushes its table statistics some time after each transaction,
-/// so a counter is read by polling rather than once; the flush carries every
-/// relation the transaction touched together, which is what lets a counter
-/// that did not move be read as evidence.
-async fn wait_for_update(pool: &PgPool, relation: &str, before: i64) -> i64 {
-    for _ in 0..100 {
-        let now = tuples_updated(pool, relation).await;
-        if now > before {
-            return now;
-        }
-        sleep(Duration::from_millis(50)).await;
-    }
-    tuples_updated(pool, relation).await
+        .expect("the entity's row must report the transaction that wrote it")
 }
 
 /// Through the API: a write that changes only an attribute value rewrites the
@@ -416,19 +408,22 @@ async fn a_value_only_write_leaves_the_search_row_untouched_while_a_type_change_
         .expect("create request failed");
     assert_eq!(created.status, StatusCode::CREATED);
 
-    let documents_before = tuples_updated(pool, "entity_documents").await;
-    let search_before = tuples_updated(pool, "entity_search").await;
+    let document_writer = row_writer(pool, "entity_documents", &id).await;
+    let search_writer = row_writer(pool, "entity_search", &id).await;
 
     let value_only = client
         .update_entity_attrs(&id, &json!({"temperature": {"type": "Property", "value": 2}, "@context": [CORE_CONTEXT]}))
         .await
         .expect("attribute update request failed");
     assert_eq!(value_only.status, StatusCode::NO_CONTENT);
-    let documents_after_value = wait_for_update(pool, "entity_documents", documents_before).await;
-    assert!(documents_after_value > documents_before, "the value write must rewrite the document row");
+    assert_ne!(
+        row_writer(pool, "entity_documents", &id).await,
+        document_writer,
+        "the value write must rewrite the document row"
+    );
     assert_eq!(
-        tuples_updated(pool, "entity_search").await,
-        search_before,
+        row_writer(pool, "entity_search", &id).await,
+        search_writer,
         "a value-only write must leave the search row where it was"
     );
 
@@ -447,8 +442,11 @@ async fn a_value_only_write_leaves_the_search_row_untouched_while_a_type_change_
         .await
         .expect("replace request failed");
     assert_eq!(retyped.status, StatusCode::NO_CONTENT);
-    let search_after_type = wait_for_update(pool, "entity_search", search_before).await;
-    assert!(search_after_type > search_before, "a type change must rewrite the search row");
+    assert_ne!(
+        row_writer(pool, "entity_search", &id).await,
+        search_writer,
+        "a type change must rewrite the search row"
+    );
 
     scope.finish().await.expect("cleanup failed");
 }
