@@ -1,24 +1,29 @@
 name: Integration test stack
 description: >
-  Provide the broker image -- built from the Dockerfile or pulled from GHCR --
-  tag it and the PostgreSQL image into the named stack's compose `image:` targets,
-  then drive the stack through `cargo xtask itest` with rebuilding disabled. Shared
-  by the per-stack workflows and the release gate. The integration test binaries
-  always compile from source; `image-source` selects only where the broker image
-  comes from.
+  Provide the broker image -- loaded from the shared build artifact or pulled
+  from GHCR -- tag it and the PostgreSQL image into the named stack's compose
+  `image:` targets, then drive the stack through `cargo xtask itest` with
+  rebuilding disabled. Shared by the integration workflow's matrix legs and the
+  release gate. The broker image is built once per run by a preceding
+  `build-broker` job and fanned out here, so a matrix of stacks never rebuilds
+  the identical image per leg. The integration test binaries always compile from
+  source; `image-source` selects only where the broker image comes from.
 
 inputs:
   stack:
-    description: The xtask stack name (base, distributed, federation, snapshot, http3, extensions).
+    description: The xtask stack name (base, distributed, federation, snapshot, http3, extensions, pgbouncer).
     required: true
   image-source:
     description: >
-      Where the broker image comes from. `build` (default) builds it from the
-      Dockerfile with the shared gha cache; `ghcr` pulls the published
-      `ghcr.io/mskvarc/andromeda:latest` and falls back to a build when it 404s
-      (the published image does not exist until the first clean release).
+      Where the broker image comes from. `preloaded` (default) downloads the
+      `broker-image` artifact built once by the run's `build-broker` job and
+      loads it, so no leg rebuilds it; `ghcr` pulls the published
+      `ghcr.io/mskvarc/andromeda:latest` and, since that mode produces no build
+      artifact, falls back to building the broker from the Dockerfile when the
+      pull 404s (the published image does not exist until the first clean
+      release, and weekly smoke runs still need a broker to test).
     required: false
-    default: build
+    default: preloaded
 
 runs:
   using: composite
@@ -28,7 +33,12 @@ runs:
     # repeat the checkout.
     - uses: ./.github/actions/free-disk-space
 
+    # buildx is only needed for the `ghcr` mode's 404 fallback, which builds the
+    # broker from the Dockerfile with the gha cache. In `preloaded` mode the broker
+    # image is only loaded and retagged, and the PostgreSQL fallback uses the plain
+    # docker builder, so setting buildx up on every leg there is pure overhead.
     - uses: docker/setup-buildx-action@v4
+      if: ${{ inputs.image-source == 'ghcr' }}
 
     # Authenticate to GHCR before the image steps so the published PostgreSQL image
     # and, in `ghcr` mode, the published broker image can be pulled even while the
@@ -42,40 +52,50 @@ runs:
         username: ${{ github.actor }}
         password: ${{ github.token }}
 
-    # Provide the broker image under each stack's compose `image:` tag
+    # The broker image is built once per run by the `build-broker` job and saved
+    # as the `broker-image` artifact. Download it here so `preloaded` mode can load
+    # it instead of rebuilding the identical image per matrix leg. In `ghcr` mode no
+    # artifact is produced (the published image is pulled instead), so the download
+    # is skipped.
+    - name: Download broker image
+      if: ${{ inputs.image-source == 'preloaded' }}
+      uses: actions/download-artifact@v8
+      with:
+        name: broker-image
+        path: ${{ runner.temp }}/broker
+
+    # Provide the broker image under the stack's compose `image:` tag
     # (andromeda-<stack>) exactly, so `docker compose up` under
-    # ANDROMEDA_XTASK_NO_BUILD reuses it instead of rebuilding. In `build` mode the
-    # image is built once with the shared gha cache and loaded into the local
-    # docker; the cache scope is stable across stacks since the Dockerfile and
-    # context are identical, so every stack warms and reuses the same `broker`
-    # scope. In `ghcr` mode the published `latest` image is pulled and retagged;
-    # until the first clean release publishes it the pull 404s and the build path
-    # runs instead, mirroring the PostgreSQL fallback below.
+    # ANDROMEDA_XTASK_NO_BUILD reuses it instead of rebuilding. In `preloaded` mode
+    # the artifact tarball built once by `build-broker` is loaded and retagged -- no
+    # leg rebuilds it. In `ghcr` mode the published `latest` image is pulled and
+    # retagged; there is no build artifact in that mode, so until the first clean
+    # release publishes the image the pull 404s and the broker is built from the
+    # Dockerfile here (a rare one-time path, self-healing once a release exists),
+    # mirroring the PostgreSQL fallback below.
     - name: Provide broker image
       shell: bash
       env:
         IMAGE_SOURCE: ${{ inputs.image-source }}
+        BROKER_ARCHIVE: ${{ runner.temp }}/broker/broker.tar.gz
       run: |
         set -euo pipefail
         broker_tag="andromeda-${{ inputs.stack }}:latest"
         published="ghcr.io/${{ github.repository_owner }}/andromeda:latest"
-        build_broker() {
-          docker buildx build --load -t andromeda-ci:broker \
-            -f docker/images/andromeda/Dockerfile \
-            --cache-from type=gha,scope=broker \
-            --cache-to type=gha,mode=max,scope=broker \
-            .
-          docker tag andromeda-ci:broker "$broker_tag"
-        }
         if [ "$IMAGE_SOURCE" = ghcr ]; then
           if docker pull "$published"; then
             docker tag "$published" "$broker_tag"
           else
             echo "andromeda:latest not published yet; building from source"
-            build_broker
+            docker buildx build --load -t "$broker_tag" \
+              -f docker/images/andromeda/Dockerfile \
+              --cache-from type=gha,scope=broker \
+              .
           fi
         else
-          build_broker
+          # docker load auto-detects the gzip stream written by `build-broker`.
+          docker load -i "$BROKER_ARCHIVE"
+          docker tag andromeda-ci:broker "$broker_tag"
         fi
 
     # The PostgreSQL image is published by postgresql.yaml; its `latest` tag is

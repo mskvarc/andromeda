@@ -22,12 +22,47 @@ env:
   CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
-  # The release gate: the same composite the nightly badge workflows call, once
-  # per stack. Everything below needs this job, so nothing publishes unless every
-  # stack is green against the tagged commit. amd64 only -- arm64 is a packaging
-  # concern, not a logic difference, and the gate image is byte-identical to the
-  # published image (same Dockerfile).
+  # Build the gate's broker image exactly once and fan it out to every stack, so
+  # the identical image is not rebuilt per matrix leg. amd64 only -- arm64 is a
+  # packaging concern, not a logic difference, and this gate image is
+  # byte-identical to the published image (same Dockerfile).
+  build-broker:
+    name: build broker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/free-disk-space
+      - uses: docker/setup-buildx-action@v4
+
+      # The shared gha cache scope and gzip tarball the gate legs load, matching
+      # the integration workflow's build-broker so both warm the same `broker` scope.
+      - name: Build broker image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx build --load -t andromeda-ci:broker \
+            -f docker/images/andromeda/Dockerfile \
+            --cache-from type=gha,scope=broker \
+            --cache-to type=gha,mode=max,scope=broker \
+            .
+          mkdir -p "$RUNNER_TEMP/broker"
+          docker save andromeda-ci:broker | gzip > "$RUNNER_TEMP/broker/broker.tar.gz"
+
+      # compression-level 0: the tarball is already gzipped, so re-zipping it in
+      # the artifact upload only burns CPU on both ends for no size gain.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: broker-image
+          path: ${{ runner.temp }}/broker/broker.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+
+  # The release gate: the same composite the integration workflow calls, once per
+  # stack, each loading the one broker image. Everything below needs this job, so
+  # nothing publishes unless every stack is green against the tagged commit.
   gate:
+    needs: build-broker
     name: gate (${{ matrix.stack }})
     strategy:
       fail-fast: false
@@ -42,6 +77,7 @@ jobs:
       - uses: ./.github/actions/itest
         with:
           stack: ${{ matrix.stack }}
+          image-source: preloaded
 
   binaries:
     needs: gate
