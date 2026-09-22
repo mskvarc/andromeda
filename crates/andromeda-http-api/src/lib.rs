@@ -32,7 +32,6 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-health",
         "andromeda-http-headers",
         "andromeda-ngsi-ld-lexicon",
-        "andromeda-subscription-forwarding",
         "andromeda-telemetry",
         "andromeda-tenancy",
     ],

@@ -50,7 +50,9 @@ pub async fn patch(
     let Some(is_active) = body.is_active else {
         return Err(ClassifiedReport::public(
             NgsiLdErrorType::BadRequestData,
-            "a tenant update must set the writable 'isActive' member (clause 5.2.12-1)",
+            // Clause 5.2.12-1 makes `isActive` the sole writable member; the
+            // citation stays here rather than in the client-facing detail.
+            "a tenant update must set the writable 'isActive' member",
         )
         .with_instance(uri.clone()));
     };

@@ -10,7 +10,10 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_pool::configure_pool_options;
 use andromeda_postgresql_schema::{current::EntitySearch, snapshot::Snapshots};
-use andromeda_postgresql_seaquery::aggregate::count_all;
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    introspection::{current_database, current_database_size},
+};
 use andromeda_tenancy::{database_name::TenantDatabaseName, error::TenancyError, tenant_usage::TenantUsage, usage_probe::TenantUsageProbe};
 use async_trait::async_trait;
 use sea_query::{Alias, Expr, ExprTrait, Func, PostgresQueryBuilder, Query, SelectStatement};
@@ -95,7 +98,7 @@ fn usage_read_failure(error: &sqlx::Error) -> TenancyError {
 
 /// The total on-disk size of the tenant's database, in bytes.
 fn database_size_query() -> SelectStatement {
-    Query::select().expr(Expr::cust("pg_database_size(current_database())::bigint")).to_owned()
+    Query::select().expr(current_database_size()).to_owned()
 }
 
 /// The number of PostgreSQL backends currently attached to the tenant's database.
@@ -103,7 +106,7 @@ fn backend_count_query() -> SelectStatement {
     Query::select()
         .expr(count_all())
         .from(Alias::new("pg_stat_activity"))
-        .and_where(Expr::col(Alias::new("datname")).eq(Expr::cust("current_database()")))
+        .and_where(Expr::col(Alias::new("datname")).eq(current_database()))
         .to_owned()
 }
 

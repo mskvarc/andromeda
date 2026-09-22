@@ -4,6 +4,7 @@ pub mod lease;
 
 mod cached_runtime;
 mod eviction;
+mod teardown;
 #[cfg(test)]
 mod tests;
 

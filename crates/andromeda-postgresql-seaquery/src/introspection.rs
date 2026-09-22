@@ -106,6 +106,31 @@ pub fn jsonb_row_size(row: SimpleExpr) -> SimpleExpr {
     Func::cust(PgColumnSize).arg(json).into()
 }
 
+/// `current_database()` - the name of the database the session is attached to.
+#[must_use]
+pub fn current_database() -> SimpleExpr {
+    Func::cust(CurrentDatabase).args::<[SimpleExpr; 0]>([]).into()
+}
+
+/// `pg_database_size(current_database())` - the total on-disk size, in bytes, of
+/// the database the session is attached to.
+///
+/// `pg_database_size` already returns `bigint`, so no cast is spelled.
+#[must_use]
+pub fn current_database_size() -> SimpleExpr {
+    Func::cust(PgDatabaseSize).arg(current_database()).into()
+}
+
+/// The `current_database` system function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "current_database"]
+struct CurrentDatabase;
+
+/// The `pg_database_size` system sizing function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "pg_database_size"]
+struct PgDatabaseSize;
+
 /// The `to_jsonb` PostgreSQL conversion function.
 #[derive(Iden, Clone, Copy)]
 #[iden = "to_jsonb"]
@@ -161,6 +186,16 @@ mod tests {
             sql.contains("EXISTS(SELECT 1 FROM \"pg_proc\" WHERE \"proname\" = 'add_columnstore_policy')"),
             "{sql}"
         );
+    }
+
+    #[test]
+    fn the_database_size_sizes_the_current_database() {
+        use crate::introspection::current_database_size;
+        let sql = Query::select()
+            .expr_as(current_database_size(), Alias::new("bytes"))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert!(sql.contains("pg_database_size(current_database())"), "{sql}");
     }
 
     #[test]

@@ -82,7 +82,7 @@ pub(crate) enum XtaskError {
     #[error("{0} test case(s) newly failing since the baseline")]
     NewlyFailing(usize),
     /// A `--strict` run recorded failing test cases, so the run fails as a gate.
-    #[error("{0} ETSI test case(s) failed")]
+    #[error("{0} conformance test case(s) failed")]
     EtsiTestsFailed(usize),
     /// An underlying process could not be spawned or waited on.
     #[error("process error: {0}")]
