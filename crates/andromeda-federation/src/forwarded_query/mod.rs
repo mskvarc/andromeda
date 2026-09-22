@@ -26,12 +26,11 @@ use crate::{
     term_resolver::TermResolver,
 };
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, temporal_format::TemporalFormat, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339::sub_second, temporal_format::TemporalFormat, uri::Uri};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, info::RegistrationInfo};
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, geo::input::GeoQueryInput};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
-use chrono::{DateTime, SecondsFormat, Utc};
 use std::num::NonZeroU32;
 use tracing::warn;
 use url::form_urlencoded;
@@ -204,8 +203,8 @@ impl ForwardedQuery {
     /// traversal continuation.
     fn push_temporal_parameters(&mut self, params: &TemporalQueryParameters) {
         self.push_optional(ForwardedParameter::Timerel, params.timerel.map(|timerel| timerel.to_string()));
-        self.push_optional(ForwardedParameter::TimeAt, params.time_at.map(rfc3339));
-        self.push_optional(ForwardedParameter::EndTimeAt, params.end_time_at.map(rfc3339));
+        self.push_optional(ForwardedParameter::TimeAt, params.time_at.map(sub_second));
+        self.push_optional(ForwardedParameter::EndTimeAt, params.end_time_at.map(sub_second));
         self.push_optional(ForwardedParameter::Timeproperty, params.timeproperty.map(|property| property.to_string()));
         self.push_optional(ForwardedParameter::LastN, params.last_n.map(|last_n| last_n.to_string()));
         // Clause 6.3.12: `normalized` is the absence of a temporal `format`, not
@@ -381,11 +380,6 @@ impl ForwardedQuery {
             self.push(ForwardedParameter::ContainedBy, held.iter().map(Uri::as_str).collect::<Vec<_>>().join(","));
         }
     }
-}
-
-/// An instant in the RFC 3339 form the temporal parameters are written in.
-fn rfc3339(instant: DateTime<Utc>) -> String {
-    instant.to_rfc3339_opts(SecondsFormat::AutoSi, true)
 }
 
 #[cfg(test)]

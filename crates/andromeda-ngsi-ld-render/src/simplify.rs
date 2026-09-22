@@ -8,7 +8,7 @@
 //! specification model crate — a resource does not render itself.
 
 use crate::object_list::bare_uri_object_list;
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, rfc3339::whole_seconds};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, rfc3339::sub_second};
 use andromeda_ngsi_ld_model::{
     attribute::instance::{Attribute, AttributeValue},
     entity::Entity,
@@ -81,7 +81,7 @@ pub fn simplify_entity(entity: &Entity) -> Value {
     }
 
     if let Some(ref expires_at) = entity.expires_at {
-        map.insert("expiresAt".to_string(), serde_json::json!(whole_seconds(*expires_at)));
+        map.insert("expiresAt".to_string(), serde_json::json!(sub_second(*expires_at)));
     }
 
     if let Some(ref location) = entity.location {
@@ -97,15 +97,15 @@ pub fn simplify_entity(entity: &Entity) -> Value {
     }
 
     if let Some(ref created_at) = entity.created_at {
-        map.insert("createdAt".to_string(), serde_json::json!(whole_seconds(*created_at)));
+        map.insert("createdAt".to_string(), serde_json::json!(sub_second(*created_at)));
     }
 
     if let Some(ref modified_at) = entity.modified_at {
-        map.insert("modifiedAt".to_string(), serde_json::json!(whole_seconds(*modified_at)));
+        map.insert("modifiedAt".to_string(), serde_json::json!(sub_second(*modified_at)));
     }
 
     if let Some(ref deleted_at) = entity.deleted_at {
-        map.insert("deletedAt".to_string(), serde_json::json!(whole_seconds(*deleted_at)));
+        map.insert("deletedAt".to_string(), serde_json::json!(sub_second(*deleted_at)));
     }
 
     for (key, attr) in &entity.attrs {

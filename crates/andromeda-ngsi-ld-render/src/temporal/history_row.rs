@@ -1,7 +1,7 @@
 //! Projecting one backend-neutral temporal observation into an expanded attribute instance.
 
 use crate::temporal::geojson_ld::expand_geojson;
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_family::InstanceFamily, rfc3339::whole_seconds};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_family::InstanceFamily, rfc3339::sub_second};
 use andromeda_ngsi_ld_model::{
     expanded::null_sentinel::expanded_null_value,
     temporal::{TemporalHistoryRow, TemporalValue},
@@ -40,9 +40,22 @@ pub fn neutral_row_to_expanded_instance(row: &TemporalHistoryRow, sys_attrs: Sys
     Value::Object(instance)
 }
 
-/// The expanded node an NGSI-LD `DateTime` renders as.
+/// The expanded node every `DateTime` member of a temporal instance renders as:
+/// the `observedAt` axis (clause 5.2.5) and a `DateTime`-typed value the client
+/// supplied, and the broker-minted `createdAt`, `modifiedAt` and `deletedAt`.
+///
+/// Each of these is rebuilt from an instant the store decoded, never from a
+/// client string (the current representation carries that verbatim string
+/// instead), so it renders through [`sub_second`]: exactly the sub-second
+/// precision the instant carries, up to the microsecond resolution the
+/// `TIMESTAMPTZ` column holds and clause 4.6.3 caps a `DateTime` at. This keeps
+/// a returned `observedAt` exact enough to reuse as a bound in a later temporal
+/// query -- whole-second truncation would drop the sub-second precision the
+/// broker stored -- while a whole-second instant still renders as a bare `Z`,
+/// which is what a client that wrote a whole second reads back and what the
+/// conformance suite requires.
 fn expanded_datetime(instant: DateTime<Utc>) -> Value {
-    json!([{"@value": whole_seconds(instant), "@type": expanded_classes::DATE_TIME.as_str()}])
+    json!([{"@value": sub_second(instant), "@type": expanded_classes::DATE_TIME.as_str()}])
 }
 
 /// Insert the value member of a deleted instance.
@@ -232,7 +245,7 @@ fn insert_stored_sub_attributes(instance: &mut Map<String, Value>, row: &Tempora
 #[cfg(test)]
 mod tests {
     use crate::temporal::history_row::neutral_row_to_expanded_instance;
-    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, rfc3339::whole_seconds};
+    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, rfc3339::sub_second};
     use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -285,7 +298,7 @@ mod tests {
         );
         pretty_assertions::assert_eq!(
             member(&rendered, expanded_properties::DELETED_AT.as_str()),
-            Some(&json!([{"@value": whole_seconds(deleted_at), "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}]))
+            Some(&json!([{"@value": sub_second(deleted_at), "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}]))
         );
     }
 
@@ -299,7 +312,7 @@ mod tests {
 
         pretty_assertions::assert_eq!(member(&rendered, expanded_properties::DELETED_AT.as_str()), None);
         assert!(
-            !rendered.to_string().contains(&whole_seconds(row.recorded_at)),
+            !rendered.to_string().contains(&sub_second(row.recorded_at)),
             "recorded_at is not a Temporal Property and must not reach the rendering"
         );
     }
@@ -501,6 +514,77 @@ mod tests {
         pretty_assertions::assert_eq!(
             member(&rendered, expanded_properties::INSTANCE_ID.as_str()),
             Some(&json!([{"@id": "https://example.org/instances/1"}]))
+        );
+    }
+
+    /// The `DateTime` `@type` every rendered instant carries.
+    const DATE_TIME: &str = "https://uri.etsi.org/ngsi-ld/DateTime";
+
+    /// An instant `seconds` past the epoch carrying `nanos` sub-second remainder.
+    fn instant_with_fraction(seconds: i64, nanos: u32) -> DateTime<Utc> {
+        Utc.timestamp_opt(seconds, nanos).single().expect("valid instant")
+    }
+
+    /// Clauses 5.7.3/5.7.4 with 4.6.3: an `observedAt` rebuilt from the stored
+    /// instant keeps its sub-second precision (a millisecond value renders three
+    /// digits), so the precision the broker stored survives and a returned
+    /// instant can be reused as an exact bound in a later temporal query.
+    #[test]
+    fn observed_at_keeps_its_sub_second_precision() {
+        let mut row = row(TemporalValue::Number(JsonNumber::try_from(1.0).expect("a finite number")));
+        row.observed_at = Some(instant_with_fraction(1_700_000_000, 123_000_000));
+        let rendered = neutral_row_to_expanded_instance(&row, SysAttrsInclusion::Strip);
+        pretty_assertions::assert_eq!(
+            member(&rendered, expanded_properties::OBSERVED_AT.as_str()),
+            Some(&json!([{"@value": "2023-11-14T22:13:20.123Z", "@type": DATE_TIME}]))
+        );
+    }
+
+    /// A whole-second instant renders as a bare `Z` with no fraction, which is
+    /// the spelling a client that wrote a whole second reads back and the form
+    /// the conformance suite requires.
+    #[test]
+    fn a_whole_second_observed_at_renders_without_a_fraction() {
+        let rendered = neutral_row_to_expanded_instance(
+            &row(TemporalValue::Number(JsonNumber::try_from(1.0).expect("a finite number"))),
+            SysAttrsInclusion::Strip,
+        );
+        pretty_assertions::assert_eq!(
+            member(&rendered, expanded_properties::OBSERVED_AT.as_str()),
+            Some(&json!([{"@value": "2023-11-14T22:13:20Z", "@type": DATE_TIME}]))
+        );
+    }
+
+    /// A `DateTime`-typed value keeps its sub-second precision too, up to the
+    /// microsecond resolution the store holds.
+    #[test]
+    fn a_datetime_value_keeps_its_sub_second_precision() {
+        let rendered = neutral_row_to_expanded_instance(
+            &row(TemporalValue::DateTime(instant_with_fraction(1_700_000_000, 456_000_000))),
+            SysAttrsInclusion::Strip,
+        );
+        pretty_assertions::assert_eq!(
+            member(&rendered, AttributeType::Property.value_key_str()),
+            Some(&json!([{"@value": "2023-11-14T22:13:20.456Z", "@type": DATE_TIME}]))
+        );
+    }
+
+    /// The broker-minted `createdAt`/`modifiedAt` axes keep the sub-second
+    /// remainder the write clock carried rather than truncating it to whole
+    /// seconds.
+    #[test]
+    fn broker_minted_system_times_keep_their_sub_second_precision() {
+        let mut row = row(TemporalValue::Number(JsonNumber::try_from(1.0).expect("a finite number")));
+        row.created_at = Some(instant_with_fraction(1_700_000_100, 999_000_000));
+        row.modified_at = Some(instant_with_fraction(1_700_000_200, 999_000_000));
+        let rendered = neutral_row_to_expanded_instance(&row, SysAttrsInclusion::Include);
+        pretty_assertions::assert_eq!(
+            member(&rendered, expanded_properties::CREATED_AT.as_str()),
+            Some(&json!([{"@value": "2023-11-14T22:15:00.999Z", "@type": DATE_TIME}]))
+        );
+        pretty_assertions::assert_eq!(
+            member(&rendered, expanded_properties::MODIFIED_AT.as_str()),
+            Some(&json!([{"@value": "2023-11-14T22:16:40.999Z", "@type": DATE_TIME}]))
         );
     }
 }

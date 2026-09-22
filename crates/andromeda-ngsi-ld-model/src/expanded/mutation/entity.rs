@@ -8,7 +8,7 @@ use crate::expanded::{
     node::{expanded_object_mut, expanded_object_ref},
     null_sentinel::{instance_is_null_sentinel, member_is_null_sentinel},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339::whole_seconds};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339::sub_second};
 use andromeda_ngsi_ld_vocabulary::expanded::{classes, properties};
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
@@ -84,9 +84,13 @@ fn with_default_observed_at(existing: Option<&Value>, patch_instances: &[Value],
             match patch_instance.as_object() {
                 Some(instance) if previously_observed && !instance.contains_key(properties::OBSERVED_AT.as_str()) => {
                     let mut stamped = instance.clone(); // clone: the patch is borrowed and the stamped instance is a new value
+                    // Table 6.5.3.4-1's `observedAt` is a value the client
+                    // supplied on the request, so the stamp keeps whatever
+                    // sub-second precision it carried rather than truncating it
+                    // to whole seconds.
                     stamped.insert(
                         properties::OBSERVED_AT.as_str().to_string(),
-                        json!([{"@type": classes::DATE_TIME.as_str(), "@value": whole_seconds(observed_at)}]),
+                        json!([{"@type": classes::DATE_TIME.as_str(), "@value": sub_second(observed_at)}]),
                     );
                     Value::Object(stamped)
                 }
@@ -618,6 +622,25 @@ mod tests {
                 .get("https://uri.etsi.org/ngsi-ld/observedAt")
                 .is_none(),
             "an attribute that never carried observedAt gets none"
+        );
+    }
+
+    /// Table 6.5.3.4-1 `observedAt` is stamped by the broker from the request
+    /// parameter, so it keeps the milliseconds rather than truncating them to
+    /// whole seconds (clause 4.6.3).
+    #[test]
+    fn a_default_observed_at_keeps_its_sub_second_precision() {
+        let mut observed = property_instance(&json!(10), None);
+        observed["https://uri.etsi.org/ngsi-ld/observedAt"] = json!([{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2020-01-01T00:00:00Z"}]);
+        let mut entity = entity_with_speed(&[observed]);
+        let patch = json!([{"https://example.com/speed": [property_instance(&json!(11), None)]}]);
+        let at = "2026-03-01T10:00:00.123Z".parse::<chrono::DateTime<chrono::Utc>>().expect("valid timestamp");
+
+        merge_entity(&mut entity, &patch, Some(at)).expect("merge succeeds");
+
+        pretty_assertions::assert_eq!(
+            speed_instances(&entity)[0]["https://uri.etsi.org/ngsi-ld/observedAt"][0]["@value"],
+            json!("2026-03-01T10:00:00.123Z")
         );
     }
 

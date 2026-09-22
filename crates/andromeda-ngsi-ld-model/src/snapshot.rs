@@ -403,8 +403,11 @@ mod tests {
         );
     }
 
+    /// The broker-minted snapshot timestamps keep their sub-second remainder
+    /// rather than truncating it to whole seconds (ETSI GS CIM 009 v1.9.1 clause
+    /// 4.6.3); a millisecond instant renders three fractional digits.
     #[test]
-    fn snapshot_timestamps_serialize_with_whole_second_precision() {
+    fn snapshot_timestamps_serialize_with_sub_second_precision() {
         let instant = "2024-01-01T00:00:00.750Z".parse::<DateTime<Utc>>().expect("valid instant");
         let snapshot = Snapshot::builder()
             .id("urn:ngsi-ld:Snapshot:1".parse::<Uri>().expect("valid snapshot id"))
@@ -416,9 +419,9 @@ mod tests {
             .build();
 
         let rendered = serde_json::to_value(snapshot).expect("snapshot serializes");
-        pretty_assertions::assert_eq!(rendered["createdAt"], "2024-01-01T00:00:00Z");
-        pretty_assertions::assert_eq!(rendered["modifiedAt"], "2024-01-01T00:00:00Z");
-        pretty_assertions::assert_eq!(rendered["expiresAt"], "2024-01-01T00:00:00Z");
+        pretty_assertions::assert_eq!(rendered["createdAt"], "2024-01-01T00:00:00.750Z");
+        pretty_assertions::assert_eq!(rendered["modifiedAt"], "2024-01-01T00:00:00.750Z");
+        pretty_assertions::assert_eq!(rendered["expiresAt"], "2024-01-01T00:00:00.750Z");
     }
 
     #[test]

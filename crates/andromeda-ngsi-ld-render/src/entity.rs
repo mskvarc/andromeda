@@ -16,7 +16,7 @@ use crate::{
     structural_projection::StructuralProjection,
 };
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::{rfc3339::whole_seconds, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{rfc3339::sub_second, uri::Uri};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use indexmap::IndexMap;
@@ -190,16 +190,16 @@ impl EntityRenderer<'_> {
             // rest of the render crate uses; unifying timestamp spellings across
             // paths is a separate concern and is not decided here.
             if let Some(expires_at) = &self.entity.expires_at {
-                map.insert("expiresAt".to_string(), Value::String(whole_seconds(*expires_at)));
+                map.insert("expiresAt".to_string(), Value::String(sub_second(*expires_at)));
             }
             if let Some(created_at) = &self.entity.created_at {
-                map.insert("createdAt".to_string(), Value::String(whole_seconds(*created_at)));
+                map.insert("createdAt".to_string(), Value::String(sub_second(*created_at)));
             }
             if let Some(modified_at) = &self.entity.modified_at {
-                map.insert("modifiedAt".to_string(), Value::String(whole_seconds(*modified_at)));
+                map.insert("modifiedAt".to_string(), Value::String(sub_second(*modified_at)));
             }
             if let Some(deleted_at) = &self.entity.deleted_at {
-                map.insert("deletedAt".to_string(), Value::String(whole_seconds(*deleted_at)));
+                map.insert("deletedAt".to_string(), Value::String(sub_second(*deleted_at)));
             }
             // The geo-properties and every other attribute are re-rendered so a
             // language map inside them is negotiated; a non-language attribute
@@ -552,7 +552,7 @@ mod tests {
         pretty_assertions::assert_eq!(rendered["street"]["type"], "Property");
         pretty_assertions::assert_eq!(rendered["street"]["value"], "Grand Place");
         pretty_assertions::assert_eq!(rendered["street"]["lang"], "fr");
-        // The clause-4.8 timestamps keep the whole-second spelling.
+        // A whole-second clause-4.8 timestamp renders as a bare Z, no fraction.
         pretty_assertions::assert_eq!(rendered["createdAt"], "2025-01-01T00:00:00Z");
     }
 

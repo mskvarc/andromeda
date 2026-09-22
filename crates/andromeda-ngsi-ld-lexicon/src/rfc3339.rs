@@ -1,32 +1,59 @@
-//! The RFC 3339 rendering of the timestamp members Andromeda writes itself.
+//! The single RFC 3339 rendering Andromeda applies to every timestamp it emits
+//! from an instant it holds.
 //!
 //! Chrono's own `Serialize` emits sub-second precision that varies with the
-//! stored value. Andromeda's stable outbound policy is whole-second UTC
-//! rendering for every timestamp it generates; this is a broker policy, not an
-//! ETSI requirement about stored or accepted timestamp precision. The serde
-//! adapters below are that same rendering reached through `#[serde(with = …)]`;
-//! a caller building a timestamp into a JSON value by hand calls the function
-//! directly.
+//! stored value in ways NGSI-LD does not want. Andromeda renders one form
+//! through [`sub_second`]: UTC, the literal `Z` designator, and exactly the
+//! sub-second precision the instant carries and no more -- a whole second as a
+//! bare `Z`, a millisecond instant as `.sss`, a microsecond one as `.ssssss`.
+//!
+//! This one rendering serves every instant the broker emits: the broker-minted
+//! `createdAt`, `modifiedAt`, `deletedAt`, `expiresAt` and a subscription's
+//! `lastNotification`, and the temporal-representation members rebuilt from
+//! stored instants (`observedAt`, `DateTime` values, aggregation bucket
+//! bounds). The reason it drops the fraction from a whole second rather than
+//! zero-padding to six digits is conformance: the ETSI test suite writes an
+//! `observedAt` or `expiresAt` such as `2020-08-01T12:03:00Z` and requires the
+//! temporal retrieval to return that exact string, and the spec's own Annex C
+//! examples spell a whole-second instant with no fraction. A fixed six-digit
+//! rendering (`.000000Z`) fails those exact-match cases. Clause 4.6.3 admits
+//! "one or more fractional digits, up to a maximum of six", so both spellings
+//! name the same instant, and the minimal one is what round-trips.
+//!
+//! This is not applied to a `DateTime` value a *client* supplied on the Core
+//! Entity API: clause 4.6.4 makes the broker "preserve the representation of
+//! the content of the values ... and return the original content", so that
+//! value is stored and served as the verbatim string the client wrote (see
+//! `andromeda_ngsi_ld_model::attribute::value`), never re-rendered here. The
+//! temporal representation carries no such string -- it stores the instant in a
+//! microsecond `TIMESTAMPTZ` column -- so it renders through [`sub_second`]
+//! like any other broker-held instant. The serde adapters below are that same
+//! rendering reached through `#[serde(with = …)]`.
 
 use chrono::{DateTime, SecondsFormat, Utc};
 
-/// Render a UTC timestamp as RFC 3339 with whole-second precision.
+/// Render a UTC timestamp as RFC 3339, keeping exactly the sub-second precision
+/// it carries: a whole second as `2024-06-15T12:30:00Z`, a millisecond instant
+/// as `...:00.750Z`, a microsecond one as `...:00.123456Z`.
 ///
-/// The single reading of the format every NGSI-LD timestamp Andromeda
-/// generates is written in: `2024-06-15T12:30:00Z`, never a sub-second
-/// fraction and never a numeric offset.
+/// [`SecondsFormat::AutoSi`] prints the fraction in the smallest SI group -- 0,
+/// 3 or 6 digits -- that represents the value without loss, and never a numeric
+/// offset. This is what makes an `observedAt` or `expiresAt` round-trip to the
+/// spelling the client sent for the whole-second and millisecond cases the
+/// conformance suite exercises, while still carrying the microsecond resolution
+/// clause 4.6.3 caps a `DateTime` at and PostgreSQL `TIMESTAMPTZ` stores.
 #[must_use]
-pub fn whole_seconds(dt: DateTime<Utc>) -> String {
-    dt.to_rfc3339_opts(SecondsFormat::Secs, true)
+pub fn sub_second(dt: DateTime<Utc>) -> String {
+    dt.to_rfc3339_opts(SecondsFormat::AutoSi, true)
 }
 
 /// Serialize and deserialize a required `DateTime<Utc>` as an RFC 3339 string.
 pub mod datetime {
-    use crate::rfc3339::whole_seconds;
+    use crate::rfc3339::sub_second;
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
 
-    /// Render the timestamp as an RFC 3339 string with whole-second precision.
+    /// Render the timestamp as an RFC 3339 string, keeping its sub-second precision.
     ///
     /// # Errors
     ///
@@ -35,7 +62,7 @@ pub mod datetime {
     where
         S: Serializer,
     {
-        serializer.serialize_str(&whole_seconds(*dt))
+        serializer.serialize_str(&sub_second(*dt))
     }
 
     /// Parse an RFC 3339 string into a UTC timestamp.
@@ -55,7 +82,7 @@ pub mod datetime {
 
 /// Serialize and deserialize an optional `DateTime<Utc>` as an RFC 3339 string.
 pub mod optional_datetime {
-    use crate::rfc3339::whole_seconds;
+    use crate::rfc3339::sub_second;
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
 
@@ -69,7 +96,7 @@ pub mod optional_datetime {
         S: Serializer,
     {
         match opt {
-            Some(dt) => serializer.serialize_some(&whole_seconds(*dt)),
+            Some(dt) => serializer.serialize_some(&sub_second(*dt)),
             None => serializer.serialize_none(),
         }
     }
@@ -94,7 +121,7 @@ pub mod optional_datetime {
 
 #[cfg(test)]
 mod tests {
-    use crate::rfc3339::whole_seconds;
+    use crate::rfc3339::sub_second;
     use chrono::{DateTime, TimeZone, Utc};
     use serde::{Deserialize, Serialize};
 
@@ -111,16 +138,28 @@ mod tests {
     }
 
     #[test]
-    fn a_sub_second_timestamp_renders_at_whole_seconds_with_a_z_suffix() {
-        let dt = Utc.with_ymd_and_hms(2024, 6, 15, 12, 30, 0).unwrap() + chrono::Duration::microseconds(123_456);
-        pretty_assertions::assert_eq!(whole_seconds(dt), "2024-06-15T12:30:00Z");
+    fn a_whole_second_renders_without_a_fraction() {
+        let dt = Utc.with_ymd_and_hms(2024, 6, 15, 12, 30, 0).unwrap();
+        pretty_assertions::assert_eq!(sub_second(dt), "2024-06-15T12:30:00Z");
+    }
+
+    #[test]
+    fn a_millisecond_instant_renders_three_fractional_digits() {
+        let dt = Utc.with_ymd_and_hms(2026, 3, 1, 10, 0, 0).unwrap() + chrono::Duration::milliseconds(123);
+        pretty_assertions::assert_eq!(sub_second(dt), "2026-03-01T10:00:00.123Z");
+    }
+
+    #[test]
+    fn a_microsecond_instant_renders_at_full_six_digits() {
+        let dt = Utc.with_ymd_and_hms(2026, 3, 1, 10, 0, 0).unwrap() + chrono::Duration::microseconds(123_456);
+        pretty_assertions::assert_eq!(sub_second(dt), "2026-03-01T10:00:00.123456Z");
     }
 
     #[test]
     fn the_serde_adapters_render_exactly_what_the_function_does() {
         // Two readings of one format is how they drift; this pins them to one.
         let dt = Utc.with_ymd_and_hms(2024, 6, 15, 12, 30, 0).unwrap() + chrono::Duration::milliseconds(750);
-        let expected = serde_json::Value::String(whole_seconds(dt));
+        let expected = serde_json::Value::String(sub_second(dt));
 
         let required = serde_json::to_value(TestRequired { ts: dt }).unwrap();
         pretty_assertions::assert_eq!(required["ts"], expected);

@@ -10,7 +10,7 @@
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::port::reader::EntityReader;
-use andromeda_ngsi_ld_lexicon::rfc3339::whole_seconds;
+use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use chrono::{DateTime, Utc};
@@ -108,7 +108,7 @@ fn stamp_deleted_at(node: &mut Value, occurred_at: DateTime<Utc>) {
             expanded_properties::DELETED_AT.as_str().to_string(),
             serde_json::json!([{
                 "@type": expanded_classes::DATE_TIME.as_str(),
-                "@value": whole_seconds(occurred_at)
+                "@value": sub_second(occurred_at)
             }]),
         );
     }

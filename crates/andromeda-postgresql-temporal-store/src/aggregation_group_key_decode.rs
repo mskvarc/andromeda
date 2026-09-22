@@ -8,7 +8,7 @@
 //! column. A column that is SQL NULL is the absent key (`@none`).
 
 use crate::{aggregation_row_decode::projected_column, error::TemporalStoreError};
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, rfc3339::whole_seconds, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, rfc3339::sub_second, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::GroupKeyValue;
 use andromeda_ngsi_ld_query::temporal::grouping::{AggregationGrouping, bucket_term::BucketKind, entity_member::EntityMember, group_key::GroupKey};
 use andromeda_postgresql_temporal_query::{aggregation_group::ObservedUnits, aggregation_grouping::group_key_column};
@@ -42,7 +42,7 @@ pub(crate) fn decode_group_keys(
             // becomes distinguishing only under a cross-entity resource.
             (GroupKey::Member(EntityMember::Scope), _) => GroupKeyValue::Absent,
             (GroupKey::Path(_), Some(bucket)) => match bucket.kind() {
-                BucketKind::Calendar => optional_value(projected_column::<DateTime<Utc>>(row, &group_key_column(index))?.map(whole_seconds)),
+                BucketKind::Calendar => optional_value(projected_column::<DateTime<Utc>>(row, &group_key_column(index))?.map(sub_second)),
                 // A cyclic field (`date_part`) is a whole number — hour 0-23,
                 // day-of-week 0-6, month 1-12 — that renders as its integer.
                 BucketKind::Cyclic => optional_value(projected_column::<f64>(row, &group_key_column(index))?.map(|field| format!("{field}"))),

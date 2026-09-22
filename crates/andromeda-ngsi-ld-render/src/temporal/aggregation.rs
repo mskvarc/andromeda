@@ -9,7 +9,7 @@
 //! `[value, start, end]` triple, and two triples of one instance can never
 //! carry the same period bounds.
 
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, attribute_type::AttributeType, rfc3339::whole_seconds, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, attribute_type::AttributeType, rfc3339::sub_second, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::{AggregationAverage, AggregationMinMax, GroupKeyValue, TemporalAggregationRow};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use indexmap::IndexMap;
@@ -85,8 +85,11 @@ fn method_triples(rows: &[&TemporalAggregationRow], method: AggrMethod) -> Vec<V
                 AggrMethod::SumSq => row.sumsq.as_ref().map_or(Value::Null, |number| json!(number)),
                 AggrMethod::StdDev => row.stddev.as_ref().map_or(Value::Null, |number| json!(number)),
             };
-            let bucket_start = row.bucket_start.map_or(Value::Null, |instant| json!(whole_seconds(instant)));
-            let bucket_end = row.bucket_end.map_or(Value::Null, |instant| json!(whole_seconds(instant)));
+            // Bucket bounds are derived from the client's `timeAt` and
+            // `aggrPeriodDuration`, so a `timeAt` carrying milliseconds must
+            // render them, or the period a triple names is mislabelled.
+            let bucket_start = row.bucket_start.map_or(Value::Null, |instant| json!(sub_second(instant)));
+            let bucket_end = row.bucket_end.map_or(Value::Null, |instant| json!(sub_second(instant)));
             json!([value, bucket_start, bucket_end])
         })
         .collect()
@@ -120,7 +123,9 @@ fn aggregation_min_max_to_json(value: Option<&AggregationMinMax>) -> Value {
         Some(AggregationMinMax::Number(number)) => json!(number),
         Some(AggregationMinMax::String(text)) => json!(text),
         Some(AggregationMinMax::Boolean(flag)) => json!(flag),
-        Some(AggregationMinMax::DateTime(instant)) => json!(whole_seconds(*instant)),
+        // A DateTime extremum is a client-supplied value, so it keeps the
+        // sub-second precision it was observed with.
+        Some(AggregationMinMax::DateTime(instant)) => json!(sub_second(*instant)),
         None => Value::Null,
     }
 }
@@ -467,5 +472,31 @@ mod tests {
         let instances = instance.as_array().expect("two instances render as an array");
         pretty_assertions::assert_eq!(instances.len(), 2, "{instance}");
         pretty_assertions::assert_eq!(instances[1]["datasetId"], json!("urn:ngsi-ld:Dataset:one"));
+    }
+
+    /// A `DateTime` extremum is a client-supplied value, so it keeps the
+    /// sub-second precision it was observed with and agrees with the temporal
+    /// history (clauses 5.7.3/5.7.4, 4.6.3).
+    #[test]
+    fn a_datetime_extremum_keeps_its_milliseconds() {
+        let mut row = bucket(None, None);
+        row.min = Some(AggregationMinMax::DateTime(instant("2026-01-01T08:39:59.810Z")));
+        row.max = Some(AggregationMinMax::DateTime(instant("2026-01-01T08:40:01.250Z")));
+        let instance = rendered(&[row], vec![AggrMethod::Min, AggrMethod::Max]);
+        pretty_assertions::assert_eq!(instance["min"], json!([["2026-01-01T08:39:59.810Z", Value::Null, Value::Null]]));
+        pretty_assertions::assert_eq!(instance["max"], json!([["2026-01-01T08:40:01.250Z", Value::Null, Value::Null]]));
+    }
+
+    /// Bucket bounds derived from a `timeAt` carrying milliseconds render those
+    /// milliseconds, so the period a triple names is the one that was actually
+    /// aggregated rather than a whole-second window it never spanned.
+    #[test]
+    fn bucket_bounds_keep_the_sub_second_precision_of_the_window() {
+        let row = bucket(Some("2026-01-01T00:00:00.050Z"), Some("2026-01-01T00:00:00.200Z"));
+        let instance = rendered(&[row], vec![AggrMethod::TotalCount]);
+        pretty_assertions::assert_eq!(
+            instance["totalCount"],
+            json!([[Value::Null, "2026-01-01T00:00:00.050Z", "2026-01-01T00:00:00.200Z"]])
+        );
     }
 }

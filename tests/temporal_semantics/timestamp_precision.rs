@@ -12,13 +12,14 @@
 //! nothing between them rounds, and a value the policy refuses never reaches
 //! storage at all.
 //!
-//! Rendering is the one place the two resolutions part company, and
-//! deliberately: `andromeda_ngsi_ld_lexicon::rfc3339` renders every timestamp
-//! the broker emits at whole-second precision, which is a stable outbound
-//! format rather than a claim about stored precision. The assertions below
-//! therefore compare the rendering against the whole-second form of the stored
-//! instant — a rendering that disagreed with that would mean a value had been
-//! rounded somewhere, which is exactly what the policy exists to prevent.
+//! Rendering the temporal representation carries the stored instant back in the
+//! form `andromeda_ngsi_ld_lexicon::rfc3339::sub_second` produces — exactly the
+//! sub-second precision the instant carries, up to the microsecond resolution
+//! the `TIMESTAMPTZ` column holds and clause 4.6.3 caps a `DateTime` at. The
+//! assertions below compare the rendering against that form of the stored
+//! instant — a rendering that disagreed with it would mean a value had been
+//! rounded or truncated somewhere, which is exactly what the policy exists to
+//! prevent.
 
 use crate::{
     attribute_iri,
@@ -31,7 +32,7 @@ use crate::{
     stored_history::stored_attribute_history,
     unique_id,
 };
-use andromeda_ngsi_ld_lexicon::rfc3339::whole_seconds;
+use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
 use chrono::{DateTime, Utc};
 use pretty_assertions::{assert_eq, assert_ne};
 use reqwest::StatusCode;
@@ -131,8 +132,8 @@ async fn temporal_semantics_a_microsecond_instant_round_trips_exactly() {
     assert_eq!(instances.len(), 1, "one observation renders: {body}");
     assert_eq!(
         instances[0]["observedAt"].as_str().unwrap_or_default(),
-        whole_seconds(expected),
-        "a microsecond instant renders through the whole-second outbound form: {body}"
+        sub_second(expected),
+        "a microsecond instant renders through the sub-second outbound form: {body}"
     );
 }
 

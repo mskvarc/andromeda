@@ -1,6 +1,6 @@
 //! Deleted attribute and instance materialization.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, rfc3339::whole_seconds, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, rfc3339::sub_second, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::null_sentinel::expanded_null_value;
 use andromeda_ngsi_ld_vocabulary::{
     NULL_URI,
@@ -185,7 +185,7 @@ pub(super) fn inject_deleted_at_on_instance(instance: &mut Value, ts: DateTime<U
             expanded_properties::DELETED_AT.as_str().to_string(),
             serde_json::json!([{
                 "@type": expanded_classes::DATE_TIME.as_str(),
-                "@value": whole_seconds(ts)
+                "@value": sub_second(ts)
             }]),
         );
     }

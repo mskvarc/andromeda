@@ -4,7 +4,7 @@
 //! a partial entity. A temporal forward keeps the temporal window either way,
 //! as the window is the query itself rather than a filter on it.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339::sub_second, uri::Uri};
 use andromeda_ngsi_ld_query::pattern::Pattern;
 use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
 use axum::http::Uri as HttpUri;
@@ -124,10 +124,10 @@ pub(crate) fn temporal_body_query_string(params: &TemporalQueryParameters, filte
         serializer.append_pair("timerel", &timerel.to_string());
     }
     if let Some(time_at) = params.time_at {
-        serializer.append_pair("timeAt", &time_at.to_rfc3339());
+        serializer.append_pair("timeAt", &sub_second(time_at));
     }
     if let Some(end_time_at) = params.end_time_at {
-        serializer.append_pair("endTimeAt", &end_time_at.to_rfc3339());
+        serializer.append_pair("endTimeAt", &sub_second(end_time_at));
     }
     if let Some(timeproperty) = params.timeproperty {
         serializer.append_pair("timeproperty", &timeproperty.to_string());

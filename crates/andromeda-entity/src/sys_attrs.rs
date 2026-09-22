@@ -4,7 +4,7 @@
 //! any representation that asks for them (`options=sysAttrs`) has them put back
 //! before rendering.
 
-use andromeda_ngsi_ld_lexicon::rfc3339::whole_seconds;
+use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_vocabulary::{
     expanded::{classes as expanded_classes, properties as expanded_properties},
@@ -46,11 +46,11 @@ pub fn inject_sys_attrs(entity: &mut Value, created_at: DateTime<Utc>, modified_
 
     let created_at_value = serde_json::json!([{
         "@type": expanded_classes::DATE_TIME.as_str(),
-        "@value": whole_seconds(created_at)
+        "@value": sub_second(created_at)
     }]);
     let modified_at_value = serde_json::json!([{
         "@type": expanded_classes::DATE_TIME.as_str(),
-        "@value": whole_seconds(modified_at)
+        "@value": sub_second(modified_at)
     }]);
 
     obj.entry(expanded_properties::CREATED_AT.as_str().to_string())
@@ -61,7 +61,7 @@ pub fn inject_sys_attrs(entity: &mut Value, created_at: DateTime<Utc>, modified_
     if let Some(expires_at) = expires_at.into() {
         let expires_at_value = serde_json::json!([{
             "@type": expanded_classes::DATE_TIME.as_str(),
-            "@value": whole_seconds(expires_at)
+            "@value": sub_second(expires_at)
         }]);
         obj.entry(expanded_properties::EXPIRES_AT.as_str().to_string()).or_insert(expires_at_value);
     }

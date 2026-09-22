@@ -6,7 +6,7 @@
 //! headers from analogous pagination state.
 
 use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
-use andromeda_ngsi_ld_lexicon::rfc3339::whole_seconds;
+use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
 use andromeda_ngsi_ld_query::temporal::{last_n::LastNOrigin, window::TimeInterval};
 use chrono::{DateTime, Utc};
 
@@ -29,8 +29,8 @@ pub fn build_content_range(
     last_n_origin: LastNOrigin,
 ) -> Option<NgsiLdContentRange> {
     let (min_time, max_time) = time_range?;
-    let least_recent = whole_seconds(min_time);
-    let most_recent = whole_seconds(max_time);
+    let least_recent = sub_second(min_time);
+    let most_recent = sub_second(max_time);
 
     let (start, end, size) = if let Some(requested) = last_n_origin.requested() {
         (backwards_range_start(interval, &most_recent), least_recent, Some(u64::from(requested)))
@@ -48,8 +48,8 @@ pub fn build_content_range(
 /// recent timestamp in the range of the response.
 fn backwards_range_start(interval: &TimeInterval, most_recent: &str) -> String {
     match interval {
-        TimeInterval::Before(instant) => whole_seconds(*instant),
-        TimeInterval::Between { to, .. } => whole_seconds(*to),
+        TimeInterval::Before(instant) => sub_second(*instant),
+        TimeInterval::Between { to, .. } => sub_second(*to),
         TimeInterval::After(_) | TimeInterval::Unbounded => most_recent.to_owned(),
     }
 }
@@ -60,7 +60,7 @@ fn backwards_range_start(interval: &TimeInterval, most_recent: &str) -> String {
 /// nothing about where a forwards page begins.
 fn forwards_range_start(interval: &TimeInterval, least_recent: &str) -> String {
     match interval {
-        TimeInterval::After(instant) | TimeInterval::Between { from: instant, .. } => whole_seconds(*instant),
+        TimeInterval::After(instant) | TimeInterval::Between { from: instant, .. } => sub_second(*instant),
         TimeInterval::Before(_) | TimeInterval::Unbounded => least_recent.to_owned(),
     }
 }
