@@ -14,14 +14,16 @@ use andromeda_task_runtime::{
     drain_task::{DrainPassOutcome, DrainTask},
     failure::TaskFailure,
     registration::TaskRegistration,
+    resident_task::ResidentTask,
     restart_policy::RestartPolicy,
     shutdown_policy::ShutdownPolicy,
     supervisor::TaskSupervisor,
     task_name::TaskName,
-    wake_trigger::{DrainFallbackPolicy, DrainWakeReceiver},
+    wake_trigger::{DrainFallbackPolicy, DrainWakeReceiver, WakeHandle},
 };
 use chrono::{DateTime, Utc};
 use std::{future::Future, sync::Arc, time::Duration};
+use tokio::sync::{broadcast, broadcast::error::RecvError};
 
 /// Register `operation` as a wake-driven periodic sweep named `task_name`.
 ///
@@ -69,6 +71,66 @@ where
     });
     supervisor
         .register_drain(task, wake)
+        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+}
+
+/// Register a resident task that pulses `wake` whenever a lifecycle change
+/// arrives on `changes`, so the periodic sweep it drives notices a new or
+/// amended subscription within its fallback floor rather than its ceiling.
+///
+/// A `timeInterval` subscription is only ever discovered when the sweep runs,
+/// and a wake-triggered drain that nothing wakes runs only on the geometric
+/// backoff bounded by `interval_max_sleep_secs` (clause 5.8.6 fixes the period,
+/// not the discovery latency). Without this bridge a subscription created just
+/// after an idle pass waits out the whole ceiling before its first notification.
+/// Forwarding every change to the sweep's wake is what makes the ceiling the
+/// fallback the operator-facing setting documents, not the common case.
+///
+/// The wake coalesces, so a burst of changes costs the sweep one prompt pass; a
+/// lagged stream still means the subscription set changed, so it wakes too.
+///
+/// # Errors
+///
+/// Returns [`TenantAssemblyError`] when the task name is rejected or the
+/// supervisor refuses the registration.
+pub(super) fn register_periodic_wake<T>(
+    supervisor: &TaskSupervisor,
+    task_name: &'static str,
+    wake: WakeHandle,
+    changes: broadcast::Sender<T>,
+) -> Result<(), TenantAssemblyError>
+where
+    T: Clone + Send + 'static,
+{
+    let restart_delay = Duration::from_secs(1);
+    let name = TaskName::try_from(task_name).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let registration = TaskRegistration::new(
+        name,
+        TaskCriticality::Observed,
+        RestartPolicy::transient(u32::MAX, restart_delay, restart_delay),
+        ShutdownPolicy::new(restart_delay),
+    );
+    let task = ResidentTask::new(registration, move |execution| {
+        let wake = wake.clone(); // clone: each resident attempt owns a wake handle it pulses.
+        let mut changes = changes.subscribe();
+        async move {
+            execution.mark_running();
+            loop {
+                tokio::select! {
+                    () = execution.cancellation().cancelled() => return Ok(()),
+                    received = changes.recv() => match received {
+                        Ok(_) | Err(RecvError::Lagged(_)) => {
+                            let _ = wake.wake();
+                        }
+                        Err(RecvError::Closed) => return Err(TaskFailure::transient("subscription change channel closed")),
+                    },
+                }
+            }
+        }
+    });
+    supervisor
+        .register_resident(task)
+        .map(drop)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
 }
 

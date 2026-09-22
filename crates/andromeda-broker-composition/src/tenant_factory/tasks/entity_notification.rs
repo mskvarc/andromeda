@@ -13,7 +13,7 @@ use crate::{
         storage::TenantStorage,
         tasks::{
             EntityNotificationDelivery,
-            notification_schedule::{classify_notification_failure, register_notification_schedule},
+            notification_schedule::{classify_notification_failure, register_notification_schedule, register_periodic_wake},
             retention::retention_duration,
         },
     },
@@ -143,6 +143,7 @@ pub(super) fn register_interval_notification(
     storage: &TenantStorage,
     transport: &Arc<TransportDispatcher>,
     subscriptions: Arc<dyn SubscriptionStore>,
+    subscription_changes: broadcast::Sender<SubscriptionChange>,
     interval_max_sleep_secs: u64,
 ) -> Result<(), TenantAssemblyError> {
     let operation = Arc::new(IntervalNotificationOperation::new(
@@ -154,7 +155,8 @@ pub(super) fn register_interval_notification(
         Arc::clone(transport),  // clone: every worker delivers through one dispatcher.
         storage.tenant.clone(), // clone: interval policy owns its tenant partition.
     ));
-    let (_interval_wake, receiver) = wake_channel();
+    let (interval_wake, receiver) = wake_channel();
+    register_periodic_wake(supervisor, "notification-interval-wake", interval_wake, subscription_changes)?;
     register_notification_schedule(
         supervisor,
         "notification-interval",

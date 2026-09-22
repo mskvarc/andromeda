@@ -10,7 +10,7 @@
 use crate::tenant_factory::{
     error::TenantAssemblyError,
     storage::TenantStorage,
-    tasks::notification_schedule::{classify_notification_failure, register_notification_schedule},
+    tasks::notification_schedule::{classify_notification_failure, register_notification_schedule, register_periodic_wake},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::dispatch::TransportDispatcher;
@@ -83,6 +83,11 @@ pub(super) fn register_csource_notification_workers(
     streams: CsourceNotificationStreams,
     interval_max_sleep_secs: u64,
 ) -> Result<(), TenantAssemblyError> {
+    // clone: the periodic sweep subscribes to the same registration and
+    // context-source-subscription streams so a change wakes it, while the
+    // event-driven processor owns the senders.
+    let registration_changes = streams.registrations.clone();
+    let subscription_changes = streams.subscriptions.clone();
     register_csource_notification_processor(
         supervisor,
         streams,
@@ -105,6 +110,8 @@ pub(super) fn register_csource_notification_workers(
             Arc::clone(transport),                   // clone: every worker delivers through one dispatcher.
             storage.tenant.clone(),                  // clone: interval policy owns its tenant partition.
         )),
+        registration_changes,
+        subscription_changes,
         interval_max_sleep_secs,
     )
 }
@@ -189,9 +196,26 @@ fn register_csource_notification_processor(
 fn register_csource_interval_notification(
     supervisor: &TaskSupervisor,
     operation: Arc<CsourceIntervalNotificationOperation>,
+    registration_changes: broadcast::Sender<CsrChangeEvent>,
+    subscription_changes: broadcast::Sender<CsourceSubscriptionChange>,
     interval_max_sleep_secs: u64,
 ) -> Result<(), TenantAssemblyError> {
-    let (_interval_wake, receiver) = wake_channel();
+    let (interval_wake, receiver) = wake_channel();
+    // Both streams change what a periodic csource notification would report: the
+    // registrations it carries (clause 5.11.7) and the subscription set it is
+    // evaluated against. Either waking the sweep is correct; the wake coalesces.
+    register_periodic_wake(
+        supervisor,
+        "csource-notification-interval-registration-wake",
+        interval_wake.clone(),
+        registration_changes,
+    )?;
+    register_periodic_wake(
+        supervisor,
+        "csource-notification-interval-subscription-wake",
+        interval_wake,
+        subscription_changes,
+    )?;
     register_notification_schedule(
         supervisor,
         "csource-notification-interval",

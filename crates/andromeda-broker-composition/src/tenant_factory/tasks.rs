@@ -131,6 +131,10 @@ pub(super) fn supervise_tasks(
     let entity_subscriptions = Arc::new(SubscriptionRepository::new(&storage.pool)) as Arc<dyn SubscriptionStore>;
     let csource_subscriptions = Arc::new(CsourceSubscriptionRepository::new(&storage.pool)) as Arc<dyn SubscriptionStore>;
     let notification_processor = compose_notification_processor(storage, &services.state.forwarding, transport, &entity_subscriptions);
+    // clone: the periodic sweep subscribes to the same change stream so a new or
+    // amended timeInterval subscription wakes it, while the event-driven workers
+    // own the sender.
+    let interval_subscription_changes = subscription.clone();
     register_notification_workers(
         &task_supervisor,
         &storage.pool,
@@ -146,6 +150,7 @@ pub(super) fn supervise_tasks(
         storage,
         transport,
         entity_subscriptions,
+        interval_subscription_changes,
         config.notifications.interval_max_sleep_secs,
     )?;
     register_csource_notification_workers(
