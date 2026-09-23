@@ -106,7 +106,6 @@ uuid = { version = "1.26.1", features = ["fast-rng", "serde", "v4", "v7"] }
 lto = "thin"
 codegen-units = 16
 opt-level = 3
-debug = true
 
 [workspace.dependencies]
 andromeda-architecture-checks = { path = "crates/andromeda-architecture-checks" }
