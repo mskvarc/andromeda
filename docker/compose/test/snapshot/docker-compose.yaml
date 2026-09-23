@@ -27,6 +27,11 @@ x-broker-base: &broker-base
     ANDROMEDA__SERVER__HOST: "0.0.0.0"
     ANDROMEDA__TENANCY__ENABLED: "true"
     ANDROMEDA__NOTIFICATIONS__DELIVERY__MODE: "durable"
+    # Acceptance tests assert a failed status notification is retried within a
+    # bounded wait. The production 5s base backoff doubles to 10s on the first
+    # retry, which the test's deadline cannot absorb under CI load; a 1s base
+    # keeps the first retry near 2s without changing the exponential shape.
+    ANDROMEDA__NOTIFICATIONS__DELIVERY__BASE_BACKOFF_SECS: "1"
     ANDROMEDA__OBSERVABILITY__LOG_LEVEL: "info"
     ANDROMEDA__DATABASE__MAX_CONNECTIONS: "8"
     ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS: "2"
@@ -40,6 +45,13 @@ x-broker-base: &broker-base
     ANDROMEDA__SNAPSHOT__CAPTURE_PAGE_SIZE: "250"
     ANDROMEDA__SNAPSHOT__PREPARATION_CONCURRENCY: "4"
     ANDROMEDA__SNAPSHOT__PREPARATION_LEASE_SECS: "30"
+    # The preparation sweep is also the recovery poll that reclaims a
+    # preparation whose lease has expired (e.g. a replica that died mid-capture).
+    # A foreign broker's lease expiry is only discoverable by polling, so the
+    # reclamation test can only pass as fast as this cadence. The production 30s
+    # default cannot meet the test's bounded reclaim wait; 2s reclaims promptly
+    # and, being far below the 30s lease, never steals a live preparation.
+    ANDROMEDA__SNAPSHOT__PREPARATION_RECOVERY_SECS: "2"
     ANDROMEDA__SNAPSHOT__SCOPED_OPERATION_WAIT_SECS: "30"
   healthcheck:
     test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${ANDROMEDA__SERVER__PORT}/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
