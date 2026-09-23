@@ -1,0 +1,44 @@
+name: Build integration test suite
+description: >
+  Compile every integration-test suite once, package the compiled binaries, the
+  xtask runner, and their manifest into one directory, and upload it as the
+  `test-suite` artifact. Every stack leg then executes its prebuilt binaries via
+  `xtask itest` instead of recompiling the identical suites, so the workspace is
+  built once per run rather than once per matrix leg. The caller installs the
+  pinned toolchain and restores the cargo cache before this action runs.
+
+inputs:
+  out:
+    description: Directory to assemble the suite binaries, xtask runner, and manifest in.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # Build the xtask runner itself so the stack legs can execute it without a
+    # Rust toolchain: they run the shipped binary, not `cargo xtask`.
+    - name: Build xtask runner
+      shell: bash
+      run: cargo build --package andromeda-xtask --locked
+
+    # Compile the suites once and package each binary under <out>/bin beside a
+    # manifest mapping suite name to its relative path.
+    - name: Compile and package suites
+      shell: bash
+      run: cargo run --package andromeda-xtask --locked -- build-tests --out "${{ inputs.out }}"
+
+    # Ship the xtask runner alongside the suite binaries so a leg needs only this
+    # one artifact to drive a stack.
+    - name: Add xtask runner to the suite
+      shell: bash
+      run: cp target/debug/xtask "${{ inputs.out }}/xtask"
+
+    # compression-level 0 is deliberate: the payload is native binaries that gain
+    # almost nothing from a second compression pass but cost CPU on both ends.
+    - uses: actions/upload-artifact@v7
+      with:
+        name: test-suite
+        path: ${{ inputs.out }}
+        compression-level: 0
+        if-no-files-found: error
+        retention-days: 1

@@ -76,6 +76,28 @@ jobs:
               ;;
           esac
 
+  # Compile every integration-test suite exactly once and package the binaries,
+  # the xtask runner, and their manifest as one artifact. Every stack leg then
+  # executes its prebuilt binaries instead of recompiling the identical suites,
+  # so the workspace is built once per run rather than once per leg. The suites
+  # always come from the branch under test, so this runs in both image-source
+  # modes (a ghcr smoke run still tests the current branch's suites).
+  build-tests:
+    needs: setup
+    runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/free-disk-space
+      - name: Install pinned toolchain
+        run: rustup toolchain install --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/build-test-suite
+        with:
+          out: ${{ runner.temp }}/test-suite
+
   # Build the broker image exactly once for the whole run and hand it to every
   # stack leg as an artifact. Skipped when the run tests the published GHCR image
   # instead of a source build.
@@ -113,11 +135,12 @@ jobs:
           retention-days: 1
 
   # One leg per stack, all in parallel (fail-fast off, no max-parallel), each
-  # loading the one broker image. Runs after build-broker, but also when that job
-  # was skipped in ghcr mode, so `if` accepts both success and skipped.
+  # loading the one broker image and the one prebuilt test-suite artifact. Runs
+  # after build-broker, but also when that job was skipped in ghcr mode, so `if`
+  # accepts both success and skipped; build-tests always runs, so it must succeed.
   itest:
-    needs: [setup, build-broker]
-    if: ${{ always() && needs.setup.result == 'success' && (needs.build-broker.result == 'success' || needs.build-broker.result == 'skipped') }}
+    needs: [setup, build-tests, build-broker]
+    if: ${{ always() && needs.setup.result == 'success' && needs.build-tests.result == 'success' && (needs.build-broker.result == 'success' || needs.build-broker.result == 'skipped') }}
     name: ${{ matrix.stack }}
     runs-on: ubuntu-latest
     strategy:

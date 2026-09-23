@@ -6,8 +6,10 @@ description: >
   rebuilding disabled. Shared by the integration workflow's matrix legs and the
   release gate. The broker image is built once per run by a preceding
   `build-broker` job and fanned out here, so a matrix of stacks never rebuilds
-  the identical image per leg. The integration test binaries always compile from
-  source; `image-source` selects only where the broker image comes from.
+  the identical image per leg. The suite binaries are likewise compiled once by a
+  preceding `build-tests` job and downloaded here as the `test-suite` artifact, so
+  a leg runs them without a Rust toolchain. `image-source` selects only where the
+  broker image comes from.
 
 inputs:
   stack:
@@ -116,20 +118,29 @@ runs:
           docker build -t "$postgres_tag" docker/images/postgresql
         fi
 
-    # rust-toolchain.toml pins the nightly the workspace and its test binaries
-    # build on.
-    - name: Install pinned toolchain
+    # The suites are compiled once per run by the `build-tests` job and packaged,
+    # with the xtask runner, as the `test-suite` artifact. Download it so this leg
+    # executes the prebuilt binaries instead of recompiling the workspace: no Rust
+    # toolchain and no cargo cache are needed on a stack leg.
+    - name: Download test suite
+      uses: actions/download-artifact@v8
+      with:
+        name: test-suite
+        path: ${{ runner.temp }}/test-suite
+
+    # upload-artifact does not preserve the executable bit, so restore it on the
+    # runner and every packaged suite binary before they are run.
+    - name: Restore executable bits
       shell: bash
-      run: rustup toolchain install --profile minimal
+      run: chmod +x "${{ runner.temp }}/test-suite/xtask" "${{ runner.temp }}/test-suite/bin/"*
 
-    - uses: Swatinem/rust-cache@v2
-
-    # xtask brings the stack up reusing the tagged images, runs the suites, and
-    # tears the stack down via its Drop guard even when a suite fails.
+    # The shipped xtask runner brings the stack up reusing the tagged images, runs
+    # each suite from its prebuilt binary (ANDROMEDA_XTASK_TEST_MANIFEST), and tears
+    # the stack down via its Drop guard even when a suite fails.
     - name: Run integration suites
       shell: bash
       env:
         ANDROMEDA_XTASK_NO_BUILD: "1"
-        CARGO_INCREMENTAL: "0"
-        CARGO_PROFILE_TEST_DEBUG: line-tables-only
-      run: cargo xtask itest --stack "${{ inputs.stack }}"
+        ANDROMEDA_XTASK_TEST_MANIFEST: ${{ runner.temp }}/test-suite/manifest.json
+      run: |
+        "${{ runner.temp }}/test-suite/xtask" itest --stack "${{ inputs.stack }}"

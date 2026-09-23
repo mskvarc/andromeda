@@ -8,8 +8,10 @@ use crate::{
     error::XtaskError,
     local_broker::{self, BROKER_PORT, ForwardedHeaders, TRUSTED_PORT},
     stack::{Stack, StackName},
+    test_binaries::{TestManifest, run},
 };
 use std::{
+    env,
     path::{Path, PathBuf},
     process::{Child, Command},
 };
@@ -20,6 +22,9 @@ const CONTAINER_CALLBACK_HOST: &str = "host.docker.internal";
 const LOCAL_CALLBACK_HOST: &str = "127.0.0.1";
 /// Environment variable naming the broker-visible callback host.
 const CALLBACK_HOST_ENV: &str = "ANDROMEDA_TEST_CALLBACK_HOST";
+/// Environment variable naming a prebuilt-test manifest. When set, the suites are
+/// run from their packaged binaries instead of recompiled through `cargo test`.
+const TEST_MANIFEST_ENV: &str = "ANDROMEDA_XTASK_TEST_MANIFEST";
 
 /// Whether the base tier's brokers run in containers or as host processes.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -110,8 +115,41 @@ pub(crate) fn run_stack(
     run_suites(repository_root, stack, suites, callback_host, cargo_args)
 }
 
-/// Run the given suites against the already-running stack.
+/// Run the given suites against the already-running stack, either from a prebuilt
+/// manifest when CI sets [`TEST_MANIFEST_ENV`] or by compiling through `cargo test`.
 fn run_suites(repository_root: &Path, stack: &Stack, suites: &[&str], callback_host: &str, cargo_args: &[String]) -> Result<(), XtaskError> {
+    let mut env: Vec<(&str, String)> = stack.env.iter().map(|(key, value)| (*key, (*value).to_owned())).collect();
+    env.push((CALLBACK_HOST_ENV, callback_host.to_owned()));
+
+    match env::var(TEST_MANIFEST_ENV) {
+        Ok(manifest_path) => run_prebuilt(&manifest_path, stack, suites, &env, cargo_args, repository_root),
+        Err(_) => run_via_cargo(repository_root, stack, suites, &env, cargo_args),
+    }
+}
+
+/// Run each suite from its packaged binary, listed in the manifest at `manifest_path`.
+fn run_prebuilt(
+    manifest_path: &str,
+    stack: &Stack,
+    suites: &[&str],
+    env: &[(&str, String)],
+    harness_args: &[String],
+    working_directory: &Path,
+) -> Result<(), XtaskError> {
+    let manifest = TestManifest::load(Path::new(manifest_path))?;
+    let mut all_passed = true;
+    for suite in suites {
+        let binary = manifest.resolve(suite)?;
+        // Drive every selected suite to completion regardless of an earlier
+        // failure, matching the `--no-fail-fast` the cargo path passes.
+        let passed = run::run_suite(&binary, stack.test_threads, harness_args, env, working_directory)?;
+        all_passed &= passed;
+    }
+    if all_passed { Ok(()) } else { Err(XtaskError::CargoTest) }
+}
+
+/// Compile and run the suites through `cargo test`, the path used for local development.
+fn run_via_cargo(repository_root: &Path, stack: &Stack, suites: &[&str], env: &[(&str, String)], cargo_args: &[String]) -> Result<(), XtaskError> {
     let mut args: Vec<String> = vec!["test".to_owned()];
     for suite in suites {
         args.push("--test".to_owned());
@@ -125,9 +163,10 @@ fn run_suites(repository_root: &Path, stack: &Stack, suites: &[&str], callback_h
     args.push(format!("--test-threads={}", stack.test_threads));
     args.extend(cargo_args.iter().cloned());
 
-    let mut env: Vec<(&str, String)> = stack.env.iter().map(|(key, value)| (*key, (*value).to_owned())).collect();
-    env.push((CALLBACK_HOST_ENV, callback_host.to_owned()));
-
-    let status = Command::new("cargo").args(&args).envs(env).current_dir(repository_root).status()?;
+    let status = Command::new("cargo")
+        .args(&args)
+        .envs(env.iter().map(|(key, value)| (*key, value)))
+        .current_dir(repository_root)
+        .status()?;
     if status.success() { Ok(()) } else { Err(XtaskError::CargoTest) }
 }

@@ -33,6 +33,21 @@ pub(crate) enum XtaskError {
     /// `cargo test` reported a non-zero exit status.
     #[error("cargo test failed")]
     CargoTest,
+    /// `cargo test --no-run` failed to compile the integration-test suites.
+    #[error("cargo test --no-run failed to compile the suites")]
+    TestCompile,
+    /// A line of cargo's `--message-format=json` stream could not be parsed.
+    #[error("failed to parse a cargo build message: {0}")]
+    BuildMessageParse(String),
+    /// The prebuilt-test manifest could not be read from disk.
+    #[error("failed to read the prebuilt test manifest {0}")]
+    TestManifestRead(String),
+    /// The prebuilt-test manifest could not be (de)serialized.
+    #[error("failed to (de)serialize the prebuilt test manifest {0}")]
+    TestManifestSerde(String),
+    /// The manifest records no compiled binary for a requested suite.
+    #[error("the prebuilt test manifest has no binary for suite '{0}'")]
+    SuiteBinaryMissing(String),
     /// Generating the HTTP/3 self-signed certificate failed.
     #[error("openssl failed to generate the HTTP/3 certificate")]
     CertGeneration,

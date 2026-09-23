@@ -6,6 +6,7 @@ use crate::{
     etsi::EtsiArgs,
     lifecycle::{self, BrokerMode},
     stack::{STACKS, Stack, StackName, stack_for_suite},
+    test_binaries::build,
 };
 use clap::{ArgGroup, Args, Parser, Subcommand};
 use std::{
@@ -35,6 +36,7 @@ impl Cli {
         match self.command {
             Command::Itest(arguments) => arguments.execute(),
             Command::Etsi(arguments) => arguments.execute(),
+            Command::BuildTests(arguments) => arguments.execute(),
         }
     }
 }
@@ -46,6 +48,23 @@ enum Command {
     Itest(ItestArgs),
     /// Fetch, patch, and run the official ETSI NGSI-LD Robot Framework suite.
     Etsi(EtsiArgs),
+    /// Compile every integration-test suite once and package the binaries for CI fan-out.
+    BuildTests(BuildTestsArgs),
+}
+
+/// Arguments to `xtask build-tests`.
+#[derive(Args)]
+struct BuildTestsArgs {
+    /// Directory to write the suite binaries and their manifest into.
+    #[arg(long, value_name = "DIR")]
+    out: PathBuf,
+}
+
+impl BuildTestsArgs {
+    /// Compile and package the integration-test suites into the output directory.
+    fn execute(self) -> Result<(), XtaskError> {
+        build::build(&self.out)
+    }
 }
 
 /// Arguments to `xtask itest`. Exactly one selector is required.

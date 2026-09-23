@@ -15,6 +15,7 @@ mod lifecycle;
 mod local_broker;
 mod readiness;
 mod stack;
+mod test_binaries;
 
 fn main() -> ExitCode {
     match run() {

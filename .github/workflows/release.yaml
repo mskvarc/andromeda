@@ -58,11 +58,29 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # Compile the gate's suites exactly once and package them, with the xtask runner,
+  # as the `test-suite` artifact every stack leg runs. Mirrors the integration
+  # workflow's build-tests, so the workspace is built once per gate rather than
+  # once per stack leg.
+  build-tests:
+    name: build tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/free-disk-space
+      - name: Install pinned toolchain
+        run: rustup toolchain install --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/build-test-suite
+        with:
+          out: ${{ runner.temp }}/test-suite
+
   # The release gate: the same composite the integration workflow calls, once per
-  # stack, each loading the one broker image. Everything below needs this job, so
-  # nothing publishes unless every stack is green against the tagged commit.
+  # stack, each loading the one broker image and the one prebuilt test suite.
+  # Everything below needs this job, so nothing publishes unless every stack is
+  # green against the tagged commit.
   gate:
-    needs: build-broker
+    needs: [build-broker, build-tests]
     name: gate (${{ matrix.stack }})
     strategy:
       fail-fast: false
