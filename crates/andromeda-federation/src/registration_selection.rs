@@ -37,7 +37,7 @@ use serde_json::{Map, Value};
 /// expanded against the request context.
 pub(crate) async fn collect_matching_attrs(
     csr: &ContextSourceRegistration,
-    entity_type: Option<&IriBuf>,
+    entity_types: &[IriBuf],
     entity_id: Option<&Uri>,
     explicit_attribute: Option<&AttributeName>,
     body: Option<&[u8]>,
@@ -52,7 +52,7 @@ pub(crate) async fn collect_matching_attrs(
         .coverage
         .information
         .iter()
-        .filter(|information| information_matches_entity(information, entity_type, entity_id))
+        .filter(|information| information_matches_entity(information, entity_types, entity_id))
     {
         let declared = information.property_names.iter().chain(&information.relationship_names).flatten();
         let declared = declared.collect::<Vec<_>>();
@@ -83,7 +83,7 @@ pub(crate) async fn collect_matching_attrs(
 pub(crate) async fn filter_fragment_for_registration(
     body: Option<&[u8]>,
     csr: &ContextSourceRegistration,
-    entity_type: Option<&IriBuf>,
+    entity_types: &[IriBuf],
     entity_id: Option<&Uri>,
     resolver: &TermResolver<'_>,
 ) -> Result<Option<Vec<u8>>, FederationError> {
@@ -96,7 +96,7 @@ pub(crate) async fn filter_fragment_for_registration(
     let Some(object) = value.as_object_mut() else {
         return Ok(Some(body.to_vec()));
     };
-    if !retain_covered_attributes(object, csr, entity_type, entity_id, resolver).await? {
+    if !retain_covered_attributes(object, csr, entity_types, entity_id, resolver).await? {
         return Ok(None);
     }
     Ok(serde_json::to_vec(&value).ok())
@@ -115,12 +115,12 @@ enum AttributeCoverage {
 }
 
 /// What `csr` covers of an entity's attributes.
-fn attribute_coverage(csr: &ContextSourceRegistration, entity_type: Option<&IriBuf>, entity_id: Option<&Uri>) -> AttributeCoverage {
+fn attribute_coverage(csr: &ContextSourceRegistration, entity_types: &[IriBuf], entity_id: Option<&Uri>) -> AttributeCoverage {
     let information = csr
         .coverage
         .information
         .iter()
-        .filter(|information| information_matches_entity(information, entity_type, entity_id))
+        .filter(|information| information_matches_entity(information, entity_types, entity_id))
         .collect::<Vec<_>>();
     if information.is_empty() {
         return AttributeCoverage::NotMatching;
@@ -191,11 +191,11 @@ fn attribute_short_name(iri: &str) -> Option<&str> {
 pub(crate) async fn retain_covered_attributes(
     object: &mut Map<String, Value>,
     csr: &ContextSourceRegistration,
-    entity_type: Option<&IriBuf>,
+    entity_types: &[IriBuf],
     entity_id: Option<&Uri>,
     resolver: &TermResolver<'_>,
 ) -> Result<bool, FederationError> {
-    match attribute_coverage(csr, entity_type, entity_id) {
+    match attribute_coverage(csr, entity_types, entity_id) {
         AttributeCoverage::NotMatching => object.retain(|name, _value| is_entity_control_member(name)),
         AttributeCoverage::Unrestricted => {}
         AttributeCoverage::Names(declared) => {
@@ -217,11 +217,11 @@ pub(crate) async fn retain_covered_attributes(
 pub(crate) async fn covered_attribute_members(
     object: &Map<String, Value>,
     csr: &ContextSourceRegistration,
-    entity_type: Option<&IriBuf>,
+    entity_types: &[IriBuf],
     entity_id: Option<&Uri>,
     resolver: &TermResolver<'_>,
 ) -> Result<Vec<String>, FederationError> {
-    match attribute_coverage(csr, entity_type, entity_id) {
+    match attribute_coverage(csr, entity_types, entity_id) {
         AttributeCoverage::NotMatching => Ok(Vec::new()),
         // clone: the result owns the member names it reports
         AttributeCoverage::Unrestricted => Ok(object.keys().filter(|name| !is_entity_control_member(name)).cloned().collect()),
@@ -251,14 +251,14 @@ pub(crate) fn is_entity_control_member(name: &str) -> bool {
 /// attribute is expanded to its IRI by the caller so the comparison is exact.
 pub(crate) fn csr_has_matching_information(
     csr: &ContextSourceRegistration,
-    entity_type: Option<&IriBuf>,
+    entity_types: &[IriBuf],
     entity_id: Option<&Uri>,
     attribute: Option<&IriBuf>,
 ) -> bool {
     csr.coverage
         .information
         .iter()
-        .any(|information| information_matches_entity(information, entity_type, entity_id) && information_covers_attribute(information, attribute))
+        .any(|information| information_matches_entity(information, entity_types, entity_id) && information_covers_attribute(information, attribute))
 }
 
 /// Whether a registration's declared scope can answer a scoped read.
@@ -274,12 +274,17 @@ pub(crate) fn registration_scope_admits(registration: &ContextSourceRegistration
 }
 
 /// Whether the entity selector axis of one information entry matches.
-pub(crate) fn information_matches_entity(information: &RegistrationInfo, entity_type: Option<&IriBuf>, entity_id: Option<&Uri>) -> bool {
+pub(crate) fn information_matches_entity(information: &RegistrationInfo, entity_types: &[IriBuf], entity_id: Option<&Uri>) -> bool {
     let Some(selectors) = information.entities.as_deref().filter(|selectors| !selectors.is_empty()) else {
         return true;
     };
     selectors.iter().any(|selector| {
-        let type_matches = entity_type.is_none_or(|requested| selector.type_.admits(requested.as_str()));
+        // Clause 5.12: an Entity specification matches an EntityInfo only if the
+        // type selector matches the entity's types. An Entity may hold several
+        // (clauses 4.5.5, 5.2.4), so the selector admitting ANY of them is a
+        // match. An empty set places no type constraint -- an id-only read, or an
+        // entity whose type this caller does not resolve -- and matches on id.
+        let type_matches = entity_types.is_empty() || entity_types.iter().any(|requested| selector.type_.admits(requested.as_str()));
         let id_matches = entity_id.is_none_or(|requested| match (&selector.id, &selector.id_pattern) {
             (None, None) => true,
             (Some(id), None) => id.as_str() == requested.as_str(),
@@ -311,7 +316,7 @@ pub(crate) fn information_covers_attribute(information: &RegistrationInfo, attri
 #[cfg(test)]
 mod tests {
     use crate::{
-        registration_selection::{covered_attribute_members, retain_covered_attributes},
+        registration_selection::{covered_attribute_members, information_matches_entity, retain_covered_attributes},
         term_resolver::TermResolver,
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
@@ -391,14 +396,14 @@ mod tests {
         }));
         let mut object = aliased_vehicle();
         assert!(
-            retain_covered_attributes(&mut object, &csr, Some(&vehicle_type()), Some(&vehicle_id()), &resolver)
+            retain_covered_attributes(&mut object, &csr, &[vehicle_type()], Some(&vehicle_id()), &resolver)
                 .await
                 .expect("coverage resolves")
         );
         let mut kept = object.keys().cloned().collect::<Vec<_>>();
         kept.sort();
         pretty_assertions::assert_eq!(kept, vec!["https://example.org/brandName", "id", "spd", "type"]);
-        let mut covered = covered_attribute_members(&aliased_vehicle(), &csr, Some(&vehicle_type()), Some(&vehicle_id()), &resolver)
+        let mut covered = covered_attribute_members(&aliased_vehicle(), &csr, &[vehicle_type()], Some(&vehicle_id()), &resolver)
             .await
             .expect("coverage resolves");
         covered.sort();
@@ -413,13 +418,13 @@ mod tests {
         let csr = registration(&json!({"entities": [{"type": "https://example.org/Vehicle"}]}));
         let mut object = vehicle();
         assert!(
-            retain_covered_attributes(&mut object, &csr, Some(&vehicle_type()), Some(&vehicle_id()), &resolver)
+            retain_covered_attributes(&mut object, &csr, &[vehicle_type()], Some(&vehicle_id()), &resolver)
                 .await
                 .expect("coverage resolves")
         );
         pretty_assertions::assert_eq!(object.len(), 4);
         pretty_assertions::assert_eq!(
-            covered_attribute_members(&vehicle(), &csr, Some(&vehicle_type()), Some(&vehicle_id()), &resolver)
+            covered_attribute_members(&vehicle(), &csr, &[vehicle_type()], Some(&vehicle_id()), &resolver)
                 .await
                 .expect("coverage resolves")
                 .len(),
@@ -435,7 +440,7 @@ mod tests {
         let csr = registration(&json!({"entities": [{"type": "https://example.org/Device"}]}));
         let mut object = vehicle();
         assert!(
-            !retain_covered_attributes(&mut object, &csr, Some(&vehicle_type()), Some(&vehicle_id()), &resolver)
+            !retain_covered_attributes(&mut object, &csr, &[vehicle_type()], Some(&vehicle_id()), &resolver)
                 .await
                 .expect("coverage resolves")
         );
@@ -443,7 +448,7 @@ mod tests {
         kept.sort();
         pretty_assertions::assert_eq!(kept, vec!["id", "type"]);
         assert_eq!(
-            covered_attribute_members(&vehicle(), &csr, Some(&vehicle_type()), Some(&vehicle_id()), &resolver)
+            covered_attribute_members(&vehicle(), &csr, &[vehicle_type()], Some(&vehicle_id()), &resolver)
                 .await
                 .expect("coverage resolves"),
             [] as [String; 0]
@@ -461,9 +466,72 @@ mod tests {
         }));
         let mut object = vehicle();
         assert!(
-            !retain_covered_attributes(&mut object, &csr, Some(&vehicle_type()), Some(&vehicle_id()), &resolver)
+            !retain_covered_attributes(&mut object, &csr, &[vehicle_type()], Some(&vehicle_id()), &resolver)
                 .await
                 .expect("coverage resolves")
         );
+    }
+
+    /// An absent entity type satisfies a type-scoped information entry: the
+    /// read/purge-by-id paths pass no type on purpose, so a registration scoped
+    /// to a type still covers an id-only read. The write path must therefore
+    /// resolve the entity's actual type (see `crate::local_entity_type`), or this
+    /// permissive match refuses writes to unrelated entities.
+    #[test]
+    fn an_absent_entity_type_satisfies_a_type_scoped_information_entry() {
+        let csr = registration(&json!({"entities": [{"type": "https://example.org/Vehicle"}]}));
+        let info = &csr.coverage.information[0];
+        assert!(information_matches_entity(info, &[], Some(&vehicle_id())));
+    }
+
+    /// A known entity type that differs from the one a registration covers does
+    /// not match it. This is exactly what supplying the resolved local type buys
+    /// the write path: a registration scoped to another type stops covering the
+    /// write, so it is no longer wrongly refused.
+    #[test]
+    fn a_differing_known_entity_type_does_not_match_a_type_scoped_information_entry() {
+        let csr = registration(&json!({"entities": [{"type": "https://example.org/Device"}]}));
+        let info = &csr.coverage.information[0];
+        let building = IriBuf::new("https://example.org/Building".to_string()).expect("valid IRI");
+        assert!(!information_matches_entity(info, &[building], Some(&vehicle_id())));
+    }
+
+    /// Clause 5.12: the type selector matches the entity's *types* (plural). A
+    /// registration covering one of an entity's several types matches it, even
+    /// when that type is not the first one the entity carries.
+    #[test]
+    fn a_registration_covering_one_of_several_entity_types_matches() {
+        let device = IriBuf::new("https://example.org/Device".to_string()).expect("valid IRI");
+        let vehicle = IriBuf::new("https://example.org/Vehicle".to_string()).expect("valid IRI");
+        let csr = registration(&json!({"entities": [{"type": "https://example.org/Vehicle"}]}));
+        let info = &csr.coverage.information[0];
+        // The entity is a Device first, a Vehicle second; the Vehicle registration
+        // must still match it.
+        assert!(information_matches_entity(info, &[device.clone(), vehicle.clone()], Some(&vehicle_id())));
+        // Order must not matter.
+        assert!(information_matches_entity(info, &[vehicle, device], Some(&vehicle_id())));
+    }
+
+    /// A registration covering none of an entity's types does not match it, no
+    /// matter how many types the entity carries.
+    #[test]
+    fn a_registration_covering_none_of_several_entity_types_does_not_match() {
+        let device = IriBuf::new("https://example.org/Device".to_string()).expect("valid IRI");
+        let vehicle = IriBuf::new("https://example.org/Vehicle".to_string()).expect("valid IRI");
+        let csr = registration(&json!({"entities": [{"type": "https://example.org/Building"}]}));
+        let info = &csr.coverage.information[0];
+        assert!(!information_matches_entity(info, &[device, vehicle], Some(&vehicle_id())));
+    }
+
+    /// A registration whose `EntityInfo` selects several types matches an entity
+    /// that carries any one of them.
+    #[test]
+    fn a_multi_type_registration_selector_matches_an_entity_sharing_one_type() {
+        let device = IriBuf::new("https://example.org/Device".to_string()).expect("valid IRI");
+        let csr = registration(&json!({"entities": [{"type": ["https://example.org/Vehicle", "https://example.org/Device"]}]}));
+        let info = &csr.coverage.information[0];
+        assert!(information_matches_entity(info, &[device], Some(&vehicle_id())));
+        let building = IriBuf::new("https://example.org/Building".to_string()).expect("valid IRI");
+        assert!(!information_matches_entity(info, &[building], Some(&vehicle_id())));
     }
 }

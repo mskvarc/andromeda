@@ -90,7 +90,7 @@ fn reported_ids(csr: &ContextSourceRegistration, local_ids: &[Uri]) -> Vec<Uri> 
             csr.coverage
                 .information
                 .iter()
-                .any(|information| information_matches_entity(information, None, Some(id)))
+                .any(|information| information_matches_entity(information, &[], Some(id)))
         })
         .cloned() // clone: the report owns the identifiers it names
         .collect::<Vec<_>>();

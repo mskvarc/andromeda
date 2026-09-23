@@ -11,12 +11,14 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
-/// A registration for `Building` entities, optionally scoped to a location.
-fn registration(id: &str, location: Option<Value>) -> Value {
+/// A registration for the test's own `Building` entities, scoped by `id_pattern`
+/// so it never intercepts a concurrent test's Building traffic, optionally scoped
+/// to a location.
+fn registration(id: &str, id_pattern: &str, location: Option<Value>) -> Value {
     let mut document = json!({
         "id": id,
         "type": "ContextSourceRegistration",
-        "information": [{"entities": [{"type": "Building"}]}],
+        "information": [{"entities": [{"type": "Building", "idPattern": id_pattern}]}],
         "endpoint": "http://127.0.0.1:9999",
         "@context": [TEST_SUITE_CONTEXT]
     });
@@ -44,7 +46,7 @@ async fn csr_3d_location_round_trips() {
     let geometry = json!({"type": "Polygon", "coordinates": pillar_ring_3d(120.0)});
 
     let create = client
-        .create_registration(&registration(&registration_id, Some(geometry.clone())))
+        .create_registration(&registration(&registration_id, &format!("^{}:", scope.id_prefix()), Some(geometry.clone())))
         .await
         .expect("create registration failed");
     assert_eq!(create.status, StatusCode::CREATED);
@@ -78,10 +80,11 @@ async fn csr_discovery_geo_filter_footprint() {
         "coordinates": [[[30.0, 10.0], [31.0, 10.0], [31.0, 11.0], [30.0, 11.0], [30.0, 10.0]]]
     });
 
+    let id_pattern = format!("^{}:", scope.id_prefix());
     for document in [
-        registration(&covering, Some(covering_geometry)),
-        registration(&distant, Some(distant_geometry)),
-        registration(&unlocated, None),
+        registration(&covering, &id_pattern, Some(covering_geometry)),
+        registration(&distant, &id_pattern, Some(distant_geometry)),
+        registration(&unlocated, &id_pattern, None),
     ] {
         let response = client.create_registration(&document).await.expect("create registration failed");
         assert_eq!(response.status, StatusCode::CREATED);

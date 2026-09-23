@@ -7,7 +7,7 @@ use crate::{
     compose::{self, ImageBuild},
     error::XtaskError,
     local_broker::{self, BROKER_PORT, ForwardedHeaders, TRUSTED_PORT},
-    stack::{Stack, StackName},
+    stack::{Stack, StackName, Suite},
     test_binaries::{TestManifest, run},
 };
 use std::{
@@ -66,7 +66,7 @@ impl Drop for StackTeardown<'_> {
 pub(crate) fn run_stack(
     repository_root: &Path,
     stack: &'static Stack,
-    suites: &[&'static str],
+    suites: &[&'static Suite],
     keep: bool,
     broker_mode: BrokerMode,
     image_build: ImageBuild,
@@ -117,56 +117,55 @@ pub(crate) fn run_stack(
 
 /// Run the given suites against the already-running stack, either from a prebuilt
 /// manifest when CI sets [`TEST_MANIFEST_ENV`] or by compiling through `cargo test`.
-fn run_suites(repository_root: &Path, stack: &Stack, suites: &[&str], callback_host: &str, cargo_args: &[String]) -> Result<(), XtaskError> {
+fn run_suites(repository_root: &Path, stack: &Stack, suites: &[&Suite], callback_host: &str, cargo_args: &[String]) -> Result<(), XtaskError> {
     let mut env: Vec<(&str, String)> = stack.env.iter().map(|(key, value)| (*key, (*value).to_owned())).collect();
     env.push((CALLBACK_HOST_ENV, callback_host.to_owned()));
 
     match env::var(TEST_MANIFEST_ENV) {
-        Ok(manifest_path) => run_prebuilt(&manifest_path, stack, suites, &env, cargo_args, repository_root),
-        Err(_) => run_via_cargo(repository_root, stack, suites, &env, cargo_args),
+        Ok(manifest_path) => run_prebuilt(&manifest_path, suites, &env, cargo_args, repository_root),
+        Err(_) => run_via_cargo(repository_root, suites, &env, cargo_args),
     }
 }
 
 /// Run each suite from its packaged binary, listed in the manifest at `manifest_path`.
-fn run_prebuilt(
-    manifest_path: &str,
-    stack: &Stack,
-    suites: &[&str],
-    env: &[(&str, String)],
-    harness_args: &[String],
-    working_directory: &Path,
-) -> Result<(), XtaskError> {
+fn run_prebuilt(manifest_path: &str, suites: &[&Suite], env: &[(&str, String)], harness_args: &[String], working_directory: &Path) -> Result<(), XtaskError> {
     let manifest = TestManifest::load(Path::new(manifest_path))?;
     let mut all_passed = true;
     for suite in suites {
-        let binary = manifest.resolve(suite)?;
+        let binary = manifest.resolve(suite.name)?;
         // Drive every selected suite to completion regardless of an earlier
         // failure, matching the `--no-fail-fast` the cargo path passes.
-        let passed = run::run_suite(&binary, stack.test_threads, harness_args, env, working_directory)?;
+        let passed = run::run_suite(&binary, suite.test_threads, harness_args, env, working_directory)?;
         all_passed &= passed;
     }
     if all_passed { Ok(()) } else { Err(XtaskError::CargoTest) }
 }
 
 /// Compile and run the suites through `cargo test`, the path used for local development.
-fn run_via_cargo(repository_root: &Path, stack: &Stack, suites: &[&str], env: &[(&str, String)], cargo_args: &[String]) -> Result<(), XtaskError> {
-    let mut args: Vec<String> = vec!["test".to_owned()];
+fn run_via_cargo(repository_root: &Path, suites: &[&Suite], env: &[(&str, String)], cargo_args: &[String]) -> Result<(), XtaskError> {
+    let mut all_passed = true;
     for suite in suites {
-        args.push("--test".to_owned());
-        args.push((*suite).to_owned());
-    }
-    args.push("--locked".to_owned());
-    // Drive every selected suite to completion: one suite's failure must not
-    // hide the verdict of the suites cargo would otherwise skip after it.
-    args.push("--no-fail-fast".to_owned());
-    args.push("--".to_owned());
-    args.push(format!("--test-threads={}", stack.test_threads));
-    args.extend(cargo_args.iter().cloned());
+        // One `cargo test` invocation per suite so each runs at the thread count
+        // its isolation allows; a single shared invocation could only carry one
+        // `--test-threads` for every suite at once.
+        let mut args: Vec<String> = vec![
+            "test".to_owned(),
+            "--test".to_owned(),
+            suite.name.to_owned(),
+            "--locked".to_owned(),
+            // One suite's failure must not hide the tests cargo would skip after it.
+            "--no-fail-fast".to_owned(),
+            "--".to_owned(),
+            format!("--test-threads={}", suite.test_threads),
+        ];
+        args.extend(cargo_args.iter().cloned());
 
-    let status = Command::new("cargo")
-        .args(&args)
-        .envs(env.iter().map(|(key, value)| (*key, value)))
-        .current_dir(repository_root)
-        .status()?;
-    if status.success() { Ok(()) } else { Err(XtaskError::CargoTest) }
+        let status = Command::new("cargo")
+            .args(&args)
+            .envs(env.iter().map(|(key, value)| (*key, value)))
+            .current_dir(repository_root)
+            .status()?;
+        all_passed &= status.success();
+    }
+    if all_passed { Ok(()) } else { Err(XtaskError::CargoTest) }
 }

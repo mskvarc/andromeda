@@ -33,6 +33,7 @@ mod entity_map_pruning;
 mod entity_map_scoping;
 mod entity_map_source_declined;
 mod entity_ordering_system_timestamps;
+mod federated_write_type_coverage;
 mod forwarded_protocol_origin;
 mod geojson_geometry_selection;
 mod hosted_context_lifecycle;

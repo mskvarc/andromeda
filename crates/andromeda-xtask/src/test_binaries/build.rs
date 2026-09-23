@@ -53,7 +53,7 @@ pub(crate) fn build(out_dir: &Path) -> Result<(), XtaskError> {
     // Every integration-test target across all stacks, deduplicated. Naming each
     // one keeps the compile to the suites this pipeline runs, leaving the lib and
     // bin unit tests to their own workflow.
-    let mut suites: Vec<&'static str> = STACKS.iter().flat_map(|stack| stack.suites.iter().copied()).collect();
+    let mut suites: Vec<&'static str> = STACKS.iter().flat_map(|stack| stack.suites.iter().map(|suite| suite.name)).collect();
     suites.sort_unstable();
     suites.dedup();
     let suites = suites;

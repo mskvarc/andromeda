@@ -84,8 +84,11 @@ async fn regression_temporal_geo_a_near_query_selects_an_entity_by_a_non_first_l
     create_temporal(client, &vehicle_with_two_locations(&near)).await;
     create_temporal(client, &vehicle_without_location(&without)).await;
 
-    let query = "type=Vehicle&timerel=after&timeAt=2020-07-01T12:05:00Z&georel=near;maxDistance==2000&geometry=Point&coordinates=[-8.503,41.202]";
-    let response = client.query_temporal_entities(query, Some(CORE_CONTEXT)).await.expect("temporal query");
+    let query = format!(
+        "type=Vehicle&idPattern={}&timerel=after&timeAt=2020-07-01T12:05:00Z&georel=near;maxDistance==2000&geometry=Point&coordinates=[-8.503,41.202]",
+        urlencoding::encode(&format!("^{}:", scope.id_prefix()))
+    );
+    let response = client.query_temporal_entities(&query, Some(CORE_CONTEXT)).await.expect("temporal query");
     assert_eq!(response.status, StatusCode::OK, "{:?}", response.body);
     let body = response.json_value().expect("a temporal query answers JSON");
 
@@ -112,8 +115,11 @@ async fn regression_temporal_geo_the_geoquery_selects_entities_without_trimming_
 
     create_temporal(client, &vehicle_with_two_locations(&near)).await;
 
-    let query = "type=Vehicle&timerel=after&timeAt=2020-07-01T12:05:00Z&georel=near;maxDistance==2000&geometry=Point&coordinates=[-8.503,41.202]";
-    let response = client.query_temporal_entities(query, Some(CORE_CONTEXT)).await.expect("temporal query");
+    let query = format!(
+        "type=Vehicle&idPattern={}&timerel=after&timeAt=2020-07-01T12:05:00Z&georel=near;maxDistance==2000&geometry=Point&coordinates=[-8.503,41.202]",
+        urlencoding::encode(&format!("^{}:", scope.id_prefix()))
+    );
+    let response = client.query_temporal_entities(&query, Some(CORE_CONTEXT)).await.expect("temporal query");
     assert_eq!(response.status, StatusCode::OK, "{:?}", response.body);
     let body = response.json_value().expect("a temporal query answers JSON");
 

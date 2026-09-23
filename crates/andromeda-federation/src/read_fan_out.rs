@@ -310,7 +310,7 @@ pub(crate) fn registered_type_of(registrations: &[ContextSourceRegistration], en
     let mut types = registrations
         .iter()
         .flat_map(|registration| registration.coverage.information.iter())
-        .filter(|information| information_matches_entity(information, None, Some(entity_id)))
+        .filter(|information| information_matches_entity(information, &[], Some(entity_id)))
         .flat_map(|information| information.entities.iter().flatten())
         .filter(|selector| selector.covers_id(entity_id))
         .filter_map(|selector| match &selector.type_ {

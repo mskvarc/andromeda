@@ -33,16 +33,12 @@ use axum::{
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
-use serial_test::serial;
 use std::time::Duration;
 
-// Both tests register a Context Source under `type=Vehicle`; that registration
-// namespace is global per tenant, so an unfiltered `type=Vehicle` forwarding
-// query fans out to every Vehicle registration a concurrent sibling test has
-// created, perturbing the first-request and status observations. Serialising
-// the two keeps exactly one Vehicle registration live at a time.
+// Each test scopes its `type=Vehicle` registration and forwarding query to its
+// own id prefix, so a concurrent sibling's Vehicle registration is never matched
+// and the two run in parallel without perturbing each other's observations.
 #[tokio::test]
-#[serial]
 async fn context_source_info_round_trips_through_create_and_retrieve() {
     let scope = TestEnvironment::from_suite("context_source_info").await.expect("isolated test environment");
     let client = scope.client();
@@ -51,7 +47,7 @@ async fn context_source_info_round_trips_through_create_and_retrieve() {
     let registration = json!({
         "id": registration_id,
         "type": "ContextSourceRegistration",
-        "information": [{"entities": [{"type": "Vehicle"}]}],
+        "information": [{"entities": [{"type": "Vehicle", "idPattern": format!("^{}:", scope.id_prefix())}]}],
         "endpoint": "http://my.csource.org:1026",
         "contextSourceInfo": [
             {"key": "accept", "value": "application/ld+json"},
@@ -89,7 +85,6 @@ async fn context_source_info_round_trips_through_create_and_retrieve() {
 }
 
 #[tokio::test]
-#[serial]
 async fn context_source_info_forwarding_maps_reserved_and_custom_entries_to_http_headers() {
     let scope = TestEnvironment::from_suite("context-source-info-forwarding")
         .await
@@ -116,7 +111,7 @@ async fn context_source_info_forwarding_maps_reserved_and_custom_entries_to_http
     let registration = json!({
         "id": scope.id("ContextSourceRegistration:forwarding"),
         "type": "ContextSourceRegistration",
-        "information": [{"entities": [{"type": "Vehicle"}]}],
+        "information": [{"entities": [{"type": "Vehicle", "idPattern": format!("^{}:", scope.id_prefix())}]}],
         "endpoint": source.endpoint(&source_root).expect("source endpoint must be valid"),
         "operations": ["queryEntity"],
         "contextSourceInfo": [
@@ -131,7 +126,11 @@ async fn context_source_info_forwarding_maps_reserved_and_custom_entries_to_http
     assert_eq!(created.status, StatusCode::CREATED);
 
     let query = client
-        .query_entities("type=Vehicle", "application/ld+json", Some(COMPOUND_CONTEXT))
+        .query_entities(
+            &format!("type=Vehicle&idPattern={}", urlencoding::encode(&format!("^{}:", scope.id_prefix()))),
+            "application/ld+json",
+            Some(COMPOUND_CONTEXT),
+        )
         .await
         .expect("forwarded query failed");
     assert_eq!(query.status, StatusCode::OK);

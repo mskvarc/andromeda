@@ -191,9 +191,14 @@ async fn current_projection_and_indexed_queries_preserve_neighboring_exact_decim
             vec![adjacent_id.as_str(), exact_id.as_str()],
         ),
     ];
+    let id_pattern = urlencoding::encode(&format!("^{}:", scope.id_prefix())).into_owned();
     for (q, expected_ids) in cases {
         let response = client
-            .query_entities(&format!("type=Building&q={q}"), "application/json", Some(TEST_SUITE_CONTEXT))
+            .query_entities(
+                &format!("type=Building&idPattern={id_pattern}&q={q}"),
+                "application/json",
+                Some(TEST_SUITE_CONTEXT),
+            )
             .await
             .expect("exact numeric query failed");
         assert_eq!(response.status, StatusCode::OK, "query {q}: {:?}", response.body);

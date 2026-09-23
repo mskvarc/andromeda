@@ -5,7 +5,7 @@ use crate::{
     error::XtaskError,
     etsi::EtsiArgs,
     lifecycle::{self, BrokerMode},
-    stack::{STACKS, Stack, StackName, stack_for_suite},
+    stack::{STACKS, Stack, StackName, Suite, stack_for_suite},
     test_binaries::build,
 };
 use clap::{ArgGroup, Args, Parser, Subcommand};
@@ -126,12 +126,12 @@ impl ItestArgs {
     }
 
     /// Resolve the selector into an ordered list of `(stack, suites)` runs.
-    fn resolve(&self) -> Result<Vec<(&'static Stack, Vec<&'static str>)>, XtaskError> {
+    fn resolve(&self) -> Result<Vec<(&'static Stack, Vec<&'static Suite>)>, XtaskError> {
         let plan = if let Some(name) = self.stack {
             let stack = Stack::get(name);
-            vec![(stack, stack.suites.to_vec())]
+            vec![(stack, stack.suites.iter().collect())]
         } else if self.all {
-            STACKS.iter().map(|stack| (stack, stack.suites.to_vec())).collect()
+            STACKS.iter().map(|stack| (stack, stack.suites.iter().collect())).collect()
         } else {
             self.resolve_suites()?
         };
@@ -140,9 +140,9 @@ impl ItestArgs {
     }
 
     /// Resolve `--suite` names to a single owning stack, rejecting a cross-stack span.
-    fn resolve_suites(&self) -> Result<Vec<(&'static Stack, Vec<&'static str>)>, XtaskError> {
+    fn resolve_suites(&self) -> Result<Vec<(&'static Stack, Vec<&'static Suite>)>, XtaskError> {
         let mut owner: Option<&'static Stack> = None;
-        let mut chosen: Vec<&'static str> = Vec::new();
+        let mut chosen: Vec<&'static Suite> = Vec::new();
         for name in &self.suite {
             let (stack, suite) = stack_for_suite(name).ok_or_else(|| XtaskError::UnknownSuite(name.clone()))?;
             match owner {
@@ -160,7 +160,7 @@ impl ItestArgs {
     }
 
     /// Reject `--local-broker` unless every selected stack is the base tier.
-    fn check_local_broker(&self, plan: &[(&'static Stack, Vec<&'static str>)]) -> Result<(), XtaskError> {
+    fn check_local_broker(&self, plan: &[(&'static Stack, Vec<&'static Suite>)]) -> Result<(), XtaskError> {
         if self.options.local_broker && plan.iter().any(|(stack, _)| stack.name != StackName::Base) {
             return Err(XtaskError::LocalBrokerRequiresBase);
         }

@@ -85,7 +85,7 @@ async fn create_show_changes_subscription(scope: &TestEnvironment, receiver: &No
     let subscription = json!({
         "id": scope.id(local_id),
         "type": "Subscription",
-        "entities": [{"type": "Building"}],
+        "entities": [{"type": "Building", "idPattern": format!("^{}:", scope.id_prefix())}],
         "notificationTrigger": ["attributeUpdated"],
         "notification": {
             "showChanges": true,

@@ -89,9 +89,17 @@ impl FederationService {
             let looped = self.is_loop_detected(request.triggering.via);
 
             let resolver = TermResolver::new(&self.engine, request.context);
-            let expanded_type = match request.entity_type_compact {
-                Some(t) => Some(resolver.expand_type(t.as_str()).await?),
-                None => None,
+            let expanded_types: Vec<IriBuf> = match request.entity_type_compact {
+                Some(t) => vec![resolver.expand_type(t.as_str()).await?],
+                // An attribute-level write (delete/append/update attrs, merge,
+                // replace, delete entity) carries no `type` in its request. Match
+                // it against registrations by the local entity's actual types --
+                // every one it carries, since clause 5.12 matches on any of them --
+                // so a registration scoped to an unrelated type is not taken to
+                // cover the write and refuse it. A write to an entity this broker
+                // holds only at a source resolves to an empty set and falls back
+                // to id-only matching, as before.
+                None => self.local_entity_types.local_entity_types(target, request.entity_id).await,
             };
             // The path attribute is a compact term; matching compares IRIs, so
             // it is expanded once against the triggering request's context.
@@ -100,7 +108,15 @@ impl FederationService {
                 None => None,
             };
 
-            let csrs = self.csr_repo.find_matching(expanded_type.as_ref(), Some(request.entity_id)).await?;
+            // The store pre-filter is a coarse superset; clause-5.12 precision is
+            // applied by csr_has_matching_information below. A single known type
+            // narrows the query; zero or several types take the whole id-covering
+            // superset and let the precise match do the filtering.
+            let coarse_type = match expanded_types.as_slice() {
+                [single] => Some(single),
+                _ => None,
+            };
+            let csrs = self.csr_repo.find_matching(coarse_type, Some(request.entity_id)).await?;
 
             // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
             let mut matching_csrs = Vec::new();
@@ -109,7 +125,7 @@ impl FederationService {
                 if csr.access.mode == Some(ForwardingMode::Auxiliary) {
                     continue;
                 }
-                if !csr_has_matching_information(&csr, expanded_type.as_ref(), Some(request.entity_id), expanded_attribute.as_ref()) {
+                if !csr_has_matching_information(&csr, &expanded_types, Some(request.entity_id), expanded_attribute.as_ref()) {
                     continue;
                 }
                 if looped {
@@ -135,15 +151,8 @@ impl FederationService {
                     // Clauses 5.6.1.4 and following: a proxied registration that
                     // does not support the operation still owns its attributes, so
                     // the write fails for them instead of landing here.
-                    let proxied_attrs = collect_matching_attrs(
-                        &csr,
-                        expanded_type.as_ref(),
-                        Some(request.entity_id),
-                        request.attribute_name,
-                        request.body,
-                        &resolver,
-                    )
-                    .await?;
+                    let proxied_attrs =
+                        collect_matching_attrs(&csr, &expanded_types, Some(request.entity_id), request.attribute_name, request.body, &resolver).await?;
                     let mode = proxied_mode(&csr);
                     results.push(ForwardedWriteResult {
                         registration_id: csr.id,
@@ -154,10 +163,9 @@ impl FederationService {
                 }
             }
 
-            let expanded_type_ref = expanded_type.as_ref();
             let mut planned: Vec<PlannedWrite<'_>> = Vec::new();
             for csr in matching_csrs {
-                if let Some(write) = plan_write(csr, &request, expanded_type_ref, &resolver).await? {
+                if let Some(write) = plan_write(csr, &request, &expanded_types, &resolver).await? {
                     planned.push(write);
                 }
             }
@@ -287,7 +295,7 @@ impl FederationService {
 async fn plan_write<'a>(
     csr: ContextSourceRegistration,
     request: &ForwardProvisionRequest<'a>,
-    expanded_type: Option<&IriBuf>,
+    entity_types: &[IriBuf],
     resolver: &TermResolver<'_>,
 ) -> Result<Option<PlannedWrite<'a>>, FederationError> {
     // A POST below the bare resource creates (clauses 6.4.3.1 and 6.18.3.1);
@@ -306,13 +314,13 @@ async fn plan_write<'a>(
     let url = forwarding_url(csr.access.endpoint.url(), &path, request.query_string.unwrap_or(""));
 
     let proxied_attrs = if is_proxied(&csr) {
-        collect_matching_attrs(&csr, expanded_type, Some(request.entity_id), request.attribute_name, request.body, resolver).await?
+        collect_matching_attrs(&csr, entity_types, Some(request.entity_id), request.attribute_name, request.body, resolver).await?
     } else {
         Vec::new()
     };
 
     let body = if request.attribute_name.is_none() {
-        filter_fragment_for_registration(request.body, &csr, expanded_type, Some(request.entity_id), resolver).await?
+        filter_fragment_for_registration(request.body, &csr, entity_types, Some(request.entity_id), resolver).await?
     } else {
         request.body.map(<[u8]>::to_vec)
     };

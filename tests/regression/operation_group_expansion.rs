@@ -11,7 +11,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
-use crate::context_source_adapter::ContextSourceAdapter;
+use crate::{context_source_adapter::ContextSourceAdapter, probe_entity_type::probe_entity_type};
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
@@ -60,14 +60,19 @@ async fn regression_operation_group_redirection_ops_advertises_purge_entity() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
     let source = ContextSourceAdapter::start().await;
-    let entity_type = "PurgeGroupProbe";
+    let entity_type = probe_entity_type(&scope, "PurgeGroupProbe");
 
-    let registration = registration_advertising(&scope.id("registration:purge-redirection-ops"), &source.url("/"), "redirectionOps", entity_type);
+    let registration = registration_advertising(
+        &scope.id("registration:purge-redirection-ops"),
+        &source.url("/"),
+        "redirectionOps",
+        &entity_type,
+    );
     let created = client.create_registration(&registration).await.expect("create registration");
     assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
 
     source.set_stub(Method::DELETE, FORWARDED_PURGE_PATH, 204).await;
-    let status = purge_by_type(client, entity_type).await;
+    let status = purge_by_type(client, &entity_type).await;
     assert!(
         matches!(status.as_u16(), 200 | 204 | 207),
         "a purge across a redirect registration completes: {status}"
@@ -91,14 +96,15 @@ async fn regression_operation_group_no_other_group_advertises_purge_entity() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
 
-    for (group, entity_type) in [("federationOps", "PurgeFederationProbe"), ("associationOps", "PurgeAssociationProbe")] {
+    for (group, probe_base) in [("federationOps", "PurgeFederationProbe"), ("associationOps", "PurgeAssociationProbe")] {
         let source = ContextSourceAdapter::start().await;
-        let registration = registration_advertising(&scope.id(&format!("registration:purge-{group}")), &source.url("/"), group, entity_type);
+        let entity_type = probe_entity_type(&scope, probe_base);
+        let registration = registration_advertising(&scope.id(&format!("registration:purge-{group}")), &source.url("/"), group, &entity_type);
         let created = client.create_registration(&registration).await.expect("create registration");
         assert_eq!(created.status, StatusCode::CREATED, "{group}: {:?}", created.body);
 
         source.set_stub(Method::DELETE, FORWARDED_PURGE_PATH, 204).await;
-        purge_by_type(client, entity_type).await;
+        purge_by_type(client, &entity_type).await;
 
         assert_eq!(
             source.get_total_count(),
@@ -119,14 +125,14 @@ async fn regression_operation_group_purge_entity_named_directly_still_matches() 
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
     let source = ContextSourceAdapter::start().await;
-    let entity_type = "PurgeNamedProbe";
+    let entity_type = probe_entity_type(&scope, "PurgeNamedProbe");
 
-    let registration = registration_advertising(&scope.id("registration:purge-named"), &source.url("/"), "purgeEntity", entity_type);
+    let registration = registration_advertising(&scope.id("registration:purge-named"), &source.url("/"), "purgeEntity", &entity_type);
     let created = client.create_registration(&registration).await.expect("create registration");
     assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
 
     source.set_stub(Method::DELETE, FORWARDED_PURGE_PATH, 204).await;
-    purge_by_type(client, entity_type).await;
+    purge_by_type(client, &entity_type).await;
 
     assert_eq!(
         source.get_count(Method::DELETE, FORWARDED_PURGE_PATH),

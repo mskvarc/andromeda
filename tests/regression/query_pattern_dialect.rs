@@ -116,7 +116,7 @@ async fn create_pattern_subscription(scope: &TestEnvironment, receiver: &Notific
     let subscription = json!({
         "id": scope.id(local_id),
         "type": "Subscription",
-        "entities": [{"type": FIXTURE_TYPE}],
+        "entities": [{"type": FIXTURE_TYPE, "idPattern": format!("^{}:", scope.id_prefix())}],
         "notificationTrigger": ["entityCreated", "attributeUpdated"],
         "q": filter,
         "notification": {

@@ -25,6 +25,41 @@ pub(crate) const BROKER_DIRECT_URL_ENV: &str = "ANDROMEDA_TEST_BROKER_DIRECT_URL
 /// Environment variable naming the `PgBouncer` admin-console endpoint (db `pgbouncer`).
 pub(crate) const PGBOUNCER_ADMIN_URL_ENV: &str = "ANDROMEDA_TEST_PGBOUNCER_ADMIN_URL";
 
+/// The `--test-threads` value a suite whose tests are isolated by per-test id
+/// prefix runs at. Four keeps the pressure a 4-vCPU CI runner (which also hosts
+/// PostgreSQL and the brokers) can absorb; a suite that needs a different degree
+/// declares it with [`Suite::parallel`].
+const PREFIX_ISOLATED_THREADS: u16 = 4;
+
+/// One integration-test suite and the `--test-threads` value its isolation model
+/// supports. A suite whose tests scope every resource by a per-test id prefix
+/// (harness `TestEnvironment`, a shared advisory lock) runs in parallel; one that
+/// resets the tenant (`SerializedEnvironment`, an exclusive lock), selects a bare
+/// shared entity type, or reads tenant-wide state must run single-threaded.
+pub(crate) struct Suite {
+    /// The cargo `--test` target name.
+    pub(crate) name: &'static str,
+    /// The `--test-threads` value the suite's isolation allows.
+    pub(crate) test_threads: u16,
+}
+
+impl Suite {
+    /// A suite that must run single-threaded: it resets the tenant, selects a
+    /// bare shared entity type, or depends on tenant-wide broker state.
+    const fn serial(name: &'static str) -> Suite {
+        Suite { name, test_threads: 1 }
+    }
+
+    /// A suite whose tests are isolated by per-test id prefix and so run in
+    /// parallel at [`PREFIX_ISOLATED_THREADS`].
+    const fn parallel(name: &'static str) -> Suite {
+        Suite {
+            name,
+            test_threads: PREFIX_ISOLATED_THREADS,
+        }
+    }
+}
+
 /// The integration-test stacks the runner can drive.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(crate) enum StackName {
@@ -54,10 +89,8 @@ pub(crate) struct Stack {
     pub(crate) profile: Option<&'static str>,
     /// `ANDROMEDA_TEST_*` variables the suites read, minus the callback host.
     pub(crate) env: &'static [(&'static str, &'static str)],
-    /// The cargo `--test` targets this stack owns.
-    pub(crate) suites: &'static [&'static str],
-    /// The `--test-threads` value the suites require.
-    pub(crate) test_threads: u16,
+    /// The suites this stack owns, each with the thread count its isolation allows.
+    pub(crate) suites: &'static [Suite],
 }
 
 impl Stack {
@@ -80,67 +113,72 @@ impl Stack {
     }
 }
 
-/// Locate the stack that owns a suite, returning the owning entry and the interned suite name.
-pub(crate) fn stack_for_suite(name: &str) -> Option<(&'static Stack, &'static str)> {
+/// Locate the stack that owns a suite, returning the owning entry and the interned suite.
+pub(crate) fn stack_for_suite(name: &str) -> Option<(&'static Stack, &'static Suite)> {
     STACKS
         .iter()
-        .find_map(|stack| stack.suites.iter().copied().find(|suite| *suite == name).map(|suite| (stack, suite)))
+        .find_map(|stack| stack.suites.iter().find(|suite| suite.name == name).map(|suite| (stack, suite)))
 }
 
-/// The base tier's suites: every non-distributed suite plus the trusted-edge regression pair.
-const BASE_SUITES: &[&str] = &[
-    "aggregation",
-    "annex_c",
-    "batch",
-    "cold_dictionary",
-    "common",
-    "context_source_info",
-    "csf",
-    "csr",
-    "csr_notification",
-    "csr_subscription",
-    "current_projection",
-    "discovery",
-    "distop_attributes",
-    "distop_batch",
-    "distop_entity",
-    "distop_entity_attributes",
-    "distop_temporal_entity",
-    "distop_temporal_entity_map",
-    "distop_types",
-    "durable_queue",
-    "entity",
-    "entity_attributes",
-    "entity_map",
-    "entity_order",
-    "expand_values",
-    "expiration",
-    "extension",
-    "geometry",
-    "info",
-    "join",
-    "jsonld_context",
-    "language",
-    "list",
-    "multitenancy",
-    "name_dictionary",
-    "notification",
-    "notification_join",
-    "pagination",
-    "prefer",
-    "profile",
-    "query_access_paths",
-    "regression",
-    "scope_query",
-    "spatial",
-    "spatial_3d",
-    "subscription",
-    "temporal_entity",
-    "temporal_entity_attributes",
-    "temporal_semantics",
-    "tenant_management",
-    "tenant_schema",
-    "unit_catalog",
+/// The base tier's suites: every non-distributed suite plus the trusted-edge
+/// regression pair. Suites marked [`Suite::parallel`] are isolated by per-test id
+/// prefix and run multi-threaded; the rest reset the tenant, select a bare shared
+/// type, or read tenant-wide state and stay single-threaded.
+const BASE_SUITES: &[Suite] = &[
+    Suite::parallel("aggregation"),
+    Suite::serial("annex_c"),
+    Suite::serial("batch"),
+    Suite::serial("cold_dictionary"),
+    Suite::serial("common"),
+    // Only two tests, one of which waits on a forwarding mock; parallelism is a
+    // net loss here, so it stays single-threaded despite being prefix-isolated.
+    Suite::serial("context_source_info"),
+    Suite::serial("csf"),
+    Suite::serial("csr"),
+    Suite::serial("csr_notification"),
+    Suite::serial("csr_subscription"),
+    Suite::parallel("current_projection"),
+    Suite::serial("discovery"),
+    Suite::serial("distop_attributes"),
+    Suite::serial("distop_batch"),
+    Suite::serial("distop_entity"),
+    Suite::serial("distop_entity_attributes"),
+    Suite::serial("distop_temporal_entity"),
+    Suite::serial("distop_temporal_entity_map"),
+    Suite::serial("distop_types"),
+    Suite::serial("durable_queue"),
+    Suite::serial("entity"),
+    Suite::serial("entity_attributes"),
+    Suite::serial("entity_map"),
+    Suite::parallel("entity_order"),
+    Suite::serial("expand_values"),
+    Suite::parallel("expiration"),
+    Suite::parallel("extension"),
+    Suite::parallel("geometry"),
+    Suite::parallel("info"),
+    Suite::parallel("join"),
+    Suite::serial("jsonld_context"),
+    Suite::parallel("language"),
+    Suite::parallel("list"),
+    Suite::serial("multitenancy"),
+    Suite::serial("name_dictionary"),
+    Suite::serial("notification"),
+    Suite::parallel("notification_join"),
+    Suite::serial("pagination"),
+    Suite::parallel("prefer"),
+    Suite::parallel("profile"),
+    Suite::serial("query_access_paths"),
+    Suite::parallel("regression"),
+    Suite::parallel("scope_query"),
+    Suite::parallel("spatial"),
+    Suite::parallel("spatial_3d"),
+    Suite::serial("subscription"),
+    Suite::serial("temporal_entity"),
+    Suite::serial("temporal_entity_attributes"),
+    Suite::serial("temporal_semantics"),
+    Suite::serial("tenant_management"),
+    Suite::serial("tenant_schema"),
+    Suite::parallel("unit_catalog"),
 ];
 
 /// The complete stack registry, indexed by [`Stack::index`].
@@ -155,7 +193,6 @@ pub(crate) static STACKS: [Stack; 7] = [
             (DATABASE_URL_ENV, "postgres://postgres:postgres@127.0.0.1:5432/postgres"),
         ],
         suites: BASE_SUITES,
-        test_threads: 1,
     },
     Stack {
         name: StackName::Distributed,
@@ -164,8 +201,7 @@ pub(crate) static STACKS: [Stack; 7] = [
         // The distop topology reads DIST_* keys that already default to the
         // compose ports; only the front broker's database endpoint is pinned.
         env: &[(DATABASE_URL_ENV, "postgres://postgres:postgres@127.0.0.1:5442/broker_a")],
-        suites: &["distop"],
-        test_threads: 1,
+        suites: &[Suite::serial("distop")],
     },
     Stack {
         name: StackName::Federation,
@@ -173,8 +209,7 @@ pub(crate) static STACKS: [Stack; 7] = [
         profile: None,
         // The fed topology reads FED_* keys that already default to the compose ports.
         env: &[],
-        suites: &["fed"],
-        test_threads: 1,
+        suites: &[Suite::serial("fed")],
     },
     Stack {
         name: StackName::Snapshot,
@@ -184,8 +219,7 @@ pub(crate) static STACKS: [Stack; 7] = [
             (BROKER_URL_ENV, "http://127.0.0.1:1081/ngsi-ld/v1/"),
             (DATABASE_URL_ENV, "postgres://postgres:postgres@127.0.0.1:5481/snapshot_primary"),
         ],
-        suites: &["snapshot"],
-        test_threads: 1,
+        suites: &[Suite::serial("snapshot")],
     },
     Stack {
         name: StackName::Http3,
@@ -196,8 +230,7 @@ pub(crate) static STACKS: [Stack; 7] = [
             (HTTP3_AUTHORITY_ENV, "127.0.0.1:1056"),
             (HTTP3_CERT_ENV, "docker/compose/test/http3/certs/broker.crt"),
         ],
-        suites: &["http3"],
-        test_threads: 1,
+        suites: &[Suite::serial("http3")],
     },
     Stack {
         name: StackName::Extensions,
@@ -208,8 +241,7 @@ pub(crate) static STACKS: [Stack; 7] = [
             (CONFORMANCE_BROKER_URL_ENV, "http://127.0.0.1:1092/ngsi-ld/v1/"),
             (DATABASE_URL_ENV, "postgres://postgres:postgres@127.0.0.1:5491/postgres"),
         ],
-        suites: &["extensions"],
-        test_threads: 1,
+        suites: &[Suite::serial("extensions")],
     },
     Stack {
         name: StackName::Pgbouncer,
@@ -228,8 +260,12 @@ pub(crate) static STACKS: [Stack; 7] = [
             // PAUSE/RESUME/RECONNECT/KILL.
             (PGBOUNCER_ADMIN_URL_ENV, "postgres://postgres:postgres@127.0.0.1:6467/pgbouncer"),
         ],
-        suites: &["pgbouncer_scale", "pgbouncer_semantics", "pgbouncer_resilience", "pgbouncer_dormant"],
-        test_threads: 1,
+        suites: &[
+            Suite::serial("pgbouncer_scale"),
+            Suite::serial("pgbouncer_semantics"),
+            Suite::serial("pgbouncer_resilience"),
+            Suite::serial("pgbouncer_dormant"),
+        ],
     },
 ];
 

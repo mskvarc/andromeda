@@ -36,7 +36,7 @@ async fn create_subscription(scope: &TestEnvironment, receiver: &NotificationSer
     let subscription = json!({
         "id": scope.id(local_id),
         "type": "Subscription",
-        "entities": [{"type": "Building"}],
+        "entities": [{"type": "Building", "idPattern": format!("^{}:", scope.id_prefix())}],
         "notificationTrigger": triggers,
         "notification": {
             "showChanges": show_changes,

@@ -84,15 +84,17 @@ fn registration_for_entity(id: &str, endpoint: &str, mode: &str, entity_type: &s
     })
 }
 
-/// A registration covering one Entity type, under `mode`.
-fn registration_for_type(id: &str, endpoint: &str, mode: &str, entity_type: &str, operations: &[&str]) -> Value {
+/// A registration covering one Entity type under `mode`, scoped to
+/// `entity_id_pattern` so a concurrent test's retrieval of an unrelated
+/// identifier does not match it and drag this test's sources into that merge.
+fn registration_for_type(id: &str, endpoint: &str, mode: &str, entity_type: &str, entity_id_pattern: &str, operations: &[&str]) -> Value {
     json!({
         "id": id,
         "type": "ContextSourceRegistration",
         "endpoint": endpoint,
         "mode": mode,
         "operations": operations,
-        "information": [{"entities": [{"type": entity_type}]}],
+        "information": [{"entities": [{"type": entity_type, "idPattern": entity_id_pattern}]}],
         "@context": [TEST_SUITE_CONTEXT]
     })
 }
@@ -786,6 +788,7 @@ async fn regression_transient_conflict_the_query_path_differentiates_the_same_wa
                 &marked.url("/"),
                 "inclusive",
                 &entity_type,
+                &format!("^{}:", scope.id_prefix()),
                 &["queryEntity"],
             ),
         )
@@ -797,6 +800,7 @@ async fn regression_transient_conflict_the_query_path_differentiates_the_same_wa
                 &unmarked.url("/"),
                 "inclusive",
                 &entity_type,
+                &format!("^{}:", scope.id_prefix()),
                 &["queryEntity"],
             ),
         )

@@ -131,7 +131,10 @@ async fn temporal_query_georel_near_ignores_altitude() {
     create_temporal(client, &temporal_building(&elevated, 500.0, "2020-08-01T12:03:00Z")).await;
 
     let coordinates = encode_json(&p0());
-    let query_string = format!("type=Building&timerel=after&timeAt=2020-01-01T00:00:00Z&georel=near;maxDistance==100&geometry=Point&coordinates={coordinates}");
+    let id_pattern = urlencoding::encode(&format!("^{}:", scope.id_prefix())).into_owned();
+    let query_string = format!(
+        "type=Building&idPattern={id_pattern}&timerel=after&timeAt=2020-01-01T00:00:00Z&georel=near;maxDistance==100&geometry=Point&coordinates={coordinates}"
+    );
     let response = client
         .query_temporal_entities(&query_string, Some(TEST_SUITE_CONTEXT))
         .await
@@ -156,7 +159,10 @@ async fn temporal_query_georel_2d_reference_matches_3d_history() {
     create_temporal(client, &temporal_building(&elevated, 500.0, "2020-08-01T12:03:00Z")).await;
 
     let coordinates = encode_json(&p_2d());
-    let query_string = format!("type=Building&timerel=after&timeAt=2020-01-01T00:00:00Z&georel=near;maxDistance==100&geometry=Point&coordinates={coordinates}");
+    let id_pattern = urlencoding::encode(&format!("^{}:", scope.id_prefix())).into_owned();
+    let query_string = format!(
+        "type=Building&idPattern={id_pattern}&timerel=after&timeAt=2020-01-01T00:00:00Z&georel=near;maxDistance==100&geometry=Point&coordinates={coordinates}"
+    );
     let response = client
         .query_temporal_entities(&query_string, Some(TEST_SUITE_CONTEXT))
         .await
@@ -188,8 +194,9 @@ async fn temporal_query_georel_on_a_custom_geoproperty_matches() {
     create_temporal(client, &temporal_building_with_observation_point(&far, [13.4, 52.52], [30.0, 10.0, 0.0])).await;
 
     let coordinates = encode_json(&p0());
+    let id_pattern = urlencoding::encode(&format!("^{}:", scope.id_prefix())).into_owned();
     let query_string = format!(
-        "type=Building&timerel=after&timeAt=2020-01-01T00:00:00Z&georel=near;maxDistance==100&geometry=Point&coordinates={coordinates}&geoproperty=observationPoint"
+        "type=Building&idPattern={id_pattern}&timerel=after&timeAt=2020-01-01T00:00:00Z&georel=near;maxDistance==100&geometry=Point&coordinates={coordinates}&geoproperty=observationPoint"
     );
     let response = client
         .query_temporal_entities(&query_string, Some(TEST_SUITE_CONTEXT))

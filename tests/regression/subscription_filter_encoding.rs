@@ -57,11 +57,11 @@ fn building(id: &str, name_value: &str) -> Value {
 
 /// A subscription watching `airQualityLevel` and narrowed by `q`, notified over
 /// `endpoint`.
-fn subscription(id: &str, endpoint: &str, q: &str) -> Value {
+fn subscription(id: &str, endpoint: &str, q: &str, id_pattern: &str) -> Value {
     json!({
         "id": id,
         "type": "Subscription",
-        "entities": [{"type": "Building"}],
+        "entities": [{"type": "Building", "idPattern": id_pattern}],
         "watchedAttributes": ["airQualityLevel"],
         "q": q,
         "notification": {"format": "normalized", "endpoint": {"uri": endpoint, "accept": "application/json"}},
@@ -105,7 +105,16 @@ async fn regression_subscription_filter_a_literal_space_in_a_body_q_matches() {
     let subscription_id = scope.id("Subscription:body-q-literal-space");
 
     create(client, &building(&entity_id, "Eiffel Tower")).await;
-    subscribe(client, &subscription(&subscription_id, &receiver.endpoint_url(), "name==\"Eiffel Tower\"")).await;
+    subscribe(
+        client,
+        &subscription(
+            &subscription_id,
+            &receiver.endpoint_url(),
+            "name==\"Eiffel Tower\"",
+            &format!("^{}:", scope.id_prefix()),
+        ),
+    )
+    .await;
     receiver.clear_notifications().await;
 
     touch(client, &entity_id).await;
@@ -130,7 +139,16 @@ async fn regression_subscription_filter_a_percent_sequence_in_a_body_q_is_not_de
     let subscription_id = scope.id("Subscription:body-q-percent-encoded");
 
     create(client, &building(&entity_id, "Eiffel Tower")).await;
-    subscribe(client, &subscription(&subscription_id, &receiver.endpoint_url(), "name==\"Eiffel%20Tower\"")).await;
+    subscribe(
+        client,
+        &subscription(
+            &subscription_id,
+            &receiver.endpoint_url(),
+            "name==\"Eiffel%20Tower\"",
+            &format!("^{}:", scope.id_prefix()),
+        ),
+    )
+    .await;
     receiver.clear_notifications().await;
 
     touch(client, &entity_id).await;
@@ -165,7 +183,16 @@ async fn regression_subscription_filter_a_percent_sequence_matches_a_literal_per
     let subscription_id = scope.id("Subscription:body-q-literal-percent");
 
     create(client, &building(&entity_id, "Eiffel%20Tower")).await;
-    subscribe(client, &subscription(&subscription_id, &receiver.endpoint_url(), "name==\"Eiffel%20Tower\"")).await;
+    subscribe(
+        client,
+        &subscription(
+            &subscription_id,
+            &receiver.endpoint_url(),
+            "name==\"Eiffel%20Tower\"",
+            &format!("^{}:", scope.id_prefix()),
+        ),
+    )
+    .await;
     receiver.clear_notifications().await;
 
     touch(client, &entity_id).await;

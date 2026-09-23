@@ -32,7 +32,7 @@ use andromeda_ngsi_ld_request::options::UpsertMode;
 use futures::{StreamExt, stream};
 use iri_rs::IriBuf;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::{collections::HashMap, slice::from_ref};
 use tracing::debug;
 use url::Url;
 
@@ -227,8 +227,11 @@ async fn narrow_input(
     let csr_is_redirect = csr.access.mode == Some(ForwardingMode::Redirect);
     let mut narrowed = Vec::new();
     for entity in entities {
+        // Clause 5.12 matches on any of the entity's types; a batch entity names
+        // at most one, so its resolved type (when known) is the whole set.
         let entity_type = entity.entity_type.and_then(|name| expanded_types.get(name.as_str()));
-        if !csr_has_matching_information(csr, entity_type, Some(entity.id), None) {
+        let entity_types: &[IriBuf] = entity_type.map_or(&[], from_ref);
+        if !csr_has_matching_information(csr, entity_types, Some(entity.id), None) {
             continue;
         }
         let Some(body) = entity.body else {
@@ -242,7 +245,7 @@ async fn narrow_input(
         let Some(mut object) = body.as_object().cloned() else {
             continue; // clone: each registration gets its own narrowed copy of the entity
         };
-        if !retain_covered_attributes(&mut object, csr, entity_type, Some(entity.id), resolver).await? {
+        if !retain_covered_attributes(&mut object, csr, entity_types, Some(entity.id), resolver).await? {
             continue;
         }
         for other in candidates.iter().filter(|other| other.id != csr.id) {
@@ -254,7 +257,7 @@ async fn narrow_input(
             if !owns {
                 continue;
             }
-            for member in covered_attribute_members(&object, other, entity_type, Some(entity.id), resolver).await? {
+            for member in covered_attribute_members(&object, other, entity_types, Some(entity.id), resolver).await? {
                 object.remove(&member);
             }
         }

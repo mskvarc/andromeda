@@ -4,6 +4,7 @@ use crate::{
     blocking_executor::TokioBlockingExecutor,
     event::{entity_change_sink::BroadcastEntityChangeSink, registration_change_sink::BroadcastRegistrationChangeSink},
     linked_entity_forwarding::ForwardedLinkedEntitySource,
+    local_entity_type::EntityReaderTypeResolver,
     registered_entity_probe::EntityStoreRegistrationProbe,
     retry_delay::TokioRetryDelay,
     temporal_linked_forwarding::ForwardedTemporalLinkedSource,
@@ -101,6 +102,7 @@ pub(super) fn construct_services(
     let forwarding = Arc::new(
         FederationService::new(
             Arc::clone(&storage.registration_store),
+            Arc::new(EntityReaderTypeResolver::new(Arc::clone(&storage.entity_ports.reader))),
             storage.engine.clone(), // clone: each tenant service owns its JSON-LD engine handle.
             aliases.for_tenant(&storage.tenant),
             &config.federation,

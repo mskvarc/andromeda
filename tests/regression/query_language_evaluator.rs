@@ -55,7 +55,7 @@ async fn create_filtered_subscription(scope: &TestEnvironment, receiver: &Notifi
     let subscription = json!({
         "id": id,
         "type": "Subscription",
-        "entities": [{"type": "Building"}],
+        "entities": [{"type": "Building", "idPattern": format!("^{}:", scope.id_prefix())}],
         "notificationTrigger": ["entityCreated", "attributeUpdated"],
         "q": filter,
         "notification": {

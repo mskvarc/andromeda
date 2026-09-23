@@ -283,7 +283,7 @@ async fn regression_registration_health_a_subscription_endpoint_and_counters_mat
         let body = json!({
             "id": id,
             "type": "Subscription",
-            "entities": [{"type": "Vehicle"}],
+            "entities": [{"type": "Vehicle", "idPattern": format!("^{}:", scope.id_prefix())}],
             "notification": {"endpoint": {"uri": uri, "accept": "application/json"}},
             "@context": [CORE_CONTEXT]
         });

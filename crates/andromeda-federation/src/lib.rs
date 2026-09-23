@@ -38,6 +38,8 @@ pub mod forwarded_payload;
 pub mod forwarded_query;
 /// Forwarded URL construction.
 pub mod forwarding_url;
+/// Resolving a locally-held entity's type for federated-write coverage.
+pub mod local_entity_type;
 /// NGSI-LD operation capability matching.
 pub mod operation;
 /// Whether a read's answer may be ordered (clauses 4.23.1, 5.7.2.4, 5.7.4.4).
@@ -80,6 +82,7 @@ use crate::{
     config::{FederationConfig, SplitEntities, SplitEntitiesDefault},
     cooldown::CooldownRegistry,
     error::FederationError,
+    local_entity_type::LocalEntityTypeResolver,
     outcome::TransportFailure,
 };
 use andromeda_http_headers::{
@@ -143,6 +146,10 @@ pub(crate) struct SentResponse {
 pub struct FederationService {
     http_client: reqwest::Client,
     csr_repo: Arc<dyn RegistrationStore>,
+    /// Resolves a locally-held entity's type so an attribute-level write whose
+    /// request carries no `type` is matched against registrations by the type
+    /// the entity actually has, rather than treated as covering every type.
+    local_entity_types: Arc<dyn LocalEntityTypeResolver>,
     engine: JsonLdEngine,
     /// Context Source alias used as the `Via` pseudonym (clause 6.3.18).
     source_alias: ContextSourcePseudonym,
@@ -170,6 +177,7 @@ impl FederationService {
     /// the forwarded `Via` header carries cannot be constructed.
     pub fn new(
         csr_repo: Arc<dyn RegistrationStore>,
+        local_entity_types: Arc<dyn LocalEntityTypeResolver>,
         engine: JsonLdEngine,
         source_alias: ContextSourcePseudonym,
         config: &FederationConfig,
@@ -188,6 +196,7 @@ impl FederationService {
         Ok(FederationService {
             http_client,
             csr_repo,
+            local_entity_types,
             engine,
             source_alias,
             received_protocol,
