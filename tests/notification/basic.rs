@@ -89,7 +89,7 @@ async fn notification_time_interval_subscription_delivers_notification_without_e
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let subscription_id = unique_subscription_id("046_02");
-    let mut subscription = with_time_interval(subscription_with_endpoint(&subscription_id, &receiver.endpoint_url()), 10);
+    let mut subscription = with_time_interval(subscription_with_endpoint(&subscription_id, &receiver.endpoint_url()), 2);
     set_endpoint_uri(&mut subscription, &receiver.endpoint_url());
 
     let (status, _, _) = create_subscription(&http_client, &subscription).await;
@@ -568,10 +568,19 @@ async fn notification_entity_created_trigger_with_non_matching_type_selector_del
 
     receiver.clear_notifications().await;
 
-    let entity_id = unique_entity_id("urn:ngsi-ld:Vehicle:046_16_02");
-    let _ = create_entity(&http_client, &vehicle_simple_entity(&entity_id)).await;
+    let vehicle_id = unique_entity_id("urn:ngsi-ld:Vehicle:046_16_02");
+    let _ = create_entity(&http_client, &vehicle_simple_entity(&vehicle_id)).await;
 
-    receiver.wait_for_no_subscription_notification(&subscription_id, Duration::from_secs(3)).await;
+    // Sentinel: a Building matches the (Building|Tower) selector and must notify.
+    // Delivery for one subscription is ordered on the shared endpoint, so if the
+    // non-matching Vehicle above had wrongly notified, its notification would
+    // arrive first and be the one returned here -- the id assertion would then
+    // see the Vehicle's id instead of the Building's.
+    let building_id = unique_entity_id("urn:ngsi-ld:Building:046_16_02_sentinel");
+    let _ = create_entity(&http_client, &building_simple_entity(&building_id)).await;
+
+    let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
+    pretty_assertions::assert_eq!(notification.body["data"][0]["id"], building_id);
 }
 
 #[serial_test::serial]

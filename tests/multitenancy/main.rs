@@ -596,11 +596,12 @@ async fn multitenancy_subscription_does_not_receive_events_from_different_tenant
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    receiver
-        .wait_for_no_notification_for_subscription(&subscription_id, Duration::from_secs(2))
-        .await;
-
-    // Create entity in tenant A — must trigger subscription in tenant A
+    // Create entity in tenant A -- must trigger the subscription in tenant A. Its
+    // notification is the sentinel that proves tenant B's create above stayed in
+    // tenant B: delivery for one subscription is ordered on the shared endpoint,
+    // so a cross-tenant leak would have arrived first and been the one returned
+    // here. Asserting the delivered entity is tenant A's own is what detects a
+    // leak -- a leaked tenant-B notification carries the same subscriptionId.
     let entity_id_a = unique_entity_id("urn:ngsi-ld:Vehicle:sub-isolation-a");
     let (status, _, _) = ngsi_request(
         &http_client,
@@ -615,6 +616,7 @@ async fn multitenancy_subscription_does_not_receive_events_from_different_tenant
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
     pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["data"][0]["id"], entity_id_a);
 
     receiver.shutdown().await;
     environment.finish().await;

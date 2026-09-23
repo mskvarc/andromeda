@@ -370,25 +370,30 @@ async fn expiration_expires_at_updatable_via_merge_patch() {
 
 // --- Worker-driven expiration tests ---
 //
-// Each test sleeps ~12 s to span a worker cycle. Rows are scoped by id
-// prefix so the worker's actions on other tests' rows do not affect us.
+// The base stack runs the expiry sweep every second (EXPIRY_SWEEP_INTERVAL), so
+// these tests poll for the swept state rather than sleeping a fixed cycle. Rows
+// are scoped by id prefix so the worker's actions on other tests' rows do not
+// affect us.
 
-/// The broker's configured `entity.expiration_check_interval_secs`.
-const EXPIRY_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
+/// The base test stack's `temporal.expiration_check_interval_secs`
+/// (`ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL_SECS: "1"` in the base
+/// compose file). Kept in sync with it so the worker waits below track the real
+/// sweep cadence.
+const EXPIRY_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Wait until the expiry sweep has left the entity in `expected` shape.
 ///
-/// The worker runs on `expiration_check_interval_secs`, 30 seconds by default,
-/// so any fixed sleep either burns that on every test or races the sweep. A
-/// twelve-second one did the latter: it passed only when the test happened to
-/// land late in the interval, which is what made this suite fail one test per
-/// run under an alternating name.
+/// The worker runs on `expiration_check_interval_secs` (one second in the base
+/// test stack). Polling for the swept state, rather than sleeping a fixed cycle,
+/// keeps the test fast and immune to landing early or late in the interval: a
+/// fixed twelve-second sleep once raced the sweep and failed one test per run
+/// under an alternating name.
 async fn wait_for_expiry_sweep<F, Fut>(what: &str, mut settled: F)
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = bool>,
 {
-    let deadline = Instant::now() + Duration::from_secs(75);
+    let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         if settled().await {
             return;
@@ -496,8 +501,8 @@ async fn expiration_worker_attribute_without_expires_at_never_removed() {
     .await;
 
     // Nothing to poll for: the claim is that a sweep leaves the attribute
-    // alone, so the wait has to outlast one whole `expiration_check_interval`.
-    sleep(EXPIRY_SWEEP_INTERVAL + Duration::from_secs(5)).await;
+    // alone, so the wait must outlast at least one whole sweep interval.
+    sleep(EXPIRY_SWEEP_INTERVAL + Duration::from_secs(2)).await;
     let body = fetch(client, &id, "").await;
     assert!(body.get("speed").is_some());
     scope.finish().await.expect("cleanup failed");

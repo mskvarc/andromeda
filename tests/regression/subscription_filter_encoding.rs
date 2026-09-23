@@ -43,9 +43,6 @@ use std::time::Duration;
 /// How long a notification that is owed is waited for.
 const ARRIVAL: Duration = Duration::from_secs(10);
 
-/// How long a notification that is not owed is waited against.
-const SILENCE: Duration = Duration::from_secs(5);
-
 /// A Building whose `name` carries `value`, plus the watched attribute so a
 /// later append has something to change.
 fn building(id: &str, name_value: &str) -> Value {
@@ -138,10 +135,21 @@ async fn regression_subscription_filter_a_percent_sequence_in_a_body_q_is_not_de
 
     touch(client, &entity_id).await;
 
-    receiver.wait_for_no_subscription_notification(&subscription_id, SILENCE).await;
+    // Sentinel: an entity whose `name` literally contains `%20` does match the
+    // percent-carrying filter (the companion test pins that), so touching it is
+    // owed a notification. Delivery for one subscription is ordered on the shared
+    // endpoint, so if touching the space-named entity above had wrongly matched,
+    // its notification would arrive first and this assertion would see its id.
+    let matching_id = scope.id("Building:body-q-percent-encoded-sentinel");
+    create(client, &building(&matching_id, "Eiffel%20Tower")).await;
+    touch(client, &matching_id).await;
+
+    let notification = receiver.wait_for_subscription_notification(&subscription_id, ARRIVAL).await;
+    assert_eq!(notification.body["data"][0]["id"], json!(matching_id), "{}", notification.body);
 
     client.delete_subscription(&subscription_id).await.expect("delete subscription");
     client.delete_entity(&entity_id).await.expect("delete entity");
+    client.delete_entity(&matching_id).await.expect("delete entity");
     scope.finish().await.expect("cleanup failed");
 }
 

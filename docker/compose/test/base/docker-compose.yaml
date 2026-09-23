@@ -38,6 +38,12 @@ x-broker-base: &broker-base
     # (SYSTEM_LAST_N_CAP) exercise the 206/Content-Range cut; the broker's own
     # default is a larger production page.
     ANDROMEDA__TEMPORAL__DEFAULT_LAST_N: "19"
+    # The expiry sweep runs on this interval; the base default is 30s, which
+    # would make the expiration suite's worker tests wait a whole sweep. 1s keeps
+    # them fast without changing behaviour: the sweep never removes anything
+    # before its expiresAt, it only shortens the latency after expiry. The
+    # EXPIRY_SWEEP_INTERVAL constant in tests/expiration/main.rs tracks this.
+    ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL_SECS: "1"
     # Two brokers share this one Postgres, whose default is max_connections=100.
     # The broker's own defaults (database.max_connections=32,
     # tenancy.tenant_max_connections=16) would let the pair plus the harness pools

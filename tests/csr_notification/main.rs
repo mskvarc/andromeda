@@ -137,7 +137,7 @@ fn base_subscription_payload(subscription_id: &str, endpoint_uri: &str) -> Value
 
 fn time_interval_subscription_payload(subscription_id: &str, endpoint_uri: &str) -> Value {
     let mut payload = base_subscription_payload(subscription_id, endpoint_uri);
-    payload["timeInterval"] = Value::from(10);
+    payload["timeInterval"] = Value::from(2);
     payload
 }
 
