@@ -9,54 +9,52 @@ use crate::helpers::{
     default_subscription,
     delete_subscription,
     raw_subscription_request,
-    reset_broker_state,
     retrieve_subscription,
-    unique_subscription_id,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 
-#[serial_test::serial]
 #[tokio::test]
 async fn subscription_delete_missing_id_path_returns_method_not_allowed() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
 
     let (status, _) = raw_subscription_request(&http_client, Method::DELETE, "/subscriptions/", None, None).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    scope.finish().await.expect("cleanup failed");
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn subscription_delete_invalid_id_returns_bad_request_data() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
 
     let (status, body_bytes) = delete_subscription(&http_client, "InvalidUri").await;
     let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap_or_default();
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn subscription_delete_unknown_id_returns_resource_not_found() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
 
     let (status, body_bytes) = delete_subscription(&http_client, "urn:ngsi-ld:Subscription:unknown").await;
     let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap_or_default();
 
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
     pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn subscription_delete_existing_id_returns_no_content_and_removes_subscription() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
-    let subscription_id = unique_subscription_id("delete-existing");
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+    let subscription_id = scope.id("Subscription:delete-existing");
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
@@ -69,4 +67,5 @@ async fn subscription_delete_existing_id_returns_no_content_and_removes_subscrip
 
     let (status, _) = retrieve_subscription(&http_client, &subscription_id, false).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    scope.finish().await.expect("cleanup failed");
 }

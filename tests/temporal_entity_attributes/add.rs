@@ -9,18 +9,16 @@ use crate::{
     add_attribute_fragment,
     add_temporal_attrs,
     add_temporal_attrs_raw,
-    clean_database,
     client,
     create_temporal_entity,
     get_temporal_entity,
     request_temporal_attrs,
-    unique_id,
     vehicle_temporal_representation,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 use serde_json::{Number, json};
-use serial_test::serial;
 use std::str::FromStr;
 
 // ---------------------------------------------------------------------------
@@ -28,11 +26,12 @@ use std::str::FromStr;
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_add_attribute_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:add_014_01_01");
+    let id = scope.id("Vehicle:add_014_01_01");
 
     // Setup: create temporal entity
     let entity = vehicle_temporal_representation(&id);
@@ -55,14 +54,16 @@ async fn temporal_attrs_add_attribute_success() {
 
     let added = body["added_attribute"].as_array().expect("added_attribute should be array");
     assert_eq!(added.len(), 3, "should have 3 added_attribute instances");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_add_preserves_an_exact_decimal() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:add_exact_number");
+    let id = scope.id("Vehicle:add_exact_number");
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_representation(&id)).await, StatusCode::CREATED);
     let exact = Number::from_str("0.160000000000000005").expect("exact JSON number");
     let fragment = json!({"exactAdded": [{"type": "Property", "value": exact, "observedAt": "2020-09-01T12:00:00Z"}], "@context": [COMPOUND_CONTEXT]});
@@ -72,14 +73,16 @@ async fn temporal_attrs_add_preserves_an_exact_decimal() {
     let (status, body) = get_temporal_entity(&c, &id, Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(serde_json::to_string(&body).expect("temporal entity JSON").contains("0.160000000000000005"));
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_add_multiple_attributes_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:add_014_01_02");
+    let id = scope.id("Vehicle:add_014_01_02");
 
     // Setup: create temporal entity
     let entity = vehicle_temporal_representation(&id);
@@ -106,14 +109,16 @@ async fn temporal_attrs_add_multiple_attributes_success() {
 
     assert!(body["newAttr1"].is_array(), "newAttr1 should exist");
     assert!(body["newAttr2"].is_array(), "newAttr2 should exist");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_add_relationship_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:add_014_01_03");
+    let id = scope.id("Vehicle:add_014_01_03");
 
     let entity = vehicle_temporal_representation(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -137,14 +142,16 @@ async fn temporal_attrs_add_relationship_success() {
     assert_eq!(status, StatusCode::OK);
     assert!(body["isParkedIn"].is_array());
     assert_eq!(body["isParkedIn"][0]["type"], "Relationship");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_add_geoproperty_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:add_014_01_04");
+    let id = scope.id("Vehicle:add_014_01_04");
 
     let entity = vehicle_temporal_representation(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -168,14 +175,16 @@ async fn temporal_attrs_add_geoproperty_success() {
     assert_eq!(status, StatusCode::OK);
     assert!(body["location"].is_array());
     assert_eq!(body["location"][0]["type"], "GeoProperty");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_add_instances_to_existing_attribute_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:add_014_01_05");
+    let id = scope.id("Vehicle:add_014_01_05");
 
     let entity = vehicle_temporal_representation(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -196,6 +205,7 @@ async fn temporal_attrs_add_instances_to_existing_attribute_success() {
     assert_eq!(status, StatusCode::OK);
     let speed = body["speed"].as_array().expect("speed should be array");
     assert_eq!(speed.len(), 4, "should have 4 speed instances (2 original + 2 added)");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -203,9 +213,10 @@ async fn temporal_attrs_add_instances_to_existing_attribute_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_add_empty_entity_id_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
 
     let fragment = add_attribute_fragment();
@@ -216,12 +227,14 @@ async fn temporal_attrs_add_empty_entity_id_returns_400() {
         "error type should be BadRequestData"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_add_invalid_entity_id_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
 
     let fragment = add_attribute_fragment();
@@ -232,6 +245,7 @@ async fn temporal_attrs_add_invalid_entity_id_returns_400() {
         "error type should be BadRequestData"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -239,11 +253,12 @@ async fn temporal_attrs_add_invalid_entity_id_returns_400() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_add_entity_not_found_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:add_014_03_01");
+    let id = scope.id("Vehicle:add_014_03_01");
 
     let fragment = add_attribute_fragment();
     let (status, body) = add_temporal_attrs_raw(&c, &id, serde_json::to_vec(&fragment).unwrap().as_slice(), "application/ld+json").await;
@@ -253,6 +268,7 @@ async fn temporal_attrs_add_entity_not_found_returns_404() {
         "error type should be ResourceNotFound"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -260,11 +276,12 @@ async fn temporal_attrs_add_entity_not_found_returns_404() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_add_invalid_json_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:add_014_04_01");
+    let id = scope.id("Vehicle:add_014_04_01");
 
     // Setup: create entity
     let entity = vehicle_temporal_representation(&id);
@@ -278,14 +295,16 @@ async fn temporal_attrs_add_invalid_json_returns_400() {
         "error type should be InvalidRequest"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_add_empty_json_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:add_014_04_02");
+    let id = scope.id("Vehicle:add_014_04_02");
 
     // Setup: create entity
     let entity = vehicle_temporal_representation(&id);
@@ -299,14 +318,16 @@ async fn temporal_attrs_add_empty_json_returns_400() {
         "error type should be InvalidRequest"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_add_empty_object_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:add_014_04_03");
+    let id = scope.id("Vehicle:add_014_04_03");
 
     let entity = vehicle_temporal_representation(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -320,4 +341,5 @@ async fn temporal_attrs_add_empty_object_returns_400() {
             .is_some_and(|t| t.contains("InvalidRequest") || t.contains("BadRequestData")),
         "error type should indicate bad request"
     );
+    scope.finish().await.expect("cleanup failed");
 }

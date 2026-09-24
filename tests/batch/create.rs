@@ -2,20 +2,19 @@
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::configuration::RUNTIME_BROKER_BASE;
 use reqwest::{Method, StatusCode};
-use serial_test::serial;
 
 use crate::helpers::*;
+use andromeda_test_harness::environment::TestEnvironment;
 use serde_json::{Number, Value, json};
 use std::str::FromStr;
 
 #[tokio::test]
-#[serial]
 async fn batch_create_minimal_entities_returns_201() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:003_01_01a");
-    let id2 = unique_id("urn:ngsi-ld:Building:003_01_01b");
+    let id1 = scope.id("Building:003_01_01a");
+    let id2 = scope.id("Building:003_01_01b");
 
     let e1 = building_minimal(&id1);
     let e2 = building_minimal(&id2);
@@ -31,19 +30,19 @@ async fn batch_create_minimal_entities_returns_201() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     let (status, _, _) = get_entity(&c, &id2, "", false).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_create_partial_failure_forces_json_content_type() {
     // ETSI GS CIM 009 v1.9.1 clause 6.3.6: a 207 Multi-Status body is always
     // application/json, even when the request negotiated application/ld+json, so
     // it carries no JSON-LD @context.
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let existing = unique_id("urn:ngsi-ld:Building:207ct_a");
-    let fresh = unique_id("urn:ngsi-ld:Building:207ct_b");
+    let existing = scope.id("Building:207ct_a");
+    let fresh = scope.id("Building:207ct_b");
 
     // Pre-create one entity so the batch conflicts on it and lands a 207.
     let (status, _) = batch_create(&c, &json!([building_minimal(&existing)])).await;
@@ -71,16 +70,16 @@ async fn batch_create_partial_failure_forces_json_content_type() {
     );
     let body: Value = response.json().await.expect("207 body must be valid JSON");
     assert!(body.get("@context").is_none(), "the 207 json body carries no @context: {body}");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_create_with_properties_returns_201() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:003_01_02a");
-    let id2 = unique_id("urn:ngsi-ld:Building:003_01_02b");
+    let id1 = scope.id("Building:003_01_02a");
+    let id2 = scope.id("Building:003_01_02b");
 
     let e1 = building_simple_attributes(&id1);
     let e2 = building_simple_attributes(&id2);
@@ -92,16 +91,16 @@ async fn batch_create_with_properties_returns_201() {
     let (status, _, body) = get_entity(&c, &id1, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_create_preserves_exact_numbers_and_classifies_range_failures_per_entity() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
-    let fraction_id = unique_id("urn:ngsi-ld:Building:batch_exact_fraction");
-    let integer_id = unique_id("urn:ngsi-ld:Building:batch_exact_integer");
-    let rejected_id = unique_id("urn:ngsi-ld:Building:batch_out_of_range");
+    let fraction_id = scope.id("Building:batch_exact_fraction");
+    let integer_id = scope.id("Building:batch_exact_integer");
+    let rejected_id = scope.id("Building:batch_out_of_range");
     let fraction = Number::from_str("0.180000000000000005").expect("exact JSON fraction");
     let integer = Number::from_str("18446744073709551616").expect("exact JSON integer");
     let out_of_range = Number::from_str("1e-16384").expect("syntactically valid JSON number");
@@ -132,16 +131,16 @@ async fn batch_create_preserves_exact_numbers_and_classifies_range_failures_per_
     );
     let (status, _, _) = get_entity(&c, &rejected_id, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_create_with_relationships_returns_201() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:003_01_03a");
-    let id2 = unique_id("urn:ngsi-ld:Building:003_01_03b");
+    let id1 = scope.id("Building:003_01_03a");
+    let id2 = scope.id("Building:003_01_03b");
 
     let e1 = building_relationship(&id1);
     let e2 = building_relationship(&id2);
@@ -153,16 +152,16 @@ async fn batch_create_with_relationships_returns_201() {
     let (status, _, body) = get_entity(&c, &id1, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["locatedAt"]["type"], "Relationship");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_create_with_relationship_of_property_returns_201() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:003_01_04a");
-    let id2 = unique_id("urn:ngsi-ld:Building:003_01_04b");
+    let id1 = scope.id("Building:003_01_04a");
+    let id2 = scope.id("Building:003_01_04b");
 
     let e1 = building_relationship_of_property(&id1);
     let e2 = building_relationship_of_property(&id2);
@@ -170,21 +169,21 @@ async fn batch_create_with_relationship_of_property_returns_201() {
 
     let (status, _) = batch_create(&c, &entities).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_create_with_existing_entity_returns_207() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let existing_id = unique_id("urn:ngsi-ld:Building:003_02_01_exist");
+    let existing_id = scope.id("Building:003_02_01_exist");
     let pre = building_minimal(&existing_id);
     let (status, _, _) = create_entity(&c, &pre).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    let new_id1 = unique_id("urn:ngsi-ld:Building:003_02_01a");
-    let new_id2 = unique_id("urn:ngsi-ld:Building:003_02_01b");
+    let new_id1 = scope.id("Building:003_02_01a");
+    let new_id2 = scope.id("Building:003_02_01b");
     let e1 = building_minimal(&new_id1);
     let e2 = building_minimal(&new_id2);
     let e3 = building_minimal(&existing_id);
@@ -197,6 +196,7 @@ async fn batch_create_with_existing_entity_returns_207() {
     let errors = body["errors"].as_array().expect("should have errors array");
     pretty_assertions::assert_eq!(success.len(), 2, "2 entities should succeed");
     pretty_assertions::assert_eq!(errors.len(), 1, "1 entity should fail");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
@@ -223,13 +223,12 @@ async fn batch_create_empty_json_returns_400() {
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_create_json_with_link_header_returns_201() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:003_04_01a");
-    let id2 = unique_id("urn:ngsi-ld:Building:003_04_01b");
+    let id1 = scope.id("Building:003_04_01a");
+    let id2 = scope.id("Building:003_04_01b");
 
     let e1 = building_simple_attributes_json(&id1);
     let e2 = building_simple_attributes_json(&id2);
@@ -238,15 +237,15 @@ async fn batch_create_json_with_link_header_returns_201() {
 
     let (status, _) = request_raw(&c, Method::POST, "/entityOperations/create", &payload, Some("application/json"), true).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_create_json_with_link_header_retrieval_returns_200() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id = unique_id("urn:ngsi-ld:Building:003_04_02");
+    let id = scope.id("Building:003_04_02");
     let e1 = building_simple_attributes_json(&id);
     let entities = json!([e1]);
     let payload = serde_json::to_vec(&entities).unwrap();
@@ -257,16 +256,16 @@ async fn batch_create_json_with_link_header_retrieval_returns_200() {
     let (status, _, body) = get_entity(&c, &id, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_create_default_context_returns_201() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:003_05_01a");
-    let id2 = unique_id("urn:ngsi-ld:Building:003_05_01b");
+    let id1 = scope.id("Building:003_05_01a");
+    let id2 = scope.id("Building:003_05_01b");
 
     let e1 = building_simple_attributes_json(&id1);
     let e2 = building_simple_attributes_json(&id2);
@@ -278,15 +277,15 @@ async fn batch_create_default_context_returns_201() {
 
     let (status, _, _) = get_entity(&c, &id1, "", false).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_create_default_context_retrieval_returns_200() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id = unique_id("urn:ngsi-ld:Building:003_05_02");
+    let id = scope.id("Building:003_05_02");
     let e1 = building_simple_attributes_json(&id);
     let entities = json!([e1]);
     let payload = serde_json::to_vec(&entities).unwrap();
@@ -297,31 +296,31 @@ async fn batch_create_default_context_retrieval_returns_200() {
     let (status, _, body) = get_entity(&c, &id, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_create_json_with_context_in_body_returns_207() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id = unique_id("urn:ngsi-ld:Building:003_06_01");
+    let id = scope.id("Building:003_06_01");
     let e1 = building_minimal(&id);
     let entities = json!([e1]);
     let payload = serde_json::to_vec(&entities).unwrap();
 
     let (status, _) = request_raw(&c, Method::POST, "/entityOperations/create", &payload, Some("application/json"), false).await;
     pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS, "@context with JSON CT should cause per-entity error");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_create_ld_json_with_context_returns_201() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:003_07_01a");
-    let id2 = unique_id("urn:ngsi-ld:Building:003_07_01b");
+    let id1 = scope.id("Building:003_07_01a");
+    let id2 = scope.id("Building:003_07_01b");
 
     let e1 = building_simple_attributes(&id1);
     let e2 = building_simple_attributes(&id2);
@@ -329,15 +328,15 @@ async fn batch_create_ld_json_with_context_returns_201() {
 
     let (status, _) = batch_create(&c, &entities).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_create_ld_json_with_context_retrieval_returns_200() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id = unique_id("urn:ngsi-ld:Building:003_07_02");
+    let id = scope.id("Building:003_07_02");
     let e1 = building_simple_attributes(&id);
     let entities = json!([e1]);
 
@@ -348,46 +347,46 @@ async fn batch_create_ld_json_with_context_retrieval_returns_200() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
     pretty_assertions::assert_eq!(body["subCategory"]["value"], "tourism");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_create_ld_json_without_context_returns_207() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id = unique_id("urn:ngsi-ld:Building:003_08_01");
+    let id = scope.id("Building:003_08_01");
     let e1 = building_simple_attributes_json(&id);
     let entities = json!([e1]);
     let payload = serde_json::to_vec(&entities).unwrap();
 
     let (status, _) = request_raw(&c, Method::POST, "/entityOperations/create", &payload, Some("application/ld+json"), false).await;
     pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS, "missing @context with ld+json should fail per-entity");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_create_ld_json_with_link_header_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id = unique_id("urn:ngsi-ld:Building:003_09_01");
+    let id = scope.id("Building:003_09_01");
     let e1 = building_minimal(&id);
     let entities = json!([e1]);
     let payload = serde_json::to_vec(&entities).unwrap();
 
     let (status, _) = request_raw(&c, Method::POST, "/entityOperations/create", &payload, Some("application/ld+json"), true).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST, "Link + ld+json should return 400");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_create_duplicate_ids_in_batch_returns_207() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:003_10_01a");
-    let id2 = unique_id("urn:ngsi-ld:Building:003_10_01b");
+    let id1 = scope.id("Building:003_10_01a");
+    let id2 = scope.id("Building:003_10_01b");
 
     let e1 = building_minimal(&id1);
     let e2 = building_minimal(&id2);
@@ -399,4 +398,5 @@ async fn batch_create_duplicate_ids_in_batch_returns_207() {
 
     let success = body["success"].as_array().expect("should have success array");
     pretty_assertions::assert_eq!(success.len(), 2, "2 unique entities should succeed");
+    scope.finish().await.expect("cleanup failed");
 }

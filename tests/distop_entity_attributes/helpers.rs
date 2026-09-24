@@ -2,11 +2,10 @@
 //! Common helpers for distributed entity attribute operation tests.
 
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
-use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
+use andromeda_test_harness::configuration::RUNTIME_BROKER_BASE as BASE_URL;
 use reqwest::{Client, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use urlencoding::encode;
-use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
 // Test utilities
@@ -16,18 +15,8 @@ pub fn client() -> Client {
     Client::new()
 }
 
-pub fn unique_id(prefix: &str) -> String {
-    format!("{prefix}:{}", Uuid::new_v4())
-}
-
 pub fn jsonld_link_value() -> String {
     format!("<{COMPOUND_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
-}
-
-pub async fn clean_database() -> SerializedEnvironment {
-    SerializedEnvironment::from_environment_reset()
-        .await
-        .expect("serialized test database environment")
 }
 
 // ---------------------------------------------------------------------------

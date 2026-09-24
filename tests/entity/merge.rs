@@ -20,18 +20,16 @@ use crate::{
     building_only_airqualitylevel_value,
     building_relationship_for_merge,
     building_simple_attributes_second_for_merge,
-    clean_database,
     client,
     create_entity,
     get_entity,
     merge_entity,
     request_method_on_collection,
-    unique_id,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 use serde_json::{Number, json};
-use serial_test::serial;
 use std::str::FromStr;
 
 // ---------------------------------------------------------------------------
@@ -39,11 +37,10 @@ use std::str::FromStr;
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_empty_fragment_unchanged() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_056_01_01");
+    let id = scope.id("Building:merge_056_01_01");
 
     let entity = building_merge_data(&id);
     let status = create_entity(&c, &entity).await;
@@ -58,14 +55,14 @@ async fn entity_merge_empty_fragment_unchanged() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["name"]["value"], "Eiffel Tower");
     assert_eq!(body["almostFull"]["value"], false);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_simple_properties_updated() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_056_01_02");
+    let id = scope.id("Building:merge_056_01_02");
 
     let entity = building_merge_data(&id);
     let status = create_entity(&c, &entity).await;
@@ -80,14 +77,14 @@ async fn entity_merge_simple_properties_updated() {
     assert_eq!(body["name"]["value"], "Pisa Tower");
     assert_eq!(body["almostFull"]["value"], true);
     assert_eq!(body["airQualityLevel"]["value"], 6);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_preserves_an_exact_decimal() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_exact_number");
+    let id = scope.id("Building:merge_exact_number");
     assert_eq!(create_entity(&c, &building_minimal(&id)).await, StatusCode::CREATED);
     let exact = Number::from_str("0.110000000000000005").expect("exact JSON number");
     let fragment = json!({"id": id, "type": "Building", "reading": {"type": "Property", "value": exact}, "@context": TEST_SUITE_CONTEXT});
@@ -97,14 +94,14 @@ async fn entity_merge_preserves_an_exact_decimal() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(serde_json::to_string(&body).expect("entity JSON").contains("0.110000000000000005"));
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_new_relationship_added() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_056_01_03");
+    let id = scope.id("Building:merge_056_01_03");
 
     let entity = building_merge_data(&id);
     let status = create_entity(&c, &entity).await;
@@ -120,14 +117,14 @@ async fn entity_merge_new_relationship_added() {
     assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
     // Original properties should still be present
     assert_eq!(body["name"]["value"], "Eiffel Tower");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_partial_properties_preserved() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_056_01_04");
+    let id = scope.id("Building:merge_056_01_04");
 
     let entity = building_merge_data(&id);
     let status = create_entity(&c, &entity).await;
@@ -146,6 +143,7 @@ async fn entity_merge_partial_properties_preserved() {
     assert_eq!(body["airQualityLevel"]["unitCode"], "C62");
     // Other properties unchanged
     assert_eq!(body["name"]["value"], "Eiffel Tower");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -153,9 +151,8 @@ async fn entity_merge_partial_properties_preserved() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_invalid_id_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
 
     let fragment = json!({
@@ -169,12 +166,12 @@ async fn entity_merge_invalid_id_returns_400() {
 
     let (status, _) = merge_entity(&c, "invalidUri", &fragment, None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "invalid ID should return 400");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_missing_id_returns_error() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
 
     let fragment = json!({
@@ -191,14 +188,14 @@ async fn entity_merge_missing_id_returns_error() {
         status == StatusCode::BAD_REQUEST || status == StatusCode::METHOD_NOT_ALLOWED,
         "missing ID should return 400 or 405, got {status}",
     );
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_not_found_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_056_02_03");
+    let id = scope.id("Building:merge_056_02_03");
 
     let fragment = json!({
         "id": &id,
@@ -212,6 +209,7 @@ async fn entity_merge_not_found_returns_404() {
 
     let (status, _) = merge_entity(&c, &id, &fragment, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent entity should return 404");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -247,11 +245,10 @@ fn null_languageproperty() -> serde_json::Value {
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_delete_property_via_null() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_056_03_01");
+    let id = scope.id("Building:merge_056_03_01");
 
     let entity = building_different_attributes_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -268,14 +265,14 @@ async fn entity_merge_delete_property_via_null() {
     assert!(body.get("locatedAt").is_some(), "locatedAt should remain");
     assert!(body.get("location").is_some(), "location should remain");
     assert!(body.get("street").is_some(), "street should remain");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_delete_relationship_via_null() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_056_03_02");
+    let id = scope.id("Building:merge_056_03_02");
 
     let entity = building_different_attributes_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -289,14 +286,14 @@ async fn entity_merge_delete_relationship_via_null() {
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("locatedAt").is_none(), "locatedAt should be deleted");
     assert!(body.get("name").is_some(), "name should remain");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_delete_geoproperty_via_null() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_056_03_03");
+    let id = scope.id("Building:merge_056_03_03");
 
     let entity = building_different_attributes_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -310,14 +307,14 @@ async fn entity_merge_delete_geoproperty_via_null() {
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("location").is_none(), "location should be deleted");
     assert!(body.get("name").is_some(), "name should remain");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_delete_languageproperty_via_null() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_056_03_04");
+    let id = scope.id("Building:merge_056_03_04");
 
     let entity = building_different_attributes_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -331,6 +328,7 @@ async fn entity_merge_delete_languageproperty_via_null() {
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("street").is_none(), "street should be deleted");
     assert!(body.get("name").is_some(), "name should remain");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -382,11 +380,10 @@ fn null_languageproperty_instance() -> serde_json::Value {
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_delete_property_instance_by_datasetid() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_056_04_01");
+    let id = scope.id("Building:merge_056_04_01");
 
     let entity = building_different_attributes_instances_and_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -407,14 +404,14 @@ async fn entity_merge_delete_property_instance_by_datasetid() {
     } else {
         assert_eq!(name["datasetId"], "urn:ngsi-ld:Dataset:02");
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_delete_relationship_instance_by_datasetid() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_056_04_02");
+    let id = scope.id("Building:merge_056_04_02");
 
     let entity = building_different_attributes_instances_and_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -434,14 +431,14 @@ async fn entity_merge_delete_relationship_instance_by_datasetid() {
     } else {
         assert_eq!(located["datasetId"], "urn:ngsi-ld:Dataset:02");
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_delete_geoproperty_instance_by_datasetid() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_056_04_03");
+    let id = scope.id("Building:merge_056_04_03");
 
     let entity = building_different_attributes_instances_and_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -461,14 +458,14 @@ async fn entity_merge_delete_geoproperty_instance_by_datasetid() {
     } else {
         assert_eq!(loc["datasetId"], "urn:ngsi-ld:Dataset:02");
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_delete_languageproperty_instance_by_datasetid() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_056_04_04");
+    let id = scope.id("Building:merge_056_04_04");
 
     let entity = building_different_attributes_instances_and_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -488,6 +485,7 @@ async fn entity_merge_delete_languageproperty_instance_by_datasetid() {
     } else {
         assert_eq!(street["datasetId"], "urn:ngsi-ld:Dataset:02");
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -496,11 +494,10 @@ async fn entity_merge_delete_languageproperty_instance_by_datasetid() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_delete_all_property_instances_via_null() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_056_05_01");
+    let id = scope.id("Building:merge_056_05_01");
 
     let entity = building_different_default_attributes_instances_and_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -514,14 +511,14 @@ async fn entity_merge_delete_all_property_instances_via_null() {
     assert_eq!(status, StatusCode::OK);
     // Per 5.6.1: null without datasetId removes ALL instances
     assert!(body.get("name").is_none(), "name should be fully deleted");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_delete_all_relationship_instances_via_null() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_056_05_02");
+    let id = scope.id("Building:merge_056_05_02");
 
     let entity = building_different_default_attributes_instances_and_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -534,14 +531,14 @@ async fn entity_merge_delete_all_relationship_instances_via_null() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("locatedAt").is_none(), "locatedAt should be fully deleted");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_delete_all_geoproperty_instances_via_null() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_056_05_03");
+    let id = scope.id("Building:merge_056_05_03");
 
     let entity = building_different_default_attributes_instances_and_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -554,14 +551,14 @@ async fn entity_merge_delete_all_geoproperty_instances_via_null() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("location").is_none(), "location should be fully deleted");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_merge_delete_all_languageproperty_instances_via_null() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:merge_056_05_04");
+    let id = scope.id("Building:merge_056_05_04");
 
     let entity = building_different_default_attributes_instances_and_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -574,4 +571,5 @@ async fn entity_merge_delete_all_languageproperty_instances_via_null() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("street").is_none(), "street should be fully deleted");
+    scope.finish().await.expect("cleanup failed");
 }

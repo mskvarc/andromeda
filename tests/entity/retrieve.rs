@@ -11,29 +11,26 @@ use crate::{
     building_two_geometry_attributes,
     city_minimal,
     city_relationship,
-    clean_database,
     client,
     country_minimal,
     create_entity,
     create_entity_json,
     get_entity,
-    unique_id,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
-use serial_test::serial;
 
 // ---------------------------------------------------------------------------
 // Retrieve by ID
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_by_id_returns_entity() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:retrieve_id");
+    let id = scope.id("Building:retrieve_id");
 
     assert_eq!(create_entity(&client, &building_simple_attributes(&id)).await, StatusCode::CREATED);
 
@@ -43,6 +40,7 @@ async fn entity_retrieve_by_id_returns_entity() {
     assert_eq!(body["type"], "Building");
     assert!(body.get("name").is_some());
     assert!(body.get("airQualityLevel").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -50,11 +48,10 @@ async fn entity_retrieve_by_id_returns_entity() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_with_attrs_filter_returns_only_requested() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:retrieve_attrs");
+    let id = scope.id("Building:retrieve_attrs");
 
     assert_eq!(create_entity(&client, &building_simple_attributes(&id)).await, StatusCode::CREATED);
 
@@ -65,6 +62,7 @@ async fn entity_retrieve_with_attrs_filter_returns_only_requested() {
     assert!(body.get("airQualityLevel").is_some());
     assert!(body.get("subCategory").is_some());
     assert!(body.get("name").is_none());
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -85,25 +83,26 @@ async fn entity_retrieve_invalid_id_returns_bad_request() {
 
 #[tokio::test]
 async fn entity_retrieve_not_found_returns_404() {
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:not_found");
+    let id = scope.id("Building:not_found");
     let (status, body) = get_entity(&client, &id, "", "application/ld+json", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(body["type"].as_str().unwrap().contains("ResourceNotFound"));
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_unknown_attribute_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:unknown_attr");
+    let id = scope.id("Building:unknown_attr");
 
     assert_eq!(create_entity(&client, &building_simple_attributes(&id)).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&client, &id, "attrs=property_not_found", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(body["type"].as_str().unwrap().contains("ResourceNotFound"));
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -111,11 +110,10 @@ async fn entity_retrieve_unknown_attribute_returns_404() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_key_values_returns_simplified() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:kv");
+    let id = scope.id("Building:kv");
 
     assert_eq!(create_entity(&client, &building_simple_attributes(&id)).await, StatusCode::CREATED);
 
@@ -123,6 +121,7 @@ async fn entity_retrieve_key_values_returns_simplified() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
     assert!(body["name"].is_string(), "name should be a simple string");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -130,11 +129,10 @@ async fn entity_retrieve_key_values_returns_simplified() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_geojson_simplified_returns_feature() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:geojson_simple");
+    let id = scope.id("Building:geojson_simple");
 
     assert_eq!(create_entity(&client, &building_two_geometry_attributes(&id)).await, StatusCode::CREATED);
 
@@ -142,14 +140,14 @@ async fn entity_retrieve_geojson_simplified_returns_feature() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["type"], "Feature");
     assert!(body.get("geometry").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_geojson_normalized_returns_feature_with_properties() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:geojson_norm");
+    let id = scope.id("Building:geojson_norm");
 
     assert_eq!(create_entity(&client, &building_two_geometry_attributes(&id)).await, StatusCode::CREATED);
 
@@ -158,14 +156,14 @@ async fn entity_retrieve_geojson_normalized_returns_feature_with_properties() {
     assert_eq!(body["type"], "Feature");
     assert!(body.get("geometry").is_some());
     assert!(body.get("properties").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_geojson_geometry_property_uses_specified() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:geojson_geoprop");
+    let id = scope.id("Building:geojson_geoprop");
 
     assert_eq!(create_entity(&client, &building_two_geometry_attributes(&id)).await, StatusCode::CREATED);
 
@@ -180,14 +178,14 @@ async fn entity_retrieve_geojson_geometry_property_uses_specified() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["type"], "Feature");
     assert!(body.get("geometry").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_geojson_nonexistent_geometry_property_returns_null_geometry() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:geojson_null");
+    let id = scope.id("Building:geojson_null");
 
     assert_eq!(create_entity(&client, &building_two_geometry_attributes(&id)).await, StatusCode::CREATED);
 
@@ -202,6 +200,7 @@ async fn entity_retrieve_geojson_nonexistent_geometry_property_returns_null_geom
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["type"], "Feature");
     assert!(body["geometry"].is_null());
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -209,11 +208,10 @@ async fn entity_retrieve_geojson_nonexistent_geometry_property_returns_null_geom
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_json_empty_context_returns_expanded_terms() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:json_empty_ctx");
+    let id = scope.id("Building:json_empty_ctx");
 
     let entity = json!({
         "id": id,
@@ -232,14 +230,14 @@ async fn entity_retrieve_json_empty_context_returns_expanded_terms() {
         body.get("https://ngsi-ld-test-suite/context#name").is_some() || body.get("name").is_some(),
         "should contain name attribute"
     );
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_json_with_context_returns_compacted_terms() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:json_ctx");
+    let id = scope.id("Building:json_ctx");
 
     let entity = json!({
         "id": id,
@@ -255,6 +253,7 @@ async fn entity_retrieve_json_with_context_returns_compacted_terms() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
     assert!(body.get("name").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -262,53 +261,52 @@ async fn entity_retrieve_json_with_context_returns_compacted_terms() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_lang_fr_returns_french() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:lang_fr");
+    let id = scope.id("Building:lang_fr");
 
     assert_eq!(create_entity(&client, &building_language_property(&id)).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&client, &id, "lang=fr", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_lang_multi_no_ranked_returns_first_match() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:lang_multi");
+    let id = scope.id("Building:lang_multi");
 
     assert_eq!(create_entity(&client, &building_language_property(&id)).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&client, &id, "lang=fr-CH,fr", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_lang_any_returns_any_language() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:lang_any");
+    let id = scope.id("Building:lang_any");
 
     assert_eq!(create_entity(&client, &building_language_property(&id)).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&client, &id, "lang=*", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_lang_ranked_preferences_returns_best_match() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:lang_ranked");
+    let id = scope.id("Building:lang_ranked");
 
     assert_eq!(create_entity(&client, &building_language_property(&id)).await, StatusCode::CREATED);
 
@@ -322,34 +320,35 @@ async fn entity_retrieve_lang_ranked_preferences_returns_best_match() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_lang_fr_simplified_returns_simplified() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:lang_fr_kv");
+    let id = scope.id("Building:lang_fr_kv");
 
     assert_eq!(create_entity(&client, &building_language_property(&id)).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&client, &id, "lang=fr&options=keyValues", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_lang_any_simplified_returns_simplified() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:lang_any_kv");
+    let id = scope.id("Building:lang_any_kv");
 
     assert_eq!(create_entity(&client, &building_language_property(&id)).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&client, &id, "lang=*&options=keyValues", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -357,11 +356,10 @@ async fn entity_retrieve_lang_any_simplified_returns_simplified() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_observation_space_simplified_present() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:obs_space_kv");
+    let id = scope.id("Building:obs_space_kv");
 
     assert_eq!(create_entity(&client, &building_observation_space(&id)).await, StatusCode::CREATED);
 
@@ -369,14 +367,14 @@ async fn entity_retrieve_observation_space_simplified_present() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
     assert!(body.get("observationSpace").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_observation_space_normalized_is_geoproperty() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:obs_space_norm");
+    let id = scope.id("Building:obs_space_norm");
 
     assert_eq!(create_entity(&client, &building_observation_space(&id)).await, StatusCode::CREATED);
 
@@ -385,6 +383,7 @@ async fn entity_retrieve_observation_space_normalized_is_geoproperty() {
     assert_eq!(body["id"], id);
     assert!(body.get("observationSpace").is_some());
     assert_eq!(body["observationSpace"]["type"], "GeoProperty");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -392,11 +391,10 @@ async fn entity_retrieve_observation_space_normalized_is_geoproperty() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_operation_space_simplified_present() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:op_space_kv");
+    let id = scope.id("Building:op_space_kv");
 
     assert_eq!(create_entity(&client, &building_operation_space(&id)).await, StatusCode::CREATED);
 
@@ -404,14 +402,14 @@ async fn entity_retrieve_operation_space_simplified_present() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
     assert!(body.get("operationSpace").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_operation_space_normalized_is_geoproperty() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:op_space_norm");
+    let id = scope.id("Building:op_space_norm");
 
     assert_eq!(create_entity(&client, &building_operation_space(&id)).await, StatusCode::CREATED);
 
@@ -420,6 +418,7 @@ async fn entity_retrieve_operation_space_normalized_is_geoproperty() {
     assert_eq!(body["id"], id);
     assert!(body.get("operationSpace").is_some());
     assert_eq!(body["operationSpace"]["type"], "GeoProperty");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -427,12 +426,11 @@ async fn entity_retrieve_operation_space_normalized_is_geoproperty() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_inline_linked_returns_nested_entity() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let building_id = unique_id("urn:ngsi-ld:Building:inline_linked");
-    let city_id = unique_id("urn:ngsi-ld:City:inline_linked");
+    let building_id = scope.id("Building:inline_linked");
+    let city_id = scope.id("City:inline_linked");
 
     assert_eq!(
         create_entity(&client, &building_relationship(&building_id, &city_id)).await,
@@ -451,15 +449,15 @@ async fn entity_retrieve_inline_linked_returns_nested_entity() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], building_id);
     assert!(body["locatedAt"].get("entity").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_flat_linked_returns_array() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let building_id = unique_id("urn:ngsi-ld:Building:flat_linked");
-    let city_id = unique_id("urn:ngsi-ld:City:flat_linked");
+    let building_id = scope.id("Building:flat_linked");
+    let city_id = scope.id("City:flat_linked");
 
     assert_eq!(
         create_entity(&client, &building_relationship(&building_id, &city_id)).await,
@@ -472,15 +470,15 @@ async fn entity_retrieve_flat_linked_returns_array() {
 
     let arr = body.as_array().expect("flat join should return array");
     assert!(arr.len() >= 2, "should contain building and city");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_inline_linked_simplified_returns_nested() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let building_id = unique_id("urn:ngsi-ld:Building:inline_kv");
-    let city_id = unique_id("urn:ngsi-ld:City:inline_kv");
+    let building_id = scope.id("Building:inline_kv");
+    let city_id = scope.id("City:inline_kv");
 
     assert_eq!(
         create_entity(&client, &building_relationship(&building_id, &city_id)).await,
@@ -498,15 +496,15 @@ async fn entity_retrieve_inline_linked_simplified_returns_nested() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], building_id);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_flat_linked_simplified_returns_array() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let building_id = unique_id("urn:ngsi-ld:Building:flat_kv");
-    let city_id = unique_id("urn:ngsi-ld:City:flat_kv");
+    let building_id = scope.id("Building:flat_kv");
+    let city_id = scope.id("City:flat_kv");
 
     assert_eq!(
         create_entity(&client, &building_relationship(&building_id, &city_id)).await,
@@ -526,6 +524,7 @@ async fn entity_retrieve_flat_linked_simplified_returns_array() {
 
     let arr = body.as_array().expect("flat join should return array");
     assert!(arr.len() >= 2);
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -533,12 +532,11 @@ async fn entity_retrieve_flat_linked_simplified_returns_array() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_inline_linked_sys_attrs_includes_created_at() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let building_id = unique_id("urn:ngsi-ld:Building:inline_sys");
-    let city_id = unique_id("urn:ngsi-ld:City:inline_sys");
+    let building_id = scope.id("Building:inline_sys");
+    let city_id = scope.id("City:inline_sys");
 
     assert_eq!(
         create_entity(&client, &building_relationship(&building_id, &city_id)).await,
@@ -557,6 +555,7 @@ async fn entity_retrieve_inline_linked_sys_attrs_includes_created_at() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], building_id);
     assert!(body["locatedAt"]["entity"].get("createdAt").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -564,12 +563,11 @@ async fn entity_retrieve_inline_linked_sys_attrs_includes_created_at() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_flat_linked_sys_attrs_includes_created_at() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let building_id = unique_id("urn:ngsi-ld:Building:flat_sys");
-    let city_id = unique_id("urn:ngsi-ld:City:flat_sys");
+    let building_id = scope.id("Building:flat_sys");
+    let city_id = scope.id("City:flat_sys");
 
     assert_eq!(
         create_entity(&client, &building_relationship(&building_id, &city_id)).await,
@@ -591,6 +589,7 @@ async fn entity_retrieve_flat_linked_sys_attrs_includes_created_at() {
     for entity in arr {
         assert!(entity.get("createdAt").is_some());
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -598,13 +597,12 @@ async fn entity_retrieve_flat_linked_sys_attrs_includes_created_at() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_inline_two_level_returns_nested() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let building_id = unique_id("urn:ngsi-ld:Building:two_inline");
-    let city_id = unique_id("urn:ngsi-ld:City:two_inline");
-    let country_id = unique_id("urn:ngsi-ld:Country:two_inline");
+    let building_id = scope.id("Building:two_inline");
+    let city_id = scope.id("City:two_inline");
+    let country_id = scope.id("Country:two_inline");
 
     assert_eq!(
         create_entity(&client, &building_relationship(&building_id, &city_id)).await,
@@ -623,16 +621,16 @@ async fn entity_retrieve_inline_two_level_returns_nested() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], building_id);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_flat_two_level_returns_all() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let building_id = unique_id("urn:ngsi-ld:Building:two_flat");
-    let city_id = unique_id("urn:ngsi-ld:City:two_flat");
-    let country_id = unique_id("urn:ngsi-ld:Country:two_flat");
+    let building_id = scope.id("Building:two_flat");
+    let city_id = scope.id("City:two_flat");
+    let country_id = scope.id("Country:two_flat");
 
     assert_eq!(
         create_entity(&client, &building_relationship(&building_id, &city_id)).await,
@@ -646,16 +644,16 @@ async fn entity_retrieve_flat_two_level_returns_all() {
 
     let arr = body.as_array().expect("flat join should return array");
     assert!(arr.len() >= 3);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_inline_two_level_simplified_returns_nested() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let building_id = unique_id("urn:ngsi-ld:Building:two_inline_kv");
-    let city_id = unique_id("urn:ngsi-ld:City:two_inline_kv");
-    let country_id = unique_id("urn:ngsi-ld:Country:two_inline_kv");
+    let building_id = scope.id("Building:two_inline_kv");
+    let city_id = scope.id("City:two_inline_kv");
+    let country_id = scope.id("Country:two_inline_kv");
 
     assert_eq!(
         create_entity(&client, &building_relationship(&building_id, &city_id)).await,
@@ -674,16 +672,16 @@ async fn entity_retrieve_inline_two_level_simplified_returns_nested() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], building_id);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_flat_two_level_simplified_returns_all() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let building_id = unique_id("urn:ngsi-ld:Building:two_flat_kv");
-    let city_id = unique_id("urn:ngsi-ld:City:two_flat_kv");
-    let country_id = unique_id("urn:ngsi-ld:Country:two_flat_kv");
+    let building_id = scope.id("Building:two_flat_kv");
+    let city_id = scope.id("City:two_flat_kv");
+    let country_id = scope.id("Country:two_flat_kv");
 
     assert_eq!(
         create_entity(&client, &building_relationship(&building_id, &city_id)).await,
@@ -704,6 +702,7 @@ async fn entity_retrieve_flat_two_level_simplified_returns_all() {
 
     let arr = body.as_array().expect("flat join should return array");
     assert!(arr.len() >= 3);
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -711,11 +710,10 @@ async fn entity_retrieve_flat_two_level_simplified_returns_all() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_inline_nonexistent_linked_returns_entity() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let building_id = unique_id("urn:ngsi-ld:Building:inline_nolink");
+    let building_id = scope.id("Building:inline_nolink");
 
     assert_eq!(
         create_entity(&client, &building_relationship(&building_id, "urn:ngsi-ld:City:NonExistent")).await,
@@ -732,14 +730,14 @@ async fn entity_retrieve_inline_nonexistent_linked_returns_entity() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], building_id);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_flat_nonexistent_linked_returns_entity() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let building_id = unique_id("urn:ngsi-ld:Building:flat_nolink");
+    let building_id = scope.id("Building:flat_nolink");
 
     assert_eq!(
         create_entity(&client, &building_relationship(&building_id, "urn:ngsi-ld:City:NonExistent")).await,
@@ -748,6 +746,7 @@ async fn entity_retrieve_flat_nonexistent_linked_returns_entity() {
 
     let (status, _) = get_entity(&client, &building_id, "join=flat&joinLevel=1", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -755,11 +754,10 @@ async fn entity_retrieve_flat_nonexistent_linked_returns_entity() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_format_key_values_returns_simplified() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:format_kv");
+    let id = scope.id("Building:format_kv");
 
     assert_eq!(create_entity(&client, &building_simple_attributes(&id)).await, StatusCode::CREATED);
 
@@ -767,14 +765,14 @@ async fn entity_retrieve_format_key_values_returns_simplified() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
     assert!(body["name"].is_string());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_format_simplified_returns_simplified() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:format_simple");
+    let id = scope.id("Building:format_simple");
 
     assert_eq!(create_entity(&client, &building_simple_attributes(&id)).await, StatusCode::CREATED);
 
@@ -782,14 +780,14 @@ async fn entity_retrieve_format_simplified_returns_simplified() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
     assert!(body["name"].is_string());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_format_normalized_returns_normalized() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:format_norm");
+    let id = scope.id("Building:format_norm");
 
     assert_eq!(create_entity(&client, &building_simple_attributes(&id)).await, StatusCode::CREATED);
 
@@ -797,14 +795,14 @@ async fn entity_retrieve_format_normalized_returns_normalized() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
     assert_eq!(body["name"]["type"], "Property");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_options_key_values_returns_simplified() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:options_kv");
+    let id = scope.id("Building:options_kv");
 
     assert_eq!(create_entity(&client, &building_simple_attributes(&id)).await, StatusCode::CREATED);
 
@@ -812,14 +810,14 @@ async fn entity_retrieve_options_key_values_returns_simplified() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
     assert!(body["name"].is_string());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_options_simplified_returns_simplified() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:options_simple");
+    let id = scope.id("Building:options_simple");
 
     assert_eq!(create_entity(&client, &building_simple_attributes(&id)).await, StatusCode::CREATED);
 
@@ -827,14 +825,14 @@ async fn entity_retrieve_options_simplified_returns_simplified() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
     assert!(body["name"].is_string());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_retrieve_options_normalized_returns_normalized() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let client = client();
-    let id = unique_id("urn:ngsi-ld:Building:options_norm");
+    let id = scope.id("Building:options_norm");
 
     assert_eq!(create_entity(&client, &building_simple_attributes(&id)).await, StatusCode::CREATED);
 
@@ -842,4 +840,5 @@ async fn entity_retrieve_options_normalized_returns_normalized() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
     assert_eq!(body["name"]["type"], "Property");
+    scope.finish().await.expect("cleanup failed");
 }

@@ -19,10 +19,9 @@ mod partial_update;
 
 use andromeda_test_client::header::jsonld_link_header as try_jsonld_link_header;
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
-use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
+use andromeda_test_harness::configuration::RUNTIME_BROKER_BASE as BASE_URL;
 use reqwest::{Client, StatusCode, header::HeaderValue};
 use serde_json::{Value, json};
-use uuid::Uuid;
 
 fn jsonld_link_header(context_url: &str) -> HeaderValue {
     try_jsonld_link_header(context_url).expect("valid JSON-LD Link header")
@@ -34,16 +33,6 @@ fn jsonld_link_header(context_url: &str) -> HeaderValue {
 
 fn client() -> Client {
     Client::new()
-}
-
-fn unique_id(prefix: &str) -> String {
-    format!("{prefix}:{}", Uuid::new_v4())
-}
-
-async fn clean_database() -> SerializedEnvironment {
-    SerializedEnvironment::from_environment_reset()
-        .await
-        .expect("serialized test database environment")
 }
 
 /// Extract instanceId from first instance of an attribute.

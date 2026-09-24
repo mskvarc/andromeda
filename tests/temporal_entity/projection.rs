@@ -9,11 +9,11 @@
 //! read literally here: a non-empty `pick` keeps one of them only when it lists
 //! it, and a non-empty `omit` drops whichever of them it lists.
 
-use crate::{TEST_SUITE_CONTEXT, clean_database, client, create_temporal_entity, query_temporal_entities, unique_id, vehicle_temporal_august};
+use crate::{TEST_SUITE_CONTEXT, client, create_temporal_entity, query_temporal_entities, vehicle_temporal_august};
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::Value;
-use serial_test::serial;
 
 /// The window the August fixture falls inside.
 const WINDOW: &str = "timerel=between&timeAt=2020-08-01T00:00:00Z&endTimeAt=2020-08-02T00:00:00Z";
@@ -29,15 +29,14 @@ fn only_member(body: &Value) -> &Value {
 /// only the ones it names — over the temporal representation, instances and
 /// all.
 #[tokio::test]
-#[serial]
 async fn temporal_pick_omit_now_applied() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:tproj-pick-omit");
+    let id = scope.id("Vehicle:tproj-pick-omit");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_august(&id)).await, StatusCode::CREATED);
 
-    let (status, body, _) = query_temporal_entities(&c, &format!("id={id}&type=Vehicle&{WINDOW}&pick=speed"), Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body, _) = query_temporal_entities(&c, &scope, &format!("id={id}&type=Vehicle&{WINDOW}&pick=speed"), Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
 
     let picked = only_member(&body);
@@ -47,7 +46,7 @@ async fn temporal_pick_omit_now_applied() {
     assert!(picked.get("id").is_none(), "`id` was not picked: {picked}");
     assert!(picked.get("type").is_none(), "`type` was not picked: {picked}");
 
-    let (status, body, _) = query_temporal_entities(&c, &format!("id={id}&type=Vehicle&{WINDOW}&omit=speed"), Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body, _) = query_temporal_entities(&c, &scope, &format!("id={id}&type=Vehicle&{WINDOW}&omit=speed"), Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
 
     let kept = only_member(&body);
@@ -56,4 +55,5 @@ async fn temporal_pick_omit_now_applied() {
     // `omit` names no structural member here, so all of them stay.
     assert_eq!(kept["id"].as_str(), Some(id.as_str()));
     assert_eq!(kept["type"].as_str(), Some("Vehicle"));
+    scope.finish().await.expect("cleanup failed");
 }

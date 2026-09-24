@@ -8,30 +8,29 @@
 
 use crate::{
     COMPOUND_CONTEXT,
-    clean_database,
     client,
     create_temporal_entity,
     delete_temporal_attr,
     delete_temporal_attr_with_params,
     get_temporal_entity,
     request_temporal_attrs,
-    unique_id,
     vehicle_temporal_representation,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
-use serial_test::serial;
 
 // ---------------------------------------------------------------------------
 // Delete attribute from temporal entity
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_attribute_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:delete_015_01_01");
+    let id = scope.id("Vehicle:delete_015_01_01");
 
     let entity = vehicle_temporal_representation(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -55,14 +54,16 @@ async fn temporal_attrs_delete_attribute_success() {
             assert!(instance.get("datasetId").is_some(), "only datasetId instances should remain");
         }
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_with_datasetid_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:delete_015_01_02");
+    let id = scope.id("Vehicle:delete_015_01_02");
 
     let entity = vehicle_temporal_representation(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -85,14 +86,16 @@ async fn temporal_attrs_delete_with_datasetid_success() {
             "datasetId instance should be removed"
         );
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_with_deleteall_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:delete_015_01_03");
+    let id = scope.id("Vehicle:delete_015_01_03");
 
     let entity = vehicle_temporal_representation(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -114,6 +117,7 @@ async fn temporal_attrs_delete_with_deleteall_success() {
     );
     // speed should still exist
     assert!(body["speed"].is_array(), "speed should still exist");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -121,9 +125,10 @@ async fn temporal_attrs_delete_with_deleteall_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_empty_entity_id_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
 
     let (status, body) = request_temporal_attrs(&c, Method::DELETE, "/temporal/entities//attrs/fuelLevel", None).await;
@@ -133,12 +138,14 @@ async fn temporal_attrs_delete_empty_entity_id_returns_400() {
         "error type should be BadRequestData"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_invalid_entity_id_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
 
     let (status, _, body) = delete_temporal_attr(&c, "invalidId", "speed").await;
@@ -148,14 +155,16 @@ async fn temporal_attrs_delete_invalid_entity_id_returns_400() {
         "error type should be BadRequestData"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_invalid_attribute_name_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:delete_015_02_03");
+    let id = scope.id("Vehicle:delete_015_02_03");
 
     let entity = vehicle_temporal_representation(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -168,6 +177,7 @@ async fn temporal_attrs_delete_invalid_attribute_name_returns_400() {
         "error type should be BadRequestData"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -175,11 +185,12 @@ async fn temporal_attrs_delete_invalid_attribute_name_returns_400() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_entity_not_found_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:delete_015_03_01");
+    let id = scope.id("Vehicle:delete_015_03_01");
 
     let (status, _, body) = delete_temporal_attr(&c, &id, "fuelLevel").await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent entity should return 404");
@@ -188,14 +199,16 @@ async fn temporal_attrs_delete_entity_not_found_returns_404() {
         "error type should be ResourceNotFound"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_attribute_not_found_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:delete_015_03_02");
+    let id = scope.id("Vehicle:delete_015_03_02");
 
     let entity = vehicle_temporal_representation(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -208,14 +221,16 @@ async fn temporal_attrs_delete_attribute_not_found_returns_404() {
         "error type should be ResourceNotFound"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_nonexistent_datasetid_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:delete_015_03_03");
+    let id = scope.id("Vehicle:delete_015_03_03");
 
     let entity = vehicle_temporal_representation(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -228,4 +243,5 @@ async fn temporal_attrs_delete_nonexistent_datasetid_returns_404() {
         body["type"].as_str().is_some_and(|t| t.contains("ResourceNotFound")),
         "error type should be ResourceNotFound"
     );
+    scope.finish().await.expect("cleanup failed");
 }

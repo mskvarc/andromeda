@@ -4,12 +4,10 @@
 //! Tests for PATCH /entities/{entityId}/attrs with different registration modes.
 
 use reqwest::{Method, StatusCode};
-use serial_test::serial;
 
 use crate::{
     context_source_adapter::ContextSourceAdapter as MockServer,
     helpers::{
-        clean_database,
         client,
         create_entity,
         create_entity_local,
@@ -20,7 +18,6 @@ use crate::{
         fragment_speed_different,
         get_entity,
         jsonld_link_value,
-        unique_id,
         update_entity_attrs,
         vehicle_entity,
         vehicle_registration_auxiliary_retrieve_ops,
@@ -28,6 +25,7 @@ use crate::{
         vehicle_registration_speed_redirection_ops,
     },
 };
+use andromeda_test_harness::environment::TestEnvironment;
 
 // ---------------------------------------------------------------------------
 // Update entity attributes - exclusive mode
@@ -35,14 +33,15 @@ use crate::{
 
 /// Update with exclusive registration: forwards exclusive attributes to context source.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_update_exclusive_forwards_to_context_source() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:update-exc");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:update-exc");
+    let entity_id = scope.id("Vehicle:update-exc");
+    let reg_id = scope.id("Registration:update-exc");
 
     // Create entity locally
     let entity = vehicle_entity(&entity_id);
@@ -69,6 +68,7 @@ async fn distop_entity_attrs_update_exclusive_forwards_to_context_source() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -81,14 +81,15 @@ async fn distop_entity_attrs_update_exclusive_forwards_to_context_source() {
 /// 207 Multi-Status for when "an error response is returned from one or more
 /// registered sources"; a successful remote update is not one.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_update_local_absent_remote_success_returns_204() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:update-inc");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:update-inc");
+    let entity_id = scope.id("Vehicle:update-inc");
+    let reg_id = scope.id("Registration:update-inc");
 
     // No local entity -- only registration
     let reg = vehicle_registration_redirection_ops(&reg_id, Some(&entity_id), &mock.url(""), None);
@@ -109,18 +110,20 @@ async fn distop_entity_attrs_update_local_absent_remote_success_returns_204() {
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Update with inclusive registration: both local and remote succeed.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_update_inclusive_both_succeed() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:update-inc-both");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:update-inc-both");
+    let entity_id = scope.id("Vehicle:update-inc-both");
+    let reg_id = scope.id("Registration:update-inc-both");
 
     // Create entity locally
     let entity = vehicle_entity(&entity_id);
@@ -152,6 +155,7 @@ async fn distop_entity_attrs_update_inclusive_both_succeed() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -160,15 +164,16 @@ async fn distop_entity_attrs_update_inclusive_both_succeed() {
 
 /// Update with redirect registrations: forwards to multiple context sources.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_update_redirect_forwards_to_multiple() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:update-red");
-    let reg_id1 = unique_id("urn:ngsi-ld:Registration:update-red-1");
-    let reg_id2 = unique_id("urn:ngsi-ld:Registration:update-red-2");
+    let entity_id = scope.id("Vehicle:update-red");
+    let reg_id1 = scope.id("Registration:update-red-1");
+    let reg_id2 = scope.id("Registration:update-red-2");
 
     // Create two redirect registrations
     let reg1 = vehicle_registration_redirection_ops(&reg_id1, Some(&entity_id), &mock.url("/broker1"), Some("redirect"));
@@ -196,6 +201,7 @@ async fn distop_entity_attrs_update_redirect_forwards_to_multiple() {
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -204,27 +210,30 @@ async fn distop_entity_attrs_update_redirect_forwards_to_multiple() {
 
 /// Update non-existent entity returns 404.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_update_not_found_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:update-notfound");
+    let entity_id = scope.id("Vehicle:update-notfound");
     let fragment = fragment_brandname();
     let status = update_entity_attrs(&c, &entity_id, &fragment, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Update with auxiliary registration only updates locally, no forwarding.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_update_auxiliary_no_forwarding() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:update-aux");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:update-aux");
+    let entity_id = scope.id("Vehicle:update-aux");
+    let reg_id = scope.id("Registration:update-aux");
 
     // Create entity locally
     let entity = vehicle_entity(&entity_id);
@@ -256,4 +265,5 @@ async fn distop_entity_attrs_update_auxiliary_no_forwarding() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }

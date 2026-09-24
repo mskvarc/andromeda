@@ -3,36 +3,25 @@
 //! The map fixes the result set at creation time, so later writes cannot make a
 //! page overlap another or skip an entity.
 
-use crate::{
-    BASE_URL,
-    clean_database,
-    cleanup_entity_map,
-    client,
-    create_entity_map_from_get,
-    delete_entity,
-    query_entities_with_entity_map,
-    setup_single_vehicle,
-    unique_id,
-};
+use crate::{BASE_URL, cleanup_entity_map, client, create_entity_map_from_get, delete_entity, query_entities_with_entity_map, setup_single_vehicle};
+use andromeda_test_harness::environment::TestEnvironment;
 use reqwest::StatusCode;
-use serial_test::serial;
 use std::collections::HashSet;
 use urlencoding::encode;
 
 #[tokio::test]
-#[serial]
 async fn entity_map_pagination_query_with_frozen_map_covers_all_ids_without_duplicates() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
     let c = client();
     let mut created_ids = Vec::new();
 
     for index in 0..10 {
-        let id = unique_id(&format!("urn:ngsi-ld:Vehicle:em-pg-{index}"));
+        let id = scope.id(&format!("Vehicle:em-pg-{index}"));
         setup_single_vehicle(&c, &id).await;
         created_ids.push(id);
     }
 
-    let (status, _, body) = create_entity_map_from_get(&c, "type=Vehicle").await;
+    let (status, _, body) = create_entity_map_from_get(&c, &scope, "type=Vehicle").await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
 
@@ -49,7 +38,7 @@ async fn entity_map_pagination_query_with_frozen_map_covers_all_ids_without_dupl
     let mut collected_ids = Vec::new();
 
     for (page_index, query) in page_queries.iter().enumerate() {
-        let (status, headers, body) = query_entities_with_entity_map(&c, query, &map_id).await;
+        let (status, headers, body) = query_entities_with_entity_map(&c, &scope, query, &map_id).await;
         pretty_assertions::assert_eq!(status, StatusCode::OK);
 
         assert!(headers.get("NGSILD-EntityMap").is_some());
@@ -75,25 +64,25 @@ async fn entity_map_pagination_query_with_frozen_map_covers_all_ids_without_dupl
     for id in created_ids {
         delete_entity(&c, &id).await;
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_map_pagination_new_entity_created_after_map_is_not_in_results() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Vehicle:em-new1");
+    let id1 = scope.id("Vehicle:em-new1");
     setup_single_vehicle(&c, &id1).await;
 
-    let (status, _, body) = create_entity_map_from_get(&c, "type=Vehicle").await;
+    let (status, _, body) = create_entity_map_from_get(&c, &scope, "type=Vehicle").await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
 
-    let id2 = unique_id("urn:ngsi-ld:Vehicle:em-new2");
+    let id2 = scope.id("Vehicle:em-new2");
     setup_single_vehicle(&c, &id2).await;
 
-    let (status, _, body) = query_entities_with_entity_map(&c, "type=Vehicle&limit=100", &map_id).await;
+    let (status, _, body) = query_entities_with_entity_map(&c, &scope, "type=Vehicle&limit=100", &map_id).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("query result should be array");
@@ -105,20 +94,20 @@ async fn entity_map_pagination_new_entity_created_after_map_is_not_in_results() 
     cleanup_entity_map(&c, &map_id).await;
     delete_entity(&c, &id1).await;
     delete_entity(&c, &id2).await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_map_pagination_deleted_entity_is_skipped_from_results() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Vehicle:em-dsk1");
-    let id2 = unique_id("urn:ngsi-ld:Vehicle:em-dsk2");
+    let id1 = scope.id("Vehicle:em-dsk1");
+    let id2 = scope.id("Vehicle:em-dsk2");
     setup_single_vehicle(&c, &id1).await;
     setup_single_vehicle(&c, &id2).await;
 
-    let (status, _, body) = create_entity_map_from_get(&c, "type=Vehicle").await;
+    let (status, _, body) = create_entity_map_from_get(&c, &scope, "type=Vehicle").await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
 
@@ -133,7 +122,7 @@ async fn entity_map_pagination_deleted_entity_is_skipped_from_results() {
         .status();
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    let (status, _, body) = query_entities_with_entity_map(&c, "type=Vehicle&limit=100", &map_id).await;
+    let (status, _, body) = query_entities_with_entity_map(&c, &scope, "type=Vehicle&limit=100", &map_id).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("query result should be array");
@@ -142,26 +131,26 @@ async fn entity_map_pagination_deleted_entity_is_skipped_from_results() {
 
     cleanup_entity_map(&c, &map_id).await;
     delete_entity(&c, &id2).await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_map_pagination_query_with_count_returns_results_count_header() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
     let c = client();
     let mut ids = Vec::new();
 
     for index in 0..5 {
-        let id = unique_id(&format!("urn:ngsi-ld:Vehicle:em-cnt-{index}"));
+        let id = scope.id(&format!("Vehicle:em-cnt-{index}"));
         setup_single_vehicle(&c, &id).await;
         ids.push(id);
     }
 
-    let (status, _, body) = create_entity_map_from_get(&c, "type=Vehicle").await;
+    let (status, _, body) = create_entity_map_from_get(&c, &scope, "type=Vehicle").await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
 
-    let (status, headers, _) = query_entities_with_entity_map(&c, "type=Vehicle&count=true&limit=2", &map_id).await;
+    let (status, headers, _) = query_entities_with_entity_map(&c, &scope, "type=Vehicle&count=true&limit=2", &map_id).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let count_header = headers.get("NGSILD-Results-Count").expect("count header should be present");
@@ -176,4 +165,5 @@ async fn entity_map_pagination_query_with_count_returns_results_count_header() {
     for id in ids {
         delete_entity(&c, &id).await;
     }
+    scope.finish().await.expect("cleanup failed");
 }

@@ -97,5 +97,3 @@ pub mod context_source_adapter;
 pub mod hosted_context;
 #[path = "../support/notification_adapter.rs"]
 pub mod notification_adapter;
-#[path = "../support/probe_entity_type.rs"]
-pub mod probe_entity_type;

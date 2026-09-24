@@ -23,14 +23,13 @@ mod update;
 
 use andromeda_test_client::header::jsonld_link_header as try_jsonld_link_header;
 use andromeda_test_fixtures::context::{COMPOUND_CONTEXT, TEST_SUITE_CONTEXT};
-use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, environment::TestEnvironment};
 use reqwest::{
     Client,
     StatusCode,
     header::{HeaderMap, HeaderValue},
 };
 use serde_json::{Value, json};
-use uuid::Uuid;
 
 fn jsonld_link_header(context_url: &str) -> HeaderValue {
     try_jsonld_link_header(context_url).expect("valid JSON-LD Link header")
@@ -42,16 +41,6 @@ fn jsonld_link_header(context_url: &str) -> HeaderValue {
 
 fn client() -> Client {
     Client::new()
-}
-
-fn unique_id(prefix: &str) -> String {
-    format!("{prefix}:{}", Uuid::new_v4())
-}
-
-async fn clean_database() -> SerializedEnvironment {
-    SerializedEnvironment::from_environment_reset()
-        .await
-        .expect("serialized test database environment")
 }
 
 /// Parse Content-Range header: `DateTime <start>-<end>/<size>` (clause 6.3.10).
@@ -432,7 +421,8 @@ async fn get_temporal_entity(c: &Client, id: &str, query: &str, accept: &str, co
     (status, body, headers)
 }
 
-async fn query_temporal_entities(c: &Client, query: &str, context: Option<&str>) -> (StatusCode, Value, HeaderMap) {
+async fn query_temporal_entities(c: &Client, scope: &TestEnvironment, query: &str, context: Option<&str>) -> (StatusCode, Value, HeaderMap) {
+    let query = scope.scope_query(query);
     let url = format!("{BASE_URL}/temporal/entities?{query}");
 
     let mut req = c.get(&url).header("Accept", "application/ld+json");
@@ -447,10 +437,20 @@ async fn query_temporal_entities(c: &Client, query: &str, context: Option<&str>)
     (status, body, headers)
 }
 
-async fn post_temporal_query(c: &Client, query: &Value, context: Option<&str>) -> (StatusCode, Value, HeaderMap) {
+async fn post_temporal_query(c: &Client, scope: &TestEnvironment, query: &Value, context: Option<&str>) -> (StatusCode, Value, HeaderMap) {
     let url = format!("{BASE_URL}/temporal/entityOperations/query");
 
-    let mut req = c.post(&url).header("Content-Type", "application/json").json(query);
+    // clone: the body is borrowed, and the run's idPattern is injected into every
+    // entities selector so a POST temporal query returns only this run's entities.
+    let mut query = query.clone();
+    if let Some(entities) = query.get_mut("entities").and_then(Value::as_array_mut) {
+        for entity in entities {
+            if let Some(object) = entity.as_object_mut() {
+                object.entry("idPattern").or_insert_with(|| Value::String(scope.id_pattern()));
+            }
+        }
+    }
+    let mut req = c.post(&url).header("Content-Type", "application/json").json(&query);
     if let Some(ctx) = context {
         req = req.header("Link", jsonld_link_header(ctx));
     }

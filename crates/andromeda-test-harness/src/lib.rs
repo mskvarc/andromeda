@@ -12,6 +12,7 @@ pub mod multi_broker;
 pub mod pooler_probe;
 pub mod readiness;
 pub mod run_isolated;
+pub mod scope;
 pub mod serialized_environment;
 pub mod tenant_environment;
 pub mod tenant_schema_recreate;

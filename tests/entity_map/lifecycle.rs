@@ -4,7 +4,6 @@
 use crate::{
     BAD_REQUEST_DATA_TYPE,
     RESOURCE_NOT_FOUND_TYPE,
-    clean_database,
     cleanup_entity_map,
     client,
     create_entity_map_from_get,
@@ -12,23 +11,21 @@ use crate::{
     delete_entity_map,
     get_entity_map,
     setup_single_vehicle,
-    unique_id,
     update_entity_map,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 use chrono::{Duration, Utc};
 use reqwest::StatusCode;
 use serde_json::json;
-use serial_test::serial;
 
 #[tokio::test]
-#[serial]
 async fn entity_map_retrieve_existing_map_returns_200() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:em-retr");
+    let id = scope.id("Vehicle:em-retr");
     setup_single_vehicle(&c, &id).await;
 
-    let (status, _, body) = create_entity_map_from_get(&c, "type=Vehicle").await;
+    let (status, _, body) = create_entity_map_from_get(&c, &scope, "type=Vehicle").await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let map_id = body["id"].as_str().expect("map should have id").to_owned();
@@ -52,39 +49,39 @@ async fn entity_map_retrieve_existing_map_returns_200() {
 
     cleanup_entity_map(&c, &map_id).await;
     delete_entity(&c, &id).await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_map_retrieve_nonexistent_map_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
     let c = client();
 
     let (status, _, body) = get_entity_map(&c, "urn:ngsi-ld:EntityMap:nonexistent", "application/json").await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
     pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_map_retrieve_invalid_map_id_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
     let c = client();
 
     let (status, _, body) = get_entity_map(&c, "not-a-valid-uri", "application/json").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_map_update_valid_expires_at_returns_204() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:em-upd");
+    let id = scope.id("Vehicle:em-upd");
     setup_single_vehicle(&c, &id).await;
 
-    let (status, _, body) = create_entity_map_from_get(&c, "type=Vehicle").await;
+    let (status, _, body) = create_entity_map_from_get(&c, &scope, "type=Vehicle").await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
 
@@ -98,17 +95,17 @@ async fn entity_map_update_valid_expires_at_returns_204() {
 
     cleanup_entity_map(&c, &map_id).await;
     delete_entity(&c, &id).await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_map_update_output_only_fields_ignored_returns_204() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:em-upd-oof");
+    let id = scope.id("Vehicle:em-upd-oof");
     setup_single_vehicle(&c, &id).await;
 
-    let (status, _, body) = create_entity_map_from_get(&c, "type=Vehicle").await;
+    let (status, _, body) = create_entity_map_from_get(&c, &scope, "type=Vehicle").await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
 
@@ -122,29 +119,29 @@ async fn entity_map_update_output_only_fields_ignored_returns_204() {
 
     cleanup_entity_map(&c, &map_id).await;
     delete_entity(&c, &id).await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_map_update_nonexistent_map_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
     let c = client();
 
     let patch = json!({ "expiresAt": (Utc::now() + Duration::hours(1)).to_rfc3339() });
     let (status, body) = update_entity_map(&c, "urn:ngsi-ld:EntityMap:nonexistent", &patch).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
     pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_map_update_invalid_expires_at_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:em-upd-bad");
+    let id = scope.id("Vehicle:em-upd-bad");
     setup_single_vehicle(&c, &id).await;
 
-    let (status, _, body) = create_entity_map_from_get(&c, "type=Vehicle").await;
+    let (status, _, body) = create_entity_map_from_get(&c, &scope, "type=Vehicle").await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
 
@@ -155,17 +152,17 @@ async fn entity_map_update_invalid_expires_at_returns_400() {
 
     cleanup_entity_map(&c, &map_id).await;
     delete_entity(&c, &id).await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_map_update_past_expires_at_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:em-upd-past");
+    let id = scope.id("Vehicle:em-upd-past");
     setup_single_vehicle(&c, &id).await;
 
-    let (status, _, body) = create_entity_map_from_get(&c, "type=Vehicle").await;
+    let (status, _, body) = create_entity_map_from_get(&c, &scope, "type=Vehicle").await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
 
@@ -176,17 +173,17 @@ async fn entity_map_update_past_expires_at_returns_400() {
 
     cleanup_entity_map(&c, &map_id).await;
     delete_entity(&c, &id).await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_map_delete_existing_map_then_retrieve_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:em-del");
+    let id = scope.id("Vehicle:em-del");
     setup_single_vehicle(&c, &id).await;
 
-    let (status, _, body) = create_entity_map_from_get(&c, "type=Vehicle").await;
+    let (status, _, body) = create_entity_map_from_get(&c, &scope, "type=Vehicle").await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
 
@@ -198,14 +195,15 @@ async fn entity_map_delete_existing_map_then_retrieve_returns_404() {
     pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
 
     delete_entity(&c, &id).await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn entity_map_delete_nonexistent_map_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
     let c = client();
 
     let status = delete_entity_map(&c, "urn:ngsi-ld:EntityMap:nonexistent").await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    scope.finish().await.expect("cleanup failed");
 }

@@ -8,36 +8,25 @@
 //! - Empty result returns 204
 //! - No filters returns 400
 
-use crate::{
-    TEST_SUITE_CONTEXT,
-    building_simple_attributes,
-    clean_database,
-    client,
-    create_entity_json,
-    delete_entities_by_query,
-    get_entity,
-    unique_id,
-    vehicle_simple_attributes,
-};
+use crate::{TEST_SUITE_CONTEXT, building_simple_attributes, client, create_entity_json, delete_entities_by_query, get_entity, vehicle_simple_attributes};
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
-use serial_test::serial;
 
 // ---------------------------------------------------------------------------
 // Delete by type
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_delete_by_query_by_type_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:dq_type_1");
-    let id2 = unique_id("urn:ngsi-ld:Building:dq_type_2");
-    let id3 = unique_id("urn:ngsi-ld:Building:dq_type_3");
-    let id_vehicle = unique_id("urn:ngsi-ld:Vehicle:dq_type_v");
+    let id1 = scope.id("Building:dq_type_1");
+    let id2 = scope.id("Building:dq_type_2");
+    let id3 = scope.id("Building:dq_type_3");
+    let id_vehicle = scope.id("Vehicle:dq_type_v");
 
     for id in [&id1, &id2, &id3] {
         let entity = building_simple_attributes(id);
@@ -49,7 +38,7 @@ async fn entity_delete_by_query_by_type_success() {
     let status = create_entity_json(&c, &vehicle, TEST_SUITE_CONTEXT).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    let (status, _) = delete_entities_by_query(&c, "type=Building&local=true", Some(TEST_SUITE_CONTEXT)).await;
+    let (status, _) = delete_entities_by_query(&c, &scope, "type=Building&local=true", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete by type should return 204");
 
     // Verify buildings are gone
@@ -61,6 +50,7 @@ async fn entity_delete_by_query_by_type_success() {
     // Verify vehicle remains
     let (status, _) = get_entity(&c, &id_vehicle, "", "application/json", None).await;
     assert_eq!(status, StatusCode::OK, "vehicle should still exist");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -68,13 +58,12 @@ async fn entity_delete_by_query_by_type_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_delete_by_query_by_id_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:dq_id_1");
-    let id2 = unique_id("urn:ngsi-ld:Building:dq_id_2");
+    let id1 = scope.id("Building:dq_id_1");
+    let id2 = scope.id("Building:dq_id_2");
 
     for id in [&id1, &id2] {
         let entity = building_simple_attributes(id);
@@ -84,13 +73,14 @@ async fn entity_delete_by_query_by_id_success() {
 
     let ids = format!("{id1},{id2}");
     let query = format!("id={}&local=true", urlencoding::encode(&ids));
-    let (status, _) = delete_entities_by_query(&c, &query, Some(TEST_SUITE_CONTEXT)).await;
+    let (status, _) = delete_entities_by_query(&c, &scope, &query, Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete by id should return 204");
 
     for id in [&id1, &id2] {
         let (status, _) = get_entity(&c, id, "", "application/json", None).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "entity {id} should be deleted");
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -98,14 +88,13 @@ async fn entity_delete_by_query_by_id_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_delete_by_query_by_id_pattern_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:dq_pat_match1");
-    let id2 = unique_id("urn:ngsi-ld:Building:dq_pat_match2");
-    let id_other = unique_id("urn:ngsi-ld:Building:dq_pat_other");
+    let id1 = scope.id("Building:dq_pat_match1");
+    let id2 = scope.id("Building:dq_pat_match2");
+    let id_other = scope.id("Building:dq_pat_other");
 
     for id in [&id1, &id2, &id_other] {
         let entity = building_simple_attributes(id);
@@ -113,9 +102,9 @@ async fn entity_delete_by_query_by_id_pattern_success() {
         assert_eq!(status, StatusCode::CREATED);
     }
 
-    let pattern = urlencoding::encode("urn:ngsi-ld:Building:dq_pat_match.*");
+    let pattern = urlencoding::encode(&format!("^{}:Building:dq_pat_match.*", scope.id_prefix())).into_owned();
     let query = format!("idPattern={pattern}&local=true");
-    let (status, _) = delete_entities_by_query(&c, &query, Some(TEST_SUITE_CONTEXT)).await;
+    let (status, _) = delete_entities_by_query(&c, &scope, &query, Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete by idPattern should return 204");
 
     for id in [&id1, &id2] {
@@ -125,6 +114,7 @@ async fn entity_delete_by_query_by_id_pattern_success() {
 
     let (status, _) = get_entity(&c, &id_other, "", "application/json", None).await;
     assert_eq!(status, StatusCode::OK, "unmatched entity should remain");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -132,13 +122,12 @@ async fn entity_delete_by_query_by_id_pattern_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_delete_by_query_by_q_filter_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
 
-    let id_high = unique_id("urn:ngsi-ld:Building:dq_q_high");
-    let id_low = unique_id("urn:ngsi-ld:Building:dq_q_low");
+    let id_high = scope.id("Building:dq_q_high");
+    let id_low = scope.id("Building:dq_q_low");
 
     let mut entity_high = building_simple_attributes(&id_high);
     entity_high["airQualityLevel"]["value"] = json!(50);
@@ -152,7 +141,7 @@ async fn entity_delete_by_query_by_q_filter_success() {
 
     let q = urlencoding::encode("airQualityLevel>30");
     let query = format!("type=Building&q={q}&local=true");
-    let (status, _) = delete_entities_by_query(&c, &query, Some(TEST_SUITE_CONTEXT)).await;
+    let (status, _) = delete_entities_by_query(&c, &scope, &query, Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete by q filter should return 204");
 
     let (status, _) = get_entity(&c, &id_high, "", "application/json", None).await;
@@ -160,6 +149,7 @@ async fn entity_delete_by_query_by_q_filter_success() {
 
     let (status, _) = get_entity(&c, &id_low, "", "application/json", None).await;
     assert_eq!(status, StatusCode::OK, "low value entity should remain");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -171,9 +161,8 @@ async fn entity_delete_by_query_by_q_filter_success() {
 /// `pick` term both name something the operation can never reach, whatever else
 /// the request carries.
 #[tokio::test]
-#[serial]
 async fn entity_delete_by_query_rejects_linked_entity_references() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
 
     let traversing_q = urlencoding::encode("isParkedIn{category==\"commercial\"}");
@@ -187,9 +176,10 @@ async fn entity_delete_by_query_rejects_linked_entity_references() {
     ];
 
     for query in queries {
-        let (status, _) = delete_entities_by_query(&c, &query, Some(TEST_SUITE_CONTEXT)).await;
+        let (status, _) = delete_entities_by_query(&c, &scope, &query, Some(TEST_SUITE_CONTEXT)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "a Linked Entity reference must be refused: {query}");
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -197,13 +187,13 @@ async fn entity_delete_by_query_rejects_linked_entity_references() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_delete_by_query_empty_result_returns_204() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
 
-    let (status, _) = delete_entities_by_query(&c, "type=NonExistentType&local=true", Some(TEST_SUITE_CONTEXT)).await;
+    let (status, _) = delete_entities_by_query(&c, &scope, "type=NonExistentType&local=true", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "empty result should return 204");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -211,11 +201,11 @@ async fn entity_delete_by_query_empty_result_returns_204() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn entity_delete_by_query_no_filters_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
 
-    let (status, _) = delete_entities_by_query(&c, "", None).await;
+    let (status, _) = delete_entities_by_query(&c, &scope, "", None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "no filters should return 400");
+    scope.finish().await.expect("cleanup failed");
 }

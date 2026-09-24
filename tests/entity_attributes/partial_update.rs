@@ -16,7 +16,6 @@ use crate::{
     building_json_property_object_sub_property,
     building_language_property_sub_property,
     building_vocab_property_sub_property,
-    clean_database,
     client,
     create_entity,
     get_entity,
@@ -24,24 +23,22 @@ use crate::{
     partial_update_attr_raw,
     partial_update_attr_with_datasetid,
     request_attrs_method,
-    unique_id,
     vehicle_speed_two_datasetid,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 use serde_json::json;
-use serial_test::serial;
 
 // ---------------------------------------------------------------------------
 // Partial update attribute
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_no_datasetid_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:partial_012_01_01");
+    let id = scope.id("Vehicle:partial_012_01_01");
 
     let entity = vehicle_speed_two_datasetid(&id);
     let status = create_entity(&c, &entity).await;
@@ -62,14 +59,14 @@ async fn attribute_partial_update_no_datasetid_success() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["isParked"]["providedBy"]["object"], "urn:ngsi-ld:Person:JohnDoe");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_with_datasetid_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:partial_012_01_02");
+    let id = scope.id("Vehicle:partial_012_01_02");
 
     let entity = vehicle_speed_two_datasetid(&id);
     let status = create_entity(&c, &entity).await;
@@ -82,6 +79,7 @@ async fn attribute_partial_update_with_datasetid_success() {
 
     let (status, _) = partial_update_attr_with_datasetid(&c, &id, "speed", "urn:ngsi-ld:Property:speedometer", &fragment, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "partial update with datasetId should return 204");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -89,9 +87,8 @@ async fn attribute_partial_update_with_datasetid_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_empty_entity_id_returns_error() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
 
     let fragment = json!({
@@ -104,12 +101,12 @@ async fn attribute_partial_update_empty_entity_id_returns_error() {
         status == StatusCode::BAD_REQUEST || status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED,
         "empty entity ID should return error status, got {status}"
     );
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_invalid_entity_id_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
 
     let fragment = json!({
@@ -119,14 +116,14 @@ async fn attribute_partial_update_invalid_entity_id_returns_400() {
 
     let (status, _) = request_attrs_method(&c, Method::PATCH, "/entities/not-a-valid-uri/attrs/speed", Some(&fragment)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "invalid URI should return 400");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_mismatched_type_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:partial_012_02_03");
+    let id = scope.id("Vehicle:partial_012_02_03");
 
     let entity = vehicle_speed_two_datasetid(&id);
     let status = create_entity(&c, &entity).await;
@@ -141,14 +138,14 @@ async fn attribute_partial_update_mismatched_type_returns_400() {
 
     let (status, _) = partial_update_attr_with_datasetid(&c, &id, "speed", "urn:ngsi-ld:Property:speedometer", &fragment, None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "mismatched attribute type should return 400");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_empty_fragment_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:partial_012_02_04");
+    let id = scope.id("Vehicle:partial_012_02_04");
 
     let entity = vehicle_speed_two_datasetid(&id);
     let status = create_entity(&c, &entity).await;
@@ -156,14 +153,14 @@ async fn attribute_partial_update_empty_fragment_returns_400() {
 
     let (status, _) = partial_update_attr_raw(&c, &id, "speed", b"{}", "application/ld+json").await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "empty fragment should return 400");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_nonexistent_entity_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:partial_012_03_01");
+    let id = scope.id("Vehicle:partial_012_03_01");
 
     let fragment = json!({
         "value": 100,
@@ -172,14 +169,14 @@ async fn attribute_partial_update_nonexistent_entity_returns_404() {
 
     let (status, _) = partial_update_attr(&c, &id, "speed", &fragment, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent entity should return 404");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_no_default_instance_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:partial_012_03_02");
+    let id = scope.id("Vehicle:partial_012_03_02");
 
     let entity = vehicle_speed_two_datasetid(&id);
     let status = create_entity(&c, &entity).await;
@@ -193,14 +190,14 @@ async fn attribute_partial_update_no_default_instance_returns_404() {
 
     let (status, _) = partial_update_attr(&c, &id, "speed", &fragment, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "no default instance should return 404");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_nonexistent_datasetid_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:partial_012_03_03");
+    let id = scope.id("Vehicle:partial_012_03_03");
 
     let entity = vehicle_speed_two_datasetid(&id);
     let status = create_entity(&c, &entity).await;
@@ -213,14 +210,14 @@ async fn attribute_partial_update_nonexistent_datasetid_returns_404() {
 
     let (status, _) = partial_update_attr_with_datasetid(&c, &id, "speed", "urn:ngsi-ld:Property:unknownDatasetId", &fragment, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent datasetId should return 404");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_nonexistent_attribute_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:partial_012_03_04");
+    let id = scope.id("Vehicle:partial_012_03_04");
 
     let entity = vehicle_speed_two_datasetid(&id);
     let status = create_entity(&c, &entity).await;
@@ -233,6 +230,7 @@ async fn attribute_partial_update_nonexistent_attribute_returns_404() {
 
     let (status, _) = partial_update_attr(&c, &id, "nonExistentAttr", &fragment, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent attribute should return 404");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -240,11 +238,10 @@ async fn attribute_partial_update_nonexistent_attribute_returns_404() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_language_property_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:partial_012_04_01");
+    let id = scope.id("Building:partial_012_04_01");
 
     let entity = building_language_property_sub_property(&id);
     let status = create_entity(&c, &entity).await;
@@ -264,6 +261,7 @@ async fn attribute_partial_update_language_property_success() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["street"]["languageMap"]["es"], "Gran Lugar");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -271,11 +269,10 @@ async fn attribute_partial_update_language_property_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_delete_property_with_null_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:partial_012_05_01");
+    let id = scope.id("Building:partial_012_05_01");
 
     let entity = building_different_attributes_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -293,14 +290,14 @@ async fn attribute_partial_update_delete_property_with_null_success() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("name").is_none(), "name should be deleted");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_delete_relationship_with_null_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:partial_012_05_02");
+    let id = scope.id("Building:partial_012_05_02");
 
     let entity = building_different_attributes_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -318,14 +315,14 @@ async fn attribute_partial_update_delete_relationship_with_null_success() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("locatedAt").is_none(), "locatedAt should be deleted");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_delete_geo_property_with_null_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:partial_012_05_03");
+    let id = scope.id("Building:partial_012_05_03");
 
     let entity = building_different_attributes_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -343,14 +340,14 @@ async fn attribute_partial_update_delete_geo_property_with_null_success() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("location").is_none(), "location should be deleted");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_delete_language_property_with_null_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:partial_012_05_04");
+    let id = scope.id("Building:partial_012_05_04");
 
     let entity = building_different_attributes_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -370,6 +367,7 @@ async fn attribute_partial_update_delete_language_property_with_null_success() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("street").is_none(), "street should be deleted");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -377,11 +375,10 @@ async fn attribute_partial_update_delete_language_property_with_null_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_delete_property_instance_with_null_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:partial_012_06_01");
+    let id = scope.id("Building:partial_012_06_01");
 
     let entity = building_different_attributes_instances_and_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -395,14 +392,14 @@ async fn attribute_partial_update_delete_property_instance_with_null_success() {
 
     let (status, _) = partial_update_attr_with_datasetid(&c, &id, "name", "urn:ngsi-ld:Dataset:01", &fragment, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete Property instance via null should return 204");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_delete_relationship_instance_with_null_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:partial_012_06_02");
+    let id = scope.id("Building:partial_012_06_02");
 
     let entity = building_different_attributes_instances_and_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -416,14 +413,14 @@ async fn attribute_partial_update_delete_relationship_instance_with_null_success
 
     let (status, _) = partial_update_attr_with_datasetid(&c, &id, "locatedAt", "urn:ngsi-ld:Dataset:01", &fragment, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete Relationship instance via null should return 204");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_delete_geo_property_instance_with_null_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:partial_012_06_03");
+    let id = scope.id("Building:partial_012_06_03");
 
     let entity = building_different_attributes_instances_and_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -437,14 +434,14 @@ async fn attribute_partial_update_delete_geo_property_instance_with_null_success
 
     let (status, _) = partial_update_attr_with_datasetid(&c, &id, "location", "urn:ngsi-ld:Dataset:01", &fragment, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete GeoProperty instance via null should return 204");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_delete_language_property_instance_with_null_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:partial_012_06_04");
+    let id = scope.id("Building:partial_012_06_04");
 
     let entity = building_different_attributes_instances_and_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -460,6 +457,7 @@ async fn attribute_partial_update_delete_language_property_instance_with_null_su
 
     let (status, _) = partial_update_attr_with_datasetid(&c, &id, "street", "urn:ngsi-ld:Dataset:01", &fragment, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete LanguageProperty instance via null should return 204");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -467,11 +465,10 @@ async fn attribute_partial_update_delete_language_property_instance_with_null_su
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_delete_default_property_instance_with_null_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:partial_012_07_01");
+    let id = scope.id("Building:partial_012_07_01");
 
     let entity = building_different_default_attributes_instances_and_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -489,14 +486,14 @@ async fn attribute_partial_update_delete_default_property_instance_with_null_suc
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("name").is_some(), "name with datasetId should remain");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_delete_default_relationship_instance_with_null_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:partial_012_07_02");
+    let id = scope.id("Building:partial_012_07_02");
 
     let entity = building_different_default_attributes_instances_and_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -510,14 +507,14 @@ async fn attribute_partial_update_delete_default_relationship_instance_with_null
 
     let (status, _) = partial_update_attr(&c, &id, "locatedAt", &fragment, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete default Relationship via null should return 204");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_delete_default_geo_property_instance_with_null_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:partial_012_07_03");
+    let id = scope.id("Building:partial_012_07_03");
 
     let entity = building_different_default_attributes_instances_and_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -531,14 +528,14 @@ async fn attribute_partial_update_delete_default_geo_property_instance_with_null
 
     let (status, _) = partial_update_attr(&c, &id, "location", &fragment, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete default GeoProperty via null should return 204");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_delete_default_language_property_instance_with_null_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:partial_012_07_04");
+    let id = scope.id("Building:partial_012_07_04");
 
     let entity = building_different_default_attributes_instances_and_types(&id);
     let status = create_entity(&c, &entity).await;
@@ -554,6 +551,7 @@ async fn attribute_partial_update_delete_default_language_property_instance_with
 
     let (status, _) = partial_update_attr(&c, &id, "street", &fragment, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete default LanguageProperty via null should return 204");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -561,11 +559,10 @@ async fn attribute_partial_update_delete_default_language_property_instance_with
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_json_property_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:partial_012_08_01");
+    let id = scope.id("Building:partial_012_08_01");
 
     let entity = building_json_property_object_sub_property(&id);
     let status = create_entity(&c, &entity).await;
@@ -585,6 +582,7 @@ async fn attribute_partial_update_json_property_success() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["jsonProperty"]["json"]["id"], "another-id");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -592,11 +590,10 @@ async fn attribute_partial_update_json_property_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn attribute_partial_update_vocab_property_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:partial_012_09_01");
+    let id = scope.id("Building:partial_012_09_01");
 
     let entity = building_vocab_property_sub_property(&id);
     let status = create_entity(&c, &entity).await;
@@ -613,4 +610,5 @@ async fn attribute_partial_update_vocab_property_success() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["vocabProperty"]["type"], "VocabProperty");
+    scope.finish().await.expect("cleanup failed");
 }

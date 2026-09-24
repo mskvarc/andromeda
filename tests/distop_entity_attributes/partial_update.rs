@@ -4,12 +4,10 @@
 //! Tests for PATCH /entities/{entityId}/attrs/{attrId} with different registration modes.
 
 use reqwest::{Method, StatusCode};
-use serial_test::serial;
 
 use crate::{
     context_source_adapter::ContextSourceAdapter as MockServer,
     helpers::{
-        clean_database,
         client,
         create_entity,
         create_registration,
@@ -20,7 +18,6 @@ use crate::{
         get_entity,
         jsonld_link_value,
         partial_update_attr,
-        unique_id,
         vehicle_entity,
         vehicle_entity_different,
         vehicle_registration_auxiliary_retrieve_ops,
@@ -28,6 +25,7 @@ use crate::{
         vehicle_registration_speed_redirection_ops,
     },
 };
+use andromeda_test_harness::environment::TestEnvironment;
 
 // ---------------------------------------------------------------------------
 // Partial update attribute - inclusive mode
@@ -35,14 +33,15 @@ use crate::{
 
 /// Partial update with inclusive registration: updates local and forwards.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_partial_update_inclusive_forwards_and_updates_local() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:partial-inc");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:partial-inc");
+    let entity_id = scope.id("Vehicle:partial-inc");
+    let reg_id = scope.id("Registration:partial-inc");
 
     // Create entity with speed attribute
     let entity = vehicle_entity_different(&entity_id);
@@ -75,6 +74,7 @@ async fn distop_entity_attrs_partial_update_inclusive_forwards_and_updates_local
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -83,14 +83,15 @@ async fn distop_entity_attrs_partial_update_inclusive_forwards_and_updates_local
 
 /// Partial update with exclusive registration: forwards but does not update local.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_partial_update_exclusive_forwards_not_local() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:partial-exc");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:partial-exc");
+    let entity_id = scope.id("Vehicle:partial-exc");
+    let reg_id = scope.id("Registration:partial-exc");
 
     // Clause 5.9.2.4 refuses an exclusive registration with Conflict when the
     // existing Entity already holds one of the Attributes it covers, so the
@@ -125,6 +126,7 @@ async fn distop_entity_attrs_partial_update_exclusive_forwards_not_local() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -133,15 +135,16 @@ async fn distop_entity_attrs_partial_update_exclusive_forwards_not_local() {
 
 /// Partial update with redirect registrations: forwards to multiple context sources.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_partial_update_redirect_forwards_to_multiple() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:partial-red");
-    let reg_id1 = unique_id("urn:ngsi-ld:Registration:partial-red-1");
-    let reg_id2 = unique_id("urn:ngsi-ld:Registration:partial-red-2");
+    let entity_id = scope.id("Vehicle:partial-red");
+    let reg_id1 = scope.id("Registration:partial-red-1");
+    let reg_id2 = scope.id("Registration:partial-red-2");
 
     // Create two redirect registrations
     let reg1 = vehicle_registration_redirection_ops(&reg_id1, Some(&entity_id), &mock.url("/broker1"), Some("redirect"));
@@ -169,6 +172,7 @@ async fn distop_entity_attrs_partial_update_redirect_forwards_to_multiple() {
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -177,27 +181,30 @@ async fn distop_entity_attrs_partial_update_redirect_forwards_to_multiple() {
 
 /// Partial update non-existent entity returns 404.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_partial_update_not_found_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:partial-notfound");
+    let entity_id = scope.id("Vehicle:partial-notfound");
     let fragment = fragment_speed_datasetid();
     let status = partial_update_attr(&c, &entity_id, "speed", &fragment, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Partial update with auxiliary registration only updates locally, no forwarding.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_partial_update_auxiliary_no_forwarding() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:partial-aux");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:partial-aux");
+    let entity_id = scope.id("Vehicle:partial-aux");
+    let reg_id = scope.id("Registration:partial-aux");
 
     // Create entity with speed attribute
     let entity = vehicle_entity_different(&entity_id);
@@ -228,4 +235,5 @@ async fn distop_entity_attrs_partial_update_auxiliary_no_forwarding() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }

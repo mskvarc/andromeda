@@ -1,18 +1,17 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 use crate::helpers::*;
 use andromeda_test_fixtures::context::{COMPOUND_CONTEXT, CORE_CONTEXT};
+use andromeda_test_harness::environment::TestEnvironment;
 use reqwest::{Method, StatusCode};
 use serde_json::json;
-use serial_test::serial;
 
 #[tokio::test]
-#[serial]
 async fn batch_update_properties_returns_204() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:005_01_01a");
-    let id2 = unique_id("urn:ngsi-ld:Building:005_01_01b");
+    let id1 = scope.id("Building:005_01_01a");
+    let id2 = scope.id("Building:005_01_01b");
 
     for id in [&id1, &id2] {
         let entity = building_simple_attributes(id);
@@ -30,16 +29,16 @@ async fn batch_update_properties_returns_204() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
     pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_update_relationships_returns_204() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:005_01_02a");
-    let id2 = unique_id("urn:ngsi-ld:Building:005_01_02b");
+    let id1 = scope.id("Building:005_01_02a");
+    let id2 = scope.id("Building:005_01_02b");
 
     for id in [&id1, &id2] {
         let entity = building_minimal(id);
@@ -56,16 +55,16 @@ async fn batch_update_relationships_returns_204() {
     let (status, _, body) = get_entity(&c, &id1, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_update_relationship_of_property_returns_204() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:005_01_03a");
-    let id2 = unique_id("urn:ngsi-ld:Building:005_01_03b");
+    let id1 = scope.id("Building:005_01_03a");
+    let id2 = scope.id("Building:005_01_03b");
 
     for id in [&id1, &id2] {
         let entity = building_minimal(id);
@@ -78,15 +77,15 @@ async fn batch_update_relationship_of_property_returns_204() {
 
     let (status, _) = batch_update(&c, &updates, false).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_update_no_overwrite_existing_returns_207() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id = unique_id("urn:ngsi-ld:Building:005_02_01");
+    let id = scope.id("Building:005_02_01");
     let entity = building_simple_attributes(&id);
     create_entity(&c, &entity).await;
 
@@ -99,15 +98,15 @@ async fn batch_update_no_overwrite_existing_returns_207() {
     let (status, _, body) = get_entity(&c, &id, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_update_no_overwrite_new_returns_204() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id = unique_id("urn:ngsi-ld:Building:005_02_02");
+    let id = scope.id("Building:005_02_02");
     let entity = building_minimal(&id);
     create_entity(&c, &entity).await;
 
@@ -120,6 +119,7 @@ async fn batch_update_no_overwrite_new_returns_204() {
     let (status, _, body) = get_entity(&c, &id, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Clause 5.6.9.4/5.6.9.5: a `noOverwrite` batch update whose fragment names only
@@ -130,12 +130,11 @@ async fn batch_update_no_overwrite_new_returns_204() {
 /// a top-level `noOverwrite` append does not touch -- so no top-level attribute
 /// is appended and the batch is all-skipped, not a mix.
 #[tokio::test]
-#[serial]
 async fn batch_update_no_overwrite_all_present_returns_207() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id = unique_id("urn:ngsi-ld:Building:005_02_03");
+    let id = scope.id("Building:005_02_03");
     let entity = building_simple_attributes(&id);
     create_entity(&c, &entity).await;
 
@@ -144,6 +143,7 @@ async fn batch_update_no_overwrite_all_present_returns_207() {
 
     let (status, _) = batch_update(&c, &updates, true).await;
     pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS);
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Clause 5.6.9.4/5.6.9.5: a `noOverwrite` batch update whose fragment mixes an
@@ -152,12 +152,11 @@ async fn batch_update_no_overwrite_all_present_returns_207() {
 /// all-S batch answers 204. The present attribute keeps its original value
 /// (noOverwrite preserved it) and the new attribute is added.
 #[tokio::test]
-#[serial]
 async fn batch_update_no_overwrite_partial_append_returns_204() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id = unique_id("urn:ngsi-ld:Building:005_02_04");
+    let id = scope.id("Building:005_02_04");
     let entity = building_simple_attributes(&id);
     create_entity(&c, &entity).await;
 
@@ -182,17 +181,17 @@ async fn batch_update_no_overwrite_partial_append_returns_204() {
         "noOverwrite preserved the present attribute's original value"
     );
     pretty_assertions::assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris", "the new attribute was appended");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_update_mixed_existing_nonexisting_returns_207() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let existing_id1 = unique_id("urn:ngsi-ld:Building:005_03_01a");
-    let existing_id2 = unique_id("urn:ngsi-ld:Building:005_03_01b");
-    let nonexistent_id = unique_id("urn:ngsi-ld:Building:005_03_01c");
+    let existing_id1 = scope.id("Building:005_03_01a");
+    let existing_id2 = scope.id("Building:005_03_01b");
+    let nonexistent_id = scope.id("Building:005_03_01c");
 
     for id in [&existing_id1, &existing_id2] {
         let entity = building_simple_attributes(id);
@@ -211,6 +210,7 @@ async fn batch_update_mixed_existing_nonexisting_returns_207() {
     let errors = body["errors"].as_array().expect("should have errors");
     pretty_assertions::assert_eq!(success.len(), 2);
     pretty_assertions::assert_eq!(errors.len(), 1);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
@@ -242,12 +242,11 @@ async fn batch_update_invalid_json_ld_returns_207() {
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_update_entity_type_returns_204() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id = unique_id("urn:ngsi-ld:Building:005_05_01");
+    let id = scope.id("Building:005_05_01");
     let entity = building_minimal(&id);
     create_entity(&c, &entity).await;
 
@@ -256,6 +255,7 @@ async fn batch_update_entity_type_returns_204() {
 
     let (status, _) = batch_update(&c, &updates, false).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// NGSI-LD 5.5.11.3 with 5.5.11.0: an array may name the same entity twice, its
@@ -264,12 +264,11 @@ async fn batch_update_entity_type_returns_204() {
 /// second update applies to what the first one produced. Computing both from a
 /// single pre-batch snapshot would silently drop the earlier update.
 #[tokio::test]
-#[serial]
 async fn batch_update_repeated_id_applies_each_instance_to_the_previous_result_returns_204() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id = unique_id("urn:ngsi-ld:Building:005_06_01");
+    let id = scope.id("Building:005_06_01");
     let entity = building_simple_attributes(&id);
     let (status, _, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -300,4 +299,5 @@ async fn batch_update_repeated_id_applies_each_instance_to_the_previous_result_r
         "landmark",
         "the second instance's update must be applied on top of the first"
     );
+    scope.finish().await.expect("cleanup failed");
 }

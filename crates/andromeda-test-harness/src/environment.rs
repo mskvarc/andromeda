@@ -4,8 +4,9 @@ use crate::{
     configuration::{ConfigurationError, TestRunConfiguration},
     database_isolation::{DatabaseIsolationError, IsolatedLease, connect_pool},
     database_reset::{DatabaseResetError, cleanup_prefix},
-    identifiers::{IdentifierError, TestIdentifiers, TestSuiteName},
+    identifiers::{IdentifierError, TestSuiteName},
     readiness::{ReadinessError, ReadinessPolicy, wait_until_ready_once},
+    scope::Scope,
 };
 use andromeda_test_client::test_client::TestClient;
 use sqlx::PgPool;
@@ -14,7 +15,7 @@ use thiserror::Error;
 /// Prefix-isolated integration-test environment.
 pub struct TestEnvironment {
     client: TestClient,
-    identifiers: TestIdentifiers,
+    scope: Scope,
     lease: IsolatedLease,
     pool: PgPool,
 }
@@ -37,17 +38,12 @@ impl TestEnvironment {
     ///
     /// Returns [`TestEnvironmentError::Identifier`] when identifier allocation fails, [`TestEnvironmentError::Readiness`] when the broker does not answer its health endpoint within the default policy, and [`TestEnvironmentError::Isolation`] when the pool or the shared advisory lock cannot be obtained.
     pub async fn isolated(configuration: &TestRunConfiguration, suite: &TestSuiteName) -> Result<TestEnvironment, TestEnvironmentError> {
-        let identifiers = TestIdentifiers::allocate(suite)?;
+        let scope = Scope::allocate(suite)?;
         let client = TestClient::new(configuration.broker().clone(), None); // clone: the environment owns its client endpoint while configuration remains reusable.
         wait_until_ready_once(&client, ReadinessPolicy::default()).await?;
         let pool = connect_pool(configuration.database()).await?;
         let lease = IsolatedLease::acquire(&pool).await?;
-        Ok(TestEnvironment {
-            client,
-            identifiers,
-            lease,
-            pool,
-        })
+        Ok(TestEnvironment { client, scope, lease, pool })
     }
 
     /// Borrow the HTTP client bound to this test environment.
@@ -55,9 +51,10 @@ impl TestEnvironment {
         &self.client
     }
 
-    /// Borrow the structured identifier allocator.
-    pub const fn identifiers(&self) -> &TestIdentifiers {
-        &self.identifiers
+    /// Borrow this environment's isolation scope for typed identifier and
+    /// derived-type allocation.
+    pub const fn scope(&self) -> &Scope {
+        &self.scope
     }
 
     /// Borrow the database pool for assertions that inspect broker persistence state.
@@ -67,12 +64,28 @@ impl TestEnvironment {
 
     /// Compose a wire identifier below this environment's non-empty isolated prefix.
     pub fn id(&self, local: &str) -> String {
-        format!("{}:{local}", self.identifiers.prefix())
+        self.scope.id(local)
     }
 
     /// Borrow the non-empty cleanup prefix as wire text.
     pub fn id_prefix(&self) -> &str {
-        self.identifiers.prefix().as_str()
+        self.scope.id_prefix()
+    }
+
+    /// An Entity type unique to this run, derived from the isolation prefix.
+    pub fn entity_type(&self, base: &str) -> String {
+        self.scope.entity_type(base)
+    }
+
+    /// This run's id-scoping `RegExp` `idPattern` for an `entities` selector.
+    pub fn id_pattern(&self) -> String {
+        self.scope.id_pattern()
+    }
+
+    /// A query string carrying this run's `idPattern`, URL-encoded, so a
+    /// collection query returns only the entities the run created.
+    pub fn scope_query(&self, query: &str) -> String {
+        self.scope.scope_query(query)
     }
 
     /// Clean owned rows, release the advisory lock, and preserve both failures when necessary.
@@ -81,7 +94,7 @@ impl TestEnvironment {
     ///
     /// Returns [`TestEnvironmentError::Cleanup`] when prefix cleanup fails, [`TestEnvironmentError::Isolation`] when the shared advisory lock cannot be released, and [`TestEnvironmentError::CleanupAndRelease`] when both fail.
     pub async fn finish(self) -> Result<(), TestEnvironmentError> {
-        let cleanup = cleanup_prefix(&self.pool, &self.identifiers).await;
+        let cleanup = cleanup_prefix(&self.pool, self.scope.identifiers()).await;
         let release = self.lease.release().await;
         self.pool.close().await;
         match (cleanup, release) {

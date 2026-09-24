@@ -1,30 +1,15 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 use andromeda_test_fixtures::context::CORE_CONTEXT;
-use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, environment::TestEnvironment};
 use andromeda_test_mocks::mqtt_receiver::{MqttCredentials, MqttHost, MqttReceiver as RawMqttReceiver, MqttTopic};
 use reqwest::{Client, StatusCode, header::HeaderMap};
 use rumqttc::QoS;
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::time::sleep;
-use uuid::Uuid;
 
 pub fn client() -> Client {
     Client::new()
-}
-
-pub async fn reset_broker_state() -> SerializedEnvironment {
-    SerializedEnvironment::from_environment_reset()
-        .await
-        .expect("serialized test database environment")
-}
-
-pub fn unique_entity_id(prefix: &str) -> String {
-    format!("{prefix}:{}", Uuid::new_v4())
-}
-
-pub fn unique_subscription_id(case_id: &str) -> String {
-    format!("urn:ngsi-ld:Subscription:{case_id}:{}", Uuid::new_v4())
 }
 
 pub fn building_simple_entity(entity_id: &str) -> Value {
@@ -360,11 +345,22 @@ pub async fn create_entity(http_client: &Client, body: &Value) -> (StatusCode, H
     (status, headers, body)
 }
 
-pub async fn create_subscription(http_client: &Client, body: &Value) -> (StatusCode, HeaderMap, Value) {
+pub async fn create_subscription(http_client: &Client, scope: &TestEnvironment, body: &Value) -> (StatusCode, HeaderMap, Value) {
+    // clone: the body is borrowed, and the run's idPattern is injected into every
+    // entities selector so a type-wide subscription notifies only for this run's
+    // own entities rather than a concurrent test's.
+    let mut body = body.clone();
+    if let Some(entities) = body.get_mut("entities").and_then(Value::as_array_mut) {
+        for entity in entities {
+            if let Some(object) = entity.as_object_mut() {
+                object.entry("idPattern").or_insert_with(|| Value::String(scope.id_pattern()));
+            }
+        }
+    }
     let response = http_client
         .post(format!("{BASE_URL}/subscriptions"))
         .header("Content-Type", "application/ld+json")
-        .json(body)
+        .json(&body)
         .send()
         .await
         .expect("create subscription request failed");

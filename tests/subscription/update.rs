@@ -18,19 +18,17 @@ use crate::helpers::{
     past_expires_fragment,
     pause_fragment,
     raw_subscription_request,
-    reset_broker_state,
     retrieve_subscription,
-    unique_subscription_id,
     update_fragment,
     update_subscription,
     vehicle_entities_fragment,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 
-#[serial_test::serial]
 #[tokio::test]
 async fn subscription_update_missing_id_path_returns_method_not_allowed() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
     let fragment = update_fragment();
 
     let (status, _) = raw_subscription_request(
@@ -43,38 +41,38 @@ async fn subscription_update_missing_id_path_returns_method_not_allowed() {
     .await;
 
     pretty_assertions::assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    scope.finish().await.expect("cleanup failed");
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn subscription_update_invalid_id_returns_bad_request_data() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
 
     let (status, body) = update_subscription(&http_client, "InvalidUri", &update_fragment(), false).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn subscription_update_unknown_id_returns_resource_not_found() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
 
     let (status, body) = update_subscription(&http_client, "urn:ngsi-ld:Subscription:unknown", &update_fragment(), false).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
     pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn subscription_update_invalid_fragment_returns_bad_request_data() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
-    let subscription_id = unique_subscription_id("update-invalid-fragment");
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+    let subscription_id = scope.id("Subscription:update-invalid-fragment");
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
@@ -84,14 +82,14 @@ async fn subscription_update_invalid_fragment_returns_bad_request_data() {
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn subscription_update_null_mandatory_properties_returns_bad_request_data() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
-    let subscription_id = unique_subscription_id("update-null-mandatory-properties");
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+    let subscription_id = scope.id("Subscription:update-null-mandatory-properties");
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
@@ -101,14 +99,14 @@ async fn subscription_update_null_mandatory_properties_returns_bad_request_data(
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn subscription_update_entities_with_context_returns_no_content() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
-    let subscription_id = unique_subscription_id("update-entities-with-context");
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+    let subscription_id = scope.id("Subscription:update-entities-with-context");
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
@@ -121,14 +119,14 @@ async fn subscription_update_entities_with_context_returns_no_content() {
     let (status, body) = retrieve_subscription(&http_client, &subscription_id, true).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["entities"][0]["type"], "Vehicle");
+    scope.finish().await.expect("cleanup failed");
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn subscription_update_entities_without_accept_context_still_updates_entities() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
-    let subscription_id = unique_subscription_id("update-entities-without-context");
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+    let subscription_id = scope.id("Subscription:update-entities-without-context");
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
@@ -141,14 +139,14 @@ async fn subscription_update_entities_without_accept_context_still_updates_entit
     let (status, body) = retrieve_subscription(&http_client, &subscription_id, false).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["entities"][0]["type"], "Vehicle");
+    scope.finish().await.expect("cleanup failed");
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn subscription_update_notification_endpoint_returns_no_content_and_persists_changes() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
-    let subscription_id = unique_subscription_id("update-endpoint");
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+    let subscription_id = scope.id("Subscription:update-endpoint");
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
@@ -162,14 +160,14 @@ async fn subscription_update_notification_endpoint_returns_no_content_and_persis
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["notification"]["endpoint"]["uri"], "http://my.second.endpoint.org/notify");
     pretty_assertions::assert_eq!(body["notification"]["format"], "keyValues");
+    scope.finish().await.expect("cleanup failed");
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn subscription_update_paused_subscription_with_is_active_true_sets_active_status() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
-    let subscription_id = unique_subscription_id("update-is-active-true");
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+    let subscription_id = scope.id("Subscription:update-is-active-true");
     let payload = inactive_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
@@ -182,14 +180,14 @@ async fn subscription_update_paused_subscription_with_is_active_true_sets_active
     let (status, body) = retrieve_subscription(&http_client, &subscription_id, false).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["status"], "active");
+    scope.finish().await.expect("cleanup failed");
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn subscription_update_paused_subscription_with_is_active_and_future_expires_sets_active_status() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
-    let subscription_id = unique_subscription_id("update-active-with-expires");
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+    let subscription_id = scope.id("Subscription:update-active-with-expires");
     let payload = inactive_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
@@ -202,14 +200,14 @@ async fn subscription_update_paused_subscription_with_is_active_and_future_expir
     let (status, body) = retrieve_subscription(&http_client, &subscription_id, false).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["status"], "active");
+    scope.finish().await.expect("cleanup failed");
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn subscription_update_active_subscription_with_is_active_false_sets_paused_status() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
-    let subscription_id = unique_subscription_id("update-pause");
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+    let subscription_id = scope.id("Subscription:update-pause");
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
@@ -222,14 +220,14 @@ async fn subscription_update_active_subscription_with_is_active_false_sets_pause
     let (status, body) = retrieve_subscription(&http_client, &subscription_id, false).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["status"], "paused");
+    scope.finish().await.expect("cleanup failed");
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn subscription_update_expired_subscription_with_future_expires_reactivates_subscription() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
-    let subscription_id = unique_subscription_id("update-reactivate-expired");
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+    let subscription_id = scope.id("Subscription:update-reactivate-expired");
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
@@ -252,14 +250,14 @@ async fn subscription_update_expired_subscription_with_future_expires_reactivate
     let (status, body) = retrieve_subscription(&http_client, &subscription_id, false).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["status"], "active");
+    scope.finish().await.expect("cleanup failed");
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn subscription_update_with_past_expires_at_returns_bad_request_data() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
-    let subscription_id = unique_subscription_id("update-past-expires");
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+    let subscription_id = scope.id("Subscription:update-past-expires");
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
@@ -269,4 +267,5 @@ async fn subscription_update_with_past_expires_at_returns_bad_request_data() {
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
 }

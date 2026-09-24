@@ -1,18 +1,17 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 use reqwest::{Method, StatusCode};
-use serial_test::serial;
 
 use crate::helpers::*;
+use andromeda_test_harness::environment::TestEnvironment;
 use serde_json::json;
 
 #[tokio::test]
-#[serial]
 async fn batch_delete_entities_returns_204() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:006_01_01a");
-    let id2 = unique_id("urn:ngsi-ld:Building:006_01_01b");
+    let id1 = scope.id("Building:006_01_01a");
+    let id2 = scope.id("Building:006_01_01b");
 
     for id in [&id1, &id2] {
         let entity = building_simple_attributes(id);
@@ -28,16 +27,16 @@ async fn batch_delete_entities_returns_204() {
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, _, _) = get_entity(&c, &id2, "", false).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_delete_mixed_existing_nonexisting_returns_207() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let existing_id = unique_id("urn:ngsi-ld:Building:006_02_01a");
-    let nonexistent_id = unique_id("urn:ngsi-ld:Building:006_02_01b");
+    let existing_id = scope.id("Building:006_02_01a");
+    let nonexistent_id = scope.id("Building:006_02_01b");
 
     let entity = building_simple_attributes(&existing_id);
     let (status, _, _) = create_entity(&c, &entity).await;
@@ -54,6 +53,7 @@ async fn batch_delete_mixed_existing_nonexisting_returns_207() {
 
     let (status, _, _) = get_entity(&c, &existing_id, "", false).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
@@ -79,12 +79,11 @@ async fn batch_delete_empty_json_returns_400() {
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_delete_duplicate_ids_returns_207() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id = unique_id("urn:ngsi-ld:Building:006_04_01");
+    let id = scope.id("Building:006_04_01");
     let entity = building_simple_attributes(&id);
     let (status, _, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -97,4 +96,5 @@ async fn batch_delete_duplicate_ids_returns_207() {
     let errors = body["errors"].as_array().expect("should have errors array");
     pretty_assertions::assert_eq!(success.len(), 1, "first delete should succeed");
     pretty_assertions::assert_eq!(errors.len(), 1, "second delete should fail");
+    scope.finish().await.expect("cleanup failed");
 }

@@ -7,7 +7,6 @@
 
 use crate::{
     COMPOUND_CONTEXT,
-    clean_database,
     client,
     create_temporal_entity,
     extract_instance_id,
@@ -16,13 +15,12 @@ use crate::{
     modify_instance_fragment,
     modify_temporal_attr_instance,
     request_temporal_attrs,
-    unique_id,
     vehicle_temporal_representation,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 use serde_json::{Number, json};
-use serial_test::serial;
 use std::{str::FromStr, time::Duration};
 use tokio::time::sleep;
 
@@ -30,9 +28,9 @@ use tokio::time::sleep;
 // Setup helper
 // ---------------------------------------------------------------------------
 
-async fn setup_entity_with_instance_id(prefix: &str) -> (reqwest::Client, String, String) {
+async fn setup_entity_with_instance_id(scope: &TestEnvironment, local: &str) -> (reqwest::Client, String, String) {
     let c = client();
-    let id = unique_id(prefix);
+    let id = scope.id(local);
 
     let entity = vehicle_temporal_representation(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -51,10 +49,11 @@ async fn setup_entity_with_instance_id(prefix: &str) -> (reqwest::Client, String
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_modify_instance_success() {
-    let _serialized_environment = clean_database().await;
-    let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_01_01").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (c, id, instance_id) = setup_entity_with_instance_id(&scope, "Vehicle:modify_016_01_01").await;
 
     let (status, before) = get_temporal_entity_with_query(&c, &id, "options=sysAttrs", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
@@ -90,13 +89,15 @@ async fn temporal_attrs_modify_instance_success() {
     assert_eq!(after_instance["createdAt"], created_at, "createdAt must be stable across instance replacement");
     let advanced = after_instance["modifiedAt"].as_str().expect("modifiedAt must be rendered after update");
     assert!(advanced > modified_at.as_str(), "modifiedAt must advance across instance replacement");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_modify_instance_preserves_an_exact_decimal() {
-    let _serialized_environment = clean_database().await;
-    let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_exact_number").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (c, id, instance_id) = setup_entity_with_instance_id(&scope, "Vehicle:modify_exact_number").await;
     let exact = Number::from_str("0.170000000000000005").expect("exact JSON number");
     let fragment = json!({"type": "Property", "value": exact, "observedAt": "2020-09-01T12:03:00Z", "@context": [COMPOUND_CONTEXT]});
 
@@ -106,6 +107,7 @@ async fn temporal_attrs_modify_instance_preserves_an_exact_decimal() {
     let (status, body) = get_temporal_entity(&c, &id, Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(serde_json::to_string(&body).expect("temporal entity JSON").contains("0.170000000000000005"));
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -113,10 +115,11 @@ async fn temporal_attrs_modify_instance_preserves_an_exact_decimal() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_modify_instance_invalid_entity_id_returns_400() {
-    let _serialized_environment = clean_database().await;
-    let (_, _, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_02_01").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (_, _, instance_id) = setup_entity_with_instance_id(&scope, "Vehicle:modify_016_02_01").await;
     let c = client();
 
     let fragment = modify_instance_fragment();
@@ -127,25 +130,29 @@ async fn temporal_attrs_modify_instance_invalid_entity_id_returns_400() {
         "error type should be BadRequestData"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_modify_instance_empty_entity_id_returns_400() {
-    let _serialized_environment = clean_database().await;
-    let (_, _, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_02_02").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (_, _, instance_id) = setup_entity_with_instance_id(&scope, "Vehicle:modify_016_02_02").await;
     let c = client();
 
     let fragment = modify_instance_fragment();
     let (status, _) = request_temporal_attrs(&c, Method::PATCH, &format!("/temporal/entities//attrs/speed/{instance_id}"), Some(&fragment)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "empty entity ID should return 400");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_modify_instance_invalid_instance_id_returns_400() {
-    let _serialized_environment = clean_database().await;
-    let (c, id, _) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_02_03").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (c, id, _) = setup_entity_with_instance_id(&scope, "Vehicle:modify_016_02_03").await;
 
     let fragment = modify_instance_fragment();
     let (status, _, body) = modify_temporal_attr_instance(&c, &id, "speed", "invalidId", &fragment).await;
@@ -155,24 +162,28 @@ async fn temporal_attrs_modify_instance_invalid_instance_id_returns_400() {
         "error type should be BadRequestData"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_modify_instance_empty_instance_id_returns_405() {
-    let _serialized_environment = clean_database().await;
-    let (c, id, _) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_02_04").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (c, id, _) = setup_entity_with_instance_id(&scope, "Vehicle:modify_016_02_04").await;
 
     let fragment = modify_instance_fragment();
     let (status, _) = request_temporal_attrs(&c, Method::PATCH, &format!("/temporal/entities/{id}/attrs/speed/"), Some(&fragment)).await;
     assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "empty instance ID should return 405");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_modify_instance_invalid_attribute_name_returns_400() {
-    let _serialized_environment = clean_database().await;
-    let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_02_05").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (c, id, instance_id) = setup_entity_with_instance_id(&scope, "Vehicle:modify_016_02_05").await;
 
     let fragment = modify_instance_fragment();
     let (status, _, body) = modify_temporal_attr_instance(&c, &id, "invalid(Id", &instance_id, &fragment).await;
@@ -182,17 +193,20 @@ async fn temporal_attrs_modify_instance_invalid_attribute_name_returns_400() {
         "error type should be BadRequestData"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_modify_instance_empty_attribute_name_returns_400() {
-    let _serialized_environment = clean_database().await;
-    let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_02_06").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (c, id, instance_id) = setup_entity_with_instance_id(&scope, "Vehicle:modify_016_02_06").await;
 
     let fragment = modify_instance_fragment();
     let (status, _) = request_temporal_attrs(&c, Method::PATCH, &format!("/temporal/entities/{id}/attrs//{instance_id}"), Some(&fragment)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "empty attr name should return 400");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -200,11 +214,12 @@ async fn temporal_attrs_modify_instance_empty_attribute_name_returns_400() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_modify_instance_entity_not_found_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:modify_016_03_01");
+    let id = scope.id("Vehicle:modify_016_03_01");
 
     let fragment = modify_instance_fragment();
     let (status, _, body) = modify_temporal_attr_instance(&c, &id, "speed", "urn:ngsi-ld:Instance:nonexistent", &fragment).await;
@@ -214,13 +229,15 @@ async fn temporal_attrs_modify_instance_entity_not_found_returns_404() {
         "error type should be ResourceNotFound"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_modify_instance_attribute_not_found_returns_404() {
-    let _serialized_environment = clean_database().await;
-    let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_03_02").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (c, id, instance_id) = setup_entity_with_instance_id(&scope, "Vehicle:modify_016_03_02").await;
 
     let fragment = modify_instance_fragment();
     let (status, _, body) = modify_temporal_attr_instance(&c, &id, "nonExistentAttr", &instance_id, &fragment).await;
@@ -230,13 +247,15 @@ async fn temporal_attrs_modify_instance_attribute_not_found_returns_404() {
         "error type should be ResourceNotFound"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_modify_instance_instance_not_found_returns_404() {
-    let _serialized_environment = clean_database().await;
-    let (c, id, _) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_03_03").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (c, id, _) = setup_entity_with_instance_id(&scope, "Vehicle:modify_016_03_03").await;
 
     let fragment = modify_instance_fragment();
     let (status, _, body) = modify_temporal_attr_instance(&c, &id, "speed", "urn:ngsi-ld:01234567890123456789", &fragment).await;
@@ -246,4 +265,5 @@ async fn temporal_attrs_modify_instance_instance_not_found_returns_404() {
         "error type should be ResourceNotFound"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }

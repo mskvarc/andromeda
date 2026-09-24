@@ -4,14 +4,12 @@
 //! Tests for POST /entities/{entityId}/attrs with different registration modes.
 
 use reqwest::{Method, StatusCode};
-use serial_test::serial;
 
 use crate::{
     context_source_adapter::ContextSourceAdapter as MockServer,
     helpers::{
         append_entity_attrs,
         append_entity_attrs_no_overwrite,
-        clean_database,
         client,
         create_entity,
         create_entity_local,
@@ -21,13 +19,13 @@ use crate::{
         fragment_speed_isparked,
         get_entity,
         jsonld_link_value,
-        unique_id,
         vehicle_entity,
         vehicle_registration_auxiliary_retrieve_ops,
         vehicle_registration_redirection_ops,
         vehicle_registration_speed_redirection_ops,
     },
 };
+use andromeda_test_harness::environment::TestEnvironment;
 
 // ---------------------------------------------------------------------------
 // Append entity attributes - inclusive mode
@@ -35,14 +33,15 @@ use crate::{
 
 /// Append with inclusive registration: updates local entity and forwards to context source.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_append_inclusive_forwards_and_updates_local() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:append-inc");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:append-inc");
+    let entity_id = scope.id("Vehicle:append-inc");
+    let reg_id = scope.id("Registration:append-inc");
 
     // Create entity locally
     let entity = vehicle_entity(&entity_id);
@@ -80,6 +79,7 @@ async fn distop_entity_attrs_append_inclusive_forwards_and_updates_local() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -88,14 +88,15 @@ async fn distop_entity_attrs_append_inclusive_forwards_and_updates_local() {
 
 /// Append with exclusive registration: forwards exclusive attributes, does not store locally.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_append_exclusive_forwards_not_local() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:append-exc");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:append-exc");
+    let entity_id = scope.id("Vehicle:append-exc");
+    let reg_id = scope.id("Registration:append-exc");
 
     // Create entity locally
     let entity = vehicle_entity(&entity_id);
@@ -127,6 +128,7 @@ async fn distop_entity_attrs_append_exclusive_forwards_not_local() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -135,15 +137,16 @@ async fn distop_entity_attrs_append_exclusive_forwards_not_local() {
 
 /// Append with redirect registrations: forwards to multiple context sources, no local storage.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_append_redirect_forwards_to_multiple() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:append-red");
-    let reg_id1 = unique_id("urn:ngsi-ld:Registration:append-red-1");
-    let reg_id2 = unique_id("urn:ngsi-ld:Registration:append-red-2");
+    let entity_id = scope.id("Vehicle:append-red");
+    let reg_id1 = scope.id("Registration:append-red-1");
+    let reg_id2 = scope.id("Registration:append-red-2");
 
     // Create two redirect registrations
     let reg1 = vehicle_registration_redirection_ops(&reg_id1, Some(&entity_id), &mock.url("/broker1"), Some("redirect"));
@@ -175,6 +178,7 @@ async fn distop_entity_attrs_append_redirect_forwards_to_multiple() {
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -183,14 +187,15 @@ async fn distop_entity_attrs_append_redirect_forwards_to_multiple() {
 
 /// Append with noOverwrite and inclusive registration: existing attrs unchanged.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_append_nooverwrite_inclusive_preserves_existing() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:append-noow-inc");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:append-noow-inc");
+    let entity_id = scope.id("Vehicle:append-noow-inc");
+    let reg_id = scope.id("Registration:append-noow-inc");
 
     // Create entity
     let entity = vehicle_entity(&entity_id);
@@ -227,18 +232,20 @@ async fn distop_entity_attrs_append_nooverwrite_inclusive_preserves_existing() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Append with noOverwrite and exclusive registration.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_append_nooverwrite_exclusive_forwards() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:append-noow-exc");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:append-noow-exc");
+    let entity_id = scope.id("Vehicle:append-noow-exc");
+    let reg_id = scope.id("Registration:append-noow-exc");
 
     // Create entity locally
     let entity = vehicle_entity(&entity_id);
@@ -264,19 +271,21 @@ async fn distop_entity_attrs_append_nooverwrite_exclusive_forwards() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Append with noOverwrite and redirect registrations.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_append_nooverwrite_redirect_forwards_to_multiple() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:append-noow-red");
-    let reg_id1 = unique_id("urn:ngsi-ld:Registration:append-noow-red-1");
-    let reg_id2 = unique_id("urn:ngsi-ld:Registration:append-noow-red-2");
+    let entity_id = scope.id("Vehicle:append-noow-red");
+    let reg_id1 = scope.id("Registration:append-noow-red-1");
+    let reg_id2 = scope.id("Registration:append-noow-red-2");
 
     // Create two redirect registrations
     let reg1 = vehicle_registration_redirection_ops(&reg_id1, Some(&entity_id), &mock.url("/broker1"), Some("redirect"));
@@ -304,6 +313,7 @@ async fn distop_entity_attrs_append_nooverwrite_redirect_forwards_to_multiple() 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -312,27 +322,30 @@ async fn distop_entity_attrs_append_nooverwrite_redirect_forwards_to_multiple() 
 
 /// Append to non-existent entity returns 404.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_append_not_found_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:append-notfound");
+    let entity_id = scope.id("Vehicle:append-notfound");
     let fragment = fragment_speed_isparked();
     let status = append_entity_attrs(&c, &entity_id, &fragment, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Append with auxiliary registration only updates locally, no forwarding.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_append_auxiliary_no_forwarding() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:append-aux");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:append-aux");
+    let entity_id = scope.id("Vehicle:append-aux");
+    let reg_id = scope.id("Registration:append-aux");
 
     // Create entity locally
     let entity = vehicle_entity(&entity_id);
@@ -364,4 +377,5 @@ async fn distop_entity_attrs_append_auxiliary_no_forwarding() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }

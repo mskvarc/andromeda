@@ -21,14 +21,12 @@
 use crate::{
     TEST_SUITE_CONTEXT,
     bus_temporal_august,
-    clean_database,
     client,
     create_temporal_entity,
     get_most_recent_timestamp_vehicles,
     parse_content_range,
     post_temporal_query,
     query_temporal_entities,
-    unique_id,
     vehicle_temporal_august,
     vehicle_temporal_multi_attributes,
     vehicle_temporal_multiple_instances,
@@ -36,29 +34,28 @@ use crate::{
     vehicle_temporal_twenty_instances,
     vehicle_temporal_with_location,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
-use serial_test::serial;
 
 // ---------------------------------------------------------------------------
 // Query with temporal constraints
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_after_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_01_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_01_B");
+    let va = scope.id("Vehicle:query_021_01_A");
+    let vb = scope.id("Vehicle:query_021_01_B");
 
     let entity_a = vehicle_temporal_august(&va);
     let entity_b = vehicle_temporal_september(&vb);
     assert_eq!(create_temporal_entity(&c, &entity_a).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &entity_b).await, StatusCode::CREATED);
 
-    let (status, body, _) = query_temporal_entities(&c, "type=Vehicle&timerel=after&timeAt=2020-08-01T12:04:00Z", Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body, _) = query_temporal_entities(&c, &scope, "type=Vehicle&timerel=after&timeAt=2020-08-01T12:04:00Z", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
@@ -67,35 +64,35 @@ async fn temporal_query_after_success() {
     for entity in arr {
         assert_eq!(entity["type"], "Vehicle");
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_before_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_01_02_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_01_02_B");
+    let va = scope.id("Vehicle:query_021_01_02_A");
+    let vb = scope.id("Vehicle:query_021_01_02_B");
 
     let entity_a = vehicle_temporal_august(&va);
     let entity_b = vehicle_temporal_september(&vb);
     assert_eq!(create_temporal_entity(&c, &entity_a).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &entity_b).await, StatusCode::CREATED);
 
-    let (status, body, _) = query_temporal_entities(&c, "type=Vehicle&timerel=before&timeAt=2020-09-01T13:06:00Z", Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body, _) = query_temporal_entities(&c, &scope, "type=Vehicle&timerel=before&timeAt=2020-09-01T13:06:00Z", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
     assert!(!arr.is_empty(), "should return entities with instances before timeAt");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_between_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_01_03_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_01_03_B");
+    let va = scope.id("Vehicle:query_021_01_03_A");
+    let vb = scope.id("Vehicle:query_021_01_03_B");
 
     let entity_a = vehicle_temporal_august(&va);
     let entity_b = vehicle_temporal_september(&vb);
@@ -104,6 +101,7 @@ async fn temporal_query_between_success() {
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&timerel=between&timeAt=2020-08-01T12:04:00Z&endTimeAt=2020-09-01T13:06:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -112,6 +110,7 @@ async fn temporal_query_between_success() {
 
     let arr = body.as_array().expect("response should be array");
     assert!(!arr.is_empty(), "should return entities with instances in range");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -119,12 +118,11 @@ async fn temporal_query_between_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_attrs_speed_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_02_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_02_B");
+    let va = scope.id("Vehicle:query_021_02_A");
+    let vb = scope.id("Vehicle:query_021_02_B");
 
     let entity_a = vehicle_temporal_august(&va);
     let entity_b = vehicle_temporal_september(&vb);
@@ -133,6 +131,7 @@ async fn temporal_query_attrs_speed_success() {
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&attrs=speed&timerel=after&timeAt=2020-07-01T12:05:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -144,6 +143,7 @@ async fn temporal_query_attrs_speed_success() {
         assert!(entity.get("speed").is_some(), "speed should be present");
         // fuelLevel should not be present when filtering by attrs=speed
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -151,19 +151,24 @@ async fn temporal_query_attrs_speed_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_last_n_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_03_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_03_B");
+    let va = scope.id("Vehicle:query_021_03_A");
+    let vb = scope.id("Vehicle:query_021_03_B");
 
     let entity_a = vehicle_temporal_multiple_instances(&va);
     let entity_b = vehicle_temporal_september(&vb);
     assert_eq!(create_temporal_entity(&c, &entity_a).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &entity_b).await, StatusCode::CREATED);
 
-    let (status, body, _) = query_temporal_entities(&c, "type=Vehicle&timerel=after&timeAt=2020-07-01T12:05:00Z&lastN=4", Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body, _) = query_temporal_entities(
+        &c,
+        &scope,
+        "type=Vehicle&timerel=after&timeAt=2020-07-01T12:05:00Z&lastN=4",
+        Some(TEST_SUITE_CONTEXT),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
@@ -173,6 +178,7 @@ async fn temporal_query_last_n_success() {
             assert!(speed_arr.len() <= 4, "speed should have at most 4 instances with lastN=4");
         }
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -180,23 +186,23 @@ async fn temporal_query_last_n_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_with_context_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_04_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_04_B");
+    let va = scope.id("Vehicle:query_021_04_A");
+    let vb = scope.id("Vehicle:query_021_04_B");
 
     let entity_a = vehicle_temporal_august(&va);
     let entity_b = vehicle_temporal_september(&vb);
     assert_eq!(create_temporal_entity(&c, &entity_a).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &entity_b).await, StatusCode::CREATED);
 
-    let (status, body, _) = query_temporal_entities(&c, "type=Vehicle&timerel=after&timeAt=2020-07-01T12:05:00Z", Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body, _) = query_temporal_entities(&c, &scope, "type=Vehicle&timerel=after&timeAt=2020-07-01T12:05:00Z", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
     assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -204,19 +210,18 @@ async fn temporal_query_with_context_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_by_type_bus_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let vehicle = unique_id("urn:ngsi-ld:Vehicle:query_021_05_A");
-    let bus = unique_id("urn:ngsi-ld:Bus:query_021_05_B");
+    let vehicle = scope.id("Vehicle:query_021_05_A");
+    let bus = scope.id("Bus:query_021_05_B");
 
     let entity_v = vehicle_temporal_august(&vehicle);
     let entity_b = bus_temporal_august(&bus);
     assert_eq!(create_temporal_entity(&c, &entity_v).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &entity_b).await, StatusCode::CREATED);
 
-    let (status, body, _) = query_temporal_entities(&c, "type=Bus&timerel=after&timeAt=2020-07-01T12:05:00Z", Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body, _) = query_temporal_entities(&c, &scope, "type=Bus&timerel=after&timeAt=2020-07-01T12:05:00Z", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
@@ -224,6 +229,7 @@ async fn temporal_query_by_type_bus_success() {
     for entity in arr {
         assert_eq!(entity["type"], "Bus");
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -231,12 +237,11 @@ async fn temporal_query_by_type_bus_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_by_id_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_06_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_06_B");
+    let va = scope.id("Vehicle:query_021_06_A");
+    let vb = scope.id("Vehicle:query_021_06_B");
 
     let entity_a = vehicle_temporal_august(&va);
     let entity_b = vehicle_temporal_september(&vb);
@@ -244,12 +249,13 @@ async fn temporal_query_by_id_success() {
     assert_eq!(create_temporal_entity(&c, &entity_b).await, StatusCode::CREATED);
 
     let query = format!("type=Vehicle&id={va}&timerel=after&timeAt=2020-07-01T12:05:00Z");
-    let (status, body, _) = query_temporal_entities(&c, &query, Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body, _) = query_temporal_entities(&c, &scope, &query, Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
     assert_eq!(arr.len(), 1, "should return exactly one entity");
     assert_eq!(arr[0]["id"], va);
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -257,21 +263,22 @@ async fn temporal_query_by_id_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_by_id_pattern_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_07_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_07_B");
+    let va = scope.id("Vehicle:query_021_07_A");
+    let vb = scope.id("Vehicle:query_021_07_B");
 
     let entity_a = vehicle_temporal_august(&va);
     let entity_b = vehicle_temporal_september(&vb);
     assert_eq!(create_temporal_entity(&c, &entity_a).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &entity_b).await, StatusCode::CREATED);
 
+    let pattern = urlencoding::encode(&format!("^{}:Vehicle:.*", scope.id_prefix())).into_owned();
     let (status, body, _) = query_temporal_entities(
         &c,
-        "type=Vehicle&idPattern=urn:ngsi-ld:Vehicle:.*&timerel=after&timeAt=2020-07-01T12:05:00Z",
+        &scope,
+        &format!("type=Vehicle&idPattern={pattern}&timerel=after&timeAt=2020-07-01T12:05:00Z"),
         Some(TEST_SUITE_CONTEXT),
     )
     .await;
@@ -279,6 +286,7 @@ async fn temporal_query_by_id_pattern_success() {
 
     let arr = body.as_array().expect("response should be array");
     assert!(!arr.is_empty(), "should return entities matching pattern");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -286,12 +294,11 @@ async fn temporal_query_by_id_pattern_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_q_filter_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_08_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_08_B");
+    let va = scope.id("Vehicle:query_021_08_A");
+    let vb = scope.id("Vehicle:query_021_08_B");
 
     let entity_a = vehicle_temporal_august(&va);
     let entity_b = vehicle_temporal_september(&vb);
@@ -301,6 +308,7 @@ async fn temporal_query_q_filter_success() {
     // Query for entities where speed > 90
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&q=speed>90&timerel=after&timeAt=2020-07-01T12:05:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -309,6 +317,7 @@ async fn temporal_query_q_filter_success() {
 
     let arr = body.as_array().expect("response should be array");
     assert!(!arr.is_empty(), "should return entities matching q filter");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -316,12 +325,11 @@ async fn temporal_query_q_filter_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_geo_near_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_09_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_09_B");
+    let va = scope.id("Vehicle:query_021_09_A");
+    let vb = scope.id("Vehicle:query_021_09_B");
 
     let entity_a = vehicle_temporal_august(&va);
     let entity_b = vehicle_temporal_with_location(&vb);
@@ -330,6 +338,7 @@ async fn temporal_query_geo_near_success() {
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&georel=near;maxDistance==2000&geometry=Point&coordinates=[-8.503,41.202]&timerel=after&timeAt=2020-07-01T12:05:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -346,15 +355,15 @@ async fn temporal_query_geo_near_success() {
         arr.iter().all(|entity| entity.get("location").is_some()),
         "the matched Vehicle carries the GeoProperty the query selected on: {body}"
     );
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_geo_within_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_09_02_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_09_02_B");
+    let va = scope.id("Vehicle:query_021_09_02_A");
+    let vb = scope.id("Vehicle:query_021_09_02_B");
 
     let entity_a = vehicle_temporal_august(&va);
     let entity_b = vehicle_temporal_with_location(&vb);
@@ -363,6 +372,7 @@ async fn temporal_query_geo_within_success() {
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&georel=within&geometry=Polygon&coordinates=[[[-13.503,47.202],[6.541,52.961],[20.37,44.653],[9.46,32.57],[-13.503,32.57],[-13.503,47.202]]]&geoproperty=location&timerel=after&timeAt=2020-07-01T12:05:00Z",
         Some(TEST_SUITE_CONTEXT),
     ).await;
@@ -371,6 +381,7 @@ async fn temporal_query_geo_within_success() {
     let arr = body.as_array().expect("response should be array");
     // Should return entities within the polygon
     assert!(arr.is_empty() || arr.iter().all(|e| e["type"] == "Vehicle"));
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -378,13 +389,12 @@ async fn temporal_query_geo_within_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_limit_2_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let v1 = unique_id("urn:ngsi-ld:Vehicle:query_021_11_A");
-    let v2 = unique_id("urn:ngsi-ld:Vehicle:query_021_11_B");
-    let v3 = unique_id("urn:ngsi-ld:Vehicle:query_021_11_C");
+    let v1 = scope.id("Vehicle:query_021_11_A");
+    let v2 = scope.id("Vehicle:query_021_11_B");
+    let v3 = scope.id("Vehicle:query_021_11_C");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_august(&v1)).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_september(&v2)).await, StatusCode::CREATED);
@@ -392,6 +402,7 @@ async fn temporal_query_limit_2_success() {
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Bus,Vehicle&limit=2&timerel=after&timeAt=2020-07-01T12:05:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -400,16 +411,16 @@ async fn temporal_query_limit_2_success() {
 
     let arr = body.as_array().expect("response should be array");
     assert!(arr.len() <= 2, "limit=2 should return at most 2 entities");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_limit_3_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let v1 = unique_id("urn:ngsi-ld:Vehicle:query_021_11_02_A");
-    let v2 = unique_id("urn:ngsi-ld:Vehicle:query_021_11_02_B");
-    let v3 = unique_id("urn:ngsi-ld:Vehicle:query_021_11_02_C");
+    let v1 = scope.id("Vehicle:query_021_11_02_A");
+    let v2 = scope.id("Vehicle:query_021_11_02_B");
+    let v3 = scope.id("Vehicle:query_021_11_02_C");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_august(&v1)).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_september(&v2)).await, StatusCode::CREATED);
@@ -417,6 +428,7 @@ async fn temporal_query_limit_3_success() {
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Bus,Vehicle&limit=3&timerel=after&timeAt=2020-07-01T12:05:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -425,6 +437,7 @@ async fn temporal_query_limit_3_success() {
 
     let arr = body.as_array().expect("response should be array");
     assert!(arr.len() <= 3, "limit=3 should return at most 3 entities");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -432,14 +445,14 @@ async fn temporal_query_limit_3_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_missing_type_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
 
-    let (status, body, _) = query_temporal_entities(&c, "timerel=after&timeAt=2020-07-01T12:05:00Z", Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body, _) = query_temporal_entities(&c, &scope, "timerel=after&timeAt=2020-07-01T12:05:00Z", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "query without type should return 400");
     assert!(body["type"].as_str().unwrap_or("").contains("BadRequestData"));
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -447,12 +460,11 @@ async fn temporal_query_missing_type_returns_400() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_post_after_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_13_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_13_B");
+    let va = scope.id("Vehicle:query_021_13_A");
+    let vb = scope.id("Vehicle:query_021_13_B");
 
     let entity_a = vehicle_temporal_august(&va);
     let entity_b = vehicle_temporal_september(&vb);
@@ -468,20 +480,20 @@ async fn temporal_query_post_after_success() {
         }
     });
 
-    let (status, body, _) = post_temporal_query(&c, &query, Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body, _) = post_temporal_query(&c, &scope, &query, Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
     assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_post_before_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_13_02_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_13_02_B");
+    let va = scope.id("Vehicle:query_021_13_02_A");
+    let vb = scope.id("Vehicle:query_021_13_02_B");
 
     let entity_a = vehicle_temporal_august(&va);
     let entity_b = vehicle_temporal_september(&vb);
@@ -497,20 +509,20 @@ async fn temporal_query_post_before_success() {
         }
     });
 
-    let (status, body, _) = post_temporal_query(&c, &query, Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body, _) = post_temporal_query(&c, &scope, &query, Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
     assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_post_between_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_13_03_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_13_03_B");
+    let va = scope.id("Vehicle:query_021_13_03_A");
+    let vb = scope.id("Vehicle:query_021_13_03_B");
 
     let entity_a = vehicle_temporal_august(&va);
     let entity_b = vehicle_temporal_september(&vb);
@@ -527,21 +539,21 @@ async fn temporal_query_post_between_success() {
         }
     });
 
-    let (status, body, _) = post_temporal_query(&c, &query, Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body, _) = post_temporal_query(&c, &scope, &query, Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
     assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_post_multiple_types_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_13_04_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_13_04_B");
-    let bus = unique_id("urn:ngsi-ld:Bus:query_021_13_04_C");
+    let va = scope.id("Vehicle:query_021_13_04_A");
+    let vb = scope.id("Vehicle:query_021_13_04_B");
+    let bus = scope.id("Bus:query_021_13_04_C");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_august(&va)).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_september(&vb)).await, StatusCode::CREATED);
@@ -559,7 +571,7 @@ async fn temporal_query_post_multiple_types_success() {
         }
     });
 
-    let (status, body, _) = post_temporal_query(&c, &query, Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body, _) = post_temporal_query(&c, &scope, &query, Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
@@ -567,6 +579,7 @@ async fn temporal_query_post_multiple_types_success() {
     // Should include both Vehicle and Bus types
     let types: Vec<_> = arr.iter().filter_map(|e| e.get("type").and_then(|t| t.as_str())).collect();
     assert!(types.contains(&"Vehicle") || types.contains(&"Bus"));
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -574,18 +587,18 @@ async fn temporal_query_post_multiple_types_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_temporal_values_after_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_14_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_14_B");
+    let va = scope.id("Vehicle:query_021_14_A");
+    let vb = scope.id("Vehicle:query_021_14_B");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_august(&va)).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_september(&vb)).await, StatusCode::CREATED);
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&options=temporalValues&timerel=after&timeAt=2020-08-01T12:04:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -599,21 +612,22 @@ async fn temporal_query_temporal_values_after_success() {
             assert!(speed.get("values").is_some(), "speed should have values array in temporalValues format");
         }
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_temporal_values_before_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_14_02_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_14_02_B");
+    let va = scope.id("Vehicle:query_021_14_02_A");
+    let vb = scope.id("Vehicle:query_021_14_02_B");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_august(&va)).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_september(&vb)).await, StatusCode::CREATED);
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&options=temporalValues&timerel=before&timeAt=2020-09-01T13:06:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -622,21 +636,22 @@ async fn temporal_query_temporal_values_before_success() {
 
     let arr = body.as_array().expect("response should be array");
     assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_temporal_values_between_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_14_03_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_14_03_B");
+    let va = scope.id("Vehicle:query_021_14_03_A");
+    let vb = scope.id("Vehicle:query_021_14_03_B");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_august(&va)).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_september(&vb)).await, StatusCode::CREATED);
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&options=temporalValues&timerel=between&timeAt=2020-08-01T12:04:00Z&endTimeAt=2020-09-01T13:06:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -645,6 +660,7 @@ async fn temporal_query_temporal_values_between_success() {
 
     let arr = body.as_array().expect("response should be array");
     assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -652,38 +668,43 @@ async fn temporal_query_temporal_values_between_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_pagination_last_n_before_returns_206_with_content_range() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let v1 = unique_id("urn:ngsi-ld:Vehicle:query_021_15_A");
-    let v2 = unique_id("urn:ngsi-ld:Vehicle:query_021_15_B");
-
-    assert_eq!(create_temporal_entity(&c, &vehicle_temporal_twenty_instances(&v1)).await, StatusCode::CREATED);
-    assert_eq!(create_temporal_entity(&c, &vehicle_temporal_september(&v2)).await, StatusCode::CREATED);
-
-    let (status, body, headers) =
-        query_temporal_entities(&c, "type=Vehicle&lastN=20&timerel=before&timeAt=2021-01-01T01:01:00Z", Some(TEST_SUITE_CONTEXT)).await;
-    assert_eq!(status, StatusCode::PARTIAL_CONTENT);
-
-    let _arr = body.as_array().expect("response should be array");
-    let (unit, _, _, _) = parse_content_range(&headers).expect("partial temporal response must include Content-Range");
-    assert_eq!(unit, "DateTime", "clause 6.3.10: the range unit shall be equal to \"DateTime\"");
-}
-
-#[tokio::test]
-#[serial]
-async fn temporal_query_pagination_last_n_between_returns_206_with_content_range() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
-    let v1 = unique_id("urn:ngsi-ld:Vehicle:query_021_15_02_A");
-    let v2 = unique_id("urn:ngsi-ld:Vehicle:query_021_15_02_B");
+    let v1 = scope.id("Vehicle:query_021_15_A");
+    let v2 = scope.id("Vehicle:query_021_15_B");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_twenty_instances(&v1)).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_september(&v2)).await, StatusCode::CREATED);
 
     let (status, body, headers) = query_temporal_entities(
         &c,
+        &scope,
+        "type=Vehicle&lastN=20&timerel=before&timeAt=2021-01-01T01:01:00Z",
+        Some(TEST_SUITE_CONTEXT),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+
+    let _arr = body.as_array().expect("response should be array");
+    let (unit, _, _, _) = parse_content_range(&headers).expect("partial temporal response must include Content-Range");
+    assert_eq!(unit, "DateTime", "clause 6.3.10: the range unit shall be equal to \"DateTime\"");
+    scope.finish().await.expect("cleanup failed");
+}
+
+#[tokio::test]
+async fn temporal_query_pagination_last_n_between_returns_206_with_content_range() {
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
+    let c = client();
+    let v1 = scope.id("Vehicle:query_021_15_02_A");
+    let v2 = scope.id("Vehicle:query_021_15_02_B");
+
+    assert_eq!(create_temporal_entity(&c, &vehicle_temporal_twenty_instances(&v1)).await, StatusCode::CREATED);
+    assert_eq!(create_temporal_entity(&c, &vehicle_temporal_september(&v2)).await, StatusCode::CREATED);
+
+    let (status, body, headers) = query_temporal_entities(
+        &c,
+        &scope,
         "type=Vehicle&lastN=20&timerel=between&timeAt=2019-01-01T01:01:00Z&endTimeAt=2021-01-01T01:01:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -693,41 +714,47 @@ async fn temporal_query_pagination_last_n_between_returns_206_with_content_range
     let _arr = body.as_array().expect("response should be array");
     let (unit, _, _, _) = parse_content_range(&headers).expect("partial temporal response must include Content-Range");
     assert_eq!(unit, "DateTime", "clause 6.3.10: the range unit shall be equal to \"DateTime\"");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_pagination_last_n_after_returns_206_with_content_range() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let v1 = unique_id("urn:ngsi-ld:Vehicle:query_021_15_03_A");
-    let v2 = unique_id("urn:ngsi-ld:Vehicle:query_021_15_03_B");
-
-    assert_eq!(create_temporal_entity(&c, &vehicle_temporal_twenty_instances(&v1)).await, StatusCode::CREATED);
-    assert_eq!(create_temporal_entity(&c, &vehicle_temporal_september(&v2)).await, StatusCode::CREATED);
-
-    let (status, body, headers) =
-        query_temporal_entities(&c, "type=Vehicle&lastN=20&timerel=after&timeAt=2019-01-01T01:01:00Z", Some(TEST_SUITE_CONTEXT)).await;
-    assert_eq!(status, StatusCode::PARTIAL_CONTENT);
-
-    let _arr = body.as_array().expect("response should be array");
-    let (unit, _, _, _) = parse_content_range(&headers).expect("partial temporal response must include Content-Range");
-    assert_eq!(unit, "DateTime", "clause 6.3.10: the range unit shall be equal to \"DateTime\"");
-}
-
-#[tokio::test]
-#[serial]
-async fn temporal_query_pagination_temporal_values_after_success() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
-    let v1 = unique_id("urn:ngsi-ld:Vehicle:query_021_15_07_A");
-    let v2 = unique_id("urn:ngsi-ld:Vehicle:query_021_15_07_B");
+    let v1 = scope.id("Vehicle:query_021_15_03_A");
+    let v2 = scope.id("Vehicle:query_021_15_03_B");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_twenty_instances(&v1)).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_september(&v2)).await, StatusCode::CREATED);
 
     let (status, body, headers) = query_temporal_entities(
         &c,
+        &scope,
+        "type=Vehicle&lastN=20&timerel=after&timeAt=2019-01-01T01:01:00Z",
+        Some(TEST_SUITE_CONTEXT),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+
+    let _arr = body.as_array().expect("response should be array");
+    let (unit, _, _, _) = parse_content_range(&headers).expect("partial temporal response must include Content-Range");
+    assert_eq!(unit, "DateTime", "clause 6.3.10: the range unit shall be equal to \"DateTime\"");
+    scope.finish().await.expect("cleanup failed");
+}
+
+#[tokio::test]
+async fn temporal_query_pagination_temporal_values_after_success() {
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
+    let c = client();
+    let v1 = scope.id("Vehicle:query_021_15_07_A");
+    let v2 = scope.id("Vehicle:query_021_15_07_B");
+
+    assert_eq!(create_temporal_entity(&c, &vehicle_temporal_twenty_instances(&v1)).await, StatusCode::CREATED);
+    assert_eq!(create_temporal_entity(&c, &vehicle_temporal_september(&v2)).await, StatusCode::CREATED);
+
+    let (status, body, headers) = query_temporal_entities(
+        &c,
+        &scope,
         "type=Vehicle&options=temporalValues&timerel=after&timeAt=2019-01-01T01:01:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -740,6 +767,7 @@ async fn temporal_query_pagination_temporal_values_after_success() {
     let mrt = get_most_recent_timestamp_vehicles(arr, "temporalValues").unwrap_or_default();
     assert_eq!(range_start, "2019-01-01T01:01:00Z");
     assert_eq!(range_end, mrt);
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -747,12 +775,11 @@ async fn temporal_query_pagination_temporal_values_after_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_post_pagination_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let v1 = unique_id("urn:ngsi-ld:Vehicle:query_021_16_A");
-    let v2 = unique_id("urn:ngsi-ld:Vehicle:query_021_16_B");
+    let v1 = scope.id("Vehicle:query_021_16_A");
+    let v2 = scope.id("Vehicle:query_021_16_B");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_twenty_instances(&v1)).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_september(&v2)).await, StatusCode::CREATED);
@@ -766,10 +793,11 @@ async fn temporal_query_post_pagination_success() {
         }
     });
 
-    let (status, _, headers) = post_temporal_query(&c, &query, Some(TEST_SUITE_CONTEXT)).await;
+    let (status, _, headers) = post_temporal_query(&c, &scope, &query, Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::PARTIAL_CONTENT);
     let (unit, _, _, _) = parse_content_range(&headers).expect("partial temporal response must include Content-Range");
     assert_eq!(unit, "DateTime", "clause 6.3.10: the range unit shall be equal to \"DateTime\"");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -777,16 +805,16 @@ async fn temporal_query_post_pagination_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_aggregated_avg_pt1h_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:query_021_17_01");
+    let id = scope.id("Vehicle:query_021_17_01");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_august(&id)).await, StatusCode::CREATED);
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&options=aggregatedValues&aggrMethods=avg&aggrPeriodDuration=PT1H&timerel=after&timeAt=2020-01-01T12:03:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -795,19 +823,20 @@ async fn temporal_query_aggregated_avg_pt1h_success() {
 
     let arr = body.as_array().expect("response should be array");
     assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_aggregated_avg_fuel_level_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:query_021_17_02");
+    let id = scope.id("Vehicle:query_021_17_02");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_august(&id)).await, StatusCode::CREATED);
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&attrs=fuelLevel&options=aggregatedValues&aggrMethods=avg&aggrPeriodDuration=PT1H&timerel=after&timeAt=2020-01-01T12:03:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -819,19 +848,20 @@ async fn temporal_query_aggregated_avg_fuel_level_success() {
     for entity in arr {
         assert!(entity.get("fuelLevel").is_some());
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_aggregated_avg_max_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:query_021_17_03");
+    let id = scope.id("Vehicle:query_021_17_03");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_august(&id)).await, StatusCode::CREATED);
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&options=aggregatedValues&aggrMethods=avg,max&aggrPeriodDuration=PT1H&timerel=after&timeAt=2020-01-01T12:03:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -840,19 +870,20 @@ async fn temporal_query_aggregated_avg_max_success() {
 
     let arr = body.as_array().expect("response should be array");
     assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_aggregated_min_max_p1d_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:query_021_17_04");
+    let id = scope.id("Vehicle:query_021_17_04");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_august(&id)).await, StatusCode::CREATED);
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&options=aggregatedValues&aggrMethods=min,max&aggrPeriodDuration=P1D&timerel=after&timeAt=2020-01-01T12:03:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -861,6 +892,7 @@ async fn temporal_query_aggregated_min_max_p1d_success() {
 
     let arr = body.as_array().expect("response should be array");
     assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -868,16 +900,16 @@ async fn temporal_query_aggregated_min_max_p1d_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_attrs_speed_with_multi_instances_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:query_021_18_01");
+    let id = scope.id("Vehicle:query_021_18_01");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_multi_attributes(&id)).await, StatusCode::CREATED);
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&attrs=speed&options=temporalValues&timerel=after&timeAt=2020-08-01T12:04:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -889,19 +921,20 @@ async fn temporal_query_attrs_speed_with_multi_instances_success() {
     for entity in arr {
         assert!(entity.get("speed").is_some());
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_dataset_common_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:query_021_18_02");
+    let id = scope.id("Vehicle:query_021_18_02");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_multi_attributes(&id)).await, StatusCode::CREATED);
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&datasetId=urn:ngsi-ld:Dataset:Common&options=temporalValues&timerel=after&timeAt=2020-08-01T12:04:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -911,19 +944,20 @@ async fn temporal_query_dataset_common_success() {
     let arr = body.as_array().expect("response should be array");
     // Should filter to instances with datasetId=urn:ngsi-ld:Dataset:Common
     assert!(!arr.is_empty() || arr.is_empty()); // May be empty if no match
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_dataset_default_instance_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:query_021_18_04");
+    let id = scope.id("Vehicle:query_021_18_04");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_multi_attributes(&id)).await, StatusCode::CREATED);
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&datasetId=@none&options=temporalValues&timerel=after&timeAt=2020-08-01T12:04:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -933,19 +967,20 @@ async fn temporal_query_dataset_default_instance_success() {
     let arr = body.as_array().expect("response should be array");
     // @none filters to default instances (no datasetId)
     assert!(!arr.is_empty() || arr.is_empty());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_dataset_no_match_returns_empty() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:query_021_18_07");
+    let id = scope.id("Vehicle:query_021_18_07");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_multi_attributes(&id)).await, StatusCode::CREATED);
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&attrs=speed&datasetId=urn:ngsi-ld:Dataset:fuel&options=temporalValues&timerel=after&timeAt=2020-08-01T12:04:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -955,6 +990,7 @@ async fn temporal_query_dataset_no_match_returns_empty() {
     let arr = body.as_array().expect("response should be array");
     // speed attribute does not have datasetId=urn:ngsi-ld:Dataset:fuel
     assert!(arr.is_empty(), "no match should return empty result");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -962,18 +998,18 @@ async fn temporal_query_dataset_no_match_returns_empty() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_format_temporal_values_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_19_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_19_B");
+    let va = scope.id("Vehicle:query_021_19_A");
+    let vb = scope.id("Vehicle:query_021_19_B");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_august(&va)).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_september(&vb)).await, StatusCode::CREATED);
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&format=temporalValues&timerel=after&timeAt=2020-01-01T12:03:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -986,15 +1022,15 @@ async fn temporal_query_format_temporal_values_success() {
             assert!(speed.get("values").is_some(), "format=temporalValues should produce values array");
         }
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_format_takes_precedence_over_options_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let va = unique_id("urn:ngsi-ld:Vehicle:query_021_19_02_A");
-    let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_19_02_B");
+    let va = scope.id("Vehicle:query_021_19_02_A");
+    let vb = scope.id("Vehicle:query_021_19_02_B");
 
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_august(&va)).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &vehicle_temporal_september(&vb)).await, StatusCode::CREATED);
@@ -1002,6 +1038,7 @@ async fn temporal_query_format_takes_precedence_over_options_success() {
     // format=temporalValues should take precedence over options=aggregatedValues
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&format=temporalValues&options=aggregatedValues&aggrMethods=sum&timerel=after&timeAt=2020-01-01T12:03:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
@@ -1015,6 +1052,7 @@ async fn temporal_query_format_takes_precedence_over_options_success() {
             assert!(speed.get("values").is_some());
         }
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -1022,49 +1060,52 @@ async fn temporal_query_format_takes_precedence_over_options_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_invalid_format_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&format=invalidFormat&timerel=after&timeAt=2020-01-01T12:03:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "invalid format should return 400");
     assert!(body["type"].as_str().unwrap_or("").contains("InvalidRequest") || body["type"].as_str().unwrap_or("").contains("BadRequestData"));
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_invalid_options_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&options=invalidOptions&timerel=after&timeAt=2020-01-01T12:03:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "invalid options should return 400");
     assert!(body["type"].as_str().unwrap_or("").contains("InvalidRequest") || body["type"].as_str().unwrap_or("").contains("BadRequestData"));
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_query_partial_invalid_options_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
 
     let (status, body, _) = query_temporal_entities(
         &c,
+        &scope,
         "type=Vehicle&options=temporalValues,invalidOptions&timerel=after&timeAt=2020-01-01T12:03:00Z",
         Some(TEST_SUITE_CONTEXT),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "partial invalid options should return 400");
     assert!(body["type"].as_str().unwrap_or("").contains("InvalidRequest") || body["type"].as_str().unwrap_or("").contains("BadRequestData"));
+    scope.finish().await.expect("cleanup failed");
 }

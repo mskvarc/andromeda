@@ -99,6 +99,11 @@ fn is_deadlock(error: &sqlx::Error) -> bool {
 /// catalogue delete below reclaims every claim the prefix staked. The global
 /// reset still names it, because a `TRUNCATE` list is not a cascade.
 const PREFIX_DELETES: &[&str] = &[
+    // `notification_events` carries the Entity id as text and has no foreign key
+    // to `subscriptions` -- a subscription delete cascades its deliveries but
+    // never the events -- so it is reclaimed here by the Entity-id prefix rather
+    // than through any cascade.
+    "DELETE FROM notification_events WHERE entity_id LIKE $1",
     "DELETE FROM subscriptions WHERE id LIKE $1",
     "DELETE FROM context_source_registrations WHERE id LIKE $1",
     "DELETE FROM snapshots WHERE id LIKE $1",
@@ -224,6 +229,7 @@ mod tests {
     fn prefix_cleanup_reaches_every_relation_the_reset_script_truncates() {
         let deletes = PREFIX_DELETES.join(" ");
         for relation in [
+            "notification_events",
             "subscriptions",
             "context_source_registrations",
             "snapshots",

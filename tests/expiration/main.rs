@@ -375,31 +375,33 @@ async fn expiration_expires_at_updatable_via_merge_patch() {
 // are scoped by id prefix so the worker's actions on other tests' rows do not
 // affect us.
 
-/// The base test stack's `temporal.expiration_check_interval_secs`
-/// (`ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL_SECS: "1"` in the base
-/// compose file). Kept in sync with it so the worker waits below track the real
-/// sweep cadence.
+/// The base test stack's `temporal.expiration_check_interval`
+/// (`ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL: "1s"` in the base compose
+/// file). Kept in sync with it so the worker waits below track the real sweep
+/// cadence.
 const EXPIRY_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Wait until the expiry sweep has left the entity in `expected` shape.
 ///
-/// The worker runs on `expiration_check_interval_secs` (one second in the base
-/// test stack). Polling for the swept state, rather than sleeping a fixed cycle,
+/// The worker runs on `expiration_check_interval` (one second in the base test
+/// stack). Polling for the swept state, rather than sleeping a fixed cycle,
 /// keeps the test fast and immune to landing early or late in the interval: a
 /// fixed twelve-second sleep once raced the sweep and failed one test per run
-/// under an alternating name.
+/// under an alternating name. The deadline is a generous multiple of the sweep
+/// interval, enough to absorb a loaded broker without the old twenty-second
+/// ceiling that only ever masked a misconfigured sweep.
 async fn wait_for_expiry_sweep<F, Fut>(what: &str, mut settled: F)
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = bool>,
 {
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + EXPIRY_SWEEP_INTERVAL * 6;
     loop {
         if settled().await {
             return;
         }
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        sleep(Duration::from_millis(500)).await;
+        sleep(Duration::from_millis(200)).await;
     }
 }
 

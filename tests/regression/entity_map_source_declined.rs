@@ -22,7 +22,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
-use crate::{context_source_adapter::ContextSourceAdapter, probe_entity_type::probe_entity_type};
+use crate::context_source_adapter::ContextSourceAdapter;
 use andromeda_test_client::{response::TestResponse, test_client::TestClient};
 use andromeda_test_fixtures::{context::TEST_SUITE_CONTEXT, problem_detail::OPERATION_NOT_SUPPORTED};
 use andromeda_test_harness::environment::TestEnvironment;
@@ -140,7 +140,7 @@ async fn create_map(client: &TestClient, query: &str) -> TestResponse {
 #[tokio::test]
 async fn regression_entity_map_declined_a_lone_redirect_source_501_is_relayed() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let entity_type = probe_entity_type(&scope, "MapDeclinedRedirectProbe");
+    let entity_type = scope.entity_type("MapDeclinedRedirectProbe");
     let source = ContextSourceAdapter::start().await;
 
     let attempt = {
@@ -177,7 +177,7 @@ async fn regression_entity_map_declined_a_lone_redirect_source_501_is_relayed() 
 #[tokio::test]
 async fn regression_entity_map_declined_the_post_binding_relays_the_same_501() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let entity_type = probe_entity_type(&scope, "MapDeclinedPostProbe");
+    let entity_type = scope.entity_type("MapDeclinedPostProbe");
     let source = ContextSourceAdapter::start().await;
 
     let attempt = {
@@ -222,7 +222,7 @@ async fn regression_entity_map_declined_the_post_binding_relays_the_same_501() {
 #[tokio::test]
 async fn regression_entity_map_declined_a_501_among_several_sources_is_not_relayed() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let entity_type = probe_entity_type(&scope, "MapDeclinedSeveralProbe");
+    let entity_type = scope.entity_type("MapDeclinedSeveralProbe");
     let declining = ContextSourceAdapter::start().await;
     let answering = ContextSourceAdapter::start().await;
 
@@ -277,7 +277,7 @@ async fn regression_entity_map_declined_a_501_among_several_sources_is_not_relay
 #[tokio::test]
 async fn regression_entity_map_declined_a_lone_inclusive_source_501_is_only_a_warning() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let entity_type = probe_entity_type(&scope, "MapDeclinedInclusiveProbe");
+    let entity_type = scope.entity_type("MapDeclinedInclusiveProbe");
     let source = ContextSourceAdapter::start().await;
 
     let attempt = {
@@ -314,7 +314,7 @@ async fn regression_entity_map_declined_a_lone_inclusive_source_501_is_only_a_wa
 #[tokio::test]
 async fn regression_entity_map_declined_a_non_501_error_still_creates_the_map() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let entity_type = probe_entity_type(&scope, "MapDeclinedNon501Probe");
+    let entity_type = scope.entity_type("MapDeclinedNon501Probe");
     let source = ContextSourceAdapter::start().await;
 
     let attempt = {
@@ -351,7 +351,7 @@ async fn regression_entity_map_declined_a_non_501_error_still_creates_the_map() 
 #[tokio::test]
 async fn regression_entity_map_declined_a_source_that_answers_still_yields_201() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let entity_type = probe_entity_type(&scope, "MapDeclinedHappyProbe");
+    let entity_type = scope.entity_type("MapDeclinedHappyProbe");
     let source = ContextSourceAdapter::start().await;
 
     let attempt = {
@@ -394,7 +394,7 @@ async fn regression_entity_map_declined_a_source_that_answers_still_yields_201()
 #[tokio::test]
 async fn regression_entity_map_declined_the_temporal_resource_relays_it_too() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let entity_type = probe_entity_type(&scope, "MapDeclinedTemporalProbe");
+    let entity_type = scope.entity_type("MapDeclinedTemporalProbe");
     let source = ContextSourceAdapter::start().await;
 
     let attempt = {

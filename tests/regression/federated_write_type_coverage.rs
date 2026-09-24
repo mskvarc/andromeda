@@ -23,7 +23,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
-use crate::{context_source_adapter::ContextSourceAdapter, probe_entity_type::probe_entity_type};
+use crate::context_source_adapter::ContextSourceAdapter;
 use andromeda_test_client::entity_attribute::DatasetSelection;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
@@ -101,14 +101,14 @@ fn dual_typed_entity(id: &str, first: &str, second: &str) -> Value {
 /// entity of a *different* per-test type, and return the entity id and its type.
 async fn registration_over_an_unrelated_type(scope: &TestEnvironment, tag: &str) -> (String, String) {
     let client = scope.client();
-    let covered = probe_entity_type(scope, "CoverageRegisteredType");
+    let covered = scope.entity_type("CoverageRegisteredType");
     let registered = client
         .create_registration(&redirect_registration(scope, &format!("registration:{tag}"), &covered))
         .await
         .expect("create registration");
     assert_eq!(registered.status, StatusCode::CREATED, "registration: {:?}", registered.body);
 
-    let local_type = probe_entity_type(scope, "CoverageLocalType");
+    let local_type = scope.entity_type("CoverageLocalType");
     let entity_id = scope.id(&format!("entity:{tag}"));
     let created = client.post_entity(&entity(&entity_id, &local_type)).send().await.expect("create entity");
     assert_eq!(
@@ -268,8 +268,8 @@ async fn regression_federated_coverage_a_registration_covering_a_second_entity_t
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
     let source = ContextSourceAdapter::start().await;
-    let first = probe_entity_type(&scope, "MultiTypeMatchFirst");
-    let second = probe_entity_type(&scope, "MultiTypeMatchSecond");
+    let first = scope.entity_type("MultiTypeMatchFirst");
+    let second = scope.entity_type("MultiTypeMatchSecond");
 
     let created = client
         .create_registration(&inclusive_update_registration(
@@ -330,9 +330,9 @@ async fn regression_federated_coverage_a_registration_covering_none_of_the_entit
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
     let source = ContextSourceAdapter::start().await;
-    let first = probe_entity_type(&scope, "MultiTypeMissFirst");
-    let second = probe_entity_type(&scope, "MultiTypeMissSecond");
-    let unrelated = probe_entity_type(&scope, "MultiTypeMissUnrelated");
+    let first = scope.entity_type("MultiTypeMissFirst");
+    let second = scope.entity_type("MultiTypeMissSecond");
+    let unrelated = scope.entity_type("MultiTypeMissUnrelated");
 
     let created = client
         .create_registration(&inclusive_update_registration(

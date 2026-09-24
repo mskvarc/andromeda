@@ -13,7 +13,6 @@ use crate::{
     building_observation_space,
     building_operation_space,
     building_vocab_property_string,
-    clean_database,
     client,
     create_entity,
     create_entity_json,
@@ -22,24 +21,22 @@ use crate::{
     delete_entity_attr_with_datasetid,
     get_entity,
     request_attrs_method,
-    unique_id,
     vehicle_speed_only_multi_instances,
     vehicle_speed_two_datasetid,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
-use serial_test::serial;
 
 // ---------------------------------------------------------------------------
 // Delete attribute instances
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn attribute_delete_default_instance_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:delete_013_01_01");
+    let id = scope.id("Vehicle:delete_013_01_01");
 
     // vehicle_speed_only_multi_instances has a default instance (no datasetId) plus two with datasetId
     let entity = vehicle_speed_only_multi_instances(&id);
@@ -53,14 +50,14 @@ async fn attribute_delete_default_instance_success() {
     assert_eq!(status, StatusCode::OK);
     // Other instances with datasetId should remain
     assert!(body.get("speed").is_some(), "speed instances with datasetId should remain");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_delete_with_datasetid_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:delete_013_01_02");
+    let id = scope.id("Vehicle:delete_013_01_02");
 
     let entity = vehicle_speed_two_datasetid(&id);
     let status = create_entity(&c, &entity).await;
@@ -73,14 +70,14 @@ async fn attribute_delete_with_datasetid_success() {
     assert_eq!(status, StatusCode::OK);
     // Other instance should remain
     assert!(body.get("speed").is_some(), "speed instance with other datasetId should remain");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_delete_all_instances_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:delete_013_01_03");
+    let id = scope.id("Vehicle:delete_013_01_03");
 
     let entity = vehicle_speed_only_multi_instances(&id);
     let status = create_entity(&c, &entity).await;
@@ -92,6 +89,7 @@ async fn attribute_delete_all_instances_success() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("speed").is_none(), "all speed instances should be deleted");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -99,9 +97,8 @@ async fn attribute_delete_all_instances_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn attribute_delete_empty_entity_id_returns_error() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
 
     let (status, _) = request_attrs_method(&c, Method::DELETE, "/entities//attrs/speed", None).await;
@@ -109,24 +106,24 @@ async fn attribute_delete_empty_entity_id_returns_error() {
         status == StatusCode::BAD_REQUEST || status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED,
         "empty entity ID should return error status, got {status}"
     );
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_delete_invalid_entity_id_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
 
     let (status, _) = request_attrs_method(&c, Method::DELETE, "/entities/not-a-valid-uri/attrs/speed", None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "invalid entity ID should return 400");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_delete_missing_attribute_name_returns_405() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:delete_013_02_03");
+    let id = scope.id("Vehicle:delete_013_02_03");
 
     let entity = vehicle_speed_two_datasetid(&id);
     let status = create_entity(&c, &entity).await;
@@ -134,25 +131,25 @@ async fn attribute_delete_missing_attribute_name_returns_405() {
 
     let (status, _) = request_attrs_method(&c, Method::DELETE, &format!("/entities/{id}/attrs"), None).await;
     assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "DELETE /attrs without attribute name should return 405");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_delete_nonexistent_entity_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:delete_013_03_01");
+    let id = scope.id("Vehicle:delete_013_03_01");
 
     let (status, _) = delete_entity_attr(&c, &id, "speed", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent entity should return 404");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_delete_nonexistent_attribute_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:delete_013_03_02");
+    let id = scope.id("Vehicle:delete_013_03_02");
 
     let entity = vehicle_speed_two_datasetid(&id);
     let status = create_entity(&c, &entity).await;
@@ -160,14 +157,14 @@ async fn attribute_delete_nonexistent_attribute_returns_404() {
 
     let (status, _) = delete_entity_attr(&c, &id, "nonExistentAttr", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent attribute should return 404");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_delete_nonexistent_datasetid_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:delete_013_03_03");
+    let id = scope.id("Vehicle:delete_013_03_03");
 
     let entity = vehicle_speed_two_datasetid(&id);
     let status = create_entity(&c, &entity).await;
@@ -175,6 +172,7 @@ async fn attribute_delete_nonexistent_datasetid_returns_404() {
 
     let (status, _) = delete_entity_attr_with_datasetid(&c, &id, "speed", "urn:ngsi-ld:Dataset:nonexistent", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent datasetId should return 404");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -182,11 +180,10 @@ async fn attribute_delete_nonexistent_datasetid_returns_404() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn attribute_delete_scope_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:delete_013_04");
+    let id = scope.id("Building:delete_013_04");
 
     let entity = serde_json::json!({
         "id": &id,
@@ -202,14 +199,14 @@ async fn attribute_delete_scope_success() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("scope").is_none(), "scope should be deleted");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_delete_observation_space_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:delete_013_05");
+    let id = scope.id("Building:delete_013_05");
 
     let entity = building_observation_space(&id);
     let status = create_entity(&c, &entity).await;
@@ -221,14 +218,14 @@ async fn attribute_delete_observation_space_success() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("observationSpace").is_none(), "observationSpace should be deleted");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_delete_operation_space_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:delete_013_06");
+    let id = scope.id("Building:delete_013_06");
 
     let entity = building_operation_space(&id);
     let status = create_entity(&c, &entity).await;
@@ -240,14 +237,14 @@ async fn attribute_delete_operation_space_success() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("operationSpace").is_none(), "operationSpace should be deleted");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_delete_vocab_property_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:delete_013_07_01");
+    let id = scope.id("Building:delete_013_07_01");
 
     let entity = building_vocab_property_string(&id);
     let status = create_entity(&c, &entity).await;
@@ -259,4 +256,5 @@ async fn attribute_delete_vocab_property_success() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("vocabProperty").is_none(), "vocabProperty should be deleted");
+    scope.finish().await.expect("cleanup failed");
 }

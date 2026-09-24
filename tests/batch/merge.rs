@@ -1,18 +1,17 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 use crate::helpers::*;
 use andromeda_test_fixtures::context::{COMPOUND_CONTEXT, CORE_CONTEXT};
+use andromeda_test_harness::environment::TestEnvironment;
 use reqwest::{Method, StatusCode};
 use serde_json::json;
-use serial_test::serial;
 
 #[tokio::test]
-#[serial]
 async fn batch_merge_empty_fragment_preserves_entities_returns_204() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:057_01_01a");
-    let id2 = unique_id("urn:ngsi-ld:Building:057_01_01b");
+    let id1 = scope.id("Building:057_01_01a");
+    let id2 = scope.id("Building:057_01_01b");
 
     for id in [&id1, &id2] {
         let entity = building_simple_attributes(id);
@@ -30,16 +29,16 @@ async fn batch_merge_empty_fragment_preserves_entities_returns_204() {
     let (status, _, body) = get_entity(&c, &id1, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_merge_properties_updates_values_returns_204() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:057_01_02a");
-    let id2 = unique_id("urn:ngsi-ld:Building:057_01_02b");
+    let id1 = scope.id("Building:057_01_02a");
+    let id2 = scope.id("Building:057_01_02b");
 
     for id in [&id1, &id2] {
         let entity = building_simple_attributes(id);
@@ -57,16 +56,16 @@ async fn batch_merge_properties_updates_values_returns_204() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
     pretty_assertions::assert_eq!(body["subCategory"]["value"], "tourism");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_merge_relationship_adds_to_entities_returns_204() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:057_01_03a");
-    let id2 = unique_id("urn:ngsi-ld:Building:057_01_03b");
+    let id1 = scope.id("Building:057_01_03a");
+    let id2 = scope.id("Building:057_01_03b");
 
     for id in [&id1, &id2] {
         let entity = building_minimal(id);
@@ -83,16 +82,16 @@ async fn batch_merge_relationship_adds_to_entities_returns_204() {
     let (status, _, body) = get_entity(&c, &id1, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_merge_partial_preserves_sub_attributes_returns_204() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id1 = unique_id("urn:ngsi-ld:Building:057_01_04a");
-    let id2 = unique_id("urn:ngsi-ld:Building:057_01_04b");
+    let id1 = scope.id("Building:057_01_04a");
+    let id2 = scope.id("Building:057_01_04b");
 
     for id in [&id1, &id2] {
         let entity = building_simple_attributes(id);
@@ -111,17 +110,17 @@ async fn batch_merge_partial_preserves_sub_attributes_returns_204() {
     pretty_assertions::assert_eq!(body["airQualityLevel"]["value"], 4);
     pretty_assertions::assert_eq!(body["airQualityLevel"]["unitCode"], "C62", "unitCode should be preserved");
     pretty_assertions::assert_eq!(body["airQualityLevel"]["hasWeatherObserved"]["type"], "Relationship");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn batch_merge_mixed_existing_nonexisting_returns_207() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let existing_id1 = unique_id("urn:ngsi-ld:Building:057_02_01a");
-    let existing_id2 = unique_id("urn:ngsi-ld:Building:057_02_01b");
-    let nonexistent_id = unique_id("urn:ngsi-ld:Building:057_02_01c");
+    let existing_id1 = scope.id("Building:057_02_01a");
+    let existing_id2 = scope.id("Building:057_02_01b");
+    let nonexistent_id = scope.id("Building:057_02_01c");
 
     for id in [&existing_id1, &existing_id2] {
         let entity = building_simple_attributes(id);
@@ -140,6 +139,7 @@ async fn batch_merge_mixed_existing_nonexisting_returns_207() {
     let errors = body["errors"].as_array().expect("should have errors");
     pretty_assertions::assert_eq!(success.len(), 2);
     pretty_assertions::assert_eq!(errors.len(), 1);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
@@ -176,12 +176,11 @@ async fn batch_merge_invalid_json_ld_returns_207() {
 /// maintained in the current state". Both fragments therefore end up in the
 /// stored entity, the later one composed onto the earlier one's result.
 #[tokio::test]
-#[serial]
 async fn batch_merge_repeated_id_composes_the_instances_in_order_returns_204() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
     let c = client();
 
-    let id = unique_id("urn:ngsi-ld:Building:057_06_01");
+    let id = scope.id("Building:057_06_01");
     let entity = building_simple_attributes(&id);
     let (status, _, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -211,4 +210,5 @@ async fn batch_merge_repeated_id_composes_the_instances_in_order_returns_204() {
         "landmark",
         "the second fragment must merge onto the first fragment's result"
     );
+    scope.finish().await.expect("cleanup failed");
 }

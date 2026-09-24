@@ -1,22 +1,11 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 use andromeda_test_fixtures::context::CORE_CONTEXT;
-use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
+use andromeda_test_harness::configuration::RUNTIME_BROKER_BASE as BASE_URL;
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
-use uuid::Uuid;
 
 pub fn client() -> Client {
     Client::new()
-}
-
-pub async fn clean_database() -> SerializedEnvironment {
-    SerializedEnvironment::from_environment_reset()
-        .await
-        .expect("serialized test database environment")
-}
-
-pub fn unique_id(prefix: &str) -> String {
-    format!("{prefix}:{}", Uuid::new_v4())
 }
 
 pub fn building_minimal(id: &str) -> Value {

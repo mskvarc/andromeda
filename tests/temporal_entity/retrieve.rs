@@ -15,14 +15,12 @@
 
 use crate::{
     TEST_SUITE_CONTEXT,
-    clean_database,
     client,
     create_temporal_entity,
     delete_entity_attr,
     get_most_recent_timestamp,
     get_temporal_entity,
     parse_content_range,
-    unique_id,
     vehicle_temporal_august,
     vehicle_temporal_different_types,
     vehicle_temporal_json_property,
@@ -32,20 +30,19 @@ use crate::{
     vehicle_temporal_vocab_property,
     vehicle_temporal_with_scope,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
-use serial_test::serial;
 
 // ---------------------------------------------------------------------------
 // Basic retrieve
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_basic_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_01");
+    let id = scope.id("Vehicle:retrieve_020_01");
 
     let entity = vehicle_temporal_august(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -61,14 +58,14 @@ async fn temporal_retrieve_basic_success() {
     assert_eq!(body["type"], "Vehicle");
     assert!(body.get("speed").is_some(), "speed attribute should exist");
     assert!(body.get("fuelLevel").is_some(), "fuelLevel attribute should exist");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_with_context_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_02");
+    let id = scope.id("Vehicle:retrieve_020_02");
 
     let entity = vehicle_temporal_august(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -78,6 +75,7 @@ async fn temporal_retrieve_with_context_success() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
     assert!(body.get("speed").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -85,11 +83,10 @@ async fn temporal_retrieve_with_context_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_attrs_fuel_level_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_03_01");
+    let id = scope.id("Vehicle:retrieve_020_03_01");
 
     let entity = vehicle_temporal_august(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -99,14 +96,14 @@ async fn temporal_retrieve_attrs_fuel_level_success() {
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("fuelLevel").is_some(), "fuelLevel should be present");
     assert!(body.get("speed").is_none(), "speed should not be present when filtering by attrs");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_attrs_multiple_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_03_02");
+    let id = scope.id("Vehicle:retrieve_020_03_02");
 
     let entity = vehicle_temporal_august(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -116,6 +113,7 @@ async fn temporal_retrieve_attrs_multiple_success() {
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("fuelLevel").is_some(), "fuelLevel should be present");
     assert!(body.get("speed").is_some(), "speed should be present");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -123,11 +121,10 @@ async fn temporal_retrieve_attrs_multiple_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_timerel_after_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_04_01");
+    let id = scope.id("Vehicle:retrieve_020_04_01");
 
     let entity = vehicle_temporal_august(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -150,14 +147,14 @@ async fn temporal_retrieve_timerel_after_success() {
             assert!(ts >= "2020-08-01T13:03:00Z", "fuelLevel instance should be after timeAt");
         }
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_timerel_before_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_04_02");
+    let id = scope.id("Vehicle:retrieve_020_04_02");
 
     let entity = vehicle_temporal_august(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -180,14 +177,14 @@ async fn temporal_retrieve_timerel_before_success() {
             assert!(ts <= "2020-08-01T12:05:00Z", "speed instance should be before timeAt");
         }
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_timerel_between_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_04_03");
+    let id = scope.id("Vehicle:retrieve_020_04_03");
 
     let entity = vehicle_temporal_august(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -210,6 +207,7 @@ async fn temporal_retrieve_timerel_between_success() {
             assert!(("2020-08-01T12:00:00Z"..="2020-08-01T13:00:00Z").contains(&ts), "instance should be in range");
         }
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -217,11 +215,10 @@ async fn temporal_retrieve_timerel_between_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_last_n_4_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_05_01");
+    let id = scope.id("Vehicle:retrieve_020_05_01");
 
     let entity = vehicle_temporal_multiple_instances(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -237,14 +234,14 @@ async fn temporal_retrieve_last_n_4_success() {
     if let Some(fuel_arr) = body.get("fuelLevel").and_then(|v| v.as_array()) {
         assert!(fuel_arr.len() <= 4, "fuelLevel should have at most 4 instances with lastN=4");
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_last_n_7_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_05_02");
+    let id = scope.id("Vehicle:retrieve_020_05_02");
 
     let entity = vehicle_temporal_multiple_instances(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -256,6 +253,7 @@ async fn temporal_retrieve_last_n_7_success() {
     if let Some(speed_arr) = body.get("speed").and_then(|v| v.as_array()) {
         assert!(speed_arr.len() <= 7, "speed should have at most 7 instances with lastN=7");
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -263,33 +261,32 @@ async fn temporal_retrieve_last_n_7_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_invalid_id_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
 
     let (status, body, _) = get_temporal_entity(&c, "invalidUri", "", "application/ld+json", None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "invalid entity ID should return 400");
     assert!(body["type"].as_str().unwrap_or("").contains("BadRequestData"));
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_nonexistent_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
 
     let (status, body, _) = get_temporal_entity(&c, "urn:ngsi-ld:Vehicle:unknownEntity", "", "application/ld+json", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent entity should return 404");
     assert!(body["type"].as_str().unwrap_or("").contains("ResourceNotFound"));
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_unknown_attrs_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_08");
+    let id = scope.id("Vehicle:retrieve_020_08");
 
     let entity = vehicle_temporal_august(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -298,14 +295,14 @@ async fn temporal_retrieve_unknown_attrs_returns_404() {
     let (status, body, _) = get_temporal_entity(&c, &id, "attrs=unknownAttribute", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "unknown attribute should return 404");
     assert!(body["type"].as_str().unwrap_or("").contains("ResourceNotFound"));
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_after_missing_timeat_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_09_01");
+    let id = scope.id("Vehicle:retrieve_020_09_01");
 
     let entity = vehicle_temporal_august(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -314,14 +311,14 @@ async fn temporal_retrieve_after_missing_timeat_returns_400() {
     let (status, body, _) = get_temporal_entity(&c, &id, "timerel=after", "application/ld+json", None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "after without timeAt should return 400");
     assert!(body["type"].as_str().unwrap_or("").contains("BadRequestData"));
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_before_missing_timeat_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_09_02");
+    let id = scope.id("Vehicle:retrieve_020_09_02");
 
     let entity = vehicle_temporal_august(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -330,14 +327,14 @@ async fn temporal_retrieve_before_missing_timeat_returns_400() {
     let (status, body, _) = get_temporal_entity(&c, &id, "timerel=before", "application/ld+json", None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "before without timeAt should return 400");
     assert!(body["type"].as_str().unwrap_or("").contains("BadRequestData"));
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_between_missing_endtimeat_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_09_03");
+    let id = scope.id("Vehicle:retrieve_020_09_03");
 
     let entity = vehicle_temporal_august(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -346,6 +343,7 @@ async fn temporal_retrieve_between_missing_endtimeat_returns_400() {
     let (status, body, _) = get_temporal_entity(&c, &id, "timerel=between&timeAt=2020-08-01T12:00:00Z", "application/ld+json", None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "between without endTimeAt should return 400");
     assert!(body["type"].as_str().unwrap_or("").contains("BadRequestData"));
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -353,11 +351,10 @@ async fn temporal_retrieve_between_missing_endtimeat_returns_400() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_temporal_values_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_10");
+    let id = scope.id("Vehicle:retrieve_020_10");
 
     let entity = vehicle_temporal_august(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -370,6 +367,7 @@ async fn temporal_retrieve_temporal_values_success() {
     if let Some(speed) = body.get("speed") {
         assert!(speed.get("values").is_some(), "speed should have values array in temporalValues format");
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -377,11 +375,10 @@ async fn temporal_retrieve_temporal_values_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_aggregated_avg_pt1h_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_11_01");
+    let id = scope.id("Vehicle:retrieve_020_11_01");
 
     let entity = vehicle_temporal_august(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -397,14 +394,14 @@ async fn temporal_retrieve_aggregated_avg_pt1h_success() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("speed").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_aggregated_avg_fuel_level_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_11_02");
+    let id = scope.id("Vehicle:retrieve_020_11_02");
 
     let entity = vehicle_temporal_august(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -421,14 +418,14 @@ async fn temporal_retrieve_aggregated_avg_fuel_level_success() {
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("fuelLevel").is_some());
     assert!(body.get("speed").is_none());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_aggregated_avg_max_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_11_03");
+    let id = scope.id("Vehicle:retrieve_020_11_03");
 
     let entity = vehicle_temporal_august(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -444,14 +441,14 @@ async fn temporal_retrieve_aggregated_avg_max_success() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("speed").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_aggregated_min_max_p1d_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_11_04");
+    let id = scope.id("Vehicle:retrieve_020_11_04");
 
     let entity = vehicle_temporal_august(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -467,6 +464,7 @@ async fn temporal_retrieve_aggregated_min_max_p1d_success() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("speed").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -474,11 +472,10 @@ async fn temporal_retrieve_aggregated_min_max_p1d_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_language_property_normalized_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_12_01");
+    let id = scope.id("Vehicle:retrieve_020_12_01");
 
     let entity = vehicle_temporal_language_property(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -494,14 +491,14 @@ async fn temporal_retrieve_language_property_normalized_success() {
         assert_eq!(first["type"], "LanguageProperty");
         assert!(first.get("languageMap").is_some());
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_language_property_simplified_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_12_02");
+    let id = scope.id("Vehicle:retrieve_020_12_02");
 
     let entity = vehicle_temporal_language_property(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -514,6 +511,7 @@ async fn temporal_retrieve_language_property_simplified_success() {
     if let Some(name) = body.get("name") {
         assert!(name.get("languageMaps").is_some() || name.get("values").is_some());
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -521,11 +519,10 @@ async fn temporal_retrieve_language_property_simplified_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_pagination_basic_returns_206() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_13_01");
+    let id = scope.id("Vehicle:retrieve_020_13_01");
 
     let entity = vehicle_temporal_twenty_instances(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -536,14 +533,14 @@ async fn temporal_retrieve_pagination_basic_returns_206() {
     let (unit, _, _, _) = parse_content_range(&headers).expect("partial temporal response must include Content-Range");
     assert_eq!(unit, "DateTime", "clause 6.3.10: the range unit shall be equal to \"DateTime\"");
     assert!(body.get("speed").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_pagination_last_n_returns_206_with_content_range() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_13_02");
+    let id = scope.id("Vehicle:retrieve_020_13_02");
 
     let entity = vehicle_temporal_twenty_instances(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -555,14 +552,14 @@ async fn temporal_retrieve_pagination_last_n_returns_206_with_content_range() {
     assert_eq!(unit, "DateTime", "clause 6.3.10: the range unit shall be equal to \"DateTime\"");
     assert_eq!(size, "20");
     assert!(body.get("speed").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_pagination_last_n_before_returns_206_with_content_range() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_13_03");
+    let id = scope.id("Vehicle:retrieve_020_13_03");
 
     let entity = vehicle_temporal_twenty_instances(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -582,14 +579,14 @@ async fn temporal_retrieve_pagination_last_n_before_returns_206_with_content_ran
     assert_eq!(range_start, "2021-01-01T01:01:00Z");
     assert_eq!(size, "20");
     assert!(body.get("speed").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_pagination_after_returns_206() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_13_08");
+    let id = scope.id("Vehicle:retrieve_020_13_08");
 
     let entity = vehicle_temporal_twenty_instances(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -610,14 +607,14 @@ async fn temporal_retrieve_pagination_after_returns_206() {
     assert_eq!(range_start, "2019-01-01T01:01:00Z");
     assert_eq!(range_end, mrt);
     assert!(body.get("speed").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_pagination_temporal_values_after_returns_206() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_13_09");
+    let id = scope.id("Vehicle:retrieve_020_13_09");
 
     let entity = vehicle_temporal_twenty_instances(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -638,6 +635,7 @@ async fn temporal_retrieve_pagination_temporal_values_after_returns_206() {
     assert_eq!(range_start, "2019-01-01T01:01:00Z");
     assert_eq!(range_end, mrt);
     assert!(body.get("speed").is_some());
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -645,11 +643,10 @@ async fn temporal_retrieve_pagination_temporal_values_after_returns_206() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_json_property_normalized_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_15_01");
+    let id = scope.id("Vehicle:retrieve_020_15_01");
 
     let entity = vehicle_temporal_json_property(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -664,14 +661,14 @@ async fn temporal_retrieve_json_property_normalized_success() {
         assert_eq!(first["type"], "JsonProperty");
         assert!(first.get("json").is_some());
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_json_property_simplified_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_15_02");
+    let id = scope.id("Vehicle:retrieve_020_15_02");
 
     let entity = vehicle_temporal_json_property(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -684,6 +681,7 @@ async fn temporal_retrieve_json_property_simplified_success() {
     if let Some(config) = body.get("config") {
         assert!(config.get("jsons").is_some() || config.get("values").is_some());
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -691,11 +689,10 @@ async fn temporal_retrieve_json_property_simplified_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_vocab_property_normalized_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_16_01");
+    let id = scope.id("Vehicle:retrieve_020_16_01");
 
     let entity = vehicle_temporal_vocab_property(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -710,14 +707,14 @@ async fn temporal_retrieve_vocab_property_normalized_success() {
         assert_eq!(first["type"], "VocabProperty");
         assert!(first.get("vocab").is_some());
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_vocab_property_simplified_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_16_02");
+    let id = scope.id("Vehicle:retrieve_020_16_02");
 
     let entity = vehicle_temporal_vocab_property(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -730,6 +727,7 @@ async fn temporal_retrieve_vocab_property_simplified_success() {
     if let Some(cat) = body.get("category") {
         assert!(cat.get("vocabs").is_some() || cat.get("values").is_some());
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -737,11 +735,10 @@ async fn temporal_retrieve_vocab_property_simplified_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_deleted_at_property_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_17_01");
+    let id = scope.id("Vehicle:retrieve_020_17_01");
 
     let entity = vehicle_temporal_different_types(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -761,14 +758,14 @@ async fn temporal_retrieve_deleted_at_property_success() {
     {
         assert!(fuel_arr[0].get("deletedAt").is_some(), "deletedAt should be present on fuelLevel");
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_deleted_at_relationship_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_17_02");
+    let id = scope.id("Vehicle:retrieve_020_17_02");
 
     let entity = vehicle_temporal_different_types(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -787,14 +784,14 @@ async fn temporal_retrieve_deleted_at_relationship_success() {
     {
         assert!(parked_arr[0].get("deletedAt").is_some(), "deletedAt should be present on isParkedIn");
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_deleted_at_language_property_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_17_03");
+    let id = scope.id("Vehicle:retrieve_020_17_03");
 
     let entity = vehicle_temporal_different_types(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -813,6 +810,7 @@ async fn temporal_retrieve_deleted_at_language_property_success() {
     {
         assert!(name_arr[0].get("deletedAt").is_some(), "deletedAt should be present on name");
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -820,11 +818,10 @@ async fn temporal_retrieve_deleted_at_language_property_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_deleted_at_temporal_values_property_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_18_01");
+    let id = scope.id("Vehicle:retrieve_020_18_01");
 
     let entity = vehicle_temporal_different_types(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -851,6 +848,7 @@ async fn temporal_retrieve_deleted_at_temporal_values_property_success() {
         // Second element of first entry should be the deletedAt timestamp
         assert!(values[0].get(1).is_some());
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -858,11 +856,10 @@ async fn temporal_retrieve_deleted_at_temporal_values_property_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_deleted_at_scope_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_19");
+    let id = scope.id("Vehicle:retrieve_020_19");
 
     let entity = vehicle_temporal_with_scope(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -879,19 +876,19 @@ async fn temporal_retrieve_deleted_at_scope_success() {
     // "urn:ngsi-ld:null" and the deletedAt Temporal Property set". A
     // `timeproperty=deletedAt` window selects the instances that carry that
     // axis, so the removal is the one instance the Scope answers with.
-    let scope = body.get("scope").expect("clause 4.18 reifies the scope in the temporal representation");
-    let instances = scope.as_array().cloned().unwrap_or_else(|| vec![scope.clone()]);
-    assert_eq!(instances.len(), 1, "the deletedAt window selects the removal alone: {scope}");
-    assert_eq!(instances[0]["value"], "urn:ngsi-ld:null", "{scope}");
-    assert!(instances[0].get("deletedAt").is_some(), "deletedAt should be present on scope: {scope}");
+    let scope_attr = body.get("scope").expect("clause 4.18 reifies the scope in the temporal representation");
+    let instances = scope_attr.as_array().cloned().unwrap_or_else(|| vec![scope_attr.clone()]);
+    assert_eq!(instances.len(), 1, "the deletedAt window selects the removal alone: {scope_attr}");
+    assert_eq!(instances[0]["value"], "urn:ngsi-ld:null", "{scope_attr}");
+    assert!(instances[0].get("deletedAt").is_some(), "deletedAt should be present on scope: {scope_attr}");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_retrieve_deleted_at_temporal_values_scope_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_20");
+    let id = scope.id("Vehicle:retrieve_020_20");
 
     let entity = vehicle_temporal_with_scope(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -914,12 +911,13 @@ async fn temporal_retrieve_deleted_at_temporal_values_scope_success() {
     // like any other attribute-shaped member, and a deleted instance pairs the
     // NGSI-LD Null with the `deletedAt` that stands in for the Temporal
     // Property it never observed.
-    let scope = body.get("scope").expect("clause 4.18 reifies the scope in the temporal representation");
-    let values = scope
+    let scope_attr = body.get("scope").expect("clause 4.18 reifies the scope in the temporal representation");
+    let values = scope_attr
         .get("values")
         .and_then(|values| values.as_array())
         .expect("a temporalValues member holds values");
-    assert_eq!(values.len(), 1, "the deletedAt window selects the removal alone: {scope}");
-    assert_eq!(values[0][0], "urn:ngsi-ld:null", "{scope}");
-    assert!(values[0].get(1).is_some(), "the deletion instant is the pair's second element: {scope}");
+    assert_eq!(values.len(), 1, "the deletedAt window selects the removal alone: {scope_attr}");
+    assert_eq!(values[0][0], "urn:ngsi-ld:null", "{scope_attr}");
+    assert!(values[0].get(1).is_some(), "the deletion instant is the pair's second element: {scope_attr}");
+    scope.finish().await.expect("cleanup failed");
 }

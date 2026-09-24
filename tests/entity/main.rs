@@ -20,10 +20,9 @@ mod retrieve;
 
 use andromeda_test_client::header::jsonld_link_header as try_jsonld_link_header;
 use andromeda_test_fixtures::context::{COMPOUND_CONTEXT, TEST_SUITE_CONTEXT};
-use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, environment::TestEnvironment};
 use reqwest::{Client, Method, StatusCode, header::HeaderValue};
 use serde_json::{Value, json};
-use uuid::Uuid;
 
 fn jsonld_link_header(context_url: &str) -> HeaderValue {
     try_jsonld_link_header(context_url).expect("valid JSON-LD Link header")
@@ -35,16 +34,6 @@ fn jsonld_link_header(context_url: &str) -> HeaderValue {
 
 fn client() -> Client {
     Client::new()
-}
-
-fn unique_id(prefix: &str) -> String {
-    format!("{prefix}:{}", Uuid::new_v4())
-}
-
-async fn clean_database() -> SerializedEnvironment {
-    SerializedEnvironment::from_environment_reset()
-        .await
-        .expect("serialized test database environment")
 }
 
 // ---------------------------------------------------------------------------
@@ -793,7 +782,8 @@ async fn get_entity(client: &Client, id: &str, query: &str, accept: &str, link: 
     (status, body)
 }
 
-async fn query_entities(client: &Client, query: &str, accept: &str, link: Option<&str>) -> (StatusCode, Value, Option<String>) {
+async fn query_entities(client: &Client, scope: &TestEnvironment, query: &str, accept: &str, link: Option<&str>) -> (StatusCode, Value, Option<String>) {
+    let query = scope.scope_query(query);
     let sep = if query.is_empty() { "" } else { "?" };
     let mut req = client.get(format!("{BASE_URL}/entities{sep}{query}")).header("Accept", accept);
     if let Some(ctx) = link {
@@ -894,7 +884,8 @@ async fn replace_entity(client: &Client, id: &str, replacement: &Value, content_
     (status, body)
 }
 
-async fn delete_entities_by_query(client: &Client, query: &str, link: Option<&str>) -> (StatusCode, Value) {
+async fn delete_entities_by_query(client: &Client, scope: &TestEnvironment, query: &str, link: Option<&str>) -> (StatusCode, Value) {
+    let query = scope.scope_query(query);
     let sep = if query.is_empty() { "" } else { "?" };
     let mut req = client.delete(format!("{BASE_URL}/entities{sep}{query}"));
     if let Some(ctx) = link {

@@ -30,13 +30,11 @@ use crate::helpers::{
     create_entity,
     create_subscription,
     fragment_air_quality_level,
-    reset_broker_state,
     set_endpoint_uri,
     subscription_with_endpoint,
-    unique_entity_id,
-    unique_subscription_id,
     with_is_active,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 
 /// Retrieve one entity in the default (normalized) representation.
 async fn retrieve_entity(http_client: &Client, entity_id: &str) -> (StatusCode, Value) {
@@ -61,21 +59,20 @@ fn notified_air_quality(notification: &Value, entity_id: &str) -> Option<i64> {
 
 /// Clause 5.10.1 / 5.8.1: the value a notification carries is durably retrievable
 /// -- the drain never publishes a change the triggering write has not committed.
-#[serial_test::serial]
 #[tokio::test]
 async fn notification_reflects_committed_state_of_triggering_write() {
     let http_client = client();
-    let _serialized_environment = reset_broker_state().await;
+    let scope = TestEnvironment::from_suite("notification").await.expect("isolated test environment");
     let receiver = NotificationReceiver::start().await;
 
-    let entity_id = unique_entity_id("urn:ngsi-ld:Building:delivery-after-commit");
+    let entity_id = scope.id("Building:delivery-after-commit");
     let (status, _, _) = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    let subscription_id = unique_subscription_id("delivery-after-commit");
+    let subscription_id = scope.id("Subscription:delivery-after-commit");
     let mut subscription = with_is_active(subscription_with_endpoint(&subscription_id, &receiver.endpoint_url()), true);
     set_endpoint_uri(&mut subscription, &receiver.endpoint_url());
-    let (status, _, _) = create_subscription(&http_client, &subscription).await;
+    let (status, _, _) = create_subscription(&http_client, &scope, &subscription).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     receiver.clear_notifications().await;
@@ -100,4 +97,5 @@ async fn notification_reflects_committed_state_of_triggering_write() {
         Some(5),
         "the retrieved entity reflects the same committed value the notification carried"
     );
+    scope.finish().await.expect("cleanup failed");
 }

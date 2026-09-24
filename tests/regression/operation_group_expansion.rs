@@ -11,7 +11,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
-use crate::{context_source_adapter::ContextSourceAdapter, probe_entity_type::probe_entity_type};
+use crate::context_source_adapter::ContextSourceAdapter;
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
@@ -60,7 +60,7 @@ async fn regression_operation_group_redirection_ops_advertises_purge_entity() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
     let source = ContextSourceAdapter::start().await;
-    let entity_type = probe_entity_type(&scope, "PurgeGroupProbe");
+    let entity_type = scope.entity_type("PurgeGroupProbe");
 
     let registration = registration_advertising(
         &scope.id("registration:purge-redirection-ops"),
@@ -98,7 +98,7 @@ async fn regression_operation_group_no_other_group_advertises_purge_entity() {
 
     for (group, probe_base) in [("federationOps", "PurgeFederationProbe"), ("associationOps", "PurgeAssociationProbe")] {
         let source = ContextSourceAdapter::start().await;
-        let entity_type = probe_entity_type(&scope, probe_base);
+        let entity_type = scope.entity_type(probe_base);
         let registration = registration_advertising(&scope.id(&format!("registration:purge-{group}")), &source.url("/"), group, &entity_type);
         let created = client.create_registration(&registration).await.expect("create registration");
         assert_eq!(created.status, StatusCode::CREATED, "{group}: {:?}", created.body);
@@ -125,7 +125,7 @@ async fn regression_operation_group_purge_entity_named_directly_still_matches() 
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
     let source = ContextSourceAdapter::start().await;
-    let entity_type = probe_entity_type(&scope, "PurgeNamedProbe");
+    let entity_type = scope.entity_type("PurgeNamedProbe");
 
     let registration = registration_advertising(&scope.id("registration:purge-named"), &source.url("/"), "purgeEntity", &entity_type);
     let created = client.create_registration(&registration).await.expect("create registration");

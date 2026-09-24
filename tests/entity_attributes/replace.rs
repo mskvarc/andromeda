@@ -8,7 +8,6 @@
 
 use crate::{
     TEST_SUITE_CONTEXT,
-    clean_database,
     client,
     create_entity,
     create_entity_json,
@@ -17,14 +16,13 @@ use crate::{
     replace_entity_attr_json,
     replace_entity_attr_with_datasetid,
     request_attrs_method,
-    unique_id,
     vehicle_speed_multi_instances,
     vehicle_speed_two_datasetid,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 use serde_json::{Number, json};
-use serial_test::serial;
 use std::str::FromStr;
 
 // ---------------------------------------------------------------------------
@@ -32,11 +30,10 @@ use std::str::FromStr;
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn attribute_replace_existing_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:replace_055_01_01");
+    let id = scope.id("Vehicle:replace_055_01_01");
 
     let entity = vehicle_speed_multi_instances(&id);
     let status = create_entity(&c, &entity).await;
@@ -54,14 +51,14 @@ async fn attribute_replace_existing_success() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["isParked"]["type"], "Relationship");
     assert_eq!(body["isParked"]["object"], "urn:ngsi-ld:OffStreetParking:Downtown2");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_replace_preserves_an_exact_decimal() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:replace_exact_number");
+    let id = scope.id("Vehicle:replace_exact_number");
     assert_eq!(
         create_entity_json(&c, &vehicle_speed_multi_instances(&id), TEST_SUITE_CONTEXT).await,
         StatusCode::CREATED
@@ -74,14 +71,14 @@ async fn attribute_replace_preserves_an_exact_decimal() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(serde_json::to_string(&body).expect("entity JSON").contains("0.150000000000000005"));
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_replace_with_type_change_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:replace_055_01_02");
+    let id = scope.id("Vehicle:replace_055_01_02");
 
     let entity = vehicle_speed_multi_instances(&id);
     let status = create_entity(&c, &entity).await;
@@ -99,6 +96,7 @@ async fn attribute_replace_with_type_change_success() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["isParked"]["type"], "Property");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -106,11 +104,10 @@ async fn attribute_replace_with_type_change_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn attribute_replace_default_instance_returns_404_when_no_default() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:replace_055_02_01");
+    let id = scope.id("Vehicle:replace_055_02_01");
 
     // vehicle_speed_two_datasetid has no default instance (both have datasetId)
     let entity = vehicle_speed_two_datasetid(&id);
@@ -129,14 +126,14 @@ async fn attribute_replace_default_instance_returns_404_when_no_default() {
         StatusCode::NOT_FOUND,
         "replace default instance should return 404 when no default exists"
     );
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_replace_specific_instance_by_datasetid_success() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:replace_055_02_02");
+    let id = scope.id("Vehicle:replace_055_02_02");
 
     let entity = vehicle_speed_two_datasetid(&id);
     let status = create_entity(&c, &entity).await;
@@ -150,6 +147,7 @@ async fn attribute_replace_specific_instance_by_datasetid_success() {
 
     let (status, _) = replace_entity_attr_with_datasetid(&c, &id, "speed", "urn:ngsi-ld:Property:speedometer", &fragment, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "replace specific instance by datasetId should return 204");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -157,9 +155,8 @@ async fn attribute_replace_specific_instance_by_datasetid_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn attribute_replace_invalid_entity_id_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
 
     let fragment = json!({
@@ -170,14 +167,14 @@ async fn attribute_replace_invalid_entity_id_returns_400() {
 
     let (status, _) = request_attrs_method(&c, Method::PUT, "/entities/not-a-valid-uri/attrs/speed", Some(&fragment)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "invalid entity ID should return 400");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_replace_nonexistent_entity_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:replace_055_03_02");
+    let id = scope.id("Vehicle:replace_055_03_02");
 
     let fragment = json!({
         "type": "Property",
@@ -187,14 +184,14 @@ async fn attribute_replace_nonexistent_entity_returns_404() {
 
     let (status, _) = replace_entity_attr(&c, &id, "speed", &fragment, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent entity should return 404");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_replace_invalid_attribute_name_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:replace_055_03_03");
+    let id = scope.id("Vehicle:replace_055_03_03");
 
     let entity = vehicle_speed_two_datasetid(&id);
     let status = create_entity(&c, &entity).await;
@@ -208,14 +205,14 @@ async fn attribute_replace_invalid_attribute_name_returns_400() {
 
     let (status, _) = request_attrs_method(&c, Method::PUT, &format!("/entities/{id}/attrs/@invalid"), Some(&fragment)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "invalid attribute name should return 400");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_replace_nonexistent_attribute_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:replace_055_03_04");
+    let id = scope.id("Vehicle:replace_055_03_04");
 
     let entity = vehicle_speed_two_datasetid(&id);
     let status = create_entity(&c, &entity).await;
@@ -229,14 +226,14 @@ async fn attribute_replace_nonexistent_attribute_returns_404() {
 
     let (status, _) = replace_entity_attr(&c, &id, "nonExistentAttr", &fragment, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent attribute should return 404");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn attribute_replace_scope_returns_400() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Building:replace_055_03_05");
+    let id = scope.id("Building:replace_055_03_05");
 
     let entity = json!({
         "id": &id,
@@ -254,4 +251,5 @@ async fn attribute_replace_scope_returns_400() {
 
     let (status, _) = replace_entity_attr(&c, &id, "scope", &fragment, None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "replace scope should return 400");
+    scope.finish().await.expect("cleanup failed");
 }

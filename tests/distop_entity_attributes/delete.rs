@@ -4,12 +4,10 @@
 //! Tests for DELETE /entities/{entityId}/attrs/{attrId} with different registration modes.
 
 use reqwest::{Method, StatusCode};
-use serial_test::serial;
 
 use crate::{
     context_source_adapter::ContextSourceAdapter as MockServer,
     helpers::{
-        clean_database,
         client,
         create_entity,
         create_entity_local,
@@ -20,7 +18,6 @@ use crate::{
         delete_registration,
         get_entity,
         jsonld_link_value,
-        unique_id,
         vehicle_entity,
         vehicle_entity_two_speed_datasets,
         vehicle_registration_auxiliary_retrieve_ops,
@@ -28,6 +25,7 @@ use crate::{
         vehicle_registration_speed_redirection_ops,
     },
 };
+use andromeda_test_harness::environment::TestEnvironment;
 
 // ---------------------------------------------------------------------------
 // Delete entity attribute (default instance) - inclusive mode
@@ -35,14 +33,15 @@ use crate::{
 
 /// Delete attribute (default instance) with inclusive registration.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_delete_inclusive_forwards_and_deletes_local() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:delete-inc");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:delete-inc");
+    let entity_id = scope.id("Vehicle:delete-inc");
+    let reg_id = scope.id("Registration:delete-inc");
 
     // Create entity with two datasetId speed attributes
     let entity = vehicle_entity_two_speed_datasets(&entity_id);
@@ -73,6 +72,7 @@ async fn distop_entity_attrs_delete_inclusive_forwards_and_deletes_local() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -81,14 +81,15 @@ async fn distop_entity_attrs_delete_inclusive_forwards_and_deletes_local() {
 
 /// Delete attribute (default instance) with exclusive registration.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_delete_exclusive_forwards_to_context_source() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:delete-exc");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:delete-exc");
+    let entity_id = scope.id("Vehicle:delete-exc");
+    let reg_id = scope.id("Registration:delete-exc");
 
     // Create entity locally
     let entity = vehicle_entity(&entity_id);
@@ -114,6 +115,7 @@ async fn distop_entity_attrs_delete_exclusive_forwards_to_context_source() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -122,15 +124,16 @@ async fn distop_entity_attrs_delete_exclusive_forwards_to_context_source() {
 
 /// Delete attribute (default instance) with redirect registrations.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_delete_redirect_forwards_to_multiple() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:delete-red");
-    let reg_id1 = unique_id("urn:ngsi-ld:Registration:delete-red-1");
-    let reg_id2 = unique_id("urn:ngsi-ld:Registration:delete-red-2");
+    let entity_id = scope.id("Vehicle:delete-red");
+    let reg_id1 = scope.id("Registration:delete-red-1");
+    let reg_id2 = scope.id("Registration:delete-red-2");
 
     // Two redirect registrations. Clause 5.9.2.4 refuses a redirect registration
     // with Conflict when an existing Entity already matches it, so the entity is
@@ -159,6 +162,7 @@ async fn distop_entity_attrs_delete_redirect_forwards_to_multiple() {
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -167,14 +171,15 @@ async fn distop_entity_attrs_delete_redirect_forwards_to_multiple() {
 
 /// Delete attribute with deleteAll=true and inclusive registration.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_delete_all_inclusive_deletes_all_instances() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:delete-all-inc");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:delete-all-inc");
+    let entity_id = scope.id("Vehicle:delete-all-inc");
+    let reg_id = scope.id("Registration:delete-all-inc");
 
     // Create entity with two datasetId speed attributes
     let entity = vehicle_entity_two_speed_datasets(&entity_id);
@@ -205,6 +210,7 @@ async fn distop_entity_attrs_delete_all_inclusive_deletes_all_instances() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -213,14 +219,15 @@ async fn distop_entity_attrs_delete_all_inclusive_deletes_all_instances() {
 
 /// Delete attribute with deleteAll=true and exclusive registration.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_delete_all_exclusive_forwards_to_context_source() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:delete-all-exc");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:delete-all-exc");
+    let entity_id = scope.id("Vehicle:delete-all-exc");
+    let reg_id = scope.id("Registration:delete-all-exc");
 
     // Create entity locally
     let entity = vehicle_entity(&entity_id);
@@ -246,6 +253,7 @@ async fn distop_entity_attrs_delete_all_exclusive_forwards_to_context_source() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -254,15 +262,16 @@ async fn distop_entity_attrs_delete_all_exclusive_forwards_to_context_source() {
 
 /// Delete attribute with deleteAll=true and redirect registrations.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_delete_all_redirect_forwards_to_multiple() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:delete-all-red");
-    let reg_id1 = unique_id("urn:ngsi-ld:Registration:delete-all-red-1");
-    let reg_id2 = unique_id("urn:ngsi-ld:Registration:delete-all-red-2");
+    let entity_id = scope.id("Vehicle:delete-all-red");
+    let reg_id1 = scope.id("Registration:delete-all-red-1");
+    let reg_id2 = scope.id("Registration:delete-all-red-2");
 
     // Two redirect registrations. Clause 5.9.2.4 refuses a redirect registration
     // with Conflict when an existing Entity already matches it, so the entity is
@@ -291,6 +300,7 @@ async fn distop_entity_attrs_delete_all_redirect_forwards_to_multiple() {
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -299,26 +309,29 @@ async fn distop_entity_attrs_delete_all_redirect_forwards_to_multiple() {
 
 /// Delete attribute from non-existent entity returns 404.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_delete_not_found_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:delete-notfound");
+    let entity_id = scope.id("Vehicle:delete-notfound");
     let status = delete_entity_attr(&c, &entity_id, "speed", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Delete with auxiliary registration only deletes locally, no forwarding.
 #[tokio::test]
-#[serial]
 async fn distop_entity_attrs_delete_auxiliary_no_forwarding() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:delete-aux");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:delete-aux");
+    let entity_id = scope.id("Vehicle:delete-aux");
+    let reg_id = scope.id("Registration:delete-aux");
 
     // Create entity with two datasetId speed attributes
     let entity = vehicle_entity_two_speed_datasets(&entity_id);
@@ -344,4 +357,5 @@ async fn distop_entity_attrs_delete_auxiliary_no_forwarding() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }

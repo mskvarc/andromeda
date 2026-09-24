@@ -7,27 +7,25 @@
 
 use crate::{
     COMPOUND_CONTEXT,
-    clean_database,
     client,
     create_temporal_entity,
     delete_temporal_attr_instance,
     extract_instance_id,
     get_temporal_entity,
     request_temporal_attrs,
-    unique_id,
     vehicle_temporal_representation,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
-use serial_test::serial;
 
 // ---------------------------------------------------------------------------
 // Setup helper
 // ---------------------------------------------------------------------------
 
-async fn setup_entity_with_instance_id(prefix: &str) -> (reqwest::Client, String, String) {
+async fn setup_entity_with_instance_id(scope: &TestEnvironment, local: &str) -> (reqwest::Client, String, String) {
     let c = client();
-    let id = unique_id(prefix);
+    let id = scope.id(local);
 
     let entity = vehicle_temporal_representation(&id);
     let status = create_temporal_entity(&c, &entity).await;
@@ -46,10 +44,11 @@ async fn setup_entity_with_instance_id(prefix: &str) -> (reqwest::Client, String
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_instance_success() {
-    let _serialized_environment = clean_database().await;
-    let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:delete_inst_017_01_01").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (c, id, instance_id) = setup_entity_with_instance_id(&scope, "Vehicle:delete_inst_017_01_01").await;
 
     let (status, bytes, _) = delete_temporal_attr_instance(&c, &id, "speed", &instance_id).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete instance should return 204");
@@ -70,6 +69,7 @@ async fn temporal_attrs_delete_instance_success() {
     let speed = body["speed"].as_array().expect("speed should be array");
     // Original had 2 instances, now should have 1
     assert_eq!(speed.len(), 1, "should have 1 speed instance after deletion");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -77,10 +77,11 @@ async fn temporal_attrs_delete_instance_success() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_instance_invalid_entity_id_returns_400() {
-    let _serialized_environment = clean_database().await;
-    let (_, _, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:delete_inst_017_02_01").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (_, _, instance_id) = setup_entity_with_instance_id(&scope, "Vehicle:delete_inst_017_02_01").await;
     let c = client();
 
     let (status, _, body) = delete_temporal_attr_instance(&c, "invalidId", "speed", &instance_id).await;
@@ -90,24 +91,28 @@ async fn temporal_attrs_delete_instance_invalid_entity_id_returns_400() {
         "error type should be BadRequestData"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_instance_empty_entity_id_returns_400() {
-    let _serialized_environment = clean_database().await;
-    let (_, _, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:delete_inst_017_02_02").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (_, _, instance_id) = setup_entity_with_instance_id(&scope, "Vehicle:delete_inst_017_02_02").await;
     let c = client();
 
     let (status, _body) = request_temporal_attrs(&c, Method::DELETE, &format!("/temporal/entities//attrs/speed/{instance_id}"), None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "empty entity ID should return 400");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_instance_invalid_instance_id_returns_400() {
-    let _serialized_environment = clean_database().await;
-    let (c, id, _) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:delete_inst_017_02_03").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (c, id, _) = setup_entity_with_instance_id(&scope, "Vehicle:delete_inst_017_02_03").await;
 
     let (status, _, body) = delete_temporal_attr_instance(&c, &id, "speed", "invalidId").await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "invalid instance ID should return 400");
@@ -116,13 +121,15 @@ async fn temporal_attrs_delete_instance_invalid_instance_id_returns_400() {
         "error type should be BadRequestData"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_instance_invalid_attribute_name_returns_400() {
-    let _serialized_environment = clean_database().await;
-    let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:delete_inst_017_02_04").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (c, id, instance_id) = setup_entity_with_instance_id(&scope, "Vehicle:delete_inst_017_02_04").await;
 
     let (status, _, body) = delete_temporal_attr_instance(&c, &id, "invalid(Name", &instance_id).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "invalid attr name should return 400");
@@ -131,16 +138,19 @@ async fn temporal_attrs_delete_instance_invalid_attribute_name_returns_400() {
         "error type should be BadRequestData"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_instance_empty_attribute_name_returns_400() {
-    let _serialized_environment = clean_database().await;
-    let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:delete_inst_017_02_05").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (c, id, instance_id) = setup_entity_with_instance_id(&scope, "Vehicle:delete_inst_017_02_05").await;
 
     let (status, _) = request_temporal_attrs(&c, Method::DELETE, &format!("/temporal/entities/{id}/attrs//{instance_id}"), None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "empty attr name should return 400");
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -148,11 +158,12 @@ async fn temporal_attrs_delete_instance_empty_attribute_name_returns_400() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_instance_entity_not_found_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
     let c = client();
-    let id = unique_id("urn:ngsi-ld:Vehicle:delete_inst_017_03_01");
+    let id = scope.id("Vehicle:delete_inst_017_03_01");
 
     let (status, _, body) = delete_temporal_attr_instance(&c, &id, "speed", "urn:ngsi-ld:Instance:nonexistent").await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent entity should return 404");
@@ -161,13 +172,15 @@ async fn temporal_attrs_delete_instance_entity_not_found_returns_404() {
         "error type should be ResourceNotFound"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_instance_attribute_not_found_returns_404() {
-    let _serialized_environment = clean_database().await;
-    let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:delete_inst_017_03_02").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (c, id, instance_id) = setup_entity_with_instance_id(&scope, "Vehicle:delete_inst_017_03_02").await;
 
     // Try to delete instance of non-existent attribute
     let (status, _, body) = delete_temporal_attr_instance(&c, &id, "nonExistentAttr", &instance_id).await;
@@ -177,13 +190,15 @@ async fn temporal_attrs_delete_instance_attribute_not_found_returns_404() {
         "error type should be ResourceNotFound"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn temporal_attrs_delete_instance_instance_not_found_returns_404() {
-    let _serialized_environment = clean_database().await;
-    let (c, id, _) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:delete_inst_017_03_03").await;
+    let scope = TestEnvironment::from_suite("temporal_entity_attributes")
+        .await
+        .expect("isolated test environment");
+    let (c, id, _) = setup_entity_with_instance_id(&scope, "Vehicle:delete_inst_017_03_03").await;
 
     // Try to delete non-existent instance (valid URN format but doesn't exist)
     let (status, _, body) = delete_temporal_attr_instance(&c, &id, "speed", "urn:ngsi-ld:01234567890123456789").await;
@@ -193,4 +208,5 @@ async fn temporal_attrs_delete_instance_instance_not_found_returns_404() {
         "error type should be ResourceNotFound"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
+    scope.finish().await.expect("cleanup failed");
 }

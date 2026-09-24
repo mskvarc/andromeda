@@ -21,11 +21,10 @@ mod pagination;
 mod temporal;
 
 use andromeda_test_fixtures::{context::TEST_SUITE_CONTEXT, problem_detail as error};
-use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, environment::TestEnvironment};
 use reqwest::{Client, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use urlencoding::encode;
-use uuid::Uuid;
 
 const BAD_REQUEST_DATA_TYPE: &iri_rs::Iri<&str> = error::BAD_REQUEST_DATA;
 const INVALID_REQUEST_TYPE: &iri_rs::Iri<&str> = error::INVALID_REQUEST;
@@ -33,10 +32,6 @@ const RESOURCE_NOT_FOUND_TYPE: &iri_rs::Iri<&str> = error::RESOURCE_NOT_FOUND;
 
 fn client() -> Client {
     Client::new()
-}
-
-fn unique_id(prefix: &str) -> String {
-    format!("{prefix}:{}", Uuid::new_v4())
 }
 
 fn jsonld_link_value() -> String {
@@ -91,12 +86,6 @@ fn vehicle_linking_to(id: &str, target: &str) -> Value {
     })
 }
 
-async fn clean_database() -> SerializedEnvironment {
-    SerializedEnvironment::from_environment_reset()
-        .await
-        .expect("serialized test database environment")
-}
-
 async fn create_entity(client: &Client, entity: &Value) -> (StatusCode, Option<String>) {
     let resp = client
         .post(format!("{BASE_URL}/entities"))
@@ -114,7 +103,8 @@ async fn delete_entity(client: &Client, id: &str) {
     let _ = client.delete(format!("{BASE_URL}/entities/{}", encode(id))).send().await;
 }
 
-async fn create_entity_map_from_get(client: &Client, query: &str) -> (StatusCode, HeaderMap, Value) {
+async fn create_entity_map_from_get(client: &Client, scope: &TestEnvironment, query: &str) -> (StatusCode, HeaderMap, Value) {
+    let query = scope.scope_query(query);
     let sep = if query.is_empty() { "" } else { "?" };
     let resp = client
         .get(format!("{BASE_URL}/entityMaps{sep}{query}"))
@@ -143,7 +133,8 @@ async fn create_entity_map_from_post(client: &Client, body: &Value) -> (StatusCo
     (status, headers, body)
 }
 
-async fn create_temporal_entity_map_from_get(client: &Client, query: &str) -> (StatusCode, HeaderMap, Value) {
+async fn create_temporal_entity_map_from_get(client: &Client, scope: &TestEnvironment, query: &str) -> (StatusCode, HeaderMap, Value) {
+    let query = scope.scope_query(query);
     let sep = if query.is_empty() { "" } else { "?" };
     let resp = client
         .get(format!("{BASE_URL}/temporal/entityMaps{sep}{query}"))
@@ -208,7 +199,8 @@ async fn delete_entity_map(client: &Client, id: &str) -> StatusCode {
         .status()
 }
 
-async fn query_entities(client: &Client, query: &str) -> (StatusCode, HeaderMap, Value) {
+async fn query_entities(client: &Client, scope: &TestEnvironment, query: &str) -> (StatusCode, HeaderMap, Value) {
+    let query = scope.scope_query(query);
     let sep = if query.is_empty() { "" } else { "?" };
     let resp = client
         .get(format!("{BASE_URL}/entities{sep}{query}"))
@@ -222,7 +214,8 @@ async fn query_entities(client: &Client, query: &str) -> (StatusCode, HeaderMap,
     (status, headers, body)
 }
 
-async fn query_temporal_entities(client: &Client, query: &str) -> (StatusCode, HeaderMap, Value) {
+async fn query_temporal_entities(client: &Client, scope: &TestEnvironment, query: &str) -> (StatusCode, HeaderMap, Value) {
+    let query = scope.scope_query(query);
     let sep = if query.is_empty() { "" } else { "?" };
     let resp = client
         .get(format!("{BASE_URL}/temporal/entities{sep}{query}"))
@@ -236,7 +229,8 @@ async fn query_temporal_entities(client: &Client, query: &str) -> (StatusCode, H
     (status, headers, body)
 }
 
-async fn query_entities_with_entity_map(client: &Client, query: &str, entity_map_id: &str) -> (StatusCode, HeaderMap, Value) {
+async fn query_entities_with_entity_map(client: &Client, scope: &TestEnvironment, query: &str, entity_map_id: &str) -> (StatusCode, HeaderMap, Value) {
+    let query = scope.scope_query(query);
     let sep = if query.is_empty() { "" } else { "?" };
     let resp = client
         .get(format!("{BASE_URL}/entities{sep}{query}"))

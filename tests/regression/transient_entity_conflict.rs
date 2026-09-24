@@ -22,7 +22,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
-use crate::{context_source_adapter::ContextSourceAdapter, probe_entity_type::probe_entity_type};
+use crate::context_source_adapter::ContextSourceAdapter;
 use andromeda_test_client::{response::TestResponse, test_client::TestClient};
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
@@ -151,7 +151,7 @@ fn entity_of(response: &TestResponse) -> Value {
 #[tokio::test]
 async fn regression_transient_conflict_entity_expiry_reaches_the_attributes_that_lack_one() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let entity_type = probe_entity_type(&scope, "TransientPushDownProbe");
+    let entity_type = scope.entity_type("TransientPushDownProbe");
     let entity_id = scope.id("Vehicle:transient-push-down");
     let marked = ContextSourceAdapter::start().await;
     let unmarked = ContextSourceAdapter::start().await;
@@ -237,7 +237,7 @@ async fn regression_transient_conflict_entity_expiry_reaches_the_attributes_that
 #[tokio::test]
 async fn regression_transient_conflict_attribute_expiry_is_clamped_only_when_it_is_later() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let entity_type = probe_entity_type(&scope, "TransientClampProbe");
+    let entity_type = scope.entity_type("TransientClampProbe");
     let entity_id = scope.id("Vehicle:transient-clamp");
     let marked = ContextSourceAdapter::start().await;
     let unmarked = ContextSourceAdapter::start().await;
@@ -325,7 +325,7 @@ async fn regression_transient_conflict_attribute_expiry_is_clamped_only_when_it_
 #[tokio::test]
 async fn regression_transient_conflict_named_geo_properties_receive_the_propagation() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let entity_type = probe_entity_type(&scope, "TransientGeoProbe");
+    let entity_type = scope.entity_type("TransientGeoProbe");
     let entity_id = scope.id("Vehicle:transient-geo");
     let marked = ContextSourceAdapter::start().await;
     let unmarked = ContextSourceAdapter::start().await;
@@ -405,7 +405,7 @@ async fn regression_transient_conflict_named_geo_properties_receive_the_propagat
 #[tokio::test]
 async fn regression_transient_conflict_a_verbatim_member_is_skipped_and_survives() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let entity_type = probe_entity_type(&scope, "TransientVerbatimProbe");
+    let entity_type = scope.entity_type("TransientVerbatimProbe");
     let entity_id = scope.id("Vehicle:transient-verbatim");
     let marked = ContextSourceAdapter::start().await;
     let unmarked = ContextSourceAdapter::start().await;
@@ -485,7 +485,7 @@ async fn regression_transient_conflict_a_verbatim_member_is_skipped_and_survives
 #[tokio::test]
 async fn regression_transient_conflict_versions_that_agree_keep_the_entity_level_expiry() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let entity_type = probe_entity_type(&scope, "TransientAgreedProbe");
+    let entity_type = scope.entity_type("TransientAgreedProbe");
     let entity_id = scope.id("Vehicle:transient-agreed");
     let first_source = ContextSourceAdapter::start().await;
     let second_source = ContextSourceAdapter::start().await;
@@ -565,7 +565,7 @@ async fn regression_transient_conflict_versions_that_agree_keep_the_entity_level
 #[tokio::test]
 async fn regression_transient_conflict_a_single_source_is_not_in_conflict_with_itself() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let entity_type = probe_entity_type(&scope, "TransientLoneProbe");
+    let entity_type = scope.entity_type("TransientLoneProbe");
     let entity_id = scope.id("Vehicle:transient-lone");
     let source = ContextSourceAdapter::start().await;
 
@@ -620,7 +620,7 @@ async fn regression_transient_conflict_a_single_source_is_not_in_conflict_with_i
 #[tokio::test]
 async fn regression_transient_conflict_the_locally_held_version_is_a_party() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let entity_type = probe_entity_type(&scope, "TransientLocalPartyProbe");
+    let entity_type = scope.entity_type("TransientLocalPartyProbe");
     let entity_id = scope.id("Vehicle:transient-local-party");
     let source = ContextSourceAdapter::start().await;
 
@@ -690,7 +690,7 @@ async fn regression_transient_conflict_the_locally_held_version_is_a_party() {
 #[tokio::test]
 async fn regression_transient_conflict_an_auxiliary_version_is_not_a_party() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let entity_type = probe_entity_type(&scope, "TransientAuxiliaryProbe");
+    let entity_type = scope.entity_type("TransientAuxiliaryProbe");
     let entity_id = scope.id("Vehicle:transient-auxiliary");
     let primary = ContextSourceAdapter::start().await;
     let auxiliary = ContextSourceAdapter::start().await;
@@ -774,7 +774,7 @@ async fn regression_transient_conflict_an_auxiliary_version_is_not_a_party() {
 #[tokio::test]
 async fn regression_transient_conflict_the_query_path_differentiates_the_same_way() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let entity_type = probe_entity_type(&scope, "TransientQueryProbe");
+    let entity_type = scope.entity_type("TransientQueryProbe");
     let entity_id = scope.id("Vehicle:transient-query");
     let marked = ContextSourceAdapter::start().await;
     let unmarked = ContextSourceAdapter::start().await;
@@ -860,7 +860,7 @@ async fn regression_transient_conflict_the_query_path_differentiates_the_same_wa
 #[tokio::test]
 async fn regression_transient_conflict_a_local_read_leaves_attribute_expiry_independent() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let entity_type = probe_entity_type(&scope, "TransientLocalOnlyProbe");
+    let entity_type = scope.entity_type("TransientLocalOnlyProbe");
     let entity_id = scope.id("Vehicle:transient-local-only");
 
     let read = {
