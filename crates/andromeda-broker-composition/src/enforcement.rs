@@ -15,6 +15,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-architecture-checks",
         "andromeda-component-report",
+        "andromeda-configuration-scalars",
         "andromeda-context-commit",
         "andromeda-context-registry",
         "andromeda-context-space",

@@ -43,7 +43,7 @@ x-broker-base: &broker-base
     # them fast without changing behaviour: the sweep never removes anything
     # before its expiresAt, it only shortens the latency after expiry. The
     # EXPIRY_SWEEP_INTERVAL constant in tests/expiration/main.rs tracks this.
-    ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL_SECS: "1"
+    ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL: "1s"
     # Two brokers share this one Postgres, whose default is max_connections=100.
     # The broker's own defaults (database.max_connections=32,
     # tenancy.tenant_max_connections=16) would let the pair plus the harness pools
@@ -52,9 +52,9 @@ x-broker-base: &broker-base
     # pool and the cached tenant runtimes keeps 2 x (16 + 4 x 4) well under 100.
     ANDROMEDA__DATABASE__MAX_CONNECTIONS: "16"
     ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS: "4"
-    ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL_SECS: "60"
+    ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL: "60s"
     ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "4"
-    ANDROMEDA__TENANCY__JANITOR_INTERVAL_SECS: "1"
+    ANDROMEDA__TENANCY__JANITOR_INTERVAL: "1s"
     # The tenant-management extension (non-standard) backs the tenant_management
     # suite and the multitenancy tenant-collection assertion; the cleanup between
     # runs suspends tenants through it to close their pools before the databases

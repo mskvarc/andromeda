@@ -26,7 +26,7 @@ use andromeda_task_runtime::{
 };
 use andromeda_temporal::config::TemporalConfig;
 use chrono::{TimeDelta, Utc};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 /// Register the retention sweep when the operator has configured a horizon.
 ///
@@ -42,15 +42,17 @@ pub(super) fn register_temporal_retention(
     repository: Arc<TemporalRepository>,
     config: &TemporalConfig,
 ) -> Result<(), TenantAssemblyError> {
-    let Some(horizon_days) = config.retention_horizon_days else {
+    let Some(horizon) = config.retention_horizon else {
         return Ok(());
     };
-    let horizon_days = i64::try_from(horizon_days).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    // A validated retention horizon is a whole number of days (see
+    // `TemporalConfig::validate`), so integer division recovers it exactly.
+    let horizon_days = i64::try_from(horizon.duration().as_secs() / 86_400).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let span = TimeDelta::try_days(horizon_days).ok_or_else(|| TenantAssemblyError::invariant("temporal retention horizon is out of range".to_owned()))?;
     let retention = TemporalRetention::Enabled {
         horizon: TemporalRetentionHorizon::new(span).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?,
     };
-    let cadence = Duration::from_secs(config.retention_sweep_interval_secs);
+    let cadence = config.retention_sweep_interval.duration();
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let name = TaskName::try_from("temporal-retention").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;

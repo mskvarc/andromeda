@@ -20,6 +20,7 @@ pub mod store;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-configuration-scalars",
         "andromeda-context-commit",
         "andromeda-context-space",
         "andromeda-entity",

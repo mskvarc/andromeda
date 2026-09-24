@@ -144,7 +144,7 @@ pub(super) fn register_interval_notification(
     transport: &Arc<TransportDispatcher>,
     subscriptions: Arc<dyn SubscriptionStore>,
     subscription_changes: broadcast::Sender<SubscriptionChange>,
-    interval_max_sleep_secs: u64,
+    interval_max_sleep: Duration,
 ) -> Result<(), TenantAssemblyError> {
     let operation = Arc::new(IntervalNotificationOperation::new(
         storage.live_target.clone(), // clone: interval delivery and expiry both operate on the tenant's live branch.
@@ -157,19 +157,13 @@ pub(super) fn register_interval_notification(
     ));
     let (interval_wake, receiver) = wake_channel();
     register_periodic_wake(supervisor, "notification-interval-wake", interval_wake, subscription_changes)?;
-    register_notification_schedule(
-        supervisor,
-        "notification-interval",
-        Duration::from_secs(interval_max_sleep_secs),
-        receiver,
-        move |cutoff| {
-            let operation = Arc::clone(&operation); // clone: each bounded pass owns the shared notification operation.
-            async move {
-                operation.execute(cutoff).await?;
-                operation.next_due(cutoff).await
-            }
-        },
-    )
+    register_notification_schedule(supervisor, "notification-interval", interval_max_sleep, receiver, move |cutoff| {
+        let operation = Arc::clone(&operation); // clone: each bounded pass owns the shared notification operation.
+        async move {
+            operation.execute(cutoff).await?;
+            operation.next_due(cutoff).await
+        }
+    })
 }
 
 fn register_notification_processor(
@@ -242,8 +236,12 @@ fn register_notification_delivery(
     config: &DeliveryConfig,
     wake: DrainWakeReceiver,
 ) -> Result<(), TenantAssemblyError> {
-    let fallback_floor = Duration::from_secs(config.poll_interval_secs.max(1));
-    let fallback_ceiling = Duration::from_secs(config.poll_interval_max_secs.max(config.poll_interval_secs).max(1));
+    let fallback_floor = config.poll_interval.duration().max(Duration::from_secs(1));
+    let fallback_ceiling = config
+        .poll_interval_max
+        .duration()
+        .max(config.poll_interval.duration())
+        .max(Duration::from_secs(1));
     let fallback = DrainFallbackPolicy::new(fallback_floor, fallback_ceiling).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let name = TaskName::try_from("notification-delivery").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let registration = TaskRegistration::new(
@@ -269,10 +267,10 @@ fn register_notification_delivery(
         .register_drain(task, wake)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
 
-    let cleanup_cadence = Duration::from_secs(config.cleanup_interval_secs.max(1));
-    let cleanup_after = retention_duration(config.cleanup_after_secs, "notification delivery cleanup age")?;
-    let dead_letter_after = retention_duration(config.dead_letter_after_secs, "notification delivery dead-letter age")?;
-    let orphan_event_after = retention_duration(config.orphan_event_after_secs, "notification delivery orphan-event age")?;
+    let cleanup_cadence = config.cleanup_interval.duration().max(Duration::from_secs(1));
+    let cleanup_after = retention_duration(config.cleanup_after.duration().as_secs(), "notification delivery cleanup age")?;
+    let dead_letter_after = retention_duration(config.dead_letter_after.duration().as_secs(), "notification delivery dead-letter age")?;
+    let orphan_event_after = retention_duration(config.orphan_event_after.duration().as_secs(), "notification delivery orphan-event age")?;
     let schedule = PeriodicSchedule::new(cleanup_cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let name = TaskName::try_from("notification-delivery-cleanup").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;

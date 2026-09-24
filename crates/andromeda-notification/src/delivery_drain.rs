@@ -123,7 +123,7 @@ impl NotificationDeliveryDrain {
         config: &DeliveryConfig,
     ) -> Result<NotificationDeliveryDrain, NotificationError> {
         let worker_id = WorkerInstanceId::delivery(uuid::Uuid::new_v4());
-        let base_backoff_secs = i64::try_from(config.base_backoff_secs)
+        let base_backoff_secs = i64::try_from(config.base_backoff.duration().as_secs())
             .map_err(|error| NotificationError::representation(format!("notification delivery base backoff is out of range: {error}")))?;
         let lease_term = config
             .lease_term()
@@ -282,6 +282,7 @@ mod tests {
         notification_event::{NotificationEvent, NotificationEventId},
         worker_instance_id::WorkerInstanceId,
     };
+    use andromeda_configuration_scalars::human_duration::HumanDuration;
     use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -444,19 +445,19 @@ mod tests {
     fn config() -> DeliveryConfig {
         DeliveryConfig {
             mode: DeliveryMode::Durable,
-            request_timeout_secs: 10,
+            request_timeout: HumanDuration::from_secs(10),
             max_attempts: 5,
-            base_backoff_secs: 5,
-            poll_interval_secs: 1,
-            poll_interval_max_secs: 30,
+            base_backoff: HumanDuration::from_secs(5),
+            poll_interval: HumanDuration::from_secs(1),
+            poll_interval_max: HumanDuration::from_secs(30),
             batch_size: 1,
             concurrency: 4,
-            lease_secs: 30,
+            lease: HumanDuration::from_secs(30),
             error_max_chars: 8,
-            cleanup_after_secs: 86_400,
-            cleanup_interval_secs: 300,
-            dead_letter_after_secs: 604_800,
-            orphan_event_after_secs: 86_400,
+            cleanup_after: HumanDuration::from_secs(86_400),
+            cleanup_interval: HumanDuration::from_secs(300),
+            dead_letter_after: HumanDuration::from_secs(604_800),
+            orphan_event_after: HumanDuration::from_secs(86_400),
         }
     }
 

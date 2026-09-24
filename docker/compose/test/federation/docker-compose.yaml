@@ -36,7 +36,7 @@ x-broker-base: &broker-base
     ANDROMEDA__DATABASE__MAX_CONNECTIONS: "16"
     ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS: "8"
     ANDROMEDA__IDENTITY__SOURCE_EXTRAS: '{"deployment":"federation"}'
-    ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL_SECS: "5"
+    ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL: "5s"
   healthcheck:
     test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${ANDROMEDA__SERVER__PORT}/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
     interval: 3s

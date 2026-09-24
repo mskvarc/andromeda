@@ -67,6 +67,7 @@ pub mod tenant_wake_schedule;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-component-report",
+        "andromeda-configuration-scalars",
         "andromeda-context-commit",
         "andromeda-context-space",
         "andromeda-context-registry",

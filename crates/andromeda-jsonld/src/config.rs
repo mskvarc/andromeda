@@ -10,6 +10,7 @@ use crate::{
     engine::{builder::JsonLdEngineBuilder, processor::JsonLdEngine},
     error::JsonLdError,
 };
+use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
 use iri_rs::{IriBuf, iri};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -24,18 +25,18 @@ use url::Url;
 /// A setting that must be positive and was not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum JsonLdConfigError {
-    /// `timeout_secs` was zero, which would abandon every fetch instantly.
-    #[error("jsonld.timeout_secs must be at least 1")]
+    /// `timeout` was zero, which would abandon every fetch instantly.
+    #[error("jsonld.timeout must be at least 1 second")]
     ZeroTimeout,
-    /// `max_context_bytes` was zero, which would refuse every context.
-    #[error("jsonld.max_context_bytes must be at least 1")]
-    ZeroMaxContextBytes,
+    /// `max_context` was zero, which would refuse every context.
+    #[error("jsonld.max_context must be at least 1 byte")]
+    ZeroMaxContext,
     /// `cache_capacity` was zero, which would cache nothing.
     #[error("jsonld.cache_capacity must be at least 1")]
     ZeroCacheCapacity,
-    /// `cache_ttl_secs` was zero, which would expire on arrival every
+    /// `cache_ttl` was zero, which would expire on arrival every
     /// context whose response states no expiration time of its own.
-    #[error("jsonld.cache_ttl_secs must be at least 1")]
+    #[error("jsonld.cache_ttl must be at least 1 second")]
     ZeroCacheTtl,
 }
 
@@ -45,20 +46,24 @@ pub struct JsonLdConfig {
     /// Whether a context that is neither embedded nor cached may be fetched.
     pub allow_remote_contexts: bool,
 
-    /// How long a context fetch may take.
-    pub timeout_secs: u64,
+    /// How long a context fetch may take, in human-readable form (`"30s"`).
+    #[toml_comment(inline)]
+    pub timeout: HumanDuration,
 
     /// How many redirects a context fetch may follow.
     pub max_redirects: u32,
 
-    /// The size beyond which a fetched context is refused.
-    pub max_context_bytes: u64,
+    /// The size beyond which a fetched context is refused, in human-readable
+    /// form (`"2 MB"`).
+    #[toml_comment(inline)]
+    pub max_context: HumanByteSize,
 
     /// How many entries the in-process caches hold.
     pub cache_capacity: u64,
 
     /// How long a term-cache entry lives, and how long a downloaded `@context`
-    /// whose response states no expiration time is kept.
+    /// whose response states no expiration time is kept, in human-readable form
+    /// (`"1h"`).
     ///
     /// Clause 6.3.16 requires compliance with the `Expires` header field and
     /// with the `max-age` and `s-maxage` directives of `Cache-Control` carried
@@ -66,7 +71,8 @@ pub struct JsonLdConfig {
     /// its own lifetime and this setting never applies to it. It is the
     /// heuristic expiration time the same clause recommends assigning when the
     /// origin server specifies none.
-    pub cache_ttl_secs: u64,
+    #[toml_comment(inline)]
+    pub cache_ttl: HumanDuration,
 
     /// Contexts to read from disk at startup, as URL to file path.
     pub preload_contexts: HashMap<Url, PathBuf>,
@@ -76,11 +82,11 @@ impl Default for JsonLdConfig {
     fn default() -> JsonLdConfig {
         JsonLdConfig {
             allow_remote_contexts: true,
-            timeout_secs: 30,
+            timeout: HumanDuration::from_secs(30),
             max_redirects: 5,
-            max_context_bytes: 2_000_000,
+            max_context: HumanByteSize::b(2_000_000),
             cache_capacity: 1024,
-            cache_ttl_secs: 3600,
+            cache_ttl: HumanDuration::from_secs(3600),
             preload_contexts: HashMap::new(),
         }
     }
@@ -94,16 +100,16 @@ impl JsonLdConfig {
     /// Returns the [`JsonLdConfigError`] naming the first setting that is
     /// zero.
     pub const fn validate(&self) -> Result<(), JsonLdConfigError> {
-        if self.timeout_secs == 0 {
+        if self.timeout.is_zero() {
             return Err(JsonLdConfigError::ZeroTimeout);
         }
-        if self.max_context_bytes == 0 {
-            return Err(JsonLdConfigError::ZeroMaxContextBytes);
+        if self.max_context.as_u64() == 0 {
+            return Err(JsonLdConfigError::ZeroMaxContext);
         }
         if self.cache_capacity == 0 {
             return Err(JsonLdConfigError::ZeroCacheCapacity);
         }
-        if self.cache_ttl_secs == 0 {
+        if self.cache_ttl.is_zero() {
             return Err(JsonLdConfigError::ZeroCacheTtl);
         }
         Ok(())
@@ -141,11 +147,11 @@ impl JsonLdConfig {
         // on the engine each tenant builds.
         let mut builder = JsonLdEngineBuilder::new()
             .allow_remote(self.allow_remote_contexts)
-            .timeout_secs(self.timeout_secs)
+            .timeout_secs(self.timeout.duration().as_secs())
             .max_redirects(self.max_redirects)
             .cache_capacity(self.cache_capacity)
-            .cache_ttl_secs(self.cache_ttl_secs)
-            .max_context_bytes(self.max_context_bytes)
+            .cache_ttl_secs(self.cache_ttl.duration().as_secs())
+            .max_context_bytes(self.max_context.as_u64())
             .default_core_url(IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld")))
             .with_l2_cache(l2_cache);
         if !self.preload_contexts.is_empty() {
@@ -158,6 +164,7 @@ impl JsonLdConfig {
 #[cfg(test)]
 mod tests {
     use crate::config::{JsonLdConfig, JsonLdConfigError};
+    use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
     use std::{
         collections::HashMap,
         path::{Path, PathBuf},
@@ -172,11 +179,11 @@ mod tests {
     fn valid_config() -> JsonLdConfig {
         JsonLdConfig {
             allow_remote_contexts: true,
-            timeout_secs: 30,
+            timeout: HumanDuration::from_secs(30),
             max_redirects: 5,
-            max_context_bytes: 2_000_000,
+            max_context: HumanByteSize::b(2_000_000),
             cache_capacity: 1024,
-            cache_ttl_secs: 3600,
+            cache_ttl: HumanDuration::from_secs(3600),
             preload_contexts: HashMap::new(),
         }
     }
@@ -193,10 +200,10 @@ mod tests {
     #[test]
     fn each_setting_that_must_be_positive_reports_itself_by_name() {
         let cases: [ZeroedSetting; 4] = [
-            (|config| config.timeout_secs = 0, JsonLdConfigError::ZeroTimeout),
-            (|config| config.max_context_bytes = 0, JsonLdConfigError::ZeroMaxContextBytes),
+            (|config| config.timeout = HumanDuration::from_secs(0), JsonLdConfigError::ZeroTimeout),
+            (|config| config.max_context = HumanByteSize::b(0), JsonLdConfigError::ZeroMaxContext),
             (|config| config.cache_capacity = 0, JsonLdConfigError::ZeroCacheCapacity),
-            (|config| config.cache_ttl_secs = 0, JsonLdConfigError::ZeroCacheTtl),
+            (|config| config.cache_ttl = HumanDuration::from_secs(0), JsonLdConfigError::ZeroCacheTtl),
         ];
         for (zero_out, expected) in cases {
             let mut config = valid_config();

@@ -27,13 +27,13 @@ pub struct WakerPolicy {
 }
 
 impl WakerPolicy {
-    /// A policy from the configured seconds and counts.
+    /// A policy from the configured durations and counts.
     #[must_use]
-    pub const fn new(min_dormancy_secs: u64, wake_residency_secs: u64, idle_ttl_secs: u64, max_wakes_per_pass: usize) -> WakerPolicy {
+    pub const fn new(min_dormancy: Duration, wake_residency: Duration, idle_ttl: Duration, max_wakes_per_pass: usize) -> WakerPolicy {
         WakerPolicy {
-            min_dormancy: Duration::from_secs(min_dormancy_secs),
-            wake_residency: Duration::from_secs(wake_residency_secs),
-            idle_ttl: Duration::from_secs(idle_ttl_secs),
+            min_dormancy,
+            wake_residency,
+            idle_ttl,
             max_wakes_per_pass,
         }
     }
@@ -107,7 +107,12 @@ mod tests {
     const IDLE_TTL_SECS: u64 = 900;
 
     fn policy() -> WakerPolicy {
-        WakerPolicy::new(MIN_DORMANCY_SECS, WAKE_RESIDENCY_SECS, IDLE_TTL_SECS, 4)
+        WakerPolicy::new(
+            Duration::from_secs(MIN_DORMANCY_SECS),
+            Duration::from_secs(WAKE_RESIDENCY_SECS),
+            Duration::from_secs(IDLE_TTL_SECS),
+            4,
+        )
     }
 
     #[test]
@@ -150,7 +155,7 @@ mod tests {
     #[test]
     fn a_wake_residency_at_least_the_idle_ttl_backdates_to_now() {
         // Degenerate configuration: residency swallows the whole idle TTL.
-        let policy = WakerPolicy::new(30, 900, 900, 4);
+        let policy = WakerPolicy::new(Duration::from_secs(30), Duration::from_mins(15), Duration::from_mins(15), 4);
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(10_000);
         assert_eq!(policy.woken_last_used(now), now);
     }

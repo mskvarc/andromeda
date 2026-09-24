@@ -17,6 +17,7 @@ use crate::{
     tenant_ref::TenantRef,
     wake_schedule::{TenantWakeSchedule, WakeScheduleError},
 };
+use andromeda_configuration_scalars::human_duration::HumanDuration;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_telemetry::tenancy::{EvictionReason, WakeOutcome};
 use async_trait::async_trait;
@@ -143,13 +144,13 @@ fn config(enabled: bool, max_cached: usize) -> TenancyConfig {
         enabled,
         tenant_db_prefix: DbNamePrefix::try_from("andromeda_tenant").expect("valid default db name prefix"),
         tenant_max_connections: 16,
-        runtime_idle_ttl_secs: 900,
+        runtime_idle_ttl: HumanDuration::from_secs(900),
         runtime_max_cached: max_cached,
-        janitor_interval_secs: 30,
+        janitor_interval: HumanDuration::from_secs(30),
         max_concurrent_builds: 8,
         eviction_concurrency: 8,
-        min_dormancy_secs: 30,
-        wake_residency_secs: 60,
+        min_dormancy: HumanDuration::from_secs(30),
+        wake_residency: HumanDuration::from_secs(60),
         waker_max_wakes_per_pass: 4,
     }
 }

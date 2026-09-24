@@ -31,28 +31,28 @@ x-broker-base: &broker-base
     # bounded wait. The production 5s base backoff doubles to 10s on the first
     # retry, which the test's deadline cannot absorb under CI load; a 1s base
     # keeps the first retry near 2s without changing the exponential shape.
-    ANDROMEDA__NOTIFICATIONS__DELIVERY__BASE_BACKOFF_SECS: "1"
+    ANDROMEDA__NOTIFICATIONS__DELIVERY__BASE_BACKOFF: "1s"
     ANDROMEDA__OBSERVABILITY__LOG_LEVEL: "info"
     ANDROMEDA__DATABASE__MAX_CONNECTIONS: "8"
     ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS: "2"
-    ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL_SECS: "60"
+    ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL: "60s"
     ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "4"
-    ANDROMEDA__TENANCY__JANITOR_INTERVAL_SECS: "1"
-    ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL_SECS: "1"
+    ANDROMEDA__TENANCY__JANITOR_INTERVAL: "1s"
+    ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL: "1s"
     ANDROMEDA__TEMPORAL__DEFAULT_LAST_N: "1000"
-    ANDROMEDA__SNAPSHOT__DEFAULT_LIFETIME_SECS: "3600"
-    ANDROMEDA__SNAPSHOT__MAXIMUM_LIFETIME_SECS: "2592000"
+    ANDROMEDA__SNAPSHOT__DEFAULT_LIFETIME: "1h"
+    ANDROMEDA__SNAPSHOT__MAXIMUM_LIFETIME: "30days"
     ANDROMEDA__SNAPSHOT__CAPTURE_PAGE_SIZE: "250"
     ANDROMEDA__SNAPSHOT__PREPARATION_CONCURRENCY: "4"
-    ANDROMEDA__SNAPSHOT__PREPARATION_LEASE_SECS: "30"
+    ANDROMEDA__SNAPSHOT__PREPARATION_LEASE: "30s"
     # The preparation sweep is also the recovery poll that reclaims a
     # preparation whose lease has expired (e.g. a replica that died mid-capture).
     # A foreign broker's lease expiry is only discoverable by polling, so the
     # reclamation test can only pass as fast as this cadence. The production 30s
     # default cannot meet the test's bounded reclaim wait; 2s reclaims promptly
     # and, being far below the 30s lease, never steals a live preparation.
-    ANDROMEDA__SNAPSHOT__PREPARATION_RECOVERY_SECS: "2"
-    ANDROMEDA__SNAPSHOT__SCOPED_OPERATION_WAIT_SECS: "30"
+    ANDROMEDA__SNAPSHOT__PREPARATION_RECOVERY: "2s"
+    ANDROMEDA__SNAPSHOT__SCOPED_OPERATION_WAIT: "30s"
   healthcheck:
     test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${ANDROMEDA__SERVER__PORT}/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
     interval: 3s
@@ -91,7 +91,7 @@ services:
     environment:
       <<: *primary-env
       ANDROMEDA__SERVER__PORT: "1081"
-      ANDROMEDA__SNAPSHOT__SCOPED_OPERATION_WAIT_SECS: "2"
+      ANDROMEDA__SNAPSHOT__SCOPED_OPERATION_WAIT: "2s"
       ANDROMEDA__IDENTITY__ADVERTISED_URL: "http://snapshot-primary:1081"
     ports:
       - "1081:1081"

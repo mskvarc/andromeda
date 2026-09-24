@@ -1,5 +1,6 @@
 //! Streaming subscription transport configuration.
 
+use andromeda_configuration_scalars::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use toml_comment::TomlComment;
@@ -11,13 +12,13 @@ pub enum NotificationConfigError {
     #[error("notifications.streaming.sse.channel_buffer_size must be at least 1")]
     ZeroSseChannelCapacity,
     /// SSE keep-alive cadence was configured as zero.
-    #[error("notifications.streaming.sse.keep_alive_interval_secs must be at least 1")]
+    #[error("notifications.streaming.sse.keep_alive_interval must be greater than zero")]
     ZeroSseKeepAliveInterval,
     /// WebSocket channel capacity was configured as zero.
     #[error("notifications.streaming.ws.channel_buffer_size must be at least 1")]
     ZeroWebSocketChannelCapacity,
     /// WebSocket ping cadence was configured as zero.
-    #[error("notifications.streaming.ws.ping_interval_secs must be at least 1")]
+    #[error("notifications.streaming.ws.ping_interval must be greater than zero")]
     ZeroWebSocketPingInterval,
 }
 
@@ -26,15 +27,17 @@ pub enum NotificationConfigError {
 pub struct SseConfig {
     /// Per-connection notification channel capacity.
     pub channel_buffer_size: usize,
-    /// Keep-alive interval for idle connections.
-    pub keep_alive_interval_secs: u64,
+    /// Keep-alive interval for idle connections, in human-readable form
+    /// (`"15s"`).
+    #[toml_comment(inline)]
+    pub keep_alive_interval: HumanDuration,
 }
 
 impl Default for SseConfig {
     fn default() -> SseConfig {
         SseConfig {
             channel_buffer_size: 64,
-            keep_alive_interval_secs: 15,
+            keep_alive_interval: HumanDuration::from_secs(15),
         }
     }
 }
@@ -44,15 +47,16 @@ impl Default for SseConfig {
 pub struct WsConfig {
     /// Per-connection notification channel capacity.
     pub channel_buffer_size: usize,
-    /// Ping interval for idle connections.
-    pub ping_interval_secs: u64,
+    /// Ping interval for idle connections, in human-readable form (`"30s"`).
+    #[toml_comment(inline)]
+    pub ping_interval: HumanDuration,
 }
 
 impl Default for WsConfig {
     fn default() -> WsConfig {
         WsConfig {
             channel_buffer_size: 64,
-            ping_interval_secs: 30,
+            ping_interval: HumanDuration::from_secs(30),
         }
     }
 }
@@ -79,13 +83,13 @@ impl NotificationConfig {
         if self.sse.channel_buffer_size == 0 {
             return Err(NotificationConfigError::ZeroSseChannelCapacity);
         }
-        if self.sse.keep_alive_interval_secs == 0 {
+        if self.sse.keep_alive_interval.is_zero() {
             return Err(NotificationConfigError::ZeroSseKeepAliveInterval);
         }
         if self.ws.channel_buffer_size == 0 {
             return Err(NotificationConfigError::ZeroWebSocketChannelCapacity);
         }
-        if self.ws.ping_interval_secs == 0 {
+        if self.ws.ping_interval.is_zero() {
             return Err(NotificationConfigError::ZeroWebSocketPingInterval);
         }
         Ok(())
@@ -95,6 +99,7 @@ impl NotificationConfig {
 #[cfg(test)]
 mod tests {
     use super::{NotificationConfig, NotificationConfigError, SseConfig, WsConfig};
+    use andromeda_configuration_scalars::human_duration::HumanDuration;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -102,11 +107,11 @@ mod tests {
         let config = NotificationConfig {
             sse: SseConfig {
                 channel_buffer_size: 64,
-                keep_alive_interval_secs: 15,
+                keep_alive_interval: HumanDuration::from_secs(15),
             },
             ws: WsConfig {
                 channel_buffer_size: 64,
-                ping_interval_secs: 0,
+                ping_interval: HumanDuration::from_secs(0),
             },
         };
         assert_eq!(config.validate(), Err(NotificationConfigError::ZeroWebSocketPingInterval));

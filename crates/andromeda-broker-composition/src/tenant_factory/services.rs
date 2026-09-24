@@ -19,6 +19,7 @@ use crate::{
     },
     tenant_state::AndromedaState,
 };
+use andromeda_configuration_scalars::human_byte_size::HumanByteSize;
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_registry::{service::ContextRegistryService, store::ContextRegistryStore};
 use andromeda_entity::{
@@ -48,7 +49,7 @@ use andromeda_temporal::{
     service::TemporalService,
 };
 use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 /// Request-facing state and the scheduled snapshot preparation operation composed with it.
 pub(super) struct ConstructedServices {
@@ -144,10 +145,10 @@ pub(super) fn construct_services(
         snapshots,
         sse_registry: Arc::clone(&transports.sse_registry),
         sse_channel_buffer_size: config.notifications.streaming.sse.channel_buffer_size,
-        sse_keep_alive_interval_secs: config.notifications.streaming.sse.keep_alive_interval_secs,
+        sse_keep_alive_interval_secs: config.notifications.streaming.sse.keep_alive_interval.duration().as_secs(),
         ws_registry: Arc::clone(&transports.ws_registry),
         ws_channel_buffer_size: config.notifications.streaming.ws.channel_buffer_size,
-        ws_ping_interval_secs: config.notifications.streaming.ws.ping_interval_secs,
+        ws_ping_interval_secs: config.notifications.streaming.ws.ping_interval.duration().as_secs(),
     };
     Ok(ConstructedServices { state, snapshot_preparation })
 }
@@ -268,9 +269,9 @@ fn compose_snapshot_services(
         SnapshotPreparationConfig {
             capture_page_size: config.capture_page_size,
             max_per_pass: config.preparation_concurrency,
-            lease_duration: Duration::from_secs(config.preparation_lease_secs),
+            lease_duration: config.preparation_lease.duration(),
             tenant_count_quota: config.tenant_count_quota,
-            tenant_byte_quota: config.tenant_byte_quota,
+            tenant_byte_quota: config.tenant_storage_quota.map(HumanByteSize::as_u64),
         },
     ));
     let service = Arc::new(SnapshotService::new(
@@ -278,11 +279,11 @@ fn compose_snapshot_services(
         Some(Arc::clone(&preparation)), // clone: the service schedules the same preparation the worker drives.
         Some(delivery_signal),
         SnapshotServiceConfig {
-            default_lifetime: Duration::from_secs(config.default_lifetime_secs),
-            maximum_lifetime: Duration::from_secs(config.maximum_lifetime_secs),
-            scoped_operation_wait: Duration::from_secs(config.scoped_operation_wait_secs),
+            default_lifetime: config.default_lifetime.duration(),
+            maximum_lifetime: config.maximum_lifetime.duration(),
+            scoped_operation_wait: config.scoped_operation_wait.duration(),
             tenant_count_quota: config.tenant_count_quota,
-            tenant_byte_quota: config.tenant_byte_quota,
+            tenant_byte_quota: config.tenant_storage_quota.map(HumanByteSize::as_u64),
         },
     ));
     (preparation, service)

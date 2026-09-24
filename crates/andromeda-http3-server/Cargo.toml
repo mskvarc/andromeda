@@ -15,6 +15,7 @@ ignored = ["toml"]
 workspace = true
 
 [dependencies]
+andromeda-configuration-scalars.workspace = true
 axum = "0.8.9"
 axum-h3 = "0.0.6"
 h3-util = { version = "0.0.6", features = ["quinn"] }

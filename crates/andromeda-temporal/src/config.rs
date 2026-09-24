@@ -1,6 +1,7 @@
 //! Temporal policy configuration.
 
 use crate::storage_policy::TemporalStoragePolicy;
+use andromeda_configuration_scalars::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 use strum::{Display, EnumString};
@@ -12,13 +13,17 @@ use toml_comment::TomlComment;
 /// Mirrors the `create_hypertable` interval in the attribute-history and
 /// scope-history migrations; validation compares an override of one value
 /// against the default of the other.
-pub const DEFAULT_CHUNK_INTERVAL_DAYS: u32 = 7;
+pub const DEFAULT_CHUNK_INTERVAL: HumanDuration = HumanDuration::from_days(7);
 
 /// The columnstore lag the tenant schema declares when no override is set.
 ///
 /// Mirrors the `add_columnstore_policy` lag in the attribute-history and
 /// scope-history migrations.
-pub const DEFAULT_COLUMNSTORE_AFTER_DAYS: u32 = 30;
+pub const DEFAULT_COLUMNSTORE_AFTER: HumanDuration = HumanDuration::from_days(30);
+
+/// The number of seconds in one day, the grain the history-partition day fields
+/// are constrained to.
+const SECONDS_PER_DAY: u64 = 86_400;
 
 /// Invalid temporal policy configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -27,43 +32,47 @@ pub enum TemporalConfigError {
     #[error("temporal.default_last_n must be at least 1")]
     ZeroDefaultLastN,
     /// Expiry reconciliation cadence was configured as zero.
-    #[error("temporal.expiration_check_interval_secs must be at least 1")]
+    #[error("temporal.expiration_check_interval must be greater than zero")]
     ZeroExpirationCheckInterval,
     /// Intent fallback cadence was configured as zero.
-    #[error("temporal.intent_fallback_secs must be at least 1")]
+    #[error("temporal.intent_fallback must be greater than zero")]
     ZeroIntentFallback,
     /// Intent fallback ceiling was configured below the fallback floor.
-    #[error("temporal.intent_fallback_max_secs must be at least temporal.intent_fallback_secs")]
+    #[error("temporal.intent_fallback_max must be at least temporal.intent_fallback")]
     IntentFallbackCeilingBelowFloor,
     /// Intent batch size was configured as zero.
     #[error("temporal.intent_batch_size must be at least 1")]
     ZeroIntentBatchSize,
     /// Intent lease duration was configured as zero.
-    #[error("temporal.intent_lease_secs must be at least 1")]
+    #[error("temporal.intent_lease must be greater than zero")]
     ZeroIntentLease,
     /// Intent retry delay was configured as zero.
-    #[error("temporal.intent_retry_secs must be at least 1")]
+    #[error("temporal.intent_retry must be greater than zero")]
     ZeroIntentRetry,
     /// Intent retry ceiling was configured below the base delay.
-    #[error("temporal.intent_retry_max_secs must be at least temporal.intent_retry_secs")]
+    #[error("temporal.intent_retry_max must be at least temporal.intent_retry")]
     IntentRetryCeilingBelowBase,
     /// The stuck-intent warning threshold was configured as zero.
     #[error("temporal.intent_stuck_after_attempts must be at least 1")]
     ZeroIntentStuckThreshold,
-    /// The chunk interval override was configured as zero.
-    #[error("temporal.chunk_interval_days must be at least 1")]
-    ZeroChunkInterval,
-    /// The columnstore lag override was configured as zero.
-    #[error("temporal.columnstore_after_days must be at least 1")]
-    ZeroColumnstoreLag,
+    /// The chunk interval override was not a positive whole number of days.
+    ///
+    /// The write-side history partitions are day-grained, so an override must
+    /// resolve to whole days: a fractional or sub-day span such as `"36h"` has
+    /// no partition boundary to land on.
+    #[error("temporal.chunk_interval must be a positive whole number of days")]
+    ChunkIntervalNotWholeDays,
+    /// The columnstore lag override was not a positive whole number of days.
+    #[error("temporal.columnstore_after must be a positive whole number of days")]
+    ColumnstoreAfterNotWholeDays,
     /// The columnstore lag would convert a chunk that is still being written.
-    #[error("temporal.columnstore_after_days must be at least temporal.chunk_interval_days")]
+    #[error("temporal.columnstore_after must be at least temporal.chunk_interval")]
     ColumnstoreLagBelowChunkInterval,
-    /// A retention horizon was named but spans no time.
-    #[error("temporal.retention_horizon_days must be at least 1 when retention is enabled")]
-    ZeroRetentionHorizon,
+    /// A retention horizon was named but was not a positive whole number of days.
+    #[error("temporal.retention_horizon must be a positive whole number of days when retention is enabled")]
+    RetentionHorizonNotWholeDays,
     /// Retention sweep cadence was configured as zero.
-    #[error("temporal.retention_sweep_interval_secs must be at least 1")]
+    #[error("temporal.retention_sweep_interval must be greater than zero")]
     ZeroRetentionSweepInterval,
 }
 
@@ -93,59 +102,78 @@ pub struct TemporalConfig {
     /// must page rather than return every instance), so a conformance run sets
     /// `ANDROMEDA__TEMPORAL__DEFAULT_LAST_N=19` to sit just under that threshold.
     pub default_last_n: u32,
-    /// Cadence, in seconds, of every `expiresAt` sweep the broker schedules
-    /// per tenant: entities (clause 5.2.4), subscriptions (clause 5.8.1.4),
-    /// context source registrations (clause 5.9.2.4), snapshots and entity
-    /// maps. Each sweep deletes what has expired at the moment it runs, so a
-    /// resource may outlive its `expiresAt` in storage by up to one cadence;
-    /// the read paths hide an expired registration in the meantime, so the
-    /// API never serves one. The conformance stacks run this at 5 s.
-    pub expiration_check_interval_secs: u64,
-    /// Fallback poll cadence for committed temporal intents.
+    /// Cadence of every `expiresAt` sweep the broker schedules per tenant:
+    /// entities (clause 5.2.4), subscriptions (clause 5.8.1.4), context source
+    /// registrations (clause 5.9.2.4), snapshots and entity maps, in
+    /// human-readable form (`"30s"`). Each sweep deletes what has expired at the
+    /// moment it runs, so a resource may outlive its `expiresAt` in storage by
+    /// up to one cadence; the read paths hide an expired registration in the
+    /// meantime, so the API never serves one. The conformance stacks run this at
+    /// `"5s"`.
+    #[toml_comment(inline)]
+    pub expiration_check_interval: HumanDuration,
+    /// Fallback poll cadence for committed temporal intents, in human-readable
+    /// form (`"1s"`).
     ///
     /// The floor of the drain's idle backoff: after a commit's edge wake the
     /// drain runs promptly, and while idle it backs off from here toward
-    /// `intent_fallback_max_secs`.
-    pub intent_fallback_secs: u64,
-    /// Ceiling the intent drain's idle backoff reaches while no commit wakes it.
+    /// `intent_fallback_max`.
+    #[toml_comment(inline)]
+    pub intent_fallback: HumanDuration,
+    /// Ceiling the intent drain's idle backoff reaches while no commit wakes it,
+    /// in human-readable form (`"30s"`).
     ///
     /// Also the cross-replica pickup bound: a committed intent another replica
     /// did not observe a wake for is claimed within this cadence.
-    pub intent_fallback_max_secs: u64,
+    #[toml_comment(inline)]
+    pub intent_fallback_max: HumanDuration,
     /// Maximum intents claimed by one bounded drain pass.
     pub intent_batch_size: u32,
-    /// Lease duration for one claimed intent batch.
-    pub intent_lease_secs: u64,
-    /// Base retry delay for a sink rejection.
-    pub intent_retry_secs: u64,
-    /// Ceiling the exponential retry delay is clamped to.
-    pub intent_retry_max_secs: u64,
+    /// Lease duration for one claimed intent batch, in human-readable form
+    /// (`"30s"`).
+    #[toml_comment(inline)]
+    pub intent_lease: HumanDuration,
+    /// Base retry delay for a sink rejection, in human-readable form (`"2s"`).
+    #[toml_comment(inline)]
+    pub intent_retry: HumanDuration,
+    /// Ceiling the exponential retry delay is clamped to, in human-readable form
+    /// (`"5m"`).
+    #[toml_comment(inline)]
+    pub intent_retry_max: HumanDuration,
     /// Attempt count from which an intent that keeps failing is reported as stuck.
     ///
     /// There is no dead-letter for a temporal append intent: the intent is the
     /// durable record of history the broker accepted, so it stays claimable
     /// forever and is only reported, never discarded.
     pub intent_stuck_after_attempts: u32,
-    /// Override of the span one write-side history partition covers, in days.
+    /// Override of the span one write-side history partition covers, as a whole
+    /// number of days in human-readable form (`"7days"`).
     ///
     /// Absent, the schema's own default stands. Reconciled against the stored
-    /// hypertable dimension when a tenant is opened.
-    pub chunk_interval_days: Option<u32>,
+    /// hypertable dimension when a tenant is opened. The partitions are
+    /// day-grained, so the value must resolve to whole days.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunk_interval: Option<HumanDuration>,
     /// Override of the age past which a history partition is converted to the
-    /// columnstore, in days.
+    /// columnstore, as a whole number of days in human-readable form
+    /// (`"30days"`).
     ///
     /// Absent, the schema's own default stands. Must not fall below the chunk
     /// interval, or a partition still receiving rows would be converted.
-    pub columnstore_after_days: Option<u32>,
-    /// Operator retention horizon in days, absent while retention is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub columnstore_after: Option<HumanDuration>,
+    /// Operator retention horizon as a whole number of days in human-readable
+    /// form (`"365days"`), absent while retention is off.
     ///
     /// Retention ages temporal storage out and is not an NGSI-LD operation: the
     /// specification defines deletion of a Temporal Evolution (clause 5.6.16)
     /// and says nothing about storage an operator chooses not to keep. It is
     /// therefore absent unless an operator names a horizon.
-    pub retention_horizon_days: Option<u64>,
-    /// Cadence of the operator retention sweep.
-    pub retention_sweep_interval_secs: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retention_horizon: Option<HumanDuration>,
+    /// Cadence of the operator retention sweep, in human-readable form (`"1h"`).
+    #[toml_comment(inline)]
+    pub retention_sweep_interval: HumanDuration,
 }
 
 impl Default for TemporalConfig {
@@ -153,20 +181,37 @@ impl Default for TemporalConfig {
         TemporalConfig {
             append_mode: TemporalAppendMode::Native,
             default_last_n: 100,
-            expiration_check_interval_secs: 30,
-            intent_fallback_secs: 1,
-            intent_fallback_max_secs: 30,
+            expiration_check_interval: HumanDuration::from_secs(30),
+            intent_fallback: HumanDuration::from_secs(1),
+            intent_fallback_max: HumanDuration::from_secs(30),
             intent_batch_size: 64,
-            intent_lease_secs: 30,
-            intent_retry_secs: 2,
-            intent_retry_max_secs: 300,
+            intent_lease: HumanDuration::from_secs(30),
+            intent_retry: HumanDuration::from_secs(2),
+            intent_retry_max: HumanDuration::from_secs(300),
             intent_stuck_after_attempts: 10,
-            chunk_interval_days: None,
-            columnstore_after_days: None,
-            retention_horizon_days: None,
-            retention_sweep_interval_secs: 3600,
+            chunk_interval: None,
+            columnstore_after: None,
+            retention_horizon: None,
+            retention_sweep_interval: HumanDuration::from_secs(3600),
         }
     }
+}
+
+/// Whether a duration is a positive whole number of days, the grain the
+/// history-partition day fields require.
+const fn is_positive_whole_days(duration: HumanDuration) -> bool {
+    let seconds = duration.duration().as_secs();
+    seconds != 0 && seconds.is_multiple_of(SECONDS_PER_DAY)
+}
+
+/// The whole days a validated day-grained override spans, as a [`NonZeroU32`].
+///
+/// Returns [`None`] for a value that is not a positive whole number of days or
+/// that overflows [`u32`]; on a configuration that passed
+/// [`TemporalConfig::validate`] the day fields always convert.
+fn whole_days(duration: HumanDuration) -> Option<NonZeroU32> {
+    let days = duration.duration().as_secs() / SECONDS_PER_DAY;
+    u32::try_from(days).ok().and_then(NonZeroU32::new)
 }
 
 impl TemporalConfig {
@@ -185,51 +230,57 @@ impl TemporalConfig {
         if self.default_last_n == 0 {
             return Err(TemporalConfigError::ZeroDefaultLastN);
         }
-        if self.expiration_check_interval_secs == 0 {
+        if self.expiration_check_interval.is_zero() {
             return Err(TemporalConfigError::ZeroExpirationCheckInterval);
         }
-        if self.intent_fallback_secs == 0 {
+        if self.intent_fallback.is_zero() {
             return Err(TemporalConfigError::ZeroIntentFallback);
         }
-        if self.intent_fallback_max_secs < self.intent_fallback_secs {
+        if self.intent_fallback_max.duration().as_secs() < self.intent_fallback.duration().as_secs() {
             return Err(TemporalConfigError::IntentFallbackCeilingBelowFloor);
         }
         if self.intent_batch_size == 0 {
             return Err(TemporalConfigError::ZeroIntentBatchSize);
         }
-        if self.intent_lease_secs == 0 {
+        if self.intent_lease.is_zero() {
             return Err(TemporalConfigError::ZeroIntentLease);
         }
-        if self.intent_retry_secs == 0 {
+        if self.intent_retry.is_zero() {
             return Err(TemporalConfigError::ZeroIntentRetry);
         }
-        if self.intent_retry_max_secs < self.intent_retry_secs {
+        if self.intent_retry_max.duration().as_secs() < self.intent_retry.duration().as_secs() {
             return Err(TemporalConfigError::IntentRetryCeilingBelowBase);
         }
         if self.intent_stuck_after_attempts == 0 {
             return Err(TemporalConfigError::ZeroIntentStuckThreshold);
         }
-        if let Some(0) = self.chunk_interval_days {
-            return Err(TemporalConfigError::ZeroChunkInterval);
+        if let Some(chunk_interval) = self.chunk_interval
+            && !is_positive_whole_days(chunk_interval)
+        {
+            return Err(TemporalConfigError::ChunkIntervalNotWholeDays);
         }
-        if let Some(0) = self.columnstore_after_days {
-            return Err(TemporalConfigError::ZeroColumnstoreLag);
+        if let Some(columnstore_after) = self.columnstore_after
+            && !is_positive_whole_days(columnstore_after)
+        {
+            return Err(TemporalConfigError::ColumnstoreAfterNotWholeDays);
         }
-        let chunk_interval_days = match self.chunk_interval_days {
-            Some(days) => days,
-            None => DEFAULT_CHUNK_INTERVAL_DAYS,
+        let chunk_interval = match self.chunk_interval {
+            Some(chunk_interval) => chunk_interval,
+            None => DEFAULT_CHUNK_INTERVAL,
         };
-        let columnstore_after_days = match self.columnstore_after_days {
-            Some(days) => days,
-            None => DEFAULT_COLUMNSTORE_AFTER_DAYS,
+        let columnstore_after = match self.columnstore_after {
+            Some(columnstore_after) => columnstore_after,
+            None => DEFAULT_COLUMNSTORE_AFTER,
         };
-        if columnstore_after_days < chunk_interval_days {
+        if columnstore_after.duration().as_secs() < chunk_interval.duration().as_secs() {
             return Err(TemporalConfigError::ColumnstoreLagBelowChunkInterval);
         }
-        if let Some(0) = self.retention_horizon_days {
-            return Err(TemporalConfigError::ZeroRetentionHorizon);
+        if let Some(retention_horizon) = self.retention_horizon
+            && !is_positive_whole_days(retention_horizon)
+        {
+            return Err(TemporalConfigError::RetentionHorizonNotWholeDays);
         }
-        if self.retention_sweep_interval_secs == 0 {
+        if self.retention_sweep_interval.is_zero() {
             return Err(TemporalConfigError::ZeroRetentionSweepInterval);
         }
         Ok(())
@@ -240,16 +291,10 @@ impl TemporalConfig {
     /// Only meaningful on a validated configuration: a zero override is
     /// refused by [`TemporalConfig::validate`] and treated as absent here.
     #[must_use]
-    pub const fn storage_policy(&self) -> TemporalStoragePolicy {
+    pub fn storage_policy(&self) -> TemporalStoragePolicy {
         TemporalStoragePolicy {
-            chunk_interval_days: match self.chunk_interval_days {
-                Some(days) => NonZeroU32::new(days),
-                None => None,
-            },
-            columnstore_after_days: match self.columnstore_after_days {
-                Some(days) => NonZeroU32::new(days),
-                None => None,
-            },
+            chunk_interval_days: self.chunk_interval.and_then(whole_days),
+            columnstore_after_days: self.columnstore_after.and_then(whole_days),
         }
     }
 }
@@ -258,25 +303,26 @@ impl TemporalConfig {
 mod config_tests {
     use super::{TemporalAppendMode, TemporalConfig, TemporalConfigError};
     use crate::storage_policy::TemporalStoragePolicy;
+    use andromeda_configuration_scalars::human_duration::HumanDuration;
     use pretty_assertions::assert_eq;
-    use std::num::NonZeroU32;
+    use std::{num::NonZeroU32, time::Duration};
 
     fn valid() -> TemporalConfig {
         TemporalConfig {
             append_mode: TemporalAppendMode::Native,
             default_last_n: 19,
-            expiration_check_interval_secs: 30,
-            intent_fallback_secs: 1,
-            intent_fallback_max_secs: 30,
+            expiration_check_interval: HumanDuration::from_secs(30),
+            intent_fallback: HumanDuration::from_secs(1),
+            intent_fallback_max: HumanDuration::from_secs(30),
             intent_batch_size: 64,
-            intent_lease_secs: 30,
-            intent_retry_secs: 2,
-            intent_retry_max_secs: 300,
+            intent_lease: HumanDuration::from_secs(30),
+            intent_retry: HumanDuration::from_secs(2),
+            intent_retry_max: HumanDuration::from_secs(300),
             intent_stuck_after_attempts: 10,
-            chunk_interval_days: None,
-            columnstore_after_days: None,
-            retention_horizon_days: None,
-            retention_sweep_interval_secs: 3600,
+            chunk_interval: None,
+            columnstore_after: None,
+            retention_horizon: None,
+            retention_sweep_interval: HumanDuration::from_secs(3600),
         }
     }
 
@@ -295,8 +341,8 @@ mod config_tests {
     #[test]
     fn a_retry_ceiling_below_the_base_delay_is_rejected() {
         let config = TemporalConfig {
-            intent_retry_secs: 10,
-            intent_retry_max_secs: 5,
+            intent_retry: HumanDuration::from_secs(10),
+            intent_retry_max: HumanDuration::from_secs(5),
             ..valid()
         };
         assert_eq!(config.validate(), Err(TemporalConfigError::IntentRetryCeilingBelowBase));
@@ -314,32 +360,48 @@ mod config_tests {
     #[test]
     fn a_zero_storage_override_is_rejected() {
         let chunk = TemporalConfig {
-            chunk_interval_days: Some(0),
+            chunk_interval: Some(HumanDuration::from_days(0)),
             ..valid()
         };
-        assert_eq!(chunk.validate(), Err(TemporalConfigError::ZeroChunkInterval));
+        assert_eq!(chunk.validate(), Err(TemporalConfigError::ChunkIntervalNotWholeDays));
         let lag = TemporalConfig {
-            columnstore_after_days: Some(0),
+            columnstore_after: Some(HumanDuration::from_days(0)),
             ..valid()
         };
-        assert_eq!(lag.validate(), Err(TemporalConfigError::ZeroColumnstoreLag));
+        assert_eq!(lag.validate(), Err(TemporalConfigError::ColumnstoreAfterNotWholeDays));
+    }
+
+    #[test]
+    fn a_sub_day_or_fractional_storage_override_is_rejected() {
+        // The write-side history partitions are day-grained; a `"36h"` chunk
+        // interval has no partition boundary to land on.
+        let fractional_chunk = TemporalConfig {
+            chunk_interval: Some(HumanDuration::new(Duration::from_hours(36))),
+            ..valid()
+        };
+        assert_eq!(fractional_chunk.validate(), Err(TemporalConfigError::ChunkIntervalNotWholeDays));
+        let sub_day_horizon = TemporalConfig {
+            retention_horizon: Some(HumanDuration::new(Duration::from_hours(12))),
+            ..valid()
+        };
+        assert_eq!(sub_day_horizon.validate(), Err(TemporalConfigError::RetentionHorizonNotWholeDays));
     }
 
     #[test]
     fn a_columnstore_lag_shorter_than_the_chunk_interval_is_rejected_against_either_default() {
         let short_lag = TemporalConfig {
-            columnstore_after_days: Some(3),
+            columnstore_after: Some(HumanDuration::from_days(3)),
             ..valid()
         };
         assert_eq!(short_lag.validate(), Err(TemporalConfigError::ColumnstoreLagBelowChunkInterval));
         let long_chunk = TemporalConfig {
-            chunk_interval_days: Some(60),
+            chunk_interval: Some(HumanDuration::from_days(60)),
             ..valid()
         };
         assert_eq!(long_chunk.validate(), Err(TemporalConfigError::ColumnstoreLagBelowChunkInterval));
         let both = TemporalConfig {
-            chunk_interval_days: Some(1),
-            columnstore_after_days: Some(3),
+            chunk_interval: Some(HumanDuration::from_days(1)),
+            columnstore_after: Some(HumanDuration::from_days(3)),
             ..valid()
         };
         assert_eq!(both.validate(), Ok(()));
@@ -355,8 +417,8 @@ mod config_tests {
             }
         );
         let overridden = TemporalConfig {
-            chunk_interval_days: Some(1),
-            columnstore_after_days: Some(3),
+            chunk_interval: Some(HumanDuration::from_days(1)),
+            columnstore_after: Some(HumanDuration::from_days(3)),
             ..valid()
         };
         assert_eq!(
@@ -381,15 +443,15 @@ mod config_tests {
     fn retention_is_off_unless_an_operator_names_a_horizon() {
         let config = valid();
         assert_eq!(config.validate(), Ok(()));
-        assert_eq!(config.retention_horizon_days, None);
+        assert_eq!(config.retention_horizon, None);
     }
 
     #[test]
     fn a_retention_horizon_spanning_no_time_is_rejected() {
         let config = TemporalConfig {
-            retention_horizon_days: Some(0),
+            retention_horizon: Some(HumanDuration::from_days(0)),
             ..valid()
         };
-        assert_eq!(config.validate(), Err(TemporalConfigError::ZeroRetentionHorizon));
+        assert_eq!(config.validate(), Err(TemporalConfigError::RetentionHorizonNotWholeDays));
     }
 }

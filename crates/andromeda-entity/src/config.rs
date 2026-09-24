@@ -1,5 +1,6 @@
 //! Entity execution and background-operation configuration.
 
+use andromeda_configuration_scalars::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use toml_comment::TomlComment;
@@ -35,13 +36,13 @@ pub enum EntityConfigError {
     #[error("entity.expiry_batch_size must fit in an unsigned 32-bit integer")]
     ExpiryBatchSizeOutOfRange,
     /// Pending side-effect polling cadence was configured as zero.
-    #[error("entity.pending_side_effects_poll_secs must be at least 1")]
+    #[error("entity.pending_side_effects_poll must be greater than zero")]
     ZeroPendingSideEffectsPollCadence,
     /// The idle side-effect polling ceiling was configured below the polling floor.
-    #[error("entity.pending_side_effects_poll_max_secs must be at least entity.pending_side_effects_poll_secs")]
+    #[error("entity.pending_side_effects_poll_max must be at least entity.pending_side_effects_poll")]
     PendingSideEffectsPollCeilingBelowFloor,
     /// Pending side-effect lease duration was configured as zero.
-    #[error("entity.pending_side_effects_lease_secs must be at least 1")]
+    #[error("entity.pending_side_effects_lease must be greater than zero")]
     ZeroPendingSideEffectsLeaseDuration,
     /// Pending side-effect batch size was configured as zero.
     #[error("entity.pending_side_effects_batch_size must be at least 1")]
@@ -50,13 +51,13 @@ pub enum EntityConfigError {
     #[error("entity.pending_side_effects_max_attempts must be at least 1")]
     ZeroPendingSideEffectsMaxAttempts,
     /// Pending side-effect backoff was configured as zero.
-    #[error("entity.pending_side_effects_base_backoff_secs must be at least 1")]
+    #[error("entity.pending_side_effects_base_backoff must be greater than zero")]
     ZeroPendingSideEffectsBaseBackoff,
     /// Dead-lettered side-effect retention was configured as zero.
-    #[error("entity.pending_side_effects_dead_letter_after_secs must be at least 1")]
+    #[error("entity.pending_side_effects_dead_letter_after must be greater than zero")]
     ZeroPendingSideEffectsDeadLetterRetention,
     /// Dead-lettered side-effect reap cadence was configured as zero.
-    #[error("entity.pending_side_effects_cleanup_interval_secs must be at least 1")]
+    #[error("entity.pending_side_effects_cleanup_interval must be greater than zero")]
     ZeroPendingSideEffectsCleanupInterval,
 }
 
@@ -80,28 +81,38 @@ pub struct EntityConfig {
     /// Maximum entity or attribute-expiry candidates read per sweep phase.
     pub expiry_batch_size: usize,
     /// Poll interval for durable pending side effects: the floor of the drain's
-    /// idle backoff.
+    /// idle backoff, in human-readable form (`"1s"`).
     ///
     /// After a commit's edge wake the drain runs promptly; while idle it backs
-    /// off from here toward `pending_side_effects_poll_max_secs`.
-    pub pending_side_effects_poll_secs: u64,
-    /// Ceiling the side-effect drain's idle backoff reaches while no commit wakes it.
-    pub pending_side_effects_poll_max_secs: u64,
-    /// Lease duration for a claimed side-effect job.
-    pub pending_side_effects_lease_secs: u64,
+    /// off from here toward `pending_side_effects_poll_max`.
+    #[toml_comment(inline)]
+    pub pending_side_effects_poll: HumanDuration,
+    /// Ceiling the side-effect drain's idle backoff reaches while no commit wakes
+    /// it, in human-readable form (`"30s"`).
+    #[toml_comment(inline)]
+    pub pending_side_effects_poll_max: HumanDuration,
+    /// Lease duration for a claimed side-effect job, in human-readable form
+    /// (`"30s"`).
+    #[toml_comment(inline)]
+    pub pending_side_effects_lease: HumanDuration,
     /// Maximum jobs claimed per poll.
     pub pending_side_effects_batch_size: usize,
     /// Attempts before a side-effect job is dead-lettered.
     pub pending_side_effects_max_attempts: u16,
-    /// Base retry backoff for side-effect jobs.
-    pub pending_side_effects_base_backoff_secs: u64,
-    /// Age after which a dead-lettered side-effect job is removed.
+    /// Base retry backoff for side-effect jobs, in human-readable form (`"2s"`).
+    #[toml_comment(inline)]
+    pub pending_side_effects_base_backoff: HumanDuration,
+    /// Age after which a dead-lettered side-effect job is removed, in
+    /// human-readable form (`"7days"`).
     ///
     /// A dead job is evidence of a batch whose deferred side effects never
     /// landed, so it is kept for a week by default before the reap removes it.
-    pub pending_side_effects_dead_letter_after_secs: u64,
-    /// Cadence of the dead-lettered side-effect reap.
-    pub pending_side_effects_cleanup_interval_secs: u64,
+    #[toml_comment(inline)]
+    pub pending_side_effects_dead_letter_after: HumanDuration,
+    /// Cadence of the dead-lettered side-effect reap, in human-readable form
+    /// (`"5m"`).
+    #[toml_comment(inline)]
+    pub pending_side_effects_cleanup_interval: HumanDuration,
 }
 
 impl Default for EntityConfig {
@@ -115,14 +126,14 @@ impl Default for EntityConfig {
             batch_prepare_blocking_threshold: 128,
             batch_async_side_effect_threshold: None,
             expiry_batch_size: 1_000,
-            pending_side_effects_poll_secs: 1,
-            pending_side_effects_poll_max_secs: 30,
-            pending_side_effects_lease_secs: 30,
+            pending_side_effects_poll: HumanDuration::from_secs(1),
+            pending_side_effects_poll_max: HumanDuration::from_secs(30),
+            pending_side_effects_lease: HumanDuration::from_secs(30),
             pending_side_effects_batch_size: 32,
             pending_side_effects_max_attempts: 5,
-            pending_side_effects_base_backoff_secs: 2,
-            pending_side_effects_dead_letter_after_secs: 604_800,
-            pending_side_effects_cleanup_interval_secs: 300,
+            pending_side_effects_base_backoff: HumanDuration::from_secs(2),
+            pending_side_effects_dead_letter_after: HumanDuration::from_secs(604_800),
+            pending_side_effects_cleanup_interval: HumanDuration::from_secs(300),
         }
     }
 }
@@ -161,13 +172,13 @@ impl EntityConfig {
         if self.expiry_batch_size == 0 {
             return Err(EntityConfigError::ZeroExpiryBatchSize);
         }
-        if self.pending_side_effects_poll_secs == 0 {
+        if self.pending_side_effects_poll.is_zero() {
             return Err(EntityConfigError::ZeroPendingSideEffectsPollCadence);
         }
-        if self.pending_side_effects_poll_max_secs < self.pending_side_effects_poll_secs {
+        if self.pending_side_effects_poll_max.duration().as_secs() < self.pending_side_effects_poll.duration().as_secs() {
             return Err(EntityConfigError::PendingSideEffectsPollCeilingBelowFloor);
         }
-        if self.pending_side_effects_lease_secs == 0 {
+        if self.pending_side_effects_lease.is_zero() {
             return Err(EntityConfigError::ZeroPendingSideEffectsLeaseDuration);
         }
         if self.pending_side_effects_batch_size == 0 {
@@ -176,13 +187,13 @@ impl EntityConfig {
         if self.pending_side_effects_max_attempts == 0 {
             return Err(EntityConfigError::ZeroPendingSideEffectsMaxAttempts);
         }
-        if self.pending_side_effects_base_backoff_secs == 0 {
+        if self.pending_side_effects_base_backoff.is_zero() {
             return Err(EntityConfigError::ZeroPendingSideEffectsBaseBackoff);
         }
-        if self.pending_side_effects_dead_letter_after_secs == 0 {
+        if self.pending_side_effects_dead_letter_after.is_zero() {
             return Err(EntityConfigError::ZeroPendingSideEffectsDeadLetterRetention);
         }
-        if self.pending_side_effects_cleanup_interval_secs == 0 {
+        if self.pending_side_effects_cleanup_interval.is_zero() {
             return Err(EntityConfigError::ZeroPendingSideEffectsCleanupInterval);
         }
         if u32::try_from(self.expiry_batch_size).is_err() {
@@ -195,6 +206,7 @@ impl EntityConfig {
 #[cfg(test)]
 mod tests {
     use super::{EntityConfig, EntityConfigError};
+    use andromeda_configuration_scalars::human_duration::HumanDuration;
     use pretty_assertions::assert_eq;
 
     fn valid_config() -> EntityConfig {
@@ -207,14 +219,14 @@ mod tests {
             batch_prepare_blocking_threshold: 128,
             batch_async_side_effect_threshold: None,
             expiry_batch_size: 1_000,
-            pending_side_effects_poll_secs: 1,
-            pending_side_effects_poll_max_secs: 30,
-            pending_side_effects_lease_secs: 30,
+            pending_side_effects_poll: HumanDuration::from_secs(1),
+            pending_side_effects_poll_max: HumanDuration::from_secs(30),
+            pending_side_effects_lease: HumanDuration::from_secs(30),
             pending_side_effects_batch_size: 32,
             pending_side_effects_max_attempts: 5,
-            pending_side_effects_base_backoff_secs: 2,
-            pending_side_effects_dead_letter_after_secs: 604_800,
-            pending_side_effects_cleanup_interval_secs: 300,
+            pending_side_effects_base_backoff: HumanDuration::from_secs(2),
+            pending_side_effects_dead_letter_after: HumanDuration::from_secs(604_800),
+            pending_side_effects_cleanup_interval: HumanDuration::from_secs(300),
         }
     }
 
@@ -247,17 +259,17 @@ mod tests {
     #[test]
     fn zero_dead_letter_retention_and_cadence_are_rejected() {
         let mut config = valid_config();
-        config.pending_side_effects_dead_letter_after_secs = 0;
+        config.pending_side_effects_dead_letter_after = HumanDuration::from_secs(0);
         assert_eq!(config.validate(), Err(EntityConfigError::ZeroPendingSideEffectsDeadLetterRetention));
         let mut config = valid_config();
-        config.pending_side_effects_cleanup_interval_secs = 0;
+        config.pending_side_effects_cleanup_interval = HumanDuration::from_secs(0);
         assert_eq!(config.validate(), Err(EntityConfigError::ZeroPendingSideEffectsCleanupInterval));
     }
 
     #[test]
     fn dead_letter_defaults_keep_evidence_for_a_week_and_reap_every_five_minutes() {
         let config = EntityConfig::default();
-        assert_eq!(config.pending_side_effects_dead_letter_after_secs, 604_800);
-        assert_eq!(config.pending_side_effects_cleanup_interval_secs, 300);
+        assert_eq!(config.pending_side_effects_dead_letter_after.duration().as_secs(), 604_800);
+        assert_eq!(config.pending_side_effects_cleanup_interval.duration().as_secs(), 300);
     }
 }

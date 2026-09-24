@@ -7,6 +7,7 @@
 //! listener is disabled by default; enabling it without a key pair is a
 //! configuration error rather than a silent no-op.
 
+use andromeda_configuration_scalars::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use strum::{Display, EnumString};
@@ -78,9 +79,11 @@ pub struct Http3Config {
     /// PEM-encoded PKCS#8 private key for the leaf certificate.
     #[toml_comment(inline)]
     pub private_key_path: PathBuf,
-    /// How long, in seconds, a client may cache the `Alt-Svc` advertisement of
-    /// this listener before rediscovering it (RFC 7838 `ma`).
-    pub advertisement_max_age_secs: u64,
+    /// How long a client may cache the `Alt-Svc` advertisement of this listener
+    /// before rediscovering it (RFC 7838 `ma`), in human-readable form
+    /// (`"24h"`).
+    #[toml_comment(inline)]
+    pub advertisement_max_age: HumanDuration,
 }
 
 impl Default for Http3Config {
@@ -89,7 +92,7 @@ impl Default for Http3Config {
             mode: Http3Mode::Disabled,
             certificate_path: PathBuf::new(),
             private_key_path: PathBuf::new(),
-            advertisement_max_age_secs: 86_400,
+            advertisement_max_age: HumanDuration::from_secs(86_400),
         }
     }
 }

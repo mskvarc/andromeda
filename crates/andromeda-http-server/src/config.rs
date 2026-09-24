@@ -1,5 +1,6 @@
 //! Listener and graceful-drain configuration.
 
+use andromeda_configuration_scalars::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
 use std::{
     net::{IpAddr, Ipv4Addr},
@@ -33,8 +34,10 @@ pub struct ServerConfig {
     pub host: IpAddr,
     /// Listener port.
     pub port: u16,
-    /// Maximum time allowed for accepted connections to drain after shutdown begins.
-    pub graceful_drain_secs: u64,
+    /// Maximum time allowed for accepted connections to drain after shutdown
+    /// begins, in human-readable form (`"30s"`).
+    #[toml_comment(inline)]
+    pub graceful_drain: HumanDuration,
 }
 
 impl Default for ServerConfig {
@@ -42,7 +45,7 @@ impl Default for ServerConfig {
         ServerConfig {
             host: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             port: 1056,
-            graceful_drain_secs: 30,
+            graceful_drain: HumanDuration::from_secs(30),
         }
     }
 }
@@ -61,13 +64,14 @@ impl ServerConfig {
     /// Return the configured graceful-drain deadline.
     #[must_use]
     pub const fn graceful_drain_deadline(&self) -> Duration {
-        Duration::from_secs(self.graceful_drain_secs)
+        self.graceful_drain.duration()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{ServerConfig, ServerConfigError};
+    use andromeda_configuration_scalars::human_duration::HumanDuration;
     use pretty_assertions::assert_eq;
     use std::net::IpAddr;
 
@@ -76,7 +80,7 @@ mod tests {
         let config = ServerConfig {
             host: IpAddr::from([127, 0, 0, 1]),
             port: 0,
-            graceful_drain_secs: 30,
+            graceful_drain: HumanDuration::from_secs(30),
         };
         assert_eq!(config.validate(), Err(ServerConfigError::ZeroPort));
     }

@@ -54,7 +54,7 @@ pub(super) fn register_expiry_workers(
     state: &AndromedaState,
     registration_changes: &broadcast::Sender<CsrChangeEvent>,
 ) -> Result<(), TenantAssemblyError> {
-    let interval = config.temporal.expiration_check_interval_secs;
+    let interval = config.temporal.expiration_check_interval.duration();
     register_subscription_expiry(
         supervisor,
         "subscription-expiry",
@@ -123,10 +123,9 @@ fn register_entity_expiry(
     target: ContextTarget,
     entity_policy: Arc<EntityService>,
     entity_expiry_source: Arc<dyn EntityExpirySource>,
-    expiration_interval: u64,
+    cadence: Duration,
     expiry_batch_size: usize,
 ) -> Result<(), TenantAssemblyError> {
-    let cadence = Duration::from_secs(expiration_interval);
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let name = TaskName::try_from("entity-expiry").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
@@ -164,12 +163,11 @@ fn register_subscription_expiry<V>(
     task_name: &'static str,
     target: ContextTarget,
     policy: Arc<SubscriptionService<V>>,
-    expiration_interval: u64,
+    cadence: Duration,
 ) -> Result<(), TenantAssemblyError>
 where
     V: SubscriptionVariant + 'static,
 {
-    let cadence = Duration::from_secs(expiration_interval);
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let name = TaskName::try_from(task_name).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
@@ -199,7 +197,7 @@ where
 ///
 /// Clause 5.9.2.4: a registration with a future `expiresAt` is deleted when
 /// that instant is reached. The sweep runs immediately at start-up and then
-/// every `expiration_interval` seconds (`ANDROMEDA_TEMPORAL_EXPIRATION_CHECK_INTERVAL_SECS`,
+/// every `cadence` (`ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL`,
 /// 30 s by default, 5 s in the conformance stacks), deleting every
 /// registration whose `expiresAt` is at or before the sweep's cutoff and
 /// publishing the clause 5.11 `NoLongerMatching` change for each. A missed
@@ -210,9 +208,8 @@ fn register_registration_expiry(
     supervisor: &TaskSupervisor,
     store: Arc<dyn RegistrationStore>,
     change_sink: Arc<dyn RegistrationChangeSink>,
-    expiration_interval: u64,
+    cadence: Duration,
 ) -> Result<(), TenantAssemblyError> {
-    let cadence = Duration::from_secs(expiration_interval);
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let name = TaskName::try_from("registration-expiry").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
@@ -241,8 +238,7 @@ fn register_registration_expiry(
 /// Register the sweep that removes Entity Maps past their `expiresAt`
 /// (clause 5.2.39); the maps are durable, so a stale one would otherwise stay
 /// referenceable across instances forever.
-fn register_entity_map_expiry(supervisor: &TaskSupervisor, store: Arc<dyn EntityMapStore>, expiration_interval: u64) -> Result<(), TenantAssemblyError> {
-    let cadence = Duration::from_secs(expiration_interval);
+fn register_entity_map_expiry(supervisor: &TaskSupervisor, store: Arc<dyn EntityMapStore>, cadence: Duration) -> Result<(), TenantAssemblyError> {
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let name = TaskName::try_from("entity-map-expiry").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;

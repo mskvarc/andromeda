@@ -149,6 +149,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-component-report",
+ "andromeda-configuration-scalars",
  "andromeda-context-commit",
  "andromeda-context-registry",
  "andromeda-context-space",
@@ -241,6 +242,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-configuration-scalars"
+version = "0.1.0"
+dependencies = [
+ "bytesize",
+ "humantime-serde",
+ "pretty_assertions",
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "andromeda-context-commit"
 version = "0.1.0"
 dependencies = [
@@ -329,6 +341,7 @@ name = "andromeda-entity"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-configuration-scalars",
  "andromeda-context-commit",
  "andromeda-context-space",
  "andromeda-federation",
@@ -411,6 +424,7 @@ name = "andromeda-federation"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-configuration-scalars",
  "andromeda-context-space",
  "andromeda-entity-map",
  "andromeda-http-headers",
@@ -766,6 +780,7 @@ name = "andromeda-http-server"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-configuration-scalars",
  "axum",
  "pretty_assertions",
  "reqwest",
@@ -834,16 +849,15 @@ name = "andromeda-http-stack"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-configuration-scalars",
  "andromeda-http-headers",
  "andromeda-http-tenancy",
  "axum",
  "axum-helmet",
  "axum-prometheus",
  "axum-server-timing",
- "bytesize",
  "enumset",
  "headers",
- "humantime-serde",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -863,6 +877,7 @@ name = "andromeda-http-subscription"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-configuration-scalars",
  "andromeda-context-space",
  "andromeda-delivery",
  "andromeda-http-extraction",
@@ -970,6 +985,7 @@ name = "andromeda-http3-server"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-configuration-scalars",
  "axum",
  "axum-h3",
  "bytes",
@@ -999,6 +1015,7 @@ name = "andromeda-jsonld"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-configuration-scalars",
  "andromeda-http-headers",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-query",
@@ -1237,6 +1254,7 @@ name = "andromeda-notification"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-configuration-scalars",
  "andromeda-context-commit",
  "andromeda-context-space",
  "andromeda-delivery",
@@ -1371,6 +1389,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-component-report",
+ "andromeda-configuration-scalars",
  "andromeda-context-commit",
  "andromeda-context-registry",
  "andromeda-context-space",
@@ -1637,6 +1656,7 @@ name = "andromeda-snapshot"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-configuration-scalars",
  "andromeda-context-commit",
  "andromeda-context-space",
  "andromeda-entity",
@@ -1785,6 +1805,7 @@ name = "andromeda-temporal"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-configuration-scalars",
  "andromeda-context-commit",
  "andromeda-context-space",
  "andromeda-entity",
@@ -1822,6 +1843,7 @@ name = "andromeda-tenancy"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-configuration-scalars",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-telemetry",
  "async-trait",

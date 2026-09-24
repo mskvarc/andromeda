@@ -8,7 +8,7 @@
 //! boolean fields. A genuine policy boolean that maps to a boolean wire semantic
 //! (`allow_credentials`, `pass_through_unaccepted`, `allow_private_network`)
 //! stays a bare `bool`. Sizes and durations use their human-readable spellings
-//! ([`ByteSize`], [`HumanDuration`](human_duration::HumanDuration)).
+//! ([`HumanByteSize`], [`HumanDuration`]).
 
 pub mod compression;
 pub mod content_coding;
@@ -17,7 +17,6 @@ pub mod csrf;
 pub mod decompression;
 pub mod feature_mode;
 pub mod helmet;
-pub mod human_duration;
 pub mod server_timing;
 
 use crate::config::{
@@ -26,11 +25,10 @@ use crate::config::{
     csrf::CsrfConfig,
     decompression::DecompressionConfig,
     helmet::HelmetConfig,
-    human_duration::HumanDuration,
     server_timing::ServerTimingConfig,
 };
+use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
 use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
-use bytesize::ByteSize;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use toml_comment::TomlComment;
@@ -60,7 +58,7 @@ pub struct HttpStackConfig {
     /// Maximum accepted HTTP request body size, in human-readable form
     /// (`"64 MiB"`).
     #[toml_comment(inline)]
-    pub max_request_body: ByteSize,
+    pub max_request_body: HumanByteSize,
     /// Whether the `Forwarded` and `X-Forwarded-Proto` fields of an inbound
     /// request may decide the scheme of the URLs the broker mints from the
     /// request origin.
@@ -91,7 +89,7 @@ impl Default for HttpStackConfig {
     fn default() -> HttpStackConfig {
         HttpStackConfig {
             request_timeout: HumanDuration::from_secs(30),
-            max_request_body: ByteSize::mib(64),
+            max_request_body: HumanByteSize::mib(64),
             forwarded_headers: ForwardedHeaderTrust::Untrusted,
             cors: CorsConfig::default(),
             compression: CompressionConfig::default(),
@@ -133,17 +131,16 @@ mod tests {
         HttpStackConfig,
         HttpStackConfigError,
         cors::{CorsConfig, CorsMode},
-        human_duration::HumanDuration,
     };
+    use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
     use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
-    use bytesize::ByteSize;
     use serde::Deserialize;
     use std::time::Duration;
     use toml_comment::TomlComment;
 
     #[derive(Deserialize)]
     struct BodyHolder {
-        max_request_body: ByteSize,
+        max_request_body: HumanByteSize,
     }
 
     #[derive(Deserialize)]
@@ -170,7 +167,7 @@ mod tests {
     #[test]
     fn zero_body_limit_rejected() {
         let config = HttpStackConfig {
-            max_request_body: ByteSize::b(0),
+            max_request_body: HumanByteSize::b(0),
             ..HttpStackConfig::default()
         };
         pretty_assertions::assert_eq!(config.validate(), Err(HttpStackConfigError::ZeroRequestBodyLimit));

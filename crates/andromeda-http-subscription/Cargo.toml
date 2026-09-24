@@ -15,6 +15,7 @@ ignored = ["toml"]
 workspace = true
 
 [dependencies]
+andromeda-configuration-scalars.workspace = true
 andromeda-context-space.workspace = true
 andromeda-delivery.workspace = true
 andromeda-http-extraction.workspace = true

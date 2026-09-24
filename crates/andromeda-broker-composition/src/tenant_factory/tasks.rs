@@ -169,7 +169,7 @@ pub(super) fn supervise_tasks(
         transport,
         entity_subscriptions,
         interval_subscription_changes,
-        config.notifications.interval_max_sleep_secs,
+        config.notifications.interval_max_sleep.duration(),
     )?;
     register_csource_notification_workers(
         &task_supervisor,
@@ -180,7 +180,7 @@ pub(super) fn supervise_tasks(
             registrations: registration,
             subscriptions: csource_subscription,
         },
-        config.notifications.interval_max_sleep_secs,
+        config.notifications.interval_max_sleep.duration(),
     )?;
     register_temporal_retention(&task_supervisor, Arc::clone(&storage.temporal_repo), &config.temporal)?; // clone: the sweep and the read stores share one repository.
     register_snapshot_workers(
@@ -189,7 +189,7 @@ pub(super) fn supervise_tasks(
         Arc::clone(&services.snapshot_preparation), // clone: the worker drives the same preparation the snapshot service schedules.
         transport,
         &config.notifications.delivery,
-        config.snapshot.preparation_recovery_secs,
+        config.snapshot.preparation_recovery.duration(),
         SnapshotStatusWake {
             sweep_wake: snapshot_status_wake,
             receiver: snapshot_status_receiver,

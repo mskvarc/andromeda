@@ -133,8 +133,8 @@ impl RuntimeConfig {
     /// TOML file (silently absent when the path does not exist), the
     /// `ANDROMEDA__`-prefixed environment, and finally the CLI listener
     /// overrides. Environment nesting uses `__` between every level, so
-    /// `ANDROMEDA__NOTIFICATIONS__STREAMING__WS__PING_INTERVAL_SECS` reaches
-    /// `notifications.streaming.ws.ping_interval_secs`; a single underscore separates the
+    /// `ANDROMEDA__NOTIFICATIONS__STREAMING__WS__PING_INTERVAL` reaches
+    /// `notifications.streaming.ws.ping_interval`; a single underscore separates the
     /// words of one key and never nests.
     ///
     /// A `None` file means no TOML layer contributes: the broker loads from
@@ -327,7 +327,8 @@ pub fn generate_default_reported(output: Option<PathBuf>) -> ProcessExitOutcome 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_http_stack::config::{compression::CompressionQuality, cors::CorsMode, human_duration::HumanDuration};
+    use andromeda_configuration_scalars::human_duration::HumanDuration;
+    use andromeda_http_stack::config::{compression::CompressionQuality, cors::CorsMode};
     use serial_test::serial;
     use std::{
         env,
@@ -466,20 +467,20 @@ mod tests {
     #[serial]
     fn file_overrides_defaults() {
         let path = write_temp_config(
-            r"
+            r#"
 [server]
 port = 1600
 
 [notifications.streaming.ws]
-ping_interval_secs = 45
-",
+ping_interval = "45s"
+"#,
         );
 
         let config = RuntimeConfig::load(Some(&path), ServerOverrides::default()).expect("config should load");
         fs::remove_file(path).expect("temp config should be removed");
 
         pretty_assertions::assert_eq!(config.server.port, 1600);
-        pretty_assertions::assert_eq!(config.notifications.streaming.ws.ping_interval_secs, 45);
+        pretty_assertions::assert_eq!(config.notifications.streaming.ws.ping_interval.duration().as_secs(), 45);
     }
 
     #[test]
@@ -576,7 +577,7 @@ port = 1600
     #[test]
     fn validate_rejects_zero_spatial_rebuild_interval() {
         let mut config = test_runtime_config_with_preload("contexts/test.jsonld");
-        config.spatial.rebuild_interval_secs = 0;
+        config.spatial.rebuild_interval = HumanDuration::from_secs(0);
 
         assert!(validate_config(&config).is_err());
     }
@@ -590,9 +591,9 @@ port = 1600
     }
 
     #[test]
-    fn validate_rejects_zero_spatial_lag_log_interval_secs() {
+    fn validate_rejects_zero_spatial_lag_log_interval() {
         let mut config = test_runtime_config_with_preload("contexts/test.jsonld");
-        config.spatial.lag_log_interval_secs = 0;
+        config.spatial.lag_log_interval = HumanDuration::from_secs(0);
 
         assert!(validate_config(&config).is_err());
     }

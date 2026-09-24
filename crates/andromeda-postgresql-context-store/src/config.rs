@@ -1,6 +1,7 @@
 //! PostgreSQL connection and pool configuration.
 
 use crate::maintenance_config::MaintenanceConfig;
+use andromeda_configuration_scalars::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use strum::{Display, EnumString};
@@ -16,10 +17,10 @@ pub enum DatabaseConfigError {
     #[error("database.max_connections must be at least 1")]
     ZeroMaxConnections,
     /// Context-hit persistence requires a positive cadence.
-    #[error("database.context_hit_flush_secs must be at least 1")]
+    #[error("database.context_hit_flush must be greater than zero")]
     ZeroContextHitFlushCadence,
-    /// The connection acquire deadline requires a positive number of seconds.
-    #[error("database.acquire_timeout_secs must be at least 1")]
+    /// The connection acquire deadline requires a positive duration.
+    #[error("database.acquire_timeout must be greater than zero")]
     ZeroAcquireTimeout,
     /// The pooled per-tenant serving pool requires at least one connection.
     #[error("database.pooler.tenant_max_connections must be at least 1")]
@@ -135,18 +136,22 @@ pub struct DatabaseConfig {
     /// Maximum connections in the main pool.
     pub max_connections: u32,
     /// How long a request-path connection checkout waits for a free connection
-    /// before it is shed as backpressure. Kept below `http.request_timeout`
-    /// so a saturated pool surfaces as a 503 with `Retry-After` before the HTTP
-    /// request deadline races it, rather than as a 500 after a long stall.
-    pub acquire_timeout_secs: u64,
+    /// before it is shed as backpressure, in human-readable form (`"5s"`). Kept
+    /// below `http.request_timeout` so a saturated pool surfaces as a 503 with
+    /// `Retry-After` before the HTTP request deadline races it, rather than as a
+    /// 500 after a long stall.
+    #[toml_comment(inline)]
+    pub acquire_timeout: HumanDuration,
     /// Commit durability installed on each database with `ALTER DATABASE ... SET`.
     #[toml_comment(inline)]
     pub synchronous_commit: SynchronousCommit,
     /// Populate the attribute-name and entity-type-name caches at tenant
     /// startup.
     pub preload_name_dictionaries: bool,
-    /// Interval between JSON-LD hit-counter flushes.
-    pub context_hit_flush_secs: u64,
+    /// Interval between JSON-LD hit-counter flushes, in human-readable form
+    /// (`"5s"`).
+    #[toml_comment(inline)]
+    pub context_hit_flush: HumanDuration,
     /// Adaptive PostgreSQL inspection and maintenance policy.
     pub maintenance: MaintenanceConfig,
 }
@@ -159,10 +164,10 @@ impl Default for DatabaseConfig {
             // No proxy by default: the request path and the direct path are the same.
             pooler: None,
             max_connections: 32,
-            acquire_timeout_secs: 5,
+            acquire_timeout: HumanDuration::from_secs(5),
             synchronous_commit: SynchronousCommit::Off,
             preload_name_dictionaries: true,
-            context_hit_flush_secs: 5,
+            context_hit_flush: HumanDuration::from_secs(5),
             maintenance: MaintenanceConfig::default(),
         }
     }
@@ -183,10 +188,10 @@ impl DatabaseConfig {
         if self.max_connections == 0 {
             return Err(DatabaseConfigError::ZeroMaxConnections);
         }
-        if self.context_hit_flush_secs == 0 {
+        if self.context_hit_flush.is_zero() {
             return Err(DatabaseConfigError::ZeroContextHitFlushCadence);
         }
-        if self.acquire_timeout_secs == 0 {
+        if self.acquire_timeout.is_zero() {
             return Err(DatabaseConfigError::ZeroAcquireTimeout);
         }
         if let Some(pooler) = &self.pooler
@@ -200,7 +205,7 @@ impl DatabaseConfig {
     /// The request-path connection acquire deadline as a [`Duration`].
     #[must_use]
     pub const fn acquire_timeout(&self) -> Duration {
-        Duration::from_secs(self.acquire_timeout_secs)
+        self.acquire_timeout.duration()
     }
 
     /// The base URL the request path connects through: the
@@ -249,6 +254,7 @@ impl DatabaseConfig {
 mod tests {
     use super::{DatabaseConfig, DatabaseConfigError, PoolerConfig, SynchronousCommit};
     use crate::maintenance_config::MaintenanceConfig;
+    use andromeda_configuration_scalars::human_duration::HumanDuration;
     use std::str::FromStr;
 
     #[test]
@@ -264,10 +270,10 @@ mod tests {
                 tenant_max_connections,
             }),
             max_connections: 16,
-            acquire_timeout_secs: 5,
+            acquire_timeout: HumanDuration::from_secs(5),
             synchronous_commit: SynchronousCommit::Off,
             preload_name_dictionaries: true,
-            context_hit_flush_secs: 60,
+            context_hit_flush: HumanDuration::from_secs(60),
             maintenance: MaintenanceConfig::default(),
         }
     }
@@ -311,10 +317,10 @@ mod tests {
             url: "postgres://localhost/postgres".parse().expect("database URL"),
             pooler: None,
             max_connections: 1,
-            acquire_timeout_secs: 5,
+            acquire_timeout: HumanDuration::from_secs(5),
             synchronous_commit: SynchronousCommit::Off,
             preload_name_dictionaries: true,
-            context_hit_flush_secs: 0,
+            context_hit_flush: HumanDuration::from_secs(0),
             maintenance: MaintenanceConfig::default(),
         };
         assert_eq!(config.validate(), Err(DatabaseConfigError::ZeroContextHitFlushCadence));
@@ -323,7 +329,7 @@ mod tests {
     #[test]
     fn a_zero_acquire_timeout_is_rejected() {
         let config = DatabaseConfig {
-            acquire_timeout_secs: 0,
+            acquire_timeout: HumanDuration::from_secs(0),
             ..DatabaseConfig::default()
         };
         assert_eq!(config.validate(), Err(DatabaseConfigError::ZeroAcquireTimeout));

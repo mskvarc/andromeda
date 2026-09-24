@@ -6,6 +6,7 @@ use crate::{
     delivery_error_bound::{DeliveryErrorBound, DeliveryErrorBoundError},
     delivery_lease::{LeaseTerm, LeaseTermError},
 };
+use andromeda_configuration_scalars::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use strum::{Display, EnumString};
@@ -19,34 +20,34 @@ pub enum DeliveryConfigError {
     #[error("notifications.delivery.max_attempts is invalid: {0}")]
     AttemptCeiling(#[from] DeliveryAttemptCeilingError),
     /// Retry backoff was configured as zero.
-    #[error("notifications.delivery.base_backoff_secs must be at least 1")]
+    #[error("notifications.delivery.base_backoff must be greater than zero")]
     ZeroBaseBackoff,
     /// Polling cadence was configured as zero.
-    #[error("notifications.delivery.poll_interval_secs must be at least 1")]
+    #[error("notifications.delivery.poll_interval must be greater than zero")]
     ZeroPollInterval,
     /// The idle polling ceiling was configured below the polling floor.
-    #[error("notifications.delivery.poll_interval_max_secs must be at least notifications.delivery.poll_interval_secs")]
+    #[error("notifications.delivery.poll_interval_max must be at least notifications.delivery.poll_interval")]
     PollIntervalCeilingBelowFloor,
     /// The outbound notification request timeout was configured as zero.
-    #[error("notifications.delivery.request_timeout_secs must be at least 1")]
+    #[error("notifications.delivery.request_timeout must be greater than zero")]
     ZeroRequestTimeout,
     /// Delivery batch size was configured as zero or less.
     #[error("notifications.delivery.batch_size must be at least 1")]
     NonPositiveBatchSize,
     /// Acknowledged-delivery retention was configured as zero.
-    #[error("notifications.delivery.cleanup_after_secs must be at least 1")]
+    #[error("notifications.delivery.cleanup_after must be greater than zero")]
     ZeroCleanupRetention,
     /// Cleanup cadence was configured as zero.
-    #[error("notifications.delivery.cleanup_interval_secs must be at least 1")]
+    #[error("notifications.delivery.cleanup_interval must be greater than zero")]
     ZeroCleanupInterval,
     /// Dead-lettered (exhausted) delivery retention was configured as zero.
-    #[error("notifications.delivery.dead_letter_after_secs must be at least 1")]
+    #[error("notifications.delivery.dead_letter_after must be greater than zero")]
     ZeroDeadLetterRetention,
     /// Orphaned-event retention was configured as zero.
-    #[error("notifications.delivery.orphan_event_after_secs must be at least 1")]
+    #[error("notifications.delivery.orphan_event_after must be greater than zero")]
     ZeroOrphanEventRetention,
     /// The claim lease term was outside the accepted range.
-    #[error("notifications.delivery.lease_secs is invalid: {0}")]
+    #[error("notifications.delivery.lease is invalid: {0}")]
     LeaseTerm(#[from] LeaseTermError),
     /// The stored-diagnostic bound was outside the accepted range.
     #[error("notifications.delivery.error_max_chars is invalid: {0}")]
@@ -81,11 +82,13 @@ pub struct DeliveryConfig {
     /// Whether notifications are delivered live (in-process) or durably (queued).
     #[toml_comment(inline)]
     pub mode: DeliveryMode,
-    /// How long an outbound notification POST may take before it is abandoned.
+    /// How long an outbound notification POST may take before it is abandoned,
+    /// in human-readable form (`"10s"`).
     ///
     /// A subscription's own Table 5.2.15-1 `timeout` may only shorten this
     /// system bound, never lengthen it. Applies to both delivery modes.
-    pub request_timeout_secs: u64,
+    #[toml_comment(inline)]
+    pub request_timeout: HumanDuration,
     /// Maximum delivery attempts before dead-lettering.
     ///
     /// The worker owns this ceiling: the attempt that reaches it is
@@ -93,15 +96,20 @@ pub struct DeliveryConfig {
     /// good. The queue schema does not repeat the number, so it may be changed
     /// without a migration; the only bound is that it is at least one.
     pub max_attempts: i32,
-    /// Base exponential retry backoff.
-    pub base_backoff_secs: u64,
-    /// Poll interval for the delivery worker: the floor of its idle backoff.
+    /// Base exponential retry backoff, in human-readable form (`"5s"`).
+    #[toml_comment(inline)]
+    pub base_backoff: HumanDuration,
+    /// Poll interval for the delivery worker: the floor of its idle backoff, in
+    /// human-readable form (`"1s"`).
     ///
     /// After a commit's edge wake the worker delivers promptly; while idle it
-    /// backs off from here toward `poll_interval_max_secs`.
-    pub poll_interval_secs: u64,
-    /// Ceiling the delivery worker's idle backoff reaches while no commit wakes it.
-    pub poll_interval_max_secs: u64,
+    /// backs off from here toward `poll_interval_max`.
+    #[toml_comment(inline)]
+    pub poll_interval: HumanDuration,
+    /// Ceiling the delivery worker's idle backoff reaches while no commit wakes
+    /// it, in human-readable form (`"30s"`).
+    #[toml_comment(inline)]
+    pub poll_interval_max: HumanDuration,
     /// Deliveries claimed per poll.
     pub batch_size: i32,
     /// Claimed deliveries sent concurrently within one pass.
@@ -109,50 +117,60 @@ pub struct DeliveryConfig {
     /// Bounded by [`DeliveryConcurrency::MAXIMUM`]; a pass never keeps more
     /// than this many transport calls in flight at once.
     pub concurrency: u32,
-    /// How long a claimed delivery stays leased to its delivery worker.
+    /// How long a claimed delivery stays leased to its delivery worker, in
+    /// human-readable form (`"30s"`).
     ///
     /// A claim that outlives its delivery attempt is what keeps a second worker
     /// from sending the same notification, so this must exceed the longest
     /// single delivery attempt the transport can take; a crashed worker's
     /// deliveries stay unclaimable for the remainder of the term.
-    pub lease_secs: u32,
+    #[toml_comment(inline)]
+    pub lease: HumanDuration,
     /// Characters of a failure diagnostic kept when a failed attempt is recorded.
     ///
     /// The delivery schema constrains the stored column, so this may not exceed
     /// [`DeliveryErrorBound::SCHEMA_MAXIMUM_CHARACTERS`].
     pub error_max_chars: u32,
-    /// Age after which acknowledged deliveries are removed.
-    pub cleanup_after_secs: u64,
-    /// Cadence for physical cleanup of acknowledged deliveries.
-    pub cleanup_interval_secs: u64,
-    /// Age after which a dead-lettered (exhausted) delivery is removed.
+    /// Age after which acknowledged deliveries are removed, in human-readable
+    /// form (`"1day"`).
+    #[toml_comment(inline)]
+    pub cleanup_after: HumanDuration,
+    /// Cadence for physical cleanup of acknowledged deliveries, in human-readable
+    /// form (`"5m"`).
+    #[toml_comment(inline)]
+    pub cleanup_interval: HumanDuration,
+    /// Age after which a dead-lettered (exhausted) delivery is removed, in
+    /// human-readable form (`"7days"`).
     ///
-    /// Kept longer than [`Self::cleanup_after_secs`] by default: an exhausted
+    /// Kept longer than [`Self::cleanup_after`] by default: an exhausted
     /// delivery is retained specifically as evidence of a notification that
     /// never arrived, so it earns a longer look than a delivery that already
     /// succeeded.
-    pub dead_letter_after_secs: u64,
-    /// Age after which an event with zero referencing deliveries is removed.
-    pub orphan_event_after_secs: u64,
+    #[toml_comment(inline)]
+    pub dead_letter_after: HumanDuration,
+    /// Age after which an event with zero referencing deliveries is removed, in
+    /// human-readable form (`"1day"`).
+    #[toml_comment(inline)]
+    pub orphan_event_after: HumanDuration,
 }
 
 impl Default for DeliveryConfig {
     fn default() -> DeliveryConfig {
         DeliveryConfig {
             mode: DeliveryMode::Live,
-            request_timeout_secs: 10,
+            request_timeout: HumanDuration::from_secs(10),
             max_attempts: 5,
-            base_backoff_secs: 5,
-            poll_interval_secs: 1,
-            poll_interval_max_secs: 30,
+            base_backoff: HumanDuration::from_secs(5),
+            poll_interval: HumanDuration::from_secs(1),
+            poll_interval_max: HumanDuration::from_secs(30),
             batch_size: 50,
             concurrency: 20,
-            lease_secs: 30,
+            lease: HumanDuration::from_secs(30),
             error_max_chars: 1024,
-            cleanup_after_secs: 86400,
-            cleanup_interval_secs: 300,
-            dead_letter_after_secs: 604_800,
-            orphan_event_after_secs: 86400,
+            cleanup_after: HumanDuration::from_secs(86400),
+            cleanup_interval: HumanDuration::from_secs(300),
+            dead_letter_after: HumanDuration::from_secs(604_800),
+            orphan_event_after: HumanDuration::from_secs(86400),
         }
     }
 }
@@ -168,50 +186,39 @@ impl DeliveryConfig {
     /// dead-letter retention or orphan-event retention, or a claim lease term,
     /// stored-diagnostic bound or in-flight delivery bound its own newtype
     /// rejects.
-    pub const fn validate(&self) -> Result<(), DeliveryConfigError> {
-        match self.attempt_ceiling() {
-            Ok(_) => (),
-            Err(error) => return Err(DeliveryConfigError::AttemptCeiling(error)),
-        }
+    pub fn validate(&self) -> Result<(), DeliveryConfigError> {
+        self.attempt_ceiling()?;
         if self.batch_size <= 0 {
             return Err(DeliveryConfigError::NonPositiveBatchSize);
         }
-        if self.base_backoff_secs == 0 {
+        if self.base_backoff.is_zero() {
             return Err(DeliveryConfigError::ZeroBaseBackoff);
         }
-        if self.poll_interval_secs == 0 {
+        if self.poll_interval.is_zero() {
             return Err(DeliveryConfigError::ZeroPollInterval);
         }
-        if self.poll_interval_max_secs < self.poll_interval_secs {
+        if self.poll_interval_max.duration().as_secs() < self.poll_interval.duration().as_secs() {
             return Err(DeliveryConfigError::PollIntervalCeilingBelowFloor);
         }
-        if self.request_timeout_secs == 0 {
+        if self.request_timeout.is_zero() {
             return Err(DeliveryConfigError::ZeroRequestTimeout);
         }
-        if self.cleanup_after_secs == 0 {
+        if self.cleanup_after.is_zero() {
             return Err(DeliveryConfigError::ZeroCleanupRetention);
         }
-        if self.cleanup_interval_secs == 0 {
+        if self.cleanup_interval.is_zero() {
             return Err(DeliveryConfigError::ZeroCleanupInterval);
         }
-        if self.dead_letter_after_secs == 0 {
+        if self.dead_letter_after.is_zero() {
             return Err(DeliveryConfigError::ZeroDeadLetterRetention);
         }
-        if self.orphan_event_after_secs == 0 {
+        if self.orphan_event_after.is_zero() {
             return Err(DeliveryConfigError::ZeroOrphanEventRetention);
         }
-        match self.lease_term() {
-            Ok(_) => (),
-            Err(error) => return Err(DeliveryConfigError::LeaseTerm(error)),
-        }
-        match self.error_bound() {
-            Ok(_) => (),
-            Err(error) => return Err(DeliveryConfigError::ErrorBound(error)),
-        }
-        match self.delivery_concurrency() {
-            Ok(_) => Ok(()),
-            Err(error) => Err(DeliveryConfigError::Concurrency(error)),
-        }
+        self.lease_term()?;
+        self.error_bound()?;
+        self.delivery_concurrency()?;
+        Ok(())
     }
 
     /// Whether notifications are recorded and delivered through the durable queue.
@@ -223,7 +230,7 @@ impl DeliveryConfig {
     /// The outbound notification request timeout.
     #[must_use]
     pub const fn request_timeout(&self) -> Duration {
-        Duration::from_secs(self.request_timeout_secs)
+        self.request_timeout.duration()
     }
 
     /// The configured in-flight delivery bound.
@@ -252,8 +259,9 @@ impl DeliveryConfig {
     ///
     /// Returns [`LeaseTermError`] when the configured lease term is zero
     /// seconds or above the longest accepted term.
-    pub const fn lease_term(&self) -> Result<LeaseTerm, LeaseTermError> {
-        LeaseTerm::from_seconds(self.lease_secs)
+    pub fn lease_term(&self) -> Result<LeaseTerm, LeaseTermError> {
+        let seconds = u32::try_from(self.lease.duration().as_secs()).unwrap_or(u32::MAX);
+        LeaseTerm::from_seconds(seconds)
     }
 
     /// The configured bound on a stored failure diagnostic.
@@ -276,24 +284,25 @@ mod tests {
         delivery_error_bound::DeliveryErrorBoundError,
         delivery_lease::LeaseTermError,
     };
+    use andromeda_configuration_scalars::human_duration::HumanDuration;
     use pretty_assertions::assert_eq;
 
     fn valid_config() -> DeliveryConfig {
         DeliveryConfig {
             mode: DeliveryMode::Durable,
-            request_timeout_secs: 10,
+            request_timeout: HumanDuration::from_secs(10),
             max_attempts: 5,
-            base_backoff_secs: 5,
-            poll_interval_secs: 1,
-            poll_interval_max_secs: 30,
+            base_backoff: HumanDuration::from_secs(5),
+            poll_interval: HumanDuration::from_secs(1),
+            poll_interval_max: HumanDuration::from_secs(30),
             batch_size: 50,
             concurrency: 20,
-            lease_secs: 30,
+            lease: HumanDuration::from_secs(30),
             error_max_chars: 1_024,
-            cleanup_after_secs: 86_400,
-            cleanup_interval_secs: 300,
-            dead_letter_after_secs: 604_800,
-            orphan_event_after_secs: 86_400,
+            cleanup_after: HumanDuration::from_secs(86_400),
+            cleanup_interval: HumanDuration::from_secs(300),
+            dead_letter_after: HumanDuration::from_secs(604_800),
+            orphan_event_after: HumanDuration::from_secs(86_400),
         }
     }
 
@@ -330,7 +339,7 @@ mod tests {
     #[test]
     fn zero_lease_term_is_rejected() {
         let config = DeliveryConfig {
-            lease_secs: 0,
+            lease: HumanDuration::from_secs(0),
             ..valid_config()
         };
         assert_eq!(config.validate(), Err(DeliveryConfigError::LeaseTerm(LeaseTermError::ZeroSeconds)));
@@ -368,7 +377,7 @@ mod tests {
     #[test]
     fn a_zero_request_timeout_is_rejected() {
         let config = DeliveryConfig {
-            request_timeout_secs: 0,
+            request_timeout: HumanDuration::from_secs(0),
             ..valid_config()
         };
         assert_eq!(config.validate(), Err(DeliveryConfigError::ZeroRequestTimeout));

@@ -107,9 +107,9 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         let build_permits = Semaphore::new(config.max_concurrent_builds);
         let eviction_permits = Arc::new(Semaphore::new(config.eviction_concurrency));
         let waker = WakerPolicy::new(
-            config.min_dormancy_secs,
-            config.wake_residency_secs,
-            config.runtime_idle_ttl_secs,
+            config.min_dormancy.duration(),
+            config.wake_residency.duration(),
+            config.runtime_idle_ttl.duration(),
             config.waker_max_wakes_per_pass,
         );
         Arc::new(TenantRuntimeManager {

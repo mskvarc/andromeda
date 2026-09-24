@@ -15,6 +15,7 @@ ignored = ["toml"]
 workspace = true
 
 [dependencies]
+andromeda-configuration-scalars.workspace = true
 axum = { version = "0.8.9", features = ["http2"] }
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"

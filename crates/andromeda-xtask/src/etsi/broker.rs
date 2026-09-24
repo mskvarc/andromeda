@@ -37,7 +37,7 @@ const RUNTIME_MAX_CACHED: &str = "8";
 /// shorter retention would silence that notification. The connection pressure is
 /// bounded by the runtime-cache cap (enforced synchronously on cold insert), not
 /// by this idle window.
-const RUNTIME_IDLE_TTL_SECS: &str = "30";
+const RUNTIME_IDLE_TTL: &str = "30s";
 /// How often the janitor sweeps. The runtime-cache cap is now enforced
 /// synchronously on cold insert (the trim runs as each fresh tenant's runtime is
 /// built, not only on the sweep), so the open PostgreSQL connection count is
@@ -45,7 +45,7 @@ const RUNTIME_IDLE_TTL_SECS: &str = "30";
 /// This cadence therefore governs only how responsively idle and orphaned
 /// runtimes are reclaimed; five seconds is ample for that under the suite's
 /// serial drive.
-const JANITOR_INTERVAL_SECS: &str = "5";
+const JANITOR_INTERVAL: &str = "5s";
 /// The compound `@context` the suite's fixtures and queries reference, and the
 /// suite `@context` the compound pulls in by a relative reference. Both are
 /// served from the checkout so the broker never fetches them from forge: under
@@ -81,8 +81,8 @@ pub(crate) fn spawn(repository_root: &Path, port: u16, broker_log: &Path) -> Res
         .env("ANDROMEDA__TEMPORAL__DEFAULT_LAST_N", DEFAULT_LAST_N)
         .env("ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS", TENANT_MAX_CONNECTIONS)
         .env("ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED", RUNTIME_MAX_CACHED)
-        .env("ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL_SECS", RUNTIME_IDLE_TTL_SECS)
-        .env("ANDROMEDA__TENANCY__JANITOR_INTERVAL_SECS", JANITOR_INTERVAL_SECS)
+        .env("ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL", RUNTIME_IDLE_TTL)
+        .env("ANDROMEDA__TENANCY__JANITOR_INTERVAL", JANITOR_INTERVAL)
         .env("ANDROMEDA__JSONLD__PRELOAD_CONTEXTS", suite_context_preload())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(errors))

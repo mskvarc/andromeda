@@ -15,6 +15,7 @@ ignored = ["toml"]
 workspace = true
 
 [dependencies]
+andromeda-configuration-scalars.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-query.workspace = true

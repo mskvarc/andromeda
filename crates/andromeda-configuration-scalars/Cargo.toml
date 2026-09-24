@@ -1,0 +1,18 @@
+[package]
+name = "andromeda-configuration-scalars"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bytesize = { version = "2.7.0", features = ["serde"] }
+humantime-serde = "1.1.1"
+serde = { version = "1.0.229", features = ["derive"] }
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"
+toml = "1.1.6"

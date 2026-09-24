@@ -65,26 +65,29 @@ pub(super) fn register_entity_side_effects(
         Arc::clone(writes), // clone: request handling and the drain share one committer.
         Some(change_sink),
         EntitySideEffectDrainConfig {
-            lease_seconds: i32::try_from(entity_config.pending_side_effects_lease_secs).unwrap_or(i32::MAX),
+            lease_seconds: i32::try_from(entity_config.pending_side_effects_lease.duration().as_secs()).unwrap_or(i32::MAX),
             batch_size: i32::try_from(entity_config.pending_side_effects_batch_size).unwrap_or(i32::MAX),
             max_attempts: entity_config.pending_side_effects_max_attempts,
-            base_backoff: Duration::from_secs(entity_config.pending_side_effects_base_backoff_secs),
+            base_backoff: entity_config.pending_side_effects_base_backoff.duration(),
             lease_owner: SideEffectLeaseOwner::for_tenant(&config.identity.source_id, Uuid::new_v4()),
         },
     ));
     register_entity_side_effect_drain(
         supervisor,
         Arc::clone(&drain), // clone: the delivery and reap workers share one drain operation.
-        Duration::from_secs(entity_config.pending_side_effects_poll_secs),
-        Duration::from_secs(entity_config.pending_side_effects_poll_max_secs),
-        Duration::from_secs(entity_config.pending_side_effects_lease_secs),
+        entity_config.pending_side_effects_poll.duration(),
+        entity_config.pending_side_effects_poll_max.duration(),
+        entity_config.pending_side_effects_lease.duration(),
         wake,
     )?;
     register_entity_side_effect_reap(
         supervisor,
         drain,
-        Duration::from_secs(entity_config.pending_side_effects_cleanup_interval_secs),
-        retention_duration(entity_config.pending_side_effects_dead_letter_after_secs, "pending side-effect dead-letter age")?,
+        entity_config.pending_side_effects_cleanup_interval.duration(),
+        retention_duration(
+            entity_config.pending_side_effects_dead_letter_after.duration().as_secs(),
+            "pending side-effect dead-letter age",
+        )?,
     )?;
     Ok(())
 }
@@ -113,7 +116,7 @@ pub(super) fn register_spatial_workers(
         Arc::clone(&storage.spatial_index), // clone: synchronization and reconciliation share one index.
         Arc::clone(&storage.entity_ports.spatial_snapshots),
         storage.tenant.clone(), // clone: the reconciliation pass owns its tenant partition.
-        Duration::from_secs(config.spatial.rebuild_interval_secs),
+        config.spatial.rebuild_interval.duration(),
     )
 }
 

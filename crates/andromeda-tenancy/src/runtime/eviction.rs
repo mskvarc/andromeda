@@ -21,8 +21,8 @@ use tracing::info;
 impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// Sweep for orphaned, excess and idle runtimes until the process ends.
     pub(super) async fn run_janitor(self: Arc<TenantRuntimeManager<D, F>>) {
-        let interval = Duration::from_secs(self.config.janitor_interval_secs.max(1));
-        let ttl = Duration::from_secs(self.config.runtime_idle_ttl_secs.max(1));
+        let interval = self.config.janitor_interval.duration().max(Duration::from_secs(1));
+        let ttl = self.config.runtime_idle_ttl.duration().max(Duration::from_secs(1));
         let mut ticker = tokio_interval(interval);
         loop {
             ticker.tick().await;

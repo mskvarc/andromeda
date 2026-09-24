@@ -15,6 +15,7 @@ ignored = ["toml"]
 workspace = true
 
 [dependencies]
+andromeda-configuration-scalars.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-telemetry.workspace = true
 async-trait = "0.1.92"

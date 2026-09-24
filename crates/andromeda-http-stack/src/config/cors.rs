@@ -1,6 +1,6 @@
 //! Cross-Origin Resource Sharing policy for browser-facing clients.
 
-use crate::config::human_duration::HumanDuration;
+use andromeda_configuration_scalars::human_duration::HumanDuration;
 use axum::http::{HeaderName, Method};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeError};
 use strum::{Display, EnumString};

@@ -111,6 +111,7 @@ opt-level = 3
 andromeda-architecture-checks = { path = "crates/andromeda-architecture-checks" }
 andromeda-broker-composition = { path = "crates/andromeda-broker-composition" }
 andromeda-component-report = { path = "crates/andromeda-component-report" }
+andromeda-configuration-scalars = { path = "crates/andromeda-configuration-scalars" }
 andromeda-context-commit = { path = "crates/andromeda-context-commit" }
 andromeda-context-registry = { path = "crates/andromeda-context-registry" }
 andromeda-context-space = { path = "crates/andromeda-context-space" }

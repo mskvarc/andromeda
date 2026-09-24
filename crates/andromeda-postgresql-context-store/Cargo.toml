@@ -16,6 +16,7 @@ workspace = true
 
 [dependencies]
 andromeda-component-report.workspace = true
+andromeda-configuration-scalars.workspace = true
 andromeda-context-commit.workspace = true
 andromeda-context-registry.workspace = true
 andromeda-context-space.workspace = true

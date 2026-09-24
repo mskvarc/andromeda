@@ -47,7 +47,7 @@ use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_subscription::cache::SubscriptionCache;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use sqlx::PgPool;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use url::Url;
 
 /// Validated repositories, indexes, and storage workers for one tenant.
@@ -146,7 +146,7 @@ pub(super) async fn initialize_storage(
             ContextHitFlushWorker::spawn(
                 hit_counter,
                 Arc::clone(&context_repo) as Arc<dyn ContextHitStore>,
-                Duration::from_secs(config.database.context_hit_flush_secs),
+                config.database.context_hit_flush.duration(),
             )
         }),
     };

@@ -58,7 +58,7 @@ pub(super) fn register_snapshot_workers(
     preparation: Arc<SnapshotPreparation>,
     transport: &Arc<TransportDispatcher>,
     config: &DeliveryConfig,
-    preparation_recovery_secs: u64,
+    preparation_recovery: Duration,
     wake: SnapshotStatusWake,
 ) -> Result<(), TenantAssemblyError> {
     // The scheduled sweep wakes status delivery the moment it prepares a
@@ -67,7 +67,7 @@ pub(super) fn register_snapshot_workers(
     // its own clone of the handle, so a freshly created Snapshot's notification
     // does not wait for the drain's fallback either.
     let SnapshotStatusWake { sweep_wake, receiver } = wake;
-    register_snapshot_preparation(supervisor, preparation, sweep_wake, Duration::from_secs(preparation_recovery_secs))?;
+    register_snapshot_preparation(supervisor, preparation, sweep_wake, preparation_recovery)?;
     let drain = Arc::new(
         SnapshotStatusDeliveryDrain::new(
             Arc::new(SnapshotStatusOutbox::new(pool)),
@@ -76,10 +76,14 @@ pub(super) fn register_snapshot_workers(
         )
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?,
     );
-    let floor = Duration::from_secs(config.poll_interval_secs.max(1));
-    let ceiling = Duration::from_secs(config.poll_interval_max_secs.max(config.poll_interval_secs).max(1));
+    let floor = config.poll_interval.duration().max(Duration::from_secs(1));
+    let ceiling = config
+        .poll_interval_max
+        .duration()
+        .max(config.poll_interval.duration())
+        .max(Duration::from_secs(1));
     register_snapshot_status_delivery(supervisor, Arc::clone(&drain), floor, ceiling, receiver)?; // clone: delivery and cleanup share one drain.
-    register_snapshot_status_cleanup(supervisor, drain, Duration::from_secs(config.cleanup_interval_secs.max(1)))
+    register_snapshot_status_cleanup(supervisor, drain, config.cleanup_interval.duration().max(Duration::from_secs(1)))
 }
 
 /// Register the sweep that removes Snapshots past their `expiresAt`.
@@ -88,12 +92,7 @@ pub(super) fn register_snapshot_workers(
 ///
 /// Returns [`TenantAssemblyError`] when the cadence is rejected or when the
 /// supervisor refuses the registration.
-pub(super) fn register_snapshot_expiry(
-    supervisor: &TaskSupervisor,
-    store: Arc<dyn SnapshotStore>,
-    expiration_interval: u64,
-) -> Result<(), TenantAssemblyError> {
-    let cadence = Duration::from_secs(expiration_interval);
+pub(super) fn register_snapshot_expiry(supervisor: &TaskSupervisor, store: Arc<dyn SnapshotStore>, cadence: Duration) -> Result<(), TenantAssemblyError> {
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let name = TaskName::try_from("snapshot-expiry").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;

@@ -241,11 +241,11 @@ mod tests {
             decompression::DecompressionConfig,
             feature_mode::HttpFeatureMode,
             helmet::HelmetConfig,
-            human_duration::HumanDuration,
             server_timing::{ServerTimingConfig, ServerTimingPhase},
         },
         stack::HttpStack,
     };
+    use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
     use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
     use axum::{
         Extension,
@@ -257,7 +257,6 @@ mod tests {
         response::Response,
         routing::get,
     };
-    use bytesize::ByteSize;
     use enumset::EnumSet;
     use std::{error::Error, sync::Arc};
     use tokio::sync::Mutex;
@@ -267,7 +266,7 @@ mod tests {
     fn disabled_config() -> HttpStackConfig {
         HttpStackConfig {
             request_timeout: HumanDuration::from_secs(30),
-            max_request_body: ByteSize::kib(1),
+            max_request_body: HumanByteSize::kib(1),
             forwarded_headers: ForwardedHeaderTrust::Untrusted,
             cors: CorsConfig {
                 mode: CorsMode::Disabled,

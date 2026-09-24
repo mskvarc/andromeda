@@ -45,6 +45,7 @@ pub mod worker_instance_id;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-configuration-scalars",
         "andromeda-context-space",
         "andromeda-context-commit",
         "andromeda-delivery",

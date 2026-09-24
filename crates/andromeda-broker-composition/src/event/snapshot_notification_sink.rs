@@ -47,15 +47,15 @@ impl SnapshotStatusDeliveryDrain {
             outbox,
             transport,
             worker: Uuid::new_v4(),
-            lease: Duration::seconds(i64::from(config.lease_secs)),
+            lease: Duration::seconds(i64::try_from(config.lease.duration().as_secs()).unwrap_or(i64::MAX)),
             max_attempts: config.max_attempts.max(1),
-            base_backoff_secs: i64::try_from(config.base_backoff_secs)
+            base_backoff_secs: i64::try_from(config.base_backoff.duration().as_secs())
                 .map_err(|error| SnapshotError::internal(format!("Snapshot notification backoff is out of range: {error}")))?,
             batch_size: config.batch_size.max(1),
             concurrency: usize::try_from(config.concurrency).unwrap_or(usize::MAX).max(1),
             error_max_chars: usize::try_from(config.error_max_chars).unwrap_or(usize::MAX),
-            delivered_retention: Duration::seconds(i64::try_from(config.cleanup_after_secs).unwrap_or(i64::MAX)),
-            dead_retention: Duration::seconds(i64::try_from(config.dead_letter_after_secs).unwrap_or(i64::MAX)),
+            delivered_retention: Duration::seconds(i64::try_from(config.cleanup_after.duration().as_secs()).unwrap_or(i64::MAX)),
+            dead_retention: Duration::seconds(i64::try_from(config.dead_letter_after.duration().as_secs()).unwrap_or(i64::MAX)),
         })
     }
 

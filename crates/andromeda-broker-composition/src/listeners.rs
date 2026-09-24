@@ -21,7 +21,7 @@ use andromeda_http3_server::{
     execution::{Http3ServeError, serve_endpoint},
 };
 use futures::future::try_join_all;
-use std::{future::Future, net::SocketAddr, num::NonZeroU16, pin::Pin, time::Duration};
+use std::{future::Future, net::SocketAddr, num::NonZeroU16, pin::Pin};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tower::{Layer, util::option_layer};
@@ -81,7 +81,7 @@ pub async fn serve(
     let advertisement = match activation {
         Some(_) => {
             let port = NonZeroU16::new(config.server.port).ok_or(ListenerError::ZeroPort)?;
-            Some(AltSvcAdvertisement::h3(port, Duration::from_secs(config.http3.advertisement_max_age_secs))?)
+            Some(AltSvcAdvertisement::h3(port, config.http3.advertisement_max_age.duration())?)
         }
         None => None,
     };
@@ -119,7 +119,7 @@ pub async fn serve(
         let management_config = ServerConfig {
             host: config.management.host,
             port: config.management.port,
-            graceful_drain_secs: config.server.graceful_drain_secs,
+            graceful_drain: config.server.graceful_drain,
         };
         let management_serve = serve_management(management_config, management, wait_for(&shutdown_token));
         listeners.push(Box::pin(async move { management_serve.await.map_err(ListenerError::from) }));

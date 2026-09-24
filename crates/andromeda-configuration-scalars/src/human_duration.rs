@@ -5,8 +5,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::time::Duration;
 
 /// A [`Duration`] whose wire form is the human-readable `humantime` spelling
-/// (`"30s"`, `"1h"`) rather than the `{ secs, nanos }` shape serde derives for a
-/// bare `Duration`.
+/// (`"30s"`, `"1h"`, `"7days"`) rather than the `{ secs, nanos }` shape serde
+/// derives for a bare `Duration`.
 ///
 /// The broker uses this newtype instead of `#[serde(with = "humantime_serde")]`
 /// on a plain `Duration` field because the commented-configuration renderer
@@ -25,10 +25,25 @@ impl HumanDuration {
         HumanDuration(duration)
     }
 
+    /// Construct from a whole number of milliseconds.
+    #[must_use]
+    pub const fn from_millis(millis: u64) -> HumanDuration {
+        HumanDuration(Duration::from_millis(millis))
+    }
+
     /// Construct from a whole number of seconds.
     #[must_use]
     pub const fn from_secs(secs: u64) -> HumanDuration {
         HumanDuration(Duration::from_secs(secs))
+    }
+
+    /// Construct from a whole number of days.
+    ///
+    /// Used by the temporal day-grained fields whose defaults are expressed in
+    /// days (`chunk_interval`, `columnstore_after`, `retention_horizon`).
+    #[must_use]
+    pub const fn from_days(days: u64) -> HumanDuration {
+        HumanDuration(Duration::from_secs(days * 86_400))
     }
 
     /// The wrapped [`Duration`].
@@ -64,7 +79,7 @@ impl<'de> Deserialize<'de> for HumanDuration {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::human_duration::HumanDuration;
+    use crate::human_duration::HumanDuration;
     use serde::{Deserialize, Serialize};
     use std::time::Duration;
 
@@ -86,6 +101,20 @@ mod tests {
     fn human_duration_parses_a_humantime_string() {
         let holder: Holder = toml::from_str("span = \"45s\"").expect("holder parses");
         pretty_assertions::assert_eq!(holder.span.duration(), Duration::from_secs(45));
+    }
+
+    #[test]
+    fn from_millis_round_trips_as_milliseconds() {
+        let holder = Holder {
+            span: HumanDuration::from_millis(500),
+        };
+        let rendered = toml::to_string(&holder).expect("holder serialises");
+        assert!(rendered.contains("span = \"500ms\""), "{rendered}");
+    }
+
+    #[test]
+    fn from_days_is_a_whole_number_of_days() {
+        pretty_assertions::assert_eq!(HumanDuration::from_days(7).duration().as_secs(), 604_800);
     }
 
     #[test]

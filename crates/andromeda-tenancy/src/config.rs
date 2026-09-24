@@ -2,6 +2,7 @@
 //! long.
 
 use crate::db_name_prefix::DbNamePrefix;
+use andromeda_configuration_scalars::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use toml_comment::TomlComment;
@@ -13,13 +14,13 @@ pub enum TenancyConfigError {
     #[error("tenancy.tenant_max_connections must be at least 1")]
     ZeroTenantMaxConnections,
     /// Runtime idle retention was configured as zero.
-    #[error("tenancy.runtime_idle_ttl_secs must be at least 1")]
+    #[error("tenancy.runtime_idle_ttl must be greater than zero")]
     ZeroRuntimeIdleTtl,
     /// Runtime cache capacity was configured as zero.
     #[error("tenancy.runtime_max_cached must be at least 1")]
     ZeroRuntimeMaxCached,
     /// Runtime janitor cadence was configured as zero.
-    #[error("tenancy.janitor_interval_secs must be at least 1")]
+    #[error("tenancy.janitor_interval must be greater than zero")]
     ZeroJanitorInterval,
     /// The concurrent cold-build admission bound was configured as zero.
     #[error("tenancy.max_concurrent_builds must be at least 1")]
@@ -28,10 +29,10 @@ pub enum TenancyConfigError {
     #[error("tenancy.eviction_concurrency must be at least 1")]
     ZeroEvictionConcurrency,
     /// The dormant-tenant re-wake floor was configured as zero.
-    #[error("tenancy.min_dormancy_secs must be at least 1")]
+    #[error("tenancy.min_dormancy must be greater than zero")]
     ZeroMinDormancy,
     /// The woken-runtime residency was configured as zero.
-    #[error("tenancy.wake_residency_secs must be at least 1")]
+    #[error("tenancy.wake_residency must be greater than zero")]
     ZeroWakeResidency,
     /// The per-pass wake bound was configured as zero.
     #[error("tenancy.waker_max_wakes_per_pass must be at least 1")]
@@ -62,8 +63,10 @@ pub struct TenancyConfig {
     /// so tenant churn cannot exhaust the server's connection limit.
     pub tenant_max_connections: u32,
 
-    /// How long an unused tenant runtime is held open before eviction.
-    pub runtime_idle_ttl_secs: u64,
+    /// How long an unused tenant runtime is held open before eviction, in
+    /// human-readable form (`"15m"`).
+    #[toml_comment(inline)]
+    pub runtime_idle_ttl: HumanDuration,
 
     /// How many tenant runtimes may be held open at once.
     ///
@@ -80,8 +83,10 @@ pub struct TenancyConfig {
     /// insert as those requests complete and drop their leases.
     pub runtime_max_cached: usize,
 
-    /// How often the janitor sweeps for idle and orphaned runtimes.
-    pub janitor_interval_secs: u64,
+    /// How often the janitor sweeps for idle and orphaned runtimes, in
+    /// human-readable form (`"30s"`).
+    #[toml_comment(inline)]
+    pub janitor_interval: HumanDuration,
 
     /// How many tenant runtimes may be cold-built at once.
     ///
@@ -105,19 +110,22 @@ pub struct TenancyConfig {
     ///
     /// When the janitor evicts a tenant it probes for the earliest instant the
     /// tenant has work due and records a wake for it. A due instant sooner than
-    /// `now + min_dormancy_secs` is clamped up to it, so evicting a tenant that
+    /// `now + min_dormancy` is clamped up to it, so evicting a tenant that
     /// is only a little overdue and immediately reloading it cannot thrash. A
     /// failed probe records a retry this far out rather than leaving the tenant
-    /// unscheduled.
-    pub min_dormancy_secs: u64,
+    /// unscheduled. Human-readable form (`"30s"`).
+    #[toml_comment(inline)]
+    pub min_dormancy: HumanDuration,
 
     /// How long a woken runtime is held resident to do its due work.
     ///
     /// A runtime the waker loads exists only to drain the work its probe found.
     /// Its last use is backdated so it is the first idle-eviction victim yet
     /// keeps this much idle life, so it never displaces a runtime a request
-    /// touched. Must be below `runtime_idle_ttl_secs` to have that effect.
-    pub wake_residency_secs: u64,
+    /// touched. Must be below `runtime_idle_ttl` to have that effect.
+    /// Human-readable form (`"1m"`).
+    #[toml_comment(inline)]
+    pub wake_residency: HumanDuration,
 
     /// How many dormant tenants a single wake pass loads at most.
     ///
@@ -133,13 +141,13 @@ impl Default for TenancyConfig {
             enabled: true,
             tenant_db_prefix: DbNamePrefix::default(),
             tenant_max_connections: 16,
-            runtime_idle_ttl_secs: 900,
+            runtime_idle_ttl: HumanDuration::from_secs(900),
             runtime_max_cached: 64,
-            janitor_interval_secs: 30,
+            janitor_interval: HumanDuration::from_secs(30),
             max_concurrent_builds: 8,
             eviction_concurrency: 8,
-            min_dormancy_secs: 30,
-            wake_residency_secs: 60,
+            min_dormancy: HumanDuration::from_secs(30),
+            wake_residency: HumanDuration::from_secs(60),
             waker_max_wakes_per_pass: 4,
         }
     }
@@ -159,13 +167,13 @@ impl TenancyConfig {
         if self.tenant_max_connections == 0 {
             return Err(TenancyConfigError::ZeroTenantMaxConnections);
         }
-        if self.runtime_idle_ttl_secs == 0 {
+        if self.runtime_idle_ttl.is_zero() {
             return Err(TenancyConfigError::ZeroRuntimeIdleTtl);
         }
         if self.runtime_max_cached == 0 {
             return Err(TenancyConfigError::ZeroRuntimeMaxCached);
         }
-        if self.janitor_interval_secs == 0 {
+        if self.janitor_interval.is_zero() {
             return Err(TenancyConfigError::ZeroJanitorInterval);
         }
         if self.max_concurrent_builds == 0 {
@@ -174,10 +182,10 @@ impl TenancyConfig {
         if self.eviction_concurrency == 0 {
             return Err(TenancyConfigError::ZeroEvictionConcurrency);
         }
-        if self.min_dormancy_secs == 0 {
+        if self.min_dormancy.is_zero() {
             return Err(TenancyConfigError::ZeroMinDormancy);
         }
-        if self.wake_residency_secs == 0 {
+        if self.wake_residency.is_zero() {
             return Err(TenancyConfigError::ZeroWakeResidency);
         }
         if self.waker_max_wakes_per_pass == 0 {
@@ -191,6 +199,7 @@ impl TenancyConfig {
 mod config_tests {
     use super::{TenancyConfig, TenancyConfigError};
     use crate::db_name_prefix::DbNamePrefix;
+    use andromeda_configuration_scalars::human_duration::HumanDuration;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -199,13 +208,13 @@ mod config_tests {
             enabled: true,
             tenant_db_prefix: DbNamePrefix::try_from("andromeda_tenant").expect("database prefix"),
             tenant_max_connections: 16,
-            runtime_idle_ttl_secs: 900,
+            runtime_idle_ttl: HumanDuration::from_secs(900),
             runtime_max_cached: 0,
-            janitor_interval_secs: 30,
+            janitor_interval: HumanDuration::from_secs(30),
             max_concurrent_builds: 8,
             eviction_concurrency: 8,
-            min_dormancy_secs: 30,
-            wake_residency_secs: 60,
+            min_dormancy: HumanDuration::from_secs(30),
+            wake_residency: HumanDuration::from_secs(60),
             waker_max_wakes_per_pass: 4,
         };
         assert_eq!(config.validate(), Err(TenancyConfigError::ZeroRuntimeMaxCached));
@@ -232,7 +241,7 @@ mod config_tests {
     #[test]
     fn a_zero_min_dormancy_is_rejected() {
         let config = TenancyConfig {
-            min_dormancy_secs: 0,
+            min_dormancy: HumanDuration::from_secs(0),
             ..TenancyConfig::default()
         };
         assert_eq!(config.validate(), Err(TenancyConfigError::ZeroMinDormancy));
@@ -241,7 +250,7 @@ mod config_tests {
     #[test]
     fn a_zero_wake_residency_is_rejected() {
         let config = TenancyConfig {
-            wake_residency_secs: 0,
+            wake_residency: HumanDuration::from_secs(0),
             ..TenancyConfig::default()
         };
         assert_eq!(config.validate(), Err(TenancyConfigError::ZeroWakeResidency));

@@ -53,11 +53,11 @@ fn validate_management_port_distinct_from_server(config: &RuntimeConfig) -> Resu
 /// timeout and surface as a stalled 500 rather than the fast 503 with
 /// `Retry-After` the acquire deadline exists to produce.
 fn validate_acquire_timeout_below_request_timeout(config: &RuntimeConfig) -> Result<(), ConfigurationError> {
-    let acquire = config.database.acquire_timeout_secs;
+    let acquire = config.database.acquire_timeout.duration().as_secs();
     let request = config.http.request_timeout.duration().as_secs();
     if acquire >= request {
         return Err(ConfigurationError::invalid(format!(
-            "database.acquire_timeout_secs ({acquire}) must be below http.request_timeout ({request}s) so a saturated pool answers 503 before the request deadline"
+            "database.acquire_timeout ({acquire}s) must be below http.request_timeout ({request}s) so a saturated pool answers 503 before the request deadline"
         )));
     }
     Ok(())
@@ -81,7 +81,7 @@ mod tests {
         runtime::RuntimeConfig,
         validation::{validate_acquire_timeout_below_request_timeout, validate_management_port_distinct_from_server},
     };
-    use andromeda_http_stack::config::human_duration::HumanDuration;
+    use andromeda_configuration_scalars::human_duration::HumanDuration;
 
     #[test]
     fn management_port_colliding_with_server_port_is_rejected() {
@@ -114,19 +114,19 @@ mod tests {
         let mut config = RuntimeConfig::default();
         config.http.request_timeout = HumanDuration::from_secs(10);
 
-        config.database.acquire_timeout_secs = 9;
+        config.database.acquire_timeout = HumanDuration::from_secs(9);
         assert!(
             validate_acquire_timeout_below_request_timeout(&config).is_ok(),
             "an acquire below the request timeout is accepted"
         );
 
-        config.database.acquire_timeout_secs = 10;
+        config.database.acquire_timeout = HumanDuration::from_secs(10);
         assert!(
             validate_acquire_timeout_below_request_timeout(&config).is_err(),
             "an acquire equal to the request timeout is rejected"
         );
 
-        config.database.acquire_timeout_secs = 11;
+        config.database.acquire_timeout = HumanDuration::from_secs(11);
         assert!(
             validate_acquire_timeout_below_request_timeout(&config).is_err(),
             "an acquire above the request timeout is rejected"

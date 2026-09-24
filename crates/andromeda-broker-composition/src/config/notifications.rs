@@ -1,5 +1,6 @@
 //! Composition of the durable-delivery and streaming notification configurations.
 
+use andromeda_configuration_scalars::human_duration::HumanDuration;
 use andromeda_http_subscription::config::{NotificationConfig, NotificationConfigError};
 use andromeda_notification::delivery_config::{DeliveryConfig, DeliveryConfigError};
 use serde::{Deserialize, Serialize};
@@ -16,7 +17,7 @@ pub enum NotificationsConfigError {
     #[error(transparent)]
     Streaming(#[from] NotificationConfigError),
     /// The interval-notification idle sleep ceiling was configured as zero.
-    #[error("notifications.interval_max_sleep_secs must be at least 1")]
+    #[error("notifications.interval_max_sleep must be greater than zero")]
     ZeroIntervalMaxSleep,
 }
 
@@ -37,7 +38,9 @@ pub struct NotificationsConfig {
     /// The drain sleeps until the next subscription is actually due (clause
     /// 5.8.6, floor 1 s); this only bounds how long it waits when nothing is due,
     /// so a change to the interval subscription set is still noticed within it.
-    pub interval_max_sleep_secs: u64,
+    /// Human-readable form (`"30s"`).
+    #[toml_comment(inline)]
+    pub interval_max_sleep: HumanDuration,
 }
 
 impl Default for NotificationsConfig {
@@ -45,7 +48,7 @@ impl Default for NotificationsConfig {
         NotificationsConfig {
             delivery: DeliveryConfig::default(),
             streaming: NotificationConfig::default(),
-            interval_max_sleep_secs: 30,
+            interval_max_sleep: HumanDuration::from_secs(30),
         }
     }
 }
@@ -62,7 +65,7 @@ impl NotificationsConfig {
     pub fn validate(&self) -> Result<(), NotificationsConfigError> {
         self.delivery.validate()?;
         self.streaming.validate()?;
-        if self.interval_max_sleep_secs == 0 {
+        if self.interval_max_sleep.is_zero() {
             return Err(NotificationsConfigError::ZeroIntervalMaxSleep);
         }
         Ok(())

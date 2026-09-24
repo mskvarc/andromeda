@@ -43,6 +43,6 @@ ANDROMEDA_TEST_CALLBACK_HOST=host.docker.internal
 # the origin peers can call back; the compose file sets
 # ANDROMEDA__IDENTITY__ADVERTISED_URL per broker to its compose-network address
 # (http://broker-a:1056 and so on). Forwarded-request deadlines default to
-# ANDROMEDA__FEDERATION__CONNECT_TIMEOUT_MS=3000 and
-# ANDROMEDA__FEDERATION__REQUEST_TIMEOUT_MS=5000 unless a registration's
+# ANDROMEDA__FEDERATION__CONNECT_TIMEOUT="3s" and
+# ANDROMEDA__FEDERATION__REQUEST_TIMEOUT="5s" unless a registration's
 # management.timeout overrides them.

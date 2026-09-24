@@ -81,7 +81,7 @@ pub(super) fn register_csource_notification_workers(
     transport: &Arc<TransportDispatcher>,
     csource_subscriptions: Arc<dyn SubscriptionStore>,
     streams: CsourceNotificationStreams,
-    interval_max_sleep_secs: u64,
+    interval_max_sleep: Duration,
 ) -> Result<(), TenantAssemblyError> {
     // clone: the periodic sweep subscribes to the same registration and
     // context-source-subscription streams so a change wakes it, while the
@@ -112,7 +112,7 @@ pub(super) fn register_csource_notification_workers(
         )),
         registration_changes,
         subscription_changes,
-        interval_max_sleep_secs,
+        interval_max_sleep,
     )
 }
 
@@ -198,7 +198,7 @@ fn register_csource_interval_notification(
     operation: Arc<CsourceIntervalNotificationOperation>,
     registration_changes: broadcast::Sender<CsrChangeEvent>,
     subscription_changes: broadcast::Sender<CsourceSubscriptionChange>,
-    interval_max_sleep_secs: u64,
+    interval_max_sleep: Duration,
 ) -> Result<(), TenantAssemblyError> {
     let (interval_wake, receiver) = wake_channel();
     // Both streams change what a periodic csource notification would report: the
@@ -216,17 +216,11 @@ fn register_csource_interval_notification(
         interval_wake,
         subscription_changes,
     )?;
-    register_notification_schedule(
-        supervisor,
-        "csource-notification-interval",
-        Duration::from_secs(interval_max_sleep_secs),
-        receiver,
-        move |cutoff| {
-            let operation = Arc::clone(&operation); // clone: each bounded pass owns the shared notification operation.
-            async move {
-                operation.execute(cutoff).await?;
-                operation.next_due(cutoff).await
-            }
-        },
-    )
+    register_notification_schedule(supervisor, "csource-notification-interval", interval_max_sleep, receiver, move |cutoff| {
+        let operation = Arc::clone(&operation); // clone: each bounded pass owns the shared notification operation.
+        async move {
+            operation.execute(cutoff).await?;
+            operation.next_due(cutoff).await
+        }
+    })
 }

@@ -1,5 +1,6 @@
 //! Federation operation configuration.
 
+use andromeda_configuration_scalars::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
@@ -64,10 +65,10 @@ pub enum FederationConfigError {
     #[error("federation.forward_concurrency must be at least 1")]
     ZeroForwardConcurrency,
     /// A forwarded request needs a positive deadline.
-    #[error("federation.request_timeout_ms must be at least 1")]
+    #[error("federation.request_timeout must be greater than zero")]
     ZeroRequestTimeout,
     /// Connecting to a source needs a positive deadline.
-    #[error("federation.connect_timeout_ms must be at least 1")]
+    #[error("federation.connect_timeout must be greater than zero")]
     ZeroConnectTimeout,
 }
 
@@ -76,12 +77,15 @@ pub enum FederationConfigError {
 pub struct FederationConfig {
     /// Maximum parallel Context Source forwarding requests.
     pub forward_concurrency: usize,
-    /// Milliseconds allowed to establish a connection to a Context Source.
-    pub connect_timeout_ms: u64,
-    /// Milliseconds a forwarded request may take before it is assumed to have
-    /// failed, unless the registration's `management.timeout` says otherwise
-    /// (clause 5.2.34).
-    pub request_timeout_ms: u64,
+    /// Time allowed to establish a connection to a Context Source, in
+    /// human-readable form (`"3s"`).
+    #[toml_comment(inline)]
+    pub connect_timeout: HumanDuration,
+    /// Time a forwarded request may take before it is assumed to have failed,
+    /// unless the registration's `management.timeout` says otherwise (clause
+    /// 5.2.34), in human-readable form (`"5s"`, `"500ms"`).
+    #[toml_comment(inline)]
+    pub request_timeout: HumanDuration,
     /// Most cached forwarded GET responses held per tenant (clause 6.3.17).
     pub cache_max_entries: usize,
     /// What `splitEntities` means when a request or subscription leaves it
@@ -94,8 +98,8 @@ impl Default for FederationConfig {
     fn default() -> FederationConfig {
         FederationConfig {
             forward_concurrency: 16,
-            connect_timeout_ms: 3000,
-            request_timeout_ms: 5000,
+            connect_timeout: HumanDuration::from_millis(3000),
+            request_timeout: HumanDuration::from_millis(5000),
             cache_max_entries: 1024,
             split_entities_default: SplitEntitiesDefault::Complete,
         }
@@ -116,10 +120,10 @@ impl FederationConfig {
         if self.forward_concurrency == 0 {
             return Err(FederationConfigError::ZeroForwardConcurrency);
         }
-        if self.request_timeout_ms == 0 {
+        if self.request_timeout.is_zero() {
             return Err(FederationConfigError::ZeroRequestTimeout);
         }
-        if self.connect_timeout_ms == 0 {
+        if self.connect_timeout.is_zero() {
             return Err(FederationConfigError::ZeroConnectTimeout);
         }
         Ok(())
@@ -128,25 +132,26 @@ impl FederationConfig {
     /// The connection deadline.
     #[must_use]
     pub const fn connect_timeout(&self) -> Duration {
-        Duration::from_millis(self.connect_timeout_ms)
+        self.connect_timeout.duration()
     }
 
     /// The default per-request deadline.
     #[must_use]
     pub const fn request_timeout(&self) -> Duration {
-        Duration::from_millis(self.request_timeout_ms)
+        self.request_timeout.duration()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::config::{FederationConfig, FederationConfigError, SplitEntities, SplitEntitiesDefault};
+    use andromeda_configuration_scalars::human_duration::HumanDuration;
 
     fn config() -> FederationConfig {
         FederationConfig {
             forward_concurrency: 16,
-            connect_timeout_ms: 3000,
-            request_timeout_ms: 5000,
+            connect_timeout: HumanDuration::from_millis(3000),
+            request_timeout: HumanDuration::from_millis(5000),
             cache_max_entries: 1024,
             split_entities_default: SplitEntitiesDefault::Complete,
         }
@@ -174,12 +179,12 @@ mod tests {
     #[test]
     fn zero_timeouts_are_rejected() {
         let request = FederationConfig {
-            request_timeout_ms: 0,
+            request_timeout: HumanDuration::from_millis(0),
             ..config()
         };
         assert_eq!(request.validate(), Err(FederationConfigError::ZeroRequestTimeout));
         let connect = FederationConfig {
-            connect_timeout_ms: 0,
+            connect_timeout: HumanDuration::from_millis(0),
             ..config()
         };
         assert_eq!(connect.validate(), Err(FederationConfigError::ZeroConnectTimeout));

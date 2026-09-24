@@ -80,7 +80,7 @@ where
 ///
 /// A `timeInterval` subscription is only ever discovered when the sweep runs,
 /// and a wake-triggered drain that nothing wakes runs only on the geometric
-/// backoff bounded by `interval_max_sleep_secs` (clause 5.8.6 fixes the period,
+/// backoff bounded by `interval_max_sleep` (clause 5.8.6 fixes the period,
 /// not the discovery latency). Without this bridge a subscription created just
 /// after an idle pass waits out the whole ceiling before its first notification.
 /// Forwarding every change to the sweep's wake is what makes the ceiling the
