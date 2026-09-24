@@ -21,7 +21,7 @@ chrono = { version = "0.4.45", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["from"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 sea-query = { version = "1.0.2", features = ["backend-postgres", "with-bigdecimal", "with-chrono", "with-json"] }
-thiserror = "2.0.20"
+thiserror = "2.0.21"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

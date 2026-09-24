@@ -12,7 +12,7 @@ workspace = true
 andromeda-telemetry.workspace = true
 axum = "0.8.9"
 mediatype = "0.23.0"
-thiserror = "2.0.20"
+thiserror = "2.0.21"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

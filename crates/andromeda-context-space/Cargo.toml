@@ -10,7 +10,7 @@ workspace = true
 
 [dependencies]
 andromeda-ngsi-ld-lexicon.workspace = true
-thiserror = "2.0.20"
+thiserror = "2.0.21"
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"

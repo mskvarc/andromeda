@@ -18,7 +18,7 @@ http = "1.5.0"
 rumqttc = { version = "0.25.1", features = ["use-rustls"] }
 serde = "1.0.229"
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
-thiserror = "2.0.20"
+thiserror = "2.0.21"
 tokio = { version = "1.53.1", features = ["full"] }
 typed-builder = "0.23.2"
 url = "2.5.8"

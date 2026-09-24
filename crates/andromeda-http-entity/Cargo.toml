@@ -32,7 +32,7 @@ headers = "0.4.1"
 indexmap = { version = "2.14.2", features = ["serde"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 strum = { version = "0.28.0", features = ["derive"] }
-thiserror = "2.0.20"
+thiserror = "2.0.21"
 tracing = "0.1.44"
 typed-builder = "0.23.2"
 

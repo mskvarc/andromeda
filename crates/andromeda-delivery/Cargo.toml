@@ -30,7 +30,7 @@ rustls = { version = "0.23.45", default-features = false, features = ["std"] }
 secrecy = "0.10.3"
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 strum = { version = "0.28.0", features = ["derive"] }
-thiserror = "2.0.20"
+thiserror = "2.0.21"
 tokio = { version = "1.53.1", features = ["macros", "net", "rt", "sync", "time"] }
 tokio-util = "0.7.19"
 tracing = "0.1.44"

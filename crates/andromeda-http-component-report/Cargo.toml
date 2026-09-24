@@ -14,7 +14,7 @@ andromeda-http-response.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 axum = "0.8.9"
 serde = { version = "1.0.229", features = ["derive"] }
-thiserror = "2.0.20"
+thiserror = "2.0.21"
 urn-rs = "0.9.2"
 uuid = { version = "1.26.1", features = ["v4"] }
 

@@ -18,7 +18,7 @@ workspace = true
 andromeda-configuration-scalars.workspace = true
 axum = { version = "0.8.9", features = ["http2"] }
 serde = { version = "1.0.229", features = ["derive"] }
-thiserror = "2.0.20"
+thiserror = "2.0.21"
 tokio = { version = "1.53.1", features = ["net", "sync", "time"] }
 toml = "1.1.6"
 toml-comment = "0.3.0"
