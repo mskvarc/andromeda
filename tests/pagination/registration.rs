@@ -3,20 +3,19 @@
 //!
 //! Naming convention: `pagination_registrations_<scenario>_<expected_outcome>`.
 //! The registration collection is broker-wide, so every test runs under
-//! `#[serial(global)]` and wipes broker state on entry. Clause 5.10.2.4 requires
+//! its own private tenant, whose collection starts empty. Clause 5.10.2.4 requires
 //! a narrowing selector, so every query carries `type=Building`.
 
 use crate::cursor_walk::{assert_cursor_links, ids_of, joined_links, link_target, query_string_of};
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::CORE_CONTEXT;
-use andromeda_test_harness::serialized_environment::SerializedEnvironment;
+use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
-use serial_test::serial;
 
-async fn make_scope() -> (SerializedEnvironment, TestClient) {
-    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+async fn make_scope() -> (TenantScopedEnvironment, TestClient) {
+    let scope = TenantScopedEnvironment::from_suite("pagination").await.expect("tenant-scoped test environment");
     let client = scope.client().clone();
     (scope, client)
 }
@@ -78,7 +77,6 @@ async fn walk_forward(client: &TestClient, start_query: &str) -> Vec<String> {
 /// Clause 5.5.9.1: the first page of a default registration query offers opaque
 /// cursor pointers -- first/next/last carrying a `cursor`, no `prev`, no offset.
 #[tokio::test]
-#[serial(global)]
 async fn pagination_registrations_default_first_page_offers_opaque_cursor_pointers() {
     let (scope, client) = make_scope().await;
     create_registrations(&client, 3).await;
@@ -90,13 +88,12 @@ async fn pagination_registrations_default_first_page_offers_opaque_cursor_pointe
     assert!(links.contains("rel=\"last\""), "{links}");
     assert!(!links.contains("rel=\"prev\""), "the first page has no prev: {links}");
     assert_cursor_links(&headers);
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Following `rel="next"` to exhaustion returns every registration exactly once,
 /// ascending.
 #[tokio::test]
-#[serial(global)]
 async fn pagination_registrations_full_walk_returns_every_registration_in_order() {
     let (scope, client) = make_scope().await;
     create_registrations(&client, 7).await;
@@ -104,12 +101,11 @@ async fn pagination_registrations_full_walk_returns_every_registration_in_order(
     let seen = walk_forward(&client, "type=Building&limit=2").await;
     let expected: Vec<String> = (0..7).map(registration_id).collect();
     assert_eq!(seen, expected, "the walk returns every registration once, ascending");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Following `rel="prev"` from a mid-collection page returns to the same items.
 #[tokio::test]
-#[serial(global)]
 async fn pagination_registrations_following_prev_returns_to_the_same_page() {
     let (scope, client) = make_scope().await;
     create_registrations(&client, 6).await;
@@ -120,12 +116,11 @@ async fn pagination_registrations_following_prev_returns_to_the_same_page() {
     let prev = link_target(&headers2, "prev").expect("a mid-collection page has a prev");
     let (back, _) = query_page(&client, query_string_of(&prev)).await;
     assert_eq!(back, page1, "following prev returns to the same items");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// The `rel="last"` cursor jumps to the final page (the last `limit` items).
 #[tokio::test]
-#[serial(global)]
 async fn pagination_registrations_last_jumps_to_the_final_page() {
     let (scope, client) = make_scope().await;
     create_registrations(&client, 5).await;
@@ -135,12 +130,11 @@ async fn pagination_registrations_last_jumps_to_the_final_page() {
     let (final_page, final_headers) = query_page(&client, query_string_of(&last)).await;
     assert!(final_page.contains(&registration_id(4)), "the final page holds the greatest id: {final_page:?}");
     assert!(link_target(&final_headers, "next").is_none(), "the final page offers no next");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// An explicit `offset` keeps the clause 5.5.9.2 offset pointers.
 #[tokio::test]
-#[serial(global)]
 async fn pagination_registrations_explicit_offset_keeps_offset_pointers() {
     let (scope, client) = make_scope().await;
     create_registrations(&client, 4).await;
@@ -149,12 +143,11 @@ async fn pagination_registrations_explicit_offset_keeps_offset_pointers() {
     let links = joined_links(&headers);
     assert!(links.contains("offset="), "an explicit offset keeps offset pointers: {links}");
     assert!(!links.contains("cursor="), "no cursor is offered under explicit offset: {links}");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// A malformed `cursor` is a `BadRequestData`.
 #[tokio::test]
-#[serial(global)]
 async fn pagination_registrations_malformed_cursor_is_bad_request() {
     let (scope, client) = make_scope().await;
     create_registrations(&client, 1).await;
@@ -164,12 +157,11 @@ async fn pagination_registrations_malformed_cursor_is_bad_request() {
         .await
         .expect("query registrations failed");
     assert_eq!(response.status, StatusCode::BAD_REQUEST);
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// `cursor` together with `offset` is a `BadRequestData` (clause 5.5.9).
 #[tokio::test]
-#[serial(global)]
 async fn pagination_registrations_cursor_with_offset_is_bad_request() {
     let (scope, client) = make_scope().await;
     create_registrations(&client, 1).await;
@@ -179,5 +171,5 @@ async fn pagination_registrations_cursor_with_offset_is_bad_request() {
         .await
         .expect("query registrations failed");
     assert_eq!(response.status, StatusCode::BAD_REQUEST);
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }

@@ -16,9 +16,9 @@ mod retrieve;
 mod routing_projection;
 mod update;
 
+use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::{context::COMPOUND_CONTEXT, problem_detail as error};
-use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
-use reqwest::{Client, Method, StatusCode};
+use reqwest::{Method, StatusCode};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -26,22 +26,22 @@ const BAD_REQUEST_DATA_TYPE: &iri_rs::Iri<&str> = error::BAD_REQUEST_DATA;
 const RESOURCE_NOT_FOUND_TYPE: &iri_rs::Iri<&str> = error::RESOURCE_NOT_FOUND;
 const COMPOUND_CONTEXT_URL: &iri_rs::Iri<&str> = COMPOUND_CONTEXT;
 
-fn client() -> Client {
-    Client::new()
-}
-
 fn unique_id(prefix: &str) -> String {
     format!("{prefix}:{}", Uuid::new_v4())
 }
 
-// ---------------------------------------------------------------------------
-// Database cleanup
-// ---------------------------------------------------------------------------
-
-async fn clean_database() -> SerializedEnvironment {
-    SerializedEnvironment::from_environment_reset()
-        .await
-        .expect("serialized test database environment")
+/// Force the test's private tenant into existence, then leave its collection
+/// empty. The broker provisions a tenant's database only on the first write, so
+/// a test whose first request is a read or a validation error would otherwise
+/// see a `NonexistentTenant` error instead of the `ResourceNotFound` or
+/// `BadRequestData` it asserts. Creating and immediately deleting one
+/// registration provisions the tenant without leaving anything a later query or
+/// whole-collection comparison would observe.
+async fn provision_tenant(client: &TestClient) {
+    let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:tenant-provision");
+    let (status, _, _) = create_registration(client, &csr_basic_jsonld(&id)).await;
+    assert_eq!(status, StatusCode::CREATED, "tenant provisioning registration must be created");
+    cleanup_registration(client, &id).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -628,79 +628,70 @@ fn strip_ignored_keys(val: &mut Value, keys: &[&str]) {
 // ---------------------------------------------------------------------------
 
 /// POST /csourceRegistrations with JSON-LD body. Returns (status, location, body).
-async fn create_registration(client: &Client, body: &Value) -> (StatusCode, Option<String>, Value) {
+async fn create_registration(client: &TestClient, body: &Value) -> (StatusCode, Option<String>, Value) {
     let resp = client
-        .post(format!("{BASE_URL}/csourceRegistrations"))
+        .raw(Method::POST, "/ngsi-ld/v1/csourceRegistrations")
         .header("Content-Type", "application/ld+json")
         .json(body)
         .send()
         .await
         .expect("create_registration request failed");
-    let status = resp.status();
-    let location = resp.headers().get("location").map(|v| v.to_str().expect("non-ascii location").to_owned());
-    let body: Value = resp.json().await.unwrap_or_default();
-    (status, location, body)
+    let location = resp.location().expect("valid location header").map(ToOwned::to_owned);
+    (resp.status, location, resp.json_value().unwrap_or_default())
 }
 
 /// GET /csourceRegistrations/{id} with optional headers. Returns (status, body).
-async fn retrieve_registration(client: &Client, id: &str, accept: Option<&str>, link_ctx: Option<&str>) -> (StatusCode, Value) {
-    let mut req = client.get(format!("{BASE_URL}/csourceRegistrations/{id}"));
+async fn retrieve_registration(client: &TestClient, id: &str, accept: Option<&str>, link_ctx: Option<&str>) -> (StatusCode, Value) {
+    let path = format!("/ngsi-ld/v1/csourceRegistrations/{id}");
+    let mut req = client.raw(Method::GET, &path);
     if let Some(accept) = accept {
         req = req.header("Accept", accept);
     }
     if let Some(ctx_url) = link_ctx {
         let link = format!("<{ctx_url}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"");
-        req = req.header("Link", link);
+        req = req.header("Link", link.as_str());
     }
     let resp = req.send().await.expect("retrieve_registration request failed");
-    let status = resp.status();
-    let body: Value = resp.json().await.unwrap_or_default();
-    (status, body)
+    (resp.status, resp.json_value().unwrap_or_default())
 }
 
 /// DELETE /csourceRegistrations/{id}. Returns (status, body).
-async fn delete_registration(client: &Client, id: &str) -> (StatusCode, Value) {
+async fn delete_registration(client: &TestClient, id: &str) -> (StatusCode, Value) {
     let resp = client
-        .delete(format!("{BASE_URL}/csourceRegistrations/{id}"))
+        .raw(Method::DELETE, &format!("/ngsi-ld/v1/csourceRegistrations/{id}"))
         .send()
         .await
         .expect("delete_registration request failed");
-    let status = resp.status();
-    let body: Value = resp.json().await.unwrap_or_default();
-    (status, body)
+    (resp.status, resp.json_value().unwrap_or_default())
 }
 
 /// PATCH /csourceRegistrations/{id} with given content type. Returns (status, body).
-async fn update_registration(client: &Client, id: &str, body: &Value, content_type: &str) -> (StatusCode, Value) {
+async fn update_registration(client: &TestClient, id: &str, body: &Value, content_type: &str) -> (StatusCode, Value) {
     let resp = client
-        .patch(format!("{BASE_URL}/csourceRegistrations/{id}"))
+        .raw(Method::PATCH, &format!("/ngsi-ld/v1/csourceRegistrations/{id}"))
         .header("Content-Type", content_type)
         .json(body)
         .send()
         .await
         .expect("update_registration request failed");
-    let status = resp.status();
-    let resp_body: Value = resp.json().await.unwrap_or_default();
-    (status, resp_body)
+    (resp.status, resp.json_value().unwrap_or_default())
 }
 
 /// PATCH /csourceRegistrations/{id} with raw bytes. Returns (status, body).
-async fn update_registration_raw(client: &Client, id: &str, raw: &[u8], content_type: &str) -> (StatusCode, Value) {
+async fn update_registration_raw(client: &TestClient, id: &str, raw: &[u8], content_type: &str) -> (StatusCode, Value) {
     let resp = client
-        .patch(format!("{BASE_URL}/csourceRegistrations/{id}"))
+        .raw(Method::PATCH, &format!("/ngsi-ld/v1/csourceRegistrations/{id}"))
         .header("Content-Type", content_type)
         .body(raw.to_vec())
         .send()
         .await
         .expect("update_registration_raw request failed");
-    let status = resp.status();
-    let resp_body: Value = resp.json().await.unwrap_or_default();
-    (status, resp_body)
+    (resp.status, resp.json_value().unwrap_or_default())
 }
 
 /// Generic request helper for custom method/path/body/headers combinations.
 async fn request(
-    client: &Client,
+    client: &TestClient,
     method: Method,
     path: &str,
     body: Option<&Value>,
@@ -708,13 +699,14 @@ async fn request(
     link_ctx: Option<&str>,
     accept: Option<&str>,
 ) -> (StatusCode, Value) {
-    let mut req = client.request(method, format!("{BASE_URL}{path}"));
+    let full_path = format!("/ngsi-ld/v1{path}");
+    let mut req = client.raw(method, &full_path);
     if let Some(ct) = content_type {
         req = req.header("Content-Type", ct);
     }
     if let Some(ctx_url) = link_ctx {
         let link = format!("<{ctx_url}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"");
-        req = req.header("Link", link);
+        req = req.header("Link", link.as_str());
     }
     if let Some(accept) = accept {
         req = req.header("Accept", accept);
@@ -723,29 +715,26 @@ async fn request(
         req = req.json(body);
     }
     let resp = req.send().await.expect("request failed");
-    let status = resp.status();
-    let resp_body: Value = resp.json().await.unwrap_or_default();
-    (status, resp_body)
+    (resp.status, resp.json_value().unwrap_or_default())
 }
 
 /// GET /csourceRegistrations with query string. Returns (status, body).
-async fn query_registrations(client: &Client, query: &str, accept: Option<&str>, link_ctx: Option<&str>) -> (StatusCode, Value) {
+async fn query_registrations(client: &TestClient, query: &str, accept: Option<&str>, link_ctx: Option<&str>) -> (StatusCode, Value) {
     let sep = if query.is_empty() { "" } else { "?" };
-    let mut req = client.get(format!("{BASE_URL}/csourceRegistrations{sep}{query}"));
+    let path = format!("/ngsi-ld/v1/csourceRegistrations{sep}{query}");
+    let mut req = client.raw(Method::GET, &path);
     if let Some(accept) = accept {
         req = req.header("Accept", accept);
     }
     if let Some(ctx_url) = link_ctx {
         let link = format!("<{ctx_url}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"");
-        req = req.header("Link", link);
+        req = req.header("Link", link.as_str());
     }
     let resp = req.send().await.expect("query_registrations request failed");
-    let status = resp.status();
-    let body: Value = resp.json().await.unwrap_or_default();
-    (status, body)
+    (resp.status, resp.json_value().unwrap_or_default())
 }
 
 /// Cleanup: delete a registration, ignoring errors.
-async fn cleanup_registration(client: &Client, id: &str) {
-    let _ = client.delete(format!("{BASE_URL}/csourceRegistrations/{id}")).send().await;
+async fn cleanup_registration(client: &TestClient, id: &str) {
+    let _ = client.raw(Method::DELETE, &format!("/ngsi-ld/v1/csourceRegistrations/{id}")).send().await;
 }

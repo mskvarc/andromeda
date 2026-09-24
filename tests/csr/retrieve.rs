@@ -6,7 +6,6 @@ use crate::{
     COMPOUND_CONTEXT_URL,
     RESOURCE_NOT_FOUND_TYPE,
     cleanup_registration,
-    client,
     create_registration,
     csr_basic_jsonld,
     expected_csr_compacted,
@@ -15,8 +14,8 @@ use crate::{
     strip_ignored_keys,
     unique_id,
 };
+use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use reqwest::StatusCode;
-use serial_test::serial;
 
 // ---------------------------------------------------------------------------
 // 5.10.1 -- Retrieve with invalid ID
@@ -24,12 +23,14 @@ use serial_test::serial;
 
 /// Retrieve with non-URI ID -- 400 (5.10.1).
 #[tokio::test]
-#[serial]
 async fn retrieve_invalid_id_returns_400() {
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let (status, body) = retrieve_registration(&c, "invalidUri", None, None).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -38,12 +39,14 @@ async fn retrieve_invalid_id_returns_400() {
 
 /// Retrieve non-existent registration -- 404 (5.10.1).
 #[tokio::test]
-#[serial]
 async fn retrieve_unknown_registration_returns_404() {
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let (status, body) = retrieve_registration(&c, "urn:ngsi-ld:ContextSourceRegistration:unknownRegistration", None, None).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
     pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -52,9 +55,10 @@ async fn retrieve_unknown_registration_returns_404() {
 
 /// Retrieve without Link header -- custom terms rendered as FQNs (5.10.1, 5.5.7).
 #[tokio::test]
-#[serial]
 async fn retrieve_without_context_returns_expanded_format() {
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:retrieve-expanded");
     let reg = csr_basic_jsonld(&id);
 
@@ -71,6 +75,7 @@ async fn retrieve_without_context_returns_expanded_format() {
     pretty_assertions::assert_eq!(expected, actual);
 
     cleanup_registration(&c, &id).await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -79,9 +84,10 @@ async fn retrieve_without_context_returns_expanded_format() {
 
 /// Retrieve with compound context Link header -- compacted names (5.10.1, 5.5.7).
 #[tokio::test]
-#[serial]
 async fn retrieve_with_context_returns_compacted_format() {
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:retrieve-compacted");
     let reg = csr_basic_jsonld(&id);
 
@@ -98,6 +104,7 @@ async fn retrieve_with_context_returns_compacted_format() {
     pretty_assertions::assert_eq!(expected, actual);
 
     cleanup_registration(&c, &id).await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -106,9 +113,10 @@ async fn retrieve_with_context_returns_compacted_format() {
 
 /// Empty JSON-LD context (no Link header) -- same as expanded format (6.3.5).
 #[tokio::test]
-#[serial]
 async fn retrieve_empty_jsonld_context_returns_expanded_format() {
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:retrieve-empty-ctx");
     let reg = csr_basic_jsonld(&id);
 
@@ -125,13 +133,15 @@ async fn retrieve_empty_jsonld_context_returns_expanded_format() {
     pretty_assertions::assert_eq!(expected, actual);
 
     cleanup_registration(&c, &id).await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Creation-time JSON-LD context with Link header -- same as compacted format (6.3.5).
 #[tokio::test]
-#[serial]
 async fn retrieve_creation_time_context_returns_compacted_format() {
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:retrieve-creation-ctx");
     let reg = csr_basic_jsonld(&id);
 
@@ -148,4 +158,5 @@ async fn retrieve_creation_time_context_returns_compacted_format() {
     pretty_assertions::assert_eq!(expected, actual);
 
     cleanup_registration(&c, &id).await;
+    scope.finish().await.expect("cleanup failed");
 }

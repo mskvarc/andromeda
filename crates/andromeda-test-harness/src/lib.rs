@@ -16,6 +16,7 @@ pub mod scope;
 pub mod serialized_environment;
 pub mod tenant_environment;
 pub mod tenant_schema_recreate;
+pub mod tenant_scoped_environment;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

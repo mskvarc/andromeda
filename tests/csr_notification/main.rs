@@ -1,30 +1,15 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 use andromeda_test_fixtures::context::CORE_CONTEXT;
-use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, environment::TestEnvironment};
 use andromeda_test_mocks::{callback_server::CallbackServerError, notification_server::NotificationServer, server_config::MockServerConfig};
 use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, SecondsFormat, Utc};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::time::sleep;
-use uuid::Uuid;
 
 fn client() -> Client {
     Client::new()
-}
-
-fn unique_subscription_id(scenario: &str) -> String {
-    format!("urn:ngsi-ld:Subscription:csr-notif:{scenario}:{}", Uuid::new_v4())
-}
-
-fn unique_registration_id(scenario: &str) -> String {
-    format!("urn:ngsi-ld:ContextSourceRegistration:csr-notif:{scenario}:{}", Uuid::new_v4())
-}
-
-async fn clean_database() -> SerializedEnvironment {
-    SerializedEnvironment::from_environment_reset()
-        .await
-        .expect("serialized test database environment")
 }
 
 async fn read_body(response: reqwest::Response) -> Value {
@@ -115,13 +100,13 @@ async fn update_registration(http_client: &Client, registration_id: &str, fragme
     (status, body)
 }
 
-fn base_subscription_payload(subscription_id: &str, endpoint_uri: &str) -> Value {
+fn base_subscription_payload(scope: &TestEnvironment, subscription_id: &str, endpoint_uri: &str) -> Value {
     json!({
         "id": subscription_id,
         "type": "Subscription",
         "entities": [
             {
-                "type": "Building"
+                "type": scope.entity_type("Building")
             }
         ],
         "notification": {
@@ -135,8 +120,8 @@ fn base_subscription_payload(subscription_id: &str, endpoint_uri: &str) -> Value
     })
 }
 
-fn time_interval_subscription_payload(subscription_id: &str, endpoint_uri: &str) -> Value {
-    let mut payload = base_subscription_payload(subscription_id, endpoint_uri);
+fn time_interval_subscription_payload(scope: &TestEnvironment, subscription_id: &str, endpoint_uri: &str) -> Value {
+    let mut payload = base_subscription_payload(scope, subscription_id, endpoint_uri);
     payload["timeInterval"] = Value::from(2);
     payload
 }
@@ -151,8 +136,8 @@ fn time_interval_subscription_payload(subscription_id: &str, endpoint_uri: &str)
 /// payloads declare, so it overlaps whichever way the relation is read; the
 /// cases that separate the two readings are in
 /// `tests/regression/csource_subscription_notification.rs`.
-fn temporal_query_subscription_payload(subscription_id: &str, endpoint_uri: &str, time_property: &str) -> Value {
-    let mut payload = base_subscription_payload(subscription_id, endpoint_uri);
+fn temporal_query_subscription_payload(scope: &TestEnvironment, subscription_id: &str, endpoint_uri: &str, time_property: &str) -> Value {
+    let mut payload = base_subscription_payload(scope, subscription_id, endpoint_uri);
     payload["temporalQ"] = json!({
         "timerel": "after",
         "timeAt": "2020-09-01T22:07:00Z",
@@ -161,14 +146,14 @@ fn temporal_query_subscription_payload(subscription_id: &str, endpoint_uri: &str
     payload
 }
 
-fn watched_attributes_subscription_payload(subscription_id: &str, endpoint_uri: &str) -> Value {
-    let mut payload = base_subscription_payload(subscription_id, endpoint_uri);
+fn watched_attributes_subscription_payload(scope: &TestEnvironment, subscription_id: &str, endpoint_uri: &str) -> Value {
+    let mut payload = base_subscription_payload(scope, subscription_id, endpoint_uri);
     payload["watchedAttributes"] = json!(["name", "subCategory"]);
     payload
 }
 
-fn geoq_subscription_payload(subscription_id: &str, endpoint_uri: &str, include_geoproperty: bool) -> Value {
-    let mut payload = base_subscription_payload(subscription_id, endpoint_uri);
+fn geoq_subscription_payload(scope: &TestEnvironment, subscription_id: &str, endpoint_uri: &str, include_geoproperty: bool) -> Value {
+    let mut payload = base_subscription_payload(scope, subscription_id, endpoint_uri);
     payload["geoQ"] = if include_geoproperty {
         json!({
             "georel": "near;maxDistance==2000",
@@ -186,11 +171,11 @@ fn geoq_subscription_payload(subscription_id: &str, endpoint_uri: &str, include_
     payload
 }
 
-fn unreachable_endpoint_subscription_payload(subscription_id: &str) -> Value {
-    base_subscription_payload(subscription_id, "http://unreachable.endpoint/notify")
+fn unreachable_endpoint_subscription_payload(scope: &TestEnvironment, subscription_id: &str) -> Value {
+    base_subscription_payload(scope, subscription_id, "http://unreachable.endpoint/notify")
 }
 
-fn building_and_bus_registration_payload(registration_id: &str) -> Value {
+fn building_and_bus_registration_payload(scope: &TestEnvironment, registration_id: &str) -> Value {
     json!({
         "id": registration_id,
         "type": "ContextSourceRegistration",
@@ -198,14 +183,14 @@ fn building_and_bus_registration_payload(registration_id: &str) -> Value {
             {
                 "entities": [
                     {
-                        "type": "Building"
+                        "type": scope.entity_type("Building")
                     }
                 ]
             },
             {
                 "entities": [
                     {
-                        "type": "Bus"
+                        "type": scope.entity_type("Bus")
                     }
                 ]
             }
@@ -215,7 +200,7 @@ fn building_and_bus_registration_payload(registration_id: &str) -> Value {
     })
 }
 
-fn detailed_building_registration_payload(registration_id: &str) -> Value {
+fn detailed_building_registration_payload(scope: &TestEnvironment, registration_id: &str) -> Value {
     json!({
         "id": registration_id,
         "type": "ContextSourceRegistration",
@@ -223,7 +208,7 @@ fn detailed_building_registration_payload(registration_id: &str) -> Value {
             {
                 "entities": [
                     {
-                        "type": "Building"
+                        "type": scope.entity_type("Building")
                     }
                 ],
                 "propertyNames": ["name", "subCategory"],
@@ -235,7 +220,7 @@ fn detailed_building_registration_payload(registration_id: &str) -> Value {
     })
 }
 
-fn location_registration_payload(registration_id: &str) -> Value {
+fn location_registration_payload(scope: &TestEnvironment, registration_id: &str) -> Value {
     json!({
         "id": registration_id,
         "type": "ContextSourceRegistration",
@@ -243,7 +228,7 @@ fn location_registration_payload(registration_id: &str) -> Value {
             {
                 "entities": [
                     {
-                        "type": "Building"
+                        "type": scope.entity_type("Building")
                     }
                 ]
             }
@@ -257,8 +242,8 @@ fn location_registration_payload(registration_id: &str) -> Value {
     })
 }
 
-fn observation_interval_registration_payload(registration_id: &str) -> Value {
-    let mut payload = base_registration_for_type(registration_id, "Building");
+fn observation_interval_registration_payload(scope: &TestEnvironment, registration_id: &str) -> Value {
+    let mut payload = base_registration_for_type(registration_id, &scope.entity_type("Building"));
     payload["observationInterval"] = json!({
         "startAt": "2020-08-01T22:07:00Z",
         "endAt": "2021-08-01T21:07:00Z"
@@ -266,8 +251,8 @@ fn observation_interval_registration_payload(registration_id: &str) -> Value {
     payload
 }
 
-fn management_interval_registration_payload(registration_id: &str) -> Value {
-    let mut payload = base_registration_for_type(registration_id, "Building");
+fn management_interval_registration_payload(scope: &TestEnvironment, registration_id: &str) -> Value {
+    let mut payload = base_registration_for_type(registration_id, &scope.entity_type("Building"));
     payload["managementInterval"] = json!({
         "startAt": "2020-08-01T22:07:00Z",
         "endAt": "2021-08-01T21:07:00Z"
@@ -299,13 +284,13 @@ fn registration_endpoint_update_fragment() -> Value {
     })
 }
 
-fn registration_information_new_type_fragment() -> Value {
+fn registration_information_new_type_fragment(scope: &TestEnvironment) -> Value {
     json!({
         "information": [
             {
                 "entities": [
                     {
-                        "type": "NewType"
+                        "type": scope.entity_type("NewType")
                     }
                 ]
             }
@@ -325,34 +310,34 @@ fn subscription_update_expires_at_past_fragment() -> Value {
     })
 }
 
-fn subscription_update_vehicle_entities_fragment() -> Value {
+fn subscription_update_vehicle_entities_fragment(scope: &TestEnvironment) -> Value {
     json!({
         "entities": [
             {
-                "type": "Vehicle"
+                "type": scope.entity_type("Vehicle")
             }
         ]
     })
 }
 
-fn subscription_update_bus_entities_fragment() -> Value {
+fn subscription_update_bus_entities_fragment(scope: &TestEnvironment) -> Value {
     json!({
         "entities": [
             {
-                "type": "Bus"
+                "type": scope.entity_type("Bus")
             }
         ]
     })
 }
 
-fn subscription_update_vehicle_and_bus_entities_fragment() -> Value {
+fn subscription_update_vehicle_and_bus_entities_fragment(scope: &TestEnvironment) -> Value {
     json!({
         "entities": [
             {
-                "type": "Vehicle"
+                "type": scope.entity_type("Vehicle")
             },
             {
-                "type": "Bus"
+                "type": scope.entity_type("Bus")
             }
         ]
     })
@@ -364,8 +349,11 @@ fn assert_iso_timestamp(value: &Value, field_name: &str) {
     assert!(parsed.is_ok(), "{field_name} should be a valid RFC3339 timestamp");
 }
 
-fn is_building_entity_type(entity_type: &str) -> bool {
-    entity_type == "Building" || entity_type.ends_with("#Building") || entity_type.ends_with("/Building") || entity_type.ends_with(":Building")
+/// Whether a notification's entity type is `expected`, the run-scoped type the
+/// registration was created with, in either its compact form or the IRI the
+/// broker expands it to (which ends in the same run-unique term).
+fn matches_entity_type(entity_type: &str, expected: &str) -> bool {
+    entity_type == expected || entity_type.ends_with(expected)
 }
 
 #[derive(Clone)]
@@ -393,6 +381,27 @@ impl NotificationReceiver {
         }
     }
 
+    /// Wait for the first notification whose `member` equals `value`, discarding
+    /// any that arrive before it. Several notifications reach one receiver in an
+    /// order the broker does not guarantee, so a test awaiting a specific
+    /// `triggerReason` must skip past the ones it is not asserting on rather than
+    /// assume the next arrival is the one it wants.
+    async fn wait_for_notification_matching(&self, member: &str, value: &str, timeout: Duration) -> CapturedNotification {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let request = self
+                .server
+                .next_request(remaining)
+                .await
+                .expect("a matching notification arrives before timeout");
+            let body: Value = request.json().expect("notification body is valid JSON");
+            if body[member] == Value::String(value.to_owned()) {
+                return CapturedNotification { body };
+            }
+        }
+    }
+
     async fn wait_for_no_notification(&self, duration: Duration) {
         let result = self.server.next_request(duration).await;
         assert!(matches!(result, Err(CallbackServerError::RequestTimeout(_))));
@@ -400,40 +409,39 @@ impl NotificationReceiver {
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_time_interval_subscription_sends_periodic_notification() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let registration_id = unique_registration_id("047-01-registration");
-    let registration = building_and_bus_registration_payload(&registration_id);
+    let registration_id = scope.id("Registration:047-01-registration");
+    let registration = building_and_bus_registration_payload(&scope, &registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
-    let subscription_id = unique_subscription_id("047-01-subscription");
-    let subscription = time_interval_subscription_payload(&subscription_id, &receiver.endpoint_url);
+    let subscription_id = scope.id("Subscription:047-01-subscription");
+    let subscription = time_interval_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(15)).await;
     pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_subscription_creation_and_registration_update_emit_trigger_reasons() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let registration_id = unique_registration_id("047-02-registration");
-    let registration = building_and_bus_registration_payload(&registration_id);
+    let registration_id = scope.id("Registration:047-02-registration");
+    let registration = building_and_bus_registration_payload(&scope, &registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
-    let subscription_id = unique_subscription_id("047-02-subscription");
-    let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
+    let subscription_id = scope.id("Subscription:047-02-subscription");
+    let subscription = base_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
@@ -445,25 +453,28 @@ async fn csr_notification_subscription_creation_and_registration_update_emit_tri
     let (update_status, _) = update_registration(&http_client, &registration_id, &update_fragment).await;
     pretty_assertions::assert_eq!(update_status, StatusCode::NO_CONTENT);
 
-    let second_notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
+    // Drain past the earlier `newlyMatching` to the update's own notification:
+    // both reach this receiver and their arrival order is not guaranteed.
+    let second_notification = receiver
+        .wait_for_notification_matching("triggerReason", "updated", Duration::from_secs(5))
+        .await;
     pretty_assertions::assert_eq!(second_notification.body["subscriptionId"], subscription_id);
-    pretty_assertions::assert_eq!(second_notification.body["triggerReason"], "updated");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_includes_only_matching_registration_information() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let subscription_id = unique_subscription_id("047-03-subscription");
-    let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
+    let subscription_id = scope.id("Subscription:047-03-subscription");
+    let subscription = base_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
-    let registration_id = unique_registration_id("047-03-registration");
-    let registration = building_and_bus_registration_payload(&registration_id);
+    let registration_id = scope.id("Registration:047-03-registration");
+    let registration = building_and_bus_registration_payload(&scope, &registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
@@ -476,29 +487,33 @@ async fn csr_notification_includes_only_matching_registration_information() {
     let information = data[0]["information"].as_array().expect("information should be an array");
     pretty_assertions::assert_eq!(information.len(), 1, "only matching Building information should be included");
 
+    let building_type = scope.entity_type("Building");
     for info_item in information {
         let entities = info_item["entities"].as_array().expect("entities should be an array");
         for entity in entities {
             let entity_type = entity["type"].as_str().expect("entity type should be a string");
-            assert!(is_building_entity_type(entity_type), "unexpected entity type in notification: {entity_type}");
+            assert!(
+                matches_entity_type(entity_type, &building_type),
+                "unexpected entity type in notification: {entity_type}"
+            );
         }
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_has_required_csource_notification_structure() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let subscription_id = unique_subscription_id("047-04-subscription");
-    let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
+    let subscription_id = scope.id("Subscription:047-04-subscription");
+    let subscription = base_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
-    let registration_id = unique_registration_id("047-04-registration");
-    let registration = building_and_bus_registration_payload(&registration_id);
+    let registration_id = scope.id("Registration:047-04-registration");
+    let registration = building_and_bus_registration_payload(&scope, &registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
@@ -508,22 +523,22 @@ async fn csr_notification_has_required_csource_notification_structure() {
     assert!(notification.body["triggerReason"].is_string(), "triggerReason should be present");
     let data = notification.body["data"].as_array().expect("data should be an array");
     assert!(!data.is_empty(), "data should not be empty");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_success_updates_metadata_status_ok() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let subscription_id = unique_subscription_id("047-05-subscription");
-    let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
+    let subscription_id = scope.id("Subscription:047-05-subscription");
+    let subscription = base_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
-    let registration_id = unique_registration_id("047-05-registration");
-    let registration = building_and_bus_registration_payload(&registration_id);
+    let registration_id = scope.id("Registration:047-05-registration");
+    let registration = building_and_bus_registration_payload(&scope, &registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
@@ -537,21 +552,21 @@ async fn csr_notification_success_updates_metadata_status_ok() {
     pretty_assertions::assert_eq!(body["notification"]["status"], "ok");
     assert_iso_timestamp(&body["notification"]["lastNotification"], "lastNotification");
     assert_iso_timestamp(&body["notification"]["lastSuccess"], "lastSuccess");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_failed_delivery_updates_metadata_status_failed() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
 
-    let subscription_id = unique_subscription_id("047-06-subscription");
-    let subscription = unreachable_endpoint_subscription_payload(&subscription_id);
+    let subscription_id = scope.id("Subscription:047-06-subscription");
+    let subscription = unreachable_endpoint_subscription_payload(&scope, &subscription_id);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
-    let registration_id = unique_registration_id("047-06-registration");
-    let registration = building_and_bus_registration_payload(&registration_id);
+    let registration_id = scope.id("Registration:047-06-registration");
+    let registration = building_and_bus_registration_payload(&scope, &registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
@@ -562,17 +577,17 @@ async fn csr_notification_failed_delivery_updates_metadata_status_failed() {
     pretty_assertions::assert_eq!(body["notification"]["status"], "failed");
     assert_iso_timestamp(&body["notification"]["lastFailure"], "lastFailure");
     assert_iso_timestamp(&body["notification"]["lastNotification"], "lastNotification");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_paused_subscription_does_not_emit_notifications() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let subscription_id = unique_subscription_id("047-07-paused-subscription");
-    let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
+    let subscription_id = scope.id("Subscription:047-07-paused-subscription");
+    let subscription = base_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
@@ -580,23 +595,23 @@ async fn csr_notification_paused_subscription_does_not_emit_notifications() {
     let (update_status, _) = update_csource_subscription(&http_client, &subscription_id, &pause_fragment).await;
     pretty_assertions::assert_eq!(update_status, StatusCode::NO_CONTENT);
 
-    let registration_id = unique_registration_id("047-07-paused-registration");
-    let registration = base_registration_for_type(&registration_id, "Building");
+    let registration_id = scope.id("Registration:047-07-paused-registration");
+    let registration = base_registration_for_type(&registration_id, &scope.entity_type("Building"));
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     receiver.wait_for_no_notification(Duration::from_secs(5)).await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_expired_subscription_does_not_emit_notifications() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let subscription_id = unique_subscription_id("047-07-expired-subscription");
-    let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
+    let subscription_id = scope.id("Subscription:047-07-expired-subscription");
+    let subscription = base_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
@@ -604,28 +619,43 @@ async fn csr_notification_expired_subscription_does_not_emit_notifications() {
     let (update_status, _) = update_csource_subscription(&http_client, &subscription_id, &expire_fragment).await;
     pretty_assertions::assert_eq!(update_status, StatusCode::NO_CONTENT);
 
-    let registration_id = unique_registration_id("047-07-expired-registration");
-    let registration = base_registration_for_type(&registration_id, "Building");
+    // The subscription's expiry is applied by the broker's sweep, not
+    // synchronously with the PATCH, so wait until it reports the subscription
+    // expired before creating the registration below -- otherwise the registration
+    // would match a still-active subscription and notify. The paused case above
+    // needs no such wait because `isActive` is honoured synchronously.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let (_, body) = retrieve_csource_subscription(&http_client, &subscription_id, None).await;
+        if body["status"] == "expired" {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the subscription did not become expired in time");
+        sleep(Duration::from_millis(200)).await;
+    }
+
+    let registration_id = scope.id("Registration:047-07-expired-registration");
+    let registration = base_registration_for_type(&registration_id, &scope.entity_type("Building"));
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     receiver.wait_for_no_notification(Duration::from_secs(5)).await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_matching_registration_update_emits_updated() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let registration_id = unique_registration_id("047-08-registration");
-    let registration = building_and_bus_registration_payload(&registration_id);
+    let registration_id = scope.id("Registration:047-08-registration");
+    let registration = building_and_bus_registration_payload(&scope, &registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
-    let subscription_id = unique_subscription_id("047-08-subscription");
-    let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
+    let subscription_id = scope.id("Subscription:047-08-subscription");
+    let subscription = base_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
@@ -636,216 +666,221 @@ async fn csr_notification_matching_registration_update_emits_updated() {
     let (update_status, _) = update_registration(&http_client, &registration_id, &registration_patch).await;
     pretty_assertions::assert_eq!(update_status, StatusCode::NO_CONTENT);
 
-    let second_notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
+    // Drain past the earlier `newlyMatching` to the update's own notification:
+    // both reach this receiver and their arrival order is not guaranteed.
+    let second_notification = receiver
+        .wait_for_notification_matching("triggerReason", "updated", Duration::from_secs(5))
+        .await;
     pretty_assertions::assert_eq!(second_notification.body["subscriptionId"], subscription_id);
-    pretty_assertions::assert_eq!(second_notification.body["triggerReason"], "updated");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_non_matching_registration_update_emits_no_longer_matching() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let registration_id = unique_registration_id("047-09-registration");
-    let registration = building_and_bus_registration_payload(&registration_id);
+    let registration_id = scope.id("Registration:047-09-registration");
+    let registration = building_and_bus_registration_payload(&scope, &registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
-    let subscription_id = unique_subscription_id("047-09-subscription");
-    let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
+    let subscription_id = scope.id("Subscription:047-09-subscription");
+    let subscription = base_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let _ = receiver.wait_for_notification(Duration::from_secs(5)).await;
 
-    let patch = registration_information_new_type_fragment();
+    let patch = registration_information_new_type_fragment(&scope);
     let (update_status, _) = update_registration(&http_client, &registration_id, &patch).await;
     pretty_assertions::assert_eq!(update_status, StatusCode::NO_CONTENT);
 
-    let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
+    // Drain past the earlier `newlyMatching` to the removal's own notification.
+    let notification = receiver
+        .wait_for_notification_matching("triggerReason", "noLongerMatching", Duration::from_secs(5))
+        .await;
     pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
-    pretty_assertions::assert_eq!(notification.body["triggerReason"], "noLongerMatching");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_temporal_observed_at_matches_observation_interval() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let subscription_id = unique_subscription_id("047-10-subscription");
-    let subscription = temporal_query_subscription_payload(&subscription_id, &receiver.endpoint_url, "observedAt");
+    let subscription_id = scope.id("Subscription:047-10-subscription");
+    let subscription = temporal_query_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url, "observedAt");
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
-    let registration_id = unique_registration_id("047-10-registration");
-    let registration = observation_interval_registration_payload(&registration_id);
+    let registration_id = scope.id("Registration:047-10-registration");
+    let registration = observation_interval_registration_payload(&scope, &registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
     pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_temporal_created_at_matches_management_interval() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let subscription_id = unique_subscription_id("047-11-created-subscription");
-    let subscription = temporal_query_subscription_payload(&subscription_id, &receiver.endpoint_url, "createdAt");
+    let subscription_id = scope.id("Subscription:047-11-created-subscription");
+    let subscription = temporal_query_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url, "createdAt");
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
-    let registration_id = unique_registration_id("047-11-created-registration");
-    let registration = management_interval_registration_payload(&registration_id);
+    let registration_id = scope.id("Registration:047-11-created-registration");
+    let registration = management_interval_registration_payload(&scope, &registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
     pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_temporal_modified_at_matches_management_interval() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let subscription_id = unique_subscription_id("047-11-modified-subscription");
-    let subscription = temporal_query_subscription_payload(&subscription_id, &receiver.endpoint_url, "modifiedAt");
+    let subscription_id = scope.id("Subscription:047-11-modified-subscription");
+    let subscription = temporal_query_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url, "modifiedAt");
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
-    let registration_id = unique_registration_id("047-11-modified-registration");
-    let registration = management_interval_registration_payload(&registration_id);
+    let registration_id = scope.id("Registration:047-11-modified-registration");
+    let registration = management_interval_registration_payload(&scope, &registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
     pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_watched_attributes_filter_matches_registration() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let subscription_id = unique_subscription_id("047-12-subscription");
-    let subscription = watched_attributes_subscription_payload(&subscription_id, &receiver.endpoint_url);
+    let subscription_id = scope.id("Subscription:047-12-subscription");
+    let subscription = watched_attributes_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
-    let registration_id = unique_registration_id("047-12-registration");
-    let registration = detailed_building_registration_payload(&registration_id);
+    let registration_id = scope.id("Registration:047-12-registration");
+    let registration = detailed_building_registration_payload(&scope, &registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
     pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_without_watched_attributes_matches_any_information() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let subscription_id = unique_subscription_id("047-13-subscription");
-    let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
+    let subscription_id = scope.id("Subscription:047-13-subscription");
+    let subscription = base_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
-    let registration_id = unique_registration_id("047-13-registration");
-    let registration = detailed_building_registration_payload(&registration_id);
+    let registration_id = scope.id("Registration:047-13-registration");
+    let registration = detailed_building_registration_payload(&scope, &registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
     pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_geoq_with_geoproperty_matches_location() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let subscription_id = unique_subscription_id("047-14-subscription");
-    let subscription = geoq_subscription_payload(&subscription_id, &receiver.endpoint_url, true);
+    let subscription_id = scope.id("Subscription:047-14-subscription");
+    let subscription = geoq_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url, true);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
-    let registration_id = unique_registration_id("047-14-registration");
-    let registration = location_registration_payload(&registration_id);
+    let registration_id = scope.id("Registration:047-14-registration");
+    let registration = location_registration_payload(&scope, &registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
     pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_geoq_without_geoproperty_defaults_to_location() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let subscription_id = unique_subscription_id("047-15-subscription");
-    let subscription = geoq_subscription_payload(&subscription_id, &receiver.endpoint_url, false);
+    let subscription_id = scope.id("Subscription:047-15-subscription");
+    let subscription = geoq_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url, false);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
-    let registration_id = unique_registration_id("047-15-registration");
-    let registration = location_registration_payload(&registration_id);
+    let registration_id = scope.id("Registration:047-15-registration");
+    let registration = location_registration_payload(&scope, &registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
     pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_subscription_update_to_vehicle_matches_vehicle_registration_only() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let vehicle_registration_id = unique_registration_id("047-16-vehicle-registration");
-    let vehicle_registration = base_registration_for_type(&vehicle_registration_id, "Vehicle");
+    let vehicle_registration_id = scope.id("Registration:047-16-vehicle-registration");
+    let vehicle_registration = base_registration_for_type(&vehicle_registration_id, &scope.entity_type("Vehicle"));
     let (vehicle_registration_status, _) = create_registration(&http_client, &vehicle_registration).await;
     pretty_assertions::assert_eq!(vehicle_registration_status, StatusCode::CREATED);
 
-    let bus_registration_id = unique_registration_id("047-16-bus-registration");
-    let bus_registration = base_registration_for_type(&bus_registration_id, "Bus");
+    let bus_registration_id = scope.id("Registration:047-16-bus-registration");
+    let bus_registration = base_registration_for_type(&bus_registration_id, &scope.entity_type("Bus"));
     let (bus_registration_status, _) = create_registration(&http_client, &bus_registration).await;
     pretty_assertions::assert_eq!(bus_registration_status, StatusCode::CREATED);
 
-    let subscription_id = unique_subscription_id("047-16-vehicle-subscription");
-    let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
+    let subscription_id = scope.id("Subscription:047-16-vehicle-subscription");
+    let subscription = base_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
-    let patch = subscription_update_vehicle_entities_fragment();
+    let patch = subscription_update_vehicle_entities_fragment(&scope);
     let (update_status, _) = update_csource_subscription(&http_client, &subscription_id, &patch).await;
     pretty_assertions::assert_eq!(update_status, StatusCode::NO_CONTENT);
 
@@ -855,31 +890,31 @@ async fn csr_notification_subscription_update_to_vehicle_matches_vehicle_registr
 
     let data = notification.body["data"].as_array().expect("data should be an array");
     pretty_assertions::assert_eq!(data.len(), 1);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_subscription_update_to_bus_matches_bus_registration_only() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let vehicle_registration_id = unique_registration_id("047-16-vehicle-registration-2");
-    let vehicle_registration = base_registration_for_type(&vehicle_registration_id, "Vehicle");
+    let vehicle_registration_id = scope.id("Registration:047-16-vehicle-registration-2");
+    let vehicle_registration = base_registration_for_type(&vehicle_registration_id, &scope.entity_type("Vehicle"));
     let (vehicle_registration_status, _) = create_registration(&http_client, &vehicle_registration).await;
     pretty_assertions::assert_eq!(vehicle_registration_status, StatusCode::CREATED);
 
-    let bus_registration_id = unique_registration_id("047-16-bus-registration-2");
-    let bus_registration = base_registration_for_type(&bus_registration_id, "Bus");
+    let bus_registration_id = scope.id("Registration:047-16-bus-registration-2");
+    let bus_registration = base_registration_for_type(&bus_registration_id, &scope.entity_type("Bus"));
     let (bus_registration_status, _) = create_registration(&http_client, &bus_registration).await;
     pretty_assertions::assert_eq!(bus_registration_status, StatusCode::CREATED);
 
-    let subscription_id = unique_subscription_id("047-16-bus-subscription");
-    let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
+    let subscription_id = scope.id("Subscription:047-16-bus-subscription");
+    let subscription = base_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
-    let patch = subscription_update_bus_entities_fragment();
+    let patch = subscription_update_bus_entities_fragment(&scope);
     let (update_status, _) = update_csource_subscription(&http_client, &subscription_id, &patch).await;
     pretty_assertions::assert_eq!(update_status, StatusCode::NO_CONTENT);
 
@@ -889,31 +924,31 @@ async fn csr_notification_subscription_update_to_bus_matches_bus_registration_on
 
     let data = notification.body["data"].as_array().expect("data should be an array");
     pretty_assertions::assert_eq!(data.len(), 1);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_subscription_update_to_vehicle_and_bus_matches_both_registrations() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let vehicle_registration_id = unique_registration_id("047-16-vehicle-registration-3");
-    let vehicle_registration = base_registration_for_type(&vehicle_registration_id, "Vehicle");
+    let vehicle_registration_id = scope.id("Registration:047-16-vehicle-registration-3");
+    let vehicle_registration = base_registration_for_type(&vehicle_registration_id, &scope.entity_type("Vehicle"));
     let (vehicle_registration_status, _) = create_registration(&http_client, &vehicle_registration).await;
     pretty_assertions::assert_eq!(vehicle_registration_status, StatusCode::CREATED);
 
-    let bus_registration_id = unique_registration_id("047-16-bus-registration-3");
-    let bus_registration = base_registration_for_type(&bus_registration_id, "Bus");
+    let bus_registration_id = scope.id("Registration:047-16-bus-registration-3");
+    let bus_registration = base_registration_for_type(&bus_registration_id, &scope.entity_type("Bus"));
     let (bus_registration_status, _) = create_registration(&http_client, &bus_registration).await;
     pretty_assertions::assert_eq!(bus_registration_status, StatusCode::CREATED);
 
-    let subscription_id = unique_subscription_id("047-16-vehicle-and-bus-subscription");
-    let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
+    let subscription_id = scope.id("Subscription:047-16-vehicle-and-bus-subscription");
+    let subscription = base_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
-    let patch = subscription_update_vehicle_and_bus_entities_fragment();
+    let patch = subscription_update_vehicle_and_bus_entities_fragment(&scope);
     let (update_status, _) = update_csource_subscription(&http_client, &subscription_id, &patch).await;
     pretty_assertions::assert_eq!(update_status, StatusCode::NO_CONTENT);
 
@@ -923,22 +958,22 @@ async fn csr_notification_subscription_update_to_vehicle_and_bus_matches_both_re
 
     let data = notification.body["data"].as_array().expect("data should be an array");
     pretty_assertions::assert_eq!(data.len(), 2);
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_metadata_times_sent_increments_after_multiple_successes() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
-    let registration_id = unique_registration_id("extra-metadata-registration");
-    let registration = building_and_bus_registration_payload(&registration_id);
+    let registration_id = scope.id("Registration:extra-metadata-registration");
+    let registration = building_and_bus_registration_payload(&scope, &registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
-    let subscription_id = unique_subscription_id("extra-metadata-subscription");
-    let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
+    let subscription_id = scope.id("Subscription:extra-metadata-subscription");
+    let subscription = base_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
     pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
@@ -957,17 +992,17 @@ async fn csr_notification_metadata_times_sent_increments_after_multiple_successe
     let times_sent = body["notification"]["timesSent"].as_i64().expect("timesSent should be an integer");
     assert!(times_sent >= 2, "timesSent should be >= 2 after two successful deliveries, got {times_sent}");
     assert_iso_timestamp(&body["notification"]["lastSuccess"], "lastSuccess");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn csr_notification_expires_at_in_future_results_in_active_status_before_deadline() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
     let http_client = client();
 
-    let subscription_id = unique_subscription_id("extra-expiration-status");
+    let subscription_id = scope.id("Subscription:extra-expiration-status");
     let endpoint = "http://127.0.0.1:8085/notify";
-    let mut subscription = base_subscription_payload(&subscription_id, endpoint);
+    let mut subscription = base_subscription_payload(&scope, &subscription_id, endpoint);
     let future_expiration = (Utc::now() + ChronoDuration::seconds(20)).to_rfc3339_opts(SecondsFormat::Secs, true);
     subscription["expiresAt"] = Value::String(future_expiration);
 
@@ -977,4 +1012,5 @@ async fn csr_notification_expires_at_in_future_results_in_active_status_before_d
     let (retrieve_status, body) = retrieve_csource_subscription(&http_client, &subscription_id, None).await;
     pretty_assertions::assert_eq!(retrieve_status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["status"], "active");
+    scope.finish().await.expect("cleanup failed");
 }

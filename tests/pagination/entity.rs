@@ -1,17 +1,16 @@
 //! Pagination Link header and `limit=0` tests for `GET /entities`.
 //!
 //! Naming convention: `pagination_entities_<scenario>_<expected_outcome>`. The
-//! entity collection is broker-wide, so every test runs under `#[serial(global)]`
+//! entity collection is tenant-wide, so every test runs under its own private tenant
 //! and wipes broker state on entry.
 
 use crate::cursor_walk::{assert_cursor_links, ids_of, joined_links, link_target, query_string_of};
 use andromeda_test_client::{entity::results_count, test_client::TestClient};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
-use andromeda_test_harness::serialized_environment::SerializedEnvironment;
+use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
-use serial_test::serial;
 
 fn building(id: &str) -> Value {
     json!({
@@ -22,8 +21,8 @@ fn building(id: &str) -> Value {
     })
 }
 
-async fn make_scope() -> (SerializedEnvironment, TestClient) {
-    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+async fn make_scope() -> (TenantScopedEnvironment, TestClient) {
+    let scope = TenantScopedEnvironment::from_suite("pagination").await.expect("tenant-scoped test environment");
     let client = scope.client().clone();
     (scope, client)
 }
@@ -80,7 +79,6 @@ async fn walk_forward(client: &TestClient, start_query: &str) -> Vec<String> {
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_full_page_returns_next_with_the_reflected_type() {
     // Clause 6.3.10 / 4.12: a full page (results == limit) offers a `next` link,
     // and clause 6.3.10 requires its `type` to equal the negotiated media type.
@@ -93,11 +91,10 @@ async fn pagination_entities_full_page_returns_next_with_the_reflected_type() {
     assert!(link.contains("rel=\"next\""), "{link}");
     assert!(!link.contains("rel=\"prev\""), "{link}");
     assert!(link.contains("type=\"application/ld+json\""), "{link}");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_reflects_plain_json_media_type() {
     // The reflected `type` follows the request: a plain JSON query gets
     // application/json on its pagination link.
@@ -109,11 +106,10 @@ async fn pagination_entities_reflects_plain_json_media_type() {
     let link = pagination_link(&headers).expect("pagination Link header present");
     assert!(link.contains("type=\"application/json\""), "{link}");
     assert!(!link.contains("ld+json"), "{link}");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_second_page_returns_prev() {
     // The second page, offset past the first, offers a `prev` link back.
     let (scope, client) = make_scope().await;
@@ -124,11 +120,10 @@ async fn pagination_entities_second_page_returns_prev() {
     let link = pagination_link(&headers).expect("pagination Link header present");
     assert!(link.contains("rel=\"prev\""), "{link}");
     assert!(!link.contains("rel=\"next\""), "{link}");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_last_short_page_has_no_pagination_links() {
     // A single page holding every result offers neither `prev` nor `next`.
     let (scope, client) = make_scope().await;
@@ -137,11 +132,10 @@ async fn pagination_entities_last_short_page_has_no_pagination_links() {
     let (status, headers) = query(&client, "type=Building&limit=10&offset=0", "application/ld+json").await;
     assert_eq!(status, StatusCode::OK);
     assert!(pagination_link(&headers).is_none(), "no pagination links on a single full result set");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_default_first_page_offers_opaque_cursor_pointers() {
     // Clause 5.5.9.1: a locally-scoped, default-order query with no offset walks
     // by opaque cursor. The first page offers first/next/last carrying a
@@ -158,11 +152,10 @@ async fn pagination_entities_default_first_page_offers_opaque_cursor_pointers() 
     assert!(!links.contains("rel=\"prev\""), "the first page has no prev: {links}");
     assert!(links.contains("cursor="), "the pointers carry an opaque cursor: {links}");
     assert!(!links.contains("offset="), "a cursor page never carries offset: {links}");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_following_next_walks_every_entity_exactly_once() {
     // Clause 5.5.9.1: following `rel="next"` to exhaustion returns every entity
     // exactly once, and the last page has a `prev` but no `next`.
@@ -192,11 +185,10 @@ async fn pagination_entities_following_next_walks_every_entity_exactly_once() {
     seen.sort();
     seen.dedup();
     assert_eq!(seen.len(), 5, "every entity is returned exactly once across the walk");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_explicit_order_by_falls_back_to_offset_pointers() {
     // An explicit non-id `orderBy` is not the default order, so the keyset
     // cursor is not offered and the clause 5.5.9.2 offset pointers stand.
@@ -209,11 +201,10 @@ async fn pagination_entities_explicit_order_by_falls_back_to_offset_pointers() {
     assert!(links.contains("rel=\"next\""), "{links}");
     assert!(links.contains("offset="), "an explicit orderBy keeps offset pointers: {links}");
     assert!(!links.contains("cursor="), "no cursor is offered for a non-default order: {links}");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_malformed_cursor_is_bad_request() {
     // Clause 5.5.9.1: the cursor is opaque and broker-emitted, so a corrupt one
     // is a BadRequestData rather than a position.
@@ -222,11 +213,10 @@ async fn pagination_entities_malformed_cursor_is_bad_request() {
 
     let (status, _headers) = query(&client, "type=Building&local=true&cursor=zzzz", "application/ld+json").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_cursor_with_offset_is_bad_request() {
     // Clause 5.5.9: a keyset cursor (5.5.9.1) and an offset (5.5.9.2) cannot both
     // govern one page.
@@ -235,11 +225,10 @@ async fn pagination_entities_cursor_with_offset_is_bad_request() {
 
     let (status, _headers) = query(&client, "type=Building&local=true&cursor=zzzz&offset=0", "application/ld+json").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_limit_zero_without_count_is_bad_request() {
     // Clause 6.3.10 Table 6.3.10-1: `limit=0` alone is invalid.
     let (scope, client) = make_scope().await;
@@ -247,11 +236,10 @@ async fn pagination_entities_limit_zero_without_count_is_bad_request() {
 
     let (status, _headers) = query(&client, "type=Building&limit=0", "application/ld+json").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_limit_zero_with_count_returns_the_count() {
     // Clause 6.3.10 Table 6.3.10-1: `limit=0&count=true` returns the matching
     // count and no entity data.
@@ -266,7 +254,7 @@ async fn pagination_entities_limit_zero_with_count_returns_the_count() {
     assert_eq!(results_count(&response.headers), Some(3), "the count header reports every matching entity");
     let body = response.json_value().expect("entity query response must be valid JSON");
     assert_eq!(body.as_array().map(Vec::len), Some(0), "limit=0 returns no entity data");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Create one building under an explicit id (for tests that control ordering).
@@ -295,7 +283,6 @@ fn stable_id(tag: &str, index: u32) -> String {
 /// Clause 5.5.9.1: following `rel="prev"` from a mid-collection page returns to
 /// the same items the previous page held (forward/backward round-trip).
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_following_prev_returns_to_the_same_page() {
     let (scope, client) = make_scope().await;
     for index in 0..6 {
@@ -311,7 +298,7 @@ async fn pagination_entities_following_prev_returns_to_the_same_page() {
     let prev = link_target(&headers2, "prev").expect("a mid-collection page has a prev");
     let (back, _) = query_page(&client, query_string_of(&prev)).await;
     assert_eq!(back, page1, "following prev returns to the same items");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Clause 5.5.9.1: `rel="prev"` disappears once a backward fetch comes back
@@ -323,7 +310,6 @@ async fn pagination_entities_following_prev_returns_to_the_same_page() {
 /// *full* still offers a `prev` (it cannot know it is the boundary without a
 /// count), so the short page is what pins the disappearance.
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_prev_disappears_at_the_first_page() {
     let (scope, client) = make_scope().await;
     for index in 0..5 {
@@ -344,13 +330,12 @@ async fn pagination_entities_prev_disappears_at_the_first_page() {
         link_target(&first_headers, "prev").is_none(),
         "a short backward page is the first page, offering no further prev"
     );
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// The Andromeda `rel="last"` cursor jumps to the final page (the last `limit`
 /// items), reachable without a count query.
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_last_jumps_to_the_final_page() {
     let (scope, client) = make_scope().await;
     for index in 0..5 {
@@ -366,14 +351,13 @@ async fn pagination_entities_last_jumps_to_the_final_page() {
         "the final page holds the greatest id: {final_page:?}"
     );
     assert!(link_target(&final_headers, "next").is_none(), "the final page offers no next");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Stability: an entity inserted with a higher id mid-walk appears on a later
 /// page rather than being skipped, which offset paging over a growing
 /// collection could not guarantee.
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_an_insert_mid_walk_appears_in_the_walk() {
     let (scope, client) = make_scope().await;
     for index in 0..4 {
@@ -393,7 +377,7 @@ async fn pagination_entities_an_insert_mid_walk_appears_in_the_walk() {
         seen.contains(&"urn:ngsi-ld:Building:ins:9999".to_string()),
         "the inserted higher id appears: {seen:?}"
     );
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Stability: deleting an already-passed id mid-walk does not skip or duplicate
@@ -401,7 +385,6 @@ async fn pagination_entities_an_insert_mid_walk_appears_in_the_walk() {
 /// shifted offset. The contrast is an offset walk, which would skip an entity
 /// when a preceding one is deleted.
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_a_delete_mid_walk_does_not_skip_neighbours() {
     let (scope, client) = make_scope().await;
     for index in 0..6 {
@@ -419,13 +402,12 @@ async fn pagination_entities_a_delete_mid_walk_does_not_skip_neighbours() {
         vec![stable_id("del", 2), stable_id("del", 3)],
         "the next page still starts after the last id seen, skipping nothing: {page2:?}"
     );
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// The full forward walk over a stable collection returns every entity exactly
 /// once, in ascending id order.
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_full_walk_returns_every_entity_in_order() {
     let (scope, client) = make_scope().await;
     for index in 0..7 {
@@ -435,13 +417,12 @@ async fn pagination_entities_full_walk_returns_every_entity_in_order() {
     let seen = walk_forward(&client, "type=Building&local=true&limit=2").await;
     let expected: Vec<String> = (0..7).map(|index| stable_id("full", index)).collect();
     assert_eq!(seen, expected, "the walk returns every entity once, ascending");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Cursor mode still honours an explicit `count`: the `NGSILD-Results-Count`
 /// header reports the whole collection, not the page.
 #[tokio::test]
-#[serial(global)]
 async fn pagination_entities_cursor_mode_still_reports_the_count() {
     let (scope, client) = make_scope().await;
     for index in 0..5 {
@@ -459,5 +440,5 @@ async fn pagination_entities_cursor_mode_still_reports_the_count() {
         "count reports the whole collection under cursor mode"
     );
     assert_cursor_links(&response.headers);
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }

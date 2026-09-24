@@ -2,14 +2,11 @@
 //! CSR query tests (NGSI-LD 5.10.2, 5.5.9)
 
 use reqwest::StatusCode;
-use serial_test::serial;
 
 use crate::{
     BAD_REQUEST_DATA_TYPE,
     REGISTERED_VEHICLE_ID,
     UNREGISTERED_VEHICLE_ID,
-    clean_database,
-    client,
     create_registration,
     csr_basic_jsonld,
     csr_detailed_information,
@@ -34,6 +31,8 @@ use crate::{
     strip_ignored_keys,
     unique_id,
 };
+use andromeda_test_client::test_client::TestClient;
+use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use serde_json::Value;
 
 const TEST_SUITE_CONTEXT_URL: &str =
@@ -50,7 +49,7 @@ const TEST_SUITE_CONTEXT_URL: &str =
 const WITHIN_REGISTERED_INTERVAL: &str = "2021-08-01T20:00:00Z";
 
 /// Query helper with Link header context for test suite context.
-async fn query_with_context(client: &reqwest::Client, qs: &str) -> (StatusCode, Value) {
+async fn query_with_context(client: &TestClient, qs: &str) -> (StatusCode, Value) {
     query_registrations(client, qs, Some("application/ld+json"), Some(TEST_SUITE_CONTEXT_URL)).await
 }
 
@@ -60,10 +59,10 @@ async fn query_with_context(client: &reqwest::Client, qs: &str) -> (StatusCode, 
 
 /// Query by type=Building -- returns matching registrations (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_by_entity_type_returns_matching() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id1 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-type-a");
     let id2 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-type-b");
 
@@ -83,14 +82,15 @@ async fn query_by_entity_type_returns_matching() {
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Query by attrs=name -- returns matching registrations (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_by_attribute_name_returns_matching() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id1 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-attr-a");
     let id2 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-attr-b");
 
@@ -110,6 +110,7 @@ async fn query_by_attribute_name_returns_matching() {
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -118,13 +119,14 @@ async fn query_by_attribute_name_returns_matching() {
 
 /// Query with no type or attrs -- 400 (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_without_type_or_attrs_returns_400() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let (status, body) = query_with_context(&c, "").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -133,46 +135,50 @@ async fn query_without_type_or_attrs_returns_400() {
 
 /// Query with invalid id parameter -- 400 (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_invalid_id_returns_400() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let (status, body) = query_with_context(&c, "id=invalidUri").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Query with invalid q expression -- 400 (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_invalid_q_returns_400() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let (status, body) = query_with_context(&c, "q=(invalidQuery").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Query with invalid georel (missing geometry/coordinates) -- 400 (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_invalid_geoquery_returns_400() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let (status, body) = query_with_context(&c, "georel=within").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Query with invalid timerel (missing timeAt) -- 400 (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_invalid_temporal_query_returns_400() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let (status, body) = query_with_context(&c, "timerel=before").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -181,10 +187,10 @@ async fn query_invalid_temporal_query_returns_400() {
 
 /// Query with FQ type URI, no Link context -- 200 (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_fully_qualified_type_without_context_returns_200() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-fq");
     let reg = csr_detailed_information(&id);
 
@@ -200,6 +206,7 @@ async fn query_fully_qualified_type_without_context_returns_200() {
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -209,10 +216,10 @@ async fn query_fully_qualified_type_without_context_returns_200() {
 /// Query with type+idPattern matching `EntityInfo` -- 200, trimmed to the
 /// matching `RegistrationInfo` (5.10.2, 5.10.2.5).
 #[tokio::test]
-#[serial]
 async fn query_entity_info_with_type_and_id_pattern_returns_matching() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-entity-info");
     let reg = csr_basic_jsonld(&id);
 
@@ -228,14 +235,15 @@ async fn query_entity_info_with_type_and_id_pattern_returns_matching() {
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Registration without `EntityInfo` matched by type+idPattern -- 200 (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_registration_without_entity_info_returns_matching() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-no-entity-info");
     let reg = csr_only_properties(&id);
 
@@ -251,6 +259,7 @@ async fn query_registration_without_entity_info_returns_matching() {
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -259,10 +268,10 @@ async fn query_registration_without_entity_info_returns_matching() {
 
 /// Query with type+attrs -- returns matching (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_by_type_and_attrs_returns_matching() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-attrs");
     let reg = csr_detailed_information(&id);
 
@@ -277,14 +286,15 @@ async fn query_by_type_and_attrs_returns_matching() {
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Query with type only (no attrs) -- returns matching (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_by_type_without_attrs_returns_matching() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-type-only");
     let reg = csr_detailed_information(&id);
 
@@ -299,6 +309,7 @@ async fn query_by_type_without_attrs_returns_matching() {
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -307,10 +318,10 @@ async fn query_by_type_without_attrs_returns_matching() {
 
 /// Geoquery near point -- returns matching (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_geoquery_near_point_returns_matching() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-geo-near");
     let reg = csr_with_location(&id);
 
@@ -330,14 +341,15 @@ async fn query_geoquery_near_point_returns_matching() {
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Geoquery within polygon -- returns matching (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_geoquery_within_polygon_returns_matching() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-geo-polygon");
     let reg = csr_with_location(&id);
 
@@ -356,6 +368,7 @@ async fn query_geoquery_within_polygon_returns_matching() {
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -364,10 +377,10 @@ async fn query_geoquery_within_polygon_returns_matching() {
 
 /// Query with type=Vehicle, no temporal filter -- returns matching (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_without_temporal_query_returns_matching() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-no-temporal");
     let reg = csr_basic_jsonld(&id);
 
@@ -382,6 +395,7 @@ async fn query_without_temporal_query_returns_matching() {
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -390,10 +404,10 @@ async fn query_without_temporal_query_returns_matching() {
 
 /// observationInterval with observedAt timeproperty -- returns matching (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_observation_interval_with_observed_at_returns_matching() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-obs-at");
     let reg = csr_with_observation_interval(&id);
 
@@ -412,14 +426,15 @@ async fn query_observation_interval_with_observed_at_returns_matching() {
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// observationInterval without explicit timeproperty (defaults to observedAt) -- returns matching (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_observation_interval_without_timeproperty_returns_matching() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-obs-default");
     let reg = csr_with_observation_interval(&id);
 
@@ -435,14 +450,15 @@ async fn query_observation_interval_without_timeproperty_returns_matching() {
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// managementInterval with createdAt timeproperty -- returns matching (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_management_interval_with_created_at_returns_matching() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-mgmt-created");
     let reg = csr_with_management_interval(&id);
 
@@ -461,14 +477,15 @@ async fn query_management_interval_with_created_at_returns_matching() {
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// managementInterval with modifiedAt timeproperty -- returns matching (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_management_interval_with_modified_at_returns_matching() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-mgmt-modified");
     let reg = csr_with_management_interval(&id);
 
@@ -487,6 +504,7 @@ async fn query_management_interval_with_modified_at_returns_matching() {
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -501,10 +519,10 @@ async fn query_management_interval_with_modified_at_returns_matching() {
 /// Entity identifiers, without further specifying restrictions on the entities'
 /// types or attributes", so the entity id is paired with a type selector.
 #[tokio::test]
-#[serial]
 async fn query_by_entity_ids_returns_matching_subset() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id1 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-ids-a");
     let id2 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-ids-b");
     let id3 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-ids-c");
@@ -541,14 +559,15 @@ async fn query_by_entity_ids_returns_matching_subset() {
         strip_ignored_keys(v, ignored);
     }
     pretty_assertions::assert_eq!(expected_arr, actual_arr);
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Query with q condition filtering by csourceProperty -- returns matching (5.10.2).
 #[tokio::test]
-#[serial]
 async fn query_by_q_condition_returns_matching() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id1 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-q-a");
     let id2 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-q-b");
     let id3 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-q-c");
@@ -572,6 +591,7 @@ async fn query_by_q_condition_returns_matching() {
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -580,10 +600,10 @@ async fn query_by_q_condition_returns_matching() {
 
 /// Pagination: limit=1, offset=1 -- returns second result (5.10.2, 5.5.9).
 #[tokio::test]
-#[serial]
 async fn query_pagination_limit_1_offset_1_returns_one_result() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id1 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-page-a");
     let id2 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-page-b");
     let id3 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-page-c");
@@ -603,14 +623,15 @@ async fn query_pagination_limit_1_offset_1_returns_one_result() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     let arr = body.as_array().expect("response should be an array");
     pretty_assertions::assert_eq!(arr.len(), 1, "should return 1 registration");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Pagination: limit=1, offset=0 -- returns first result (5.10.2, 5.5.9).
 #[tokio::test]
-#[serial]
 async fn query_pagination_limit_1_offset_0_returns_one_result() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id1 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-page-first-a");
     let id2 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-page-first-b");
     let id3 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-page-first-c");
@@ -630,14 +651,15 @@ async fn query_pagination_limit_1_offset_0_returns_one_result() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     let arr = body.as_array().expect("response should be an array");
     pretty_assertions::assert_eq!(arr.len(), 1, "should return 1 registration");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Pagination: limit=15, offset=0 -- returns all matching (only Building types) (5.10.2, 5.5.9).
 #[tokio::test]
-#[serial]
 async fn query_pagination_returns_all_matching_within_limit() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
     let id1 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-page-all-a");
     let id2 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-page-all-b");
     let id3 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-page-all-c");
@@ -657,4 +679,5 @@ async fn query_pagination_returns_all_matching_within_limit() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     let arr = body.as_array().expect("response should be an array");
     pretty_assertions::assert_eq!(arr.len(), 2, "should return 2 registrations (only Building type matches)");
+    scope.finish().await.expect("cleanup failed");
 }

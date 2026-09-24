@@ -4,11 +4,10 @@
 
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::CORE_CONTEXT;
-use andromeda_test_harness::serialized_environment::SerializedEnvironment;
+use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use pretty_assertions::{assert_eq, assert_ne};
 use reqwest::{StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
-use serial_test::serial;
 
 fn default_subscription(id: &str) -> Value {
     json!({
@@ -34,8 +33,8 @@ fn default_registration(id: &str) -> Value {
     })
 }
 
-async fn make_scope() -> (SerializedEnvironment, TestClient) {
-    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+async fn make_scope() -> (TenantScopedEnvironment, TestClient) {
+    let scope = TenantScopedEnvironment::from_suite("pagination").await.expect("tenant-scoped test environment");
     let client = scope.client().clone();
     (scope, client)
 }
@@ -140,7 +139,6 @@ fn extract_url(segment: &str) -> &str {
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_subscriptions_middle_page_returns_prev_and_next_in_single_link_header() {
     let (scope, client) = make_scope().await;
     create_subscriptions(&client, 3, "mid").await;
@@ -152,11 +150,10 @@ async fn pagination_subscriptions_middle_page_returns_prev_and_next_in_single_li
     assert!(pagination.contains("rel=\"next\""));
     assert!(pagination.contains("offset=0"));
     assert!(pagination.contains("offset=2"));
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_subscriptions_first_page_has_last_next_without_first_or_prev() {
     let (scope, client) = make_scope().await;
     create_subscriptions(&client, 3, "first").await;
@@ -170,11 +167,10 @@ async fn pagination_subscriptions_first_page_has_last_next_without_first_or_prev
     assert!(pagination.contains("rel=\"last\""));
     assert!(pagination.contains("rel=\"next\""));
     assert!(!pagination.contains("rel=\"prev\""));
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_subscriptions_last_page_has_first_prev_without_last_or_next() {
     let (scope, client) = make_scope().await;
     create_subscriptions(&client, 3, "last").await;
@@ -188,11 +184,10 @@ async fn pagination_subscriptions_last_page_has_first_prev_without_last_or_next(
     assert!(!pagination.contains("rel=\"last\""));
     assert!(pagination.contains("rel=\"prev\""));
     assert!(!pagination.contains("rel=\"next\""));
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_subscriptions_single_page_has_no_pagination_link() {
     let (scope, client) = make_scope().await;
     create_subscriptions(&client, 3, "single").await;
@@ -203,11 +198,10 @@ async fn pagination_subscriptions_single_page_has_no_pagination_link() {
     let (status, headers, _) = query_subscriptions(&client, "limit=10&offset=0", "application/ld+json").await;
     assert_eq!(status, StatusCode::OK);
     assert!(find_pagination_link_header(&headers).is_none(), "single page emits no pagination Link header");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_subscriptions_context_and_pagination_are_separate_link_headers() {
     let (scope, client) = make_scope().await;
     create_subscriptions(&client, 3, "sep").await;
@@ -223,11 +217,10 @@ async fn pagination_subscriptions_context_and_pagination_are_separate_link_heade
     assert!(context.is_some());
     assert!(pagination.is_some());
     assert_ne!(context, pagination);
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_subscriptions_pagination_links_include_json_ld_media_type() {
     let (scope, client) = make_scope().await;
     create_subscriptions(&client, 3, "mt").await;
@@ -236,11 +229,10 @@ async fn pagination_subscriptions_pagination_links_include_json_ld_media_type() 
     assert_eq!(status, StatusCode::OK);
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     assert!(pagination.contains("type=\"application/ld+json\""));
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_registrations_middle_page_returns_first_last_prev_next() {
     let (scope, client) = make_scope().await;
     create_registrations(&client, 5, "full-mid").await;
@@ -251,11 +243,10 @@ async fn pagination_registrations_middle_page_returns_first_last_prev_next() {
     for rel in ["first", "last", "prev", "next"] {
         assert!(pagination.contains(&format!("rel=\"{rel}\"")), "should have {rel}: {pagination}");
     }
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_registrations_first_page_has_last_next_without_first_or_prev() {
     let (scope, client) = make_scope().await;
     create_registrations(&client, 5, "full-first").await;
@@ -269,11 +260,10 @@ async fn pagination_registrations_first_page_has_last_next_without_first_or_prev
     assert!(pagination.contains("rel=\"last\""));
     assert!(pagination.contains("rel=\"next\""));
     assert!(!pagination.contains("rel=\"prev\""));
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_registrations_last_page_has_first_prev_without_last_or_next() {
     let (scope, client) = make_scope().await;
     create_registrations(&client, 5, "full-last").await;
@@ -287,11 +277,10 @@ async fn pagination_registrations_last_page_has_first_prev_without_last_or_next(
     assert!(!pagination.contains("rel=\"last\""));
     assert!(pagination.contains("rel=\"prev\""));
     assert!(!pagination.contains("rel=\"next\""));
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_registrations_first_link_points_to_offset_zero() {
     let (scope, client) = make_scope().await;
     create_registrations(&client, 5, "first-off").await;
@@ -302,11 +291,10 @@ async fn pagination_registrations_first_link_points_to_offset_zero() {
     let first_segment = extract_link_segment(&pagination, "first").expect("first segment missing");
     let first_url = extract_url(first_segment);
     assert!(first_url.contains("offset=0"), "first link should have offset=0: {first_url}");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_registrations_last_link_points_to_correct_offset() {
     let (scope, client) = make_scope().await;
     create_registrations(&client, 5, "last-off").await;
@@ -317,11 +305,10 @@ async fn pagination_registrations_last_link_points_to_correct_offset() {
     let last_segment = extract_link_segment(&pagination, "last").expect("last segment missing");
     let last_url = extract_url(last_segment);
     assert!(last_url.contains("offset=4"), "last link should have offset=4: {last_url}");
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_registrations_link_type_reflects_the_request_media_type() {
     // Clause 6.3.10: a pagination link carries a mandatory `type` equal to the
     // negotiated response media type, so an `application/ld+json` request gets it
@@ -336,11 +323,10 @@ async fn pagination_registrations_link_type_reflects_the_request_media_type() {
         pagination.contains("type=\"application/ld+json\""),
         "registration pagination reflects the request media type: {pagination}"
     );
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_link_header_urls_preserve_non_pagination_query_params() {
     let (scope, client) = make_scope().await;
     create_subscriptions(&client, 3, "preserve").await;
@@ -349,11 +335,10 @@ async fn pagination_link_header_urls_preserve_non_pagination_query_params() {
     assert_eq!(status, StatusCode::OK);
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     assert!(pagination.contains("limit="));
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial(global)]
 async fn pagination_each_link_value_is_parseable_rfc8288() {
     let (scope, client) = make_scope().await;
     create_subscriptions(&client, 3, "rfc").await;
@@ -366,5 +351,5 @@ async fn pagination_each_link_value_is_parseable_rfc8288() {
         assert!(trimmed.starts_with('<'), "link-value should start with '<': {trimmed}");
         assert!(trimmed.contains("rel="), "link-value should have rel=: {trimmed}");
     }
-    scope.reset_and_finish().await.expect("post-test reset failed");
+    scope.finish().await.expect("cleanup failed");
 }
