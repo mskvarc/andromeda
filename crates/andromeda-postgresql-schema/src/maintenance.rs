@@ -13,7 +13,7 @@ pub enum PostgresqlMaintenanceTenants {
     LastInspectedAt,
     /// Consecutive database-reachability failures.
     ConsecutiveFailures,
-    /// Stable last-pass outcome label.
+    /// Last-pass outcome (`MaintenanceInspectionResultCode`).
     LastResult,
 }
 
@@ -24,7 +24,7 @@ pub enum PostgresqlMaintenanceTargets {
     Table,
     /// Foreign key to the platform tenant registry.
     TenantId,
-    /// Closed-set relation key.
+    /// Closed-set relation (`MaintenanceTargetCode`).
     Target,
     /// Most recent cheap or detailed sample instant.
     LastSampledAt,
@@ -36,7 +36,7 @@ pub enum PostgresqlMaintenanceTargets {
     LastDegradedPercent,
     /// Profile threshold compared by the most recent sample.
     LastThresholdPercent,
-    /// Stable policy decision for the most recent evaluation.
+    /// Policy decision for the most recent evaluation (`MaintenanceDecisionCode`).
     LastDecision,
     /// Consecutive samples meeting every degradation threshold.
     ConsecutiveBreaches,
@@ -48,7 +48,7 @@ pub enum PostgresqlMaintenanceTargets {
     ConsecutiveFailures,
     /// Most recent action attempt instant.
     LastActionAt,
-    /// Stable most recent action result label.
+    /// Most recent action result (`MaintenanceActionResultCode`).
     LastActionResult,
     /// Physical bytes immediately before the last successful action.
     LastBeforeBytes,

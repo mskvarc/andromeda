@@ -24,8 +24,6 @@ pub mod current_attribute_values;
 pub mod entity;
 /// Entity Map persistence (clauses 5.2.39 and 5.5.14).
 pub mod entity_map;
-/// The contract between a domain enum and the PostgreSQL enum it is stored as.
-pub mod enum_labels;
 /// Error types for the context store crate.
 pub mod error;
 /// The platform route from minted subscription identifiers to tenants (clause 5.8.1.4).
@@ -36,6 +34,8 @@ pub mod health;
 pub mod jsonld_context;
 /// PostgreSQL maintenance configuration owned beside the database connection settings.
 pub mod maintenance_config;
+/// The three embedded migration sets and the ledger each is recorded in.
+pub mod migration_set;
 /// Persistence layer for the notification delivery queue.
 pub mod notification_delivery;
 /// Durable side-effect queue for opt-in async batch processing.
@@ -54,8 +54,10 @@ pub mod subscription;
 pub mod subscription_forwarding;
 /// Shared subscription persistence layer.
 pub mod subscription_store;
-/// Reaching, creating and migrating a tenant's database.
+/// Reaching and creating a tenant's database.
 pub mod tenant_database;
+/// Migrating a tenant's database to the schema this binary embeds.
+pub mod tenant_migration;
 /// The `tenants` table, behind the tenancy crate's registry port.
 pub mod tenant_registry;
 /// Per-tenant operational usage, behind the tenancy crate's usage-probe port.

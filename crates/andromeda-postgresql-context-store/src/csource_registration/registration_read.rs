@@ -2,7 +2,7 @@
 
 use crate::csource_registration::{
     mapper::row_to_csr,
-    registration_statements::{csr_base_select, proxied_mode},
+    registration_statements::proxied_mode,
     registration_store::{PostgresRegistrationStore, persistence_error, registration_count},
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -12,14 +12,37 @@ use andromeda_postgresql_context_query::csr::{
     coverage::{entity_id_coverage, entity_type_coverage},
     expiry_predicate::not_expired,
     projection::attribute_name_candidate,
+    registration_select::registration_select,
     statement as csr_sql,
 };
 use andromeda_postgresql_schema::csr::Csr;
 use andromeda_postgresql_seaquery::aggregate::count_all;
 use andromeda_registration::{error::RegistrationError, store::page::RegistrationPage};
+use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
-use sea_query::{Expr as SeaExpr, ExprTrait, Order, PostgresQueryBuilder, Query};
+use sea_query::{Expr as SeaExpr, ExprTrait, Order, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
+
+/// Every registration due at or before `cutoff`, in identifier order, with the
+/// shared projection: what the expiry sweep reads and then deletes.
+pub(super) fn expired_select(cutoff: DateTime<Utc>) -> SelectStatement {
+    let mut select = registration_select();
+    select
+        .and_where(SeaExpr::col((Csr::Table, Csr::ExpiresAt)).is_not_null())
+        .and_where(SeaExpr::col((Csr::Table, Csr::ExpiresAt)).lte(cutoff))
+        .order_by((Csr::Table, Csr::Id), Order::Asc);
+    select
+}
+
+/// The registrations due at or before `cutoff`, read without deleting them.
+pub(super) async fn find_expired(store: &PostgresRegistrationStore, cutoff: DateTime<Utc>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+    let (sql, values) = expired_select(cutoff).build_sqlx(PostgresQueryBuilder);
+    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .fetch_all(&store.pool)
+        .await
+        .map_err(persistence_error)?;
+    rows.iter().map(|row| row_to_csr(row).map_err(persistence_error)).collect()
+}
 
 /// Whether a registration with `id` exists.
 pub(super) async fn exists(store: &PostgresRegistrationStore, id: &Uri) -> Result<bool, RegistrationError> {
@@ -39,7 +62,7 @@ pub(super) async fn exists(store: &PostgresRegistrationStore, id: &Uri) -> Resul
 
 /// Read one registration by identifier.
 pub(super) async fn get(store: &PostgresRegistrationStore, id: &Uri) -> Result<Option<ContextSourceRegistration>, RegistrationError> {
-    let mut select = csr_base_select();
+    let mut select = registration_select();
     // Clause 5.9.2.4: an expired registration reads as deleted even before
     // the expiry sweep removes its row.
     select.cond_where(not_expired());
@@ -63,7 +86,7 @@ pub(super) async fn list(store: &PostgresRegistrationStore, pagination: Paginati
         .fetch_one(&store.pool)
         .await
         .map_err(persistence_error)?;
-    let mut select = csr_base_select();
+    let mut select = registration_select();
     select
         .cond_where(not_expired())
         .order_by(Csr::CreatedAt, Order::Asc)
@@ -119,7 +142,7 @@ pub(super) async fn find_matching(
     entity_type: Option<&IriBuf>,
     entity_id: Option<&Uri>,
 ) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
-    let mut select = csr_base_select();
+    let mut select = registration_select();
     select.cond_where(not_expired());
     if let Some(entity_type) = entity_type {
         select.and_where(entity_type_coverage(entity_type));
@@ -142,7 +165,7 @@ pub(super) async fn find_overlapping(
     entity_id: Option<&Uri>,
     attributes: &[IriBuf],
 ) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
-    let mut select = csr_base_select();
+    let mut select = registration_select();
     select.cond_where(not_expired());
     select.and_where(proxied_mode());
     if let Some(entity_id) = entity_id {
@@ -170,7 +193,7 @@ pub(super) async fn find_all_active(
     after: Option<&Uri>,
     limit: u32,
 ) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
-    let mut select = csr_base_select();
+    let mut select = registration_select();
     select.cond_where(not_expired());
     if let Some(after_id) = after {
         select.and_where(SeaExpr::col(Csr::Id).gt(after_id.as_str()));

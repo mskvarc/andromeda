@@ -80,5 +80,6 @@ fn classify_failure(error: MaintenanceError) -> TaskFailure {
         MaintenanceError::Statement(error) => TaskFailure::invariant_violation(error.to_string()),
         MaintenanceError::TenantName(error) => TaskFailure::invariant_violation(error.to_string()),
         MaintenanceError::UnknownTarget(target) => TaskFailure::invariant_violation(format!("unknown PostgreSQL maintenance target {target:?}")),
+        MaintenanceError::UnreadableCode(_) | MaintenanceError::ProbeTargetNotAnIndex(_) => TaskFailure::invariant_violation(error.to_string()),
     }
 }

@@ -7,7 +7,7 @@
 use crate::{
     error::ContextStoreError,
     notification_delivery::trigger_code::trigger_of,
-    subscription_store::{params::DatasetIdPresence, rows::SubscriptionRow},
+    subscription_store::{params::DatasetIdPresence, rows::SubscriptionRow, status_code::status_of},
 };
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion, uri::Uri};
@@ -26,7 +26,7 @@ use andromeda_ngsi_ld_model::{
     },
 };
 use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
-use andromeda_postgresql_codes::notification_trigger::NotificationTriggerCode;
+use andromeda_postgresql_codes::{notification_trigger::NotificationTriggerCode, subscription_status::SubscriptionStatusCode};
 use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
 use andromeda_subscription::stored_subscription::StoredSubscription;
 use chrono::{DateTime, Utc};
@@ -106,7 +106,7 @@ fn stored_subscription_key(raw: i64) -> Result<SubscriptionKey, ContextStoreErro
 /// longer parses into its domain type: the subscription URI, an entity selector,
 /// a watched attribute name, a notification trigger code, the `q`, `scopeQ` or
 /// `csf` filter, the notification parameters, the language tag, the JSON-LD
-/// context URL, or the status label.
+/// context URL, or the status code.
 pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Result<SubscriptionRow, ContextStoreError> {
     let dataset_id_raw: Option<Vec<String>> = match dataset_id_presence {
         DatasetIdPresence::Present => row.try_get(Subscriptions::DatasetId.unquoted())?,
@@ -151,7 +151,9 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
     let jsonld_context = jsonld_context_raw
         .map(|raw| Url::parse(&raw).map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription jsonldContext '{raw}': {error}"))))
         .transpose()?;
-    let status_label: String = row.try_get(Subscriptions::Status.unquoted())?;
+    let status = SubscriptionStatusCode::try_from(row.try_get::<i16, _>(Subscriptions::Status.unquoted())?)
+        .map(status_of)
+        .map_err(|e| ContextStoreError::Internal(format!("Invalid subscription status: {e}")))?;
     let ngsild_conformance_raw: Option<String> = row.try_get(Subscriptions::NgsildConformance.unquoted())?;
     let ngsild_conformance = ngsild_conformance_raw
         .map(|raw| {
@@ -177,9 +179,7 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
         notification,
         expires_at: row.try_get(Subscriptions::ExpiresAt.unquoted())?,
         throttling: row.try_get(Subscriptions::Throttling.unquoted())?,
-        status: status_label
-            .parse()
-            .map_err(|e| ContextStoreError::Internal(format!("Invalid subscription status '{status_label}': {e}")))?,
+        status,
         temporal_q: row.try_get(Subscriptions::TemporalQ.unquoted())?,
         lang,
         jsonld_context,

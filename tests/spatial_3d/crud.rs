@@ -29,7 +29,7 @@ use serde_json::json;
 use sqlx::{PgPool, Row};
 
 /// Reads `ST_Zmflag` for an entity's hoisted `location` column: 0 for an XY
-/// geometry, 2 for XYZ. Migration 0005 constrains the column to those two.
+/// geometry, 2 for XYZ. Migration 0018 constrains the column to those two.
 async fn location_zmflag(pool: &PgPool, id: &str) -> i32 {
     // ST_Zmflag returns smallint; the cast keeps the binding type unambiguous.
     let row = sqlx::query("SELECT ST_Zmflag(s.location)::int AS zmflag FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key WHERE e.id = $1")
@@ -52,7 +52,7 @@ async fn crud_point_3d_round_trips() {
     assert_eq!(status, StatusCode::OK);
     assert_coordinates_eq(location_coordinates(&body), &json!([13.4, 52.52, 300.5]));
 
-    // Migration 0032 stores XYZ verbatim rather than flattening to XY.
+    // The entity migration (0018) stores XYZ verbatim rather than flattening to XY.
     assert_eq!(location_zmflag(scope.database_pool(), &id).await, 2);
 
     scope.finish().await.expect("cleanup failed");

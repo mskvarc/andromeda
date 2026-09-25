@@ -1,7 +1,7 @@
 //! What a registered Context Source answers for, in space, time and selection (ETSI GS CIM 009 clauses 5.2.9 and 5.2.10).
 
 use crate::{registration::info::RegistrationInfo, time_interval::TimeInterval};
-use andromeda_ngsi_ld_lexicon::scope::grammar::ScopeBuf;
+use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,10 +20,12 @@ pub struct RegistrationCoverage {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]
     pub dataset_id: Option<Vec<DatasetSelector>>,
-    /// Scope values.
+    /// The clause 4.18 scopes the source has entities in. A registration names
+    /// places, so the NGSI-LD Null a deleted entity scope is written as is not
+    /// one of its values.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]
-    pub scope: Option<Vec<ScopeBuf>>,
+    pub scope: Option<Vec<ScopePath>>,
     /// Location geometry.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]

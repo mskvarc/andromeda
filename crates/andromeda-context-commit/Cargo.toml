@@ -14,7 +14,7 @@ andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 chrono = { version = "0.4.45", features = ["serde"] }
-derive_more = { version = "2.1.1", features = ["display", "is_variant"] }
+derive_more = { version = "2.1.1", features = ["display", "from", "is_variant"] }
 fastrand = "2.5.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }

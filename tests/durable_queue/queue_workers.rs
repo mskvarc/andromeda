@@ -1,20 +1,16 @@
 //! The worker identities and lease terms the queue verifications claim under.
 
-use andromeda_entity::side_effect_queue::SideEffectLeaseOwner;
-use andromeda_notification::{delivery_lease::LeaseTerm, worker_instance_id::WorkerInstanceId};
-use uuid::Uuid;
+use andromeda_context_commit::lease_holder::LeaseHolder;
+use andromeda_notification::delivery_lease::LeaseTerm;
 
 /// One notification delivery worker, distinct from every other.
-pub fn delivery_worker() -> WorkerInstanceId {
-    WorkerInstanceId::delivery(Uuid::new_v4())
+pub fn delivery_worker() -> LeaseHolder {
+    LeaseHolder::mint()
 }
 
 /// One side-effect worker, distinct from every other.
-pub fn side_effect_worker() -> SideEffectLeaseOwner {
-    let source = "urn:ngsi-ld:ContextSourceIdentity:durable-queue"
-        .parse()
-        .expect("a valid context source identity URI");
-    SideEffectLeaseOwner::for_tenant(&source, Uuid::new_v4())
+pub fn side_effect_worker() -> LeaseHolder {
+    LeaseHolder::mint()
 }
 
 /// A lease long enough that it cannot expire during a verification.

@@ -35,14 +35,14 @@ use andromeda_entity::{
 use andromeda_entity_map::service::EntityMapService;
 use andromeda_federation::FederationService;
 use andromeda_postgresql_context_store::jsonld_context::repo::JsonLdContextRepository;
-use andromeda_registration::{RegistrationService, entity_probe::RegisteredEntityProbe};
+use andromeda_registration::{RegistrationService, entity_probe::RegisteredEntityProbe, removal_hook::RegistrationRemovalHook};
 use andromeda_snapshot::{
     config::SnapshotConfig,
     executor::{SnapshotPreparation, SnapshotPreparationConfig, capture_sources::SnapshotCaptureSources},
     service::{SnapshotService, SnapshotServiceConfig},
     status_delivery_signal::StatusDeliverySignal,
 };
-use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
+use andromeda_subscription_forwarding::{mapping::ForwardedSubscriptionRouter, service::SubscriptionForwardingService};
 use andromeda_temporal::{
     port::{mutator::TemporalMutator, service_ports::TemporalServicePorts},
     remote_linked::RemoteTemporalLinkedSource,
@@ -137,7 +137,7 @@ pub(super) fn construct_services(
         temporal,
         subscriptions: subscriptions.entity,
         contexts,
-        csr: compose_registration_service(storage, signals),
+        csr: compose_registration_service(storage, signals, subscriptions.forwarding.as_ref()),
         csr_subscriptions: subscriptions.csource,
         forwarding,
         entity_maps: Arc::new(EntityMapService::new(Arc::clone(&storage.entity_map_store))),
@@ -290,19 +290,29 @@ fn compose_snapshot_services(
 }
 
 /// Compose registration policy with the admission probe clauses 5.9.2.4 and
-/// 5.9.3.4 require: a proxied registration is refused when this broker already
-/// holds the context data it claims.
-fn compose_registration_service(storage: &TenantStorage, signals: &TenantSignals) -> Arc<RegistrationService> {
+/// 5.9.3.4 require -- a proxied registration is refused when this broker
+/// already holds the context data it claims -- and, when subscriptions are
+/// forwarded, the teardown of the copies a removed registration's source holds.
+fn compose_registration_service(
+    storage: &TenantStorage,
+    signals: &TenantSignals,
+    forwarding: Option<&Arc<SubscriptionForwardingService>>,
+) -> Arc<RegistrationService> {
     let probe = Arc::new(EntityStoreRegistrationProbe::new(
         Arc::clone(&storage.entity_ports.reader),
         Arc::clone(&storage.entity_ports.query),
         storage.engine.clone(),      // clone: the probe compiles registration selectors against its own engine handle.
         storage.live_target.clone(), // clone: admission inspects the tenant's live branch.
     )) as Arc<dyn RegisteredEntityProbe>;
-    Arc::new(RegistrationService::new(
+    let service = RegistrationService::new(
         Arc::clone(&storage.registration_store),
         probe,
         storage.engine.clone(), // clone: registration policy owns its engine handle.
         Some(Arc::new(BroadcastRegistrationChangeSink::new(signals.registration.clone()))), // clone: each tenant service and worker own a sender handle.
-    ))
+    );
+    Arc::new(match forwarding {
+        // clone: request handling, the expiry sweep and subscription forwarding share one service.
+        Some(forwarding) => service.with_removal_hook(Arc::clone(forwarding) as Arc<dyn RegistrationRemovalHook>),
+        None => service,
+    })
 }

@@ -7,11 +7,13 @@
 
 use andromeda_context_commit::{subscription_key::SubscriptionKey, write_record::WriteRecord};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_postgresql_codes::{subscription_kind::SubscriptionKindCode, subscription_status::SubscriptionStatusCode};
 use andromeda_postgresql_context_store::{
     config::SynchronousCommit,
     error::ContextStoreError,
     notification_delivery::{event_insert::insert_events_in_tx, rows::NewNotificationEvent},
-    tenant_database::{DatabaseUrl, create_database_if_missing, migrate_tenant_db},
+    tenant_database::{DatabaseUrl, create_database_if_missing},
+    tenant_migration::migrate_tenant_db,
 };
 use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
 use andromeda_tenancy::database_name::TenantDatabaseName;
@@ -62,8 +64,10 @@ pub async fn subscription(pool: &PgPool, id: &str) -> i64 {
         "endpoint": {"uri": "http://127.0.0.1:8085/notify", "accept": "application/json"},
         "format": "normalized"
     });
-    sqlx::query_scalar("INSERT INTO subscriptions (id, kind, notification) VALUES ($1, 'entity', $2) RETURNING subscription_key")
+    sqlx::query_scalar("INSERT INTO subscriptions (id, kind, status, notification) VALUES ($1, $2, $3, $4) RETURNING subscription_key")
         .bind(id)
+        .bind(SubscriptionKindCode::Entity.code())
+        .bind(SubscriptionStatusCode::Active.code())
         .bind(notification)
         .fetch_one(pool)
         .await

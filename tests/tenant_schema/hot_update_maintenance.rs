@@ -22,6 +22,7 @@
 //! of 50 must keep it heap-only.
 
 use crate::SUITE;
+use andromeda_postgresql_codes::{subscription_kind::SubscriptionKindCode, subscription_status::SubscriptionStatusCode};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::{environment::TestEnvironment, serialized_environment::SerializedEnvironment};
 use pretty_assertions::assert_eq;
@@ -508,7 +509,7 @@ async fn sustained_side_effect_claims_stay_heap_only() {
     let claims = churn(
         pool,
         "pending_side_effects",
-        "UPDATE pending_side_effects SET claimed_at = NOW(), lease_until = NOW() + make_interval(secs => $2), claimed_by = 'worker-' || $2::text \
+        "UPDATE pending_side_effects SET claimed_at = NOW(), lease_until = NOW() + make_interval(secs => $2), claimed_by = gen_random_uuid() \
          WHERE consequence_base = $1::integer",
         0,
     )
@@ -541,8 +542,10 @@ async fn sustained_delivery_state_churn_stays_heap_only() {
     let pool = scope.database_pool();
 
     let subscription_key: i64 =
-        sqlx::query_scalar("INSERT INTO subscriptions (id, kind, notification) VALUES ($1, 'entity', '{}'::jsonb) RETURNING subscription_key")
+        sqlx::query_scalar("INSERT INTO subscriptions (id, kind, status, notification) VALUES ($1, $2, $3, '{}'::jsonb) RETURNING subscription_key")
             .bind(scope.id("urn:ngsi-ld:Subscription:delivery-state-churn"))
+            .bind(SubscriptionKindCode::Entity.code())
+            .bind(SubscriptionStatusCode::Active.code())
             .fetch_one(pool)
             .await
             .expect("the churn subscription must be seeded");

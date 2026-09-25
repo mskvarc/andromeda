@@ -8,8 +8,10 @@
 //! `INSERT ... SELECT` between the two schemas, in foreign-key-dependency order.
 //! An identity column is copied through `OVERRIDING SYSTEM VALUE`; a stored
 //! generated column is left out of the column list for the database to
-//! recompute. The insertable column set is read from the catalogue so a schema
-//! change moves the copy with it rather than leaving a stale column list behind.
+//! recompute. The insertable column set is read from the catalogue of the
+//! target schema -- the branch this binary's migrations built, which a source
+//! behind it is refused for -- so a schema change moves the copy with it
+//! rather than leaving a stale column list behind.
 
 use crate::{error::ContextStoreError, snapshot::branch_schema::BRANCH_TABLES};
 use sqlx::{Executor, PgConnection, Row};
@@ -22,7 +24,7 @@ use sqlx::{Executor, PgConnection, Row};
 /// one of the copies fails.
 pub(crate) async fn clone_branch(conn: &mut PgConnection, source_schema: &str, target_schema: &str) -> Result<(), ContextStoreError> {
     for table in BRANCH_TABLES {
-        let plan = column_plan(conn, table).await?;
+        let plan = column_plan(conn, target_schema, table).await?;
         if plan.columns.is_empty() {
             continue;
         }
@@ -43,15 +45,17 @@ struct ColumnPlan {
     has_always_identity: bool,
 }
 
-/// Read one relation's insertable columns from the catalogue, excluding stored
-/// generated columns (which the database recomputes on insert).
-async fn column_plan(conn: &mut PgConnection, table: &str) -> Result<ColumnPlan, ContextStoreError> {
+/// Read one relation's insertable columns in `schema` from the catalogue,
+/// excluding stored generated columns (which the database recomputes on
+/// insert).
+async fn column_plan(conn: &mut PgConnection, schema: &str, table: &str) -> Result<ColumnPlan, ContextStoreError> {
     let rows = sqlx::query(
         "SELECT column_name, is_identity, identity_generation \
          FROM information_schema.columns \
-         WHERE table_schema = 'public' AND table_name = $1 AND is_generated = 'NEVER' \
+         WHERE table_schema = $1 AND table_name = $2 AND is_generated = 'NEVER' \
          ORDER BY ordinal_position",
     )
+    .bind(schema)
     .bind(table)
     .fetch_all(&mut *conn)
     .await?;

@@ -21,10 +21,9 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_postgresql_encoding::ewkb::encode;
 use andromeda_postgresql_query::{
-    dictionary::resolved_names::ResolvedNames,
+    dictionary::{names_in_key_order::type_names_of, resolved_names::ResolvedNames},
     entity_ordering::{order_by_entity_identifier, ordering_collation, sql_order},
     entity_row_refs::EntityRowRefs,
-    entity_type_names::type_names_of,
     error::RenderError,
 };
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};

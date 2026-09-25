@@ -1,11 +1,14 @@
 //! The `schema_metadata` singleton: stamping it, reading it, and verifying it.
 
-use crate::schema_contract::{
-    contract::SchemaContract,
-    error::SchemaContractError,
-    migrations_digest::MigrationsDigest,
-    schema_version::SchemaVersion,
-    server_requirements::verify_server_requirements,
+use crate::{
+    migration_set::tenant::TENANT_LEDGER,
+    schema_contract::{
+        contract::SchemaContract,
+        error::SchemaContractError,
+        migrations_digest::MigrationsDigest,
+        schema_version::SchemaVersion,
+        server_requirements::verify_server_requirements,
+    },
 };
 use andromeda_postgresql_schema::tenancy::SchemaMetadata;
 use sea_query::{
@@ -90,23 +93,19 @@ pub async fn ensure_schema_contract(pool: &PgPool, contract: &SchemaContract) ->
 /// one inherited from an unrelated migration path that happens to name the
 /// same version.
 ///
-/// `_sqlx_migrations` is queried rather than recomputed from the embedded
+/// The tenant ledger is queried rather than recomputed from the embedded
 /// migrator's own list: a migration file the current binary has since deleted
 /// would be invisible to a binary-only recomputation, which would silently
 /// turn a diverged history into an accepted upgrade.
 ///
-/// The query is bounded below by the contract's own first version as well as
-/// above by the stamped one. sqlx records every migration set that runs against
-/// a database in that one table, and the default tenant's database is also the
-/// platform database, so its history interleaves the platform migrations with
-/// the tenant ones. Only the rows in this set's own version range are its
-/// history; digesting the other set's rows too would make the reconciliation
-/// digest something no stamp could ever equal, and every fleet upgrade of the
-/// default tenant would read as drift.
+/// The query is bounded only above, by the stamped version. The ledger holds
+/// the tenant set's history and nothing else -- the platform set the default
+/// tenant's database also carries is recorded in a ledger of its own -- so
+/// every row up to the stamp is part of the history the stamp describes.
 ///
-/// [`migrate_tenant_db`]: crate::tenant_database::migrate_tenant_db
+/// [`migrate_tenant_db`]: crate::tenant_migration::migrate_tenant_db
 async fn reconcile_upgrade(pool: &PgPool, stamped: &StampedContract, contract: &SchemaContract) -> Result<(), SchemaContractError> {
-    let applied_digest = applied_migrations_digest_between(pool, contract.first_version(), stamped.version).await?;
+    let applied_digest = applied_migrations_digest_up_to(pool, stamped.version).await?;
     if applied_digest != stamped.digest {
         return Err(SchemaContractError::MigrationsDigestMismatch {
             expected: applied_digest,
@@ -121,17 +120,10 @@ async fn reconcile_upgrade(pool: &PgPool, stamped: &StampedContract, contract: &
     refuse_on_mismatch(&restamped, contract)
 }
 
-/// The digest of a tenant's actually-applied migrations between `from_version`
-/// and `up_to_version` inclusive, as `_sqlx_migrations` itself records them.
-///
-/// The lower bound names the migration set: rows below it were applied by
-/// another set sharing the same table (see [`reconcile_upgrade`]).
-async fn applied_migrations_digest_between(
-    pool: &PgPool,
-    from_version: SchemaVersion,
-    up_to_version: SchemaVersion,
-) -> Result<MigrationsDigest, SchemaContractError> {
-    let (sql, values) = applied_migrations_digest_statement(i64::from(from_version.get()), i64::from(up_to_version.get())).build_sqlx(PostgresQueryBuilder);
+/// The digest of a tenant's actually-applied migrations up to and including
+/// `up_to_version`, as the tenant ledger itself records them.
+async fn applied_migrations_digest_up_to(pool: &PgPool, up_to_version: SchemaVersion) -> Result<MigrationsDigest, SchemaContractError> {
+    let (sql, values) = applied_migrations_digest_statement(i64::from(up_to_version.get())).build_sqlx(PostgresQueryBuilder);
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(pool).await?;
     let records = rows
         .iter()
@@ -235,18 +227,17 @@ async fn read_stamp(pool: &PgPool) -> Result<Option<StampedContract>, SchemaCont
     Ok(Some(StampedContract { version, digest }))
 }
 
-/// Read the migration history sqlx itself recorded, bounded to one set's range.
+/// Read the migration history the tenant ledger records, up to the stamp.
 ///
-/// `_sqlx_migrations` is sqlx's own table, not part of the application schema,
-/// so it is named by aliases rather than a schema iden.
-fn applied_migrations_digest_statement(from_version: i64, up_to_version: i64) -> SelectStatement {
+/// The ledger is sqlx's own table, not part of the application schema, so it
+/// is named by aliases rather than a schema iden.
+fn applied_migrations_digest_statement(up_to_version: i64) -> SelectStatement {
     Query::select()
         .column(Alias::new("version"))
         .column(Alias::new("description"))
         .column(Alias::new("checksum"))
-        .from(Alias::new("_sqlx_migrations"))
+        .from(Alias::new(TENANT_LEDGER))
         .and_where(Expr::col(Alias::new("success")).eq(true))
-        .and_where(Expr::col(Alias::new("version")).gte(from_version))
         .and_where(Expr::col(Alias::new("version")).lte(up_to_version))
         .order_by(Alias::new("version"), Order::Asc)
         .to_owned()
@@ -316,11 +307,12 @@ mod tests {
     use std::borrow::Cow;
 
     #[test]
-    fn the_history_digest_reads_one_sets_range_of_successful_migrations() {
-        let sql = applied_migrations_digest_statement(10, 20).to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#"FROM "_sqlx_migrations""#), "{sql}");
+    fn the_history_digest_reads_the_tenant_ledger_up_to_the_stamp_with_no_lower_bound() {
+        let sql = applied_migrations_digest_statement(20).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"FROM "_andromeda_tenant_migrations""#), "{sql}");
         assert!(sql.contains(r#""success" = TRUE"#), "{sql}");
-        assert!(sql.contains(r#""version" >= 10"#) && sql.contains(r#""version" <= 20"#), "{sql}");
+        assert!(sql.contains(r#""version" <= 20"#), "{sql}");
+        assert!(!sql.contains(">="), "no lower bound: {sql}");
         assert!(sql.contains(r#"ORDER BY "version""#), "{sql}");
     }
 

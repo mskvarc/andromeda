@@ -5,6 +5,7 @@ use reqwest::StatusCode;
 
 use crate::{
     BAD_REQUEST_DATA_TYPE,
+    COMPOUND_CONTEXT_URL,
     REGISTERED_VEHICLE_ID,
     UNREGISTERED_VEHICLE_ID,
     create_registration,
@@ -28,12 +29,13 @@ use crate::{
     expected_query_with_management_interval,
     expected_query_with_observation_interval,
     query_registrations,
+    retrieve_registration,
     strip_ignored_keys,
     unique_id,
 };
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const TEST_SUITE_CONTEXT_URL: &str =
     "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld";
@@ -679,5 +681,74 @@ async fn query_pagination_returns_all_matching_within_limit() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     let arr = body.as_array().expect("response should be an array");
     pretty_assertions::assert_eq!(arr.len(), 2, "should return 2 registrations (only Building type matches)");
+    scope.finish().await.expect("cleanup failed");
+}
+
+// ---------------------------------------------------------------------------
+// 4.19 -- scopeQ over registration scopes
+// ---------------------------------------------------------------------------
+
+/// A registration of one scoped entity type, under `scope`.
+fn scoped_registration(id: &str, entity_type: &str, scope: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [{"entities": [{"type": entity_type}]}],
+        "scope": [scope],
+        "endpoint": "http://my.csource.org:1026/",
+        "@context": [COMPOUND_CONTEXT_URL],
+    })
+}
+
+/// The registration identifiers a discovery response holds, sorted.
+fn registration_ids(body: &Value) -> Vec<String> {
+    let mut ids: Vec<String> = body
+        .as_array()
+        .expect("a discovery response is an array")
+        .iter()
+        .filter_map(|registration| registration["id"].as_str().map(ToOwned::to_owned))
+        .collect();
+    ids.sort();
+    ids
+}
+
+/// Clause 4.19: a `scopeQ` matches a registration's `scope` (clause 4.18) by
+/// the scope query language -- exact path, `+` for one level, `#` for the path
+/// and every descendant -- and the stored scopes read back in their clause 4.18
+/// spelling.
+#[tokio::test]
+async fn query_by_scope_matches_the_scope_query_language_over_registration_scopes() {
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
+    let entity_type = format!("https://example.test/csr-scope/{}", unique_id("Device").replace(':', "-"));
+    let city = unique_id("urn:ngsi-ld:ContextSourceRegistration:scope-city");
+    let garden = unique_id("urn:ngsi-ld:ContextSourceRegistration:scope-garden");
+    let elsewhere = unique_id("urn:ngsi-ld:ContextSourceRegistration:scope-elsewhere");
+    for (id, path) in [(&city, "/Madrid"), (&garden, "/Madrid/Gardens"), (&elsewhere, "/Berlin")] {
+        let (status, _, _) = create_registration(&c, &scoped_registration(id, &entity_type, path)).await;
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED, "{id}");
+    }
+
+    let mut both = vec![city.clone(), garden.clone()];
+    both.sort();
+    for (scope_query, expected) in [
+        ("/Madrid", vec![city.clone()]),
+        ("/Madrid/+", vec![garden.clone()]),
+        ("/Madrid/#", both),
+        ("/Berlin", vec![elsewhere.clone()]),
+    ] {
+        let query = format!("type={}&scopeQ={}", urlencoding::encode(&entity_type), urlencoding::encode(scope_query));
+        let (status, body) = query_registrations(&c, &query, Some("application/json"), None).await;
+        pretty_assertions::assert_eq!(status, StatusCode::OK, "{scope_query}: {body}");
+        pretty_assertions::assert_eq!(registration_ids(&body), expected, "{scope_query}");
+    }
+
+    let (status, stored) = retrieve_registration(&c, &garden, Some("application/json"), None).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    assert!(
+        [json!("/Madrid/Gardens"), json!(["/Madrid/Gardens"])].contains(&stored["scope"]),
+        "the stored scope reads back in its clause 4.18 spelling: {stored}"
+    );
     scope.finish().await.expect("cleanup failed");
 }

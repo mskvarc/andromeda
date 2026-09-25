@@ -6,7 +6,7 @@ use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonym,
     dereferenceable_uri::DereferenceableUri,
     non_empty_text::NonEmptyText,
-    scope::grammar::ScopeBuf,
+    scope::path::ScopePath,
     tenant::TenantName,
 };
 use andromeda_ngsi_ld_model::{
@@ -77,7 +77,7 @@ pub struct CsrUpdateFragment {
     pub operations: NullableMember<Vec<CsrOperation>>,
     /// Updated scope values.
     #[builder(default = Default::default())]
-    pub scope: NullableMember<Vec<ScopeBuf>>,
+    pub scope: NullableMember<Vec<ScopePath>>,
     /// Updated refresh rate duration.
     #[builder(default = Default::default())]
     pub refresh_rate: NullableMember<Iso8601Duration>,

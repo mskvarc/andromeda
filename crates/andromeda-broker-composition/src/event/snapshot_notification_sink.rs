@@ -1,5 +1,6 @@
 //! Delivery binding for snapshot status notifications.
 
+use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_delivery::{
     dispatch::{DeliveryResult, TransportDispatcher},
     endpoint::transport::EndpointTransport,
@@ -14,7 +15,6 @@ use andromeda_snapshot::error::SnapshotError;
 use chrono::{DateTime, Duration, Utc};
 use futures::{StreamExt, stream};
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Delivers snapshot status notifications through the configured transport dispatcher.
 pub struct DeliverySnapshotNotificationSink {
@@ -25,7 +25,7 @@ pub struct DeliverySnapshotNotificationSink {
 pub struct SnapshotStatusDeliveryDrain {
     outbox: Arc<SnapshotStatusOutbox>,
     transport: Arc<DeliverySnapshotNotificationSink>,
-    worker: Uuid,
+    worker: LeaseHolder,
     lease: Duration,
     max_attempts: i32,
     base_backoff_secs: i64,
@@ -46,7 +46,7 @@ impl SnapshotStatusDeliveryDrain {
         Ok(SnapshotStatusDeliveryDrain {
             outbox,
             transport,
-            worker: Uuid::new_v4(),
+            worker: LeaseHolder::mint(),
             lease: Duration::seconds(i64::try_from(config.lease.duration().as_secs()).unwrap_or(i64::MAX)),
             max_attempts: config.max_attempts.max(1),
             base_backoff_secs: i64::try_from(config.base_backoff.duration().as_secs())

@@ -32,9 +32,11 @@ use crate::{
             state_insert_sql,
         },
         failure::{create_error, persistence_error},
+        interned_attributes::intern_attribute_lists,
         mapper::{row_from_pg, row_to_stored_subscription, rows_to_stored_subscriptions, stored_subscription_uri},
         params::DatasetIdPresence,
         projection::{apply_subscription_keyset, count_of_kind, one_of, projected_select},
+        status_code::{status_is, status_is_not, stored_status},
         stored_kind::{StoredKind, of_kind},
     },
 };
@@ -44,7 +46,6 @@ use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
 use andromeda_ngsi_ld_query::cursor::PageCursor;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
-use andromeda_postgresql_seaquery::{cast::cast, literal::text_literal, pg_type::PostgresType};
 use andromeda_subscription::{
     error::SubscriptionError,
     interval_schedule::{interval_duration, next_interval_due as next_interval_grid_due},
@@ -171,9 +172,7 @@ macro_rules! impl_subscription_store {
 
             async fn list_active(&self, target: &ContextTarget) -> Result<Vec<StoredSubscription>, SubscriptionError> {
                 let mut select = projected_select($kind, target);
-                select
-                    .and_where(Expr::col((Subscriptions::Table, Subscriptions::Status)).eq(text_literal("active")))
-                    .and_where(of_kind($kind));
+                select.and_where(status_is(SubscriptionStatus::Active)).and_where(of_kind($kind));
                 let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
                 let pg_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .fetch_all(&self.pool)
@@ -223,9 +222,9 @@ macro_rules! impl_subscription_store {
             async fn expire_due(&self, target: &ContextTarget, cutoff: chrono::DateTime<chrono::Utc>) -> Result<Vec<Uri>, SubscriptionError> {
                 let statement = Query::update()
                     .table(table_of(target, Subscriptions::Table))
-                    .value(Subscriptions::Status, cast(text_literal("expired"), PostgresType::SubscriptionStatus))
+                    .value(Subscriptions::Status, stored_status(SubscriptionStatus::Expired).code())
                     .value(Subscriptions::ModifiedAt, Expr::val(cutoff))
-                    .and_where(Expr::col((Subscriptions::Table, Subscriptions::Status)).ne(text_literal("expired")))
+                    .and_where(status_is_not(SubscriptionStatus::Expired))
                     .and_where(Expr::col((Subscriptions::Table, Subscriptions::ExpiresAt)).is_not_null())
                     .and_where(Expr::col((Subscriptions::Table, Subscriptions::ExpiresAt)).lte(cutoff))
                     .and_where(of_kind($kind))
@@ -245,9 +244,10 @@ macro_rules! impl_subscription_store {
                     .collect()
             }
 
-            /// The subscription row and its delivery-state row land in one
-            /// transaction, so a subscription never exists without the row its
-            /// counters live on.
+            /// The subscription row, its delivery-state row and the dictionary
+            /// keys of its attribute lists land in one transaction, so a
+            /// subscription never exists without the row its counters live on
+            /// nor references a key that was rolled back.
             async fn create_subscription(
                 &self,
                 target: &ContextTarget,
@@ -258,7 +258,8 @@ macro_rules! impl_subscription_store {
                 let sql = $create(target)?;
                 let state_sql = state_insert_sql(target)?;
                 let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
-                let query = ($create_fn)(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), id, fields, status);
+                let interned = intern_attribute_lists(self.attribute_names.as_ref(), &mut transaction, fields).await?;
+                let query = ($create_fn)(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), id, fields, &interned, status);
                 let created = query.fetch_one(&mut *transaction).await.map_err(|error| create_error(error, id))?;
                 let subscription_key: i64 = created.try_get("subscription_key").map_err(persistence_error)?;
                 sqlx::query(sqlx::AssertSqlSafe(state_sql.as_str()))
@@ -267,7 +268,7 @@ macro_rules! impl_subscription_store {
                     .await
                     .map_err(persistence_error)?;
                 transaction.commit().await.map_err(persistence_error)?;
-                tracing::info!("Created {} subscription: {}", $kind.wire(), id);
+                tracing::info!("Created {} subscription: {}", $kind.code().label(), id);
                 Ok(())
             }
 
@@ -279,8 +280,11 @@ macro_rules! impl_subscription_store {
                 status: SubscriptionStatus,
             ) -> Result<u64, SubscriptionError> {
                 let sql = $update(target);
-                let query = ($update_fn)(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), id, fields, status);
-                let result = query.execute(&self.pool).await.map_err(persistence_error)?;
+                let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
+                let interned = intern_attribute_lists(self.attribute_names.as_ref(), &mut transaction, fields).await?;
+                let query = ($update_fn)(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), id, fields, &interned, status);
+                let result = query.execute(&mut *transaction).await.map_err(persistence_error)?;
+                transaction.commit().await.map_err(persistence_error)?;
                 Ok(result.rows_affected())
             }
 
@@ -291,7 +295,7 @@ macro_rules! impl_subscription_store {
             ) -> Result<Vec<Subscription>, SubscriptionError> {
                 let mut select = projected_select($kind, target);
                 select
-                    .and_where(Expr::col((Subscriptions::Table, Subscriptions::Status)).eq(text_literal("active")))
+                    .and_where(status_is(SubscriptionStatus::Active))
                     .and_where(of_kind($kind))
                     .and_where(Expr::col((Subscriptions::Table, Subscriptions::TimeInterval)).is_not_null())
                     .cond_where(interval_elapsed(cutoff));
@@ -316,7 +320,7 @@ macro_rules! impl_subscription_store {
             ) -> Result<Option<chrono::DateTime<chrono::Utc>>, SubscriptionError> {
                 let mut select = interval_anchor_select(target);
                 select
-                    .and_where(Expr::col((Subscriptions::Table, Subscriptions::Status)).eq(text_literal("active")))
+                    .and_where(status_is(SubscriptionStatus::Active))
                     .and_where(of_kind($kind))
                     .and_where(Expr::col((Subscriptions::Table, Subscriptions::TimeInterval)).is_not_null());
                 let (sql, values) = select.build_sqlx(PostgresQueryBuilder);

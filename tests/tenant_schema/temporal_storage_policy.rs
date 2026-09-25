@@ -1,6 +1,6 @@
 //! The physical storage policy of the temporal hypertables.
 //!
-//! Migrations 0011 and 0012 declare seven-day chunks, a columnstore segmented
+//! Migrations 0028 and 0029 declare seven-day chunks, a columnstore segmented
 //! by stream (attribute history) or temporal entity (scope history) and ordered
 //! by the write-deduplication key, and a conversion policy that lags thirty
 //! days. Both intervals are operator tunables the broker reconciles when a

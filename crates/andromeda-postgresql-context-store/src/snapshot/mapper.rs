@@ -1,13 +1,14 @@
 //! Row-to-domain conversions for snapshot records.
 
-use crate::error::ContextStoreError;
+use crate::{error::ContextStoreError, snapshot::status_code::status_of};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     query::body::Query,
-    snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
+    snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority},
 };
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
+use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -33,7 +34,7 @@ pub fn deserialize_json_column<T: DeserializeOwned>(row: &PgRow, column: &str) -
 ///
 /// Returns [`ContextStoreError::Database`] when a column cannot be read, and
 /// [`ContextStoreError::Internal`] when a stored value no longer parses back
-/// into its domain type: the Snapshot URI, the status label, the lifetime
+/// into its domain type: the Snapshot URI, the status code, the lifetime
 /// duration, the endpoint URL, or one of the JSON-encoded members.
 pub fn row_to_snapshot(row: &PgRow) -> Result<Snapshot, ContextStoreError> {
     let id_str: String = row.try_get("id")?;
@@ -41,13 +42,10 @@ pub fn row_to_snapshot(row: &PgRow) -> Result<Snapshot, ContextStoreError> {
         .parse::<Uri>()
         .map_err(|e| ContextStoreError::Internal(format!("Invalid snapshot id '{id_str}': {e}")))?;
 
-    // `status` is projected as `status::text`; the label mapping lives in the
-    // domain's `EnumString`, so an unexpected label is a typed parse error
-    // rather than an opaque sqlx decode failure.
-    let status_label: String = row.try_get("status")?;
-    let status = status_label
-        .parse::<SnapshotStatus>()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid snapshot status '{status_label}': {e}")))?;
+    // An unassigned status code is a typed decode failure naming the registry
+    // rather than an opaque sqlx one.
+    let status_code: i16 = row.try_get("status")?;
+    let status = status_of(SnapshotStatusCode::try_from(status_code).map_err(|e| ContextStoreError::Internal(format!("Invalid snapshot status: {e}")))?);
 
     let snapshot_lifetime = row
         .try_get::<Option<String>, _>("snapshot_lifetime")?

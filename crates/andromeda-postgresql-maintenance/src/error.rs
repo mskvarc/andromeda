@@ -1,6 +1,7 @@
 //! Typed failures produced by platform coordination and tenant inspection.
 
 use andromeda_ngsi_ld_lexicon::tenant::InvalidTenantName;
+use andromeda_postgresql_codes::registry::UnknownCompactCode;
 use andromeda_postgresql_context_store::schema_contract::error::SchemaContractError;
 use sea_query::error::Error as SeaQueryError;
 use thiserror::Error;
@@ -36,7 +37,14 @@ pub enum MaintenanceError {
     /// The platform registry contains an invalid tenant name.
     #[error("platform tenant registry contains an invalid tenant name: {0}")]
     TenantName(#[from] InvalidTenantName),
-    /// Durable state named a target this binary does not own.
-    #[error("platform maintenance state contains unknown target '{0}'")]
+    /// The catalog named a relation this binary does not own as a target.
+    #[error("PostgreSQL catalog reported unknown maintenance target '{0}'")]
     UnknownTarget(String),
+    /// Durable state holds a code no release assigned.
+    #[error("platform maintenance state is unreadable: {0}")]
+    UnreadableCode(#[from] UnknownCompactCode),
+    /// Durable index-probe state names a target that is not an index; carries
+    /// the target's registry label.
+    #[error("platform maintenance state records an index probe for non-index target '{0}'")]
+    ProbeTargetNotAnIndex(&'static str),
 }

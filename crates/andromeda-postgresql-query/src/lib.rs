@@ -29,7 +29,6 @@ pub mod dictionary;
 pub mod entity_ordering;
 pub mod entity_row_refs;
 pub mod entity_type_id;
-pub mod entity_type_names;
 pub mod error;
 pub mod geo_predicate;
 pub mod jsonb;

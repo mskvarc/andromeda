@@ -7,20 +7,28 @@ use std::{any::Any, fmt::Display};
 
 /// Per-Snapshot branch schema creation, promotion and teardown.
 mod branch_schema;
+/// Bringing every Snapshot's branch schemas up to the binary's branch version.
+pub mod branch_upgrade;
+/// Which Snapshots' branch schemas carry the binary's current branch version.
+pub(crate) mod branch_version;
 /// Cross-schema copying of a Snapshot branch into another (clone preparation).
 mod clone;
 mod clone_context;
-/// The statements over the `snapshots` control record.
-pub mod lifecycle;
+/// Creating a Snapshot's control record, preparation row and branch schemas.
+mod creation;
 /// Row-to-domain conversions for snapshot records.
 pub mod mapper;
 mod metadata_change;
 mod preparation_claim;
 mod quota;
+/// Reaping Snapshots by deletion, expiry and quota eviction.
+mod reap;
+/// Reading and advancing a Snapshot's control record and preparation state.
+mod record;
 /// The snapshot repository struct.
 pub mod repo;
-/// Placeholder for persistence-shaped snapshot row structs.
-pub mod rows;
+/// The number a Snapshot status is stored as.
+pub mod status_code;
 /// Durable Snapshot status-notification delivery queue.
 pub mod status_outbox;
 pub mod store;

@@ -12,7 +12,7 @@ use crate::{
     status::validate_preparing_transition,
     store::{SnapshotPreparationJob, SnapshotStore},
 };
-use andromeda_context_commit::committer::ContextCommitter;
+use andromeda_context_commit::{committer::ContextCommitter, lease_holder::LeaseHolder};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::{ContextSpec, CoreContextPolicy};
 use andromeda_ngsi_ld_model::snapshot::{Snapshot, SnapshotStatus};
@@ -21,7 +21,6 @@ use futures::{StreamExt, future::ready, stream};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::{Instant, MissedTickBehavior, interval_at};
 use tracing::{debug, info};
-use uuid::Uuid;
 
 /// Executes a snapshot's typed queries and persists their frozen results.
 pub struct SnapshotExecutor {
@@ -62,7 +61,7 @@ impl SnapshotExecutor {
     /// execution status is not a permitted transition out of `preparing`, and the
     /// store's own failure when promoting the capture or enforcing the tenant
     /// quotas does not complete.
-    pub async fn execute(&self, snapshot: Snapshot, query_context: serde_json::Value, claimed_by: Uuid) -> Result<(), SnapshotError> {
+    pub async fn execute(&self, snapshot: Snapshot, query_context: serde_json::Value, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
         info!(snapshot_id = %snapshot.id, "Starting snapshot query execution");
         let target = self
             .snapshot_repo
@@ -117,7 +116,7 @@ pub struct SnapshotPreparation {
     store: Arc<dyn SnapshotStore>,
     executor: SnapshotExecutor,
     max_per_pass: usize,
-    worker_id: Uuid,
+    worker_id: LeaseHolder,
     lease_duration: Duration,
 }
 
@@ -155,7 +154,7 @@ impl SnapshotPreparation {
             ),
             store,
             max_per_pass: config.max_per_pass.max(1),
-            worker_id: Uuid::new_v4(),
+            worker_id: LeaseHolder::mint(),
             lease_duration: config.lease_duration,
         }
     }

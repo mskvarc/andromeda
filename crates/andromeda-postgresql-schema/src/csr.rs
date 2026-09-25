@@ -4,7 +4,7 @@
 //! rename moves every reference with it, and a typo becomes a compile error
 //! instead of a query that silently selects nothing. Some columns still project
 //! through a cast sea-query cannot express — `ST_AsGeoJSON(...)::JSONB` and
-//! `::text` — but even those name their column and their output alias through
+//! `::text[]` — but even those name their column and their output alias through
 //! this enum in the statement builder.
 
 use sea_query::Iden;
@@ -17,8 +17,6 @@ pub enum Csr {
     Table,
     /// Primary key: the registration's URI identifier.
     Id,
-    /// The registration type discriminator.
-    Type,
     /// Human-readable registration name.
     RegistrationName,
     /// Free-text description.
@@ -45,11 +43,11 @@ pub enum Csr {
     Endpoint,
     /// The endpoint's `accept` media type.
     Accept,
-    /// The forwarding mode enum.
+    /// The forwarding mode code (`CsrModeCode`).
     Mode,
-    /// The operations the source serves.
+    /// The operation codes the source serves (`CsrOperationCode`).
     Operations,
-    /// The registration's scope paths.
+    /// The registration's scopes, as `ltree` label paths.
     Scope,
     /// The refresh rate the source advertises.
     RefreshRate,
@@ -61,22 +59,33 @@ pub enum Csr {
     JsonldContext,
     /// The context source alias.
     ContextSourceAlias,
-    /// The forwarding status enum.
-    Status,
-    /// Count of notifications sent.
-    TimesSent,
-    /// Count of notification failures.
-    TimesFailed,
-    /// Instant of the last successful contact.
-    LastSuccess,
-    /// Instant of the last failed contact.
-    LastFailure,
     /// Creation instant (clause 4.8 system attribute).
     CreatedAt,
     /// Last-modification instant (clause 4.8 system attribute).
     ModifiedAt,
     /// The `additionalProperties` JSONB bag of unmodelled members.
     AdditionalProperties,
+}
+
+/// The `csr_delivery_state` relation: the forwarding statistics and health of
+/// one registration (Table 5.2.9-2), split off the registration row because
+/// every forwarded request moves them.
+#[derive(Iden, Clone, Copy)]
+pub enum CsrDeliveryState {
+    /// The `csr_delivery_state` table.
+    Table,
+    /// Primary key and foreign key to the owning registration.
+    RegistrationId,
+    /// Count of forwarded requests.
+    TimesSent,
+    /// Count of forwarded requests that failed.
+    TimesFailed,
+    /// Instant of the last successful contact.
+    LastSuccess,
+    /// Instant of the last failed contact.
+    LastFailure,
+    /// The health status code (`CsrStatusCode`).
+    Status,
 }
 
 /// The `registration_information` routing projection derived from a
@@ -116,7 +125,7 @@ pub enum RegistrationInformation {
 
 #[cfg(test)]
 mod tests {
-    use crate::csr::{Csr, RegistrationInformation};
+    use crate::csr::{Csr, CsrDeliveryState, RegistrationInformation};
     use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
@@ -128,13 +137,20 @@ mod tests {
     #[test]
     fn csr_column_names() {
         assert_eq!(Csr::Id.to_string(), "id");
-        assert_eq!(Csr::Type.to_string(), "type");
         assert_eq!(Csr::RegistrationName.to_string(), "registration_name");
         assert_eq!(Csr::DatasetId.to_string(), "dataset_id");
         assert_eq!(Csr::ObservationInterval.to_string(), "observation_interval");
         assert_eq!(Csr::ObservationSpace.to_string(), "observation_space");
         assert_eq!(Csr::JsonldContext.to_string(), "jsonld_context");
         assert_eq!(Csr::AdditionalProperties.to_string(), "additional_properties");
+    }
+
+    #[test]
+    fn csr_delivery_state_column_names() {
+        assert_eq!(CsrDeliveryState::Table.to_string(), "csr_delivery_state");
+        assert_eq!(CsrDeliveryState::RegistrationId.to_string(), "registration_id");
+        assert_eq!(CsrDeliveryState::TimesSent.to_string(), "times_sent");
+        assert_eq!(CsrDeliveryState::Status.to_string(), "status");
     }
 
     #[test]

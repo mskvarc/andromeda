@@ -76,6 +76,20 @@ pub fn function_exists(name: &str) -> SimpleExpr {
     Expr::exists(subquery)
 }
 
+/// `to_regnamespace(name) IS NOT NULL` - whether a schema of that name exists.
+///
+/// The schema name is bound; `to_regnamespace` answers `NULL` rather than
+/// failing for an absent schema.
+#[must_use]
+pub fn schema_exists(name: &str) -> SimpleExpr {
+    SimpleExpr::from(Func::cust(ToRegnamespace).arg(Expr::val(name.to_owned()))).is_not_null()
+}
+
+/// The `to_regnamespace` system function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "to_regnamespace"]
+struct ToRegnamespace;
+
 /// The `current_setting` system function.
 #[derive(Iden, Clone, Copy)]
 #[iden = "current_setting"]
@@ -186,6 +200,14 @@ mod tests {
             sql.contains("EXISTS(SELECT 1 FROM \"pg_proc\" WHERE \"proname\" = 'add_columnstore_policy')"),
             "{sql}"
         );
+    }
+
+    #[test]
+    fn the_schema_probe_binds_the_schema_name() {
+        use crate::introspection::schema_exists;
+        let (sql, values) = Query::select().expr(schema_exists("snap_7")).build(PostgresQueryBuilder);
+        assert_eq!(sql, "SELECT to_regnamespace($1) IS NOT NULL");
+        assert_eq!(values.0.len(), 1);
     }
 
     #[test]

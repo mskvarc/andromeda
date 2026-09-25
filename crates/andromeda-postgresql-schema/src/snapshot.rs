@@ -57,8 +57,12 @@ pub enum SnapshotPreparation {
     LeaseUntil,
     /// Identity of the replica currently preparing this Snapshot.
     ClaimedBy,
-    /// The snapshot's lifecycle status enum.
+    /// The highest branch migration the Snapshot's schemas carry.
+    BranchSchemaVersion,
+    /// The snapshot's lifecycle status code.
     Status,
+    /// Why the last branch upgrade failed, while the Snapshot is quarantined.
+    BranchUpgradeError,
     /// Per-query execution details for the entity queries.
     QueriesDetails,
     /// Per-query execution details for the temporal queries.

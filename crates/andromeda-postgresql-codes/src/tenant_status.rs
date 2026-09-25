@@ -1,0 +1,39 @@
+//! The persisted administrative status of one tenant.
+
+use crate::{compact_code_registry, registry::UnknownCompactCode};
+
+compact_code_registry! {
+    /// The administrative status of a tenant in the platform registry.
+    ///
+    /// Tenant status is an Andromeda administrative concept, so the labels are
+    /// kebab-case.
+    TenantStatusCode {
+        frozen_prefix: 2,
+        frozen_digest: 0x6352_03c8_2aff_79c9,
+        codes: {
+            /// The tenant is in service.
+            Active = 1, "active";
+            /// The tenant is administratively suspended.
+            Suspended = 2, "suspended";
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tenant_status::TenantStatusCode;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn the_members_are_numbered_as_the_migration_documents_them() {
+        assert_eq!(TenantStatusCode::ALL.len(), 2);
+        assert_eq!(TenantStatusCode::Active.code(), 1);
+        assert_eq!(TenantStatusCode::Suspended.code(), 2);
+    }
+
+    #[test]
+    fn zero_and_the_number_after_the_last_member_fail_to_decode() {
+        assert!(TenantStatusCode::try_from(0).is_err());
+        assert!(TenantStatusCode::try_from(3).is_err());
+    }
+}

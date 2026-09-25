@@ -39,8 +39,8 @@ impl TemporalRecorder {
     /// History only. The `current_attribute_values` projection is written by
     /// the same transaction from the same intents, but by the crate that owns
     /// the commit rather than from here: the projection is current entity
-    /// state, and 0045 made Temporal Evolution independent of it in both
-    /// directions.
+    /// state, and the temporal catalogue (migration 0019) keeps Temporal
+    /// Evolution independent of it in both directions.
     ///
     /// # Errors
     ///

@@ -138,29 +138,10 @@ pub enum MaintenanceTarget {
 }
 
 impl MaintenanceTarget {
-    /// Recover a target from its exact durable-state key.
+    /// The exact database identifier of the target, a bounded-cardinality
+    /// label for logs.
     #[must_use]
-    pub fn from_state_key(key: &str) -> Option<MaintenanceTarget> {
-        match key {
-            "uq_current_attribute_values_grain" => Some(MaintenanceTarget::Index(IndexTarget::UqCurrentAttributeValuesGrain)),
-            "idx_cav_attr_number" => Some(MaintenanceTarget::Index(IndexTarget::IdxCavAttrNumber)),
-            "idx_cav_attr_string" => Some(MaintenanceTarget::Index(IndexTarget::IdxCavAttrString)),
-            "idx_cav_attr_string_trgm" => Some(MaintenanceTarget::Index(IndexTarget::IdxCavAttrStringTrgm)),
-            "idx_cav_attr_bool" => Some(MaintenanceTarget::Index(IndexTarget::IdxCavAttrBool)),
-            "idx_cav_attr_datetime" => Some(MaintenanceTarget::Index(IndexTarget::IdxCavAttrDatetime)),
-            "idx_cav_attr_uri" => Some(MaintenanceTarget::Index(IndexTarget::IdxCavAttrUri)),
-            "idx_cav_attr_geo" => Some(MaintenanceTarget::Index(IndexTarget::IdxCavAttrGeo)),
-            "idx_cav_attr_entity_geo" => Some(MaintenanceTarget::Index(IndexTarget::IdxCavAttrEntityGeo)),
-            "current_attribute_values" => Some(MaintenanceTarget::Heap(HeapTarget::CurrentAttributeValues)),
-            "entity_documents" => Some(MaintenanceTarget::Heap(HeapTarget::EntityDocuments)),
-            "subscription_delivery_state" => Some(MaintenanceTarget::Heap(HeapTarget::SubscriptionDeliveryState)),
-            _ => None,
-        }
-    }
-
-    /// Stable bounded-cardinality label used in durable state and logs.
-    #[must_use]
-    pub const fn state_key(self) -> &'static str {
+    pub const fn relation_name(self) -> &'static str {
         match self {
             MaintenanceTarget::Index(target) => target.relation_name(),
             MaintenanceTarget::Heap(target) => target.relation_name(),

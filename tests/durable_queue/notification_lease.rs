@@ -10,13 +10,9 @@ use crate::{
     queue_database::queue_database,
     queue_workers::{delivery_worker, expiring_lease, holding_lease},
 };
+use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_notification::{
-    delivery_entry::DeliveryId,
-    delivery_lease::DeliveryLeaseError,
-    delivery_store::DeliveryStore,
-    worker_instance_id::WorkerInstanceId,
-};
+use andromeda_notification::{delivery_entry::DeliveryId, delivery_lease::DeliveryLeaseError, delivery_store::DeliveryStore};
 use andromeda_postgresql_context_store::notification_delivery::queue::NotificationDeliveryQueue;
 use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
@@ -24,12 +20,13 @@ use serial_test::serial;
 use sqlx::PgPool;
 use std::time::Duration;
 use tokio::time::sleep;
+use uuid::Uuid;
 
 /// Deliveries claimed per pass, larger than any fixture in this module.
 const BATCH_SIZE: i32 = 10;
 
 /// The claim triple one delivery row currently holds.
-async fn claim_triple(pool: &PgPool, delivery: i64) -> (Option<DateTime<Utc>>, Option<String>, Option<DateTime<Utc>>) {
+async fn claim_triple(pool: &PgPool, delivery: i64) -> (Option<DateTime<Utc>>, Option<Uuid>, Option<DateTime<Utc>>) {
     sqlx::query_as("SELECT claimed_at, claimed_by, lease_until FROM notification_deliveries WHERE id = $1")
         .bind(delivery)
         .fetch_one(pool)
@@ -55,7 +52,7 @@ async fn durable_queue_a_due_delivery_is_leased_to_exactly_one_worker() {
     assert!(contended.is_empty(), "a live lease must exclude every other worker");
 
     let (claimed_at, claimed_by, lease_until) = claim_triple(&pool, delivery).await;
-    assert_eq!(claimed_by.as_deref(), Some(AsRef::<str>::as_ref(&first)));
+    assert_eq!(claimed_by, Some(first.as_uuid()));
     assert!(claimed_at.is_some(), "a claim records when it was taken");
     assert!(lease_until.is_some_and(|until| until > Utc::now()), "a claim takes a live lease");
 
@@ -110,8 +107,8 @@ async fn durable_queue_a_stale_worker_cannot_acknowledge_a_reclaimed_delivery() 
 
     let (_, claimed_by, _) = claim_triple(&pool, delivery).await;
     assert_eq!(
-        claimed_by.as_deref(),
-        Some(AsRef::<str>::as_ref(&reclaiming)),
+        claimed_by,
+        Some(reclaiming.as_uuid()),
         "the stale worker must not overwrite the reclaiming worker's ownership"
     );
 
@@ -129,7 +126,7 @@ async fn durable_queue_a_stale_worker_cannot_acknowledge_a_reclaimed_delivery() 
 }
 
 /// Assert that an acknowledgement was refused because the lease had moved on.
-fn assert_lease_lost(outcome: Result<(), DeliveryLeaseError>, delivery: i64, worker: &WorkerInstanceId) {
+fn assert_lease_lost(outcome: Result<(), DeliveryLeaseError>, delivery: i64, worker: &LeaseHolder) {
     let error = outcome.expect_err("a worker whose lease expired must not acknowledge the delivery");
     assert!(
         matches!(error, DeliveryLeaseError::LeaseLost { .. }),

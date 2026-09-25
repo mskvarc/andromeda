@@ -10,9 +10,8 @@ use crate::{
     delivery_lease::{DeliveryLeaseError, LeaseTerm},
     delivery_store::DeliveryStore,
     error::NotificationError,
-    worker_instance_id::WorkerInstanceId,
 };
-use andromeda_context_commit::lease_acknowledgement::LeaseAcknowledgement;
+use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
 use chrono::{DateTime, Duration, Utc};
 use futures::{StreamExt, future::BoxFuture, stream};
@@ -80,7 +79,7 @@ pub trait NotificationDeliveryTransport: Send + Sync + 'static {
 pub struct NotificationDeliveryDrain {
     store: Arc<dyn DeliveryStore>,
     transport: Arc<dyn NotificationDeliveryTransport>,
-    worker_id: WorkerInstanceId,
+    worker_id: LeaseHolder,
     lease_term: LeaseTerm,
     error_bound: DeliveryErrorBound,
     concurrency: DeliveryConcurrency,
@@ -122,7 +121,7 @@ impl NotificationDeliveryDrain {
         transport: Arc<dyn NotificationDeliveryTransport>,
         config: &DeliveryConfig,
     ) -> Result<NotificationDeliveryDrain, NotificationError> {
-        let worker_id = WorkerInstanceId::delivery(uuid::Uuid::new_v4());
+        let worker_id = LeaseHolder::mint();
         let base_backoff_secs = i64::try_from(config.base_backoff.duration().as_secs())
             .map_err(|error| NotificationError::representation(format!("notification delivery base backoff is out of range: {error}")))?;
         let lease_term = config
@@ -280,10 +279,9 @@ mod tests {
         delivery_store::DeliveryStore,
         error::NotificationError,
         notification_event::{NotificationEvent, NotificationEventId},
-        worker_instance_id::WorkerInstanceId,
     };
     use andromeda_configuration_scalars::human_duration::HumanDuration;
-    use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
+    use andromeda_context_commit::{lease_holder::LeaseHolder, write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
@@ -341,7 +339,7 @@ mod tests {
             }
         }
 
-        fn lease_check(&self, id: DeliveryId, worker_id: &WorkerInstanceId) -> Result<(), DeliveryLeaseError> {
+        fn lease_check(&self, id: DeliveryId, worker_id: &LeaseHolder) -> Result<(), DeliveryLeaseError> {
             match self.lease_state {
                 LeaseState::Held => Ok(()),
                 LeaseState::Expired => Err(DeliveryLeaseError::lease_lost(id, worker_id)),
@@ -356,7 +354,7 @@ mod tests {
 
     #[async_trait]
     impl DeliveryStore for RecordingStore {
-        async fn claim_pending(&self, _worker_id: &WorkerInstanceId, lease: LeaseTerm, _batch_size: i32) -> Result<Vec<DeliveryEntry>, NotificationError> {
+        async fn claim_pending(&self, _worker_id: &LeaseHolder, lease: LeaseTerm, _batch_size: i32) -> Result<Vec<DeliveryEntry>, NotificationError> {
             self.claimed_with
                 .lock()
                 .map_err(|error| NotificationError::persistence(error.to_string()))?
@@ -365,7 +363,7 @@ mod tests {
             Ok(entries.drain(..).collect())
         }
 
-        async fn mark_delivered(&self, id: DeliveryId, worker_id: &WorkerInstanceId, _target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
+        async fn mark_delivered(&self, id: DeliveryId, worker_id: &LeaseHolder, _target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
             self.lease_check(id, worker_id)?;
             self.delivered.lock().map_err(poisoned)?.push(id);
             Ok(())
@@ -374,7 +372,7 @@ mod tests {
         async fn mark_failed(
             &self,
             id: DeliveryId,
-            worker_id: &WorkerInstanceId,
+            worker_id: &LeaseHolder,
             error: &str,
             next_attempt_at: DateTime<Utc>,
             _target: &ContextTarget,
@@ -384,7 +382,7 @@ mod tests {
             Ok(())
         }
 
-        async fn mark_terminal(&self, id: DeliveryId, worker_id: &WorkerInstanceId, error: &str, _target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
+        async fn mark_terminal(&self, id: DeliveryId, worker_id: &LeaseHolder, error: &str, _target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
             self.lease_check(id, worker_id)?;
             self.terminal.lock().map_err(poisoned)?.push((id, error.to_owned()));
             Ok(())

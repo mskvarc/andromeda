@@ -1,8 +1,12 @@
 //! Row-to-domain mapping for the JSON-LD context store.
 
-use crate::jsonld_context::rows::{ContextMetadataRow, ContextSummaryRow};
+use crate::jsonld_context::{
+    kind_code::kind_of,
+    rows::{ContextMetadataRow, ContextSummaryRow},
+};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
+use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
+use andromeda_postgresql_codes::{jsonld_context_kind::JsonldContextKindCode, registry::UnknownCompactCode};
 use iri_rs::IriBuf;
 use thiserror::Error;
 use url::Url;
@@ -29,12 +33,9 @@ pub enum ContextMapperError {
         /// Raw database value.
         value: i64,
     },
-    /// The `kind` column held a label no [`ContextKind`] variant covers.
-    #[error("unknown jsonld_context_kind in database: {value}")]
-    Kind {
-        /// Raw database value.
-        value: String,
-    },
+    /// The `kind` column held a number the kind registry never assigned.
+    #[error("unreadable context kind in database: {0}")]
+    Kind(#[from] UnknownCompactCode),
     /// Stored serving URL is not an IRI reference the hit counter can key on.
     #[error("invalid serving URL in database: {value}")]
     ServingIri {
@@ -65,7 +66,7 @@ pub(crate) fn row_to_metadata(row: ContextMetadataRow) -> Result<ContextMetadata
 
     let number_of_hits = u64::try_from(row.number_of_hits).map_err(|_| ContextMapperError::NegativeHits { value: row.number_of_hits })?;
 
-    let kind: ContextKind = row.kind.parse().map_err(|_| ContextMapperError::Kind { value: row.kind.clone() })?;
+    let kind = kind_of(JsonldContextKindCode::try_from(row.kind)?);
 
     Ok(ContextMetadata::builder()
         .url(url)

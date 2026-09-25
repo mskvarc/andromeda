@@ -113,6 +113,10 @@ impl RegistrationStore for PostgresRegistrationStore {
         registration_write::delete_expired(self, cutoff).await
     }
 
+    async fn find_expired(&self, cutoff: DateTime<Utc>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+        registration_read::find_expired(self, cutoff).await
+    }
+
     async fn exists(&self, id: &Uri) -> Result<bool, RegistrationError> {
         registration_read::exists(self, id).await
     }

@@ -1,11 +1,14 @@
 //! Row-to-domain mapping for context source registrations.
 
-use crate::error::ContextStoreError;
+use crate::{
+    csource_registration::{mode_code::mode_of, operation_code::operation_of, status_code::status_of},
+    error::ContextStoreError,
+};
 use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonym,
     dereferenceable_uri::DereferenceableUri,
     non_empty_text::NonEmptyText,
-    scope::grammar::ScopeBuf,
+    scope::path::ScopePath,
     tenant::TenantName,
     uri::Uri,
 };
@@ -15,7 +18,6 @@ use andromeda_ngsi_ld_model::{
         ContextSourceRegistration,
         access::ContextSourceAccess,
         coverage::RegistrationCoverage,
-        forwarding_mode::ForwardingMode,
         health::RegistrationHealth,
         lifecycle::RegistrationLifecycle,
         operation::CsrOperation,
@@ -25,6 +27,8 @@ use andromeda_ngsi_ld_model::{
     time_interval::TimeInterval,
 };
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_postgresql_codes::{csr_mode::CsrModeCode, csr_operation::CsrOperationCode, csr_status::CsrStatusCode};
+use andromeda_postgresql_query::ltree::ltree_to_scope;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
@@ -38,9 +42,9 @@ use sqlx::{Row, postgres::PgRow};
 /// Returns [`ContextStoreError::Internal`] when a stored column does not parse
 /// back into its domain type: the registration URI, the `registrationName` or
 /// `description` text, the tenant name, the `information` document and the rest
-/// of the coverage members, the endpoint, media type, forwarding mode,
-/// operations, refresh rate and remaining access members, or the health status
-/// label. It is also returned when the `context_source_alias` column exists but
+/// of the coverage members, the endpoint, media type, forwarding mode code,
+/// operation codes, refresh rate and remaining access members, or the health
+/// status code. It is also returned when the `context_source_alias` column exists but
 /// fails to read for a reason other than being absent or undecodable.
 pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStoreError> {
     let id_raw: String = row.get("id");
@@ -86,12 +90,13 @@ fn row_to_coverage(row: &PgRow) -> Result<RegistrationCoverage, ContextStoreErro
         .map(|values| values.iter().map(|raw| DatasetSelector::parse(raw)).collect::<Result<Vec<_>, _>>())
         .transpose()
         .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR datasetId: {e}")))?;
-    let scope: Option<Vec<ScopeBuf>> = row
+    // Projected as the `ltree` label paths the scopes are stored as.
+    let scope: Option<Vec<ScopePath>> = row
         .get::<Option<Vec<String>>, _>("scope")
         .map(|values| {
             values
-                .into_iter()
-                .map(|raw| ScopeBuf::new(raw).map_err(|e| ContextStoreError::Internal(format!("Invalid scope value in DB: {e}"))))
+                .iter()
+                .map(|stored| ltree_to_scope(stored).map_err(|e| ContextStoreError::Internal(format!("Invalid CSR scope label path '{stored}': {e}"))))
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?;
@@ -132,23 +137,18 @@ fn row_to_access(row: &PgRow) -> Result<ContextSourceAccess, ContextStoreError> 
         .map(|raw| raw.parse())
         .transpose()
         .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR accept media type: {e}")))?;
-    // `mode` is projected as `::text`; the PostgreSQL enum labels and the domain
-    // `EnumString` share one definition, so a label the broker does not know
-    // becomes a typed parse error here rather than an opaque sqlx decode failure
-    // deep in the driver.
-    let mode_label: String = row.get("mode");
-    let mode = mode_label
-        .parse::<ForwardingMode>()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR mode '{mode_label}': {e}")))?;
+    // A number the registry never assigned is a typed decode failure naming
+    // the registry, rather than an opaque sqlx one deep in the driver.
+    let mode = mode_of(CsrModeCode::try_from(row.get::<i16, _>("mode")).map_err(|e| ContextStoreError::Internal(format!("Invalid CSR mode: {e}")))?);
     let operations: Option<Vec<CsrOperation>> = row
-        .get::<Option<Vec<String>>, _>("operations")
-        .map(|labels| {
-            labels
+        .get::<Option<Vec<i16>>, _>("operations")
+        .map(|codes| {
+            codes
                 .into_iter()
-                .map(|label| {
-                    label
-                        .parse::<CsrOperation>()
-                        .map_err(|_| ContextStoreError::Internal(format!("Invalid CSR operation '{label}'")))
+                .map(|code| {
+                    CsrOperationCode::try_from(code)
+                        .map(operation_of)
+                        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR operation: {e}")))
                 })
                 .collect::<Result<Vec<_>, _>>()
         })
@@ -213,29 +213,29 @@ fn row_to_alias(row: &PgRow) -> Result<Option<ContextSourcePseudonym>, ContextSt
 /// registration triggered, `lastSuccess` "created on first successful
 /// operation". A registration that has triggered nothing has observed nothing,
 /// so it reports none of them rather than a health and two zeroes that stand
-/// for the absence of evidence. The stored row still carries the column the
-/// forwarding outcome writes; the timestamps are what say whether an attempt
-/// has happened at all, because `health_update_sql` writes them with the status
-/// in one statement.
+/// for the absence of evidence. The delivery state still carries the status
+/// the registration started with; the timestamps are what say whether an
+/// attempt has happened at all, because `health_update_sql` writes them with
+/// the status in one statement.
+///
+/// The delivery state is `LEFT JOIN`ed, so a registration whose state row is
+/// missing reads as one that has observed nothing.
 fn row_to_health(row: &PgRow) -> Result<RegistrationHealth, ContextStoreError> {
     let last_success: Option<DateTime<Utc>> = row.get("last_success");
     let last_failure: Option<DateTime<Utc>> = row.get("last_failure");
     let attempted = last_success.is_some() || last_failure.is_some();
 
-    // `status` is projected as `::text` for the same reason as `mode`.
-    let status_label: String = row.get("status");
-    let status = attempted
-        .then(|| {
-            status_label
-                .parse::<CsrStatus>()
-                .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR status '{status_label}': {e}")))
-        })
-        .transpose()?;
+    let status: Option<CsrStatus> = row
+        .get::<Option<i16>, _>("status")
+        .filter(|_| attempted)
+        .map(|code| CsrStatusCode::try_from(code).map(status_of))
+        .transpose()
+        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR status: {e}")))?;
 
     Ok(RegistrationHealth::builder()
         .status(status)
-        .times_sent(observed_counter(row.get("times_sent")))
-        .times_failed(observed_counter(row.get("times_failed")))
+        .times_sent(row.get::<Option<i32>, _>("times_sent").and_then(observed_counter))
+        .times_failed(row.get::<Option<i32>, _>("times_failed").and_then(observed_counter))
         .last_success(last_success)
         .last_failure(last_failure)
         .build())
@@ -246,7 +246,8 @@ fn row_to_health(row: &PgRow) -> Result<RegistrationHealth, ContextStoreError> {
 /// The column floors at zero because a counter has to be somewhere before it is
 /// first advanced. A counter still at rest reports nothing, which is the
 /// absence the member's 0..1 cardinality provides for; a negative count is not
-/// reachable through the column's own `CHECK` and is read the same way.
+/// reachable through the column's own `CHECK` and is read the same way, as is
+/// the absent counter of a registration without a delivery-state row.
 const fn observed_counter(counted: i32) -> Option<i32> {
     if counted > 0 { Some(counted) } else { None }
 }

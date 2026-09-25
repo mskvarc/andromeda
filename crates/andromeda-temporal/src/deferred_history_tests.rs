@@ -18,11 +18,17 @@ use crate::{
         mutation_barrier::TemporalMutationBarrier,
         pending_intent_reader::PendingTemporalIntentReader,
         temporal_history_sink::TemporalHistorySink,
-        temporal_intent_queue::{ClaimedTemporalAppendIntent, TemporalIntentBatchSize, TemporalIntentLeaseOwner, TemporalIntentQueue, TemporalIntentRetry},
+        temporal_intent_queue::{ClaimedTemporalAppendIntent, TemporalIntentBatchSize, TemporalIntentQueue, TemporalIntentRetry},
     },
     temporal_operation_unsupported::TemporalOperationUnsupported,
 };
-use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+use andromeda_context_commit::{
+    lease_acknowledgement::LeaseAcknowledgement,
+    lease_holder::LeaseHolder,
+    write_id::WriteId,
+    write_ordinal::WriteOrdinal,
+    write_record::WriteRecord,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -114,7 +120,7 @@ impl TemporalIntentQueue for RecordingQueue {
     async fn claim(
         &self,
         _target: &ContextTarget,
-        _owner: TemporalIntentLeaseOwner,
+        _owner: LeaseHolder,
         limit: TemporalIntentBatchSize,
         _lease_until: DateTime<Utc>,
     ) -> Result<Vec<ClaimedTemporalAppendIntent>, TemporalError> {
@@ -125,7 +131,7 @@ impl TemporalIntentQueue for RecordingQueue {
     async fn claim_for_entity(
         &self,
         _target: &ContextTarget,
-        _owner: TemporalIntentLeaseOwner,
+        _owner: LeaseHolder,
         entity_id: &Uri,
         limit: TemporalIntentBatchSize,
         _lease_until: DateTime<Utc>,
@@ -146,7 +152,7 @@ impl TemporalIntentQueue for RecordingQueue {
     async fn acknowledge(
         &self,
         _target: &ContextTarget,
-        _owner: TemporalIntentLeaseOwner,
+        _owner: LeaseHolder,
         intent: &SequencedTemporalAppendIntent,
     ) -> Result<LeaseAcknowledgement, TemporalError> {
         let mut state = self.state.lock().await;
@@ -163,7 +169,7 @@ impl TemporalIntentQueue for RecordingQueue {
     async fn retry(
         &self,
         _target: &ContextTarget,
-        _owner: TemporalIntentLeaseOwner,
+        _owner: LeaseHolder,
         intent: &SequencedTemporalAppendIntent,
         retry: TemporalIntentRetry,
     ) -> Result<LeaseAcknowledgement, TemporalError> {
@@ -401,7 +407,7 @@ fn drain(queue: Arc<RecordingQueue>, sink: Arc<RecordingSink>) -> TemporalIntent
         queue as Arc<dyn PendingTemporalIntentReader>,
         sink,
         TemporalIntentClaim {
-            owner: TemporalIntentLeaseOwner::mint(),
+            owner: LeaseHolder::mint(),
             batch_size: TemporalIntentBatchSize::new(NonZeroU32::new(8).expect("non-zero batch")),
             lease_duration: Duration::from_secs(30),
             retry_policy: retry_policy(),

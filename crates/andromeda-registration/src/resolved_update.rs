@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonym,
     dereferenceable_uri::DereferenceableUri,
     non_empty_text::NonEmptyText,
-    scope::grammar::ScopeBuf,
+    scope::path::ScopePath,
     tenant::TenantName,
 };
 use andromeda_ngsi_ld_model::{
@@ -64,7 +64,7 @@ pub struct ResolvedCsrUpdate {
     /// is already materialised here.
     pub operations: Vec<CsrOperation>,
     /// New scope strings.
-    pub scope: Option<Vec<ScopeBuf>>,
+    pub scope: Option<Vec<ScopePath>>,
     /// New refresh-rate duration string.
     pub refresh_rate: Option<Iso8601Duration>,
     /// New management object.

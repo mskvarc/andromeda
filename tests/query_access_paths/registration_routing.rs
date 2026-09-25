@@ -10,6 +10,7 @@
 //! registration to test for the absence of rows.
 
 use crate::seeded_corpus::{SEED_PREFIX, explain};
+use andromeda_postgresql_codes::csr_mode::CsrModeCode;
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use pretty_assertions::assert_eq;
 use sqlx::PgPool;
@@ -29,15 +30,16 @@ const RARE_TYPE: &str = "https://example.test/Rare";
 /// the routing rows the broker would derive.
 async fn seed_registrations(pool: &PgPool, prefix: &str) {
     sqlx::query(
-        "INSERT INTO context_source_registrations (id, information, endpoint) \
+        "INSERT INTO context_source_registrations (id, information, endpoint, mode) \
          SELECT $1 || ':ContextSourceRegistration:common-' || n, \
                 jsonb_build_array(jsonb_build_object('entities', jsonb_build_array(jsonb_build_object('type', $2::text)))), \
-                'http://localhost:9/csource' \
+                'http://localhost:9/csource', $4 \
          FROM generate_series(1, $3) AS n",
     )
     .bind(prefix)
     .bind(COMMON_TYPE)
     .bind(COMMON_REGISTRATIONS)
+    .bind(CsrModeCode::Inclusive.code())
     .execute(pool)
     .await
     .expect("the common registrations must be seeded");
@@ -55,11 +57,12 @@ async fn seed_registrations(pool: &PgPool, prefix: &str) {
 
     for (label, entity_types) in [("rare", vec![RARE_TYPE]), ("wildcard", vec!["*"])] {
         sqlx::query(
-            "INSERT INTO context_source_registrations (id, information, endpoint) \
-             VALUES ($1 || ':ContextSourceRegistration:' || $2, '[]'::jsonb, 'http://localhost:9/csource')",
+            "INSERT INTO context_source_registrations (id, information, endpoint, mode) \
+             VALUES ($1 || ':ContextSourceRegistration:' || $2, '[]'::jsonb, 'http://localhost:9/csource', $3)",
         )
         .bind(prefix)
         .bind(label)
+        .bind(CsrModeCode::Inclusive.code())
         .execute(pool)
         .await
         .expect("the registration must be seeded");

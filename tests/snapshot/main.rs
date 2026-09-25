@@ -2,6 +2,7 @@
 
 #![allow(clippy::expect_used, reason = "integration test transport failures must stop the case")]
 
+mod branch_schema;
 mod capture;
 mod core;
 mod coverage;

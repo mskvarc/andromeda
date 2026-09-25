@@ -269,6 +269,7 @@ fn classify_snapshot_failure(error: &SnapshotError) -> TaskFailure {
         | SnapshotError::NotFound { .. }
         | SnapshotError::AlreadyExists { .. }
         | SnapshotError::PreparationTimeout { .. }
+        | SnapshotError::Quarantined { .. }
         | SnapshotError::Entity(_)
         | SnapshotError::Temporal(_)
         | SnapshotError::Federation(_)

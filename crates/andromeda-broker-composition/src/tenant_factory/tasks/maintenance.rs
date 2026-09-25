@@ -4,13 +4,12 @@ use crate::{
     event::entity_change_sink::BroadcastEntityChangeSink,
     tenant_factory::{TenantFactoryConfig, error::TenantAssemblyError, storage::TenantStorage, tasks::retention::retention_duration},
 };
-use andromeda_context_commit::{committer::ContextCommitter, context_change_event::ContextChangeEvent};
+use andromeda_context_commit::{committer::ContextCommitter, context_change_event::ContextChangeEvent, lease_holder::LeaseHolder};
 use andromeda_entity::{
     change_sink::EntityChangeSink,
     error::EntityError,
     port::spatial_snapshot::EntitySpatialSnapshotSource,
     side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainConfig},
-    side_effect_queue::SideEffectLeaseOwner,
     spatial_reconciliation::reconcile_location,
     spatial_synchronization::SpatialSynchronizer,
 };
@@ -36,7 +35,6 @@ use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::{DateTime, Utc};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;
-use uuid::Uuid;
 
 /// Compose the tenant's durable side-effect drain and register the workers
 /// that service it.
@@ -69,7 +67,7 @@ pub(super) fn register_entity_side_effects(
             batch_size: i32::try_from(entity_config.pending_side_effects_batch_size).unwrap_or(i32::MAX),
             max_attempts: entity_config.pending_side_effects_max_attempts,
             base_backoff: entity_config.pending_side_effects_base_backoff.duration(),
-            lease_owner: SideEffectLeaseOwner::for_tenant(&config.identity.source_id, Uuid::new_v4()),
+            lease_holder: LeaseHolder::mint(),
         },
     ));
     register_entity_side_effect_drain(

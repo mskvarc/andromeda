@@ -88,13 +88,15 @@ pub(super) fn compose_subscription_services(
 ) -> SubscriptionServices {
     let endpoint_validator: Arc<dyn SubscriptionEndpointValidator> = Arc::new(DeliverySubscriptionEndpointValidator);
     let csource = Arc::new(SubscriptionService::new(
-        Arc::new(CsourceSubscriptionRepository::new(&storage.pool)),
+        // clone: the subscription stores intern attribute lists through the tenant's one dictionary.
+        Arc::new(CsourceSubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))),
         storage.engine.clone(),                              // clone: each subscription service owns its engine handle.
         CsrSubscriptionVariant::new(storage.engine.clone()), // clone: the variant expands against its own engine handle.
         Some(Arc::new(BroadcastSubscriptionChangeSink::new(signals.csource_subscription.clone()))), // clone: service and worker each own a sender handle.
         Arc::clone(&endpoint_validator),                     // clone: both subscription services share one endpoint validator.
     ));
-    let store = Arc::new(SubscriptionRepository::new(&storage.pool)) as Arc<dyn SubscriptionStore>;
+    // clone: see above.
+    let store = Arc::new(SubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
     let forwarding = edge.map(|edge| compose_subscription_forwarding(edge, storage, transports, entity_query, &csource, &store));
     let mut entity = SubscriptionService::new(
         Arc::clone(&store),

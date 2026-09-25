@@ -19,7 +19,7 @@ pub enum Subscriptions {
     Id,
     /// Internal surrogate the notification queue references
     SubscriptionKey,
-    /// Which subscription family a row is: `entity` or `csource`
+    /// Which subscription family a row is (`SubscriptionKindCode`)
     Kind,
     /// The `subscriptionName` member (clause 5.2.12)
     SubscriptionName,
@@ -27,7 +27,7 @@ pub enum Subscriptions {
     Description,
     /// The watched `EntityInfo` selectors, as JSONB
     Entities,
-    /// The `watchedAttributes` IRIs
+    /// The `attribute_names` keys of the `watchedAttributes` IRIs
     WatchedAttributes,
     /// The `notificationTrigger` change types
     NotificationTrigger,
@@ -41,9 +41,9 @@ pub enum Subscriptions {
     ScopeQ,
     /// The `csf` context-source filter
     Csf,
-    /// The `expandValues` attribute names whose `q` operands were coerced (clause 5.2.12)
+    /// The `attribute_names` keys of the `expandValues` names whose `q` operands were coerced (clause 5.2.12)
     ExpandValues,
-    /// The `jsonKeys` attribute names whose `q` object keys were expanded (clause 5.2.12)
+    /// The `attribute_names` keys of the `jsonKeys` names whose `q` object keys were expanded (clause 5.2.12)
     JsonKeys,
     /// The `datasetId` selectors an entity subscription narrows to
     DatasetId,
@@ -53,7 +53,7 @@ pub enum Subscriptions {
     ExpiresAt,
     /// The `throttling` minimum interval between notifications
     Throttling,
-    /// The subscription status enum (`active`, `paused`, `expired`)
+    /// The subscription status code (`SubscriptionStatusCode`)
     Status,
     /// The `temporalQ` temporal-query filter, as JSONB
     TemporalQ,

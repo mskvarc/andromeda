@@ -4,9 +4,15 @@ use crate::{
     action,
     candidate::{IndexTarget, MaintenanceTarget},
     error::MaintenanceError,
+    evidence::inspection_result::InspectionResult,
     inspection::{self, CapabilityStatus, HeapSample, IndexSize, InvalidIndex, MutationPrivilege},
     policy::{DeferralReason, PolicyDecision, PolicyProfile, SafetyGates, decide, safety_deferral},
-    state::{self, IndexProbeState, RegisteredTenant},
+    state::{
+        self,
+        RegisteredTenant,
+        target_record::{self, IndexProbeState},
+        tenant_inspection,
+    },
 };
 use andromeda_postgresql_context_store::{
     maintenance_config::{MaintenanceConfig, MaintenanceMode},
@@ -132,7 +138,7 @@ impl MaintenanceController {
         let Some(tenant) = state::select_least_recently_inspected(platform).await? else {
             return Ok(PassOutcome::NoTenant);
         };
-        state::mark_inspected(platform, &tenant, "started").await?;
+        tenant_inspection::mark_inspected(platform, &tenant, InspectionResult::Started).await?;
         let tenant_url = self.direct_url.with_db_name(&tenant.database);
         let pool_result = tokio::select! {
             () = cancellation.cancelled() => return Ok(PassOutcome::Cancelled),
@@ -141,14 +147,14 @@ impl MaintenanceController {
         let tenant_pool = match pool_result {
             Ok(pool) => pool,
             Err(error) => {
-                state::mark_tenant_failure(platform, &tenant).await?;
+                tenant_inspection::mark_tenant_failure(platform, &tenant).await?;
                 warn!(tenant = tenant.log_name(), database = %tenant.database, error = %error, decision = "tenant-unavailable", "PostgreSQL maintenance pass deferred");
                 return Ok(PassOutcome::TenantUnavailable);
             }
         };
         let contract = current_tenant_schema_contract()?;
         if let Err(error) = verify_schema_contract(&tenant_pool, &contract).await {
-            state::mark_inspected(platform, &tenant, "schema-behind").await?;
+            tenant_inspection::mark_inspected(platform, &tenant, InspectionResult::SchemaBehind).await?;
             warn!(tenant = tenant.log_name(), database = %tenant.database, error = %error, decision = "schema-behind", "PostgreSQL maintenance does not migrate idle tenant schemas");
             tenant_pool.close().await;
             return Ok(PassOutcome::SchemaBehind);
@@ -162,7 +168,7 @@ impl MaintenanceController {
         };
         let capability = inspection::validate_capabilities(&mut connection, mutation).await?;
         if capability != CapabilityStatus::Ready {
-            state::mark_inspected(platform, &tenant, capability_label(capability)).await?;
+            tenant_inspection::mark_inspected(platform, &tenant, InspectionResult::of_capability(capability)).await?;
             warn!(tenant = tenant.log_name(), database = %tenant.database, capability = ?capability, decision = "capability-unavailable", "PostgreSQL maintenance pass deferred");
             return Ok(PassOutcome::CapabilityUnavailable);
         }
@@ -171,8 +177,8 @@ impl MaintenanceController {
         let invalid = inspection::invalid_indexes(&mut connection).await?;
         let index_sizes = inspection::index_sizes(&mut connection).await?;
         let heap_samples = inspection::heap_samples(&mut connection, profile).await?;
-        let pending_before_sampling = state::pending_action(platform, &tenant).await?;
-        let probe_states = state::index_probe_states(platform, &tenant).await?;
+        let pending_before_sampling = target_record::pending_action(platform, &tenant).await?;
+        let probe_states = target_record::index_probe_states(platform, &tenant).await?;
         let sampling_outcome = self.record_heap_samples(platform, &tenant, &heap_samples, profile).await?;
 
         for index in &invalid {
@@ -189,23 +195,23 @@ impl MaintenanceController {
 
         let Some(size) = highest_priority_probe_candidate(&index_sizes, &probe_states, profile, Utc::now()) else {
             let outcome = sampling_outcome.unwrap_or(PassOutcome::Idle);
-            state::mark_inspected(platform, &tenant, outcome_label(outcome)).await?;
+            tenant_inspection::mark_inspected(platform, &tenant, InspectionResult::of_pass(outcome)).await?;
             return Ok(outcome);
         };
         let target = MaintenanceTarget::Index(size.target);
         let gates = inspection::safety_gates(&mut connection, target).await?;
         if let Some(reason) = safety_deferral(profile, gates) {
-            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.state_key(), decision = "deferred", reason = ?reason, "PostgreSQL maintenance probe deferred");
-            state::mark_inspected(platform, &tenant, "deferred").await?;
+            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), decision = "deferred", reason = ?reason, "PostgreSQL maintenance probe deferred");
+            tenant_inspection::mark_inspected(platform, &tenant, InspectionResult::Deferred).await?;
             return Ok(PassOutcome::Deferred);
         }
         let measured = tokio::select! {
             () = cancellation.cancelled() => return Ok(PassOutcome::Cancelled),
             result = inspection::probe_index(&mut connection, size, profile) => result?,
         };
-        let target_state = state::load_target_state(platform, &tenant, target).await?;
+        let target_state = target_record::load_target_state(platform, &tenant, target).await?;
         let decision = decide(self.config.mode, profile, target_state, measured, idle_gates(), Utc::now());
-        state::record_decision(platform, &tenant, target, Some(measured), decision).await?;
+        target_record::record_decision(platform, &tenant, target, Some(measured), decision).await?;
         let outcome = match decision {
             PolicyDecision::Queued => PassOutcome::Queued,
             PolicyDecision::WouldAct | PolicyDecision::Act => PassOutcome::WouldAct,
@@ -221,8 +227,8 @@ impl MaintenanceController {
                 | DeferralReason::WaitingRelationLock,
             ) => sampling_outcome.unwrap_or(PassOutcome::Probed),
         };
-        info!(tenant = tenant.log_name(), database = %tenant.database, target = target.state_key(), relation_bytes = measured.relation_bytes, reclaimable_bytes = measured.reclaimable_bytes, degraded_percent = measured.degraded_percent, decision = ?decision, "PostgreSQL maintenance index probe completed");
-        state::mark_inspected(platform, &tenant, outcome_label(outcome)).await?;
+        info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), relation_bytes = measured.relation_bytes, reclaimable_bytes = measured.reclaimable_bytes, degraded_percent = measured.degraded_percent, decision = ?decision, "PostgreSQL maintenance index probe completed");
+        tenant_inspection::mark_inspected(platform, &tenant, InspectionResult::of_pass(outcome)).await?;
         Ok(outcome)
     }
 
@@ -237,10 +243,10 @@ impl MaintenanceController {
         let mut outcome = None;
         for sample in samples {
             let target = MaintenanceTarget::Heap(sample.target);
-            let target_state = state::load_target_state(platform, tenant, target).await?;
+            let target_state = target_record::load_target_state(platform, tenant, target).await?;
             let decision = decide(self.config.mode, profile, target_state, sample.degradation, idle_gates(), Utc::now());
-            state::record_decision(platform, tenant, target, Some(sample.degradation), decision).await?;
-            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.state_key(), relation_bytes = sample.degradation.relation_bytes, reclaimable_bytes = sample.degradation.reclaimable_bytes, degraded_percent = sample.degradation.degraded_percent, decision = ?decision, "PostgreSQL maintenance heap sample completed");
+            target_record::record_decision(platform, tenant, target, Some(sample.degradation), decision).await?;
+            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), relation_bytes = sample.degradation.relation_bytes, reclaimable_bytes = sample.degradation.reclaimable_bytes, degraded_percent = sample.degradation.degraded_percent, decision = ?decision, "PostgreSQL maintenance heap sample completed");
             match decision {
                 PolicyDecision::Queued => outcome = Some(PassOutcome::Queued),
                 PolicyDecision::WouldAct if outcome.is_none() => outcome = Some(PassOutcome::WouldAct),
@@ -293,36 +299,6 @@ const fn idle_gates() -> SafetyGates {
     }
 }
 
-/// Stable per-database capability outcome label.
-const fn capability_label(status: CapabilityStatus) -> &'static str {
-    match status {
-        CapabilityStatus::Ready => "ready",
-        CapabilityStatus::MissingPgstattuple => "missing-pgstattuple",
-        CapabilityStatus::MissingPgstattupleExecute => "missing-pgstattuple-execute",
-        CapabilityStatus::MissingMaintain => "missing-maintain",
-    }
-}
-
-/// Stable persisted pass outcome label.
-const fn outcome_label(outcome: PassOutcome) -> &'static str {
-    match outcome {
-        PassOutcome::Disabled => "disabled",
-        PassOutcome::GlobalLockUnavailable => "global-lock-unavailable",
-        PassOutcome::NoTenant => "no-tenant",
-        PassOutcome::TenantUnavailable => "tenant-unavailable",
-        PassOutcome::SchemaBehind => "schema-behind",
-        PassOutcome::CapabilityUnavailable => "capability-unavailable",
-        PassOutcome::Idle => "idle",
-        PassOutcome::Probed => "probed",
-        PassOutcome::Queued => "queued",
-        PassOutcome::WouldAct => "would-act",
-        PassOutcome::Deferred => "deferred",
-        PassOutcome::Acted => "acted",
-        PassOutcome::ActionFailed => "action-failed",
-        PassOutcome::Cancelled => "cancelled",
-    }
-}
-
 /// Map a pass result to the telemetry crate's stable label domain.
 const fn metric_decision(outcome: PassOutcome) -> MaintenanceDecision {
     match outcome {
@@ -345,7 +321,13 @@ const fn metric_decision(outcome: PassOutcome) -> MaintenanceDecision {
 
 #[cfg(test)]
 mod tests {
-    use crate::{candidate::IndexTarget, controller::highest_priority_probe_candidate, inspection::IndexSize, policy::PolicyProfile, state::IndexProbeState};
+    use crate::{
+        candidate::IndexTarget,
+        controller::highest_priority_probe_candidate,
+        inspection::IndexSize,
+        policy::PolicyProfile,
+        state::target_record::IndexProbeState,
+    };
     use andromeda_postgresql_context_store::maintenance_config::MaintenanceProfile;
     use chrono::{Duration, Utc};
     use pretty_assertions::assert_eq;

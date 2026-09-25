@@ -39,8 +39,6 @@ mod interval_match;
 pub mod notification_event;
 /// Entity event notification evaluation.
 pub mod processor;
-/// Stable ownership identity for a notification delivery lease.
-pub mod worker_instance_id;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

@@ -23,7 +23,10 @@
 //! `docs/temporal-rebuild-runbook.md` documents.
 
 use crate::SUITE;
-use andromeda_postgresql_context_store::schema_contract::{contract::SchemaContract, error::SchemaContractError, schema_metadata::verify_schema_contract};
+use andromeda_postgresql_context_store::{
+    migration_set::tenant::tenant_migrator,
+    schema_contract::{contract::SchemaContract, error::SchemaContractError, schema_metadata::verify_schema_contract},
+};
 use andromeda_test_harness::{
     configuration::TestRunConfiguration,
     database_access::connect_test_database,
@@ -31,12 +34,11 @@ use andromeda_test_harness::{
     serialized_environment::SerializedEnvironment,
 };
 use pretty_assertions::assert_eq;
-use sqlx::{PgPool, Row, migrate::Migrator};
+use sqlx::{PgPool, Row};
 use std::{fs, path::Path};
 
-/// The migration set this test binary embeds, which is the one the broker
-/// embeds: both are compiled from `migrations/tenant`.
-static TENANT_MIGRATOR: Migrator = sqlx::migrate!("migrations/tenant");
+/// The directories the tenant migrator runs, as one version space.
+const TENANT_MIGRATION_DIRECTORIES: [&str; 2] = ["migrations/tenant", "migrations/branch"];
 
 /// The marker a migration declares when it cannot run inside a transaction.
 const NO_TRANSACTION: &str = "-- no-transaction";
@@ -46,7 +48,7 @@ const REPLACED_RELATIONS: &[&str] = &["attribute_current", "temporal_entity_attr
 
 /// The contract the embedded migration set expresses.
 fn embedded_contract() -> SchemaContract {
-    SchemaContract::of(&TENANT_MIGRATOR).expect("the embedded tenant migration set expresses a contract")
+    SchemaContract::of(tenant_migrator()).expect("the embedded tenant migration set expresses a contract")
 }
 
 /// One migration body with its line comments removed.
@@ -99,11 +101,14 @@ async fn under_partial_cutover(pool: &PgPool, applied_version: i32) -> Result<()
 /// declares that it cannot and holds exactly one statement.
 #[tokio::test]
 async fn every_migration_is_all_or_nothing_so_a_failed_phase_leaves_no_partial_schema() {
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations/tenant");
     let mut inspected = 0usize;
 
-    for entry in fs::read_dir(&directory).expect("the tenant migration directory must be readable") {
-        let path = entry.expect("each migration entry must be readable").path();
+    let paths = TENANT_MIGRATION_DIRECTORIES.iter().flat_map(|directory| {
+        fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join(directory))
+            .expect("the tenant and branch migration directories must be readable")
+            .map(|entry| entry.expect("each migration entry must be readable").path())
+    });
+    for path in paths {
         if path.extension().and_then(|extension| extension.to_str()) != Some("sql") {
             continue;
         }
@@ -125,7 +130,7 @@ async fn every_migration_is_all_or_nothing_so_a_failed_phase_leaves_no_partial_s
         }
     }
 
-    assert!(inspected > 0, "the tenant migration directory must hold migrations");
+    assert!(inspected > 0, "the tenant and branch migration directories must hold migrations");
 }
 
 /// A tenant whose cutover stopped between phases is stamped with a version

@@ -6,7 +6,8 @@
 //! name, because a store that keeps frozen payloads somewhere else entirely
 //! still answers the same questions.
 
-use crate::error::SnapshotError;
+use crate::{branch_condition::BranchCondition, error::SnapshotError};
+use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::snapshot_target::SnapshotTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
@@ -19,7 +20,6 @@ use futures::future::BoxFuture;
 use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
 use url::Url;
-use uuid::Uuid;
 
 /// Pre-serialised columns for a snapshot record.
 ///
@@ -112,7 +112,7 @@ pub trait SnapshotStore: Send + Sync + 'static {
     /// Return the next snapshot awaiting bounded preparation, if one exists.
     fn next_preparing<'life0, 'async_trait>(
         &'life0 self,
-        claimed_by: Uuid,
+        claimed_by: LeaseHolder,
         lease_until: DateTime<Utc>,
     ) -> BoxFuture<'async_trait, Result<Option<SnapshotPreparationJob>, SnapshotError>>
     where
@@ -123,7 +123,7 @@ pub trait SnapshotStore: Send + Sync + 'static {
     fn renew_preparation_lease<'life0, 'life1, 'async_trait>(
         &'life0 self,
         id: &'life1 Uri,
-        claimed_by: Uuid,
+        claimed_by: LeaseHolder,
         lease_until: DateTime<Utc>,
     ) -> BoxFuture<'async_trait, Result<bool, SnapshotError>>
     where
@@ -156,7 +156,7 @@ pub trait SnapshotStore: Send + Sync + 'static {
     fn update_status<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
         id: &'life1 Uri,
-        claimed_by: Uuid,
+        claimed_by: LeaseHolder,
         status: SnapshotStatus,
         queries_details: Option<&'life2 [ExecutionResultDetails]>,
         temporal_queries_details: Option<&'life3 [ExecutionResultDetails]>,
@@ -172,7 +172,7 @@ pub trait SnapshotStore: Send + Sync + 'static {
     fn promote_capture<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
         id: &'life1 Uri,
-        claimed_by: Uuid,
+        claimed_by: LeaseHolder,
         status: SnapshotStatus,
         queries_details: Option<&'life2 [ExecutionResultDetails]>,
         temporal_queries_details: Option<&'life3 [ExecutionResultDetails]>,
@@ -213,7 +213,7 @@ pub trait SnapshotStore: Send + Sync + 'static {
         &'life0 self,
         source_id: &'life1 Uri,
         target_id: &'life2 Uri,
-        claimed_by: Uuid,
+        claimed_by: LeaseHolder,
     ) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
     where
         'life0: 'async_trait,
@@ -242,6 +242,14 @@ pub trait SnapshotStore: Send + Sync + 'static {
 
     /// Record that a snapshot was read.
     fn touch_last_used<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
+
+    /// Whether a snapshot's stored branch is current or quarantined; `None`
+    /// when no such snapshot exists.
+    fn branch_condition<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<BranchCondition>, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

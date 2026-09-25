@@ -4,7 +4,6 @@
 
 use crate::{
     error::SubscriptionForwardingError,
-    mapping::ForwardedCopy,
     minted_subscription_id::mint_subscription_id,
     reduced_copy::{FilterCarriage, ReducedSubscription},
     service::SubscriptionForwardingService,
@@ -17,6 +16,7 @@ use andromeda_ngsi_ld_model::{
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
     subscription::Subscription,
 };
+use andromeda_subscription::forwarding_hook::ForwardedCopy;
 use tracing::{debug, warn};
 
 /// What one registration named in a companion notification calls for.

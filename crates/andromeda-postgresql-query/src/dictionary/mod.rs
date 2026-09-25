@@ -9,5 +9,6 @@
 //! dictionary crate's job, above this one.
 
 pub mod interned_name;
+pub mod names_in_key_order;
 pub mod query_names;
 pub mod resolved_names;

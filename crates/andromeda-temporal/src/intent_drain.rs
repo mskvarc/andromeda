@@ -7,10 +7,10 @@ use crate::{
         mutation_barrier::TemporalMutationBarrier,
         pending_intent_reader::PendingTemporalIntentReader,
         temporal_history_sink::TemporalHistorySink,
-        temporal_intent_queue::{ClaimedTemporalAppendIntent, TemporalIntentBatchSize, TemporalIntentLeaseOwner, TemporalIntentQueue, TemporalIntentRetry},
+        temporal_intent_queue::{ClaimedTemporalAppendIntent, TemporalIntentBatchSize, TemporalIntentQueue, TemporalIntentRetry},
     },
 };
-use andromeda_context_commit::lease_acknowledgement::LeaseAcknowledgement;
+use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
@@ -44,7 +44,7 @@ pub struct TemporalIntentDrain {
     /// Selected idempotent history sink.
     sink: Arc<dyn TemporalHistorySink>,
     /// Stable lease identity of this constructed drain.
-    owner: TemporalIntentLeaseOwner,
+    owner: LeaseHolder,
     /// Maximum intents claimed per pass.
     batch_size: TemporalIntentBatchSize,
     /// Claim lease duration.
@@ -63,7 +63,7 @@ pub struct TemporalIntentDrain {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TemporalIntentClaim {
     /// Identity recorded against every intent this worker claims.
-    pub owner: TemporalIntentLeaseOwner,
+    pub owner: LeaseHolder,
     /// Upper bound on the intents one pass claims.
     pub batch_size: TemporalIntentBatchSize,
     /// How long a claim is held before it may be reclaimed.

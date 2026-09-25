@@ -6,7 +6,7 @@
 //! state, because clause 5.6.6 leaves the Temporal Evolution standing when the
 //! entity itself is deleted.
 
-use crate::{repo::TemporalRepository, temporal_catalog_read::AttributeStreamScope};
+use crate::{attribute_stream_deletion::AttributeStreamScope, repo::TemporalRepository};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_identity::InstanceIdentity, uri::Uri};
 use andromeda_ngsi_ld_query::temporal::history_delete::TemporalHistoryDeleteScope;

@@ -40,8 +40,8 @@ impl MigrationsDigest {
     ///
     /// Shared by [`MigrationsDigest::of`], which digests the migrations the
     /// running binary embeds, and by the schema-contract reconciliation path,
-    /// which digests rows read back from a tenant's own `_sqlx_migrations`
-    /// table: the two must use the identical framing for a digest computed
+    /// which digests rows read back from a tenant's own ledger
+    /// (`_andromeda_tenant_migrations`): the two must use the identical framing for a digest computed
     /// from one source to ever equal a digest computed from the other.
     pub(crate) fn of_records<'record>(records: impl IntoIterator<Item = (i64, &'record str, &'record [u8])>) -> MigrationsDigest {
         let mut ordered: Vec<(i64, &str, &[u8])> = records.into_iter().collect();

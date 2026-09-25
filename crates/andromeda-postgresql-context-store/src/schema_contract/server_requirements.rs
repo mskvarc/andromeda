@@ -147,7 +147,7 @@ pub enum ExtensionVersionError {
 /// the schema also creates — `pg_trgm`, `ltree`, `btree_gist`, `btree_gin`
 /// (the `int4_ops` half of the attribute-aware trigram index on
 /// `current_attribute_values`) — ship with every supported server, so their
-/// `CREATE EXTENSION IF NOT EXISTS` in migration 0002 is the check.
+/// `CREATE EXTENSION IF NOT EXISTS` in migration 0006 is the check.
 ///
 /// # Errors
 ///

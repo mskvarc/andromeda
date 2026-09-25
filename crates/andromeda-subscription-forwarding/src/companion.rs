@@ -6,11 +6,15 @@
 //! this broker's receiver; those notifications drive the reduced copies placed
 //! at the matching context sources. An update follows the original, and a
 //! deletion tears down the companion together with every forwarded copy.
+//!
+//! A deletion is torn down from what was captured before the local row went:
+//! the store removes the forwarding mappings together with the subscription,
+//! so only the remote copies, the companion subscription and the platform
+//! routes are left for this side to remove.
 
 use crate::{
     error::SubscriptionForwardingError,
     forwarder::{ForwardDecision, decide},
-    mapping::ForwardedCopy,
     minted_subscription_id::mint_subscription_id,
     service::SubscriptionForwardingService,
 };
@@ -23,7 +27,7 @@ use andromeda_subscription::{
     compiled::CompiledCsrSubscription,
     csource_matching::csource_subscription_selects_registration,
     error::SubscriptionError,
-    forwarding_hook::SubscriptionForwardingHook,
+    forwarding_hook::{ForwardedCopy, SubscriptionForwardingHook, SubscriptionTeardown},
 };
 use futures::future::BoxFuture;
 use serde_json::{Map, Value, json};
@@ -54,6 +58,16 @@ fn companion_document(subscription: &Subscription, minted: &Uri, receiver: &url:
 /// Registrations read per round trip while the copies of a new subscription
 /// are placed.
 const REGISTRATION_PAGE: u32 = 200;
+
+/// Where the mappings of the copies being torn down stand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CopyMappings {
+    /// The local subscription was deleted, and its mappings with it.
+    RemovedWithSubscription,
+    /// The local subscription still exists, so each copy's mapping is removed
+    /// here as the copy is.
+    StillRecorded,
+}
 
 /// Whether a subscription takes part in distributed operations at all.
 fn is_local_only(subscription: &Subscription) -> bool {
@@ -157,6 +171,15 @@ impl SubscriptionForwardingService {
         decide(trigger, registration.access.mode.unwrap_or_default(), Some(copy.remote_subscription.clone())) // clone: the decision owns the copy's identifier
     }
 
+    /// What tearing `local` down involves, read from the mappings while they
+    /// still exist.
+    async fn teardown_of(&self, local: &Uri) -> Result<SubscriptionTeardown, SubscriptionForwardingError> {
+        Ok(SubscriptionTeardown {
+            companion: self.mappings.companion_of(local).await?,
+            forwarded: self.mappings.forwarded_of(local).await?,
+        })
+    }
+
     /// Tear down every copy forwarded for `local` and then its companion
     /// (clause 5.8.5.4).
     ///
@@ -167,18 +190,18 @@ impl SubscriptionForwardingService {
     /// Each step is attempted whatever the previous one did and a failure is
     /// reported per step, so one unreachable source never leaves the other
     /// copies, the mappings or the companion behind.
-    async fn tear_down(&self, local: &Uri) -> Result<(), SubscriptionForwardingError> {
-        for copy in self.mappings.forwarded_of(local).await? {
-            self.tear_down_forwarded_copy(local, &copy).await;
+    async fn tear_down(&self, local: &Uri, teardown: &SubscriptionTeardown, mappings: CopyMappings) {
+        for copy in &teardown.forwarded {
+            self.tear_down_forwarded_copy(local, copy, mappings).await;
         }
-        if let Some(companion) = self.mappings.companion_of(local).await? {
-            self.tear_down_companion(local, &companion).await;
+        if let Some(companion) = &teardown.companion {
+            self.tear_down_companion(local, companion).await;
         }
-        Ok(())
     }
 
-    /// Delete the copy of `local` at `copy.registration`'s source and forget it.
-    async fn tear_down_forwarded_copy(&self, local: &Uri, copy: &ForwardedCopy) {
+    /// Delete the copy of `local` at `copy.registration`'s source, forget its
+    /// mapping unless the deletion of `local` already did, and drop its route.
+    async fn tear_down_forwarded_copy(&self, local: &Uri, copy: &ForwardedCopy, mappings: CopyMappings) {
         match self.federation_registration(&copy.registration).await {
             Ok(Some(registration)) => {
                 let forwarded = self
@@ -199,21 +222,24 @@ impl SubscriptionForwardingService {
                 warn!(subscription = %local, registration = %copy.registration, %error, "registration of a forwarded copy could not be read; the copy may remain at the source");
             }
         }
-        if let Err(error) = self.mappings.remove_forwarded(local, &copy.registration).await {
-            warn!(subscription = %local, registration = %copy.registration, %error, "forwarded subscription copy mapping could not be removed");
+        match mappings {
+            CopyMappings::StillRecorded => {
+                if let Err(error) = self.mappings.remove_forwarded(local, &copy.registration).await {
+                    warn!(subscription = %local, registration = %copy.registration, %error, "forwarded subscription copy mapping could not be removed");
+                }
+            }
+            CopyMappings::RemovedWithSubscription => {}
         }
         if let Err(error) = self.router.unregister(&copy.remote_subscription).await {
             warn!(subscription = %local, remote = %copy.remote_subscription, %error, "forwarded subscription copy route could not be removed");
         }
     }
 
-    /// Delete the companion of `local` and unlink it.
+    /// Delete the companion of `local`, which removes its mapping with it, and
+    /// drop its route.
     async fn tear_down_companion(&self, local: &Uri, companion: &Uri) {
         if let Err(error) = self.csource_subscriptions.delete(&self.live_target, companion).await {
             warn!(subscription = %local, %companion, %error, "companion subscription could not be deleted");
-        }
-        if let Err(error) = self.mappings.unlink_companion(local).await {
-            warn!(subscription = %local, %companion, %error, "companion subscription could not be unlinked");
         }
         if let Err(error) = self.router.unregister(companion).await {
             warn!(subscription = %local, %companion, %error, "companion subscription route could not be removed");
@@ -224,7 +250,9 @@ impl SubscriptionForwardingService {
     /// forwarded copy (clause 5.8.2.4).
     async fn follow_update(&self, subscription: &Subscription, context: &ContextSpec) -> Result<(), SubscriptionForwardingError> {
         if is_local_only(subscription) {
-            return self.tear_down(&subscription.id).await;
+            let teardown = self.teardown_of(&subscription.id).await?;
+            self.tear_down(&subscription.id, &teardown, CopyMappings::StillRecorded).await;
+            return Ok(());
         }
         let companion = if let Some(companion) = self.mappings.companion_of(&subscription.id).await? {
             let mut fragment = companion_document(subscription, &companion, self.receiver.url());
@@ -293,13 +321,30 @@ impl SubscriptionForwardingHook for SubscriptionForwardingService {
         Box::pin(async move { self.follow_update(subscription, context).await.map_err(into_subscription_error) })
     }
 
-    fn deleted<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
+    fn teardown_of<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<SubscriptionTeardown, SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait,
     {
-        Box::pin(async move { self.tear_down(id).await.map_err(into_subscription_error) })
+        Box::pin(async move { self.teardown_of(id).await.map_err(into_subscription_error) })
+    }
+
+    fn deleted<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        id: &'life1 Uri,
+        teardown: &'life2 SubscriptionTeardown,
+    ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            self.tear_down(id, teardown, CopyMappings::RemovedWithSubscription).await;
+            Ok(())
+        })
     }
 }
 
@@ -322,9 +367,9 @@ fn into_subscription_error(error: SubscriptionForwardingError) -> SubscriptionEr
 
 #[cfg(test)]
 mod tests {
-    use crate::{companion::companion_document, forwarder::ForwardDecision, mapping::ForwardedCopy, service::SubscriptionForwardingService};
+    use crate::{companion::companion_document, forwarder::ForwardDecision, service::SubscriptionForwardingService};
     use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription::Subscription};
-    use andromeda_subscription::compilation::compile_csource_subscription;
+    use andromeda_subscription::{compilation::compile_csource_subscription, forwarding_hook::ForwardedCopy};
     use serde_json::json;
     use url::Url;
 

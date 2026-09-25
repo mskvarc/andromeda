@@ -3,14 +3,24 @@
 use crate::subscription_forwarding::{persistence_error, repo::SubscriptionForwardingRepository};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_schema::subscription_forwarding::{ForwardedSubscriptions, SubscriptionCompanions};
-use andromeda_subscription_forwarding::{
-    error::SubscriptionForwardingError,
-    mapping::{ForwardedCopy, SubscriptionForwardingStore},
-};
+use andromeda_registration::removal_hook::ForwardedSubscriptionCopy;
+use andromeda_subscription::forwarding_hook::ForwardedCopy;
+use andromeda_subscription_forwarding::{error::SubscriptionForwardingError, mapping::SubscriptionForwardingStore};
 use futures::future::BoxFuture;
-use sea_query::{Expr, ExprTrait, OnConflict, PostgresQueryBuilder, Query};
+use sea_query::{Expr, ExprTrait, OnConflict, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{Row, postgres::PgRow};
+
+/// Every copy held at `registration`'s context source, served by
+/// `idx_forwarded_subscriptions_registration`.
+fn forwarded_for_registration_statement(registration: &Uri) -> SelectStatement {
+    Query::select()
+        .column(ForwardedSubscriptions::LocalSubscriptionId)
+        .column(ForwardedSubscriptions::RemoteSubscriptionId)
+        .from(ForwardedSubscriptions::Table)
+        .and_where(Expr::col(ForwardedSubscriptions::RegistrationId).eq(registration.as_str()))
+        .to_owned()
+}
 
 /// Parse an identifier column back into a URI.
 fn uri_column(row: &PgRow, column: &str) -> Result<Uri, SubscriptionForwardingError> {
@@ -95,25 +105,6 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         })
     }
 
-    fn unlink_companion<'life0, 'life1, 'async_trait>(&'life0 self, local: &'life1 Uri) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: 'async_trait,
-    {
-        Box::pin(async move {
-            let (sql, values) = Query::delete()
-                .from_table(SubscriptionCompanions::Table)
-                .and_where(Expr::col(SubscriptionCompanions::LocalSubscriptionId).eq(local.as_str()))
-                .build_sqlx(PostgresQueryBuilder);
-            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-                .execute(self.pool())
-                .await
-                .map_err(persistence_error)?;
-            Ok(())
-        })
-    }
-
     fn record_forwarded<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         local: &'life1 Uri,
@@ -185,6 +176,32 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         })
     }
 
+    fn forwarded_for_registration<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        registration: &'life1 Uri,
+    ) -> BoxFuture<'async_trait, Result<Vec<ForwardedSubscriptionCopy>, SubscriptionForwardingError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            let (sql, values) = forwarded_for_registration_statement(registration).build_sqlx(PostgresQueryBuilder);
+            let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                .fetch_all(self.pool())
+                .await
+                .map_err(persistence_error)?;
+            rows.iter()
+                .map(|row| {
+                    Ok(ForwardedSubscriptionCopy {
+                        local_subscription: uri_column(row, "local_subscription_id")?,
+                        remote_subscription: uri_column(row, "remote_subscription_id")?,
+                    })
+                })
+                .collect()
+        })
+    }
+
     fn local_of_forwarded<'life0, 'life1, 'async_trait>(
         &'life0 self,
         remote_subscription: &'life1 Uri,
@@ -233,5 +250,23 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
                 .map_err(persistence_error)?;
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::subscription_forwarding::store::forwarded_for_registration_statement;
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use pretty_assertions::assert_eq;
+    use sea_query::PostgresQueryBuilder;
+
+    #[test]
+    fn the_copies_held_at_a_registration_are_read_by_its_identifier() {
+        let registration: Uri = "urn:ngsi-ld:ContextSourceRegistration:b".parse().expect("a URI");
+        let sql = forwarded_for_registration_statement(&registration).to_string(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            r#"SELECT "local_subscription_id", "remote_subscription_id" FROM "forwarded_subscriptions" WHERE "registration_id" = 'urn:ngsi-ld:ContextSourceRegistration:b'"#
+        );
     }
 }

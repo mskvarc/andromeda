@@ -5,7 +5,7 @@ use andromeda_federation::error::FederationError;
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
 use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
-use andromeda_snapshot::{error::SnapshotError, service::SnapshotPurgeFailure};
+use andromeda_snapshot::{error::SnapshotError, service::purge::SnapshotPurgeFailure};
 use andromeda_temporal::error::TemporalError;
 use axum::http::Uri;
 use std::{fmt::Display, time::Duration};
@@ -20,6 +20,9 @@ pub fn classify_snapshot_error(error: &SnapshotError) -> ClassifiedReport {
         SnapshotError::PreparationTimeout { .. } => {
             ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, error.to_string()).with_retry_after(Duration::from_secs(1))
         }
+        // A quarantined Snapshot is a broker-side condition the operator must
+        // resolve, answered as an internal error whose detail names it.
+        SnapshotError::Quarantined { .. } => ClassifiedReport::public(NgsiLdErrorType::InternalError, error.to_string()),
         SnapshotError::Entity(source) => classify_entity_error(source),
         SnapshotError::Temporal(source) => classify_temporal_error(source),
         SnapshotError::Federation(source) => classify_federation_error(source),
@@ -159,6 +162,7 @@ mod tests {
                 | SnapshotError::NotFound { .. }
                 | SnapshotError::AlreadyExists { .. }
                 | SnapshotError::PreparationTimeout { .. }
+                | SnapshotError::Quarantined { .. }
                 | SnapshotError::Entity(_)
                 | SnapshotError::Temporal(_)
                 | SnapshotError::Federation(_)
@@ -168,6 +172,17 @@ mod tests {
                 | SnapshotError::Contended => {}
             }
         }
+        Ok(())
+    }
+
+    /// A quarantined Snapshot answers 500 `InternalError`, and unlike an
+    /// internal fault its detail names the Snapshot the operator must repair.
+    #[test]
+    fn a_quarantined_snapshot_is_an_internal_error_that_names_the_snapshot() -> Result<(), Box<dyn Error>> {
+        let identifier = "urn:ngsi-ld:Snapshot:quarantined".parse::<Uri>()?;
+        let report = classify_snapshot_error(&SnapshotError::Quarantined { identifier });
+        pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
+        assert!(report.detail().contains("urn:ngsi-ld:Snapshot:quarantined"), "{}", report.detail());
         Ok(())
     }
 }

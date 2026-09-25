@@ -22,7 +22,7 @@ pub enum Tenants {
     IsUnnamedDefault,
     /// Name of the database holding the tenant's context
     DbName,
-    /// Tenant lifecycle status
+    /// Tenant administrative status (`TenantStatusCode`)
     Status,
     /// Instant the row was created
     CreatedAt,

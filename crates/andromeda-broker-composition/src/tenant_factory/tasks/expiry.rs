@@ -24,7 +24,7 @@ use andromeda_entity::{
 };
 use andromeda_entity_map::{error::EntityMapError, expiry::EntityMapExpiry, store::EntityMapStore};
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
-use andromeda_registration::{RegistrationChangeSink, expiry::RegistrationExpiry, store::RegistrationStore};
+use andromeda_registration::{RegistrationChangeSink, expiry::RegistrationExpiry, removal_hook::RegistrationRemovalHook, store::RegistrationStore};
 use andromeda_subscription::{expiry::SubscriptionExpiry, lifecycle::SubscriptionService, variant::SubscriptionVariant};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
@@ -73,6 +73,11 @@ pub(super) fn register_expiry_workers(
         supervisor,
         Arc::clone(&storage.registration_store), // clone: every registration worker shares one store.
         Arc::new(BroadcastRegistrationChangeSink::new(registration_changes.clone())), // clone: each worker owns a sender handle.
+        // clone: request handling and the sweep tear down removed registrations through one forwarding service.
+        state
+            .subscription_forwarding
+            .as_ref()
+            .map(|forwarding| Arc::clone(forwarding) as Arc<dyn RegistrationRemovalHook>),
         interval,
     )?;
     register_entity_expiry(
@@ -208,6 +213,7 @@ fn register_registration_expiry(
     supervisor: &TaskSupervisor,
     store: Arc<dyn RegistrationStore>,
     change_sink: Arc<dyn RegistrationChangeSink>,
+    removal_hook: Option<Arc<dyn RegistrationRemovalHook>>,
     cadence: Duration,
 ) -> Result<(), TenantAssemblyError> {
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
@@ -219,7 +225,7 @@ fn register_registration_expiry(
         RestartPolicy::transient(u32::MAX, cadence, cadence),
         ShutdownPolicy::new(cadence),
     );
-    let expiry = Arc::new(RegistrationExpiry::new(store, Some(change_sink)));
+    let expiry = Arc::new(RegistrationExpiry::new(store, Some(change_sink), removal_hook));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
         let expiry = Arc::clone(&expiry); // clone: each scheduled future owns the policy operation while executing.
         async move {

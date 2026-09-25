@@ -46,6 +46,8 @@ pub mod lifecycle;
 pub mod matching;
 /// The reverse map from a subscription to its index buckets.
 pub mod membership;
+/// The clause 5.2.12 rules a merged update is checked against.
+mod merged_validation;
 mod normalization;
 /// Initialising a subscription's notification `@context` from its creation context.
 mod notification_context;

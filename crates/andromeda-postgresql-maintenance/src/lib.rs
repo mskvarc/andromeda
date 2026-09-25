@@ -15,6 +15,7 @@ pub mod candidate;
 pub mod controller;
 /// Typed controller failures.
 pub mod error;
+mod evidence;
 mod inspection;
 /// Threshold and safety-gate decision policy.
 pub mod policy;
@@ -26,6 +27,7 @@ pub mod table_size;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-ngsi-ld-lexicon",
+        "andromeda-postgresql-codes",
         "andromeda-postgresql-context-store",
         "andromeda-postgresql-pool",
         "andromeda-postgresql-schema",

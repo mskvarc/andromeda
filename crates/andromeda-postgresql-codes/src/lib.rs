@@ -32,20 +32,42 @@
 
 /// The persisted attribute family of one history row.
 pub mod attribute_kind;
+/// The persisted distributed-operation mode of one registration.
+pub mod csr_mode;
 /// The persisted operation set of one context-source registration.
 pub mod csr_operation;
+/// The persisted health of one registration's context source.
+pub mod csr_status;
 /// The narrow key a current-state entity is referenced by.
 pub mod entity_key;
+/// The persisted kind of one stored JSON-LD context.
+pub mod jsonld_context_kind;
+/// The persisted outcome of one maintenance action.
+pub mod maintenance_action_result;
+/// The persisted policy decision of one maintenance target.
+pub mod maintenance_decision;
+/// The persisted outcome of one tenant's maintenance inspection.
+pub mod maintenance_inspection_result;
+/// The persisted relation one maintenance target row describes.
+pub mod maintenance_target;
 /// The persisted trigger condition of one notification record.
 pub mod notification_trigger;
 /// The one pattern every migration-owned compact code domain is declared with.
 pub mod registry;
 /// The persisted value shape of one scope-history row.
 pub mod scope_value_kind;
+/// The persisted lifecycle state of one snapshot.
+pub mod snapshot_status;
 /// The narrow key a temporal attribute stream is referenced by.
 pub mod stream_key;
+/// The persisted family of one stored subscription.
+pub mod subscription_kind;
+/// The persisted lifecycle state of one stored subscription.
+pub mod subscription_status;
 /// The narrow key a temporal entity is referenced by.
 pub mod temporal_entity_key;
+/// The persisted administrative status of one tenant.
+pub mod tenant_status;
 /// The persisted value shape of one attribute-history row.
 pub mod value_kind;
 

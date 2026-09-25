@@ -2,11 +2,11 @@
 //!
 //! Every read and write of the JSON-LD context store is assembled here, so the
 //! two ports built on the table — the registry and the resolver cache — name its
-//! columns and spell its enum cast in one place.
+//! columns and its kind codes in one place.
 
-use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
+use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
 use andromeda_postgresql_schema::jsonld::JsonldContexts;
-use andromeda_postgresql_seaquery::{cast::cast, interval::make_interval_secs, pg_type::PostgresType};
+use andromeda_postgresql_seaquery::interval::make_interval_secs;
 use sea_query::{
     Alias,
     Condition,
@@ -54,9 +54,9 @@ fn unexpired() -> Condition {
         .add(Expr::col(JsonldContexts::ExpiresAt).gt(Expr::current_timestamp()))
 }
 
-/// The `Cached` kind label, cast to the enum the column carries.
+/// The `Cached` kind code.
 fn cached_kind() -> SimpleExpr {
-    cast(Expr::val(<&str>::from(&ContextKind::Cached)), PostgresType::JsonldContextKind)
+    Expr::val(JsonldContextKindCode::Cached.code())
 }
 
 /// The `@context` payload of the Context identified by `identifier`, unless it
@@ -121,8 +121,6 @@ pub fn cached_upsert(local_id: &str, url: &str, payload: Value, lifetime_seconds
         .values([
             local_id.into(),
             url.into(),
-            // A bound text parameter does not implicitly coerce to the enum
-            // column the way an unknown-typed literal would, so the label is cast.
             cached_kind(),
             payload.into(),
             Expr::current_timestamp(),
@@ -169,13 +167,13 @@ pub fn delete_expired_cached() -> DeleteStatement {
 
 /// The full metadata projection, aliased to the metadata row's field names.
 ///
-/// `id` answers under `local_id` and the enum `kind` is projected as text, so
-/// the row decodes the same whether it came from the list or the point lookup.
+/// `id` answers under `local_id`, so the row decodes the same whether it came
+/// from the list or the point lookup.
 fn metadata_columns(statement: &mut SelectStatement) {
     statement
         .expr_as(Expr::col(JsonldContexts::Id), Alias::new("local_id"))
         .column(JsonldContexts::Url)
-        .expr_as(cast(Expr::col(JsonldContexts::Kind), PostgresType::Text), Alias::new("kind"))
+        .column(JsonldContexts::Kind)
         .column(JsonldContexts::CreatedAt)
         .column(JsonldContexts::ExpiresAt)
         .column(JsonldContexts::LastUsage)
@@ -184,9 +182,9 @@ fn metadata_columns(statement: &mut SelectStatement) {
         .from(JsonldContexts::Table);
 }
 
-/// A `kind = $k::jsonld_context_kind` filter, cast from the bound label.
-fn kind_filter(kind: &str) -> SimpleExpr {
-    Expr::col(JsonldContexts::Kind).eq(cast(Expr::val(kind), PostgresType::JsonldContextKind))
+/// A `kind = $k` filter on the bound kind code.
+fn kind_filter(kind: JsonldContextKindCode) -> SimpleExpr {
+    Expr::col(JsonldContexts::Kind).eq(kind.code())
 }
 
 /// A page of stored Contexts, ordered by id, optionally of one kind and after a
@@ -194,7 +192,7 @@ fn kind_filter(kind: &str) -> SimpleExpr {
 ///
 /// The kind and cursor are absent-or-present filters applied in Rust rather than
 /// as `$n IS NULL OR …` guards, so a page carries only the predicates it needs.
-fn paged_where(statement: &mut SelectStatement, kind: Option<&str>, after: Option<&str>, limit: i64) {
+fn paged_where(statement: &mut SelectStatement, kind: Option<JsonldContextKindCode>, after: Option<&str>, limit: i64) {
     if let Some(kind) = kind {
         statement.and_where(kind_filter(kind));
     }
@@ -208,7 +206,7 @@ fn paged_where(statement: &mut SelectStatement, kind: Option<&str>, after: Optio
 
 /// The full-metadata page of stored Contexts.
 #[must_use]
-pub fn metadata_page_query(kind: Option<&str>, after: Option<&str>, limit: i64) -> SelectStatement {
+pub fn metadata_page_query(kind: Option<JsonldContextKindCode>, after: Option<&str>, limit: i64) -> SelectStatement {
     let mut statement = Query::select();
     metadata_columns(&mut statement);
     paged_where(&mut statement, kind, after, limit);
@@ -217,7 +215,7 @@ pub fn metadata_page_query(kind: Option<&str>, after: Option<&str>, limit: i64) 
 
 /// The summary (id and url) page of stored Contexts.
 #[must_use]
-pub fn summary_page_query(kind: Option<&str>, after: Option<&str>, limit: i64) -> SelectStatement {
+pub fn summary_page_query(kind: Option<JsonldContextKindCode>, after: Option<&str>, limit: i64) -> SelectStatement {
     let mut statement = Query::select();
     statement.column(JsonldContexts::Id).column(JsonldContexts::Url).from(JsonldContexts::Table);
     paged_where(&mut statement, kind, after, limit);
@@ -238,7 +236,7 @@ pub fn metadata_by_identifier_query(identifier: &str) -> SelectStatement {
 pub fn stored_context_query(identifier: &str) -> SelectStatement {
     Query::select()
         .column(JsonldContexts::Id)
-        .expr_as(cast(Expr::col(JsonldContexts::Kind), PostgresType::Text), Alias::new("kind"))
+        .column(JsonldContexts::Kind)
         .column(JsonldContexts::Url)
         .from(JsonldContexts::Table)
         .cond_where(identity_matches(identifier))
@@ -296,7 +294,7 @@ pub fn replace_payload_update(local_id: &str, payload: Value) -> UpdateStatement
 ///
 /// Returns [`SeaQueryError`] when the bound value list stops matching the
 /// seven-wide column list, which the fixed shapes here make unreachable.
-pub fn hosted_insert(local_id: &str, serving_url: Option<&str>, kind_label: &str, payload: Value) -> Result<InsertStatement, SeaQueryError> {
+pub fn hosted_insert(local_id: &str, serving_url: Option<&str>, kind: JsonldContextKindCode, payload: Value) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(JsonldContexts::Table)
@@ -312,7 +310,7 @@ pub fn hosted_insert(local_id: &str, serving_url: Option<&str>, kind_label: &str
         .values([
             local_id.into(),
             Expr::val(serving_url),
-            cast(Expr::val(kind_label), PostgresType::JsonldContextKind),
+            kind.code().into(),
             payload.into(),
             Expr::current_timestamp(),
             Expr::current_timestamp(),
@@ -333,6 +331,7 @@ mod tests {
         stored_context_query,
         summary_page_query,
     };
+    use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
     use sea_query::{PostgresQueryBuilder, error::Error as SeaQueryError};
     use serde_json::json;
 
@@ -344,18 +343,19 @@ mod tests {
     }
 
     #[test]
-    fn the_metadata_projection_aliases_id_and_casts_kind_to_text() {
+    fn the_metadata_projection_aliases_id_and_reads_the_kind_code() {
         let sql = metadata_page_query(None, None, 50).to_string(PostgresQueryBuilder);
         assert!(sql.contains("\"id\" AS \"local_id\""), "{sql}");
-        assert!(sql.contains("::text AS \"kind\""), "{sql}");
+        assert!(sql.contains("\"kind\","), "{sql}");
+        assert!(!sql.contains("::text"), "{sql}");
         assert!(sql.contains("ORDER BY \"id\" ASC"), "{sql}");
         assert!(sql.contains("LIMIT 50"), "{sql}");
     }
 
     #[test]
-    fn a_kind_filter_casts_the_bound_label_to_the_enum() {
-        let sql = summary_page_query(Some("Hosted"), None, 10).to_string(PostgresQueryBuilder);
-        assert!(sql.contains("::jsonld_context_kind"), "{sql}");
+    fn a_kind_filter_compares_the_kind_code() {
+        let sql = summary_page_query(Some(JsonldContextKindCode::Hosted), None, 10).to_string(PostgresQueryBuilder);
+        assert!(sql.contains("\"kind\" = 2"), "{sql}");
     }
 
     #[test]
@@ -365,9 +365,9 @@ mod tests {
     }
 
     #[test]
-    fn the_stored_context_projection_carries_kind_as_text() {
+    fn the_stored_context_projection_carries_the_kind_code() {
         let sql = stored_context_query("urn:x").to_string(PostgresQueryBuilder);
-        assert!(sql.contains("::text AS \"kind\""), "{sql}");
+        assert!(sql.contains("SELECT \"id\", \"kind\", \"url\""), "{sql}");
     }
 
     /// Clause 5.13.1: a `"Cached"` entry that has lapsed may not be served, so
@@ -452,7 +452,7 @@ mod tests {
         let sql = delete_expired_cached().to_string(PostgresQueryBuilder);
 
         assert!(sql.starts_with("DELETE FROM \"jsonld_contexts\""), "{sql}");
-        assert!(sql.contains("'Cached'::jsonld_context_kind"), "{sql}");
+        assert!(sql.contains("\"kind\" = 1"), "{sql}");
         assert!(sql.contains("\"expires_at\" <= CURRENT_TIMESTAMP"), "{sql}");
     }
 }

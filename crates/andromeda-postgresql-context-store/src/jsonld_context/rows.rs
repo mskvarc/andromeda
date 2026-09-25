@@ -10,10 +10,10 @@ pub(crate) struct ContextMetadataRow {
     pub local_id: String,
     /// Public URL, if any.
     pub url: Option<String>,
-    /// Stored kind, as the raw `jsonld_context_kind` label. Projected via
-    /// `kind::text`; the mapper turns it into the domain enum so an unknown
-    /// label surfaces as a typed error rather than an sqlx decode failure.
-    pub kind: String,
+    /// Stored kind, as the raw `JsonldContextKindCode` number; the mapper
+    /// decodes it so an unknown number surfaces as a typed error rather than
+    /// an sqlx decode failure.
+    pub kind: i16,
     /// Creation timestamp.
     pub created_at: DateTime<Utc>,
     /// Expiry timestamp, if set.

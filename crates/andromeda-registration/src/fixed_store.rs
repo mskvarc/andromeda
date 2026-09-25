@@ -20,12 +20,16 @@ use std::sync::Mutex;
 /// `get` answers the registration carrying the requested identifier;
 /// `find_overlapping` returns every registration, as a superset preselect is
 /// allowed to; `update` records the resolved `information` it received so a
-/// test can assert what the policy layer would have written.
+/// test can assert what the policy layer would have written; `delete` records
+/// the identifier it was asked to remove, so a test can tell what happened
+/// before the row went from what happened after.
 pub(crate) struct FixedStore {
     /// The registrations the store holds.
     registrations: Vec<ContextSourceRegistration>,
     /// The `information` of every update applied, in order.
     updated_information: Mutex<Vec<Vec<RegistrationInfo>>>,
+    /// Every identifier deleted, in order.
+    deleted: Mutex<Vec<Uri>>,
 }
 
 impl FixedStore {
@@ -34,7 +38,13 @@ impl FixedStore {
         FixedStore {
             registrations,
             updated_information: Mutex::new(Vec::new()),
+            deleted: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Every identifier deleted so far.
+    pub(crate) fn deleted(&self) -> Vec<Uri> {
+        self.deleted.lock().expect("deletion log").clone() // clone: the test reads what the fake recorded
     }
 
     /// The `information` of every update applied so far.
@@ -45,6 +55,16 @@ impl FixedStore {
 
 impl RegistrationStore for FixedStore {
     fn delete_expired<'life0, 'async_trait>(
+        &'life0 self,
+        _cutoff: DateTime<Utc>,
+    ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
+    where
+        'life0: 'async_trait,
+    {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn find_expired<'life0, 'async_trait>(
         &'life0 self,
         _cutoff: DateTime<Utc>,
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
@@ -164,12 +184,18 @@ impl RegistrationStore for FixedStore {
         Box::pin(async { Ok(Vec::new()) })
     }
 
-    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Uri) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
+    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
     {
-        Box::pin(async { Ok(RegistrationMutation::Applied) })
+        let mutation = if self.registrations.iter().any(|registration| registration.id == *id) {
+            self.deleted.lock().expect("deletion log").push(id.clone()); // clone: the fake keeps a record the caller still owns
+            RegistrationMutation::Applied
+        } else {
+            RegistrationMutation::Missing
+        };
+        Box::pin(async move { Ok(mutation) })
     }
 
     fn record_forwarding_outcome<'life0, 'life1, 'async_trait>(

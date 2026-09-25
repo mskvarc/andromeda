@@ -87,6 +87,16 @@ pub trait RegistrationStore: Send + Sync + 'static {
         'life0: 'async_trait,
         Self: 'async_trait;
 
+    /// The registrations due at or before an explicit cutoff, read without
+    /// deleting them: what an expiry sweep is about to remove.
+    fn find_expired<'life0, 'async_trait>(
+        &'life0 self,
+        cutoff: DateTime<Utc>,
+    ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
+
     /// Whether a registration with this identifier exists.
     fn exists<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<bool, RegistrationError>>
     where

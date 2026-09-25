@@ -14,6 +14,8 @@ pub mod cached_context_invalidation;
 pub mod context_cache;
 /// Durable resolver-hit accounting.
 pub mod hit_store;
+/// The number the `kind` column stores a Context's kind as.
+pub mod kind_code;
 /// Row-to-domain conversions for JSON-LD context documents.
 pub mod mapper;
 /// Hosted-context lifecycle persistence.

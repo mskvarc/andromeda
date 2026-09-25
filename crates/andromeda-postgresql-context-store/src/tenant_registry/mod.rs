@@ -1,23 +1,30 @@
 //! The `tenants` table, as the tenancy crate's registry and lifecycle ports.
 
 mod statements;
+/// The number the `tenants.status` column stores a tenant's status as.
+pub mod status_code;
 
 use crate::{
     error::ContextStoreError,
-    tenant_database::{DatabaseUrl, create_database_if_missing, generate_db_name, migrate_main_db, migrate_single_tenant_db},
-    tenant_registry::statements::{
-        advisory_lock_query,
-        default_tenant_upsert,
-        named_tenant_database_query,
-        registered_tenants_query,
-        set_status_update,
-        tenant_count_query,
-        tenant_insert,
-        tenant_record_query,
-        tenant_records_page_query,
+    tenant_database::{DatabaseUrl, create_database_if_missing, generate_db_name},
+    tenant_migration::{configure_platform_database, migrate_platform_db, migrate_single_tenant_db},
+    tenant_registry::{
+        statements::{
+            advisory_lock_query,
+            default_tenant_upsert,
+            named_tenant_database_query,
+            registered_tenants_query,
+            set_status_update,
+            tenant_count_query,
+            tenant_insert,
+            tenant_record_query,
+            tenant_records_page_query,
+        },
+        status_code::{status_of, stored_status},
     },
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
 use andromeda_postgresql_pool::{configure_pool_options, is_pool_saturated};
 use andromeda_tenancy::{
     config::TenancyConfig,
@@ -35,7 +42,7 @@ use chrono::{DateTime, Utc};
 use sea_query::{PostgresQueryBuilder, error::Error as SeaQueryError};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Row, postgres::PgRow};
-use std::{str::FromStr, time::Duration};
+use std::time::Duration;
 
 /// The tenant registry, backed by the platform database's `tenants` table.
 ///
@@ -97,12 +104,16 @@ impl PostgresTenantRegistry {
         // never runs on `main_pool`.
         let platform_url = registry.direct_url.with_db_name(&registry.default_database);
         let platform_migration_pool = configure_pool_options(1, registry.acquire_timeout).connect(platform_url.as_str()).await?;
-        let migration_result = migrate_main_db(
+        let migration_result = match configure_platform_database(
             &platform_migration_pool,
             registry.default_database.as_str(),
             registry.synchronous_commit_setting,
         )
-        .await;
+        .await
+        {
+            Ok(()) => migrate_platform_db(&platform_migration_pool).await,
+            Err(error) => Err(error),
+        };
         platform_migration_pool.close().await;
         migration_result?;
 
@@ -119,7 +130,7 @@ impl PostgresTenantRegistry {
     /// Record the unnamed default tenant, so it appears in the registry like
     /// any other.
     async fn register_default_tenant(&self) -> Result<(), ContextStoreError> {
-        let statement = default_tenant_upsert(self.default_database.as_str(), &TenantStatus::Active.to_string()).map_err(|error| statement_error(&error))?;
+        let statement = default_tenant_upsert(self.default_database.as_str(), stored_status(TenantStatus::Active)).map_err(|error| statement_error(&error))?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&self.main_pool).await?;
         Ok(())
@@ -159,7 +170,7 @@ fn statement_error(error: &SeaQueryError) -> ContextStoreError {
 /// as [`TenancyError::RegistryUnavailable`].
 fn record_from_row(row: &PgRow) -> Result<TenantRecord, TenancyError> {
     let name: String = row.try_get("name").map_err(|error| registry_unavailable(&error))?;
-    let status: String = row.try_get("status").map_err(|error| registry_unavailable(&error))?;
+    let status: i16 = row.try_get("status").map_err(|error| registry_unavailable(&error))?;
     let db_name: String = row.try_get("db_name").map_err(|error| registry_unavailable(&error))?;
     let created_at: DateTime<Utc> = row.try_get("created_at").map_err(|error| registry_unavailable(&error))?;
     let modified_at: DateTime<Utc> = row.try_get("modified_at").map_err(|error| registry_unavailable(&error))?;
@@ -167,9 +178,9 @@ fn record_from_row(row: &PgRow) -> Result<TenantRecord, TenancyError> {
     let tenant_name = TenantName::try_from(name).map_err(|error| TenancyError::RegistryUnavailable {
         detail: format!("the registry holds a name that is not a tenant name: {error}"),
     })?;
-    let status = TenantStatus::from_str(&status).map_err(|error| TenancyError::RegistryUnavailable {
+    let status = status_of(TenantStatusCode::try_from(status).map_err(|error| TenancyError::RegistryUnavailable {
         detail: format!("the registry holds an unrecognised tenant status: {error}"),
-    })?;
+    })?);
     Ok(TenantRecord::new(
         tenant_name,
         status,
@@ -253,7 +264,7 @@ impl TenantDatabase for PostgresTenantRegistry {
 #[async_trait]
 impl TenantLifecycle for PostgresTenantRegistry {
     async fn set_status(&self, name: &TenantName, status: TenantStatus) -> Result<(), TenancyError> {
-        let (sql, values) = set_status_update(name.as_str(), &status.to_string()).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = set_status_update(name.as_str(), stored_status(status)).build_sqlx(PostgresQueryBuilder);
         sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .execute(&self.main_pool)
             .await
@@ -286,7 +297,7 @@ impl PostgresTenantRegistry {
         let db_name = generate_db_name(&self.tenancy.tenant_db_prefix, name);
         create_database_if_missing(&self.direct_url, &db_name, self.synchronous_commit_setting).await?;
 
-        let statement = tenant_insert(name.as_str(), db_name.as_str(), &TenantStatus::Active.to_string()).map_err(|error| statement_error(&error))?;
+        let statement = tenant_insert(name.as_str(), db_name.as_str(), stored_status(TenantStatus::Active)).map_err(|error| statement_error(&error))?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut *tx).await?;
         tx.commit().await?;

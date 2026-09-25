@@ -1,16 +1,18 @@
 //! `SnapshotStore` trait implementation for `SnapshotRepository`.
 //!
-//! The implementation dispatches to the statement modules by concern: the
-//! control record ([`crate::snapshot::lifecycle`]), the captured rows
-//! ([`crate::snapshot::content`]) and the summaries over them
-//! ([`crate::snapshot::introspection`]).
+//! The implementation dispatches to the statement modules by concern: creation,
+//! the control record and its preparation state, reaping, preparation claims,
+//! publication, quotas and the branch-version quarantine.
 
 use crate::snapshot::{
+    branch_version::read_branch_condition,
     clone_context::{promote_context_clone, promote_staged_capture},
-    lifecycle::{
-        create_snapshot,
-        delete_expired_snapshots,
-        delete_snapshot,
+    creation::create_snapshot,
+    metadata_change::MetadataChange,
+    preparation_claim::{next_preparing_snapshot, renew_preparation_lease},
+    quota::enforce_snapshot_quotas,
+    reap::{delete_expired_snapshots, delete_snapshot},
+    record::{
         match_snapshots_by_filter,
         read_snapshot,
         resolve_snapshot_staging_target,
@@ -20,11 +22,9 @@ use crate::snapshot::{
         update_snapshot_metadata,
         update_status,
     },
-    metadata_change::MetadataChange,
-    preparation_claim::{next_preparing_snapshot, renew_preparation_lease},
-    quota::enforce_snapshot_quotas,
     repo::SnapshotRepository,
 };
+use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::snapshot_target::SnapshotTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
@@ -32,6 +32,7 @@ use andromeda_ngsi_ld_model::{
     snapshot_filter::SnapshotPurgeFilter,
 };
 use andromeda_snapshot::{
+    branch_condition::BranchCondition,
     error::SnapshotError,
     store::{InsertSnapshotParams, SnapshotPreparationJob, SnapshotStore},
 };
@@ -39,7 +40,6 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
-use uuid::Uuid;
 
 #[async_trait]
 impl SnapshotStore for SnapshotRepository {
@@ -63,11 +63,11 @@ impl SnapshotStore for SnapshotRepository {
         resolve_snapshot_staging_target(self.pool(), id).await
     }
 
-    async fn next_preparing(&self, claimed_by: Uuid, lease_until: DateTime<Utc>) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
+    async fn next_preparing(&self, claimed_by: LeaseHolder, lease_until: DateTime<Utc>) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
         next_preparing_snapshot(self.pool(), claimed_by, lease_until).await
     }
 
-    async fn renew_preparation_lease(&self, id: &Uri, claimed_by: Uuid, lease_until: DateTime<Utc>) -> Result<bool, SnapshotError> {
+    async fn renew_preparation_lease(&self, id: &Uri, claimed_by: LeaseHolder, lease_until: DateTime<Utc>) -> Result<bool, SnapshotError> {
         renew_preparation_lease(self.pool(), id, claimed_by, lease_until).await
     }
 
@@ -95,7 +95,7 @@ impl SnapshotStore for SnapshotRepository {
     async fn update_status(
         &self,
         id: &Uri,
-        claimed_by: Uuid,
+        claimed_by: LeaseHolder,
         status: SnapshotStatus,
         queries_details: Option<&[ExecutionResultDetails]>,
         temporal_queries_details: Option<&[ExecutionResultDetails]>,
@@ -106,7 +106,7 @@ impl SnapshotStore for SnapshotRepository {
     async fn promote_capture(
         &self,
         id: &Uri,
-        claimed_by: Uuid,
+        claimed_by: LeaseHolder,
         status: SnapshotStatus,
         queries_details: Option<&[ExecutionResultDetails]>,
         temporal_queries_details: Option<&[ExecutionResultDetails]>,
@@ -126,7 +126,7 @@ impl SnapshotStore for SnapshotRepository {
         delete_snapshot(self.pool(), id).await
     }
 
-    async fn promote_clone(&self, source_id: &Uri, target_id: &Uri, claimed_by: Uuid) -> Result<(), SnapshotError> {
+    async fn promote_clone(&self, source_id: &Uri, target_id: &Uri, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
         promote_context_clone(self.pool(), source_id, target_id, claimed_by).await
     }
 
@@ -140,5 +140,9 @@ impl SnapshotStore for SnapshotRepository {
 
     async fn touch_last_used(&self, id: &Uri) -> Result<(), SnapshotError> {
         touch_last_used(self.pool(), id).await
+    }
+
+    async fn branch_condition(&self, id: &Uri) -> Result<Option<BranchCondition>, SnapshotError> {
+        read_branch_condition(self.pool(), id).await
     }
 }

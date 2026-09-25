@@ -1,0 +1,169 @@
+//! Enqueueing temporal append intents inside the entity anchor transaction.
+
+use crate::intent_store::{PostgresTemporalIntentStore, persistence};
+use andromeda_context_space::context_target::ContextTarget;
+use andromeda_postgresql_branch::table_of;
+use andromeda_postgresql_schema::queue::TemporalAppendIntents;
+use andromeda_postgresql_seaquery::{
+    pg_array::text_array,
+    pg_type::PostgresType,
+    unnest::{UnnestColumn, apply_column_alias, unnest_call},
+};
+use andromeda_temporal::{append_intent::TemporalAppendIntent, error::TemporalError};
+use sea_query::{Alias, Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query, error::Error as SeaQueryError};
+use sea_query_sqlx::SqlxBinder;
+use serde_json::Value;
+use sqlx::{Postgres, Transaction};
+use uuid::Uuid;
+
+/// The `AS input(write_id, entity_id, base, intent)` column-list alias the
+/// enqueue's `UNNEST` set-write projects, in the order the parallel arrays are
+/// bound and the insert's columns are named.
+pub(super) fn intent_unnest_columns() -> [UnnestColumn; 4] {
+    [
+        UnnestColumn::new(Alias::new("write_id"), PostgresType::UuidArray),
+        UnnestColumn::new(Alias::new("entity_id"), PostgresType::TextArray),
+        UnnestColumn::new(Alias::new("base"), PostgresType::IntegerArray),
+        UnnestColumn::new(Alias::new("intent"), PostgresType::JsonbArray),
+    ]
+}
+
+/// Insert a batch of temporal append intents from four parallel arrays.
+///
+/// One commit may land more than one entity, and every intent it produces
+/// shares the commit's single write identity; that alone does not identify
+/// one durable intent, because a batch commit in
+/// `BatchSideEffectMode::Enqueue` mode writes an inline intent for an
+/// entity's tombstones and later replays that same entity's deferred
+/// side-effect job under the same write identity, producing a second intent
+/// for the same entity whose entries occupy a different ordinal range. The
+/// deduplicating key is therefore `(write_id, entity_id, base)`, matching
+/// `uq_temporal_append_intents_write`, rather than `(write_id, entity_id)`.
+/// `ON CONFLICT ... DO NOTHING` is what makes a commit replayed under its
+/// original identity enqueue no second copy of any entity's intent at a given
+/// base.
+pub(super) fn enqueue_statement(
+    target: &ContextTarget,
+    ids: Vec<Uuid>,
+    entity_ids: &[&str],
+    bases: Vec<i32>,
+    payloads: Vec<Value>,
+) -> Result<InsertStatement, SeaQueryError> {
+    let columns = intent_unnest_columns();
+    let call = unnest_call([
+        (&columns[0], Expr::val(ids)),
+        (&columns[1], text_array(entity_ids)),
+        (&columns[2], Expr::val(bases)),
+        (&columns[3], Expr::val(payloads)),
+    ]);
+    let input = Alias::new("input");
+    let source = Query::select()
+        .expr(Expr::col((input.clone(), Alias::new("write_id"))))
+        .expr(Expr::col((input.clone(), Alias::new("entity_id"))))
+        .expr(Expr::col((input.clone(), Alias::new("base"))))
+        .expr(Expr::col((input.clone(), Alias::new("intent"))))
+        .from_function(call, input)
+        .to_owned();
+    let mut statement = Query::insert();
+    statement
+        .into_table(table_of(target, TemporalAppendIntents::Table))
+        .columns([
+            TemporalAppendIntents::WriteId,
+            TemporalAppendIntents::EntityId,
+            TemporalAppendIntents::Base,
+            TemporalAppendIntents::Intent,
+        ])
+        .select_from(source)?
+        .on_conflict(
+            OnConflict::columns([TemporalAppendIntents::WriteId, TemporalAppendIntents::EntityId, TemporalAppendIntents::Base])
+                .do_nothing()
+                .to_owned(),
+        );
+    Ok(statement.clone())
+}
+
+impl PostgresTemporalIntentStore {
+    /// Persist complete intents inside the entity anchor transaction.
+    pub(crate) async fn enqueue_in_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        target: &ContextTarget,
+        intents: &[TemporalAppendIntent],
+    ) -> Result<(), TemporalError> {
+        if intents.is_empty() {
+            return Ok(());
+        }
+        let mut ids = Vec::with_capacity(intents.len());
+        let mut entity_ids = Vec::with_capacity(intents.len());
+        let mut bases = Vec::with_capacity(intents.len());
+        let mut payloads = Vec::with_capacity(intents.len());
+        for intent in intents {
+            ids.push(intent.record.write_id().as_uuid());
+            entity_ids.push(intent.entity_id.as_str());
+            bases.push(
+                intent
+                    .base
+                    .as_i32()
+                    .map_err(|error| TemporalError::internal(format!("temporal append intent base is out of range: {error}")))?,
+            );
+            payloads.push(serde_json::to_value(intent).map_err(|error| TemporalError::internal(format!("failed to encode temporal append intent: {error}")))?);
+        }
+        let statement = enqueue_statement(target, ids, &entity_ids, bases, payloads)
+            .map_err(|error| TemporalError::internal(format!("failed to build intent enqueue: {error}")))?;
+        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+        let sql = apply_column_alias(sql, &Alias::new("input"), &intent_unnest_columns());
+        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .execute(&mut **tx)
+            .await
+            .map_err(persistence)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::intent_store::enqueue::{enqueue_statement, intent_unnest_columns};
+    use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_postgresql_seaquery::unnest::apply_column_alias;
+    use sea_query::{Alias, PostgresQueryBuilder};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    fn enqueue_sql() -> String {
+        let statement = enqueue_statement(&ContextTarget::Live, vec![Uuid::nil()], &["urn:ngsi-ld:Vehicle:1"], vec![0], vec![json!({})]).expect("arity");
+        let sql = statement.to_string(PostgresQueryBuilder);
+        apply_column_alias(sql, &Alias::new("input"), &intent_unnest_columns())
+    }
+    #[test]
+    fn a_commit_replayed_under_its_original_identity_enqueues_no_second_intent_per_entity_and_base() {
+        let sql = enqueue_sql();
+        assert!(sql.contains(r#"ON CONFLICT ("write_id", "entity_id", "base") DO NOTHING"#), "{sql}");
+    }
+
+    #[test]
+    fn the_deduplicating_key_names_the_write_the_entity_and_the_ordinal_base() {
+        let sql = enqueue_sql();
+        assert!(
+            sql.contains(r#"INTO "temporal_append_intents" ("write_id", "entity_id", "base", "intent")"#),
+            "{sql}"
+        );
+    }
+
+    /// The parallel-array set-write projects a `AS input(...)` column-list
+    /// alias with no ordinality, and each array is cast to its element type.
+    #[test]
+    fn the_enqueue_projects_the_four_parallel_arrays_as_named_columns() {
+        let sql = enqueue_sql();
+        assert!(sql.contains("AS input(write_id, entity_id, base, intent)"), "{sql}");
+        assert!(sql.contains("::uuid[]") && sql.contains("::jsonb[]"), "{sql}");
+        assert!(!sql.contains("WITH ORDINALITY"), "{sql}");
+    }
+
+    /// A batch commit in `BatchSideEffectMode::Enqueue` mode keys on `base` as
+    /// well as `(write_id, entity_id)` so two intents for the same write and
+    /// entity at different ordinals are not collided.
+    #[test]
+    fn two_intents_for_the_same_write_and_entity_are_distinguished_by_their_ordinal_base() {
+        let sql = enqueue_sql();
+        assert!(!sql.contains(r#"ON CONFLICT ("write_id", "entity_id") DO NOTHING"#), "{sql}");
+    }
+}

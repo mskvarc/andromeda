@@ -1,6 +1,6 @@
 //! The persisted administrative state of a registered tenant.
 
-/// Administrative state of a tenant, as stored in the `tenants.status` column.
+/// Administrative state of a tenant, as the tenant registry records it.
 ///
 /// This is the write axis of tenant lifecycle control: an operator suspends a
 /// tenant to take it out of service and resumes it to bring it back. It is kept
@@ -8,9 +8,9 @@
 /// which folds this administrative state together with runtime residency into the
 /// single read-only `status` a tenant resource exposes.
 ///
-/// Carries no persistence derive: how a store spells `active` is the store's
+/// Carries no persistence derive: how a store encodes a status is the store's
 /// business, and a `sqlx::Type` here is what used to make this enum unmovable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumIter)]
 #[strum(serialize_all = "lowercase")]
 pub enum TenantStatus {
     /// The tenant is in service and accepts requests.
@@ -36,14 +36,13 @@ impl TenantStatus {
 #[cfg(test)]
 mod tests {
     use crate::status::TenantStatus;
-    use std::str::FromStr;
+    use strum::IntoEnumIterator;
 
     #[test]
-    fn each_status_round_trips_through_its_lowercase_spelling() {
-        for status in [TenantStatus::Active, TenantStatus::Suspended] {
+    fn each_status_renders_in_lowercase() {
+        for status in TenantStatus::iter() {
             let rendered = status.to_string();
             assert_eq!(rendered, rendered.to_lowercase());
-            pretty_assertions::assert_eq!(TenantStatus::from_str(&rendered).expect("parses"), status);
         }
     }
 

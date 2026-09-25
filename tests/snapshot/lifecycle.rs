@@ -1,6 +1,7 @@
 //! Snapshot lifecycle and HTTP resource acceptance cases.
 
 use super::*;
+use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures::future::join_all;
 use sqlx::PgPool;
@@ -319,9 +320,11 @@ async fn snapshot_clone_failure_is_atomic_and_terminal_failure() {
     let pool = PgPool::connect(&env::var("ANDROMEDA_TEST_DATABASE_URL").expect("Snapshot database URL"))
         .await
         .expect("Snapshot database connection");
-    sqlx::query(
-        "CREATE OR REPLACE FUNCTION snapshot_clone_failure_injection() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.status = 'success' AND EXISTS (SELECT 1 FROM snapshots WHERE snapshot_key = NEW.snapshot_key AND id LIKE '%:fault') THEN RAISE EXCEPTION 'deterministic clone fault'; END IF; RETURN NEW; END $$",
-    )
+    // The status code is the registry's own constant, never caller input.
+    let success = SnapshotStatusCode::Success.code();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE OR REPLACE FUNCTION snapshot_clone_failure_injection() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.status = {success} AND EXISTS (SELECT 1 FROM snapshots WHERE snapshot_key = NEW.snapshot_key AND id LIKE '%:fault') THEN RAISE EXCEPTION 'deterministic clone fault'; END IF; RETURN NEW; END $$"
+    )))
     .execute(&pool)
     .await
     .expect("clone failure function");

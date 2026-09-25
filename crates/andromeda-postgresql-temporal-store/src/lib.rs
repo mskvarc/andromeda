@@ -25,6 +25,8 @@ pub mod attribute_history_write;
 pub mod attribute_instance;
 /// Translation between the NGSI-LD attribute family and its stored code.
 pub mod attribute_kind_code;
+/// Deleting the Temporal Evolution of one attribute.
+pub mod attribute_stream_deletion;
 /// The value an attribute instance carries, and the column it lands in.
 pub mod attribute_value;
 /// Dispatch mode for bulk history writes.
@@ -73,7 +75,7 @@ pub(crate) mod stored_attribute_shape;
 pub(crate) mod stored_decimal;
 /// Splitting one stored instance identity across its two history columns.
 pub mod stored_instance_columns;
-/// Reading and pruning the temporal catalogue.
+/// Reading the temporal catalogue.
 pub mod temporal_catalog_read;
 /// Coordinating one chunk's temporal-entity and temporal-stream catalogue writes.
 pub mod temporal_catalog_write;

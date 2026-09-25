@@ -3,7 +3,17 @@
 
 use crate::csource_registration::{
     mapper::row_to_csr,
-    registration_statements::{csr_base_select, csr_create_sql, csr_update_sql, dataset_selectors, health_update_sql, operation_names},
+    registration_read::expired_select,
+    registration_statements::{
+        csr_create_sql,
+        csr_update_sql,
+        dataset_selectors,
+        delivery_state_insert_sql,
+        health_update_sql,
+        mode_code,
+        operation_codes,
+        scope_label_paths,
+    },
     registration_store::{PostgresRegistrationStore, create_error, mutation_outcome, persistence_error},
     routing_rewrite::replace_registration_information,
 };
@@ -11,7 +21,6 @@ use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonym,
     dereferenceable_uri::DereferenceableUri,
     non_empty_text::NonEmptyText,
-    scope::grammar::ScopeBuf,
     tenant::TenantName,
     uri::Uri,
 };
@@ -24,7 +33,7 @@ use andromeda_registration::{
     store::{create_params::CreateCsrParams, forwarding_outcome::ForwardingOutcome, mutation::RegistrationMutation},
 };
 use chrono::{DateTime, Utc};
-use sea_query::{Expr as SeaExpr, ExprTrait, Order, PostgresQueryBuilder, Query};
+use sea_query::{Expr as SeaExpr, ExprTrait, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
 
 /// Delete every registration due at or before `cutoff`, returning the deleted rows; their projection rows go in the same transaction.
@@ -35,12 +44,7 @@ pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: Da
     // then remove exactly the same set, agreeing without depending on the
     // foreign key's referential action. All three run in one transaction, so
     // no reader observes a partial removal.
-    let mut expired_select = csr_base_select();
-    expired_select
-        .and_where(SeaExpr::col(Csr::ExpiresAt).is_not_null())
-        .and_where(SeaExpr::col(Csr::ExpiresAt).lte(cutoff))
-        .order_by(Csr::Id, Order::Asc);
-    let (select_sql, select_values) = expired_select.build_sqlx(PostgresQueryBuilder);
+    let (select_sql, select_values) = expired_select(cutoff).build_sqlx(PostgresQueryBuilder);
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(select_sql.as_str()), select_values)
         .fetch_all(&mut *transaction)
         .await
@@ -81,16 +85,17 @@ pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: Da
     Ok(expired)
 }
 
-/// Persist a new registration and its routing projection in one transaction.
+/// Persist a new registration, its delivery state and its routing projection
+/// in one transaction.
 pub(super) async fn create(store: &PostgresRegistrationStore, id: &Uri, params: &CreateCsrParams) -> Result<(), RegistrationError> {
     let information = serde_json::to_value(&params.information)?;
     let observation_interval = params.observation_interval.map(serde_json::to_value).transpose()?;
     let management_interval = params.management_interval.map(serde_json::to_value).transpose()?;
     let management = params.management.as_ref().map(serde_json::to_value).transpose()?;
     let context_source_info = params.context_source_info.as_ref().map(serde_json::to_value).transpose()?;
-    let operations = operation_names(&params.operations);
+    let operations = operation_codes(&params.operations);
     let dataset_id = dataset_selectors(params.dataset_id.as_deref());
-    let scopes = params.scope.as_deref().map(|values| values.iter().map(ScopeBuf::as_str).collect::<Vec<_>>());
+    let scopes = scope_label_paths(params.scope.as_deref());
     let mut transaction = store.pool.begin().await.map_err(persistence_error)?;
     let create_sql = csr_create_sql()?;
     sqlx::query(sqlx::AssertSqlSafe(create_sql.as_str()))
@@ -108,8 +113,8 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Uri, params: 
         .bind(params.expires_at)
         .bind(params.endpoint.as_str())
         .bind(params.accept.as_ref().map(ToString::to_string))
-        .bind(<&str>::from(params.mode))
-        .bind(operations.as_slice())
+        .bind(mode_code(params.mode))
+        .bind(operations.as_deref())
         .bind(scopes.as_deref())
         .bind(params.refresh_rate.as_ref().map(ToString::to_string))
         .bind(management)
@@ -120,6 +125,12 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Uri, params: 
         .execute(&mut *transaction)
         .await
         .map_err(|error| create_error(error, id))?;
+    let delivery_state_sql = delivery_state_insert_sql()?;
+    sqlx::query(sqlx::AssertSqlSafe(delivery_state_sql.as_str()))
+        .bind(id.as_str())
+        .execute(&mut *transaction)
+        .await
+        .map_err(persistence_error)?;
     replace_registration_information(
         &mut transaction,
         id,
@@ -140,9 +151,9 @@ pub(super) async fn update(store: &PostgresRegistrationStore, id: &Uri, values: 
     let management_interval = values.management_interval.map(serde_json::to_value).transpose()?;
     let management = values.management.as_ref().map(serde_json::to_value).transpose()?;
     let context_source_info = values.context_source_info.as_ref().map(serde_json::to_value).transpose()?;
-    let operations = operation_names(&values.operations);
+    let operations = operation_codes(&values.operations);
     let dataset_id = dataset_selectors(values.dataset_id.as_deref());
-    let scopes = values.scope.as_deref().map(|values| values.iter().map(ScopeBuf::as_str).collect::<Vec<_>>());
+    let scopes = scope_label_paths(values.scope.as_deref());
     let mut transaction = store.pool.begin().await.map_err(persistence_error)?;
     let update_sql = csr_update_sql();
     let result = sqlx::query(sqlx::AssertSqlSafe(update_sql.as_str()))
@@ -160,8 +171,8 @@ pub(super) async fn update(store: &PostgresRegistrationStore, id: &Uri, values: 
         .bind(values.expires_at)
         .bind(values.endpoint.as_str())
         .bind(values.accept.as_ref().map(ToString::to_string))
-        .bind(<&str>::from(values.mode))
-        .bind(operations.as_slice())
+        .bind(mode_code(values.mode))
+        .bind(operations.as_deref())
         .bind(scopes.as_deref())
         .bind(values.refresh_rate.as_ref().map(ToString::to_string))
         .bind(management)

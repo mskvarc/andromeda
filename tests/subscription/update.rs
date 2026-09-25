@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 use chrono::{Duration as ChronoDuration, Utc};
 use reqwest::{Method, StatusCode};
+use serde_json::json;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -22,6 +23,7 @@ use crate::helpers::{
     update_fragment,
     update_subscription,
     vehicle_entities_fragment,
+    watched_attributes_subscription,
 };
 use andromeda_test_harness::environment::TestEnvironment;
 
@@ -267,5 +269,37 @@ async fn subscription_update_with_past_expires_at_returns_bad_request_data() {
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.2.12 (Table 5.2.12-1) makes `timeInterval` exclusive with both
+/// `throttling` and `watchedAttributes`. An update is validated as the merged
+/// subscription it would leave behind, so a fragment that is valid alone but
+/// conflicts with a stored member is refused as `BadRequestData` and changes
+/// nothing, rather than reaching the schema's own check as a server error.
+#[tokio::test]
+async fn subscription_update_adding_time_interval_to_a_conflicting_subscription_returns_bad_request_data() {
+    let http_client = client();
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+
+    let throttled_id = scope.id("Subscription:update-throttled-time-interval");
+    let mut throttled = default_subscription(&throttled_id);
+    throttled.as_object_mut().expect("subscription object").remove("timeInterval");
+    throttled["throttling"] = json!(30);
+    let watching_id = scope.id("Subscription:update-watching-time-interval");
+    let watching = watched_attributes_subscription(&watching_id);
+
+    for (subscription_id, payload) in [(&throttled_id, &throttled), (&watching_id, &watching)] {
+        let (status, _, _) = create_subscription(&http_client, payload).await;
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED, "{subscription_id}");
+
+        let (status, body) = update_subscription(&http_client, subscription_id, &json!({"timeInterval": 5}), true).await;
+        pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST, "{subscription_id}: {body}");
+        pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str(), "{subscription_id}");
+
+        let (status, stored) = retrieve_subscription(&http_client, subscription_id, true).await;
+        pretty_assertions::assert_eq!(status, StatusCode::OK);
+        assert!(stored.get("timeInterval").is_none(), "the refused update changed nothing: {stored}");
+    }
     scope.finish().await.expect("cleanup failed");
 }

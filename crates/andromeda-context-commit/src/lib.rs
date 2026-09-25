@@ -34,6 +34,8 @@ pub mod error;
 pub mod history_record;
 /// Whether a lease-guarded acknowledgement reached the row it targeted.
 pub mod lease_acknowledgement;
+/// The identity a worker holds a durable queue lease under.
+pub mod lease_holder;
 /// Preconditions and retry classification for entity mutations.
 pub mod precondition;
 /// The identity of one durable side-effect job.

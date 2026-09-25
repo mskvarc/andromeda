@@ -1,6 +1,7 @@
 //! Direct PostgreSQL implementation of the hosted-context persistence port.
 
 use crate::jsonld_context::{
+    kind_code::{created_kind, kind_of, stored_kind},
     mapper::{row_to_identifier, row_to_metadata},
     repo::JsonLdContextRepository,
     rows::{ContextMetadataRow, ContextSummaryRow},
@@ -28,7 +29,8 @@ use andromeda_context_registry::{
     stored_context::StoredContext,
 };
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
-use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
+use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
+use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
 use andromeda_postgresql_pool::is_pool_saturated;
 use iri_rs::IriBuf;
 use sea_query::PostgresQueryBuilder;
@@ -49,7 +51,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
         Box::pin(async move {
             let after = query.after.map(Uri::as_str);
             let limit = i64::from(query.limit);
-            let kind = query.kind.map(<&str>::from);
+            let kind = query.kind.map(stored_kind);
             match query.detail_level {
                 ContextDetailLevel::Full => {
                     let (sql, values) = metadata_page_query(kind, after, limit).build_sqlx(PostgresQueryBuilder);
@@ -119,13 +121,13 @@ impl ContextRegistryStore for JsonLdContextRepository {
     fn lookup<'a>(&'a self, identifier: &'a Uri) -> ContextRegistryFuture<'a, Option<StoredContext>> {
         Box::pin(async move {
             let (sql, values) = stored_context_query(identifier.as_str()).build_sqlx(PostgresQueryBuilder);
-            let row: Option<(String, String, Option<String>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            let row: Option<(String, i16, Option<String>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(persistence_error)?;
             row.map(|(identifier, kind, source_url)| {
                 let identifier = identifier.parse::<Uri>().map_err(persistence_error)?;
-                let kind = kind.parse::<ContextKind>().map_err(persistence_error)?;
+                let kind = kind_of(JsonldContextKindCode::try_from(kind).map_err(persistence_error)?);
                 let source_url = source_url.map(IriBuf::new).transpose().map_err(|error| ContextRegistryError::Persistence {
                     detail: format!("stored Context URL is invalid: {}", error.0),
                 })?;
@@ -175,11 +177,7 @@ async fn insert_context(
         serving.set_path(&format!("/ngsi-ld/v1/jsonldContexts/{local_id}"));
         serving
     });
-    let kind_label = match kind {
-        ContextCreationKind::Hosted => "Hosted",
-        ContextCreationKind::ImplicitlyCreated => "ImplicitlyCreated",
-    };
-    let statement = hosted_insert(local_id.as_ref(), serving_url.as_ref().map(Url::as_str), kind_label, payload).map_err(persistence_error)?;
+    let statement = hosted_insert(local_id.as_ref(), serving_url.as_ref().map(Url::as_str), created_kind(kind), payload).map_err(persistence_error)?;
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(&repository.pool)

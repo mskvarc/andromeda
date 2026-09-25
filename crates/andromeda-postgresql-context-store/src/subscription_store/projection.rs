@@ -11,20 +11,28 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::cursor::PageCursor;
 use andromeda_postgresql_branch::table_of;
+use andromeda_postgresql_query::dictionary::names_in_key_order::attribute_names_of;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
-use andromeda_postgresql_seaquery::{aggregate::count_all, cast::cast, pg_type::PostgresType};
+use andromeda_postgresql_seaquery::aggregate::count_all;
 use andromeda_subscription::error::SubscriptionError;
-use sea_query::{Expr, ExprTrait, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use sea_query::{CaseStatement, Expr, ExprTrait, Keyword, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
 
-/// The `status::text AS status` read cast: a query decodes the enum as text.
-fn status_as_text() -> SimpleExpr {
-    cast(Expr::col((Subscriptions::Table, Subscriptions::Status)), PostgresType::Text)
+/// The attribute IRIs behind one of a subscription's interned attribute lists,
+/// in the order the subscriber wrote them; an absent list stays absent rather
+/// than reading back as an empty one.
+fn attribute_list(column: Subscriptions) -> SimpleExpr {
+    let keys = Expr::col((Subscriptions::Table, column));
+    CaseStatement::new()
+        .case(keys.clone().is_null(), Keyword::Null) // clone: the column is named by the guard and by the resolution
+        .finally(attribute_names_of(keys))
+        .into()
 }
 
 /// Add the stored-subscription projection to `select`, in the column set the
 /// mapper reads by name; `dataset_id` only for the family that stores it. The
-/// delivery counters come from the joined state row.
+/// delivery counters come from the joined state row, and the three attribute
+/// lists are resolved from their dictionary keys under their own column names.
 fn project_subscription(select: &mut SelectStatement, kind: StoredKind, target: &ContextTarget) {
     select
         .column((Subscriptions::Table, Subscriptions::Id))
@@ -32,19 +40,19 @@ fn project_subscription(select: &mut SelectStatement, kind: StoredKind, target: 
         .column((Subscriptions::Table, Subscriptions::SubscriptionName))
         .column((Subscriptions::Table, Subscriptions::Description))
         .column((Subscriptions::Table, Subscriptions::Entities))
-        .column((Subscriptions::Table, Subscriptions::WatchedAttributes))
+        .expr_as(attribute_list(Subscriptions::WatchedAttributes), Subscriptions::WatchedAttributes)
         .column((Subscriptions::Table, Subscriptions::NotificationTrigger))
         .column((Subscriptions::Table, Subscriptions::TimeInterval))
         .column((Subscriptions::Table, Subscriptions::Q))
         .column((Subscriptions::Table, Subscriptions::GeoQ))
         .column((Subscriptions::Table, Subscriptions::ScopeQ))
         .column((Subscriptions::Table, Subscriptions::Csf))
-        .column((Subscriptions::Table, Subscriptions::ExpandValues))
-        .column((Subscriptions::Table, Subscriptions::JsonKeys))
+        .expr_as(attribute_list(Subscriptions::ExpandValues), Subscriptions::ExpandValues)
+        .expr_as(attribute_list(Subscriptions::JsonKeys), Subscriptions::JsonKeys)
         .column((Subscriptions::Table, Subscriptions::Notification))
         .column((Subscriptions::Table, Subscriptions::ExpiresAt))
         .column((Subscriptions::Table, Subscriptions::Throttling))
-        .expr_as(status_as_text(), Subscriptions::Status)
+        .column((Subscriptions::Table, Subscriptions::Status))
         .column((Subscriptions::Table, Subscriptions::TemporalQ))
         .column((Subscriptions::Table, Subscriptions::Lang))
         .column((Subscriptions::Table, Subscriptions::JsonldContext))
@@ -193,5 +201,28 @@ mod tests {
         }
         let csource = projected_select(StoredKind::Csource, &ContextTarget::Live).to_string(PostgresQueryBuilder);
         assert!(!csource.contains("dataset_id"), "{csource}");
+    }
+
+    /// The three attribute lists are stored as dictionary keys and read back as
+    /// the IRIs they name, in stored order, under their own column names, and
+    /// an absent list reads back absent rather than empty.
+    #[test]
+    fn the_projection_resolves_the_interned_attribute_lists_in_order() {
+        let sql = projected_select(StoredKind::Entity, &ContextTarget::Live).to_string(PostgresQueryBuilder);
+        for column in ["watched_attributes", "expand_values", "json_keys"] {
+            assert!(
+                sql.contains(&format!(
+                    r#"(CASE WHEN ("subscriptions"."{column}" IS NULL) THEN NULL ELSE ARRAY(SELECT "attribute_names"."name" FROM "attribute_names" WHERE "attribute_names"."id" = ANY("subscriptions"."{column}") ORDER BY array_position("subscriptions"."{column}", "attribute_names"."id") ASC) END) AS "{column}""#
+                )),
+                "{column}: {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_projection_reads_the_status_code_without_a_cast() {
+        let sql = projected_select(StoredKind::Entity, &ContextTarget::Live).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#""subscriptions"."status","#), "{sql}");
+        assert!(!sql.contains("::text"), "{sql}");
     }
 }

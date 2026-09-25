@@ -8,15 +8,21 @@ use crate::csr::{
     expiry_predicate::not_expired,
     filter::csr_expr_to_condition,
     projection::{attribute_name_candidate, entity_id_candidate, entity_type_candidate},
-    scope_predicate::registration_scope_matches,
+    registration_select::registration_select,
     temporal_partition::temporal_partition,
     unnesting::{entity_axis_covers, information_item_matches},
 };
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, cursor::PageCursor, geo::query::GeoQuery};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBSERVATION_SPACE, OPERATION_SPACE};
-use andromeda_postgresql_query::{dictionary::resolved_names::ResolvedNames, error::RenderError, geo_predicate as geo_sql, geo_predicate::GeometrySource};
+use andromeda_postgresql_query::{
+    dictionary::resolved_names::ResolvedNames,
+    error::RenderError,
+    geo_predicate as geo_sql,
+    geo_predicate::GeometrySource,
+    scope_predicate::{ScopeTarget, condition as scope_condition},
+};
 use andromeda_postgresql_schema::csr::Csr;
-use andromeda_postgresql_seaquery::{aggregate::count_all, cast::cast, pg_type::PostgresType, postgis::geometry_as_geojson};
+use andromeda_postgresql_seaquery::aggregate::count_all;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Order, Query, SelectStatement};
 
 /// A compiled CSR discovery query: the paginated result statement and its count,
@@ -51,40 +57,8 @@ pub struct CsrQuery {
 pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<CsrQuery, RenderError> {
     let condition = build_csr_conditions(query)?;
 
-    let mut select = Query::select();
+    let mut select = registration_select();
     select
-        .column(Csr::Id)
-        .column(Csr::Type)
-        .column(Csr::RegistrationName)
-        .column(Csr::Description)
-        .column(Csr::Information)
-        .column(Csr::DatasetId)
-        .column(Csr::Tenant)
-        .column(Csr::ObservationInterval)
-        .column(Csr::ManagementInterval)
-        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::Location)), Csr::Location)
-        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::ObservationSpace)), Csr::ObservationSpace)
-        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::OperationSpace)), Csr::OperationSpace)
-        .column(Csr::ExpiresAt)
-        .column(Csr::Endpoint)
-        .column(Csr::Accept)
-        .expr_as(cast(SeaExpr::col(Csr::Mode), PostgresType::Text), Csr::Mode)
-        .column(Csr::Operations)
-        .column(Csr::Scope)
-        .column(Csr::RefreshRate)
-        .column(Csr::Management)
-        .column(Csr::ContextSourceInfo)
-        .column(Csr::JsonldContext)
-        .column(Csr::ContextSourceAlias)
-        .expr_as(cast(SeaExpr::col(Csr::Status), PostgresType::Text), Csr::Status)
-        .column(Csr::TimesSent)
-        .column(Csr::TimesFailed)
-        .column(Csr::LastSuccess)
-        .column(Csr::LastFailure)
-        .column(Csr::CreatedAt)
-        .column(Csr::ModifiedAt)
-        .column(Csr::AdditionalProperties)
-        .from(Csr::Table)
         // clone: the count statement filters on the same condition
         .cond_where(condition.clone());
     apply_csr_window(&mut select, query);
@@ -197,8 +171,11 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
         )?);
     }
 
+    // Clause 4.19: a registration's scopes are stored as the same `ltree`
+    // label paths current entities carry, so a `scopeQ` compiles to the same
+    // `lquery` match.
     if let Some(scope_q) = &query.scope_q {
-        condition = condition.add(registration_scope_matches(scope_q));
+        condition = condition.add(scope_condition(scope_q, &ScopeTarget::current_paths((Csr::Table, Csr::Scope))));
     }
 
     if !query.dataset_id.is_empty() {
@@ -320,22 +297,20 @@ mod tests {
     }
 
     #[test]
-    fn the_projection_names_every_column_quoted_and_casts_geometry_and_enum_columns() {
-        // The `Iden` enum must render byte-identically to the hand-quoted column
-        // list it replaced: plain columns quoted, geometry columns as GeoJSON,
-        // and the enum columns cast to text, each with the same output alias.
+    fn discovery_reads_the_shared_registration_projection() {
         let built = build(&empty_query());
-        for column in ["\"id\"", "\"type\"", "\"registration_name\"", "\"jsonld_context\"", "\"additional_properties\""] {
+        for column in ["\"id\"", "\"registration_name\"", "\"jsonld_context\"", "\"additional_properties\""] {
             assert!(built.sql.contains(column), "missing {column}: {}", built.sql);
         }
-        assert!(built.sql.contains("ST_AsGeoJSON(\"location\")::jsonb AS \"location\""), "{}", built.sql);
         assert!(
-            built.sql.contains("ST_AsGeoJSON(\"observation_space\")::jsonb AS \"observation_space\""),
+            built
+                .sql
+                .contains("ST_AsGeoJSON(\"context_source_registrations\".\"location\")::jsonb AS \"location\""),
             "{}",
             built.sql
         );
-        assert!(built.sql.contains("\"mode\"::text AS \"mode\""), "{}", built.sql);
-        assert!(built.sql.contains("\"status\"::text AS \"status\""), "{}", built.sql);
+        assert!(built.sql.contains("LEFT JOIN \"csr_delivery_state\""), "{}", built.sql);
+        assert!(!built.sql.contains("\"type\""), "{}", built.sql);
     }
 
     #[test]
@@ -615,12 +590,13 @@ mod tests {
     }
 
     #[test]
-    fn build_with_scope_query() {
+    fn a_scope_query_matches_the_stored_label_paths_with_an_lquery() {
         let mut q = empty_query();
         q.scope_q = Some(ScopeQuery::parse("/Madrid/#").unwrap());
         let built = build(&q);
-        assert!(built.sql.contains("UNNEST(\"scope\")"), "{}", built.sql);
-        assert!(built.sql.contains("~ '^/?Madrid(/[^/]+)*$'"), "{}", built.sql);
+        assert!(built.sql.contains("\"context_source_registrations\".\"scope\" ~"), "{}", built.sql);
+        assert!(built.sql.contains("'Madrid.*'::lquery"), "{}", built.sql);
+        assert!(!built.sql.contains("UNNEST"), "{}", built.sql);
     }
 
     /// Clause 5.12: a registration declaring no `datasetId` matches; one that

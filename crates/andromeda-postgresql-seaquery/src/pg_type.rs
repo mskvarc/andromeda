@@ -1,7 +1,8 @@
 //! PostgreSQL type names as identifiers.
 //!
-//! A cast and an enum-label write both name a physical type, and naming it once
-//! here keeps the two from spelling the same type differently. The array
+//! Every cast names a physical type, and naming it once here keeps two casts
+//! from spelling the same type differently. The schema declares no enum type:
+//! closed vocabularies are `SMALLINT` registry codes, which need no cast. The array
 //! variants carry their `[]` so an `UNNEST` argument and an `::integer[]` cast
 //! read the element type the same way a scalar column does.
 
@@ -9,7 +10,7 @@ use sea_query::Iden;
 
 /// A PostgreSQL type, as it is spelled where a statement names one.
 ///
-/// Backs [`crate::cast`] and the enum-label writes: a value cast to
+/// Backs [`crate::cast`]: a value cast to
 /// [`PostgresType::Numeric`] and a column typed `numeric` refer to one type, so
 /// the token is written in exactly one place.
 #[derive(Iden, Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,24 +57,6 @@ pub enum PostgresType {
     /// `ltree`, the label-path type a scope is stored as (clause 4.18).
     #[iden = "ltree"]
     Ltree,
-    /// `jsonld_context_kind`, the enum a stored Context's kind carries.
-    #[iden = "jsonld_context_kind"]
-    JsonldContextKind,
-    /// `snapshot_status`, the enum a snapshot's lifecycle state carries.
-    #[iden = "snapshot_status"]
-    SnapshotStatus,
-    /// `context_space_kind`, the enum identifying live and Snapshot branches.
-    #[iden = "context_space_kind"]
-    ContextSpaceKind,
-    /// `subscription_status`, the enum a subscription's state carries.
-    #[iden = "subscription_status"]
-    SubscriptionStatus,
-    /// `csr_mode`, the enum a registration's forwarding mode carries.
-    #[iden = "csr_mode"]
-    CsrMode,
-    /// `csr_status`, the enum a registration's health status carries.
-    #[iden = "csr_status"]
-    CsrStatus,
     /// `uuid`, the identity type write and lease identifiers carry.
     #[iden = "uuid"]
     Uuid,
@@ -86,6 +69,9 @@ pub enum PostgresType {
     /// `smallint[]`.
     #[iden = "smallint[]"]
     SmallintArray,
+    /// `ltree[]`, the array type a registration's scopes are stored as.
+    #[iden = "ltree[]"]
+    LtreeArray,
     /// `boolean[]`.
     #[iden = "boolean[]"]
     BooleanArray,

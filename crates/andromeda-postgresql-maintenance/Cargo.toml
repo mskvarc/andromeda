@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-context-store.workspace = true
 andromeda-postgresql-pool.workspace = true
 andromeda-postgresql-schema.workspace = true

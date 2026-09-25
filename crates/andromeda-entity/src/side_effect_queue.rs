@@ -12,28 +12,13 @@ use crate::error::EntityError;
 use andromeda_context_commit::{
     batch_side_effect_job::BatchSideEffectJob,
     lease_acknowledgement::LeaseAcknowledgement,
+    lease_holder::LeaseHolder,
     side_effect_job_id::SideEffectJobId,
     write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
 use chrono::{DateTime, Utc};
-use derive_more::{AsRef, Display};
 use futures::future::BoxFuture;
-use uuid::Uuid;
-
-/// Stable identity recorded while a side-effect worker owns a queue lease.
-#[derive(Clone, Debug, Eq, PartialEq, AsRef, Display)]
-#[as_ref(str)]
-pub struct SideEffectLeaseOwner(String);
-
-impl SideEffectLeaseOwner {
-    /// Construct a unique lease owner for one tenant worker process.
-    #[must_use]
-    pub fn for_tenant(source_id: &Uri, nonce: Uuid) -> SideEffectLeaseOwner {
-        SideEffectLeaseOwner(format!("{source_id}-{nonce}"))
-    }
-}
 
 /// One side-effect job leased for execution.
 #[derive(Debug)]
@@ -43,7 +28,7 @@ pub struct LeasedSideEffect {
     /// How many times this job has already been attempted.
     ///
     /// Decoded from `pending_side_effects.attempt_count`, an `INTEGER` column
-    /// (migration 0019), so this is `i32` to match its SQL width; the sibling
+    /// (migration 0025), so this is `i32` to match its SQL width; the sibling
     /// notification and temporal queues carry the same-width counter.
     pub attempts: i32,
     /// The work to perform.
@@ -73,7 +58,7 @@ pub trait SideEffectQueue: Send + Sync + 'static {
     /// stall the queue behind it.
     fn lease_batch<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        worker_id: &'life1 SideEffectLeaseOwner,
+        worker_id: &'life1 LeaseHolder,
         batch_size: i32,
         lease_seconds: i32,
     ) -> BoxFuture<'async_trait, Result<Vec<LeasedSideEffect>, EntityError>>
@@ -91,7 +76,7 @@ pub trait SideEffectQueue: Send + Sync + 'static {
     fn ack<'life0, 'life1, 'async_trait>(
         &'life0 self,
         id: SideEffectJobId,
-        owner: &'life1 SideEffectLeaseOwner,
+        owner: &'life1 LeaseHolder,
     ) -> BoxFuture<'async_trait, Result<LeaseAcknowledgement, EntityError>>
     where
         'life0: 'async_trait,
@@ -104,7 +89,7 @@ pub trait SideEffectQueue: Send + Sync + 'static {
     fn nack<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         id: SideEffectJobId,
-        owner: &'life1 SideEffectLeaseOwner,
+        owner: &'life1 LeaseHolder,
         error: &'life2 str,
         next_attempt_at: DateTime<Utc>,
     ) -> BoxFuture<'async_trait, Result<LeaseAcknowledgement, EntityError>>
@@ -120,7 +105,7 @@ pub trait SideEffectQueue: Send + Sync + 'static {
     fn mark_dead<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         id: SideEffectJobId,
-        owner: &'life1 SideEffectLeaseOwner,
+        owner: &'life1 LeaseHolder,
         error: &'life2 str,
     ) -> BoxFuture<'async_trait, Result<LeaseAcknowledgement, EntityError>>
     where

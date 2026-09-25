@@ -10,19 +10,17 @@
 
 use crate::error::SubscriptionForwardingError;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_registration::removal_hook::ForwardedSubscriptionCopy;
+use andromeda_subscription::forwarding_hook::ForwardedCopy;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use futures::future::BoxFuture;
 
-/// A copy of a local subscription placed at one registration's context source.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ForwardedCopy {
-    /// The registration whose source holds the copy.
-    pub registration: Uri,
-    /// The identifier the copy carries at the source.
-    pub remote_subscription: Uri,
-}
-
 /// The tenant-scoped mappings of the distributed subscription side.
+///
+/// A store removes a subscription's mappings together with the subscription,
+/// and a registration's forwarded copies together with the registration, so
+/// forgetting either explicitly is never needed after a deletion; only a copy
+/// withdrawn while both ends still exist is removed by hand.
 pub trait SubscriptionForwardingStore: Send + Sync + 'static {
     /// Record that `companion` is the context source registration subscription
     /// mirroring `local`.
@@ -57,13 +55,6 @@ pub trait SubscriptionForwardingStore: Send + Sync + 'static {
         'life1: 'async_trait,
         Self: 'async_trait;
 
-    /// Forget the companion of `local`.
-    fn unlink_companion<'life0, 'life1, 'async_trait>(&'life0 self, local: &'life1 Uri) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: 'async_trait;
-
     /// Record the copy of `local` placed at `copy.registration`.
     fn record_forwarded<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
@@ -81,6 +72,17 @@ pub trait SubscriptionForwardingStore: Send + Sync + 'static {
         &'life0 self,
         local: &'life1 Uri,
     ) -> BoxFuture<'async_trait, Result<Vec<ForwardedCopy>, SubscriptionForwardingError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
+
+    /// Every copy held at `registration`'s context source, with the local
+    /// subscription each reduces.
+    fn forwarded_for_registration<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        registration: &'life1 Uri,
+    ) -> BoxFuture<'async_trait, Result<Vec<ForwardedSubscriptionCopy>, SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

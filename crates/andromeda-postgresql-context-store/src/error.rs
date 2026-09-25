@@ -1,6 +1,11 @@
 //! Error types for the context store crate.
 
-use crate::{entity::types_present::EntityTypesMissing, jsonld_context::mapper::ContextMapperError, schema_contract::error::SchemaContractError};
+use crate::{
+    entity::types_present::EntityTypesMissing,
+    jsonld_context::mapper::ContextMapperError,
+    migration_set::branch::BranchVersionError,
+    schema_contract::error::SchemaContractError,
+};
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 use andromeda_postgresql_encoding::{copy::CopyFieldError, ewkb::EwkbError};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
@@ -63,6 +68,9 @@ pub enum ContextStoreError {
     /// A tenant database is not the schema this binary was built against.
     #[error("context store schema contract: {0}")]
     SchemaContract(#[from] SchemaContractError),
+    /// The embedded branch migration set has no usable version.
+    #[error("context store branch schema version: {0}")]
+    BranchVersion(#[from] BranchVersionError),
     /// An internal invariant was violated (malformed stored data, serialization
     /// failure, etc.).
     #[error("context store internal: {0}")]
@@ -110,6 +118,7 @@ impl ContextStoreError {
             | ContextStoreError::EntityTypes(_)
             | ContextStoreError::ContextMapper(_)
             | ContextStoreError::Migration(_)
+            | ContextStoreError::BranchVersion(_)
             | ContextStoreError::Internal(_) => false,
         }
     }
@@ -137,6 +146,7 @@ impl ContextStoreError {
             | ContextStoreError::EntityTypes(_)
             | ContextStoreError::ContextMapper(_)
             | ContextStoreError::Migration(_)
+            | ContextStoreError::BranchVersion(_)
             | ContextStoreError::Internal(_) => false,
         }
     }

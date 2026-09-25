@@ -1,6 +1,7 @@
 //! Durable delivery queue for Snapshot lifecycle notifications.
 
-use crate::snapshot::{lifecycle::snapshot_select, mapper::row_to_snapshot, persistence_error};
+use crate::snapshot::{mapper::row_to_snapshot, persistence_error, record::snapshot_select};
+use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, snapshot::SnapshotStatus};
 use andromeda_postgresql_schema::snapshot::{SnapshotNotificationOutbox, Snapshots};
@@ -60,7 +61,7 @@ impl SnapshotStatusOutbox {
     /// Returns [`SnapshotError::persistence`] when the claim, the projection of
     /// the claimed rows or the commit fails, and when a claimed row does not map
     /// back to a delivery because its endpoint or Snapshot URI no longer parses.
-    pub async fn claim(&self, worker: Uuid, lease_until: DateTime<Utc>, limit: i32) -> Result<Vec<SnapshotStatusDelivery>, SnapshotError> {
+    pub async fn claim(&self, worker: LeaseHolder, lease_until: DateTime<Utc>, limit: i32) -> Result<Vec<SnapshotStatusDelivery>, SnapshotError> {
         let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
         let claimable = || {
             claimable_at(
@@ -84,7 +85,7 @@ impl SnapshotStatusOutbox {
         let claim = Query::update()
             .table(SnapshotNotificationOutbox::Table)
             .value(SnapshotNotificationOutbox::ClaimedAt, now())
-            .value(SnapshotNotificationOutbox::ClaimedBy, worker)
+            .value(SnapshotNotificationOutbox::ClaimedBy, worker.as_uuid())
             .value(SnapshotNotificationOutbox::LeaseUntil, lease_until)
             .and_where(Expr::col(SnapshotNotificationOutbox::Id).in_subquery(candidates))
             .returning_col(SnapshotNotificationOutbox::Id)
@@ -132,7 +133,7 @@ impl SnapshotStatusOutbox {
     /// # Errors
     ///
     /// Returns [`SnapshotError::persistence`] when the update fails.
-    pub async fn acknowledge(&self, id: Uuid, worker: Uuid) -> Result<bool, SnapshotError> {
+    pub async fn acknowledge(&self, id: Uuid, worker: LeaseHolder) -> Result<bool, SnapshotError> {
         let statement = Query::update()
             .table(SnapshotNotificationOutbox::Table)
             .value(SnapshotNotificationOutbox::DeliveredAt, now())
@@ -141,7 +142,7 @@ impl SnapshotStatusOutbox {
                 Expr::col(SnapshotNotificationOutbox::AttemptCount).add(1),
             )
             .and_where(Expr::col(SnapshotNotificationOutbox::Id).eq(id))
-            .and_where(Expr::col(SnapshotNotificationOutbox::ClaimedBy).eq(worker))
+            .and_where(Expr::col(SnapshotNotificationOutbox::ClaimedBy).eq(worker.as_uuid()))
             .and_where(Expr::col(SnapshotNotificationOutbox::DeliveredAt).is_null())
             .and_where(Expr::col(SnapshotNotificationOutbox::ExhaustedAt).is_null())
             .to_owned();
@@ -156,7 +157,7 @@ impl SnapshotStatusOutbox {
     pub async fn fail(
         &self,
         id: Uuid,
-        worker: Uuid,
+        worker: LeaseHolder,
         failure: SnapshotDeliveryFailure,
         max_attempts: i32,
         retry_at: DateTime<Utc>,
@@ -184,7 +185,7 @@ impl SnapshotStatusOutbox {
             .value(SnapshotNotificationOutbox::ClaimedBy, Keyword::Null)
             .value(SnapshotNotificationOutbox::LeaseUntil, Keyword::Null)
             .and_where(Expr::col(SnapshotNotificationOutbox::Id).eq(id))
-            .and_where(Expr::col(SnapshotNotificationOutbox::ClaimedBy).eq(worker))
+            .and_where(Expr::col(SnapshotNotificationOutbox::ClaimedBy).eq(worker.as_uuid()))
             .and_where(Expr::col(SnapshotNotificationOutbox::DeliveredAt).is_null())
             .and_where(Expr::col(SnapshotNotificationOutbox::ExhaustedAt).is_null())
             .to_owned();

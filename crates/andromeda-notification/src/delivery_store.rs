@@ -22,8 +22,8 @@ use crate::{
     delivery_entry::{DeliveryEntry, DeliveryId},
     delivery_lease::{DeliveryLeaseError, LeaseTerm},
     error::NotificationError,
-    worker_instance_id::WorkerInstanceId,
 };
+use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::context_target::ContextTarget;
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
@@ -44,7 +44,7 @@ pub trait DeliveryStore: Send + Sync + 'static {
     /// not stall every other pending notification.
     fn claim_pending<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        worker_id: &'life1 WorkerInstanceId,
+        worker_id: &'life1 LeaseHolder,
         lease: LeaseTerm,
         batch_size: i32,
     ) -> BoxFuture<'async_trait, Result<Vec<DeliveryEntry>, NotificationError>>
@@ -60,7 +60,7 @@ pub trait DeliveryStore: Send + Sync + 'static {
     fn mark_delivered<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         id: DeliveryId,
-        worker_id: &'life1 WorkerInstanceId,
+        worker_id: &'life1 LeaseHolder,
         target: &'life2 ContextTarget,
     ) -> BoxFuture<'async_trait, Result<(), DeliveryLeaseError>>
     where
@@ -77,7 +77,7 @@ pub trait DeliveryStore: Send + Sync + 'static {
     fn mark_failed<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
         id: DeliveryId,
-        worker_id: &'life1 WorkerInstanceId,
+        worker_id: &'life1 LeaseHolder,
         error: &'life2 str,
         next_attempt_at: DateTime<Utc>,
         target: &'life3 ContextTarget,
@@ -98,7 +98,7 @@ pub trait DeliveryStore: Send + Sync + 'static {
     fn mark_terminal<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
         id: DeliveryId,
-        worker_id: &'life1 WorkerInstanceId,
+        worker_id: &'life1 LeaseHolder,
         error: &'life2 str,
         target: &'life3 ContextTarget,
     ) -> BoxFuture<'async_trait, Result<(), DeliveryLeaseError>>

@@ -36,8 +36,8 @@ pub enum ForwardedSubscriptionRoutes {
     Table,
     /// The minted subscription identifier.
     MintedSubscriptionId,
-    /// The owning tenant, `NULL` for the unnamed default tenant.
-    Tenant,
+    /// The owning tenant's `tenants(id)` surrogate, the unnamed default included.
+    TenantId,
 }
 
 #[cfg(test)]
@@ -54,5 +54,6 @@ mod tests {
         assert_eq!(ForwardedSubscriptions::RemoteSubscriptionId.to_string(), "remote_subscription_id");
         assert_eq!(ForwardedSubscriptionRoutes::Table.to_string(), "forwarded_subscription_routes");
         assert_eq!(ForwardedSubscriptionRoutes::MintedSubscriptionId.to_string(), "minted_subscription_id");
+        assert_eq!(ForwardedSubscriptionRoutes::TenantId.to_string(), "tenant_id");
     }
 }

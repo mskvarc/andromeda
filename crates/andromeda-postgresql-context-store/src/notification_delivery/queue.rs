@@ -6,7 +6,7 @@
 //! delivery worker above it knows nothing of the join.
 
 use crate::notification_delivery::{acknowledge, claim, cleanup, rows::ClaimedDelivery};
-use andromeda_context_commit::lease_acknowledgement::LeaseAcknowledgement;
+use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_notification::{
     delivery_entry::{DeliveryEntry, DeliveryId},
@@ -14,7 +14,6 @@ use andromeda_notification::{
     delivery_store::DeliveryStore,
     error::NotificationError,
     notification_event::{NotificationEvent, NotificationEventId},
-    worker_instance_id::WorkerInstanceId,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -39,15 +38,15 @@ impl NotificationDeliveryQueue {
 
 #[async_trait]
 impl DeliveryStore for NotificationDeliveryQueue {
-    async fn claim_pending(&self, worker_id: &WorkerInstanceId, lease: LeaseTerm, batch_size: i32) -> Result<Vec<DeliveryEntry>, NotificationError> {
-        let claimed = claim::claim_due(&self.pool, worker_id.as_ref(), lease, batch_size)
+    async fn claim_pending(&self, worker_id: &LeaseHolder, lease: LeaseTerm, batch_size: i32) -> Result<Vec<DeliveryEntry>, NotificationError> {
+        let claimed = claim::claim_due(&self.pool, *worker_id, lease, batch_size)
             .await
             .map_err(|error| NotificationError::persistence(error.to_string()))?;
         Ok(claimed.into_iter().filter_map(readable).collect())
     }
 
-    async fn mark_delivered(&self, id: DeliveryId, worker_id: &WorkerInstanceId, target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
-        let outcome = acknowledge::mark_delivered(&self.pool, id.into_inner(), worker_id.as_ref(), target)
+    async fn mark_delivered(&self, id: DeliveryId, worker_id: &LeaseHolder, target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
+        let outcome = acknowledge::mark_delivered(&self.pool, id.into_inner(), *worker_id, target)
             .await
             .map_err(|error| DeliveryLeaseError::persistence(error.to_string()))?;
         held(outcome, id, worker_id)
@@ -56,19 +55,19 @@ impl DeliveryStore for NotificationDeliveryQueue {
     async fn mark_failed(
         &self,
         id: DeliveryId,
-        worker_id: &WorkerInstanceId,
+        worker_id: &LeaseHolder,
         failure: &str,
         next_attempt_at: DateTime<Utc>,
         target: &ContextTarget,
     ) -> Result<(), DeliveryLeaseError> {
-        let outcome = acknowledge::mark_failed(&self.pool, id.into_inner(), worker_id.as_ref(), failure, next_attempt_at, target)
+        let outcome = acknowledge::mark_failed(&self.pool, id.into_inner(), *worker_id, failure, next_attempt_at, target)
             .await
             .map_err(|error| DeliveryLeaseError::persistence(error.to_string()))?;
         held(outcome, id, worker_id)
     }
 
-    async fn mark_terminal(&self, id: DeliveryId, worker_id: &WorkerInstanceId, failure: &str, target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
-        let outcome = acknowledge::mark_exhausted(&self.pool, id.into_inner(), worker_id.as_ref(), failure, target)
+    async fn mark_terminal(&self, id: DeliveryId, worker_id: &LeaseHolder, failure: &str, target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
+        let outcome = acknowledge::mark_exhausted(&self.pool, id.into_inner(), *worker_id, failure, target)
             .await
             .map_err(|error| DeliveryLeaseError::persistence(error.to_string()))?;
         held(outcome, id, worker_id)
@@ -94,7 +93,7 @@ impl DeliveryStore for NotificationDeliveryQueue {
 }
 
 /// Report a lost lease as the typed failure the port defines.
-fn held(outcome: LeaseAcknowledgement, id: DeliveryId, worker_id: &WorkerInstanceId) -> Result<(), DeliveryLeaseError> {
+const fn held(outcome: LeaseAcknowledgement, id: DeliveryId, worker_id: &LeaseHolder) -> Result<(), DeliveryLeaseError> {
     match outcome {
         LeaseAcknowledgement::Applied => Ok(()),
         LeaseAcknowledgement::Lost => Err(DeliveryLeaseError::lease_lost(id, worker_id)),
@@ -148,15 +147,10 @@ mod tests {
         queue::{entry, held},
         rows::ClaimedDelivery,
     };
-    use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, write_id::WriteId, write_ordinal::WriteOrdinal};
+    use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
-    use andromeda_notification::{
-        delivery_entry::DeliveryId,
-        delivery_lease::DeliveryLeaseError,
-        notification_event::NotificationEventId,
-        worker_instance_id::WorkerInstanceId,
-    };
+    use andromeda_notification::{delivery_entry::DeliveryId, delivery_lease::DeliveryLeaseError, notification_event::NotificationEventId};
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -182,13 +176,13 @@ mod tests {
 
     #[test]
     fn an_applied_acknowledgement_leaves_the_worker_holding_its_lease() {
-        let worker = WorkerInstanceId::delivery(Uuid::nil());
+        let worker = LeaseHolder::from(Uuid::nil());
         assert!(held(LeaseAcknowledgement::Applied, DeliveryId::from(11_i64), &worker).is_ok());
     }
 
     #[test]
     fn a_lost_acknowledgement_becomes_the_typed_lost_lease_failure() {
-        let worker = WorkerInstanceId::delivery(Uuid::nil());
+        let worker = LeaseHolder::from(Uuid::nil());
         let outcome = held(LeaseAcknowledgement::Lost, DeliveryId::from(11_i64), &worker);
         assert!(matches!(outcome, Err(DeliveryLeaseError::LeaseLost { .. })));
     }

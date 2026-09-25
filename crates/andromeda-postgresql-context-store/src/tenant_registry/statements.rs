@@ -1,5 +1,6 @@
 //! The `SeaQuery` statements the tenant registry runs against the `tenants` table.
 
+use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
 use andromeda_postgresql_schema::tenancy::Tenants;
 use andromeda_postgresql_seaquery::{advisory_lock::advisory_xact_lock, aggregate::count_all};
 use andromeda_tenancy::tenant_keyset::TenantKeyset;
@@ -103,11 +104,11 @@ pub(super) fn tenant_count_query() -> SelectStatement {
 }
 
 /// Set a named tenant's administrative status and refresh its `modified_at`.
-pub(super) fn set_status_update(name: &str, status: &str) -> UpdateStatement {
+pub(super) fn set_status_update(name: &str, status: TenantStatusCode) -> UpdateStatement {
     let mut statement = Query::update();
     statement
         .table(Tenants::Table)
-        .value(Tenants::Status, status)
+        .value(Tenants::Status, status.code())
         .value(Tenants::ModifiedAt, Expr::current_timestamp())
         .and_where(Expr::col(Tenants::Name).eq(name))
         .and_where(Expr::col(Tenants::IsUnnamedDefault).eq(false));
@@ -123,7 +124,7 @@ pub(super) fn advisory_lock_query(name: &str) -> SelectStatement {
 ///
 /// The conflict target is `db_name`, whose unique index is what keeps a restart
 /// from inserting a second default row.
-pub(super) fn default_tenant_upsert(db_name: &str, status: &str) -> Result<InsertStatement, SeaQueryError> {
+pub(super) fn default_tenant_upsert(db_name: &str, status: TenantStatusCode) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(Tenants::Table)
@@ -139,7 +140,7 @@ pub(super) fn default_tenant_upsert(db_name: &str, status: &str) -> Result<Inser
             SimpleExpr::Keyword(Keyword::Null),
             true.into(),
             db_name.into(),
-            status.into(),
+            status.code().into(),
             Expr::current_timestamp(),
             Expr::current_timestamp(),
         ])?
@@ -152,7 +153,7 @@ pub(super) fn default_tenant_upsert(db_name: &str, status: &str) -> Result<Inser
 }
 
 /// Insert a named tenant.
-pub(super) fn tenant_insert(name: &str, db_name: &str, status: &str) -> Result<InsertStatement, SeaQueryError> {
+pub(super) fn tenant_insert(name: &str, db_name: &str, status: TenantStatusCode) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(Tenants::Table)
@@ -168,7 +169,7 @@ pub(super) fn tenant_insert(name: &str, db_name: &str, status: &str) -> Result<I
             name.into(),
             false.into(),
             db_name.into(),
-            status.into(),
+            status.code().into(),
             Expr::current_timestamp(),
             Expr::current_timestamp(),
         ])?;
@@ -189,6 +190,7 @@ mod tests {
         tenant_records_page_query,
     };
     use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+    use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
     use andromeda_tenancy::tenant_keyset::TenantKeyset;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, SelectStatement, UpdateStatement};
@@ -271,7 +273,7 @@ mod tests {
 
     #[test]
     fn set_status_updates_the_status_and_the_modified_stamp_for_a_named_tenant() {
-        let sql = update_sql(&set_status_update("acme", "suspended"));
+        let sql = update_sql(&set_status_update("acme", TenantStatusCode::Suspended));
         assert!(sql.contains("UPDATE \"tenants\" SET"), "{sql}");
         assert!(sql.contains("\"status\" ="), "{sql}");
         assert!(sql.contains("\"modified_at\" = CURRENT_TIMESTAMP"), "{sql}");
@@ -294,7 +296,9 @@ mod tests {
 
     #[test]
     fn the_default_upsert_conflicts_on_db_name_and_refreshes_the_timestamp() {
-        let sql = default_tenant_upsert("andromeda", "active").expect("arity").to_string(PostgresQueryBuilder);
+        let sql = default_tenant_upsert("andromeda", TenantStatusCode::Active)
+            .expect("arity")
+            .to_string(PostgresQueryBuilder);
         assert!(sql.contains("INSERT INTO \"tenants\""), "{sql}");
         assert!(sql.contains("ON CONFLICT (\"db_name\") DO UPDATE"), "{sql}");
         assert!(sql.contains("\"modified_at\" = CURRENT_TIMESTAMP"), "{sql}");
@@ -302,7 +306,7 @@ mod tests {
 
     #[test]
     fn a_named_tenant_insert_is_not_the_default() {
-        let sql = tenant_insert("acme", "andromeda_acme", "active")
+        let sql = tenant_insert("acme", "andromeda_acme", TenantStatusCode::Active)
             .expect("arity")
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains("INSERT INTO \"tenants\""), "{sql}");

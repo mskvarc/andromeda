@@ -27,6 +27,8 @@ pub mod reassembly;
 pub mod receiver;
 /// Reducing a subscription to what one registration matches.
 pub mod reduced_copy;
+/// Tearing down the copies held at a removed registration's context source.
+mod registration_removal;
 /// The service tying the parts together.
 pub mod service;
 
@@ -43,6 +45,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-render",
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-request",
+        "andromeda-registration",
         "andromeda-subscription",
         "andromeda-tenancy",
     ],

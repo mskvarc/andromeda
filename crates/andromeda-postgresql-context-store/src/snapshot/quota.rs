@@ -1,8 +1,9 @@
 //! Deterministic tenant-local Snapshot quota enforcement.
 
 use crate::snapshot::{
-    lifecycle::{delete_control_record, reap_branch, victim_order},
     persistence_error,
+    reap::{delete_control_record, reap_branch},
+    record::victim_order,
 };
 use andromeda_context_space::snapshot_key::SnapshotKey;
 use andromeda_ngsi_ld_lexicon::uri::Uri;

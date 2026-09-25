@@ -15,6 +15,7 @@ use crate::{
         rows::{ClaimedDelivery, ClaimedDeliveryError, RawClaimedDeliveryRow},
     },
 };
+use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_notification::delivery_lease::LeaseTerm;
 use andromeda_postgresql_branch::table_of;
@@ -71,7 +72,7 @@ const DELIVERY_CLAIM: StatementName = StatementName("notification-delivery-claim
 /// failure of the claim.
 pub async fn claim_due(
     pool: &PgPool,
-    worker_id: &str,
+    worker_id: LeaseHolder,
     lease: LeaseTerm,
     batch_size: i32,
 ) -> Result<Vec<Result<ClaimedDelivery, ClaimedDeliveryError>>, ContextStoreError> {
@@ -97,7 +98,7 @@ pub async fn claim_due(
 async fn claim_branch(
     pool: &PgPool,
     target: &ContextTarget,
-    worker_id: &str,
+    worker_id: LeaseHolder,
     lease: LeaseTerm,
     batch_size: i32,
 ) -> Result<Vec<Result<ClaimedDelivery, ClaimedDeliveryError>>, ContextStoreError> {
@@ -148,7 +149,7 @@ fn ordinality_alias() -> (Alias, [UnnestColumn; 1], Alias) {
 /// The attempt ceiling is not part of the predicate: a delivery that has run
 /// out of attempts is stamped `exhausted_at` by the worker that made the last
 /// attempt, so the queue never needs to know the configured maximum.
-fn claim_statement(target: &ContextTarget, worker_id: &str, batch_size: i32, lease_seconds: f64) -> UpdateStatement {
+fn claim_statement(target: &ContextTarget, worker_id: LeaseHolder, batch_size: i32, lease_seconds: f64) -> UpdateStatement {
     let candidates = Query::select()
         .column(NotificationDeliveries::Id)
         .from(table_of(target, NotificationDeliveries::Table))
@@ -166,7 +167,7 @@ fn claim_statement(target: &ContextTarget, worker_id: &str, batch_size: i32, lea
     Query::update()
         .table(table_of(target, NotificationDeliveries::Table))
         .value(NotificationDeliveries::ClaimedAt, Expr::current_timestamp())
-        .value(NotificationDeliveries::ClaimedBy, worker_id)
+        .value(NotificationDeliveries::ClaimedBy, worker_id.as_uuid())
         .value(
             NotificationDeliveries::LeaseUntil,
             Expr::current_timestamp().add(make_interval_secs(Expr::val(lease_seconds))),
@@ -253,9 +254,11 @@ fn bigint_array(ids: &[i64]) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::notification_delivery::claim::{claim_statement, claimed_projection_statement, ordinality_alias};
+    use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_postgresql_seaquery::unnest::apply_with_ordinality;
     use sea_query::PostgresQueryBuilder;
+    use uuid::Uuid;
 
     fn projection_sql(target: &ContextTarget) -> String {
         let sql = claimed_projection_statement(target, &[1, 2]).to_string(PostgresQueryBuilder);
@@ -271,20 +274,20 @@ mod tests {
 
     #[test]
     fn the_claim_scans_and_updates_deliveries_alone() {
-        let sql = claim_statement(&ContextTarget::Live, "w", 10, 30.0).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), 10, 30.0).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"UPDATE "notification_deliveries""#), "{sql}");
         assert!(!sql.contains("notification_events"), "the claim must not touch the events table: {sql}");
     }
 
     #[test]
     fn a_snapshot_branch_claim_qualifies_the_deliveries_table() {
-        let sql = claim_statement(&snapshot(), "w", 10, 30.0).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(&snapshot(), LeaseHolder::from(Uuid::nil()), 10, 30.0).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"UPDATE "snap_5"."notification_deliveries""#), "{sql}");
     }
 
     #[test]
     fn the_candidate_predicate_matches_the_partial_claim_index() {
-        let sql = claim_statement(&ContextTarget::Live, "w", 10, 30.0).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), 10, 30.0).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""delivered_at" IS NULL"#), "{sql}");
         assert!(sql.contains(r#""exhausted_at" IS NULL"#), "{sql}");
         assert!(
@@ -296,7 +299,7 @@ mod tests {
 
     #[test]
     fn the_candidates_are_ordered_by_the_claimable_instant_then_identifier() {
-        let sql = claim_statement(&ContextTarget::Live, "w", 10, 30.0).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), 10, 30.0).to_string(PostgresQueryBuilder);
         assert!(
             sql.contains(r#"ORDER BY GREATEST("next_attempt_at", COALESCE("lease_until", '-infinity'::timestamptz)) ASC, "id" ASC LIMIT 10"#),
             "{sql}"
@@ -305,15 +308,15 @@ mod tests {
 
     #[test]
     fn a_row_another_worker_holds_is_skipped_rather_than_waited_on() {
-        let sql = claim_statement(&ContextTarget::Live, "w", 10, 30.0).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), 10, 30.0).to_string(PostgresQueryBuilder);
         assert!(sql.contains("FOR UPDATE SKIP LOCKED"), "{sql}");
     }
 
     #[test]
     fn the_claim_takes_a_lease_alongside_the_claim_triple() {
-        let sql = claim_statement(&ContextTarget::Live, "w", 10, 30.0).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), 10, 30.0).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""claimed_at" = CURRENT_TIMESTAMP"#), "{sql}");
-        assert!(sql.contains(r#""claimed_by" = 'w'"#), "{sql}");
+        assert!(sql.contains(r#""claimed_by" = '00000000-0000-0000-0000-000000000000'"#), "{sql}");
         assert!(sql.contains("make_interval(secs =>"), "{sql}");
     }
 

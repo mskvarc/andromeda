@@ -15,7 +15,7 @@ pub enum JsonldContexts {
     Id,
     /// Source URL, when the Context has one
     Url,
-    /// Context kind (`jsonld_context_kind` enum)
+    /// Context kind (`JsonldContextKindCode`)
     Kind,
     /// The `@context` document
     Payload,

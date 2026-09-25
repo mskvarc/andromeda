@@ -34,6 +34,14 @@ pub enum SnapshotError {
         /// Snapshot that remained in preparation.
         identifier: Uri,
     },
+    /// The Snapshot's stored branch is behind this binary's branch relations
+    /// because its upgrade has not run or has failed, so it cannot be read,
+    /// cloned or delivered from until the upgrade succeeds.
+    #[error("snapshot {identifier} is quarantined: its stored branch has not been upgraded to this broker's schema")]
+    Quarantined {
+        /// The quarantined snapshot.
+        identifier: Uri,
+    },
     /// Entity query policy failed during preparation.
     ///
     /// Boxed: these embedded policy errors are the widest members, and inlining
@@ -134,6 +142,14 @@ impl SnapshotError {
     #[must_use]
     pub fn preparation_timeout(identifier: &Uri) -> SnapshotError {
         SnapshotError::PreparationTimeout {
+            identifier: identifier.clone(), // clone: the error owns the borrowed snapshot identifier.
+        }
+    }
+
+    /// Construct a quarantined-branch refusal.
+    #[must_use]
+    pub fn quarantined(identifier: &Uri) -> SnapshotError {
+        SnapshotError::Quarantined {
             identifier: identifier.clone(), // clone: the error owns the borrowed snapshot identifier.
         }
     }

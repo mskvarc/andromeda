@@ -2,6 +2,8 @@
 
 #![deny(missing_docs)]
 
+/// Whether a Snapshot's stored branch can be served by this binary.
+pub mod branch_condition;
 /// Snapshot operation configuration.
 pub mod config;
 

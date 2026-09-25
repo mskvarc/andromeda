@@ -8,7 +8,7 @@ pub mod entity_specification;
 pub mod expiry_predicate;
 pub mod filter;
 pub mod projection;
-pub mod scope_predicate;
+pub mod registration_select;
 pub mod statement;
 pub mod temporal_partition;
 pub mod unnesting;

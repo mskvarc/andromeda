@@ -2,7 +2,7 @@
 
 #![deny(missing_docs)]
 
-use crate::{entity_probe::RegisteredEntityProbe, store::RegistrationStore};
+use crate::{entity_probe::RegisteredEntityProbe, removal_hook::RegistrationRemovalHook, store::RegistrationStore};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use std::sync::Arc;
@@ -33,6 +33,8 @@ pub mod registration_conflict_reason;
 pub mod registration_diagnostic;
 /// The typed reasons a registration request is rejected as `BadRequestData`.
 pub mod registration_validation_reason;
+/// The distributed side of removing a registration, as a port.
+pub mod removal_hook;
 /// Fully resolved registration update values and merge policy.
 pub mod resolved_update;
 mod retrieve;
@@ -47,6 +49,7 @@ pub struct RegistrationService {
     entity_probe: Arc<dyn RegisteredEntityProbe>,
     engine: JsonLdEngine,
     change_sink: Option<Arc<dyn RegistrationChangeSink>>,
+    removal_hook: Option<Arc<dyn RegistrationRemovalHook>>,
 }
 
 /// Publishes registration lifecycle changes without coupling policy to a runtime transport.
@@ -70,7 +73,15 @@ impl RegistrationService {
             entity_probe,
             engine,
             change_sink,
+            removal_hook: None,
         }
+    }
+
+    /// Attach the distributed side of registration removal.
+    #[must_use]
+    pub fn with_removal_hook(mut self, hook: Arc<dyn RegistrationRemovalHook>) -> RegistrationService {
+        self.removal_hook = Some(hook);
+        self
     }
 
     fn emit_csr_change(&self, event: CsrChangeEvent) {

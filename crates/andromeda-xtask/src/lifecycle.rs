@@ -6,7 +6,7 @@ use crate::{
     certs,
     compose::{self, ImageBuild},
     error::XtaskError,
-    local_broker::{self, BROKER_PORT, ForwardedHeaders, TRUSTED_PORT},
+    local_broker::{self, HostBroker},
     stack::{Stack, StackName, Suite},
     test_binaries::{TestManifest, run},
 };
@@ -100,12 +100,9 @@ pub(crate) fn run_stack(
     let callback_host = match broker_mode {
         BrokerMode::Local => {
             local_broker::build(repository_root)?;
-            teardown
-                .brokers
-                .push(local_broker::spawn_broker(repository_root, BROKER_PORT, ForwardedHeaders::Untrusted)?);
-            teardown
-                .brokers
-                .push(local_broker::spawn_broker(repository_root, TRUSTED_PORT, ForwardedHeaders::Trusted)?);
+            for broker in HostBroker::ALL {
+                teardown.brokers.push(local_broker::spawn_broker(repository_root, broker)?);
+            }
             local_broker::await_ready()?;
             LOCAL_CALLBACK_HOST
         }

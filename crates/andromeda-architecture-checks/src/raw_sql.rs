@@ -42,10 +42,11 @@ use syn::{
 /// COPY modules speak the binary wire protocol sea-query has no form for; a
 /// `schema_ddl` module holds the `CREATE`/`TimescaleDB` DDL `SeaQuery` cannot
 /// express. The Snapshot branch modules are that same category: a branch is a
-/// per-Snapshot PostgreSQL schema, and `CREATE SCHEMA`, `CREATE TABLE ... (LIKE
-/// ... INCLUDING ALL)`, `ALTER SCHEMA ... RENAME`, `DROP SCHEMA`, the
-/// cross-schema `INSERT ... SELECT` clone over dynamically named schemas, and
-/// the `pg_total_relation_size` branch-size sum have no sea-query form.
+/// per-Snapshot PostgreSQL schema, and `CREATE SCHEMA`, `ALTER SCHEMA ...
+/// RENAME`, `DROP SCHEMA`, the branch-wide `TRUNCATE`, the cross-schema
+/// `INSERT ... SELECT` clone over dynamically named schemas, and the
+/// `pg_total_relation_size` branch-size sum have no sea-query form. The branch
+/// relations themselves are created by the branch migration set, not here.
 /// Everything else builds statements through sea-query.
 const SANCTIONED_PREFIXES: &[&str] = &[
     "crates/andromeda-postgresql-seaquery/",

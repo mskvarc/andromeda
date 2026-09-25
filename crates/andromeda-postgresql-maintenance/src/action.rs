@@ -5,9 +5,10 @@ use crate::{
     candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
     controller::PassOutcome,
     error::MaintenanceError,
+    evidence::inspection_result::InspectionResult,
     inspection,
     policy::{DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, decide, safety_deferral},
-    state::{self, RegisteredTenant},
+    state::{RegisteredTenant, target_record, tenant_inspection},
 };
 use andromeda_postgresql_context_store::maintenance_config::MaintenanceMode;
 use andromeda_postgresql_seaquery::maintenance::MaintenanceStatement;
@@ -31,12 +32,12 @@ pub(crate) async fn recover_artifact(
     let target = MaintenanceTarget::Index(artifact.name.owner());
     let gates = inspection::safety_gates(tenant_connection, target).await?;
     if let Some(reason) = safety_deferral(profile, gates) {
-        state::mark_inspected(platform, tenant, "deferred").await?;
+        tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Deferred).await?;
         info!(tenant = tenant.log_name(), database = %tenant.database, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, decision = "deferred", reason = ?reason, "PostgreSQL maintenance recovery deferred");
         return Ok(PassOutcome::Deferred);
     }
     if mode != MaintenanceMode::Automatic {
-        state::mark_inspected(platform, tenant, "would-act").await?;
+        tenant_inspection::mark_inspected(platform, tenant, InspectionResult::WouldAct).await?;
         info!(tenant = tenant.log_name(), database = %tenant.database, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, decision = "would-drop-artifact", "PostgreSQL maintenance recovery observed");
         return Ok(PassOutcome::WouldAct);
     }
@@ -46,7 +47,7 @@ pub(crate) async fn recover_artifact(
     match result {
         StatementOutcome::Succeeded => {
             record_action(MaintenanceAction::Recovery, MaintenanceActionOutcome::Succeeded, started.elapsed(), None);
-            state::mark_inspected(platform, tenant, "acted").await?;
+            tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Acted).await?;
             info!(tenant = tenant.log_name(), database = %tenant.database, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, decision = "dropped-artifact", "PostgreSQL concurrent-index recovery completed");
             Ok(PassOutcome::Acted)
         }
@@ -56,7 +57,7 @@ pub(crate) async fn recover_artifact(
         }
         StatementOutcome::Failed(error) => {
             record_action(MaintenanceAction::Recovery, MaintenanceActionOutcome::Failed, started.elapsed(), None);
-            state::mark_inspected(platform, tenant, "action-failed").await?;
+            tenant_inspection::mark_inspected(platform, tenant, InspectionResult::ActionFailed).await?;
             warn!(tenant = tenant.log_name(), database = %tenant.database, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, error = %error, decision = "artifact-drop-failed", "PostgreSQL concurrent-index recovery failed");
             Ok(PassOutcome::ActionFailed)
         }
@@ -74,13 +75,13 @@ pub(crate) async fn execute_pending(
     cancellation: &CancellationToken,
 ) -> Result<PassOutcome, MaintenanceError> {
     let gates = inspection::safety_gates(tenant_connection, target).await?;
-    let target_state = state::load_target_state(platform, tenant, target).await?;
+    let target_state = target_record::load_target_state(platform, tenant, target).await?;
     let decision = decide(mode, profile, target_state, empty_sample(), gates, Utc::now());
-    state::record_decision(platform, tenant, target, None, decision).await?;
+    target_record::record_decision(platform, tenant, target, None, decision).await?;
     match decision {
         PolicyDecision::WouldAct => {
-            state::mark_inspected(platform, tenant, "would-act").await?;
-            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.state_key(), decision = "would-act", "PostgreSQL maintenance pending action observed");
+            tenant_inspection::mark_inspected(platform, tenant, InspectionResult::WouldAct).await?;
+            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), decision = "would-act", "PostgreSQL maintenance pending action observed");
             return Ok(PassOutcome::WouldAct);
         }
         PolicyDecision::Deferred(
@@ -94,12 +95,12 @@ pub(crate) async fn execute_pending(
             | DeferralReason::ActiveMaintenance
             | DeferralReason::WaitingRelationLock),
         ) => {
-            state::mark_inspected(platform, tenant, "deferred").await?;
-            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.state_key(), decision = "deferred", reason = ?reason, "PostgreSQL maintenance pending action deferred");
+            tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Deferred).await?;
+            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), decision = "deferred", reason = ?reason, "PostgreSQL maintenance pending action deferred");
             return Ok(PassOutcome::Deferred);
         }
         PolicyDecision::Queued => {
-            state::mark_inspected(platform, tenant, "queued").await?;
+            tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Queued).await?;
             return Ok(PassOutcome::Queued);
         }
         PolicyDecision::Act => {}
@@ -115,9 +116,9 @@ pub(crate) async fn execute_pending(
         }
         StatementOutcome::Failed(error) => {
             record_action(action, MaintenanceActionOutcome::Failed, started.elapsed(), None);
-            state::record_action_failure(platform, tenant, target).await?;
-            state::mark_inspected(platform, tenant, "action-failed").await?;
-            warn!(tenant = tenant.log_name(), database = %tenant.database, target = target.state_key(), error = %error, duration_seconds = started.elapsed().as_secs_f64(), decision = "action-failed", "PostgreSQL maintenance action failed");
+            target_record::record_action_failure(platform, tenant, target).await?;
+            tenant_inspection::mark_inspected(platform, tenant, InspectionResult::ActionFailed).await?;
+            warn!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), error = %error, duration_seconds = started.elapsed().as_secs_f64(), decision = "action-failed", "PostgreSQL maintenance action failed");
             Ok(PassOutcome::ActionFailed)
         }
         StatementOutcome::Succeeded => {
@@ -128,9 +129,9 @@ pub(crate) async fn execute_pending(
                 started.elapsed(),
                 Some(before.saturating_sub(after)),
             );
-            state::record_action_success(platform, tenant, target, Utc::now() + profile.successful_cooldown, before, after).await?;
-            state::mark_inspected(platform, tenant, "acted").await?;
-            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.state_key(), before_bytes = before, after_bytes = after, reclaimed_bytes = before.saturating_sub(after), duration_seconds = started.elapsed().as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
+            target_record::record_action_success(platform, tenant, target, Utc::now() + profile.successful_cooldown, before, after).await?;
+            tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Acted).await?;
+            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), before_bytes = before, after_bytes = after, reclaimed_bytes = before.saturating_sub(after), duration_seconds = started.elapsed().as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
             Ok(PassOutcome::Acted)
         }
     }

@@ -7,7 +7,7 @@
 //!
 //! The schema deliberately indexes one axis. `idx_attribute_history_stream_observed_at`
 //! exists because `observedAt` is the default and carries the query volume;
-//! migration 0011 records that a created, modified or deleted index is
+//! migration 0020 records that a created, modified or deleted index is
 //! benchmark-gated and none was accepted. These tests assert both halves of
 //! that decision — the indexed axis reaches its index, the other three are
 //! exact and stay on the stream-led path — so a later index is added because a
@@ -169,7 +169,7 @@ async fn a_narrow_observed_window_reaches_the_stream_led_observed_index() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Migration 0011 gives every semantic axis exactly one BRIN block summary and
+/// Migration 0020 gives every semantic axis exactly one BRIN block summary and
 /// no B-tree of its own: `createdAt`, `modifiedAt` and `deletedAt` are selectable
 /// timeproperties (clause 5.2.21) that neither the partition column nor any
 /// stream-led index answers, and a per-row B-tree on each would cost what the

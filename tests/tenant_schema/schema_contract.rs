@@ -10,10 +10,13 @@
 //! restored before the assertion runs: a test that failed while the tenant was
 //! left drifted would refuse the broker its next start.
 
-use andromeda_postgresql_context_store::schema_contract::{
-    contract::SchemaContract,
-    error::SchemaContractError,
-    schema_metadata::{ensure_schema_contract, verify_schema_contract},
+use andromeda_postgresql_context_store::{
+    migration_set::tenant::tenant_migrator,
+    schema_contract::{
+        contract::SchemaContract,
+        error::SchemaContractError,
+        schema_metadata::{ensure_schema_contract, verify_schema_contract},
+    },
 };
 use andromeda_test_harness::{configuration::TestRunConfiguration, database_access::connect_test_database, serialized_environment::SerializedEnvironment};
 use pretty_assertions::assert_eq;
@@ -24,13 +27,9 @@ use sqlx::{
 };
 use std::borrow::Cow;
 
-/// The migration set this test binary embeds, which is the one the broker
-/// embeds: both are compiled from `migrations/tenant`.
-static TENANT_MIGRATOR: Migrator = sqlx::migrate!("migrations/tenant");
-
 /// The contract the embedded migration set expresses.
 fn embedded_contract() -> SchemaContract {
-    SchemaContract::of(&TENANT_MIGRATOR).expect("the embedded tenant migration set expresses a contract")
+    SchemaContract::of(tenant_migrator()).expect("the embedded tenant migration set expresses a contract")
 }
 
 /// The contract expressed by every non-down migration this binary embeds at
@@ -38,11 +37,11 @@ fn embedded_contract() -> SchemaContract {
 ///
 /// Built from clones of this binary's own resolved [`Migration`] values
 /// rather than reconstructed ones, so the digest is byte-identical to what
-/// `_sqlx_migrations` records for that same prefix on the database this test
+/// `_andromeda_tenant_migrations` records for that same prefix on the database this test
 /// binary actually migrated: the real prefix of a real history, not an
 /// approximation of one.
 fn contract_up_to(cutoff_version: i64) -> SchemaContract {
-    let prefix = TENANT_MIGRATOR
+    let prefix = tenant_migrator()
         .iter()
         .filter(|migration| !migration.migration_type.is_down_migration() && migration.version <= cutoff_version)
         .cloned()
@@ -57,7 +56,7 @@ fn contract_up_to(cutoff_version: i64) -> SchemaContract {
 /// The highest migration version below the embedded contract's own, i.e. the
 /// version a tenant migrated by "the previous release" would carry.
 fn previous_version() -> i64 {
-    let mut versions = TENANT_MIGRATOR
+    let mut versions = tenant_migrator()
         .iter()
         .filter(|migration| !migration.migration_type.is_down_migration())
         .map(|migration| migration.version)

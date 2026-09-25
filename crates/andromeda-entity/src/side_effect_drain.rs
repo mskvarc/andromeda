@@ -19,7 +19,7 @@ use crate::{
     change_sink::EntityChangeSink,
     committed_side_effect::CommittedSideEffect,
     error::EntityError,
-    side_effect_queue::{LeasedSideEffect, SideEffectLeaseOwner, SideEffectQueue},
+    side_effect_queue::{LeasedSideEffect, SideEffectQueue},
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
@@ -30,6 +30,7 @@ use andromeda_context_commit::{
     entity_mutation::EntityMutation,
     history_record::HistoryRecord,
     lease_acknowledgement::LeaseAcknowledgement,
+    lease_holder::LeaseHolder,
     write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
 };
@@ -48,8 +49,8 @@ pub struct EntitySideEffectDrainConfig {
     pub max_attempts: u16,
     /// Base exponential retry delay.
     pub base_backoff: Duration,
-    /// Stable owner recorded on queue leases.
-    pub lease_owner: SideEffectLeaseOwner,
+    /// The worker identity recorded on queue leases.
+    pub lease_holder: LeaseHolder,
 }
 
 /// Result of one bounded side-effect pass.
@@ -95,7 +96,7 @@ impl EntitySideEffectDrain {
     pub async fn execute(&self, now: DateTime<Utc>) -> Result<EntitySideEffectDrainOutcome, EntityError> {
         let leased = self
             .queue
-            .lease_batch(&self.config.lease_owner, self.config.batch_size, self.config.lease_seconds)
+            .lease_batch(&self.config.lease_holder, self.config.batch_size, self.config.lease_seconds)
             .await?;
         let batch_capacity = match usize::try_from(self.config.batch_size) {
             Ok(value) => value,
@@ -120,7 +121,7 @@ impl EntitySideEffectDrain {
             consequence_base,
         } = lease;
         match self.deliver(job, record, consequence_base).await {
-            Ok(committed) => match self.queue.ack(id, &self.config.lease_owner).await? {
+            Ok(committed) => match self.queue.ack(id, &self.config.lease_holder).await? {
                 LeaseAcknowledgement::Applied => {
                     // The commit is durably owned by this worker, so its live
                     // change events are published exactly here, once.
@@ -135,7 +136,7 @@ impl EntitySideEffectDrain {
                     // The durable temporal and notification rows are idempotent
                     // on replay, so its redelivery adds no duplicate there.
                     record_queue_outcome(QueueName::PendingSideEffects, QueueOutcome::LeaseLost, 1);
-                    tracing::warn!(job_id = %id, event = "pending_side_effect_lease_lost_on_ack");
+                    tracing::warn!(job_id = %id, lease_holder = %self.config.lease_holder, event = "pending_side_effect_lease_lost_on_ack");
                     Ok(false)
                 }
             },
@@ -144,18 +145,18 @@ impl EntitySideEffectDrain {
                     .map_err(|conversion| EntityError::internal(format!("invalid durable side-effect attempt count: {conversion}")))?;
                 let detail = error.to_string();
                 let (acknowledgement, outcome) = if attempt >= self.config.max_attempts {
-                    (self.queue.mark_dead(id, &self.config.lease_owner, &detail).await?, QueueOutcome::Exhausted)
+                    (self.queue.mark_dead(id, &self.config.lease_holder, &detail).await?, QueueOutcome::Exhausted)
                 } else {
                     let exponent = u32::from(attempt.saturating_sub(1)).min(15);
                     let multiplier = 1_u32 << exponent;
                     let backoff = self.config.base_backoff.saturating_mul(multiplier);
                     let retry_at = now + chrono::Duration::from_std(backoff).map_err(|conversion| EntityError::internal(conversion.to_string()))?;
-                    (self.queue.nack(id, &self.config.lease_owner, &detail, retry_at).await?, QueueOutcome::Retried)
+                    (self.queue.nack(id, &self.config.lease_holder, &detail, retry_at).await?, QueueOutcome::Retried)
                 };
                 let outcome = match acknowledgement {
                     LeaseAcknowledgement::Applied => outcome,
                     LeaseAcknowledgement::Lost => {
-                        tracing::warn!(job_id = %id, event = "pending_side_effect_lease_lost_on_retry");
+                        tracing::warn!(job_id = %id, lease_holder = %self.config.lease_holder, event = "pending_side_effect_lease_lost_on_retry");
                         QueueOutcome::LeaseLost
                     }
                 };
@@ -227,6 +228,7 @@ mod tests {
         change_event::ChangeEvent,
         committer::CommitFuture,
         error::CommitError,
+        lease_holder::LeaseHolder,
         side_effect_job_id::SideEffectJobId,
         write_id::WriteId,
         write_outcome::WriteOutcome,
@@ -352,7 +354,7 @@ mod tests {
     impl SideEffectQueue for RecordingQueue {
         fn lease_batch<'life0, 'life1, 'async_trait>(
             &'life0 self,
-            _worker_id: &'life1 SideEffectLeaseOwner,
+            _worker_id: &'life1 LeaseHolder,
             _batch_size: i32,
             _lease_seconds: i32,
         ) -> BoxFuture<'async_trait, Result<Vec<LeasedSideEffect>, EntityError>>
@@ -370,7 +372,7 @@ mod tests {
         fn ack<'life0, 'life1, 'async_trait>(
             &'life0 self,
             id: SideEffectJobId,
-            _owner: &'life1 SideEffectLeaseOwner,
+            _owner: &'life1 LeaseHolder,
         ) -> BoxFuture<'async_trait, Result<LeaseAcknowledgement, EntityError>>
         where
             'life0: 'async_trait,
@@ -388,7 +390,7 @@ mod tests {
         fn nack<'life0, 'life1, 'life2, 'async_trait>(
             &'life0 self,
             id: SideEffectJobId,
-            _owner: &'life1 SideEffectLeaseOwner,
+            _owner: &'life1 LeaseHolder,
             _error: &'life2 str,
             next_attempt_at: DateTime<Utc>,
         ) -> BoxFuture<'async_trait, Result<LeaseAcknowledgement, EntityError>>
@@ -412,7 +414,7 @@ mod tests {
         fn mark_dead<'life0, 'life1, 'life2, 'async_trait>(
             &'life0 self,
             id: SideEffectJobId,
-            _owner: &'life1 SideEffectLeaseOwner,
+            _owner: &'life1 LeaseHolder,
             _error: &'life2 str,
         ) -> BoxFuture<'async_trait, Result<LeaseAcknowledgement, EntityError>>
         where
@@ -461,15 +463,12 @@ mod tests {
         ContextTarget::Live
     }
 
-    fn lease_owner() -> Result<SideEffectLeaseOwner, EntityError> {
-        let source_id = "urn:ngsi-ld:ContextSourceIdentity:test"
-            .parse()
-            .map_err(|error| EntityError::internal(format!("invalid test source identifier: {error}")))?;
-        Ok(SideEffectLeaseOwner::for_tenant(&source_id, Uuid::nil()))
+    fn lease_holder() -> LeaseHolder {
+        LeaseHolder::from(Uuid::nil())
     }
 
-    fn drain_with_committer(queue: Arc<RecordingQueue>, writes: Arc<FixedCommitter>) -> Result<EntitySideEffectDrain, EntityError> {
-        Ok(EntitySideEffectDrain::new(
+    fn drain_with_committer(queue: Arc<RecordingQueue>, writes: Arc<FixedCommitter>) -> EntitySideEffectDrain {
+        EntitySideEffectDrain::new(
             queue,
             writes,
             None,
@@ -478,17 +477,17 @@ mod tests {
                 batch_size: 1,
                 max_attempts: 3,
                 base_backoff: Duration::from_secs(5),
-                lease_owner: lease_owner()?,
+                lease_holder: lease_holder(),
             },
-        ))
+        )
     }
 
-    fn drain(queue: Arc<RecordingQueue>, disposition: CommitDisposition) -> Result<EntitySideEffectDrain, EntityError> {
+    fn drain(queue: Arc<RecordingQueue>, disposition: CommitDisposition) -> EntitySideEffectDrain {
         drain_with_committer(queue, Arc::new(FixedCommitter::new(disposition)))
     }
 
-    fn drain_with_sink(queue: Arc<RecordingQueue>, disposition: CommitDisposition, sink: Arc<RecordingSink>) -> Result<EntitySideEffectDrain, EntityError> {
-        Ok(EntitySideEffectDrain::new(
+    fn drain_with_sink(queue: Arc<RecordingQueue>, disposition: CommitDisposition, sink: Arc<RecordingSink>) -> EntitySideEffectDrain {
+        EntitySideEffectDrain::new(
             queue,
             Arc::new(FixedCommitter::new(disposition)),
             Some(sink),
@@ -497,9 +496,9 @@ mod tests {
                 batch_size: 1,
                 max_attempts: 3,
                 base_backoff: Duration::from_secs(5),
-                lease_owner: lease_owner()?,
+                lease_holder: lease_holder(),
             },
-        ))
+        )
     }
 
     /// A lease whose job carries exactly one change event, so a test can count
@@ -527,7 +526,7 @@ mod tests {
         let lease = lease(0);
         let id = lease.id;
         let queue = Arc::new(RecordingQueue::with_lease(lease));
-        let outcome = drain(Arc::clone(&queue), CommitDisposition::Applied)?.execute(Utc::now()).await?;
+        let outcome = drain(Arc::clone(&queue), CommitDisposition::Applied).execute(Utc::now()).await?;
         pretty_assertions::assert_eq!(outcome.completed, 1);
         let acknowledged = queue.acknowledged.lock().map_err(|error| EntityError::internal(error.to_string()))?;
         pretty_assertions::assert_eq!(acknowledged.as_slice(), &[id]);
@@ -540,7 +539,7 @@ mod tests {
         let id = lease.id;
         let queue = Arc::new(RecordingQueue::with_lease(lease));
         let now = Utc::now();
-        let outcome = drain(Arc::clone(&queue), CommitDisposition::Failed)?.execute(now).await?;
+        let outcome = drain(Arc::clone(&queue), CommitDisposition::Failed).execute(now).await?;
         pretty_assertions::assert_eq!(outcome.completed, 0);
         let retried = queue.retried.lock().map_err(|error| EntityError::internal(error.to_string()))?;
         pretty_assertions::assert_eq!(retried.as_slice(), &[(id, now + chrono::Duration::seconds(5))]);
@@ -552,7 +551,7 @@ mod tests {
         let lease = lease(2);
         let id = lease.id;
         let queue = Arc::new(RecordingQueue::with_lease(lease));
-        let outcome = drain(Arc::clone(&queue), CommitDisposition::Failed)?.execute(Utc::now()).await?;
+        let outcome = drain(Arc::clone(&queue), CommitDisposition::Failed).execute(Utc::now()).await?;
         pretty_assertions::assert_eq!(outcome.completed, 0);
         let dead = queue.dead.lock().map_err(|error| EntityError::internal(error.to_string()))?;
         pretty_assertions::assert_eq!(dead.as_slice(), &[id]);
@@ -569,7 +568,7 @@ mod tests {
         let expected_base = leased.consequence_base;
         let queue = Arc::new(RecordingQueue::with_lease(leased));
         let committer = Arc::new(FixedCommitter::new(CommitDisposition::Applied));
-        drain_with_committer(queue, Arc::clone(&committer))?.execute(Utc::now()).await?;
+        drain_with_committer(queue, Arc::clone(&committer)).execute(Utc::now()).await?;
         let replays = committer.replays.lock().map_err(|error| EntityError::internal(error.to_string()))?;
         pretty_assertions::assert_eq!(replays.as_slice(), &[CommitReplay::new(expected_record, expected_base)]);
         Ok(())
@@ -582,7 +581,7 @@ mod tests {
     async fn a_lost_lease_on_acknowledgement_is_logged_and_not_treated_as_completed() -> Result<(), EntityError> {
         let leased = lease(0);
         let queue = Arc::new(RecordingQueue::with_lease_lost_on_acknowledgement(leased));
-        let outcome = drain(Arc::clone(&queue), CommitDisposition::Applied)?.execute(Utc::now()).await?;
+        let outcome = drain(Arc::clone(&queue), CommitDisposition::Applied).execute(Utc::now()).await?;
         pretty_assertions::assert_eq!(outcome.completed, 0);
         let acknowledged = queue.acknowledged.lock().map_err(|error| EntityError::internal(error.to_string()))?;
         assert!(acknowledged.is_empty(), "a lost lease must not be recorded as an applied acknowledgement");
@@ -595,7 +594,7 @@ mod tests {
     async fn an_applied_delivery_publishes_its_change_events_once() -> Result<(), EntityError> {
         let queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()?));
         let sink = Arc::new(RecordingSink::default());
-        let outcome = drain_with_sink(queue, CommitDisposition::Applied, Arc::clone(&sink))?
+        let outcome = drain_with_sink(queue, CommitDisposition::Applied, Arc::clone(&sink))
             .execute(Utc::now())
             .await?;
         pretty_assertions::assert_eq!(outcome.completed, 1);
@@ -610,7 +609,7 @@ mod tests {
     async fn a_lost_lease_publishes_no_change_events() -> Result<(), EntityError> {
         let queue = Arc::new(RecordingQueue::with_lease_lost_on_acknowledgement(lease_with_change_event()?));
         let sink = Arc::new(RecordingSink::default());
-        let outcome = drain_with_sink(queue, CommitDisposition::Applied, Arc::clone(&sink))?
+        let outcome = drain_with_sink(queue, CommitDisposition::Applied, Arc::clone(&sink))
             .execute(Utc::now())
             .await?;
         pretty_assertions::assert_eq!(outcome.completed, 0);
@@ -628,14 +627,14 @@ mod tests {
 
         // First worker: commits, then finds its lease already reclaimed.
         let lost_queue = Arc::new(RecordingQueue::with_lease_lost_on_acknowledgement(lease_with_change_event()?));
-        drain_with_sink(lost_queue, CommitDisposition::Applied, Arc::clone(&sink))?
+        drain_with_sink(lost_queue, CommitDisposition::Applied, Arc::clone(&sink))
             .execute(Utc::now())
             .await?;
         pretty_assertions::assert_eq!(sink.count()?, 0, "the worker that lost its lease publishes nothing");
 
         // Reclaiming worker: replays the same job and acknowledges it.
         let applied_queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()?));
-        drain_with_sink(applied_queue, CommitDisposition::Applied, Arc::clone(&sink))?
+        drain_with_sink(applied_queue, CommitDisposition::Applied, Arc::clone(&sink))
             .execute(Utc::now())
             .await?;
         pretty_assertions::assert_eq!(sink.count()?, 1, "the reclaiming worker performs the single publication");

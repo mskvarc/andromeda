@@ -16,7 +16,11 @@
 -- of a client-supplied `instanceId`, which `attribute_history` cannot carry
 -- itself, so a claim surviving the reset would refuse an identifier the next
 -- test case is entitled to use -- and relying on a cascade to reclaim it makes
--- that depend on a foreign key rather than on this list.
+-- that depend on a foreign key rather than on this list. The same holds for
+-- `csr_delivery_state`, `subscription_companions`, `forwarded_subscriptions`
+-- and `snapshot_notification_outbox`: each is also reclaimed by a cascade from
+-- the row it hangs off, and each is named here so the reset does not depend on
+-- that edge.
 
 TRUNCATE
     write_records,
@@ -26,9 +30,13 @@ TRUNCATE
     notification_deliveries,
     notification_events,
     scope_history,
+    snapshot_notification_outbox,
     snapshot_preparation,
     snapshots,
+    forwarded_subscriptions,
+    subscription_companions,
     registration_information,
+    csr_delivery_state,
     context_source_registrations,
     subscription_delivery_state,
     subscriptions,

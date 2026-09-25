@@ -1,6 +1,7 @@
 //! Composition of temporal intent policy with drain runtime mechanics.
 
 use crate::tenant_factory::error::TenantAssemblyError;
+use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
@@ -23,7 +24,7 @@ use andromeda_temporal::{
         pending_intent_reader::PendingTemporalIntentReader,
         temporal_history_sink::TemporalHistorySink,
         temporal_intent_publisher::TemporalIntentPublisher,
-        temporal_intent_queue::{TemporalIntentBatchSize, TemporalIntentLeaseOwner, TemporalIntentQueue},
+        temporal_intent_queue::{TemporalIntentBatchSize, TemporalIntentQueue},
     },
 };
 use chrono::{DateTime, Utc};
@@ -83,7 +84,7 @@ pub(super) fn register_temporal_intent_drain(
         pending,
         sink,
         TemporalIntentClaim {
-            owner: TemporalIntentLeaseOwner::mint(),
+            owner: LeaseHolder::mint(),
             batch_size,
             lease_duration: config.intent_lease.duration(),
             retry_policy,

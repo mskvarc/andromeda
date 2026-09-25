@@ -36,15 +36,10 @@ pub const GOD_FILE_BASELINE: &[&str] = &[
     "crates/andromeda-entity/src/notification_recording_harness.rs",
     "crates/andromeda-federation/src/provision_batch.rs",
     "crates/andromeda-http-temporal/src/temporal/query.rs",
-    "crates/andromeda-postgresql-atomic-write/src/intent_store.rs",
     "crates/andromeda-postgresql-context-store/src/current_attribute_values/upsert.rs",
-    "crates/andromeda-postgresql-context-store/src/snapshot/lifecycle.rs",
     "crates/andromeda-postgresql-maintenance/src/inspection.rs",
-    "crates/andromeda-postgresql-maintenance/src/state.rs",
     "crates/andromeda-postgresql-name-dictionary/src/name_cache.rs",
     "crates/andromeda-postgresql-temporal-store/src/instance_mutation.rs",
-    "crates/andromeda-postgresql-temporal-store/src/temporal_catalog_read.rs",
-    "crates/andromeda-snapshot/src/service.rs",
     "crates/andromeda-temporal/src/linked.rs",
 ];
 

@@ -15,8 +15,14 @@
 //! [`next_interval_due`] grid, so the probe and the delivery drain agree on when
 //! a subscription is next due.
 
-use crate::{subscription_store::delivery_state::interval_anchor_select, tenant_database::DatabaseUrl};
+use crate::{
+    migration_set::branch::{BranchSchemaVersion, current_branch_version},
+    snapshot::{branch_version::branch_is_current, status_code::stored_status as stored_snapshot_status},
+    subscription_store::{delivery_state::interval_anchor_select, status_code::status_is_not},
+    tenant_database::DatabaseUrl,
+};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_model::{snapshot::SnapshotStatus, subscription::SubscriptionStatus};
 use andromeda_postgresql_pool::{configure_pool_options, is_pool_saturated};
 use andromeda_postgresql_schema::{
     csr::Csr,
@@ -27,7 +33,7 @@ use andromeda_postgresql_schema::{
     snapshot::{SnapshotNotificationOutbox, SnapshotPreparation, Snapshots},
     subscriptions::Subscriptions,
 };
-use andromeda_postgresql_seaquery::{clock::now, literal::text_literal, queue::claimable_at};
+use andromeda_postgresql_seaquery::{clock::now, queue::claimable_at};
 use andromeda_subscription::interval_schedule::interval_duration;
 use andromeda_tenancy::{
     database_name::TenantDatabaseName,
@@ -101,7 +107,11 @@ impl PendingWorkProbe for PostgresPendingWorkProbe {
 impl PostgresPendingWorkProbe {
     /// Run both probe reads over the transient pool and fold their results.
     async fn earliest_over(&self, pool: &sqlx::PgPool, database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
-        let (queue_sql, queue_values) = least_due_select().build_sqlx(PostgresQueryBuilder);
+        let current = current_branch_version().map_err(|error| PendingWorkError::ProbeFailed {
+            database: database.clone(), // clone: the error outlives this borrow
+            detail: error.to_string(),
+        })?;
+        let (queue_sql, queue_values) = least_due_select(current).build_sqlx(PostgresQueryBuilder);
         let queue_due: Option<DateTime<Utc>> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(queue_sql.as_str()), queue_values)
             .fetch_one(pool)
             .await
@@ -138,7 +148,7 @@ fn earliest_interval_due(anchors: Vec<(DateTime<Utc>, f64)>) -> Option<DateTime<
 /// `SELECT LEAST(...)` of the earliest due instant in each queue and expiry
 /// source, a single row whose one nullable column is the soonest, or NULL when
 /// nothing is due.
-fn least_due_select() -> SelectStatement {
+fn least_due_select(current: BranchSchemaVersion) -> SelectStatement {
     let sources = vec![
         claimable_min(
             NotificationDeliveries::Table,
@@ -163,7 +173,7 @@ fn least_due_select() -> SelectStatement {
             TemporalAppendIntents::NextAttemptAt,
             TemporalAppendIntents::LeaseUntil,
         ),
-        preparing_min(),
+        preparing_min(current),
         expiry_min(Entities::Table, Entities::ExpiresAt),
         expiry_min(Entities::Table, Entities::MinAttributeExpiresAt),
         subscription_expiry_min(),
@@ -197,12 +207,16 @@ fn claimable_min_all(table: impl IntoTableRef, next_attempt: impl IntoColumnRef,
 
 /// A scalar subquery of when the earliest still-preparing snapshot next needs a
 /// preparation tick: its lease expiry, or now when it holds no lease.
-fn preparing_min() -> SimpleExpr {
+///
+/// A quarantined snapshot is left out: the claim never takes one, so counting
+/// it would report the tenant due forever and wake it on every pass.
+fn preparing_min(current: BranchSchemaVersion) -> SimpleExpr {
     let mut select = Query::select();
     select
         .expr(Func::min(Func::coalesce([Expr::col(SnapshotPreparation::LeaseUntil), now()])))
         .from(SnapshotPreparation::Table)
-        .and_where(Expr::col(SnapshotPreparation::Status).eq(text_literal("preparing")));
+        .and_where(Expr::col(SnapshotPreparation::Status).eq(stored_snapshot_status(SnapshotStatus::Preparing).code()))
+        .and_where(branch_is_current(current));
     scalar(select)
 }
 
@@ -229,7 +243,7 @@ fn subscription_expiry_min() -> SimpleExpr {
         .expr(Func::min(Expr::col(Subscriptions::ExpiresAt)))
         .from(Subscriptions::Table)
         .and_where(Expr::col(Subscriptions::ExpiresAt).is_not_null())
-        .and_where(Expr::col(Subscriptions::Status).ne(text_literal("expired")));
+        .and_where(status_is_not(SubscriptionStatus::Expired));
     scalar(select)
 }
 
@@ -240,7 +254,7 @@ fn interval_probe_select() -> SelectStatement {
     select
         .and_where(Expr::col((Subscriptions::Table, Subscriptions::TimeInterval)).is_not_null())
         .and_where(Expr::col((Subscriptions::Table, Subscriptions::TimeInterval)).gt(0.0))
-        .and_where(Expr::col((Subscriptions::Table, Subscriptions::Status)).ne(text_literal("expired")));
+        .and_where(status_is_not(SubscriptionStatus::Expired));
     select
 }
 
@@ -270,7 +284,10 @@ fn scalar(select: SelectStatement) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::pending_work::{PostgresPendingWorkProbe, code_is_undefined_database, earliest_interval_due, interval_probe_select, least_due_select};
+    use crate::{
+        migration_set::branch::BranchSchemaVersion,
+        pending_work::{PostgresPendingWorkProbe, code_is_undefined_database, earliest_interval_due, interval_probe_select, least_due_select},
+    };
     use andromeda_tenancy::{database_name::TenantDatabaseName, pending_work::PendingWorkError};
     use chrono::{Duration, Utc};
     use sea_query::PostgresQueryBuilder;
@@ -322,7 +339,7 @@ mod tests {
     }
 
     fn least_sql() -> String {
-        least_due_select().to_string(PostgresQueryBuilder)
+        least_due_select(BranchSchemaVersion::try_from(26_i64).expect("a positive version")).to_string(PostgresQueryBuilder)
     }
 
     #[test]
@@ -351,7 +368,11 @@ mod tests {
     fn the_probe_reads_the_preparing_snapshots() {
         let sql = least_sql();
         assert!(sql.contains("FROM \"snapshot_preparation\""), "{sql}");
-        assert!(sql.contains("preparing"), "{sql}");
+        assert!(sql.contains("\"status\" = 1"), "only preparing snapshots, by code: {sql}");
+        assert!(
+            sql.contains("\"snapshot_preparation\".\"branch_schema_version\" >= 26"),
+            "a quarantined snapshot never keeps the tenant due: {sql}"
+        );
     }
 
     #[test]
@@ -389,12 +410,15 @@ mod tests {
         // Both the subscription-expiry source and the periodic-notification
         // source exclude a subscription already in the expired state.
         assert!(
-            least_sql().contains("expired"),
+            least_sql().contains("\"subscriptions\".\"status\" <> 3"),
             "the subscription-expiry source excludes expired: {}",
             least_sql()
         );
         let interval_sql = interval_probe_select().to_string(PostgresQueryBuilder);
-        assert!(interval_sql.contains("expired"), "the interval source excludes expired: {interval_sql}");
+        assert!(
+            interval_sql.contains("\"subscriptions\".\"status\" <> 3"),
+            "the interval source excludes expired: {interval_sql}"
+        );
         assert!(
             interval_sql.contains("\"time_interval\""),
             "the interval source reads the period: {interval_sql}"

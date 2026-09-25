@@ -17,11 +17,14 @@ mod code_registry;
 mod concurrent_provisioning;
 mod hot_update_maintenance;
 mod migration_failure;
+mod migration_ledgers;
+mod platform_configuration;
 mod procedural_logic;
 mod reconciliation;
 mod schema_contract;
 mod temporal_append_intent;
 mod temporal_storage_policy;
+mod tenant_registry_constraints;
 mod toast_compression;
 
 /// The suite name every environment in this suite is allocated under.

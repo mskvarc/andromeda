@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{snapshot_clone::SnapshotCloneInput, snapshot_input::SnapshotInput, snapshot_patch::SnapshotPatch};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
 use andromeda_ngsi_ld_render::response::ResponsePayload;
-use andromeda_snapshot::service::PurgeOutcome;
+use andromeda_snapshot::service::purge::PurgeOutcome;
 use axum::{
     Json,
     extract::OriginalUri,

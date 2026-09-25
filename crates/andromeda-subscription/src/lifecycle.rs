@@ -13,6 +13,7 @@ use crate::{
     fields,
     forwarding_hook::SubscriptionForwardingHook,
     keyset_listing::KeysetListing,
+    merged_validation::validate_merged_subscription,
     status::compute_updated_status,
     store::{StatusUpdateFields, SubscriptionStore},
     subscription_validation_reason::SubscriptionValidationReason,
@@ -318,6 +319,7 @@ where
             let existing = self.get(target, id).await?;
             let existing_status = existing.lifecycle.status;
             let merged = fields::merge_update_fields(&payload, existing, self.variant.dataset_id_policy())?;
+            validate_merged_subscription(&merged)?;
             let fields = merged.to_fields();
 
             let status = compute_updated_status(
@@ -355,14 +357,24 @@ where
     /// rather than returned: the local subscription is deleted either way.
     pub async fn delete(&self, target: &ContextTarget, id: &Uri) -> Result<(), SubscriptionError> {
         let result: Result<(), SubscriptionError> = async {
+            // Captured before the row goes: the store deletes the forwarding
+            // mappings together with the subscription.
+            let teardown = match self.forwarding_hook.as_deref() {
+                Some(hook) if target.permits_federation() => hook
+                    .teardown_of(id)
+                    .await
+                    .inspect_err(|error| tracing::warn!(subscription = %id, %error, "subscription forwarding teardown could not be captured"))
+                    .ok(),
+                Some(_) | None => None,
+            };
             let deleted = self.repo.delete(target, id).await?;
             if deleted == 0 {
                 return Err(SubscriptionError::not_found(id));
             }
 
             self.emit_change(self.variant.make_deleted(target.clone(), id.clone())).await; // clone: the change event owns the branch and identifier.
-            if target.permits_federation() {
-                self.run_hook(id, |hook| hook.deleted(id)).await;
+            if let Some(teardown) = &teardown {
+                self.run_hook(id, |hook| hook.deleted(id, teardown)).await;
             }
             Ok(())
         }
@@ -382,15 +394,4 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::lifecycle::generate_id;
-
-    #[test]
-    fn generated_subscription_identifiers_are_ngsi_ld_urns() {
-        let identifier = generate_id();
-        assert!(matches!(
-            identifier,
-            Ok(identifier) if identifier.as_str().starts_with("urn:ngsi-ld:Subscription:")
-        ));
-    }
-}
+mod tests;

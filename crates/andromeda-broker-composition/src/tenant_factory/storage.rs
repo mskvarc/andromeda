@@ -27,9 +27,12 @@ use andromeda_postgresql_context_store::{
     entity::repo::EntityRepository,
     entity_map::repo::EntityMapRepository,
     jsonld_context::repo::JsonLdContextRepository,
-    snapshot::repo::SnapshotRepository,
+    snapshot::{
+        branch_upgrade::{SnapshotBranchState, snapshot_branch_state},
+        repo::SnapshotRepository,
+    },
     subscription::repo::SubscriptionRepository,
-    tenant_database::{TenantSchemaState, migrate_single_tenant_db, tenant_schema_state},
+    tenant_migration::{TenantSchemaState, migrate_single_tenant_db, tenant_schema_state, upgrade_single_tenant_snapshot_branches},
 };
 use andromeda_postgresql_name_dictionary::{
     name_cache::{NameCache, read_established_epoch},
@@ -47,7 +50,7 @@ use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_subscription::cache::SubscriptionCache;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use sqlx::PgPool;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use url::Url;
 
 /// Validated repositories, indexes, and storage workers for one tenant.
@@ -104,6 +107,24 @@ pub(super) struct EntityStoragePorts {
     pub(super) spatial_snapshots: Arc<dyn EntitySpatialSnapshotSource>,
 }
 
+/// Migrate a tenant whose schema is behind this binary, or upgrade its
+/// Snapshot branches when only they are.
+///
+/// A current schema can still hold Snapshot branches behind this binary: the
+/// tenant was migrated by a replica that has not upgraded them, or an earlier
+/// upgrade quarantined one. One `EXISTS` probe over the serving pool decides
+/// whether the direct connection is opened at all.
+async fn bring_schema_current(pool: &PgPool, migration_url: &Url, acquire_timeout: Duration) -> Result<(), TenantAssemblyError> {
+    match tenant_schema_state(pool).await? {
+        TenantSchemaState::Current => match snapshot_branch_state(pool).await? {
+            SnapshotBranchState::Current => {}
+            SnapshotBranchState::Behind => upgrade_single_tenant_snapshot_branches(migration_url, acquire_timeout).await?,
+        },
+        TenantSchemaState::NeedsMigration => migrate_single_tenant_db(migration_url, acquire_timeout).await?,
+    }
+    Ok(())
+}
+
 /// Open, migrate, validate, and warm every storage component for a tenant.
 ///
 /// The database is migrated over `migration_url`, which reaches PostgreSQL
@@ -134,10 +155,7 @@ pub(super) async fn initialize_storage(
     let pool = configure_pool_options(max_connections, config.database.acquire_timeout())
         .connect(serving_url.as_str())
         .await?;
-    match tenant_schema_state(&pool).await? {
-        TenantSchemaState::Current => {}
-        TenantSchemaState::NeedsMigration => migrate_single_tenant_db(migration_url, config.database.acquire_timeout()).await?,
-    }
+    bring_schema_current(&pool, migration_url, config.database.acquire_timeout()).await?;
     let live_target = resolve_live_target();
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
     let engine = config.jsonld.build_engine(Arc::clone(&context_repo))?;
@@ -222,7 +240,11 @@ pub(super) async fn initialize_storage(
     let entity_map_store = Arc::new(EntityMapRepository::new(&pool)) as Arc<dyn EntityMapStore>;
     let snapshot_store = Arc::new(SnapshotRepository::new(&pool)) as Arc<dyn SnapshotStore>;
     let subscription_cache = Arc::new(SubscriptionCache::new(tenant.clone()));
-    if let Err(error) = subscription_cache.reload(&live_target, &SubscriptionRepository::new(&pool)).await {
+    // clone: the cache reload reads through a repository sharing the tenant's one dictionary.
+    if let Err(error) = subscription_cache
+        .reload(&live_target, &SubscriptionRepository::new(&pool, Arc::clone(&attribute_names)))
+        .await
+    {
         tracing::error!(%error, "failed to load subscription cache");
     }
     let spatial_index = Arc::new(SpatialEntityIndex::new());

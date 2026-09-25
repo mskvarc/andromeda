@@ -10,21 +10,24 @@
 //! `notification_trigger` is stored as the clause-5.3.3 registry codes the
 //! notification queue is numbered from, not as their camel-case labels, so a
 //! subscription's trigger set and a queued notification's trigger share one
-//! numbering.
+//! numbering. `kind` and `status` are registry codes too, and the three
+//! attribute lists are the dictionary keys [`InternedAttributeLists`] carries.
 
 use crate::{
     notification_delivery::trigger_code::stored_trigger,
     subscription_store::{
         failure::persistence_error,
+        interned_attributes::InternedAttributeLists,
+        status_code::stored_status,
         stored_kind::{StoredKind, of_kind},
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
-use andromeda_postgresql_seaquery::{cast::cast, clock::now, literal::text_literal, pg_type::PostgresType, placeholder::external_placeholder};
+use andromeda_postgresql_seaquery::{clock::now, placeholder::external_placeholder};
 use andromeda_subscription::{error::SubscriptionError, store::SubscriptionFields};
 use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query};
 use sqlx::{postgres::PgArguments, query::Query as SqlxQuery, types::Json};
@@ -48,17 +51,12 @@ fn stored_conformance(fields: &SubscriptionFields<'_>) -> Option<String> {
     fields.ngsild_conformance.map(|version| version.to_string())
 }
 
-/// The stored `TEXT[]` of one expanded attribute-name list, or `None` when the
-/// subscription carries none.
-fn expanded_names(names: Option<&[AttributeName]>) -> Option<Vec<&str>> {
-    names.map(|names| names.iter().map(AttributeName::as_str).collect())
-}
-
 /// Bind an entity-subscription create command in statement order.
 pub fn bind_entity_create<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
     id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
+    interned: &'q InternedAttributeLists,
     status: SubscriptionStatus,
 ) -> SqlxQuery<'q, sqlx::Postgres, PgArguments> {
     query
@@ -66,24 +64,20 @@ pub fn bind_entity_create<'q>(
         .bind(fields.subscription_name)
         .bind(fields.description)
         .bind(fields.entities.map(Json))
-        .bind(
-            fields
-                .watched_attributes
-                .map(|names| names.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
-        )
+        .bind(interned.watched_attributes.as_deref())
         .bind(stored_triggers(fields))
         .bind(fields.time_interval)
         .bind(fields.q.map(ToString::to_string))
         .bind(fields.geo_q.map(Json))
         .bind(fields.scope_q.map(ToString::to_string))
         .bind(fields.csf.map(ToString::to_string))
-        .bind(expanded_names(fields.expand_values))
-        .bind(expanded_names(fields.json_keys))
+        .bind(interned.expand_values.as_deref())
+        .bind(interned.json_keys.as_deref())
         .bind(fields.dataset_id.map(|ids| ids.iter().map(Uri::as_str).collect::<Vec<_>>()))
         .bind(fields.notification.map(Json))
         .bind(fields.expires_at)
         .bind(fields.throttling)
-        .bind(<&str>::from(status))
+        .bind(stored_status(status).code())
         .bind(fields.temporal_q.map(Json))
         .bind(fields.lang.map(ToString::to_string))
         .bind(fields.jsonld_context.map(Url::as_str))
@@ -97,6 +91,7 @@ pub fn bind_entity_update<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
     id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
+    interned: &'q InternedAttributeLists,
     status: SubscriptionStatus,
 ) -> SqlxQuery<'q, sqlx::Postgres, PgArguments> {
     query
@@ -104,24 +99,20 @@ pub fn bind_entity_update<'q>(
         .bind(fields.subscription_name)
         .bind(fields.description)
         .bind(fields.entities.map(Json))
-        .bind(
-            fields
-                .watched_attributes
-                .map(|names| names.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
-        )
+        .bind(interned.watched_attributes.as_deref())
         .bind(stored_triggers(fields))
         .bind(fields.time_interval)
         .bind(fields.q.map(ToString::to_string))
         .bind(fields.geo_q.map(Json))
         .bind(fields.scope_q.map(ToString::to_string))
         .bind(fields.csf.map(ToString::to_string))
-        .bind(expanded_names(fields.expand_values))
-        .bind(expanded_names(fields.json_keys))
+        .bind(interned.expand_values.as_deref())
+        .bind(interned.json_keys.as_deref())
         .bind(fields.dataset_id.map(|ids| ids.iter().map(Uri::as_str).collect::<Vec<_>>()))
         .bind(fields.notification.map(Json))
         .bind(fields.expires_at)
         .bind(fields.throttling)
-        .bind(<&str>::from(status))
+        .bind(stored_status(status).code())
         .bind(fields.lang.map(ToString::to_string))
         .bind(fields.jsonld_context.map(Url::as_str))
         .bind(fields.local_only)
@@ -134,6 +125,7 @@ pub fn bind_csource_create<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
     id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
+    interned: &'q InternedAttributeLists,
     status: SubscriptionStatus,
 ) -> SqlxQuery<'q, sqlx::Postgres, PgArguments> {
     query
@@ -141,23 +133,19 @@ pub fn bind_csource_create<'q>(
         .bind(fields.subscription_name)
         .bind(fields.description)
         .bind(fields.entities.map(Json))
-        .bind(
-            fields
-                .watched_attributes
-                .map(|names| names.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
-        )
+        .bind(interned.watched_attributes.as_deref())
         .bind(stored_triggers(fields))
         .bind(fields.time_interval)
         .bind(fields.q.map(ToString::to_string))
         .bind(fields.geo_q.map(Json))
         .bind(fields.scope_q.map(ToString::to_string))
         .bind(fields.csf.map(ToString::to_string))
-        .bind(expanded_names(fields.expand_values))
-        .bind(expanded_names(fields.json_keys))
+        .bind(interned.expand_values.as_deref())
+        .bind(interned.json_keys.as_deref())
         .bind(fields.notification.map(Json))
         .bind(fields.expires_at)
         .bind(fields.throttling)
-        .bind(<&str>::from(status))
+        .bind(stored_status(status).code())
         .bind(fields.temporal_q.map(Json))
         .bind(fields.lang.map(ToString::to_string))
         .bind(fields.jsonld_context.map(Url::as_str))
@@ -169,6 +157,7 @@ pub fn bind_csource_update<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
     id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
+    interned: &'q InternedAttributeLists,
     status: SubscriptionStatus,
 ) -> SqlxQuery<'q, sqlx::Postgres, PgArguments> {
     query
@@ -176,23 +165,19 @@ pub fn bind_csource_update<'q>(
         .bind(fields.subscription_name)
         .bind(fields.description)
         .bind(fields.entities.map(Json))
-        .bind(
-            fields
-                .watched_attributes
-                .map(|names| names.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
-        )
+        .bind(interned.watched_attributes.as_deref())
         .bind(stored_triggers(fields))
         .bind(fields.time_interval)
         .bind(fields.q.map(ToString::to_string))
         .bind(fields.geo_q.map(Json))
         .bind(fields.scope_q.map(ToString::to_string))
         .bind(fields.csf.map(ToString::to_string))
-        .bind(expanded_names(fields.expand_values))
-        .bind(expanded_names(fields.json_keys))
+        .bind(interned.expand_values.as_deref())
+        .bind(interned.json_keys.as_deref())
         .bind(fields.notification.map(Json))
         .bind(fields.expires_at)
         .bind(fields.throttling)
-        .bind(<&str>::from(status))
+        .bind(stored_status(status).code())
         .bind(fields.lang.map(ToString::to_string))
         .bind(fields.jsonld_context.map(Url::as_str))
         .bind(stored_conformance(fields))
@@ -234,7 +219,7 @@ pub fn entity_create_sql(target: &ContextTarget) -> Result<String, SubscriptionE
     insert
         .values([
             external_placeholder(1),
-            text_literal("entity"),
+            Expr::val(StoredKind::Entity.code().code()),
             external_placeholder(2),
             external_placeholder(3),
             external_placeholder(4),
@@ -251,7 +236,7 @@ pub fn entity_create_sql(target: &ContextTarget) -> Result<String, SubscriptionE
             external_placeholder(15),
             external_placeholder(16),
             external_placeholder(17),
-            cast(external_placeholder(18), PostgresType::SubscriptionStatus),
+            external_placeholder(18),
             external_placeholder(19),
             external_placeholder(20),
             external_placeholder(21),
@@ -288,7 +273,7 @@ pub fn entity_update_sql(target: &ContextTarget) -> String {
             (Subscriptions::Notification, external_placeholder(15)),
             (Subscriptions::ExpiresAt, external_placeholder(16)),
             (Subscriptions::Throttling, external_placeholder(17)),
-            (Subscriptions::Status, cast(external_placeholder(18), PostgresType::SubscriptionStatus)),
+            (Subscriptions::Status, external_placeholder(18)),
             (Subscriptions::Lang, external_placeholder(19)),
             (Subscriptions::JsonldContext, external_placeholder(20)),
             (Subscriptions::LocalOnly, external_placeholder(21)),
@@ -333,7 +318,7 @@ pub fn csource_create_sql(target: &ContextTarget) -> Result<String, Subscription
     insert
         .values([
             external_placeholder(1),
-            text_literal("csource"),
+            Expr::val(StoredKind::Csource.code().code()),
             external_placeholder(2),
             external_placeholder(3),
             external_placeholder(4),
@@ -349,7 +334,7 @@ pub fn csource_create_sql(target: &ContextTarget) -> Result<String, Subscription
             external_placeholder(14),
             external_placeholder(15),
             external_placeholder(16),
-            cast(external_placeholder(17), PostgresType::SubscriptionStatus),
+            external_placeholder(17),
             external_placeholder(18),
             external_placeholder(19),
             external_placeholder(20),
@@ -383,7 +368,7 @@ pub fn csource_update_sql(target: &ContextTarget) -> String {
             (Subscriptions::Notification, external_placeholder(14)),
             (Subscriptions::ExpiresAt, external_placeholder(15)),
             (Subscriptions::Throttling, external_placeholder(16)),
-            (Subscriptions::Status, cast(external_placeholder(17), PostgresType::SubscriptionStatus)),
+            (Subscriptions::Status, external_placeholder(17)),
             (Subscriptions::Lang, external_placeholder(18)),
             (Subscriptions::JsonldContext, external_placeholder(19)),
             (Subscriptions::NgsildConformance, external_placeholder(20)),
@@ -400,11 +385,11 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
 
     #[test]
-    fn the_entity_create_carries_its_kind_and_status_cast_with_contiguous_markers() {
+    fn the_entity_create_carries_its_kind_code_and_binds_its_status_code_with_contiguous_markers() {
         let sql = entity_create_sql(&ContextTarget::Live).expect("the fixed entity insert builds");
-        assert!(sql.contains("'entity'"), "{sql}");
+        assert!(sql.contains("VALUES ($1, 1, $2"), "the entity kind code: {sql}");
         assert!(!sql.contains("'Subscription'"), "the constant type token is no longer a column: {sql}");
-        assert!(sql.contains("$18::subscription_status"), "{sql}");
+        assert!(!sql.contains("::subscription_status"), "no enum cast remains: {sql}");
         assert!(sql.contains("NOW()"), "created_at and modified_at stamp the transaction clock: {sql}");
         for marker in 1..=24 {
             assert!(sql.contains(&format!("${marker}")), "missing ${marker}: {sql}");
@@ -438,8 +423,8 @@ mod tests {
     #[test]
     fn the_csource_create_omits_the_dataset_and_local_only_columns() {
         let sql = csource_create_sql(&ContextTarget::Live).expect("the fixed context-source insert builds");
-        assert!(sql.contains("'csource'"), "{sql}");
-        assert!(sql.contains("$17::subscription_status"), "{sql}");
+        assert!(sql.contains("VALUES ($1, 2, $2"), "the context-source kind code: {sql}");
+        assert!(!sql.contains("::subscription_status"), "no enum cast remains: {sql}");
         assert!(!sql.contains("$22"), "the context-source create binds twenty-one values: {sql}");
         assert!(!sql.contains("dataset_id"), "a context-source subscription stores no datasetId: {sql}");
     }
@@ -464,8 +449,8 @@ mod tests {
     fn the_entity_update_pins_the_row_by_id_and_kind() {
         let sql = entity_update_sql(&ContextTarget::Live);
         assert!(sql.contains(r#""id" = ($1)"#), "{sql}");
-        assert!(sql.contains("'entity'"), "{sql}");
-        assert!(sql.contains("$18::subscription_status"), "{sql}");
+        assert!(sql.contains(r#""subscriptions"."kind" = 1"#), "{sql}");
+        assert!(sql.contains(r#""status" = $18"#), "{sql}");
         assert!(sql.contains(r#""modified_at" = NOW()"#), "{sql}");
     }
 

@@ -7,7 +7,7 @@
 
 use crate::compiled::CompiledCsrSubscription;
 use andromeda_ngsi_ld_geometry::{geometry::Geometry, relation::matches as geometry_matches};
-use andromeda_ngsi_ld_lexicon::{scope::grammar::ScopeBuf, time_prop::TimeProp};
+use andromeda_ngsi_ld_lexicon::{scope::path::ScopePath, time_prop::TimeProp};
 use andromeda_ngsi_ld_model::{
     registration::{ContextSourceRegistration, info::RegistrationInfo},
     registration_matching::{EntitySpecification, RegistrationMatchSpecification},
@@ -127,7 +127,7 @@ fn scope_query_admits(sub: &CompiledCsrSubscription, registration: &ContextSourc
         .coverage
         .scope
         .as_deref()
-        .is_some_and(|scopes| scope_q.matches(&scopes.iter().map(ScopeBuf::as_str).collect::<Vec<_>>()))
+        .is_some_and(|scopes| scope_q.matches(&scopes.iter().map(ScopePath::as_str).collect::<Vec<_>>()))
 }
 
 /// Clause 5.11.2.4: the context source filter is matched against the

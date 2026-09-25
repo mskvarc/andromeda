@@ -45,6 +45,7 @@ fn classify(error: &ContextStoreError) -> EntityError {
         | ContextStoreError::ContextMapper(_)
         | ContextStoreError::Migration(_)
         | ContextStoreError::SchemaContract(_)
+        | ContextStoreError::BranchVersion(_)
         | ContextStoreError::Internal(_) => EntityError::persistence(error.to_string()),
     }
 }

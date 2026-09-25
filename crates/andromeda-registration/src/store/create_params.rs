@@ -5,7 +5,7 @@ use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonym,
     dereferenceable_uri::DereferenceableUri,
     non_empty_text::NonEmptyText,
-    scope::grammar::ScopeBuf,
+    scope::path::ScopePath,
     tenant::TenantName,
 };
 use andromeda_ngsi_ld_model::{
@@ -69,7 +69,7 @@ pub struct CreateCsrParams {
     pub operations: Vec<CsrOperation>,
     /// Scope values for the registration.
     #[builder(default = Default::default())]
-    pub scope: Option<Vec<ScopeBuf>>,
+    pub scope: Option<Vec<ScopePath>>,
     /// ISO 8601 duration between context source refreshes.
     #[builder(default = Default::default())]
     pub refresh_rate: Option<Iso8601Duration>,

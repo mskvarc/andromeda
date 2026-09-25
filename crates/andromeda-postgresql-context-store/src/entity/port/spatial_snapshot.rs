@@ -10,7 +10,7 @@ use andromeda_entity::{
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_postgresql_encoding::ewkb::Ewkb;
-use andromeda_postgresql_query::entity_type_names::type_names_of;
+use andromeda_postgresql_query::dictionary::names_in_key_order::type_names_of;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
 use async_trait::async_trait;

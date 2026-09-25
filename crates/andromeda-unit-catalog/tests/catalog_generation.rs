@@ -47,7 +47,7 @@ const SNAPSHOT_HEADER: &str = "# generated - never hand-edited\n\
 const SNAPSHOT_PATH: &str = "data/unit-code-ids.tsv";
 
 /// Path of the generated seed migration, relative to the crate root.
-const SEED_PATH: &str = "../../migrations/tenant/0009_unit_codes_seed.sql";
+const SEED_PATH: &str = "../../migrations/tenant/0010_unit_codes_seed.sql";
 
 /// The identity assignment could not be produced or does not match what is committed.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -139,7 +139,7 @@ fn render_seed(entries: &[UnitCodeEntry]) -> Result<String, CatalogGenerationFai
     let mut rendered = String::new();
     rendered.push_str("-- generated - never hand-edited\n");
     rendered.push_str("-- ============================================================================\n");
-    rendered.push_str("-- 0009: UN/CEFACT unit-code catalogue seed\n");
+    rendered.push_str("-- 0010: UN/CEFACT unit-code catalogue seed\n");
     rendered.push_str("-- ============================================================================\n");
     rendered.push_str("-- Rendered by the generation test of `crates/andromeda-unit-catalog` from the\n");
     rendered.push_str("-- same identity assignment the broker compiles in, so an identifier written\n");

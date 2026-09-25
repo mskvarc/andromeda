@@ -19,6 +19,7 @@ mod entity_map_request;
 mod entity_map_temporal;
 mod entity_map_temporal_forwarding;
 mod entity_map_temporal_stages;
+mod forwarding_cascade;
 mod notification_body;
 mod notification_content;
 mod notification_delivery;

@@ -9,13 +9,15 @@
 
 use crate::subscription_store::{
     failure::persistence_error,
+    status_code::status_is,
     stored_kind::{StoredKind, of_kind},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
-use andromeda_postgresql_seaquery::{clock::now, interval::make_interval_secs, literal::text_literal, placeholder::external_placeholder};
+use andromeda_postgresql_seaquery::{clock::now, interval::make_interval_secs, placeholder::external_placeholder};
 use andromeda_subscription::{error::SubscriptionError, notification_slot::NotificationSlotGate};
 use chrono::{DateTime, Utc};
 use sea_query::{
@@ -84,7 +86,7 @@ fn owner_key(target: &ContextTarget, id: &Uri, kind: StoredKind, status: OwnerSt
         .and_where(of_kind(kind));
     match status {
         OwnerStatus::ActiveOnly => {
-            owner.and_where(Expr::col((Subscriptions::Table, Subscriptions::Status)).eq(text_literal("active")));
+            owner.and_where(status_is(SubscriptionStatus::Active));
         }
         OwnerStatus::Any => {}
     }
@@ -287,7 +289,7 @@ mod tests {
         );
         assert!(
             sql.contains(
-                r#"WHERE "subscription_key" = (SELECT "subscriptions"."subscription_key" FROM "subscriptions" WHERE "subscriptions"."id" = 'urn:ngsi-ld:Subscription:one' AND "subscriptions"."kind" = ('entity') AND "subscriptions"."status" = ('active'))"#
+                r#"WHERE "subscription_key" = (SELECT "subscriptions"."subscription_key" FROM "subscriptions" WHERE "subscriptions"."id" = 'urn:ngsi-ld:Subscription:one' AND "subscriptions"."kind" = 1 AND "subscriptions"."status" = 1)"#
             ),
             "{sql}"
         );
@@ -308,7 +310,7 @@ mod tests {
             "{sql}"
         );
         assert!(!sql.contains("last_failure"), "an endpoint without a cooldown adds no second gate: {sql}");
-        assert!(sql.contains("'csource'"), "{sql}");
+        assert!(sql.contains(r#""subscriptions"."kind" = 2"#), "{sql}");
     }
 
     /// Table 5.2.15-1: "If requests are received before the cooldown period has
@@ -423,6 +425,6 @@ mod tests {
             "{sql}"
         );
         assert!(!sql.contains("times_sent"), "advancing the anchor counts no notification: {sql}");
-        assert!(sql.contains(r#""subscriptions"."status" = ('active')"#), "{sql}");
+        assert!(sql.contains(r#""subscriptions"."status" = 1"#), "{sql}");
     }
 }

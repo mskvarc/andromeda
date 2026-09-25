@@ -1,33 +1,12 @@
 //! Durable claim, acknowledgement and retry state for temporal intent delivery.
 
 use crate::{append_intent::SequencedTemporalAppendIntent, error::TemporalError};
-use andromeda_context_commit::lease_acknowledgement::LeaseAcknowledgement;
+use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use derive_more::Display;
 use std::num::NonZeroU32;
-use uuid::Uuid;
-
-/// Stable owner of one temporal drain's durable leases.
-#[derive(Clone, Copy, Debug, Display, Eq, Hash, PartialEq)]
-#[display("{_0}")]
-pub struct TemporalIntentLeaseOwner(Uuid);
-
-impl TemporalIntentLeaseOwner {
-    /// Mint one owner identifier for a constructed tenant drain.
-    #[must_use]
-    pub fn mint() -> TemporalIntentLeaseOwner {
-        TemporalIntentLeaseOwner(Uuid::new_v4())
-    }
-
-    /// Return the UUID persistence representation.
-    #[must_use]
-    pub const fn as_uuid(self) -> Uuid {
-        self.0
-    }
-}
 
 /// Non-zero upper bound for one temporal intent claim.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -73,7 +52,7 @@ pub trait TemporalIntentQueue: Send + Sync {
     async fn claim(
         &self,
         target: &ContextTarget,
-        owner: TemporalIntentLeaseOwner,
+        owner: LeaseHolder,
         limit: TemporalIntentBatchSize,
         lease_until: DateTime<Utc>,
     ) -> Result<Vec<ClaimedTemporalAppendIntent>, TemporalError>;
@@ -83,7 +62,7 @@ pub trait TemporalIntentQueue: Send + Sync {
     async fn claim_for_entity(
         &self,
         target: &ContextTarget,
-        owner: TemporalIntentLeaseOwner,
+        owner: LeaseHolder,
         entity_id: &Uri,
         limit: TemporalIntentBatchSize,
         lease_until: DateTime<Utc>,
@@ -100,7 +79,7 @@ pub trait TemporalIntentQueue: Send + Sync {
     async fn acknowledge(
         &self,
         target: &ContextTarget,
-        owner: TemporalIntentLeaseOwner,
+        owner: LeaseHolder,
         intent: &SequencedTemporalAppendIntent,
     ) -> Result<LeaseAcknowledgement, TemporalError>;
 
@@ -111,7 +90,7 @@ pub trait TemporalIntentQueue: Send + Sync {
     async fn retry(
         &self,
         target: &ContextTarget,
-        owner: TemporalIntentLeaseOwner,
+        owner: LeaseHolder,
         intent: &SequencedTemporalAppendIntent,
         retry: TemporalIntentRetry,
     ) -> Result<LeaseAcknowledgement, TemporalError>;

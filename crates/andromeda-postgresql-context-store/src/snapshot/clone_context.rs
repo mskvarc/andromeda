@@ -7,29 +7,31 @@
 
 use crate::snapshot::{
     branch_schema::{drop_branch_schema, promote_staging_schema},
+    branch_version::{condition_of, current_version},
     clone::clone_branch,
-    lifecycle::status_is_preparing,
     persistence_error,
+    record::status_is_preparing,
+    status_code::stored_status,
     status_outbox::enqueue_terminal_notification,
 };
+use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, SnapshotStatus};
 use andromeda_postgresql_branch::snapshot_schema_name;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
-use andromeda_postgresql_seaquery::{cast::cast, clock::now, pg_type::PostgresType};
-use andromeda_snapshot::error::SnapshotError;
+use andromeda_postgresql_seaquery::clock::now;
+use andromeda_snapshot::{branch_condition::BranchCondition, error::SnapshotError};
 use sea_query::{Expr, ExprTrait, JoinType, Keyword, LockType, PostgresQueryBuilder, Query, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Postgres, Transaction};
-use uuid::Uuid;
 
 /// Publish one query capture: swap the staging branch in on success, discard it
 /// on failure, and record the terminal status, all in one transaction.
 pub(crate) async fn promote_staged_capture(
     pool: &PgPool,
     id: &Uri,
-    claimed_by: Uuid,
+    claimed_by: LeaseHolder,
     status: SnapshotStatus,
     queries_details: Option<&[ExecutionResultDetails]>,
     temporal_queries_details: Option<&[ExecutionResultDetails]>,
@@ -50,7 +52,7 @@ pub(crate) async fn promote_staged_capture(
 
 /// Copy a source Snapshot's published branch into the claimed target's staging
 /// branch, then publish it, in one transaction.
-pub(crate) async fn promote_context_clone(pool: &PgPool, source_id: &Uri, target_id: &Uri, claimed_by: Uuid) -> Result<(), SnapshotError> {
+pub(crate) async fn promote_context_clone(pool: &PgPool, source_id: &Uri, target_id: &Uri, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
     let mut transaction = pool.begin().await.map_err(persistence_error)?;
     let source_key = source_snapshot_key(&mut transaction, source_id).await?;
     let target_key = lock_preparing_key(&mut transaction, target_id, claimed_by).await?;
@@ -67,7 +69,7 @@ pub(crate) async fn promote_context_clone(pool: &PgPool, source_id: &Uri, target
 
 /// Resolve, and row-lock, the preparing preparation row of one Snapshot claimed
 /// by this replica.
-async fn lock_preparing_key(transaction: &mut Transaction<'_, Postgres>, id: &Uri, claimed_by: Uuid) -> Result<SnapshotKey, SnapshotError> {
+async fn lock_preparing_key(transaction: &mut Transaction<'_, Postgres>, id: &Uri, claimed_by: LeaseHolder) -> Result<SnapshotKey, SnapshotError> {
     let select = Query::select()
         .column((Snapshots::Table, Snapshots::SnapshotKey))
         .from(Snapshots::Table)
@@ -77,7 +79,7 @@ async fn lock_preparing_key(transaction: &mut Transaction<'_, Postgres>, id: &Ur
             Expr::col((SnapshotPreparation::Table, SnapshotPreparation::SnapshotKey)).equals((Snapshots::Table, Snapshots::SnapshotKey)),
         )
         .and_where(Expr::col((Snapshots::Table, Snapshots::Id)).eq(id.as_str()))
-        .and_where(Expr::col((SnapshotPreparation::Table, SnapshotPreparation::ClaimedBy)).eq(claimed_by))
+        .and_where(Expr::col((SnapshotPreparation::Table, SnapshotPreparation::ClaimedBy)).eq(claimed_by.as_uuid()))
         .and_where(status_is_preparing())
         .lock(LockType::Update)
         .to_owned();
@@ -90,20 +92,32 @@ async fn lock_preparing_key(transaction: &mut Transaction<'_, Postgres>, id: &Ur
     SnapshotKey::try_from(raw).map_err(|error| SnapshotError::internal(error.to_string()))
 }
 
-/// Resolve a clone source's surrogate key by URI.
+/// Resolve a clone source's surrogate key by URI, refusing a quarantined source:
+/// its branch schema is behind this binary's branch relations, so a
+/// column-for-column copy into the target could not be trusted.
 async fn source_snapshot_key(transaction: &mut Transaction<'_, Postgres>, source_id: &Uri) -> Result<SnapshotKey, SnapshotError> {
+    let current = current_version()?;
     let select = Query::select()
-        .column(Snapshots::SnapshotKey)
+        .column((Snapshots::Table, Snapshots::SnapshotKey))
+        .column((SnapshotPreparation::Table, SnapshotPreparation::BranchSchemaVersion))
         .from(Snapshots::Table)
-        .and_where(Expr::col(Snapshots::Id).eq(source_id.as_str()))
+        .join(
+            JoinType::Join,
+            SnapshotPreparation::Table,
+            Expr::col((SnapshotPreparation::Table, SnapshotPreparation::SnapshotKey)).equals((Snapshots::Table, Snapshots::SnapshotKey)),
+        )
+        .and_where(Expr::col((Snapshots::Table, Snapshots::Id)).eq(source_id.as_str()))
         .to_owned();
     let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-    let raw = sqlx::query_scalar_with::<_, i64, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let (raw, version) = sqlx::query_as_with::<_, (i64, i32), _>(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_optional(&mut **transaction)
         .await
         .map_err(persistence_error)?
         .ok_or_else(|| SnapshotError::internal(format!("Clone source {source_id} does not exist")))?;
-    SnapshotKey::try_from(raw).map_err(|error| SnapshotError::internal(error.to_string()))
+    match condition_of(version, current) {
+        BranchCondition::Current => SnapshotKey::try_from(raw).map_err(|error| SnapshotError::internal(error.to_string())),
+        BranchCondition::Quarantined => Err(SnapshotError::quarantined(source_id)),
+    }
 }
 
 /// Record the terminal preparation state, clearing the lease; must match the
@@ -111,14 +125,14 @@ async fn source_snapshot_key(transaction: &mut Transaction<'_, Postgres>, source
 async fn finalize_preparation(
     transaction: &mut Transaction<'_, Postgres>,
     snapshot_key: SnapshotKey,
-    claimed_by: Uuid,
+    claimed_by: LeaseHolder,
     status: SnapshotStatus,
     queries_details: Option<&[ExecutionResultDetails]>,
     temporal_queries_details: Option<&[ExecutionResultDetails]>,
 ) -> Result<(), SnapshotError> {
     let statement = Query::update()
         .table(SnapshotPreparation::Table)
-        .value(SnapshotPreparation::Status, cast(Expr::val(<&str>::from(status)), PostgresType::SnapshotStatus))
+        .value(SnapshotPreparation::Status, stored_status(status).code())
         .value(SnapshotPreparation::QueriesDetails, queries_details.map(serde_json::to_value).transpose()?)
         .value(
             SnapshotPreparation::TemporalQueriesDetails,
@@ -129,7 +143,7 @@ async fn finalize_preparation(
         .value(SnapshotPreparation::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
         .value(SnapshotPreparation::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
         .and_where(Expr::col(SnapshotPreparation::SnapshotKey).eq(snapshot_key.as_i64()))
-        .and_where(Expr::col(SnapshotPreparation::ClaimedBy).eq(claimed_by))
+        .and_where(Expr::col(SnapshotPreparation::ClaimedBy).eq(claimed_by.as_uuid()))
         .and_where(status_is_preparing())
         .to_owned();
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
