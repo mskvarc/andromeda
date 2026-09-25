@@ -32,15 +32,56 @@ COPY rust-toolchain.toml ./
 COPY .cargo ./.cargo
 RUN rustup show
 
+# sccache caches every compiled crate individually. The cargo-chef layer below
+# is all-or-nothing: any Cargo.lock change invalidates it whole, and without
+# sccache that recompiles every dependency. The prebuilt musl release is static,
+# so one binary serves the Debian builder; its SHA-256 is pinned per architecture.
+ARG SCCACHE_VERSION=0.18.0
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+        x86_64) sha256=45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89 ;; \
+        aarch64) sha256=2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a ;; \
+        *) echo "no pinned sccache checksum for $arch" >&2; exit 1 ;; \
+    esac; \
+    release="sccache-v${SCCACHE_VERSION}-${arch}-unknown-linux-musl"; \
+    curl -fsSL -o /tmp/sccache.tar.gz \
+        "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/${release}.tar.gz"; \
+    echo "${sha256}  /tmp/sccache.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/sccache.tar.gz -C /tmp; \
+    install -m 0755 "/tmp/${release}/sccache" /usr/local/bin/sccache; \
+    rm -rf /tmp/sccache.tar.gz "/tmp/${release}"
+
+# rustc goes through sccache via RUSTC_WRAPPER. C compiles go through it too:
+# the cc crate picks up an sccache RUSTC_WRAPPER on its own, and the launcher
+# variables cover aws-lc-sys's cmake build. sccache cannot cache incremental
+# compilation, so it stays off.
+ENV RUSTC_WRAPPER=sccache \
+    CMAKE_C_COMPILER_LAUNCHER=sccache \
+    CMAKE_CXX_COMPILER_LAUNCHER=sccache \
+    CARGO_INCREMENTAL=0 \
+    SCCACHE_DIR=/var/cache/sccache
+COPY --chmod=0755 docker/images/andromeda/with-sccache.sh /usr/local/bin/with-sccache
+
 # Compile and cache only the dependency graph first: this layer is reused across
-# source changes and only rebuilds when Cargo.lock or the recipe changes.
+# source changes and only rebuilds when Cargo.lock or the recipe changes; sccache
+# then limits that rebuild to the crates whose inputs actually changed. The two
+# secrets are the GitHub Actions cache credentials CI passes in; a local build
+# omits them and sccache uses the SCCACHE_DIR cache mount instead. Secret mounts
+# never enter the layer or its cache key.
 COPY --from=planner /build/recipe.json recipe.json
-RUN cargo chef cook --release --locked --recipe-path recipe.json
+RUN --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=ACTIONS_RUNTIME_TOKEN,env=ACTIONS_RUNTIME_TOKEN \
+    --mount=type=cache,id=andromeda-sccache,target=/var/cache/sccache,sharing=locked \
+    with-sccache cargo chef cook --release --locked --recipe-path recipe.json
 
 # Build the broker itself. .git is present in the context so shadow-rs can embed
 # the real commit metadata reported by the broker at runtime.
 COPY . .
-RUN cargo build --release --locked --bin andromeda
+RUN --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=ACTIONS_RUNTIME_TOKEN,env=ACTIONS_RUNTIME_TOKEN \
+    --mount=type=cache,id=andromeda-sccache,target=/var/cache/sccache,sharing=locked \
+    with-sccache cargo build --release --locked --bin andromeda
 
 FROM debian:trixie-20260824-slim AS runtime
 

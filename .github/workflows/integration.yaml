@@ -108,21 +108,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/free-disk-space
-      - uses: docker/setup-buildx-action@v4
 
       # Build with the shared gha cache scope and save a gzip tarball. Every stack
       # leg loads this one image, so the identical broker is never rebuilt per leg.
-      - name: Build broker image
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker buildx build --load -t andromeda-ci:broker \
-            -f docker/images/andromeda/Dockerfile \
-            --cache-from type=gha,scope=broker \
-            --cache-to type=gha,mode=max,scope=broker \
-            .
-          mkdir -p "$RUNNER_TEMP/broker"
-          docker save andromeda-ci:broker | gzip > "$RUNNER_TEMP/broker/broker.tar.gz"
+      - uses: ./.github/actions/build-broker-image
+        with:
+          tag: andromeda-ci:broker
+          archive: ${{ runner.temp }}/broker/broker.tar.gz
 
       # compression-level 0: the tarball is already gzipped, so re-zipping it in
       # the artifact upload only burns CPU on both ends for no size gain.

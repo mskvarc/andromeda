@@ -35,13 +35,6 @@ runs:
     # repeat the checkout.
     - uses: ./.github/actions/free-disk-space
 
-    # buildx is only needed for the `ghcr` mode's 404 fallback, which builds the
-    # broker from the Dockerfile with the gha cache. In `preloaded` mode the broker
-    # image is only loaded and retagged, and the PostgreSQL fallback uses the plain
-    # docker builder, so setting buildx up on every leg there is pure overhead.
-    - uses: docker/setup-buildx-action@v4
-      if: ${{ inputs.image-source == 'ghcr' }}
-
     # Authenticate to GHCR before the image steps so the published PostgreSQL image
     # and, in `ghcr` mode, the published broker image can be pulled even while the
     # repository (and thus its packages) is private. github.token is the job's
@@ -66,39 +59,50 @@ runs:
         name: broker-image
         path: ${{ runner.temp }}/broker
 
-    # Provide the broker image under the stack's compose `image:` tag
+    # The broker image must end up under the stack's compose `image:` tag
     # (andromeda-<stack>) exactly, so `docker compose up` under
     # ANDROMEDA_XTASK_NO_BUILD reuses it instead of rebuilding. In `preloaded` mode
     # the artifact tarball built once by `build-broker` is loaded and retagged -- no
-    # leg rebuilds it. In `ghcr` mode the published `latest` image is pulled and
-    # retagged; there is no build artifact in that mode, so until the first clean
-    # release publishes the image the pull 404s and the broker is built from the
-    # Dockerfile here (a rare one-time path, self-healing once a release exists),
-    # mirroring the PostgreSQL fallback below.
-    - name: Provide broker image
+    # leg rebuilds it.
+    - name: Load broker image
+      if: ${{ inputs.image-source == 'preloaded' }}
       shell: bash
       env:
-        IMAGE_SOURCE: ${{ inputs.image-source }}
         BROKER_ARCHIVE: ${{ runner.temp }}/broker/broker.tar.gz
       run: |
         set -euo pipefail
-        broker_tag="andromeda-${{ inputs.stack }}:latest"
+        # docker load auto-detects the gzip stream written by `build-broker`.
+        docker load -i "$BROKER_ARCHIVE"
+        docker tag andromeda-ci:broker "andromeda-${{ inputs.stack }}:latest"
+
+    # In `ghcr` mode the published `latest` image is pulled and retagged. There is
+    # no build artifact in that mode, so until the first clean release publishes the
+    # image the pull 404s and the next step builds the broker from the Dockerfile (a
+    # rare one-time path, self-healing once a release exists), mirroring the
+    # PostgreSQL fallback below.
+    - name: Pull published broker image
+      id: published-broker
+      if: ${{ inputs.image-source == 'ghcr' }}
+      shell: bash
+      run: |
+        set -euo pipefail
         published="ghcr.io/${{ github.repository_owner }}/andromeda:latest"
-        if [ "$IMAGE_SOURCE" = ghcr ]; then
-          if docker pull "$published"; then
-            docker tag "$published" "$broker_tag"
-          else
-            echo "andromeda:latest not published yet; building from source"
-            docker buildx build --load -t "$broker_tag" \
-              -f docker/images/andromeda/Dockerfile \
-              --cache-from type=gha,scope=broker \
-              .
-          fi
+        if docker pull "$published"; then
+          docker tag "$published" "andromeda-${{ inputs.stack }}:latest"
+          echo "found=true" >> "$GITHUB_OUTPUT"
         else
-          # docker load auto-detects the gzip stream written by `build-broker`.
-          docker load -i "$BROKER_ARCHIVE"
-          docker tag andromeda-ci:broker "$broker_tag"
+          echo "andromeda:latest not published yet; building from source"
+          echo "found=false" >> "$GITHUB_OUTPUT"
         fi
+
+    # read-only: a one-off fallback build should not churn the shared `broker`
+    # layer scope the build-broker jobs maintain.
+    - name: Build broker image
+      if: ${{ inputs.image-source == 'ghcr' && steps.published-broker.outputs.found == 'false' }}
+      uses: ./.github/actions/build-broker-image
+      with:
+        tag: andromeda-${{ inputs.stack }}:latest
+        cache-mode: read-only
 
     # The PostgreSQL image is published by postgresql.yaml; its `latest` tag is
     # the tsl edition, matching the compose files' default build. Pull and retag

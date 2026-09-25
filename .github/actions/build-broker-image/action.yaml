@@ -1,0 +1,60 @@
+name: Build broker image
+description: >
+  Build the broker from docker/images/andromeda/Dockerfile with buildx and load it
+  into the local docker daemon under `tag`, optionally saving it as a gzip tarball.
+  Layers come from, and by default go back to, the shared `broker` gha cache
+  scope; crate compiles go through the Dockerfile's sccache, which stores each
+  compiled crate in the GitHub Actions cache. Every job that builds the broker
+  image locally goes through here, so the cache wiring lives in one place.
+
+inputs:
+  tag:
+    description: Tag the built image is loaded under.
+    required: true
+  cache-mode:
+    description: >
+      `read-write` (default) also exports the build's layers to the `broker`
+      scope; `read-only` only imports them, for one-off fallback builds that
+      should not churn the shared scope.
+    required: false
+    default: read-write
+  archive:
+    description: When set, the loaded image is also saved as a gzip tarball at this path.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - uses: docker/setup-buildx-action@v4
+
+    # GitHub issues ACTIONS_RESULTS_URL and ACTIONS_RUNTIME_TOKEN to every job on
+    # its own but hides them from run steps; this exposes them. The type=gha layer
+    # cache reads them directly and the Dockerfile's sccache through the build
+    # secrets below, so no repository secret has to be defined.
+    - uses: crazy-max/ghaction-github-runtime@v4
+
+    - name: Build broker image
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+        CACHE_MODE: ${{ inputs.cache-mode }}
+        ARCHIVE: ${{ inputs.archive }}
+      run: |
+        set -euo pipefail
+        cache_args=(--cache-from type=gha,scope=broker)
+        case "$CACHE_MODE" in
+          read-write) cache_args+=(--cache-to type=gha,mode=max,scope=broker) ;;
+          read-only) ;;
+          *) echo "cache-mode must be read-write or read-only, got '$CACHE_MODE'" >&2; exit 1 ;;
+        esac
+        docker buildx build --load -t "$TAG" \
+          -f docker/images/andromeda/Dockerfile \
+          "${cache_args[@]}" \
+          --secret id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
+          --secret id=ACTIONS_RUNTIME_TOKEN,env=ACTIONS_RUNTIME_TOKEN \
+          .
+        if [ -n "$ARCHIVE" ]; then
+          mkdir -p "$(dirname "$ARCHIVE")"
+          docker save "$TAG" | gzip > "$ARCHIVE"
+        fi
