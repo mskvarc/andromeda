@@ -29,6 +29,7 @@ async fn reg_client_supplied_health_fields_ignored() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:health-ignored");
     let mut body = csr_basic(&id, PEER_ENDPOINT);
+    body["information"][0]["entities"][0]["type"] = json!(topology.id("Vehicle"));
     body["status"] = json!("failed");
     body["timesSent"] = json!(99);
     body["timesFailed"] = json!(42);
@@ -69,11 +70,13 @@ async fn reg_client_supplied_health_fields_ignored() {
 async fn reg_fresh_registration_reports_no_observed_health() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:health-fresh");
+    let mut body = csr_basic(&id, PEER_ENDPOINT);
+    body["information"][0]["entities"][0]["type"] = json!(topology.id("Vehicle"));
     let created = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .create_registration(&csr_basic(&id, PEER_ENDPOINT))
+        .create_registration(&body)
         .await
         .expect("create registration");
     assert_status(&created, 201);

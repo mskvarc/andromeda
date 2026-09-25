@@ -8,7 +8,7 @@ use crate::{
     http::forwarding::{PLACEHOLDER_ENDPOINT, context_link},
     notification_adapter::NotificationAdapter,
     oracle::assert_status,
-    registration::csr_basic,
+    registration::csr_basic_typed,
     topology::{self, BrokerRole},
 };
 use andromeda_test_client::response::TestResponse;
@@ -32,16 +32,24 @@ async fn create_csource_subscription(topology: &MultiBrokerTopology<BrokerRole>,
         .expect("create csource subscription")
 }
 
-/// A csource subscription over `Vehicle` registrations delivering to `endpoint`,
-/// with the given notification endpoint object spliced in.
-fn csource_subscription(id: &str, notification_endpoint: &Value) -> Value {
+/// A csource subscription over the given entity type's registrations delivering
+/// to `endpoint`, with the given notification endpoint object spliced in. The
+/// type is derived per test so the subscription only matches this test's own
+/// registration, never a concurrent test's.
+fn csource_subscription(id: &str, entity_type: &str, notification_endpoint: &Value) -> Value {
     json!({
         "id": id,
         "type": "Subscription",
-        "entities": [ { "type": "Vehicle" } ],
+        "entities": [ { "type": entity_type } ],
         "notification": { "endpoint": notification_endpoint },
         "@context": context_link()
     })
+}
+
+/// A registration covering `entity_type` at the placeholder endpoint, so a
+/// matching csource subscription over that same type is triggered.
+fn typed_registration(id: &str, entity_type: &str) -> Value {
+    csr_basic_typed(id, PLACEHOLDER_ENDPOINT, entity_type)
 }
 
 /// A `CSourceNotification` is `POSTed` to the subscription's `endpoint.uri`
@@ -50,17 +58,18 @@ fn csource_subscription(id: &str, notification_endpoint: &Value) -> Value {
 async fn dist_http_csource_notification_posted_to_endpoint_uri() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let sub_id = topology.id("Subscription:csnotif-post");
     let reg_id = topology.id("registration:csnotif-post");
 
-    let subscription = csource_subscription(&sub_id, &json!({ "uri": receiver.endpoint_url(), "accept": "application/json" }));
+    let subscription = csource_subscription(&sub_id, &vtype, &json!({ "uri": receiver.endpoint_url(), "accept": "application/json" }));
     assert_status(&create_csource_subscription(&topology, &subscription).await, 201);
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
+            .create_registration(&typed_registration(&reg_id, &vtype))
             .await
             .expect("matching registration"),
         201,
@@ -90,6 +99,7 @@ async fn dist_http_csource_notification_mime_defaults_json_and_ld_json_via_accep
     let topology = topology::single().await.expect("single-broker topology");
     let json_receiver = NotificationAdapter::start().await;
     let ld_receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let json_sub = topology.id("Subscription:csnotif-mime-json");
     let ld_sub = topology.id("Subscription:csnotif-mime-ld");
     let reg_id = topology.id("registration:csnotif-mime");
@@ -97,7 +107,7 @@ async fn dist_http_csource_notification_mime_defaults_json_and_ld_json_via_accep
     assert_status(
         &create_csource_subscription(
             &topology,
-            &csource_subscription(&json_sub, &json!({ "uri": json_receiver.endpoint_url(), "accept": "application/json" })),
+            &csource_subscription(&json_sub, &vtype, &json!({ "uri": json_receiver.endpoint_url(), "accept": "application/json" })),
         )
         .await,
         201,
@@ -105,7 +115,7 @@ async fn dist_http_csource_notification_mime_defaults_json_and_ld_json_via_accep
     assert_status(
         &create_csource_subscription(
             &topology,
-            &csource_subscription(&ld_sub, &json!({ "uri": ld_receiver.endpoint_url(), "accept": "application/ld+json" })),
+            &csource_subscription(&ld_sub, &vtype, &json!({ "uri": ld_receiver.endpoint_url(), "accept": "application/ld+json" })),
         )
         .await,
         201,
@@ -115,7 +125,7 @@ async fn dist_http_csource_notification_mime_defaults_json_and_ld_json_via_accep
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
+            .create_registration(&typed_registration(&reg_id, &vtype))
             .await
             .expect("matching registration"),
         201,
@@ -151,13 +161,14 @@ async fn dist_http_csource_notification_mime_defaults_json_and_ld_json_via_accep
 async fn dist_http_csource_notification_json_target_carries_link_context() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let sub_id = topology.id("Subscription:csnotif-link");
     let reg_id = topology.id("registration:csnotif-link");
 
     assert_status(
         &create_csource_subscription(
             &topology,
-            &csource_subscription(&sub_id, &json!({ "uri": receiver.endpoint_url(), "accept": "application/json" })),
+            &csource_subscription(&sub_id, &vtype, &json!({ "uri": receiver.endpoint_url(), "accept": "application/json" })),
         )
         .await,
         201,
@@ -167,7 +178,7 @@ async fn dist_http_csource_notification_json_target_carries_link_context() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
+            .create_registration(&typed_registration(&reg_id, &vtype))
             .await
             .expect("matching registration"),
         201,
@@ -189,6 +200,7 @@ async fn dist_http_csource_notification_json_target_carries_link_context() {
 async fn dist_http_csource_notification_receiver_info_becomes_custom_headers() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let sub_id = topology.id("Subscription:csnotif-receiverinfo");
     let reg_id = topology.id("registration:csnotif-receiverinfo");
 
@@ -197,13 +209,16 @@ async fn dist_http_csource_notification_receiver_info_becomes_custom_headers() {
         "accept": "application/json",
         "receiverInfo": [ { "key": "X-Custom-Token", "value": "secret-value" } ]
     });
-    assert_status(&create_csource_subscription(&topology, &csource_subscription(&sub_id, &endpoint)).await, 201);
+    assert_status(
+        &create_csource_subscription(&topology, &csource_subscription(&sub_id, &vtype, &endpoint)).await,
+        201,
+    );
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
+            .create_registration(&typed_registration(&reg_id, &vtype))
             .await
             .expect("matching registration"),
         201,

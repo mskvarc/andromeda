@@ -169,10 +169,12 @@ async fn reg_redirect_over_existing_entity_returns_409() {
 #[tokio::test]
 async fn reg_auxiliary_with_write_operation_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let registration_id = topology.id("registration:aux-write");
 
     let auxiliary = CsrBuilder::new(&registration_id, PEER_ENDPOINT)
         .mode("auxiliary")
+        .entity_type(&vtype)
         .operations(&["createEntity"])
         .build();
     let rejected = topology
@@ -193,10 +195,12 @@ async fn reg_auxiliary_with_write_operation_returns_400() {
 #[tokio::test]
 async fn reg_auxiliary_with_valid_consumption_ops_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let registration_id = topology.id("registration:aux-consume");
 
     let auxiliary = CsrBuilder::new(&registration_id, PEER_ENDPOINT)
         .mode("auxiliary")
+        .entity_type(&vtype)
         .operations(&["retrieveEntity", "queryEntity"])
         .build();
     let created = topology
@@ -345,10 +349,12 @@ async fn update_redirect_matching_existing_entity_returns_409() {
 #[tokio::test]
 async fn update_auxiliary_with_write_operation_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let registration_id = topology.id("registration:update-aux-write");
 
     let auxiliary = CsrBuilder::new(&registration_id, PEER_ENDPOINT)
         .mode("auxiliary")
+        .entity_type(&vtype)
         .operations(&["retrieveEntity", "queryEntity"])
         .build();
     assert_status(

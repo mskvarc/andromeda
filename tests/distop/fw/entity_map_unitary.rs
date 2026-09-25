@@ -5,7 +5,7 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::vehicle,
+    entity::typed_vehicle,
     oracle::{assert_problem_details, assert_status, entity_map_header, forwarded_header, json_body},
     registration::CsrBuilder,
     topology::{self, BrokerRole},
@@ -16,6 +16,7 @@ use axum::http::Method;
 use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::json;
 use std::time::Duration;
+use urlencoding::encode;
 
 /// How long to wait for the forwarded request a map reuse issues to its source.
 const FORWARD_WAIT: Duration = Duration::from_secs(5);
@@ -23,11 +24,12 @@ const FORWARD_WAIT: Duration = Duration::from_secs(5);
 /// The path a broker appends to a registration `endpoint` for an entity query.
 const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
 
-/// Register an inclusive query CSR at the mock and assert acceptance.
-async fn register_inclusive_query(topology: &MultiBrokerTopology<BrokerRole>, endpoint: &str, name: &str) {
+/// Register an inclusive query CSR at the mock, covering the per-test type, and
+/// assert acceptance.
+async fn register_inclusive_query(topology: &MultiBrokerTopology<BrokerRole>, endpoint: &str, name: &str, vtype: &str) {
     let registration = CsrBuilder::new(&topology.id(name), endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(
@@ -47,25 +49,36 @@ async fn register_inclusive_query(topology: &MultiBrokerTopology<BrokerRole>, en
 #[tokio::test]
 async fn distop_entity_map_broad_request_to_each_matching_source() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let first_mock = ContextSourceAdapter::start().await;
     let second_mock = ContextSourceAdapter::start().await;
     first_mock
-        .set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([vehicle(&topology.id("Vehicle:map-broad-1"), 11)]))
+        .set_stub_with_body(
+            Method::GET,
+            FORWARDED_ENTITIES,
+            200,
+            &json!([typed_vehicle(&topology.id("Vehicle:map-broad-1"), &vtype, 11)]),
+        )
         .await;
     second_mock
-        .set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([vehicle(&topology.id("Vehicle:map-broad-2"), 22)]))
+        .set_stub_with_body(
+            Method::GET,
+            FORWARDED_ENTITIES,
+            200,
+            &json!([typed_vehicle(&topology.id("Vehicle:map-broad-2"), &vtype, 22)]),
+        )
         .await;
 
     let first_endpoint = first_mock.url("");
     let second_endpoint = second_mock.url("");
-    register_inclusive_query(&topology, &first_endpoint, "registration:map-broad-1").await;
-    register_inclusive_query(&topology, &second_endpoint, "registration:map-broad-2").await;
+    register_inclusive_query(&topology, &first_endpoint, "registration:map-broad-1", &vtype).await;
+    register_inclusive_query(&topology, &second_endpoint, "registration:map-broad-2", &vtype).await;
 
     let response = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
+        .query_entities(&format!("type={}&entityMap=true", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 201);
@@ -91,6 +104,7 @@ async fn distop_entity_map_broad_request_to_each_matching_source() {
 #[tokio::test]
 async fn distop_entity_map_query_pins_ids_only_mapped_paginated() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let first_id = topology.id("Vehicle:map-pin-1");
     let second_id = topology.id("Vehicle:map-pin-2");
     assert_status(
@@ -98,7 +112,7 @@ async fn distop_entity_map_query_pins_ids_only_mapped_paginated() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&first_id, 10))
+            .post_entity(&typed_vehicle(&first_id, &vtype, 10))
             .with_ld_json()
             .send()
             .await
@@ -110,7 +124,7 @@ async fn distop_entity_map_query_pins_ids_only_mapped_paginated() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&second_id, 20))
+            .post_entity(&typed_vehicle(&second_id, &vtype, 20))
             .with_ld_json()
             .send()
             .await
@@ -122,7 +136,7 @@ async fn distop_entity_map_query_pins_ids_only_mapped_paginated() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
+        .query_entities(&format!("type={}&entityMap=true", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("map query");
     assert_status(&created, 201);
@@ -132,7 +146,7 @@ async fn distop_entity_map_query_pins_ids_only_mapped_paginated() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle&limit=1")
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type={}&limit=1", encode(&vtype)))
         .header("NGSILD-EntityMap", map_id.as_str())
         .header("accept", "application/ld+json")
         .send()
@@ -152,6 +166,7 @@ async fn distop_entity_map_query_pins_ids_only_mapped_paginated() {
 #[tokio::test]
 async fn distop_entity_map_filters_remove_non_matching_ids_during_pagination() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let matching = topology.id("Vehicle:map-filter-match");
     let non_matching = topology.id("Vehicle:map-filter-nomatch");
     assert_status(
@@ -159,7 +174,7 @@ async fn distop_entity_map_filters_remove_non_matching_ids_during_pagination() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&matching, 60))
+            .post_entity(&typed_vehicle(&matching, &vtype, 60))
             .with_ld_json()
             .send()
             .await
@@ -171,7 +186,7 @@ async fn distop_entity_map_filters_remove_non_matching_ids_during_pagination() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&non_matching, 40))
+            .post_entity(&typed_vehicle(&non_matching, &vtype, 40))
             .with_ld_json()
             .send()
             .await
@@ -183,7 +198,7 @@ async fn distop_entity_map_filters_remove_non_matching_ids_during_pagination() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&q=speed%3E50&entityMap=true", "application/ld+json", None)
+        .query_entities(&format!("type={}&q=speed%3E50&entityMap=true", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("map query");
     assert_status(&created, 201);
@@ -193,7 +208,7 @@ async fn distop_entity_map_filters_remove_non_matching_ids_during_pagination() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle&q=speed%3E50")
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type={}&q=speed%3E50", encode(&vtype)))
         .header("NGSILD-EntityMap", map_id.as_str())
         .header("accept", "application/ld+json")
         .send()
@@ -221,13 +236,14 @@ async fn distop_entity_map_filters_remove_non_matching_ids_during_pagination() {
 #[tokio::test]
 async fn distop_entity_map_location_returned_when_requested() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:map-location");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 15))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 15))
             .with_ld_json()
             .send()
             .await
@@ -239,7 +255,7 @@ async fn distop_entity_map_location_returned_when_requested() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
+        .query_entities(&format!("type={}&entityMap=true", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("map query");
     assert_status(&created, 201);
@@ -262,27 +278,28 @@ async fn distop_entity_map_location_returned_when_requested() {
 #[tokio::test]
 async fn distop_entity_map_retrieve_records_holding_sources_single_instance() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let holding_mock = ContextSourceAdapter::start().await;
     let other_mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:map-holding");
     holding_mock
-        .set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([vehicle(&entity_id, 33)]))
+        .set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([typed_vehicle(&entity_id, &vtype, 33)]))
         .await;
     holding_mock
-        .set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([vehicle(&entity_id, 33)]))
+        .set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([typed_vehicle(&entity_id, &vtype, 33)]))
         .await;
     other_mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
     let holding_endpoint = holding_mock.url("");
     let other_endpoint = other_mock.url("");
-    register_inclusive_query(&topology, &holding_endpoint, "registration:map-holding").await;
-    register_inclusive_query(&topology, &other_endpoint, "registration:map-other").await;
+    register_inclusive_query(&topology, &holding_endpoint, "registration:map-holding", &vtype).await;
+    register_inclusive_query(&topology, &other_endpoint, "registration:map-other", &vtype).await;
 
     let created = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities(&format!("type=Vehicle&id={entity_id}&entityMap=true"), "application/ld+json", None)
+        .query_entities(&format!("type={}&id={entity_id}&entityMap=true", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("map query");
     assert_status(&created, 201);
@@ -293,7 +310,7 @@ async fn distop_entity_map_retrieve_records_holding_sources_single_instance() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type=Vehicle&id={entity_id}"))
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type={}&id={entity_id}", encode(&vtype)))
         .header("NGSILD-EntityMap", map_id.as_str())
         .header("accept", "application/ld+json")
         .send()
@@ -319,13 +336,14 @@ async fn distop_entity_map_retrieve_records_holding_sources_single_instance() {
 #[tokio::test]
 async fn distop_entity_map_retrieve_cross_instance_reuse() {
     let topology = topology::pair().await.expect("two-broker topology");
+    let vtype = topology.id("Vehicle");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let peer = topology.broker(BrokerRole::B).expect("topology broker B");
     let entity_id = topology.id("Vehicle:map-cross");
     assert_status(
         &front
             .client()
-            .post_entity(&vehicle(&entity_id, 18))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 18))
             .with_ld_json()
             .send()
             .await
@@ -335,7 +353,7 @@ async fn distop_entity_map_retrieve_cross_instance_reuse() {
 
     let created = front
         .client()
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
+        .query_entities(&format!("type={}&entityMap=true", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("map query");
     assert_status(&created, 201);
@@ -343,7 +361,7 @@ async fn distop_entity_map_retrieve_cross_instance_reuse() {
 
     let reused = peer
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type={}", encode(&vtype)))
         .header("NGSILD-EntityMap", map_id.as_str())
         .header("accept", "application/ld+json")
         .send()
@@ -367,19 +385,20 @@ async fn distop_entity_map_retrieve_cross_instance_reuse() {
 #[tokio::test]
 async fn distop_entity_map_reused_when_field_passed_back() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:map-reuse");
-    mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([vehicle(&entity_id, 25)]))
+    mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([typed_vehicle(&entity_id, &vtype, 25)]))
         .await;
 
     let endpoint = mock.url("");
-    register_inclusive_query(&topology, &endpoint, "registration:map-reuse").await;
+    register_inclusive_query(&topology, &endpoint, "registration:map-reuse", &vtype).await;
 
     let created = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
+        .query_entities(&format!("type={}&entityMap=true", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("map query");
     assert_status(&created, 201);
@@ -391,7 +410,7 @@ async fn distop_entity_map_reused_when_field_passed_back() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type={}", encode(&vtype)))
         .header("NGSILD-EntityMap", map_id.as_str())
         .header("accept", "application/ld+json")
         .send()
@@ -416,6 +435,7 @@ async fn distop_entity_map_reused_when_field_passed_back() {
 #[tokio::test]
 async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let mapped = topology.id("Vehicle:map-listed");
     let added_later = topology.id("Vehicle:map-added");
     assert_status(
@@ -423,7 +443,7 @@ async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&mapped, 10))
+            .post_entity(&typed_vehicle(&mapped, &vtype, 10))
             .with_ld_json()
             .send()
             .await
@@ -435,7 +455,7 @@ async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
+        .query_entities(&format!("type={}&entityMap=true", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("map query");
     assert_status(&created, 201);
@@ -446,7 +466,7 @@ async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&added_later, 20))
+            .post_entity(&typed_vehicle(&added_later, &vtype, 20))
             .with_ld_json()
             .send()
             .await
@@ -458,7 +478,7 @@ async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type={}", encode(&vtype)))
         .header("NGSILD-EntityMap", map_id.as_str())
         .header("accept", "application/ld+json")
         .send()
@@ -482,13 +502,14 @@ async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
 #[tokio::test]
 async fn distop_entity_map_subsequent_request_rejects_changed_filter_params() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:map-changed-filter");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 60))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 60))
             .with_ld_json()
             .send()
             .await
@@ -500,7 +521,7 @@ async fn distop_entity_map_subsequent_request_rejects_changed_filter_params() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
+        .query_entities(&format!("type={}&entityMap=true", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("map query");
     assert_status(&created, 201);
@@ -510,7 +531,7 @@ async fn distop_entity_map_subsequent_request_rejects_changed_filter_params() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle&q=speed%3E99")
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type={}&q=speed%3E99", encode(&vtype)))
         .header("NGSILD-EntityMap", map_id.as_str())
         .header("accept", "application/ld+json")
         .send()
@@ -527,20 +548,21 @@ async fn distop_entity_map_subsequent_request_rejects_changed_filter_params() {
 #[tokio::test]
 async fn distop_entity_map_expired_or_inaccessible_creates_new() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:map-expired");
-    mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([vehicle(&entity_id, 25)]))
+    mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([typed_vehicle(&entity_id, &vtype, 25)]))
         .await;
 
     let endpoint = mock.url("");
-    register_inclusive_query(&topology, &endpoint, "registration:map-expired").await;
+    register_inclusive_query(&topology, &endpoint, "registration:map-expired", &vtype).await;
 
     let unknown_map = topology.id("EntityMap:does-not-exist");
     let response = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type={}", encode(&vtype)))
         .header("NGSILD-EntityMap", unknown_map.as_str())
         .header("accept", "application/ld+json")
         .send()
@@ -563,13 +585,14 @@ async fn distop_entity_map_expired_or_inaccessible_creates_new() {
 #[tokio::test]
 async fn distop_entity_map_only_expiry_updatable_by_other_components() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:map-expiry-update");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 15))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 15))
             .with_ld_json()
             .send()
             .await
@@ -581,7 +604,7 @@ async fn distop_entity_map_only_expiry_updatable_by_other_components() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
+        .query_entities(&format!("type={}&entityMap=true", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("map query");
     assert_status(&created, 201);

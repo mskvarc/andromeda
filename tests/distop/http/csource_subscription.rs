@@ -14,13 +14,15 @@ use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use reqwest::Method;
 use serde_json::{Value, json};
 
-/// A csource subscription over `Vehicle` registrations delivering to a
-/// placeholder endpoint (never contacted by these lifecycle assertions).
-fn subscription_body(id: &str) -> Value {
+/// A csource subscription over the given entity type's registrations delivering
+/// to a placeholder endpoint (never contacted by these lifecycle assertions).
+/// The type is derived per test so this subscription cannot match a concurrent
+/// test's registration.
+fn subscription_body(id: &str, entity_type: &str) -> Value {
     json!({
         "id": id,
         "type": "Subscription",
-        "entities": [ { "type": "Vehicle" } ],
+        "entities": [ { "type": entity_type } ],
         "notification": { "endpoint": { "uri": PLACEHOLDER_ENDPOINT, "accept": "application/json" } },
         "@context": context_link()
     })
@@ -86,8 +88,9 @@ async fn delete_sub(topology: &MultiBrokerTopology<BrokerRole>, id: &str) -> Tes
 #[tokio::test]
 async fn dist_http_create_csource_subscription_returns_201_location() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let sub_id = topology.id("Subscription:cssub-201");
-    let response = create_sub(&topology, &subscription_body(&sub_id)).await;
+    let response = create_sub(&topology, &subscription_body(&sub_id, &vtype)).await;
     assert_status(&response, 201);
     assert!(location(&response).ends_with(&sub_id), "the Location names the created subscription");
     let _cleanup = delete_sub(&topology, &sub_id).await;
@@ -109,9 +112,10 @@ async fn dist_http_create_csource_subscription_invalid_returns_400() {
 #[tokio::test]
 async fn dist_http_create_csource_subscription_duplicate_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let sub_id = topology.id("Subscription:cssub-409");
-    assert_status(&create_sub(&topology, &subscription_body(&sub_id)).await, 201);
-    assert_status(&create_sub(&topology, &subscription_body(&sub_id)).await, 409);
+    assert_status(&create_sub(&topology, &subscription_body(&sub_id, &vtype)).await, 201);
+    assert_status(&create_sub(&topology, &subscription_body(&sub_id, &vtype)).await, 409);
     let _cleanup = delete_sub(&topology, &sub_id).await;
     topology.finish().await.expect("topology cleanup");
 }
@@ -121,8 +125,9 @@ async fn dist_http_create_csource_subscription_duplicate_returns_409() {
 #[tokio::test]
 async fn dist_http_query_csource_subscriptions_returns_200_array() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let sub_id = topology.id("Subscription:cssub-array");
-    assert_status(&create_sub(&topology, &subscription_body(&sub_id)).await, 201);
+    assert_status(&create_sub(&topology, &subscription_body(&sub_id, &vtype)).await, 201);
 
     let response = topology
         .broker(BrokerRole::A)
@@ -145,8 +150,9 @@ async fn dist_http_query_csource_subscriptions_returns_200_array() {
 #[tokio::test]
 async fn dist_http_retrieve_csource_subscription_returns_200_400_404() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let sub_id = topology.id("Subscription:cssub-retrieve");
-    assert_status(&create_sub(&topology, &subscription_body(&sub_id)).await, 201);
+    assert_status(&create_sub(&topology, &subscription_body(&sub_id, &vtype)).await, 201);
 
     assert_status(&get_sub(&topology, &sub_id).await, 200);
     assert_status(&get_sub(&topology, "not a uri").await, 400);
@@ -160,8 +166,9 @@ async fn dist_http_retrieve_csource_subscription_returns_200_400_404() {
 #[tokio::test]
 async fn dist_http_update_csource_subscription_returns_204_400_404() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let sub_id = topology.id("Subscription:cssub-update");
-    assert_status(&create_sub(&topology, &subscription_body(&sub_id)).await, 201);
+    assert_status(&create_sub(&topology, &subscription_body(&sub_id, &vtype)).await, 201);
 
     assert_status(&patch_sub(&topology, &sub_id, &json!({ "description": "updated" })).await, 204);
     assert_status(&patch_sub(&topology, &sub_id, &json!({ "expiresAt": "not-a-datetime" })).await, 400);
@@ -178,8 +185,9 @@ async fn dist_http_update_csource_subscription_returns_204_400_404() {
 #[tokio::test]
 async fn dist_http_delete_csource_subscription_returns_204_400_404() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let sub_id = topology.id("Subscription:cssub-delete");
-    assert_status(&create_sub(&topology, &subscription_body(&sub_id)).await, 201);
+    assert_status(&create_sub(&topology, &subscription_body(&sub_id, &vtype)).await, 201);
 
     assert_status(&delete_sub(&topology, "not a uri").await, 400);
     assert_status(&delete_sub(&topology, &topology.id("Subscription:cssub-delete-unknown")).await, 404);

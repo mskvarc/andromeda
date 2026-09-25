@@ -5,12 +5,10 @@
 //! local-only retrieval, attribute merging from context sources, error handling.
 
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
-use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, environment::TestEnvironment};
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
-use serial_test::serial;
 use urlencoding::encode;
-use uuid::Uuid;
 
 use crate::context_source_adapter::ContextSourceAdapter as MockServer;
 
@@ -22,18 +20,8 @@ fn client() -> Client {
     Client::new()
 }
 
-fn unique_id(prefix: &str) -> String {
-    format!("{prefix}:{}", Uuid::new_v4())
-}
-
 fn jsonld_link_value() -> String {
     format!("<{TEST_SUITE_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
-}
-
-async fn clean_database() -> SerializedEnvironment {
-    SerializedEnvironment::from_environment_reset()
-        .await
-        .expect("serialized test database environment")
 }
 
 fn temporal_vehicle_entity(id: &str) -> Value {
@@ -135,14 +123,13 @@ fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
 /// local=true retrieves only local temporal entity, skips CSR forwarding.
 /// Spec ref: 5.7.3.4 - when local=true, distributed operations are not performed.
 #[tokio::test]
-#[serial]
 async fn distop_temporal_retrieve_local_true_skips_forwarding() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_temporal_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:tr-local");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:tr-local");
+    let entity_id = scope.id("Vehicle:tr-local");
+    let reg_id = scope.id("Registration:tr-local");
 
     // Create local temporal entity
     let entity = temporal_vehicle_entity(&entity_id);
@@ -171,19 +158,19 @@ async fn distop_temporal_retrieve_local_true_skips_forwarding() {
     delete_temporal_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Retrieve merges local and remote temporal entity attributes.
 /// Spec ref: 5.7.3.4 - inclusive mode merges attributes from context sources.
 #[tokio::test]
-#[serial]
 async fn distop_temporal_retrieve_merges_local_and_remote_attributes() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_temporal_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:tr-merge");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:tr-merge");
+    let entity_id = scope.id("Vehicle:tr-merge");
+    let reg_id = scope.id("Registration:tr-merge");
 
     // Create local temporal entity (has speed, fuelLevel)
     let entity = temporal_vehicle_entity(&entity_id);
@@ -212,19 +199,19 @@ async fn distop_temporal_retrieve_merges_local_and_remote_attributes() {
     delete_temporal_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Retrieve returns entity only from remote context source when no local entity exists.
 /// Spec ref: 5.7.3.4 - when entity exists only in context source, return from there.
 #[tokio::test]
-#[serial]
 async fn distop_temporal_retrieve_remote_only_entity() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_temporal_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:tr-remote-only");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:tr-remote-only");
+    let entity_id = scope.id("Vehicle:tr-remote-only");
+    let reg_id = scope.id("Registration:tr-remote-only");
 
     // No local entity - only exists in remote
     let reg = vehicle_registration(&reg_id, &entity_id, &mock.url(""), None);
@@ -246,19 +233,19 @@ async fn distop_temporal_retrieve_remote_only_entity() {
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Retrieve returns NGSILD-Warning header when context source returns error.
 /// Spec ref: 5.7.3.4 - errors from context sources result in 299 warning.
 #[tokio::test]
-#[serial]
 async fn distop_temporal_retrieve_warning_on_context_source_error() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_temporal_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:tr-warn");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:tr-warn");
+    let entity_id = scope.id("Vehicle:tr-warn");
+    let reg_id = scope.id("Registration:tr-warn");
 
     // Create local temporal entity so we get 200 even with CS error
     let entity = temporal_vehicle_entity(&entity_id);
@@ -280,6 +267,7 @@ async fn distop_temporal_retrieve_warning_on_context_source_error() {
     delete_temporal_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Retrieve with an exclusive CSR takes the registered Attribute from the
@@ -294,14 +282,13 @@ async fn distop_temporal_retrieve_warning_on_context_source_error() {
 /// locally"), while `speed` is registered and comes from the source. Clause
 /// 5.7.3.4 then merges the forwarded result of an exclusive source into S1.
 #[tokio::test]
-#[serial]
 async fn distop_temporal_retrieve_exclusive_mode_returns_remote() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_temporal_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:tr-exclusive");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:tr-exclusive");
+    let entity_id = scope.id("Vehicle:tr-exclusive");
+    let reg_id = scope.id("Registration:tr-exclusive");
 
     // Local temporal entity holds only the attribute the registration leaves out
     let local_entity = json!({
@@ -342,4 +329,5 @@ async fn distop_temporal_retrieve_exclusive_mode_returns_remote() {
     delete_temporal_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }

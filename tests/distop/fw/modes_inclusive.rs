@@ -5,7 +5,7 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::{attribute_fragment, entity, property, vehicle},
+    entity::{attribute_fragment, entity, property, typed_vehicle, vehicle},
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
     topology::{self, BrokerRole},
@@ -13,6 +13,7 @@ use crate::{
 use axum::http::Method;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
+use urlencoding::encode;
 
 /// The path a broker appends to a registration `endpoint` for an entity query.
 const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
@@ -135,16 +136,17 @@ async fn distop_entity_inclusive_additive_provision_serviced_locally_and_distrib
 #[tokio::test]
 async fn distop_entity_inclusive_multiple_sources_equal_priority() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let first_mock = ContextSourceAdapter::start().await;
     let second_mock = ContextSourceAdapter::start().await;
 
     let first_id = topology.id("Vehicle:inclusive-multi-1");
     let second_id = topology.id("Vehicle:inclusive-multi-2");
     first_mock
-        .set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([vehicle(&first_id, 11)]))
+        .set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([typed_vehicle(&first_id, &vtype, 11)]))
         .await;
     second_mock
-        .set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([vehicle(&second_id, 22)]))
+        .set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([typed_vehicle(&second_id, &vtype, 22)]))
         .await;
 
     let first_endpoint = first_mock.url("");
@@ -152,7 +154,7 @@ async fn distop_entity_inclusive_multiple_sources_equal_priority() {
     for (suffix, endpoint) in [("1", &first_endpoint), ("2", &second_endpoint)] {
         let registration = CsrBuilder::new(&topology.id(&format!("registration:inclusive-multi-{suffix}")), endpoint)
             .mode("inclusive")
-            .entity_type("Vehicle")
+            .entity_type(&vtype)
             .operations(&["queryEntity"])
             .build();
         assert_status(
@@ -171,7 +173,7 @@ async fn distop_entity_inclusive_multiple_sources_equal_priority() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -200,13 +202,14 @@ async fn distop_entity_inclusive_multiple_sources_equal_priority() {
 #[tokio::test]
 async fn distop_entity_inclusive_is_default_mode_when_unspecified() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:inclusive-default");
     mock.set_stub_with_body(
         Method::GET,
         FORWARDED_ENTITIES,
         200,
-        &json!([entity(&entity_id, "Vehicle", &[("fuel", property(json!(60)))])]),
+        &json!([entity(&entity_id, &vtype, &[("fuel", property(json!(60)))])]),
     )
     .await;
 
@@ -215,7 +218,7 @@ async fn distop_entity_inclusive_is_default_mode_when_unspecified() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 10))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 10))
             .with_ld_json()
             .send()
             .await
@@ -225,6 +228,7 @@ async fn distop_entity_inclusive_is_default_mode_when_unspecified() {
 
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:inclusive-default"), &endpoint)
+        .entity_type(&vtype)
         .entity_id(&entity_id)
         .property_names(&["fuel"])
         .operations(&["queryEntity"])
@@ -244,7 +248,7 @@ async fn distop_entity_inclusive_is_default_mode_when_unspecified() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
+        .query_entities(&format!("type={}&id={entity_id}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);

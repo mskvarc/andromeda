@@ -19,9 +19,9 @@ use axum::http::Method;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
-/// A `Vehicle` carrying only `speed`.
-fn speed_vehicle(id: &str, speed: i64) -> Value {
-    entity(id, "Vehicle", &[("speed", property(json!(speed)))])
+/// A single-`speed` entity of an explicit per-test type.
+fn speed_vehicle(id: &str, entity_type: &str, speed: i64) -> Value {
+    entity(id, entity_type, &[("speed", property(json!(speed)))])
 }
 
 /// Whether a `BatchOperationResult` carries an error keyed by `registration` with the given status.
@@ -40,6 +40,7 @@ async fn batch_merge_per_csr_filtering_drops_attrless() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:batch-merge-filter-v1");
     let v2 = topology.id("Vehicle:batch-merge-filter-v2");
     let reg_speed = topology.id("registration:batch-merge-filter-speed");
@@ -47,12 +48,16 @@ async fn batch_merge_per_csr_filtering_drops_attrless() {
 
     let speed_csr = CsrBuilder::new(&reg_speed, &mock.url("/s1"))
         .mode("redirect")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .property_names(&["speed"])
         .operations(&["mergeBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&speed_csr).await.expect("create speed registration"), 201);
     let gear_csr = CsrBuilder::new(&reg_gear, &mock.url("/s2"))
         .mode("redirect")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .property_names(&["gear"])
         .operations(&["mergeBatch", "retrieveEntity"])
         .build();
@@ -60,7 +65,10 @@ async fn batch_merge_per_csr_filtering_drops_attrless() {
     mock.set_stub(Method::POST, "/s1/ngsi-ld/v1/entityOperations/merge", 204).await;
     mock.set_stub(Method::POST, "/s2/ngsi-ld/v1/entityOperations/merge", 204).await;
 
-    let batch = json!([speed_vehicle(&v1, 42), entity(&v2, "Vehicle", &[("brandName", property(json!("Mercedes")))])]);
+    let batch = json!([
+        speed_vehicle(&v1, &vtype, 42),
+        entity(&v2, &vtype, &[("brandName", property(json!("Mercedes")))])
+    ]);
     let dispatched = client.batch_merge(&batch).await.expect("batch merge");
     assert!(dispatched.status.as_u16() < 500, "the batch merge is dispatched: {}", dispatched.status);
 
@@ -87,12 +95,15 @@ async fn batch_merge_supported_forwards_and_merges() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:batch-merge-merge-v1");
     let v2 = topology.id("Vehicle:batch-merge-merge-v2");
     let reg_id = topology.id("registration:batch-merge-merge");
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .operations(&["mergeBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
@@ -104,7 +115,7 @@ async fn batch_merge_supported_forwards_and_merges() {
         .await;
 
     let merged = client
-        .batch_merge(&json!([speed_vehicle(&v1, 1), speed_vehicle(&v2, 2)]))
+        .batch_merge(&json!([speed_vehicle(&v1, &vtype, 1), speed_vehicle(&v2, &vtype, 2)]))
         .await
         .expect("batch merge");
     assert_status(&merged, 207);
@@ -125,12 +136,15 @@ async fn batch_merge_fallback_per_entity_merge() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:batch-merge-fb-v1");
     let v2 = topology.id("Vehicle:batch-merge-fb-v2");
     let reg_id = topology.id("registration:batch-merge-fb");
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .operations(&["mergeEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
@@ -138,7 +152,7 @@ async fn batch_merge_fallback_per_entity_merge() {
     mock.set_stub(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v2}"), 204).await;
 
     let _ = client
-        .batch_merge(&json!([speed_vehicle(&v1, 1), speed_vehicle(&v2, 2)]))
+        .batch_merge(&json!([speed_vehicle(&v1, &vtype, 1), speed_vehicle(&v2, &vtype, 2)]))
         .await
         .expect("batch merge");
     assert_eq!(
@@ -163,19 +177,22 @@ async fn batch_merge_redirect_neither_op_conflict_per_entity() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:batch-merge-noviable-v1");
     let v2 = topology.id("Vehicle:batch-merge-noviable-v2");
     let reg_id = topology.id("registration:batch-merge-noviable");
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .property_names(&["speed"])
         .operations(&["retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let merged = client
-        .batch_merge(&json!([speed_vehicle(&v1, 1), speed_vehicle(&v2, 2)]))
+        .batch_merge(&json!([speed_vehicle(&v1, &vtype, 1), speed_vehicle(&v2, &vtype, 2)]))
         .await
         .expect("batch merge");
     assert_status(&merged, 207);
@@ -202,13 +219,14 @@ async fn batch_merge_local_phase_populates_results() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:batch-merge-local-v1");
     let reg_id = topology.id("registration:batch-merge-local");
 
     let seeded = client
         .raw(Method::POST, "/ngsi-ld/v1/entities?local=true")
         .header("content-type", "application/ld+json")
-        .json(&entity(&v1, "Vehicle", &[("brandName", property(json!("Mercedes")))]))
+        .json(&entity(&v1, &vtype, &[("brandName", property(json!("Mercedes")))]))
         .send()
         .await
         .expect("seed local");
@@ -216,11 +234,12 @@ async fn batch_merge_local_phase_populates_results() {
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("auxiliary")
+        .entity_type(&vtype)
         .operations(&["retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
-    let merged = client.batch_merge(&json!([speed_vehicle(&v1, 99)])).await.expect("batch merge");
+    let merged = client.batch_merge(&json!([speed_vehicle(&v1, &vtype, 99)])).await.expect("batch merge");
     assert_status(&merged, 204);
 
     let local = client

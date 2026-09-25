@@ -96,6 +96,7 @@ macro_rules! source_identity_rejection_cases {
                 let registration_id = topology.id(concat!("registration:", stringify!($name)));
                 let registration = CsrBuilder::new(&registration_id, &adapter.url(""))
                     .mode("auxiliary")
+                    .entity_type(&topology.id("Vehicle"))
                     .operations(&["retrieveEntity", "queryEntity"])
                     .build();
                 let registered = topology.broker(BrokerRole::A).expect("topology broker A").client().create_registration(&registration).await.expect("register mock source");

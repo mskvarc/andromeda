@@ -18,16 +18,29 @@ use axum::http::Method;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
+/// The base subscription for a forwarding test, scoped to a per-test entity type
+/// so a concurrent test's Vehicle subscription cannot match this registration.
+fn scoped_over_source(id: &str, entity_type: &str) -> Value {
+    let mut body = subscription(id, "http://127.0.0.1:9/notify");
+    set_entity_type(&mut body, entity_type);
+    body
+}
+
 /// Create a subscription against a source and drain the initial forwarded create,
 /// returning the mock ready to capture the next forward.
-async fn subscription_over_source(topology: &MultiBrokerTopology<BrokerRole>, registration_local: &str, subscription_id: &str) -> ContextSourceAdapter {
-    let mock = subscription_source(topology, registration_local).await;
+async fn subscription_over_source(
+    topology: &MultiBrokerTopology<BrokerRole>,
+    entity_type: &str,
+    registration_local: &str,
+    subscription_id: &str,
+) -> ContextSourceAdapter {
+    let mock = subscription_source(topology, entity_type, registration_local).await;
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_subscription(&subscription(subscription_id, "http://127.0.0.1:9/notify"))
+            .create_subscription(&scoped_over_source(subscription_id, entity_type))
             .await
             .expect("create subscription"),
         201,
@@ -45,8 +58,9 @@ async fn subscription_over_source(topology: &MultiBrokerTopology<BrokerRole>, re
 #[tokio::test]
 async fn sub_updated_supporting_source_builds_reduced_update() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let id = topology.id("Subscription:updated-reduced");
-    let mock = subscription_over_source(&topology, "registration:updated-reduced", &id).await;
+    let mock = subscription_over_source(&topology, &vtype, "registration:updated-reduced", &id).await;
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -78,8 +92,9 @@ async fn sub_updated_supporting_source_builds_reduced_update() {
 #[tokio::test]
 async fn sub_updated_split_forward_strips_q_geoq_scopeq() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let id = topology.id("Subscription:updated-strip-filters");
-    let mock = subscription_over_source(&topology, "registration:updated-strip-filters", &id).await;
+    let mock = subscription_over_source(&topology, &vtype, "registration:updated-strip-filters", &id).await;
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -108,8 +123,9 @@ async fn sub_updated_split_forward_strips_q_geoq_scopeq() {
 #[tokio::test]
 async fn sub_updated_forward_strips_notification_attributes_pick_omit() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let id = topology.id("Subscription:updated-strip-attrs");
-    let mock = subscription_over_source(&topology, "registration:updated-strip-attrs", &id).await;
+    let mock = subscription_over_source(&topology, &vtype, "registration:updated-strip-attrs", &id).await;
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -141,8 +157,9 @@ async fn sub_updated_forward_strips_notification_attributes_pick_omit() {
 #[tokio::test]
 async fn sub_updated_forward_uses_mapped_subscription_id() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let id = topology.id("Subscription:updated-mapped-id");
-    let mock = subscription_over_source(&topology, "registration:updated-mapped-id", &id).await;
+    let mock = subscription_over_source(&topology, &vtype, "registration:updated-mapped-id", &id).await;
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -171,8 +188,9 @@ async fn sub_updated_forward_uses_mapped_subscription_id() {
 #[tokio::test]
 async fn sub_updated_forward_only_on_relevant_change() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let id = topology.id("Subscription:updated-relevant-only");
-    let mock = subscription_over_source(&topology, "registration:updated-relevant-only", &id).await;
+    let mock = subscription_over_source(&topology, &vtype, "registration:updated-relevant-only", &id).await;
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -196,8 +214,9 @@ async fn sub_updated_forward_only_on_relevant_change() {
 #[tokio::test]
 async fn sub_no_longer_matching_forwards_delete_via_mapped_id() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let id = topology.id("Subscription:no-longer-matching");
-    let mock = subscription_over_source(&topology, "registration:no-longer-matching", &id).await;
+    let mock = subscription_over_source(&topology, &vtype, "registration:no-longer-matching", &id).await;
     let mut fragment = json!({});
     set_entity_type(&mut fragment, "Device");
     assert_status(
@@ -227,8 +246,9 @@ async fn sub_no_longer_matching_forwards_delete_via_mapped_id() {
 #[tokio::test]
 async fn sub_update_propagates_to_mapped_csr_subscription() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let id = topology.id("Subscription:propagate-update");
-    let mock = subscription_over_source(&topology, "registration:propagate-update", &id).await;
+    let mock = subscription_over_source(&topology, &vtype, "registration:propagate-update", &id).await;
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -256,12 +276,13 @@ async fn sub_update_propagates_to_mapped_csr_subscription() {
 #[tokio::test]
 async fn sub_delete_forwards_delete_to_each_supporting_source() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let first = ContextSourceAdapter::start().await;
     let second = ContextSourceAdapter::start().await;
     stub_subscription_endpoints(&first).await;
     stub_subscription_endpoints(&second).await;
-    register_subscription_source(&topology, &first.url(""), &topology.id("registration:fanout-a")).await;
-    register_subscription_source(&topology, &second.url(""), &topology.id("registration:fanout-b")).await;
+    register_subscription_source(&topology, &first.url(""), &vtype, &topology.id("registration:fanout-a")).await;
+    register_subscription_source(&topology, &second.url(""), &vtype, &topology.id("registration:fanout-b")).await;
 
     let id = topology.id("Subscription:fanout-delete");
     assert_status(
@@ -269,7 +290,7 @@ async fn sub_delete_forwards_delete_to_each_supporting_source() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
+            .create_subscription(&scoped_over_source(&id, &vtype))
             .await
             .expect("create subscription"),
         201,
@@ -316,8 +337,9 @@ async fn sub_delete_forwards_delete_to_each_supporting_source() {
 #[tokio::test]
 async fn sub_delete_propagates_to_mapped_csr_subscription() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let id = topology.id("Subscription:propagate-delete");
-    let mock = subscription_over_source(&topology, "registration:propagate-delete", &id).await;
+    let mock = subscription_over_source(&topology, &vtype, "registration:propagate-delete", &id).await;
     assert_status(
         &topology
             .broker(BrokerRole::A)

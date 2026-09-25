@@ -8,7 +8,6 @@
 
 use crate::{
     attribute_iri,
-    clean_database,
     client,
     create_temporal_entity,
     database,
@@ -17,13 +16,12 @@ use crate::{
     rendered_instances,
     seeded_temporal::{SeededHistoryRow, attribute_name_id, seed_history_row, seed_stream, seed_temporal_entity},
     stored_history::stored_attribute_history,
-    unique_id,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 use chrono::{TimeDelta, Utc};
 use pretty_assertions::{assert_eq, assert_ne};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
-use serial_test::serial;
 use uuid::Uuid;
 
 /// The permanently stable template a broker-minted attribute instance renders through.
@@ -51,12 +49,11 @@ fn rendered_instance_ids(body: &Value, term: &str) -> Vec<String> {
 /// Broker-minted identifiers occupy the UUID column and render through the
 /// template; every other identifier stays exact text in the verbatim column.
 #[tokio::test]
-#[serial]
 async fn temporal_semantics_generated_and_verbatim_instance_identities_stay_apart() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_semantics").await.expect("isolated test environment");
     let http = client();
     let pool = database().await;
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:instance_identity");
+    let entity_id = scope.id("Vehicle:instance_identity");
 
     let (status, _) = create_temporal_entity(
         &http,
@@ -132,6 +129,7 @@ async fn temporal_semantics_generated_and_verbatim_instance_identities_stay_apar
         remaining.iter().all(|row| row.verbatim_instance_id.is_some()),
         "the two surviving instances are the remaining verbatim ones"
     );
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// A migrated instance whose broker-minted identifier is a version-4 UUID is
@@ -139,13 +137,12 @@ async fn temporal_semantics_generated_and_verbatim_instance_identities_stay_apar
 /// version-dependent branch and no rewritten identifier. The seeded stream is
 /// keyed by whatever the database generated for it, exactly like a written one.
 #[tokio::test]
-#[serial]
 async fn temporal_semantics_mixed_instance_uuid_versions_read_and_join_without_rewriting() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_semantics").await.expect("isolated test environment");
     let http = client();
     let pool = database().await;
-    let migrated_id = unique_id("urn:ngsi-ld:Vehicle:mixed_uuid_migrated");
-    let current_id = unique_id("urn:ngsi-ld:Vehicle:mixed_uuid_current");
+    let migrated_id = scope.id("Vehicle:mixed_uuid_migrated");
+    let current_id = scope.id("Vehicle:mixed_uuid_current");
 
     // A new write mints version-7 instance identifiers.
     let (status, _) = create_temporal_entity(
@@ -206,6 +203,7 @@ async fn temporal_semantics_mixed_instance_uuid_versions_read_and_join_without_r
             "both UUID versions render through one template"
         );
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Clause 4.5.7 makes a client-supplied `instanceId` unique to one attribute
@@ -213,12 +211,11 @@ async fn temporal_semantics_mixed_instance_uuid_versions_read_and_join_without_r
 /// naming the same `instanceId` on two sibling dataset streams of the same
 /// attribute at once must be refused, not accepted onto both streams.
 #[tokio::test]
-#[serial]
 async fn temporal_semantics_a_shared_instance_id_across_sibling_dataset_streams_in_one_write_is_refused() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_semantics").await.expect("isolated test environment");
     let http = client();
     let pool = database().await;
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:duplicate_instance_id");
+    let entity_id = scope.id("Vehicle:duplicate_instance_id");
     let shared_instance_id = "urn:ngsi-ld:my-own:instance:shared";
 
     let (status, _) = create_temporal_entity(
@@ -259,4 +256,5 @@ async fn temporal_semantics_a_shared_instance_id_across_sibling_dataset_streams_
         claims <= 1,
         "the shared instanceId must never be stored on both sibling streams at once, found {claims} rows"
     );
+    scope.finish().await.expect("cleanup failed");
 }

@@ -31,6 +31,7 @@ use serde_json::json;
 /// Direction A: a client attribute whose expanded IRI matches a declared IRI is
 /// forwarded in the client's own aliased spelling `spd`, never the IRI's last
 /// segment `speed` (clause 4.3.6.1).
+#[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_compaction_forwards_an_aliased_client_attribute_under_its_alias() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -72,6 +73,7 @@ async fn distop_compaction_forwards_an_aliased_client_attribute_under_its_alias(
 /// Direction B: an exclusive block names one entity and its attributes, so a
 /// client asking only for the type has the block's id, type and attribute added
 /// to the forwarded request, each in the context's aliased spelling.
+#[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_compaction_supplies_an_exclusive_blocks_aliased_names_for_a_type_only_query() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -118,6 +120,7 @@ async fn distop_compaction_supplies_an_exclusive_blocks_aliased_names_for_a_type
 /// IRI: coverage is by IRI, not by string coincidence. The block declares
 /// `spd` (`.../vocab/speed`); the client asks `speed` (`.../other/speed`). The
 /// block then covers nothing requested and forwards no query.
+#[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_compaction_drops_an_uncovered_attribute_despite_a_coinciding_iri_segment() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -158,6 +161,7 @@ async fn distop_compaction_drops_an_uncovered_attribute_despite_a_coinciding_iri
 /// The core context is the ETSI conformance case: every term equals its IRI's
 /// last segment, so the engine forwards the same plain compact terms the old
 /// heuristic did -- `Vehicle` and `speed`, unchanged.
+#[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_compaction_keeps_the_core_context_forwarding_plain_compact_terms() {
     let topology = topology::single().await.expect("single-broker topology");

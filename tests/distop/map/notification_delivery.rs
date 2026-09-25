@@ -6,8 +6,8 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::vehicle,
-    map::subscription_document::subscription,
+    entity::typed_vehicle,
+    map::subscription_document::{set_entity_type, subscription},
     oracle::{assert_status, forwarded_header, json_body},
     topology::{self, BrokerRole},
 };
@@ -33,7 +33,9 @@ async fn notif_sent_to_endpoint_uri_with_receiver_info() {
     let sink = ContextSourceAdapter::start().await;
     sink.set_stub(Method::POST, "/notify", 200).await;
     let id = topology.id("Subscription:receiver-info");
+    let vtype = topology.id("Vehicle");
     let mut body = subscription(&id, &sink.url("/notify"));
+    set_entity_type(&mut body, &vtype);
     body["notification"]["endpoint"]["receiverInfo"] = json!([{ "key": "x-scope", "value": "acme" }]);
     assert_status(
         &topology
@@ -50,7 +52,7 @@ async fn notif_sent_to_endpoint_uri_with_receiver_info() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&topology.id("Vehicle:receiver-info"), 20))
+            .post_entity(&typed_vehicle(&topology.id("Vehicle:receiver-info"), &vtype, 20))
             .with_ld_json()
             .send()
             .await
@@ -78,7 +80,9 @@ async fn notif_content_type_follows_endpoint_accept() {
     let sink = ContextSourceAdapter::start().await;
     sink.set_stub(Method::POST, "/notify", 200).await;
     let id = topology.id("Subscription:content-type");
-    let body = subscription(&id, &sink.url("/notify"));
+    let vtype = topology.id("Vehicle");
+    let mut body = subscription(&id, &sink.url("/notify"));
+    set_entity_type(&mut body, &vtype);
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -94,7 +98,7 @@ async fn notif_content_type_follows_endpoint_accept() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&topology.id("Vehicle:content-type"), 20))
+            .post_entity(&typed_vehicle(&topology.id("Vehicle:content-type"), &vtype, 20))
             .with_ld_json()
             .send()
             .await
@@ -139,12 +143,15 @@ async fn notif_times_sent_and_last_notification_updated() {
     let sink = ContextSourceAdapter::start().await;
     sink.set_stub(Method::POST, "/notify", 200).await;
     let id = topology.id("Subscription:times-sent");
+    let vtype = topology.id("Vehicle");
+    let mut sub = subscription(&id, &sink.url("/notify"));
+    set_entity_type(&mut sub, &vtype);
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_subscription(&subscription(&id, &sink.url("/notify")))
+            .create_subscription(&sub)
             .await
             .expect("create subscription"),
         201,
@@ -154,7 +161,7 @@ async fn notif_times_sent_and_last_notification_updated() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&topology.id("Vehicle:times-sent"), 20))
+            .post_entity(&typed_vehicle(&topology.id("Vehicle:times-sent"), &vtype, 20))
             .with_ld_json()
             .send()
             .await
@@ -182,12 +189,15 @@ async fn notif_success_sets_status_ok_and_last_success() {
     let sink = ContextSourceAdapter::start().await;
     sink.set_stub(Method::POST, "/notify", 200).await;
     let id = topology.id("Subscription:success-state");
+    let vtype = topology.id("Vehicle");
+    let mut sub = subscription(&id, &sink.url("/notify"));
+    set_entity_type(&mut sub, &vtype);
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_subscription(&subscription(&id, &sink.url("/notify")))
+            .create_subscription(&sub)
             .await
             .expect("create subscription"),
         201,
@@ -197,7 +207,7 @@ async fn notif_success_sets_status_ok_and_last_success() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&topology.id("Vehicle:success-state"), 20))
+            .post_entity(&typed_vehicle(&topology.id("Vehicle:success-state"), &vtype, 20))
             .with_ld_json()
             .send()
             .await
@@ -226,12 +236,15 @@ async fn notif_failure_sets_status_failed_and_last_failure() {
     let sink = ContextSourceAdapter::start().await;
     sink.set_stub(Method::POST, "/notify", 500).await;
     let id = topology.id("Subscription:failure-state");
+    let vtype = topology.id("Vehicle");
+    let mut sub = subscription(&id, &sink.url("/notify"));
+    set_entity_type(&mut sub, &vtype);
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_subscription(&subscription(&id, &sink.url("/notify")))
+            .create_subscription(&sub)
             .await
             .expect("create subscription"),
         201,
@@ -241,7 +254,7 @@ async fn notif_failure_sets_status_failed_and_last_failure() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&topology.id("Vehicle:failure-state"), 20))
+            .post_entity(&typed_vehicle(&topology.id("Vehicle:failure-state"), &vtype, 20))
             .with_ld_json()
             .send()
             .await

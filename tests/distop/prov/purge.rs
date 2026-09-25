@@ -19,6 +19,7 @@ use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use axum::http::Method;
 use pretty_assertions::assert_eq;
 use serde_json::json;
+use urlencoding::encode;
 
 /// The JSON-LD `Link` header carrying the compound test context for a purge
 /// request, which has no body to hold an inline `@context`.
@@ -36,13 +37,14 @@ async fn purge_local_scope_skips_forwarding() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:prov-purge-local");
     let reg_id = topology.id("registration:prov-purge-local");
 
     let seeded = client
         .raw(Method::POST, "/ngsi-ld/v1/entities?local=true")
         .header("content-type", "application/ld+json")
-        .json(&entity(&entity_id, "Vehicle", &[("speed", property(json!(42)))]))
+        .json(&entity(&entity_id, &vtype, &[("speed", property(json!(42)))]))
         .send()
         .await
         .expect("seed local");
@@ -50,12 +52,13 @@ async fn purge_local_scope_skips_forwarding() {
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("inclusive")
+        .entity_type(&vtype)
         .operations(&["purgeEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let purged = client
-        .raw(Method::DELETE, "/ngsi-ld/v1/entities?type=Vehicle&local=true")
+        .raw(Method::DELETE, &format!("/ngsi-ld/v1/entities?type={}&local=true", encode(&vtype)))
         .header("link", context_link().as_str())
         .send()
         .await
@@ -84,16 +87,21 @@ async fn purge_non_local_matching_csr_forwards_per_registration() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let reg_id_one = topology.id("registration:prov-purge-fanout-1");
     let reg_id_two = topology.id("registration:prov-purge-fanout-2");
 
     let registration_one = CsrBuilder::new(&reg_id_one, &mock.url("/s1"))
         .mode("redirect")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .operations(&["purgeEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration_one).await.expect("create registration one"), 201);
     let registration_two = CsrBuilder::new(&reg_id_two, &mock.url("/s2"))
         .mode("redirect")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .operations(&["purgeEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration_two).await.expect("create registration two"), 201);
@@ -102,7 +110,7 @@ async fn purge_non_local_matching_csr_forwards_per_registration() {
     mock.set_stub(Method::DELETE, "/s2/ngsi-ld/v1/entities", 204).await;
 
     let purged = client
-        .raw(Method::DELETE, "/ngsi-ld/v1/entities?type=Vehicle")
+        .raw(Method::DELETE, &format!("/ngsi-ld/v1/entities?type={}", encode(&vtype)))
         .header("link", context_link().as_str())
         .send()
         .await
@@ -136,13 +144,19 @@ async fn purge_op_unsupported_returns_conflict_or_partial() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let reg_id = topology.id("registration:prov-purge-unsup");
 
-    let registration = CsrBuilder::new(&reg_id, &mock.url("")).mode("redirect").operations(&["retrieveEntity"]).build();
+    let registration = CsrBuilder::new(&reg_id, &mock.url(""))
+        .mode("redirect")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
+        .operations(&["retrieveEntity"])
+        .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let purged = client
-        .raw(Method::DELETE, "/ngsi-ld/v1/entities?type=Vehicle")
+        .raw(Method::DELETE, &format!("/ngsi-ld/v1/entities?type={}", encode(&vtype)))
         .header("link", context_link().as_str())
         .send()
         .await
@@ -169,6 +183,7 @@ async fn purge_local_phase_queries_then_deletes() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let entity_id_one = topology.id("Vehicle:prov-purge-phase-1");
     let entity_id_two = topology.id("Vehicle:prov-purge-phase-2");
     let reg_id = topology.id("registration:prov-purge-phase");
@@ -177,7 +192,7 @@ async fn purge_local_phase_queries_then_deletes() {
         let seeded = client
             .raw(Method::POST, "/ngsi-ld/v1/entities?local=true")
             .header("content-type", "application/ld+json")
-            .json(&entity(entity_id, "Vehicle", &[("speed", property(json!(42)))]))
+            .json(&entity(entity_id, &vtype, &[("speed", property(json!(42)))]))
             .send()
             .await
             .expect("seed local");
@@ -186,12 +201,13 @@ async fn purge_local_phase_queries_then_deletes() {
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("auxiliary")
+        .entity_type(&vtype)
         .operations(&["retrieveEntity", "queryEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let purged = client
-        .raw(Method::DELETE, "/ngsi-ld/v1/entities?type=Vehicle&local=true")
+        .raw(Method::DELETE, &format!("/ngsi-ld/v1/entities?type={}&local=true", encode(&vtype)))
         .header("link", context_link().as_str())
         .send()
         .await

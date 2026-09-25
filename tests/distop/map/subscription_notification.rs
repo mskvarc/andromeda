@@ -4,8 +4,8 @@
 //! live notification receiver.
 
 use crate::{
-    entity::{entity, property, vehicle},
-    map::subscription_document::{set_watched_attributes, subscription},
+    entity::{entity, property, typed_vehicle, vehicle},
+    map::subscription_document::{set_entity_type, set_watched_attributes, subscription},
     notification_adapter::NotificationAdapter,
     oracle::{assert_status, json_body},
     topology::{self, BrokerRole},
@@ -29,11 +29,14 @@ async fn sub_create_valid_persists_and_is_notification_eligible() {
     let topology = topology::pair().await.expect("two-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:eligible");
+    let vtype = topology.id("Vehicle");
+    let mut sub = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut sub, &vtype);
     let created = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .create_subscription(&subscription(&id, &receiver.endpoint_url()))
+        .create_subscription(&sub)
         .await
         .expect("create subscription");
     assert_status(&created, 201);
@@ -44,7 +47,7 @@ async fn sub_create_valid_persists_and_is_notification_eligible() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 40))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 40))
             .with_ld_json()
             .send()
             .await
@@ -70,12 +73,15 @@ async fn sub_create_entity_selector_restricts_subscription() {
     let topology = topology::pair().await.expect("two-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:selector");
+    let vtype = topology.id("Vehicle");
+    let mut sub = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut sub, &vtype);
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_subscription(&subscription(&id, &receiver.endpoint_url()))
+            .create_subscription(&sub)
             .await
             .expect("create subscription"),
         201,
@@ -103,7 +109,7 @@ async fn sub_create_entity_selector_restricts_subscription() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&vehicle_id, 40))
+            .post_entity(&typed_vehicle(&vehicle_id, &vtype, 40))
             .with_ld_json()
             .send()
             .await
@@ -128,19 +134,22 @@ async fn sub_create_absent_watched_attributes_watches_all() {
     let topology = topology::pair().await.expect("two-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:watch-all");
+    let vtype = topology.id("Vehicle");
+    let mut sub = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut sub, &vtype);
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_subscription(&subscription(&id, &receiver.endpoint_url()))
+            .create_subscription(&sub)
             .await
             .expect("create subscription"),
         201,
     );
 
     let entity_id = topology.id("Vehicle:watch-all");
-    let body = entity(&entity_id, "Vehicle", &[("colour", property(json!("red")))]);
+    let body = entity(&entity_id, &vtype, &[("colour", property(json!("red")))]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -217,13 +226,14 @@ async fn sub_create_watched_attributes_no_entities_spans_all_holders() {
 async fn sub_create_time_interval_periodic_regardless_of_change() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:periodic");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 22))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 22))
             .with_ld_json()
             .send()
             .await
@@ -233,6 +243,7 @@ async fn sub_create_time_interval_periodic_regardless_of_change() {
 
     let id = topology.id("Subscription:periodic");
     let mut body = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut body, &vtype);
     body["timeInterval"] = json!(1);
     body["notification"]
         .as_object_mut()
@@ -267,12 +278,15 @@ async fn sub_create_no_time_interval_change_driven() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:change-driven");
+    let vtype = topology.id("Vehicle");
+    let mut sub = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut sub, &vtype);
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_subscription(&subscription(&id, &receiver.endpoint_url()))
+            .create_subscription(&sub)
             .await
             .expect("create subscription"),
         201,
@@ -286,7 +300,7 @@ async fn sub_create_no_time_interval_change_driven() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 55))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 55))
             .with_ld_json()
             .send()
             .await
@@ -311,7 +325,9 @@ async fn sub_expiration_reached_sets_status_expired_and_stops_notifications() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:expiring");
+    let vtype = topology.id("Vehicle");
     let mut body = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut body, &vtype);
     body["expiresAt"] = json!((Utc::now() + ChronoDuration::seconds(3)).to_rfc3339());
     assert_status(
         &topology
@@ -332,7 +348,7 @@ async fn sub_expiration_reached_sets_status_expired_and_stops_notifications() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 60))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 60))
             .with_ld_json()
             .send()
             .await
@@ -365,12 +381,15 @@ async fn sub_delete_removes_and_stops_notifications() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:delete-stops");
+    let vtype = topology.id("Vehicle");
+    let mut sub = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut sub, &vtype);
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_subscription(&subscription(&id, &receiver.endpoint_url()))
+            .create_subscription(&sub)
             .await
             .expect("create subscription"),
         201,
@@ -382,7 +401,7 @@ async fn sub_delete_removes_and_stops_notifications() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&first_entity, 10))
+            .post_entity(&typed_vehicle(&first_entity, &vtype, 10))
             .with_ld_json()
             .send()
             .await
@@ -414,7 +433,7 @@ async fn sub_delete_removes_and_stops_notifications() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&second_entity, 20))
+            .post_entity(&typed_vehicle(&second_entity, &vtype, 20))
             .with_ld_json()
             .send()
             .await

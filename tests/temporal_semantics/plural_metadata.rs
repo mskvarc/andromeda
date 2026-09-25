@@ -5,21 +5,11 @@
 //! overrides what it restates, and each member becomes its own typed
 //! observation so that reconstruction is lossless.
 
-use crate::{
-    attribute_iri,
-    clean_database,
-    client,
-    create_temporal_entity,
-    database,
-    get_temporal_entity,
-    rendered_instances,
-    stored_history::stored_attribute_history,
-    unique_id,
-};
+use crate::{attribute_iri, client, create_temporal_entity, database, get_temporal_entity, rendered_instances, stored_history::stored_attribute_history};
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::{assert_eq, assert_ne};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
-use serial_test::serial;
 
 /// The `datasetId` the envelope declares for every plural member.
 const SHARED_DATASET: &str = "urn:ngsi-ld:Dataset:shared";
@@ -27,12 +17,11 @@ const SHARED_DATASET: &str = "urn:ngsi-ld:Dataset:shared";
 /// Every plural member of one attribute becomes its own typed observation,
 /// inheriting envelope metadata unless the member overrides it.
 #[tokio::test]
-#[serial]
 async fn temporal_semantics_plural_members_inherit_envelope_metadata_and_honour_overrides() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_semantics").await.expect("isolated test environment");
     let http = client();
     let pool = database().await;
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:plural_metadata");
+    let entity_id = scope.id("Vehicle:plural_metadata");
 
     let (status, _) = create_temporal_entity(
         &http,
@@ -81,16 +70,16 @@ async fn temporal_semantics_plural_members_inherit_envelope_metadata_and_honour_
         instances.iter().all(|instance| instance["datasetId"] == json!(SHARED_DATASET)),
         "the inherited dataset identity survives"
     );
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Every plural member kind becomes the correct typed observation.
 #[tokio::test]
-#[serial]
 async fn temporal_semantics_every_plural_member_kind_becomes_its_typed_observation() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_semantics").await.expect("isolated test environment");
     let http = client();
     let pool = database().await;
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:plural_kinds");
+    let entity_id = scope.id("Vehicle:plural_kinds");
 
     let (status, _) = create_temporal_entity(
         &http,
@@ -152,4 +141,5 @@ async fn temporal_semantics_every_plural_member_kind_becomes_its_typed_observati
     assert_eq!(rendered_instances(&body, "label")[1]["languageMap"], json!({ "en": "second" }));
     assert_eq!(rendered_instances(&body, "doc")[1]["json"], json!({ "a": 2 }));
     assert_eq!(rendered_instances(&body, "tags")[1]["vocab"], json!("beta"));
+    scope.finish().await.expect("cleanup failed");
 }

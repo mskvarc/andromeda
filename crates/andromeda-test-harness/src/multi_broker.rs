@@ -14,9 +14,46 @@ use andromeda_test_client::{
 };
 use http::HeaderValue;
 use sqlx::PgPool;
-use std::{env, fmt::Debug, net::SocketAddr, slice};
+use std::{
+    collections::HashMap,
+    env,
+    fmt::Debug,
+    net::SocketAddr,
+    slice,
+    sync::{Arc, LazyLock, Mutex},
+};
 use thiserror::Error;
+use tokio::sync::OnceCell;
 use url::Url;
+
+/// Per-process registry ensuring each broker database is reset exactly once,
+/// however many topologies a suite constructs.
+///
+/// `distop` and `fed` build a fresh topology for every test, but the tenant
+/// reset only has to clear what a previous run of the binary left behind: within
+/// one process each test scopes its resources by a unique id prefix and reclaims
+/// them in [`MultiBrokerTopology::finish`]. Resetting once per database rather
+/// than once per test is what lets the suites run concurrently -- a mid-test
+/// `TRUNCATE` from a second topology would otherwise wipe the first test's data.
+static RESET_DATABASES: LazyLock<Mutex<HashMap<String, Arc<OnceCell<()>>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Reset one broker database the first time this process names it, and only then.
+///
+/// Concurrent constructors that name the same database all await the single
+/// in-flight reset; every later constructor observes the initialised cell and
+/// skips the reset. A failed reset leaves the cell uninitialised, so the next
+/// constructor retries it.
+async fn reset_database_once(pool: &PgPool, key: &str) -> Result<(), MultiBrokerError> {
+    let cell = {
+        let mut registry = match RESET_DATABASES.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        Arc::clone(registry.entry(key.to_owned()).or_default())
+    };
+    cell.get_or_try_init(|| reset_owned_tenant(pool)).await?;
+    Ok(())
+}
 
 /// The environment-variable name fragments that select one broker's overrides.
 ///
@@ -218,7 +255,8 @@ impl<R> MultiBrokerTopology<R>
 where
     R: Copy + Eq + Debug + Send + Sync,
 {
-    /// Build all requested brokers, wait for readiness, and reset each unique store.
+    /// Build all requested brokers, wait for readiness, and reset each store the
+    /// first time this process connects to it (see [`RESET_DATABASES`]).
     ///
     /// # Errors
     ///
@@ -247,9 +285,7 @@ where
                 source: error,
             })?;
             let pool = connect_pool(&spec.database).await?;
-            if !brokers.iter().any(|broker: &BrokerHandle<R>| broker.role == spec.identity) {
-                reset_owned_tenant(&pool).await?;
-            }
+            reset_database_once(&pool, spec.database.url().as_str()).await?;
             brokers.push(BrokerHandle {
                 role: spec.role,
                 identity: spec.identity,

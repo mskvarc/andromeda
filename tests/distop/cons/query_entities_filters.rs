@@ -5,7 +5,7 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::{entity, property, property_with_dataset, vehicle},
+    entity::{entity, property, property_with_dataset, typed_vehicle},
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
     topology::{self, BrokerRole},
@@ -45,27 +45,39 @@ fn attribute_instances(body: &Value, id: &str, attribute: &str) -> Vec<Value> {
 #[tokio::test]
 async fn distop_query_entities_auxiliary_added_only_where_attr_absent() {
     let topology = topology::pair().await.expect("two-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:cons32");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     assert_status(
-        &front.client().post_entity(&vehicle(&entity_id, 50)).with_ld_json().send().await.expect("local"),
+        &front
+            .client()
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 50))
+            .with_ld_json()
+            .send()
+            .await
+            .expect("local"),
         201,
     );
-    let auxiliary = entity(&entity_id, "Vehicle", &[("speed", property(json!(99))), ("fuelLevel", property(json!(70)))]);
+    let auxiliary = entity(&entity_id, &vtype, &[("speed", property(json!(99))), ("fuelLevel", property(json!(70)))]);
     assert_status(&peer.client().post_entity(&auxiliary).with_ld_json().send().await.expect("peer"), 201);
 
     let registration_id = topology.id("registration:cons32");
     let registration = CsrBuilder::new(&registration_id, peer.peer_url())
         .mode("auxiliary")
         .entity_id(&entity_id)
+        .entity_type(&vtype)
         .property_names(&["speed", "fuelLevel"])
         .operations(&["queryEntity"])
         .build();
     assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
 
-    let response = front.client().query_entities("type=Vehicle", "application/ld+json", None).await.expect("query");
+    let response = front
+        .client()
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
+        .await
+        .expect("query");
     assert_status(&response, 200);
     let body = json_body(&response);
     let speed = attribute_instances(&body, &entity_id, "speed");
@@ -90,17 +102,19 @@ async fn distop_query_entities_pagination_over_mapped_candidates() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
+    let vtype = topology.id("Vehicle");
     let candidates: Vec<String> = (0..5).map(|index| topology.id(&format!("Vehicle:cons34-{index}"))).collect();
     let array = Value::Array(
         candidates
             .iter()
             .enumerate()
-            .map(|(index, id)| vehicle(id, 10 * i64::try_from(index).expect("a candidate index fits in an i64")))
+            .map(|(index, id)| typed_vehicle(id, &vtype, 10 * i64::try_from(index).expect("a candidate index fits in an i64")))
             .collect(),
     );
     let registration_id = topology.id("registration:cons34");
     let registration = CsrBuilder::new(&registration_id, &mock.url(""))
         .mode("inclusive")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
@@ -110,7 +124,11 @@ async fn distop_query_entities_pagination_over_mapped_candidates() {
     for offset in [0, 2, 4] {
         let page = front
             .client()
-            .query_entities(&format!("type=Vehicle&limit=2&offset={offset}&count=true"), "application/ld+json", None)
+            .query_entities(
+                &format!("type={}&limit=2&offset={offset}&count=true", encode(&vtype)),
+                "application/ld+json",
+                None,
+            )
             .await
             .expect("page");
         assert_status(&page, 200);
@@ -138,9 +156,11 @@ async fn distop_query_entities_csf_forwarded_unchanged_to_discovery() {
     let middle = topology.broker(BrokerRole::B).expect("topology broker B");
     let mock = ContextSourceAdapter::start().await;
 
+    let vtype = topology.id("Vehicle");
     let downstream_id = topology.id("registration:cons35-downstream");
     let downstream = CsrBuilder::new(&downstream_id, &mock.url(""))
         .mode("inclusive")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(&middle.client().create_registration(&downstream).await.expect("downstream register"), 201);
@@ -149,6 +169,7 @@ async fn distop_query_entities_csf_forwarded_unchanged_to_discovery() {
     let hop_id = topology.id("registration:cons35-hop");
     let hop = CsrBuilder::new(&hop_id, middle.peer_url())
         .mode("inclusive")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(&front.client().create_registration(&hop).await.expect("hop register"), 201);
@@ -157,7 +178,7 @@ async fn distop_query_entities_csf_forwarded_unchanged_to_discovery() {
     assert_status(
         &front
             .client()
-            .query_entities(&format!("type=Vehicle&csf={}", encode(csf)), "application/ld+json", None)
+            .query_entities(&format!("type={}&csf={}", encode(&vtype), encode(csf)), "application/ld+json", None)
             .await
             .expect("query"),
         200,
@@ -181,18 +202,25 @@ async fn distop_query_entities_csf_forwarded_unchanged_to_discovery() {
 async fn distop_query_entities_datasetid_per_attribute_filtering() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons36");
+    let vtype = topology.id("Vehicle");
     let dataset_id = topology.id("dataset:2");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let holder = topology.broker(BrokerRole::C).expect("topology broker C");
 
     assert_status(
-        &front.client().post_entity(&vehicle(&entity_id, 10)).with_ld_json().send().await.expect("local"),
+        &front
+            .client()
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 10))
+            .with_ld_json()
+            .send()
+            .await
+            .expect("local"),
         201,
     );
     assert_status(
         &holder
             .client()
-            .post_entity(&entity(&entity_id, "Vehicle", &[("speed", property_with_dataset(json!(30), &dataset_id))]))
+            .post_entity(&entity(&entity_id, &vtype, &[("speed", property_with_dataset(json!(30), &dataset_id))]))
             .with_ld_json()
             .send()
             .await
@@ -202,13 +230,18 @@ async fn distop_query_entities_datasetid_per_attribute_filtering() {
     let registration_id = topology.id("registration:cons36");
     let registration = CsrBuilder::new(&registration_id, holder.peer_url())
         .mode("inclusive")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
 
     let by_dataset = front
         .client()
-        .query_entities(&format!("type=Vehicle&datasetId={}", encode(&dataset_id)), "application/ld+json", None)
+        .query_entities(
+            &format!("type={}&datasetId={}", encode(&vtype), encode(&dataset_id)),
+            "application/ld+json",
+            None,
+        )
         .await
         .expect("dataset");
     assert_status(&by_dataset, 200);
@@ -223,7 +256,7 @@ async fn distop_query_entities_datasetid_per_attribute_filtering() {
 
     let by_none = front
         .client()
-        .query_entities("type=Vehicle&datasetId=@none", "application/ld+json", None)
+        .query_entities(&format!("type={}&datasetId=@none", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("none");
     assert_status(&by_none, 200);
@@ -242,17 +275,24 @@ async fn distop_query_entities_datasetid_per_attribute_filtering() {
 async fn distop_query_entities_datasetid_no_match_omits_attribute() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons37");
+    let vtype = topology.id("Vehicle");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let holder = topology.broker(BrokerRole::C).expect("topology broker C");
 
     assert_status(
-        &front.client().post_entity(&vehicle(&entity_id, 10)).with_ld_json().send().await.expect("local"),
+        &front
+            .client()
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 10))
+            .with_ld_json()
+            .send()
+            .await
+            .expect("local"),
         201,
     );
     assert_status(
         &holder
             .client()
-            .post_entity(&entity(&entity_id, "Vehicle", &[("fuelLevel", property(json!(70)))]))
+            .post_entity(&entity(&entity_id, &vtype, &[("fuelLevel", property(json!(70)))]))
             .with_ld_json()
             .send()
             .await
@@ -262,6 +302,7 @@ async fn distop_query_entities_datasetid_no_match_omits_attribute() {
     let registration_id = topology.id("registration:cons37");
     let registration = CsrBuilder::new(&registration_id, holder.peer_url())
         .mode("inclusive")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
@@ -269,7 +310,7 @@ async fn distop_query_entities_datasetid_no_match_omits_attribute() {
     let absent = topology.id("dataset:absent");
     let response = front
         .client()
-        .query_entities(&format!("type=Vehicle&datasetId={}", encode(&absent)), "application/ld+json", None)
+        .query_entities(&format!("type={}&datasetId={}", encode(&vtype), encode(&absent)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -290,19 +331,26 @@ async fn distop_query_entities_datasetid_no_match_omits_attribute() {
 async fn distop_query_entities_orderby_local_orders_by_member() {
     let topology = topology::single().await.expect("single-broker topology");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let vtype = topology.id("Vehicle");
     let low = topology.id("Vehicle:cons38-low");
     let mid = topology.id("Vehicle:cons38-mid");
     let high = topology.id("Vehicle:cons38-high");
     for (id, speed) in [(&low, 10), (&mid, 20), (&high, 30)] {
         assert_status(
-            &front.client().post_entity(&vehicle(id, speed)).with_ld_json().send().await.expect("create"),
+            &front
+                .client()
+                .post_entity(&typed_vehicle(id, &vtype, speed))
+                .with_ld_json()
+                .send()
+                .await
+                .expect("create"),
             201,
         );
     }
 
     let ascending = front
         .client()
-        .query_entities("type=Vehicle&local=true&orderBy=speed", "application/ld+json", None)
+        .query_entities(&format!("type={}&local=true&orderBy=speed", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("asc");
     assert_status(&ascending, 200);
@@ -311,7 +359,7 @@ async fn distop_query_entities_orderby_local_orders_by_member() {
 
     let descending = front
         .client()
-        .query_entities("type=Vehicle&local=true&orderBy=speed%3Bdesc", "application/ld+json", None)
+        .query_entities(&format!("type={}&local=true&orderBy=speed%3Bdesc", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("desc");
     assert_status(&descending, 200);

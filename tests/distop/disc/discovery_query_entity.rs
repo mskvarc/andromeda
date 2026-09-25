@@ -52,11 +52,24 @@ async fn query_csr_attributes_referenced_only_in_q_used_as_attribute_list() {
 /// the compound context matches the registration, while the same query without
 /// a context expands differently and does not (clause 5.5.7). Confirms
 /// REQ-DISC-22.
+#[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn query_csr_expands_shorthand_type_and_attr_terms_before_matching() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:expand-match");
-    register(&topology, &CsrBuilder::new(&id, PEER_ENDPOINT).entity_type("Vehicle").build()).await;
+    // The literal `Vehicle` shorthand is the point of this test (it must expand
+    // under the request context), so a prefix `idPattern` scopes the registration
+    // to this test's own ids instead, keeping it from matching another concurrent
+    // test's `Vehicle` writes on the shared broker; the shared-type serial key
+    // keeps the bare `type=Vehicle` discovery query from seeing another such test.
+    register(
+        &topology,
+        &CsrBuilder::new(&id, PEER_ENDPOINT)
+            .entity_type("Vehicle")
+            .id_pattern(&format!("{}.*", topology.id_prefix()))
+            .build(),
+    )
+    .await;
 
     let with_context = query(&topology, "type=Vehicle").await;
     assert!(contains(&with_context, &id), "the compound context expands Vehicle to the registered IRI");

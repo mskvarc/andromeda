@@ -77,27 +77,95 @@ mod rest_temporal_queries;
 mod value_type_utilization;
 mod vehicle_entity;
 
-use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
+use andromeda_test_harness::{
+    configuration::{RUNTIME_BROKER_BASE as BASE_URL, TestRunConfiguration},
+    database_isolation::connect_pool,
+    tenant_scoped_environment::sweep_stale_tenant_databases_once,
+};
 use pretty_assertions::assert_eq;
-use reqwest::{Client, RequestBuilder, StatusCode, header::HeaderMap};
+use reqwest::{
+    Client,
+    RequestBuilder,
+    StatusCode,
+    header::{HeaderMap, HeaderValue},
+};
 use serde_json::Value;
+use sqlx::PgPool;
+use uuid::Uuid;
 
-/// A plain HTTP client; every request in this suite declares its own headers.
-fn client() -> Client {
-    Client::new()
-}
-
-/// Take exclusive ownership of the tenant and empty its mutable tables.
+/// A private-tenant environment: an HTTP client bound to a unique tenant plus the
+/// control-database pool that reclaims that tenant on `finish`.
 ///
 /// Annex C examples name fixed Entity identifiers -- `urn:ngsi-ld:Vehicle:A4567`
-/// and friends -- so replaying two of them concurrently would have them read
-/// each other's fixtures. Every test in this suite is serialized and starts
-/// from an empty tenant instead of inventing identifiers the annex does not
-/// print.
-async fn clean_tenant() -> SerializedEnvironment {
-    SerializedEnvironment::from_environment_reset()
-        .await
-        .expect("serialized test database environment")
+/// and friends -- so replaying two of them against a shared tenant would have
+/// them read each other's fixtures. Each test runs against a tenant of its own,
+/// carried on every request by an `NGSILD-Tenant` default header, so the fixed
+/// identifiers and whole-response comparisons stay valid and the suite
+/// parallelizes without inventing identifiers the annex does not print.
+struct AnnexTenant {
+    http: Client,
+    label: String,
+    pool: PgPool,
+}
+
+impl AnnexTenant {
+    /// Allocate a uniquely named tenant and a client that addresses it.
+    async fn allocate() -> AnnexTenant {
+        let configuration = TestRunConfiguration::from_environment().expect("test configuration");
+        let pool = connect_pool(configuration.database()).await.expect("control database pool");
+        // Reclaim tenant databases a previous suite's force-drops missed before
+        // this suite adds its own, so their connection slots do not accumulate
+        // across the tier (see the harness sweep for the full rationale).
+        sweep_stale_tenant_databases_once(&pool).await;
+        // A database-safe, lowercase label so the broker's tenant database is
+        // `andromeda_tenant_<label>_<suffix>` and finish can find it by prefix.
+        let label = format!("annexc{}", &Uuid::new_v4().simple().to_string()[..12]);
+        let mut headers = HeaderMap::new();
+        headers.insert("NGSILD-Tenant", HeaderValue::from_str(&label).expect("tenant label is a valid header value"));
+        let http = Client::builder().default_headers(headers).build().expect("tenant-bound HTTP client");
+        AnnexTenant { http, label, pool }
+    }
+
+    /// A tenant-bound HTTP client. The clone is an `Arc` bump, and returning an
+    /// owned client lets a test hold it across the `finish` that consumes `self`.
+    fn client(&self) -> Client {
+        self.http.clone()
+    }
+
+    /// Force-drop the tenant's databases and close the pool; best-effort, because
+    /// the unique label means a leftover never collides with another test.
+    async fn finish(self) {
+        // Suspend the tenant so the broker closes its runtime pool before the
+        // database is dropped; dropping it out from under a cached runtime makes
+        // the next tenant provisioned answer 503 until the janitor evicts the
+        // stale entry. Best-effort.
+        let _ = self
+            .http
+            .patch(format!("{BASE_URL}/tenants/{}", self.label))
+            .header("content-type", "application/json")
+            .body("{\"isActive\":false}")
+            .send()
+            .await;
+        let like = format!("andromeda_tenant_{}_%", self.label);
+        if let Ok(databases) = sqlx::query_scalar::<_, String>("SELECT datname FROM pg_database WHERE datname LIKE $1")
+            .bind(&like)
+            .fetch_all(&self.pool)
+            .await
+        {
+            for database in databases {
+                // `WITH (FORCE)` evicts the tenant's background workers that hold
+                // the database open; the name comes from `pg_database`.
+                let statement = format!("DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)");
+                let _ = sqlx::query(sqlx::AssertSqlSafe(statement)).execute(&self.pool).await;
+            }
+        }
+        self.pool.close().await;
+    }
+}
+
+/// Allocate a private tenant whose collections start empty.
+async fn clean_tenant() -> AnnexTenant {
+    AnnexTenant::allocate().await
 }
 
 /// Create one Entity through clause 5.6.1 and assert it was accepted.

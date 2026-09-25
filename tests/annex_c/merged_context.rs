@@ -8,7 +8,6 @@
 
 use crate::{
     clean_tenant,
-    client,
     comparison::{ContextMember, EntityOrder, assert_matches_example, corpus},
     context_link,
     create_entity,
@@ -18,11 +17,9 @@ use crate::{
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::Value;
-use serial_test::serial;
 use url::Url;
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_4_merged_context_renders_the_same_terms_as_its_parts() {
     let environment = clean_tenant().await;
     let hosted = hosted_contexts();
@@ -30,7 +27,7 @@ async fn annex_c_2_4_merged_context_renders_the_same_terms_as_its_parts() {
 
     // Written under the three separate vocabulary documents.
     let vehicle = corpus(include_str!("corpus/c-2-2-normalized-unitless.json"));
-    create_entity(&client(), &vehicle, Some(&separate)).await;
+    create_entity(&environment.client(), &vehicle, Some(&separate)).await;
 
     // Read back under the one merged document clause C.2.4 prints. Only the
     // terms C.2.4 actually defines can be asked for, so the Entity is trimmed
@@ -39,7 +36,7 @@ async fn annex_c_2_4_merged_context_renders_the_same_terms_as_its_parts() {
     // the `passengers` Relationship names outright.
     let merged = context_link(merged_context_url(hosted).as_str());
     let (status, actual) = get_json(
-        &client(),
+        &environment.client(),
         "/entities/urn:ngsi-ld:Vehicle:A4567?attrs=brandName,isParked",
         "application/ld+json",
         Some(&merged),
@@ -50,7 +47,7 @@ async fn annex_c_2_4_merged_context_renders_the_same_terms_as_its_parts() {
     let expected = trimmed_vehicle(&vehicle);
     assert_matches_example("C.2.4 merged @context", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 /// The hosted URL of the merged `@context` document clause C.2.4 prints.

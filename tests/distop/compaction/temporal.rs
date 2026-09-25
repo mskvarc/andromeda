@@ -17,6 +17,7 @@ use serde_json::json;
 
 /// A temporal query forwards the client's aliased type and attribute under their
 /// aliases, never the IRIs' last segments.
+#[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_compaction_forwards_a_temporal_query_under_the_alias() {
     let topology = topology::single().await.expect("single-broker topology");

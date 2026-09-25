@@ -2,7 +2,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
-use andromeda_test_harness::serialized_environment::SerializedEnvironment;
+use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use andromeda_test_mocks::{callback_path::CallbackPath, jsonld_context_server::JsonLdContextServer, server_config::MockServerConfig};
 use axum::{
     body::Bytes,
@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn cache_expiration_max_age_zero_refetches_the_remote_context() {
-    let environment = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+    let environment = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
     let client = environment.client().clone(); // clone: the client remains usable while the environment retains cleanup ownership.
     let server = JsonLdContextServer::start(MockServerConfig::from_environment().expect("valid callback configuration"))
         .await
@@ -48,5 +48,5 @@ async fn cache_expiration_max_age_zero_refetches_the_remote_context() {
     );
 
     server.shutdown().await.expect("context server shutdown failed");
-    environment.reset_and_finish().await.expect("post-test reset failed");
+    environment.finish().await.expect("post-test cleanup failed");
 }

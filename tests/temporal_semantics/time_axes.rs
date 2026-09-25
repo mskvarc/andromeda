@@ -8,7 +8,6 @@
 
 use crate::{
     attribute_iri,
-    clean_database,
     client,
     create_entity,
     database,
@@ -16,13 +15,12 @@ use crate::{
     get_temporal_entity,
     rendered_instances,
     stored_history::{StoredHistoryRow, stored_attribute_history},
-    unique_id,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
 use pretty_assertions::{assert_eq, assert_ne};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
-use serial_test::serial;
 
 /// The observation instant the fixture declares, far from every write instant.
 const DECLARED_OBSERVED_AT: &str = "2021-01-01T00:00:00Z";
@@ -56,12 +54,11 @@ fn only_row(rows: &[StoredHistoryRow], attribute: &str) -> StoredHistoryRow {
 /// Clause 4.11 and clause 5.2.21: four deliberately different timestamps, each
 /// selected only by the `timeproperty` that names its own column.
 #[tokio::test]
-#[serial]
 async fn temporal_semantics_independent_time_axes_each_select_only_their_own_column() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_semantics").await.expect("isolated test environment");
     let http = client();
     let pool = database().await;
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:time_axes");
+    let entity_id = scope.id("Vehicle:time_axes");
 
     let created = create_entity(
         &http,
@@ -127,17 +124,17 @@ async fn temporal_semantics_independent_time_axes_each_select_only_their_own_col
     let deleted_window = rendered_instances(&body, "speed");
     assert_eq!(deleted_window.len(), 1, "only the tombstone lies on the deletedAt axis");
     assert!(deleted_window[0].get("deletedAt").is_some(), "the tombstone renders its deletion instant");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Clause 4.11: an instance recorded without `observedAt` matches no
 /// `observedAt` window, and the write clock does not invent one for it.
 #[tokio::test]
-#[serial]
 async fn temporal_semantics_missing_observed_time_is_never_taken_from_the_write_clock() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_semantics").await.expect("isolated test environment");
     let http = client();
     let pool = database().await;
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:missing_observed");
+    let entity_id = scope.id("Vehicle:missing_observed");
 
     let created = create_entity(
         &http,
@@ -175,17 +172,17 @@ async fn temporal_semantics_missing_observed_time_is_never_taken_from_the_write_
         modified_window[0].get("observedAt").is_none(),
         "an absent observedAt is never rendered from the write clock"
     );
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// The suite's rendering never exposes the operational write clock as a
 /// Temporal Property: clause 5.2.21 admits four names, and `recordedAt` is not
 /// one of them.
 #[tokio::test]
-#[serial]
 async fn temporal_semantics_the_write_clock_is_never_rendered_as_a_temporal_property() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_semantics").await.expect("isolated test environment");
     let http = client();
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:write_clock");
+    let entity_id = scope.id("Vehicle:write_clock");
 
     let created = create_entity(
         &http,
@@ -211,4 +208,5 @@ async fn temporal_semantics_the_write_clock_is_never_rendered_as_a_temporal_prop
         Some(DECLARED_OBSERVED_AT),
         "the declared observation instant renders unchanged"
     );
+    scope.finish().await.expect("cleanup failed");
 }

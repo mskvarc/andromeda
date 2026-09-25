@@ -5,7 +5,7 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::vehicle,
+    entity::typed_vehicle,
     http::forwarding::{FORWARDED_ENTITIES_PATH, context_link, context_link_header, retrieval_source},
     oracle::{assert_status, entity_map_header, json_body},
     topology::{self, BrokerRole},
@@ -19,6 +19,7 @@ use serde_json::json;
 #[tokio::test]
 async fn dist_http_query_entity_map_requested_returns_map_header_200_or_201() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:map-req");
     let reg_id = topology.id("registration:map-req");
     let mock = ContextSourceAdapter::start().await;
@@ -28,7 +29,7 @@ async fn dist_http_query_entity_map_requested_returns_map_header_200_or_201() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -39,7 +40,11 @@ async fn dist_http_query_entity_map_requested_returns_map_header_200_or_201() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", Some(context_link()))
+        .query_entities(
+            &format!("type={}&entityMap=true", urlencoding::encode(&vtype)),
+            "application/ld+json",
+            Some(context_link()),
+        )
         .await
         .expect("entity-map query");
     assert!(
@@ -58,6 +63,7 @@ async fn dist_http_query_entity_map_requested_returns_map_header_200_or_201() {
 #[tokio::test]
 async fn dist_http_query_with_entity_map_request_header_uses_named_map() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:map-named");
     let reg_id = topology.id("registration:map-named");
     let mock = ContextSourceAdapter::start().await;
@@ -67,7 +73,7 @@ async fn dist_http_query_with_entity_map_request_header_uses_named_map() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -78,7 +84,11 @@ async fn dist_http_query_with_entity_map_request_header_uses_named_map() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", Some(context_link()))
+        .query_entities(
+            &format!("type={}&entityMap=true", urlencoding::encode(&vtype)),
+            "application/ld+json",
+            Some(context_link()),
+        )
         .await
         .expect("first entity-map query");
     let map_id = entity_map_header(&first).unwrap_or_else(|| panic!("first query yields an entity map"));
@@ -87,7 +97,10 @@ async fn dist_http_query_with_entity_map_request_header_uses_named_map() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle&entityMap=true")
+        .raw(
+            Method::GET,
+            &format!("/ngsi-ld/v1/entities?type={}&entityMap=true", urlencoding::encode(&vtype)),
+        )
         .header("accept", "application/ld+json")
         .header("link", context_link_header())
         .header("ngsild-entitymap", map_id.as_str())
@@ -109,6 +122,7 @@ async fn dist_http_query_with_entity_map_request_header_uses_named_map() {
 #[tokio::test]
 async fn dist_http_purge_supports_entity_map_request_header() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let mapped_id = topology.id("Vehicle:map-purge-mapped");
     let unmapped_id = topology.id("Vehicle:map-purge-unmapped");
     let reg_id = topology.id("registration:map-purge");
@@ -118,7 +132,7 @@ async fn dist_http_purge_supports_entity_map_request_header() {
     assert_status(
         &broker
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &mapped_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &mapped_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -126,7 +140,13 @@ async fn dist_http_purge_supports_entity_map_request_header() {
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
     for id in [&mapped_id, &unmapped_id] {
         assert_status(
-            &broker.client().post_entity(&vehicle(id, 5)).with_ld_json().send().await.expect("local create"),
+            &broker
+                .client()
+                .post_entity(&typed_vehicle(id, &vtype, 5))
+                .with_ld_json()
+                .send()
+                .await
+                .expect("local create"),
             201,
         );
     }
@@ -136,7 +156,7 @@ async fn dist_http_purge_supports_entity_map_request_header() {
     let map = broker
         .client()
         .query_entities(
-            &format!("type=Vehicle&id={}&entityMap=true", urlencoding::encode(&mapped_id)),
+            &format!("type={}&id={}&entityMap=true", urlencoding::encode(&vtype), urlencoding::encode(&mapped_id)),
             "application/ld+json",
             Some(context_link()),
         )
@@ -147,7 +167,7 @@ async fn dist_http_purge_supports_entity_map_request_header() {
     let both = format!("{},{}", urlencoding::encode(&mapped_id), urlencoding::encode(&unmapped_id));
     let response = broker
         .client()
-        .raw(Method::DELETE, &format!("/ngsi-ld/v1/entities?type=Vehicle&id={both}"))
+        .raw(Method::DELETE, &format!("/ngsi-ld/v1/entities?type={}&id={both}", urlencoding::encode(&vtype)))
         .header("link", context_link_header())
         .header("ngsild-entitymap", map_id.as_str())
         .send()
@@ -162,7 +182,11 @@ async fn dist_http_purge_supports_entity_map_request_header() {
 
     let survivors = broker
         .client()
-        .query_entities(&format!("type=Vehicle&id={both}&local=true"), "application/ld+json", Some(context_link()))
+        .query_entities(
+            &format!("type={}&id={both}&local=true", urlencoding::encode(&vtype)),
+            "application/ld+json",
+            Some(context_link()),
+        )
         .await
         .expect("survivor query");
     assert_status(&survivors, 200);
@@ -195,6 +219,7 @@ async fn dist_http_purge_supports_entity_map_request_header() {
 #[tokio::test]
 async fn dist_http_retrieve_with_entity_map_request_header_uses_named_map() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:map-retrieve-named");
     let reg_id = topology.id("registration:map-retrieve-named");
     let mock = ContextSourceAdapter::start().await;
@@ -204,7 +229,7 @@ async fn dist_http_retrieve_with_entity_map_request_header_uses_named_map() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 5))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 5))
             .with_ld_json()
             .send()
             .await
@@ -216,7 +241,7 @@ async fn dist_http_retrieve_with_entity_map_request_header_uses_named_map() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -226,7 +251,11 @@ async fn dist_http_retrieve_with_entity_map_request_header_uses_named_map() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", Some(context_link()))
+        .query_entities(
+            &format!("type={}&entityMap=true", urlencoding::encode(&vtype)),
+            "application/ld+json",
+            Some(context_link()),
+        )
         .await
         .expect("entity-map query");
     let map_id = entity_map_header(&map).unwrap_or_else(|| panic!("query yields an entity map"));
@@ -258,6 +287,7 @@ async fn dist_http_retrieve_with_entity_map_request_header_uses_named_map() {
 #[tokio::test]
 async fn dist_http_retrieve_entity_map_requested_returns_200_and_map_header() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:map-retrieve-req");
     let reg_id = topology.id("registration:map-retrieve-req");
     let mock = ContextSourceAdapter::start().await;
@@ -267,7 +297,7 @@ async fn dist_http_retrieve_entity_map_requested_returns_200_and_map_header() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 5))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 5))
             .with_ld_json()
             .send()
             .await
@@ -279,7 +309,7 @@ async fn dist_http_retrieve_entity_map_requested_returns_200_and_map_header() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,

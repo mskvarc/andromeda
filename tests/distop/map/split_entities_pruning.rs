@@ -28,11 +28,11 @@ use serde_json::{Value, json};
 
 /// Register `source` as an inclusive `Vehicle` source on the front broker,
 /// holding `property_name` for the split entity.
-async fn register_source(topology: &MultiBrokerTopology<BrokerRole>, source: BrokerRole, registration_local: &str, property_name: &str) {
+async fn register_source(topology: &MultiBrokerTopology<BrokerRole>, source: BrokerRole, entity_type: &str, registration_local: &str, property_name: &str) {
     let peer = topology.broker(source).expect("topology source broker");
     let registration = CsrBuilder::new(&topology.id(registration_local), peer.peer_url())
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(entity_type)
         .property_names(&[property_name])
         .operations(&["queryEntity"])
         .build();
@@ -49,13 +49,13 @@ async fn register_source(topology: &MultiBrokerTopology<BrokerRole>, source: Bro
 }
 
 /// Create one `Vehicle` carrying `attributes` on `role`.
-async fn seed(topology: &MultiBrokerTopology<BrokerRole>, role: BrokerRole, id: &str, attributes: &[(&str, Value)]) {
+async fn seed(topology: &MultiBrokerTopology<BrokerRole>, role: BrokerRole, entity_type: &str, id: &str, attributes: &[(&str, Value)]) {
     assert_status(
         &topology
             .broker(role)
             .expect("topology broker")
             .client()
-            .post_entity(&entity(id, "Vehicle", attributes))
+            .post_entity(&entity(id, entity_type, attributes))
             .with_ld_json()
             .send()
             .await
@@ -83,13 +83,18 @@ async fn distop_split_pruning_mint_retains_a_locally_partial_candidate() {
     let topology = topology::pair().await.expect("two-broker topology");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let entity_id = topology.id("Vehicle:split-mint-partial");
+    let vtype = topology.id("Vehicle");
 
     // The front broker holds only `fuel`; the supporting source holds `speed`.
-    seed(&topology, BrokerRole::A, &entity_id, &[("fuel", property(json!(30)))]).await;
-    seed(&topology, BrokerRole::B, &entity_id, &[("speed", property(json!(60)))]).await;
-    register_source(&topology, BrokerRole::B, "registration:split-mint-speed", "speed").await;
+    seed(&topology, BrokerRole::A, &vtype, &entity_id, &[("fuel", property(json!(30)))]).await;
+    seed(&topology, BrokerRole::B, &vtype, &entity_id, &[("speed", property(json!(60)))]).await;
+    register_source(&topology, BrokerRole::B, &vtype, "registration:split-mint-speed", "speed").await;
 
-    let created = create_entity_map(front.client(), &format!("type=Vehicle&id={entity_id}&q=speed%3E50&splitEntities=true")).await;
+    let created = create_entity_map(
+        front.client(),
+        &format!("type={}&id={entity_id}&q=speed%3E50&splitEntities=true", urlencoding::encode(&vtype)),
+    )
+    .await;
     assert_status(&created, 201);
     let map = json_body(&created);
     let recorded = holders(&map, &entity_id);
@@ -111,19 +116,24 @@ async fn distop_split_pruning_sheds_an_entity_that_stopped_matching_after_merge(
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let stays = topology.id("Vehicle:split-prune-stays");
     let sheds = topology.id("Vehicle:split-prune-sheds");
+    let vtype = topology.id("Vehicle");
 
     // The front broker holds `speed`, the supporting source holds `fuel`; both
     // entities match `q=speed>50` at first.
-    seed(&topology, BrokerRole::A, &stays, &[("speed", property(json!(60)))]).await;
-    seed(&topology, BrokerRole::A, &sheds, &[("speed", property(json!(70)))]).await;
-    seed(&topology, BrokerRole::B, &stays, &[("fuel", property(json!(30)))]).await;
-    seed(&topology, BrokerRole::B, &sheds, &[("fuel", property(json!(40)))]).await;
-    register_source(&topology, BrokerRole::B, "registration:split-prune-fuel", "fuel").await;
+    seed(&topology, BrokerRole::A, &vtype, &stays, &[("speed", property(json!(60)))]).await;
+    seed(&topology, BrokerRole::A, &vtype, &sheds, &[("speed", property(json!(70)))]).await;
+    seed(&topology, BrokerRole::B, &vtype, &stays, &[("fuel", property(json!(30)))]).await;
+    seed(&topology, BrokerRole::B, &vtype, &sheds, &[("fuel", property(json!(40)))]).await;
+    register_source(&topology, BrokerRole::B, &vtype, "registration:split-prune-fuel", "fuel").await;
 
     // Mint a split map: both entities are candidates and both match.
     let created = front
         .client()
-        .query_entities("type=Vehicle&q=speed%3E50&splitEntities=true&entityMap=true", "application/ld+json", None)
+        .query_entities(
+            &format!("type={}&q=speed%3E50&splitEntities=true&entityMap=true", urlencoding::encode(&vtype)),
+            "application/ld+json",
+            None,
+        )
         .await
         .expect("mint split map");
     assert_status(&created, 201);
@@ -137,7 +147,10 @@ async fn distop_split_pruning_sheds_an_entity_that_stopped_matching_after_merge(
     // Reuse the map with the filter applied over the merged result.
     let reused = front
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle&q=speed%3E50&splitEntities=true")
+        .raw(
+            Method::GET,
+            &format!("/ngsi-ld/v1/entities?type={}&q=speed%3E50&splitEntities=true", urlencoding::encode(&vtype)),
+        )
         .header("NGSILD-EntityMap", map_id.as_str())
         .header("accept", "application/ld+json")
         .send()

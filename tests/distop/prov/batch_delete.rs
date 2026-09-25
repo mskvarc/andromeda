@@ -78,10 +78,12 @@ async fn batch_delete_supported_forwards_and_merges() {
     let v1 = topology.id("Vehicle:prov-batch-delete-merge-v1");
     let v2 = topology.id("Vehicle:prov-batch-delete-merge-v2");
     let reg_id = topology.id("registration:prov-batch-delete-merge");
+    let vtype = topology.id("Vehicle");
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .operations(&["deleteBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
@@ -115,10 +117,12 @@ async fn batch_delete_fallback_per_entity_delete() {
     let v1 = topology.id("Vehicle:prov-batch-delete-fallback-v1");
     let v2 = topology.id("Vehicle:prov-batch-delete-fallback-v2");
     let reg_id = topology.id("registration:prov-batch-delete-fallback");
+    let vtype = topology.id("Vehicle");
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .operations(&["deleteEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
@@ -148,10 +152,12 @@ async fn batch_delete_redirect_neither_op_conflict_per_entity() {
     let v1 = topology.id("Vehicle:prov-batch-delete-neither-v1");
     let v2 = topology.id("Vehicle:prov-batch-delete-neither-v2");
     let reg_id = topology.id("registration:prov-batch-delete-neither");
+    let vtype = topology.id("Vehicle");
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .operations(&["retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
@@ -160,7 +166,7 @@ async fn batch_delete_redirect_neither_op_conflict_per_entity() {
         let seeded = client
             .raw(Method::POST, "/ngsi-ld/v1/entities?local=true")
             .header("content-type", "application/ld+json")
-            .json(&entity(id, "Vehicle", &[("speed", property(json!(1)))]))
+            .json(&entity(id, &vtype, &[("speed", property(json!(1)))]))
             .send()
             .await
             .expect("seed local entity");
@@ -192,12 +198,13 @@ async fn batch_delete_local_phase_removes_ids() {
     let v1 = topology.id("Vehicle:prov-batch-delete-local-v1");
     let v2 = topology.id("Vehicle:prov-batch-delete-local-v2");
     let reg_id = topology.id("registration:prov-batch-delete-local");
+    let vtype = topology.id("Vehicle");
 
     for id in [&v1, &v2] {
         let seeded = client
             .raw(Method::POST, "/ngsi-ld/v1/entities?local=true")
             .header("content-type", "application/ld+json")
-            .json(&entity(id, "Vehicle", &[("speed", property(json!(1)))]))
+            .json(&entity(id, &vtype, &[("speed", property(json!(1)))]))
             .send()
             .await
             .expect("seed local entity");
@@ -206,7 +213,7 @@ async fn batch_delete_local_phase_removes_ids() {
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("auxiliary")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["retrieveEntity", "queryEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);

@@ -4,10 +4,10 @@
 //! receiver.
 
 use crate::{
-    entity::{entity, property, vehicle},
+    entity::{entity, property, typed_vehicle},
     map::{
         notification_inspection::notified_entities,
-        subscription_document::{set_notification_attributes, subscription},
+        subscription_document::{set_entity_type, set_notification_attributes, subscription},
     },
     notification_adapter::{CapturedNotification, NotificationAdapter},
     oracle::assert_status,
@@ -39,13 +39,16 @@ fn notified_entity(notification: &CapturedNotification, entity_id: &str) -> Valu
 async fn notif_body_conforms_to_notification_structure() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let id = topology.id("Subscription:structure");
+    let mut sub = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut sub, &vtype);
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_subscription(&subscription(&id, &receiver.endpoint_url()))
+            .create_subscription(&sub)
             .await
             .expect("create subscription"),
         201,
@@ -55,7 +58,7 @@ async fn notif_body_conforms_to_notification_structure() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&topology.id("Vehicle:structure"), 20))
+            .post_entity(&typed_vehicle(&topology.id("Vehicle:structure"), &vtype, 20))
             .with_ld_json()
             .send()
             .await
@@ -77,8 +80,10 @@ async fn notif_body_conforms_to_notification_structure() {
 async fn notif_context_from_subscription_jsonld_context() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let id = topology.id("Subscription:context");
     let mut body = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut body, &vtype);
     body["notification"]["endpoint"]["accept"] = json!("application/ld+json");
     assert_status(
         &topology
@@ -95,7 +100,7 @@ async fn notif_context_from_subscription_jsonld_context() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&topology.id("Vehicle:context"), 20))
+            .post_entity(&typed_vehicle(&topology.id("Vehicle:context"), &vtype, 20))
             .with_ld_json()
             .send()
             .await
@@ -118,8 +123,10 @@ async fn notif_context_from_subscription_jsonld_context() {
 async fn notif_attributes_limited_to_notification_attributes() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let id = topology.id("Subscription:attrs-limited");
     let mut body = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut body, &vtype);
     set_notification_attributes(&mut body, &["speed"]);
     assert_status(
         &topology
@@ -132,7 +139,7 @@ async fn notif_attributes_limited_to_notification_attributes() {
         201,
     );
     let entity_id = topology.id("Vehicle:attrs-limited");
-    let with_two = entity(&entity_id, "Vehicle", &[("speed", property(json!(20))), ("colour", property(json!("red")))]);
+    let with_two = entity(&entity_id, &vtype, &[("speed", property(json!(20))), ("colour", property(json!("red")))]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -159,19 +166,22 @@ async fn notif_attributes_limited_to_notification_attributes() {
 async fn notif_absent_notification_attributes_includes_all() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let id = topology.id("Subscription:attrs-all");
+    let mut sub = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut sub, &vtype);
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_subscription(&subscription(&id, &receiver.endpoint_url()))
+            .create_subscription(&sub)
             .await
             .expect("create subscription"),
         201,
     );
     let entity_id = topology.id("Vehicle:attrs-all");
-    let with_two = entity(&entity_id, "Vehicle", &[("speed", property(json!(20))), ("colour", property(json!("red")))]);
+    let with_two = entity(&entity_id, &vtype, &[("speed", property(json!(20))), ("colour", property(json!("red")))]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -200,13 +210,14 @@ async fn notif_absent_notification_attributes_includes_all() {
 async fn notif_deletion_show_changes_off_only_deleted_at() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:deletion-off");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 20))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 20))
             .with_ld_json()
             .send()
             .await
@@ -215,6 +226,7 @@ async fn notif_deletion_show_changes_off_only_deleted_at() {
     );
     let id = topology.id("Subscription:deletion-off");
     let mut body = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut body, &vtype);
     body["notificationTrigger"] = json!(["entityDeleted"]);
     assert_status(
         &topology
@@ -252,8 +264,10 @@ async fn notif_deletion_show_changes_off_only_deleted_at() {
 async fn notif_sys_attrs_true_includes_created_and_modified() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let id = topology.id("Subscription:sys-attrs");
     let mut body = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut body, &vtype);
     body["notification"]["sysAttrs"] = json!(true);
     assert_status(
         &topology
@@ -271,7 +285,7 @@ async fn notif_sys_attrs_true_includes_created_and_modified() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 20))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 20))
             .with_ld_json()
             .send()
             .await
@@ -292,8 +306,9 @@ async fn notif_sys_attrs_true_includes_created_and_modified() {
 async fn notif_deleted_attribute_rendered_as_null_uri() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:deleted-null");
-    let with_two = entity(&entity_id, "Vehicle", &[("speed", property(json!(20))), ("colour", property(json!("red")))]);
+    let with_two = entity(&entity_id, &vtype, &[("speed", property(json!(20))), ("colour", property(json!("red")))]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -308,6 +323,7 @@ async fn notif_deleted_attribute_rendered_as_null_uri() {
     );
     let id = topology.id("Subscription:deleted-null");
     let mut body = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut body, &vtype);
     body["notification"]["showChanges"] = json!(true);
     body["notificationTrigger"] = json!(["attributeDeleted"]);
     assert_status(
@@ -346,9 +362,10 @@ async fn notif_deleted_attribute_rendered_as_null_uri() {
 async fn notif_deleted_attribute_full_object_null_uri_when_more_info_needed() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:deleted-object-null");
     let observed = json!({ "type": "Property", "value": 20, "observedAt": "2021-01-01T00:00:00Z" });
-    let with_two = entity(&entity_id, "Vehicle", &[("speed", observed), ("colour", property(json!("red")))]);
+    let with_two = entity(&entity_id, &vtype, &[("speed", observed), ("colour", property(json!("red")))]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -363,6 +380,7 @@ async fn notif_deleted_attribute_full_object_null_uri_when_more_info_needed() {
     );
     let id = topology.id("Subscription:deleted-object-null");
     let mut body = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut body, &vtype);
     body["notification"]["showChanges"] = json!(true);
     body["notificationTrigger"] = json!(["attributeDeleted"]);
     assert_status(
@@ -401,9 +419,10 @@ async fn notif_deleted_attribute_full_object_null_uri_when_more_info_needed() {
 async fn notif_deleted_language_property_language_map_null_uri() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:deleted-language");
     let language = json!({ "type": "LanguageProperty", "languageMap": { "en": "Main Street", "fr": "Rue Principale" } });
-    let with_language = entity(&entity_id, "Vehicle", &[("speed", property(json!(20))), ("street", language)]);
+    let with_language = entity(&entity_id, &vtype, &[("speed", property(json!(20))), ("street", language)]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -418,6 +437,7 @@ async fn notif_deleted_language_property_language_map_null_uri() {
     );
     let id = topology.id("Subscription:deleted-language");
     let mut body = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut body, &vtype);
     body["notification"]["showChanges"] = json!(true);
     body["notificationTrigger"] = json!(["attributeDeleted"]);
     assert_status(

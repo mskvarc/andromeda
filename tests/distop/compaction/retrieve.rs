@@ -19,6 +19,7 @@ use serde_json::json;
 /// A retrieve forwarded as a query downgrade supplies the registered aliased
 /// type `Veh` and the covered aliased attribute `spd`, never the IRIs' last
 /// segments.
+#[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_compaction_forwards_a_retrieve_downgrade_under_the_alias() {
     let topology = topology::single().await.expect("single-broker topology");

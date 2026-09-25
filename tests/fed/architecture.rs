@@ -16,13 +16,13 @@ use crate::fixtures::{
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use pretty_assertions::assert_eq;
 use serde_json::json;
-use serial_test::serial;
+use urlencoding::encode;
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_topology_reports_distinct_identities_and_isolated_stores() {
     assert_complete_catalog();
     let topology = topology().await;
+    let btype = topology.id("Building");
     let roles = [FedRole::Hub, FedRole::Madrid, FedRole::Berlin, FedRole::Nordic, FedRole::North];
     let mut aliases = Vec::new();
     for role in roles {
@@ -37,7 +37,7 @@ async fn fed_topology_reports_distinct_identities_and_isolated_stores() {
         assert_status(
             &broker(&topology, role)
                 .client()
-                .post_entity(&entity_with_scope(&id, "Building", 1, &format!("/Europe/{role:?}")))
+                .post_entity(&entity_with_scope(&id, &btype, 1, &format!("/Europe/{role:?}")))
                 .with_ld_json()
                 .send()
                 .await
@@ -60,16 +60,16 @@ async fn fed_topology_reports_distinct_identities_and_isolated_stores() {
 }
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_registration_lifecycle_controls_domain_routing() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let hub = broker(&topology, FedRole::Hub);
     let madrid = broker(&topology, FedRole::Madrid);
     let id = topology.id("Building:lifecycle");
     assert_status(
         &madrid
             .client()
-            .post_entity(&entity_with_scope(&id, "Building", 10, "/Europe/Madrid"))
+            .post_entity(&entity_with_scope(&id, &btype, 10, "/Europe/Madrid"))
             .with_ld_json()
             .send()
             .await
@@ -80,7 +80,7 @@ async fn fed_registration_lifecycle_controls_domain_routing() {
     let csr = registration(
         &registration_id,
         madrid.peer_url(),
-        "Building",
+        &btype,
         Some("/Europe/Madrid"),
         "inclusive",
         Some(&["queryEntity"]),
@@ -88,7 +88,7 @@ async fn fed_registration_lifecycle_controls_domain_routing() {
     assert_status(&hub.client().create_registration(&csr).await.expect("registration create"), 201);
     let found = hub
         .client()
-        .query_entities("type=Building&scopeQ=%2FEurope%2FMadrid%2F%23", "application/ld+json", None)
+        .query_entities(&format!("type={}&scopeQ=%2FEurope%2FMadrid%2F%23", encode(&btype)), "application/ld+json", None)
         .await
         .expect("federated query");
     assert_status(&found, 200);
@@ -108,7 +108,7 @@ async fn fed_registration_lifecycle_controls_domain_routing() {
     assert_eq!(body(&updated_registration)["scope"], json!(["/Europe/Berlin"]));
     let absent = hub
         .client()
-        .query_entities("type=Building&scopeQ=%2FEurope%2FMadrid%2F%23", "application/ld+json", None)
+        .query_entities(&format!("type={}&scopeQ=%2FEurope%2FMadrid%2F%23", encode(&btype)), "application/ld+json", None)
         .await
         .expect("updated query");
     assert_status(&absent, 200);
@@ -122,9 +122,9 @@ async fn fed_registration_lifecycle_controls_domain_routing() {
 }
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_coarse_scope_selects_matching_domain() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let hub = broker(&topology, FedRole::Hub);
     for (role, scope) in [
         (FedRole::Madrid, "/Europe/Madrid"),
@@ -136,7 +136,7 @@ async fn fed_coarse_scope_selects_matching_domain() {
         assert_status(
             &domain
                 .client()
-                .post_entity(&entity_with_scope(&id, "Building", 1, scope))
+                .post_entity(&entity_with_scope(&id, &btype, 1, scope))
                 .with_ld_json()
                 .send()
                 .await
@@ -146,7 +146,7 @@ async fn fed_coarse_scope_selects_matching_domain() {
         let csr = registration(
             &topology.id(&format!("registration:{role:?}")),
             domain.peer_url(),
-            "Building",
+            &btype,
             Some(scope),
             "inclusive",
             Some(&["queryEntity"]),
@@ -155,7 +155,7 @@ async fn fed_coarse_scope_selects_matching_domain() {
     }
     let response = hub
         .client()
-        .query_entities("type=Building&scopeQ=%2FEurope%2FMadrid%2F%23", "application/ld+json", None)
+        .query_entities(&format!("type={}&scopeQ=%2FEurope%2FMadrid%2F%23", encode(&btype)), "application/ld+json", None)
         .await
         .expect("scoped query");
     assert_status(&response, 200);
@@ -166,20 +166,23 @@ async fn fed_coarse_scope_selects_matching_domain() {
 }
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_geographic_coverage_selects_matching_domain() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let hub = broker(&topology, FedRole::Hub);
     let madrid = broker(&topology, FedRole::Madrid);
     let id = topology.id("Building:geo-madrid");
-    let located = json!({"id": id, "type": "Building", "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [ -3.7, 40.4 ]}}, "@context": COMPOUND_CONTEXT.as_str()});
+    let located = json!({"id": id, "type": btype, "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [ -3.7, 40.4 ]}}, "@context": COMPOUND_CONTEXT.as_str()});
     assert_status(&madrid.client().post_entity(&located).with_ld_json().send().await.expect("geo entity"), 201);
-    let csr = json!({"id": topology.id("registration:geo-madrid"), "type": "ContextSourceRegistration", "endpoint": madrid.peer_url(), "information": [{"entities": [{"type": "Building"}]}], "location": {"type": "Point", "coordinates": [-3.7,40.4]}, "operations": ["queryEntity"], "@context": COMPOUND_CONTEXT.as_str()});
+    let csr = json!({"id": topology.id("registration:geo-madrid"), "type": "ContextSourceRegistration", "endpoint": madrid.peer_url(), "information": [{"entities": [{"type": btype}]}], "location": {"type": "Point", "coordinates": [-3.7,40.4]}, "operations": ["queryEntity"], "@context": COMPOUND_CONTEXT.as_str()});
     assert_status(&hub.client().create_registration(&csr).await.expect("geo registration"), 201);
     let response = hub
         .client()
         .query_entities(
-            "type=Building&georel=near;maxDistance==100000&geometry=Point&coordinates=%5B-3.7,40.4%5D",
+            &format!(
+                "type={}&georel=near;maxDistance==100000&geometry=Point&coordinates=%5B-3.7,40.4%5D",
+                encode(&btype)
+            ),
             "application/ld+json",
             None,
         )
@@ -195,22 +198,22 @@ async fn fed_geographic_coverage_selects_matching_domain() {
 }
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_query_merges_multi_domain_entities_and_dataset_instances() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let hub = broker(&topology, FedRole::Hub);
     let madrid = broker(&topology, FedRole::Madrid);
     let berlin = broker(&topology, FedRole::Berlin);
     let shared = topology.id("Building:shared");
-    let first = json!({"id": shared, "type": "Building", "speed": {"type": "Property", "value": 1, "datasetId": "urn:dataset:madrid"}, "@context": COMPOUND_CONTEXT.as_str()});
-    let second = json!({"id": shared, "type": "Building", "speed": {"type": "Property", "value": 2, "datasetId": "urn:dataset:berlin"}, "@context": COMPOUND_CONTEXT.as_str()});
+    let first = json!({"id": shared, "type": btype, "speed": {"type": "Property", "value": 1, "datasetId": "urn:dataset:madrid"}, "@context": COMPOUND_CONTEXT.as_str()});
+    let second = json!({"id": shared, "type": btype, "speed": {"type": "Property", "value": 2, "datasetId": "urn:dataset:berlin"}, "@context": COMPOUND_CONTEXT.as_str()});
     assert_status(&madrid.client().post_entity(&first).with_ld_json().send().await.expect("first fragment"), 201);
     assert_status(&berlin.client().post_entity(&second).with_ld_json().send().await.expect("second fragment"), 201);
     for (domain, role) in [(madrid, "madrid"), (berlin, "berlin")] {
         let csr = registration(
             &topology.id(&format!("registration:{role}")),
             domain.peer_url(),
-            "Building",
+            &btype,
             None,
             "inclusive",
             Some(&["queryEntity"]),
@@ -219,7 +222,7 @@ async fn fed_query_merges_multi_domain_entities_and_dataset_instances() {
     }
     let response = hub
         .client()
-        .query_entities("type=Building", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&btype)), "application/ld+json", None)
         .await
         .expect("merged query");
     assert_status(&response, 200);
@@ -233,16 +236,16 @@ async fn fed_query_merges_multi_domain_entities_and_dataset_instances() {
 }
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_query_is_transparent_to_consumer() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let hub = broker(&topology, FedRole::Hub);
     let madrid = broker(&topology, FedRole::Madrid);
     let id = topology.id("Building:transparent");
     assert_status(
         &madrid
             .client()
-            .post_entity(&entity(&id, "Building", 3))
+            .post_entity(&entity(&id, &btype, 3))
             .with_ld_json()
             .send()
             .await
@@ -252,7 +255,7 @@ async fn fed_query_is_transparent_to_consumer() {
     let csr = registration(
         &topology.id("registration:transparent"),
         madrid.peer_url(),
-        "Building",
+        &btype,
         None,
         "inclusive",
         Some(&["retrieveEntity"]),
@@ -268,9 +271,9 @@ async fn fed_query_is_transparent_to_consumer() {
 }
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_centralized_domain_serves_local_state() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let hub = broker(&topology, FedRole::Hub);
     let madrid = broker(&topology, FedRole::Madrid);
     for value in [1, 2] {
@@ -278,7 +281,7 @@ async fn fed_centralized_domain_serves_local_state() {
         assert_status(
             &madrid
                 .client()
-                .post_entity(&entity(&id, "Building", value))
+                .post_entity(&entity(&id, &btype, value))
                 .with_ld_json()
                 .send()
                 .await
@@ -289,7 +292,7 @@ async fn fed_centralized_domain_serves_local_state() {
     let csr = registration(
         &topology.id("registration:centralized"),
         madrid.peer_url(),
-        "Building",
+        &btype,
         None,
         "inclusive",
         Some(&["queryEntity"]),
@@ -297,7 +300,7 @@ async fn fed_centralized_domain_serves_local_state() {
     assert_status(&hub.client().create_registration(&csr).await.expect("registration"), 201);
     let response = hub
         .client()
-        .query_entities("type=Building", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&btype)), "application/ld+json", None)
         .await
         .expect("centralized query");
     assert_status(&response, 200);
@@ -306,9 +309,9 @@ async fn fed_centralized_domain_serves_local_state() {
 }
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_distributed_domain_resolves_downstream_source() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let hub = broker(&topology, FedRole::Hub);
     let nordic = broker(&topology, FedRole::Nordic);
     let north = broker(&topology, FedRole::North);
@@ -316,7 +319,7 @@ async fn fed_distributed_domain_resolves_downstream_source() {
     assert_status(
         &north
             .client()
-            .post_entity(&entity(&id, "Building", 8))
+            .post_entity(&entity(&id, &btype, 8))
             .with_ld_json()
             .send()
             .await
@@ -330,7 +333,7 @@ async fn fed_distributed_domain_resolves_downstream_source() {
                 &topology.id("registration:nordic-north"),
                 north.peer_url(),
                 &id,
-                "Building",
+                &btype,
                 "inclusive",
                 Some(&["queryEntity"]),
             ))
@@ -344,7 +347,7 @@ async fn fed_distributed_domain_resolves_downstream_source() {
                 &topology.id("registration:hub-nordic"),
                 nordic.peer_url(),
                 &id,
-                "Building",
+                &btype,
                 "inclusive",
                 Some(&["queryEntity"]),
             ))
@@ -354,7 +357,7 @@ async fn fed_distributed_domain_resolves_downstream_source() {
     );
     let response = hub
         .client()
-        .query_entities("type=Building", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&btype)), "application/ld+json", None)
         .await
         .expect("nested read");
     assert_status(&response, 200);
@@ -363,9 +366,9 @@ async fn fed_distributed_domain_resolves_downstream_source() {
 }
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_nested_federation_excludes_back_edge() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let hub = broker(&topology, FedRole::Hub);
     let nordic = broker(&topology, FedRole::Nordic);
     let north = broker(&topology, FedRole::North);
@@ -373,7 +376,7 @@ async fn fed_nested_federation_excludes_back_edge() {
     assert_status(
         &north
             .client()
-            .post_entity(&entity(&id, "Building", 9))
+            .post_entity(&entity(&id, &btype, 9))
             .with_ld_json()
             .send()
             .await
@@ -386,7 +389,7 @@ async fn fed_nested_federation_excludes_back_edge() {
             .create_registration(&registration(
                 &topology.id("registration:nested-north"),
                 north.peer_url(),
-                "Building",
+                &btype,
                 None,
                 "inclusive",
                 Some(&["queryEntity"]),
@@ -401,7 +404,7 @@ async fn fed_nested_federation_excludes_back_edge() {
             .create_registration(&registration(
                 &topology.id("registration:north-hub-back-edge"),
                 hub.peer_url(),
-                "Building",
+                &btype,
                 None,
                 "inclusive",
                 Some(&["queryEntity"]),
@@ -415,7 +418,7 @@ async fn fed_nested_federation_excludes_back_edge() {
             .create_registration(&registration(
                 &topology.id("registration:hub-nordic"),
                 nordic.peer_url(),
-                "Building",
+                &btype,
                 None,
                 "inclusive",
                 Some(&["queryEntity"]),
@@ -426,7 +429,7 @@ async fn fed_nested_federation_excludes_back_edge() {
     );
     let response = hub
         .client()
-        .query_entities("type=Building", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&btype)), "application/ld+json", None)
         .await
         .expect("loop-safe read");
     assert_status(&response, 200);
@@ -435,16 +438,16 @@ async fn fed_nested_federation_excludes_back_edge() {
 }
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_direct_discovery_contacts_exact_domain_endpoint() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let hub = broker(&topology, FedRole::Hub);
     let madrid = broker(&topology, FedRole::Madrid);
     let id = topology.id("Building:direct-discovery");
     assert_status(
         &madrid
             .client()
-            .post_entity(&entity(&id, "Building", 11))
+            .post_entity(&entity(&id, &btype, 11))
             .with_ld_json()
             .send()
             .await
@@ -454,7 +457,7 @@ async fn fed_direct_discovery_contacts_exact_domain_endpoint() {
     let csr = registration(
         &topology.id("registration:direct-discovery"),
         madrid.peer_url(),
-        "Building",
+        &btype,
         Some("/Europe/Madrid"),
         "inclusive",
         Some(&["queryEntity"]),
@@ -462,7 +465,7 @@ async fn fed_direct_discovery_contacts_exact_domain_endpoint() {
     assert_status(&hub.client().create_registration(&csr).await.expect("registration"), 201);
     let discovered = hub
         .client()
-        .query_registrations("type=Building&scopeQ=%2FEurope%2FMadrid%2F%23", None)
+        .query_registrations(&format!("type={}&scopeQ=%2FEurope%2FMadrid%2F%23", encode(&btype)), None)
         .await
         .expect("discovery");
     assert_status(&discovered, 200);
@@ -473,7 +476,7 @@ async fn fed_direct_discovery_contacts_exact_domain_endpoint() {
         .and_then(|value| value["endpoint"].as_str())
         .expect("discovered endpoint");
     let direct = discovered_client(endpoint, 1072)
-        .raw(reqwest::Method::GET, "/ngsi-ld/v1/entities?type=Building")
+        .raw(reqwest::Method::GET, &format!("/ngsi-ld/v1/entities?type={}", encode(&btype)))
         .send()
         .await
         .expect("direct domain query");
@@ -483,9 +486,9 @@ async fn fed_direct_discovery_contacts_exact_domain_endpoint() {
 }
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_single_access_point_combines_local_and_three_domains() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let hub = broker(&topology, FedRole::Hub);
     for (role, name) in [(FedRole::Madrid, "madrid"), (FedRole::Berlin, "berlin"), (FedRole::Nordic, "nordic")] {
         let domain = broker(&topology, role);
@@ -493,7 +496,7 @@ async fn fed_single_access_point_combines_local_and_three_domains() {
         assert_status(
             &domain
                 .client()
-                .post_entity(&entity(&id, "Building", 1))
+                .post_entity(&entity(&id, &btype, 1))
                 .with_ld_json()
                 .send()
                 .await
@@ -505,7 +508,7 @@ async fn fed_single_access_point_combines_local_and_three_domains() {
                 .create_registration(&registration(
                     &topology.id(&format!("registration:{name}")),
                     domain.peer_url(),
-                    "Building",
+                    &btype,
                     None,
                     "inclusive",
                     Some(&["queryEntity"]),
@@ -518,7 +521,7 @@ async fn fed_single_access_point_combines_local_and_three_domains() {
     let local = topology.id("Building:local");
     assert_status(
         &hub.client()
-            .post_entity(&entity(&local, "Building", 1))
+            .post_entity(&entity(&local, &btype, 1))
             .with_ld_json()
             .send()
             .await
@@ -527,7 +530,7 @@ async fn fed_single_access_point_combines_local_and_three_domains() {
     );
     let response = hub
         .client()
-        .query_entities("type=Building", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&btype)), "application/ld+json", None)
         .await
         .expect("single access point query");
     assert_status(&response, 200);
@@ -536,15 +539,15 @@ async fn fed_single_access_point_combines_local_and_three_domains() {
 }
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_split_entity_filters_after_cross_domain_merge() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let hub = broker(&topology, FedRole::Hub);
     let madrid = broker(&topology, FedRole::Madrid);
     let berlin = broker(&topology, FedRole::Berlin);
     let id = topology.id("Building:split-filter");
-    let left = json!({"id": id, "type": "Building", "speed": {"type": "Property", "value": 1}, "@context": COMPOUND_CONTEXT.as_str()});
-    let right = json!({"id": id, "type": "Building", "brandName": {"type": "Property", "value": "merged"}, "@context": COMPOUND_CONTEXT.as_str()});
+    let left = json!({"id": id, "type": btype, "speed": {"type": "Property", "value": 1}, "@context": COMPOUND_CONTEXT.as_str()});
+    let right = json!({"id": id, "type": btype, "brandName": {"type": "Property", "value": "merged"}, "@context": COMPOUND_CONTEXT.as_str()});
     assert_status(&madrid.client().post_entity(&left).with_ld_json().send().await.expect("left fragment"), 201);
     assert_status(&berlin.client().post_entity(&right).with_ld_json().send().await.expect("right fragment"), 201);
     for (domain, name) in [(madrid, "left"), (berlin, "right")] {
@@ -553,7 +556,7 @@ async fn fed_split_entity_filters_after_cross_domain_merge() {
                 .create_registration(&registration(
                     &topology.id(&format!("registration:{name}")),
                     domain.peer_url(),
-                    "Building",
+                    &btype,
                     None,
                     "inclusive",
                     Some(&["queryEntity"]),
@@ -565,7 +568,11 @@ async fn fed_split_entity_filters_after_cross_domain_merge() {
     }
     let response = hub
         .client()
-        .query_entities("type=Building&q=brandName==%22merged%22&splitEntities=true", "application/ld+json", None)
+        .query_entities(
+            &format!("type={}&q=brandName==%22merged%22&splitEntities=true", encode(&btype)),
+            "application/ld+json",
+            None,
+        )
         .await
         .expect("merged filter");
     assert_status(&response, 200);
@@ -574,16 +581,16 @@ async fn fed_split_entity_filters_after_cross_domain_merge() {
 }
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_partial_read_failure_preserves_healthy_domain_results() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let hub = broker(&topology, FedRole::Hub);
     let madrid = broker(&topology, FedRole::Madrid);
     let id = topology.id("Building:healthy");
     assert_status(
         &madrid
             .client()
-            .post_entity(&entity(&id, "Building", 12))
+            .post_entity(&entity(&id, &btype, 12))
             .with_ld_json()
             .send()
             .await
@@ -595,7 +602,7 @@ async fn fed_partial_read_failure_preserves_healthy_domain_results() {
             .create_registration(&registration(
                 &topology.id("registration:healthy"),
                 madrid.peer_url(),
-                "Building",
+                &btype,
                 None,
                 "inclusive",
                 Some(&["queryEntity"]),
@@ -604,11 +611,11 @@ async fn fed_partial_read_failure_preserves_healthy_domain_results() {
             .expect("healthy registration"),
         201,
     );
-    let bad = json!({"id": topology.id("registration:failing"), "type": "ContextSourceRegistration", "endpoint": "http://127.0.0.1:1", "information": [{"entities": [{"type": "Building"}]}], "operations": ["queryEntity"], "@context": COMPOUND_CONTEXT.as_str()});
+    let bad = json!({"id": topology.id("registration:failing"), "type": "ContextSourceRegistration", "endpoint": "http://127.0.0.1:1", "information": [{"entities": [{"type": btype}]}], "operations": ["queryEntity"], "@context": COMPOUND_CONTEXT.as_str()});
     assert_status(&hub.client().create_registration(&bad).await.expect("failing registration"), 201);
     let response = hub
         .client()
-        .query_entities("type=Building", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&btype)), "application/ld+json", None)
         .await
         .expect("partial query");
     assert_status(&response, 200);
@@ -618,9 +625,9 @@ async fn fed_partial_read_failure_preserves_healthy_domain_results() {
 }
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_entity_map_stabilizes_cross_domain_pagination() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let hub = broker(&topology, FedRole::Hub);
     let madrid = broker(&topology, FedRole::Madrid);
     let berlin = broker(&topology, FedRole::Berlin);
@@ -630,7 +637,7 @@ async fn fed_entity_map_stabilizes_cross_domain_pagination() {
             assert_status(
                 &domain
                     .client()
-                    .post_entity(&entity(&id, "Building", value))
+                    .post_entity(&entity(&id, &btype, value))
                     .with_ld_json()
                     .send()
                     .await
@@ -643,7 +650,7 @@ async fn fed_entity_map_stabilizes_cross_domain_pagination() {
                 .create_registration(&registration(
                     &topology.id(&format!("registration:{name}")),
                     domain.peer_url(),
-                    "Building",
+                    &btype,
                     None,
                     "inclusive",
                     Some(&["queryEntity"]),
@@ -655,7 +662,11 @@ async fn fed_entity_map_stabilizes_cross_domain_pagination() {
     }
     let first = hub
         .client()
-        .query_entities("type=Building&entityMap=true&limit=2&count=true", "application/ld+json", None)
+        .query_entities(
+            &format!("type={}&entityMap=true&limit=2&count=true", encode(&btype)),
+            "application/ld+json",
+            None,
+        )
         .await
         .expect("first map page");
     assert_status(&first, 201);
@@ -665,7 +676,6 @@ async fn fed_entity_map_stabilizes_cross_domain_pagination() {
 }
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_available_types_and_attributes_union_domain_metadata() {
     let topology = topology().await;
     let hub = broker(&topology, FedRole::Hub);
@@ -675,12 +685,15 @@ async fn fed_available_types_and_attributes_union_domain_metadata() {
         (FedRole::Nordic, "NordicBuilding"),
     ] {
         let domain = broker(&topology, role);
+        // A per-test type per domain so the tenant-wide /types and /attributes
+        // union is not polluted by another concurrent test's metadata.
+        let entity_type = topology.id(entity_type);
         assert_status(
             &hub.client()
                 .create_registration(&registration(
                     &topology.id(&format!("registration:{entity_type}")),
                     domain.peer_url(),
-                    entity_type,
+                    &entity_type,
                     None,
                     "inclusive",
                     Some(&["queryEntity"]),

@@ -6,7 +6,7 @@
 use crate::{
     map::{
         entity_map_request::create_temporal_entity_map,
-        temporal_vehicle::{BEFORE_2022, temporal_vehicle},
+        temporal_vehicle::{BEFORE_2022, temporal_vehicle_typed},
     },
     oracle::{assert_status, json_body},
     topology::{self, BrokerRole},
@@ -24,10 +24,10 @@ async fn seed(client: &TestClient, body: &Value) {
 }
 
 /// A temporal `Vehicle` located far from the origin.
-fn far_vehicle(id: &str) -> Value {
+fn far_vehicle(id: &str, entity_type: &str) -> Value {
     json!({
         "id": id,
-        "type": "Vehicle",
+        "type": entity_type,
         "speed": [ { "type": "Property", "value": 20, "observedAt": "2021-01-01T00:00:00Z" } ],
         "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [80, 80] }, "observedAt": "2021-01-01T00:00:00Z" },
         "@context": COMPOUND_CONTEXT.as_str()
@@ -38,10 +38,10 @@ fn far_vehicle(id: &str) -> Value {
 /// window, so the temporal representation exposes the scope within the queried
 /// interval (clause 5.14.5.4 evaluates the scope query against the selected
 /// temporal evolution).
-fn scoped_vehicle(id: &str, scope: &str) -> Value {
+fn scoped_vehicle(id: &str, entity_type: &str, scope: &str) -> Value {
     json!({
         "id": id,
-        "type": "Vehicle",
+        "type": entity_type,
         "scope": { "type": "Property", "value": scope, "observedAt": "2020-06-01T00:00:00Z" },
         "speed": [ { "type": "Property", "value": 90, "observedAt": "2021-01-01T00:00:00Z" } ],
         "@context": COMPOUND_CONTEXT.as_str()
@@ -58,22 +58,23 @@ fn maps(created: &Value, entity_id: &str) -> bool {
 #[tokio::test]
 async fn emt_non_split_local_fully_filtered_s1_s4() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let keep = topology.id("Vehicle:pipeline-keep");
     let drop = topology.id("Vehicle:pipeline-drop");
     seed(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &temporal_vehicle(&keep, 90),
+        &temporal_vehicle_typed(&keep, &vtype, 90),
     )
     .await;
     seed(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &temporal_vehicle(&drop, 10),
+        &temporal_vehicle_typed(&drop, &vtype, 10),
     )
     .await;
     let created = json_body(
         &create_temporal_entity_map(
             topology.broker(BrokerRole::A).expect("topology broker A").client(),
-            &format!("type=Vehicle&q=speed%3E50&{BEFORE_2022}"),
+            &format!("type={}&q=speed%3E50&{BEFORE_2022}", urlencoding::encode(&vtype)),
         )
         .await,
     );
@@ -86,22 +87,23 @@ async fn emt_non_split_local_fully_filtered_s1_s4() {
 #[tokio::test]
 async fn emt_values_filter_produces_s2() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let fast = topology.id("Vehicle:s2-fast");
     let slow = topology.id("Vehicle:s2-slow");
     seed(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &temporal_vehicle(&fast, 90),
+        &temporal_vehicle_typed(&fast, &vtype, 90),
     )
     .await;
     seed(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &temporal_vehicle(&slow, 10),
+        &temporal_vehicle_typed(&slow, &vtype, 10),
     )
     .await;
     let created = json_body(
         &create_temporal_entity_map(
             topology.broker(BrokerRole::A).expect("topology broker A").client(),
-            &format!("type=Vehicle&q=speed%3E50&{BEFORE_2022}"),
+            &format!("type={}&q=speed%3E50&{BEFORE_2022}", urlencoding::encode(&vtype)),
         )
         .await,
     );
@@ -113,22 +115,23 @@ async fn emt_values_filter_produces_s2() {
 #[tokio::test]
 async fn emt_no_values_filter_s2_equals_s1() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let first = topology.id("Vehicle:s2-eq-1");
     let second = topology.id("Vehicle:s2-eq-2");
     seed(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &temporal_vehicle(&first, 90),
+        &temporal_vehicle_typed(&first, &vtype, 90),
     )
     .await;
     seed(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &temporal_vehicle(&second, 10),
+        &temporal_vehicle_typed(&second, &vtype, 10),
     )
     .await;
     let created = json_body(
         &create_temporal_entity_map(
             topology.broker(BrokerRole::A).expect("topology broker A").client(),
-            &format!("type=Vehicle&{BEFORE_2022}"),
+            &format!("type={}&{BEFORE_2022}", urlencoding::encode(&vtype)),
         )
         .await,
     );
@@ -143,18 +146,19 @@ async fn emt_no_values_filter_s2_equals_s1() {
 #[tokio::test]
 async fn emt_geoquery_produces_s3() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let near = topology.id("Vehicle:s3-near");
     let far = topology.id("Vehicle:s3-far");
     seed(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &temporal_vehicle(&near, 20),
+        &temporal_vehicle_typed(&near, &vtype, 20),
     )
     .await;
-    seed(topology.broker(BrokerRole::A).expect("topology broker A").client(), &far_vehicle(&far)).await;
+    seed(topology.broker(BrokerRole::A).expect("topology broker A").client(), &far_vehicle(&far, &vtype)).await;
     let created = json_body(
         &create_temporal_entity_map(
             topology.broker(BrokerRole::A).expect("topology broker A").client(),
-            &format!("type=Vehicle&{NEAR_ORIGIN}&{BEFORE_2022}"),
+            &format!("type={}&{NEAR_ORIGIN}&{BEFORE_2022}", urlencoding::encode(&vtype)),
         )
         .await,
     );
@@ -166,18 +170,19 @@ async fn emt_geoquery_produces_s3() {
 #[tokio::test]
 async fn emt_no_geoquery_s3_equals_s2() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let near = topology.id("Vehicle:s3-eq-near");
     let far = topology.id("Vehicle:s3-eq-far");
     seed(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &temporal_vehicle(&near, 20),
+        &temporal_vehicle_typed(&near, &vtype, 20),
     )
     .await;
-    seed(topology.broker(BrokerRole::A).expect("topology broker A").client(), &far_vehicle(&far)).await;
+    seed(topology.broker(BrokerRole::A).expect("topology broker A").client(), &far_vehicle(&far, &vtype)).await;
     let created = json_body(
         &create_temporal_entity_map(
             topology.broker(BrokerRole::A).expect("topology broker A").client(),
-            &format!("type=Vehicle&{BEFORE_2022}"),
+            &format!("type={}&{BEFORE_2022}", urlencoding::encode(&vtype)),
         )
         .await,
     );
@@ -189,22 +194,23 @@ async fn emt_no_geoquery_s3_equals_s2() {
 #[tokio::test]
 async fn emt_scope_query_produces_s4() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let inside = topology.id("Vehicle:s4-inside");
     let outside = topology.id("Vehicle:s4-outside");
     seed(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &scoped_vehicle(&inside, "/Madrid/Center"),
+        &scoped_vehicle(&inside, &vtype, "/Madrid/Center"),
     )
     .await;
     seed(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &scoped_vehicle(&outside, "/Barcelona"),
+        &scoped_vehicle(&outside, &vtype, "/Barcelona"),
     )
     .await;
     let created = json_body(
         &create_temporal_entity_map(
             topology.broker(BrokerRole::A).expect("topology broker A").client(),
-            &format!("type=Vehicle&scopeQ=%2FMadrid%2FCenter&{BEFORE_2022}"),
+            &format!("type={}&scopeQ=%2FMadrid%2FCenter&{BEFORE_2022}", urlencoding::encode(&vtype)),
         )
         .await,
     );
@@ -216,22 +222,23 @@ async fn emt_scope_query_produces_s4() {
 #[tokio::test]
 async fn emt_no_scope_query_s4_equals_s3() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let first = topology.id("Vehicle:s4-eq-1");
     let second = topology.id("Vehicle:s4-eq-2");
     seed(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &scoped_vehicle(&first, "/Madrid/Center"),
+        &scoped_vehicle(&first, &vtype, "/Madrid/Center"),
     )
     .await;
     seed(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &scoped_vehicle(&second, "/Barcelona"),
+        &scoped_vehicle(&second, &vtype, "/Barcelona"),
     )
     .await;
     let created = json_body(
         &create_temporal_entity_map(
             topology.broker(BrokerRole::A).expect("topology broker A").client(),
-            &format!("type=Vehicle&{BEFORE_2022}"),
+            &format!("type={}&{BEFORE_2022}", urlencoding::encode(&vtype)),
         )
         .await,
     );
@@ -243,15 +250,16 @@ async fn emt_no_scope_query_s4_equals_s3() {
 #[tokio::test]
 async fn emt_local_map_created_from_s4() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:s4-map");
     seed(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &temporal_vehicle(&entity_id, 90),
+        &temporal_vehicle_typed(&entity_id, &vtype, 90),
     )
     .await;
     let created = create_temporal_entity_map(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &format!("type=Vehicle&q=speed%3E50&{BEFORE_2022}"),
+        &format!("type={}&q=speed%3E50&{BEFORE_2022}", urlencoding::encode(&vtype)),
     )
     .await;
     assert_status(&created, 201);

@@ -23,6 +23,7 @@ use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use axum::http::Method;
 use pretty_assertions::assert_eq;
 use serde_json::json;
+use urlencoding::encode;
 
 /// The JSON-LD `Link` header carrying the compound test context for a request
 /// with no body to hold an inline `@context`.
@@ -43,6 +44,7 @@ async fn purge_under_a_map_forwards_only_to_the_maps_registrations() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let in_map = topology.id("registration:purge-map-in");
     let out_of_map = topology.id("registration:purge-map-out");
     let entity_id = topology.id("Vehicle:purge-map");
@@ -53,7 +55,7 @@ async fn purge_under_a_map_forwards_only_to_the_maps_registrations() {
         Method::GET,
         "/in/ngsi-ld/v1/entities",
         200,
-        &json!([entity(&entity_id, "Vehicle", &[("speed", property(json!(42)))])]),
+        &json!([entity(&entity_id, &vtype, &[("speed", property(json!(42)))])]),
     )
     .await;
     mock.set_stub(Method::DELETE, "/in/ngsi-ld/v1/entities", 204).await;
@@ -61,14 +63,14 @@ async fn purge_under_a_map_forwards_only_to_the_maps_registrations() {
 
     let in_registration = CsrBuilder::new(&in_map, &mock.url("/in"))
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity", "purgeEntity"])
         .build();
     assert_status(&client.create_registration(&in_registration).await.expect("register in-map source"), 201);
 
     // Mint the map: the query records the in-map source as a holder of the entity.
     let created = client
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
+        .query_entities(&format!("type={}&entityMap=true", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("mint the map");
     assert_status(&created, 201);
@@ -78,7 +80,7 @@ async fn purge_under_a_map_forwards_only_to_the_maps_registrations() {
     // among the registrations the minted map names.
     let out_registration = CsrBuilder::new(&out_of_map, &mock.url("/out"))
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity", "purgeEntity"])
         .build();
     assert_status(&client.create_registration(&out_registration).await.expect("register out-of-map source"), 201);
@@ -87,7 +89,7 @@ async fn purge_under_a_map_forwards_only_to_the_maps_registrations() {
     mock.drain_requests().await;
 
     let purged = client
-        .raw(Method::DELETE, "/ngsi-ld/v1/entities?type=Vehicle")
+        .raw(Method::DELETE, &format!("/ngsi-ld/v1/entities?type={}", encode(&vtype)))
         .header("link", context_link().as_str())
         .header("NGSILD-EntityMap", map_id.as_str())
         .send()
@@ -139,6 +141,7 @@ async fn purge_without_a_map_still_fans_out_by_matching() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let first = topology.id("registration:purge-nomap-1");
     let second = topology.id("registration:purge-nomap-2");
 
@@ -148,14 +151,15 @@ async fn purge_without_a_map_still_fans_out_by_matching() {
     for (id, path) in [(&first, "/s1"), (&second, "/s2")] {
         let registration = CsrBuilder::new(id, &mock.url(path))
             .mode("redirect")
-            .entity_type("Vehicle")
+            .entity_type(&vtype)
+            .id_pattern(&format!("^{}", topology.id_prefix()))
             .operations(&["purgeEntity", "retrieveEntity"])
             .build();
         assert_status(&client.create_registration(&registration).await.expect("register source"), 201);
     }
 
     let purged = client
-        .raw(Method::DELETE, "/ngsi-ld/v1/entities?type=Vehicle")
+        .raw(Method::DELETE, &format!("/ngsi-ld/v1/entities?type={}", encode(&vtype)))
         .header("link", context_link().as_str())
         .send()
         .await

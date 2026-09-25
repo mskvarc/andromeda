@@ -55,7 +55,14 @@ async fn retrieve_csr_unknown_id_returns_404() {
 async fn retrieve_csr_expands_shorthand_terms_in_result() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:expansion");
-    let body = CsrBuilder::new(&id, PEER_ENDPOINT).entity_type("Vehicle").property_names(&["speed"]).build();
+    // The literal `Vehicle`/`speed` shorthand is what this test expands and
+    // compacts, so it stays; a prefix `idPattern` scopes the registration to this
+    // test's own ids so it cannot match another concurrent test's Vehicle writes.
+    let body = CsrBuilder::new(&id, PEER_ENDPOINT)
+        .entity_type("Vehicle")
+        .id_pattern(&format!("{}.*", topology.id_prefix()))
+        .property_names(&["speed"])
+        .build();
     let created = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
@@ -107,7 +114,10 @@ async fn retrieve_csr_expands_shorthand_terms_in_result() {
 async fn retrieve_csr_existing_returns_200_jsonld_object() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:existing");
-    let body = CsrBuilder::new(&id, PEER_ENDPOINT).build();
+    // This test asserts only the registration's id and resource type, not its
+    // covered entity type, so a per-test entity type keeps the default `Vehicle`
+    // registration from matching another concurrent test's Vehicle writes.
+    let body = CsrBuilder::new(&id, PEER_ENDPOINT).entity_type(&topology.id("Vehicle")).build();
     let created = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")

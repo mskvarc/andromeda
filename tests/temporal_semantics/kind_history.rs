@@ -7,20 +7,18 @@
 
 use crate::{
     attribute_iri,
-    clean_database,
     client,
     create_entity,
     database,
     get_temporal_entity,
     rendered_instances,
     stored_history::stored_attribute_history,
-    unique_id,
     update_entity_attributes,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
-use serial_test::serial;
 
 /// The stored code for the Property family.
 const PROPERTY_KIND: i16 = 1;
@@ -40,12 +38,11 @@ const URI_VALUE_KIND: i16 = 7;
 /// A later Relationship, and a later differently shaped Property, leave the
 /// numeric Property already recorded at the same grain exactly as it was.
 #[tokio::test]
-#[serial]
 async fn temporal_semantics_a_later_kind_change_does_not_reinterpret_recorded_history() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_semantics").await.expect("isolated test environment");
     let http = client();
     let pool = database().await;
-    let entity_id = unique_id("urn:ngsi-ld:Sensor:kind_change");
+    let entity_id = scope.id("Sensor:kind_change");
 
     let created = create_entity(
         &http,
@@ -107,4 +104,5 @@ async fn temporal_semantics_a_later_kind_change_does_not_reinterpret_recorded_hi
     assert_eq!(instances[0]["type"], json!("Property"), "the first instance is still a Property");
     assert_eq!(instances[0]["value"], json!(5), "the first instance still carries its number");
     assert!(instances[0].get("object").is_none(), "the later Relationship did not reshape it");
+    scope.finish().await.expect("cleanup failed");
 }

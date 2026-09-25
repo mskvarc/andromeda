@@ -57,7 +57,7 @@ async fn dist_http_retrieve_entity_source_unsupported_format_returns_501() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "exclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "Vehicle", "exclusive"))
             .await
             .expect("register source"),
         201,
@@ -132,7 +132,7 @@ async fn dist_http_delete_entity_partial_failure_returns_207_batch_result() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["deleteEntity"]))
+            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "Vehicle", "inclusive", &["deleteEntity"]))
             .await
             .expect("register source"),
         201,

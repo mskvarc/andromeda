@@ -19,9 +19,9 @@ use axum::http::Method;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
-/// A `Vehicle` carrying only `speed`.
-fn speed_vehicle(id: &str, speed: i64) -> Value {
-    entity(id, "Vehicle", &[("speed", property(json!(speed)))])
+/// A single-`speed` entity of an explicit per-test type.
+fn speed_vehicle(id: &str, entity_type: &str, speed: i64) -> Value {
+    entity(id, entity_type, &[("speed", property(json!(speed)))])
 }
 
 /// Whether a `BatchOperationResult` reports `id` under `success`.
@@ -47,6 +47,7 @@ async fn batch_update_per_csr_filtering_drops_attrless_entities() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:batch-update-filter-v1");
     let v2 = topology.id("Vehicle:batch-update-filter-v2");
     let reg_speed = topology.id("registration:batch-update-filter-speed");
@@ -54,12 +55,16 @@ async fn batch_update_per_csr_filtering_drops_attrless_entities() {
 
     let speed_csr = CsrBuilder::new(&reg_speed, &mock.url("/s1"))
         .mode("redirect")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .property_names(&["speed"])
         .operations(&["updateBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&speed_csr).await.expect("create speed registration"), 201);
     let gear_csr = CsrBuilder::new(&reg_gear, &mock.url("/s2"))
         .mode("redirect")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .property_names(&["gear"])
         .operations(&["updateBatch", "retrieveEntity"])
         .build();
@@ -67,7 +72,10 @@ async fn batch_update_per_csr_filtering_drops_attrless_entities() {
     mock.set_stub(Method::POST, "/s1/ngsi-ld/v1/entityOperations/update", 204).await;
     mock.set_stub(Method::POST, "/s2/ngsi-ld/v1/entityOperations/update", 204).await;
 
-    let batch = json!([speed_vehicle(&v1, 42), entity(&v2, "Vehicle", &[("brandName", property(json!("Mercedes")))])]);
+    let batch = json!([
+        speed_vehicle(&v1, &vtype, 42),
+        entity(&v2, &vtype, &[("brandName", property(json!("Mercedes")))])
+    ]);
     let dispatched = client.batch_update(&batch).await.expect("batch update");
     assert!(dispatched.status.as_u16() < 500, "the batch update is dispatched: {}", dispatched.status);
 
@@ -95,12 +103,15 @@ async fn batch_update_supported_forwards_and_merges() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:batch-update-merge-v1");
     let v2 = topology.id("Vehicle:batch-update-merge-v2");
     let reg_id = topology.id("registration:batch-update-merge");
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .operations(&["updateBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
@@ -112,7 +123,7 @@ async fn batch_update_supported_forwards_and_merges() {
         .await;
 
     let updated = client
-        .batch_update(&json!([speed_vehicle(&v1, 1), speed_vehicle(&v2, 2)]))
+        .batch_update(&json!([speed_vehicle(&v1, &vtype, 1), speed_vehicle(&v2, &vtype, 2)]))
         .await
         .expect("batch update");
     assert_status(&updated, 207);
@@ -133,12 +144,15 @@ async fn batch_update_fallback_per_entity_update_overwrite() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:batch-update-fbupdate-v1");
     let v2 = topology.id("Vehicle:batch-update-fbupdate-v2");
     let reg_id = topology.id("registration:batch-update-fbupdate");
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .operations(&["updateEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
@@ -146,7 +160,7 @@ async fn batch_update_fallback_per_entity_update_overwrite() {
     mock.set_stub(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v2}/attrs"), 204).await;
 
     let _ = client
-        .batch_update(&json!([speed_vehicle(&v1, 1), speed_vehicle(&v2, 2)]))
+        .batch_update(&json!([speed_vehicle(&v1, &vtype, 1), speed_vehicle(&v2, &vtype, 2)]))
         .await
         .expect("batch update");
     assert_eq!(
@@ -173,12 +187,15 @@ async fn batch_update_fallback_per_entity_append_no_overwrite() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:batch-update-fbappend-v1");
     let v2 = topology.id("Vehicle:batch-update-fbappend-v2");
     let reg_id = topology.id("registration:batch-update-fbappend");
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .operations(&["appendAttrs", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
@@ -188,7 +205,7 @@ async fn batch_update_fallback_per_entity_append_no_overwrite() {
     let _ = client
         .raw(Method::POST, "/ngsi-ld/v1/entityOperations/update?options=noOverwrite")
         .header("content-type", "application/ld+json")
-        .json(&json!([speed_vehicle(&v1, 1), speed_vehicle(&v2, 2)]))
+        .json(&json!([speed_vehicle(&v1, &vtype, 1), speed_vehicle(&v2, &vtype, 2)]))
         .send()
         .await
         .expect("batch update");
@@ -214,19 +231,22 @@ async fn batch_update_redirect_no_viable_op_conflict_per_entity() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:batch-update-noviable-v1");
     let v2 = topology.id("Vehicle:batch-update-noviable-v2");
     let reg_id = topology.id("registration:batch-update-noviable");
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .property_names(&["speed"])
         .operations(&["retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let updated = client
-        .batch_update(&json!([speed_vehicle(&v1, 1), speed_vehicle(&v2, 2)]))
+        .batch_update(&json!([speed_vehicle(&v1, &vtype, 1), speed_vehicle(&v2, &vtype, 2)]))
         .await
         .expect("batch update");
     assert_status(&updated, 207);
@@ -252,6 +272,7 @@ async fn batch_update_local_phase_populates_results() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:batch-update-local-v1");
     let v2 = topology.id("Vehicle:batch-update-local-v2");
     let reg_id = topology.id("registration:batch-update-local");
@@ -259,7 +280,7 @@ async fn batch_update_local_phase_populates_results() {
     let seeded = client
         .raw(Method::POST, "/ngsi-ld/v1/entities?local=true")
         .header("content-type", "application/ld+json")
-        .json(&speed_vehicle(&v1, 1))
+        .json(&speed_vehicle(&v1, &vtype, 1))
         .send()
         .await
         .expect("seed local");
@@ -267,12 +288,13 @@ async fn batch_update_local_phase_populates_results() {
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("auxiliary")
+        .entity_type(&vtype)
         .operations(&["retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let updated = client
-        .batch_update(&json!([speed_vehicle(&v1, 99), speed_vehicle(&v2, 2)]))
+        .batch_update(&json!([speed_vehicle(&v1, &vtype, 99), speed_vehicle(&v2, &vtype, 2)]))
         .await
         .expect("batch update");
     assert_status(&updated, 207);

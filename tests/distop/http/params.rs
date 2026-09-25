@@ -7,12 +7,13 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::vehicle,
+    entity::typed_vehicle,
     fw::snapshots::create_prepared_snapshot,
     http::forwarding::{FORWARDED_ENTITIES_PATH, context_link, context_link_header, provision_source, retrieval_source},
     oracle::{assert_problem_details, assert_status, entity_map_header, json_body},
     topology::{self, BrokerRole},
 };
+use andromeda_test_client::tenant_name::TenantName;
 use andromeda_test_fixtures::problem_detail::{BAD_REQUEST_DATA, INVALID_REQUEST};
 use pretty_assertions::assert_eq;
 use reqwest::Method;
@@ -24,6 +25,7 @@ use std::time::Duration;
 #[tokio::test]
 async fn dist_http_local_param_honoured_on_all_listed_resources() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:local-honoured");
     let reg_id = topology.id("registration:local-honoured");
     let mock = ContextSourceAdapter::start().await;
@@ -33,14 +35,14 @@ async fn dist_http_local_param_honoured_on_all_listed_resources() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 5))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 5))
             .with_ld_json()
             .send()
             .await
             .expect("local create"),
         201,
     );
-    let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
+    let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive");
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -58,7 +60,11 @@ async fn dist_http_local_param_honoured_on_all_listed_resources() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .query_entities("type=Vehicle&local=true", "application/ld+json", Some(context_link()))
+            .query_entities(
+                &format!("type={}&local=true", urlencoding::encode(&vtype)),
+                "application/ld+json",
+                Some(context_link()),
+            )
             .await
             .expect("local query"),
         200,
@@ -84,6 +90,7 @@ async fn dist_http_local_param_honoured_on_all_listed_resources() {
 #[tokio::test]
 async fn dist_http_local_true_bypasses_all_csrs() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:local-all");
     let first_reg = topology.id("registration:local-all-1");
     let second_reg = topology.id("registration:local-all-2");
@@ -95,7 +102,7 @@ async fn dist_http_local_true_bypasses_all_csrs() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 5))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 5))
             .with_ld_json()
             .send()
             .await
@@ -107,7 +114,7 @@ async fn dist_http_local_true_bypasses_all_csrs() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&first_reg, &first.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&first_reg, &first.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register first"),
         201,
@@ -117,7 +124,7 @@ async fn dist_http_local_true_bypasses_all_csrs() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&second_reg, &second.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&second_reg, &second.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register second"),
         201,
@@ -128,7 +135,11 @@ async fn dist_http_local_true_bypasses_all_csrs() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .query_entities("type=Vehicle&local=true", "application/ld+json", Some(context_link()))
+            .query_entities(
+                &format!("type={}&local=true", urlencoding::encode(&vtype)),
+                "application/ld+json",
+                Some(context_link()),
+            )
             .await
             .expect("local query"),
         200,
@@ -146,6 +157,7 @@ async fn dist_http_local_true_bypasses_all_csrs() {
 #[tokio::test]
 async fn dist_http_registry_api_operations_always_local() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:registry-local");
     let reg_id = topology.id("registration:registry-local");
     let mock = ContextSourceAdapter::start().await;
@@ -155,7 +167,7 @@ async fn dist_http_registry_api_operations_always_local() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -166,7 +178,7 @@ async fn dist_http_registry_api_operations_always_local() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .query_registrations("type=Vehicle", None)
+            .query_registrations(&format!("type={}", urlencoding::encode(&vtype)), None)
             .await
             .expect("registry query"),
         200,
@@ -187,6 +199,7 @@ async fn dist_http_registry_api_operations_always_local() {
 #[tokio::test]
 async fn dist_http_snapshot_op_ignores_local_false() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:snapshot-local");
     let reg_id = topology.id("registration:snapshot-local");
     let mock = ContextSourceAdapter::start().await;
@@ -196,7 +209,7 @@ async fn dist_http_snapshot_op_ignores_local_false() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 5))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 5))
             .with_ld_json()
             .send()
             .await
@@ -208,7 +221,7 @@ async fn dist_http_snapshot_op_ignores_local_false() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -218,7 +231,7 @@ async fn dist_http_snapshot_op_ignores_local_false() {
     let snapshot = json!({
         "type": "Snapshot",
         "snapshotLifetime": "PT1H",
-        "snapshotQueries": [ { "type": "Query", "entities": [ { "type": "Vehicle" } ] } ],
+        "snapshotQueries": [ { "type": "Query", "entities": [ { "type": vtype.as_str() } ] } ],
         "@context": context_link()
     });
     let snapshot_id = create_prepared_snapshot(topology.broker(BrokerRole::A).expect("topology broker A").client(), &snapshot).await;
@@ -232,7 +245,7 @@ async fn dist_http_snapshot_op_ignores_local_false() {
         .header("content-type", "application/ld+json")
         .header("accept", "application/ld+json")
         .header("ngsild-snapshot", snapshot_id.as_str())
-        .json(&json!({ "type": "Query", "entities": [ { "type": "Vehicle" } ], "@context": context_link() }))
+        .json(&json!({ "type": "Query", "entities": [ { "type": vtype.as_str() } ], "@context": context_link() }))
         .send()
         .await
         .expect("snapshot query");
@@ -261,11 +274,16 @@ async fn dist_http_snapshot_op_ignores_local_false() {
 #[tokio::test]
 async fn dist_http_incomplete_geoquery_returns_bad_request_data() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let response = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&georel=near%3BmaxDistance%3D%3D1000", "application/ld+json", Some(context_link()))
+        .query_entities(
+            &format!("type={}&georel=near%3BmaxDistance%3D%3D1000", urlencoding::encode(&vtype)),
+            "application/ld+json",
+            Some(context_link()),
+        )
         .await
         .expect("incompatible-param query");
     assert_status(&response, 400);
@@ -278,6 +296,7 @@ async fn dist_http_incomplete_geoquery_returns_bad_request_data() {
 #[tokio::test]
 async fn dist_http_query_entities_supports_query_url_params() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let fast = topology.id("Vehicle:fast");
     let slow = topology.id("Vehicle:slow");
     assert_status(
@@ -285,7 +304,7 @@ async fn dist_http_query_entities_supports_query_url_params() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&fast, 80))
+            .post_entity(&typed_vehicle(&fast, &vtype, 80))
             .with_ld_json()
             .send()
             .await
@@ -297,7 +316,7 @@ async fn dist_http_query_entities_supports_query_url_params() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&slow, 20))
+            .post_entity(&typed_vehicle(&slow, &vtype, 20))
             .with_ld_json()
             .send()
             .await
@@ -309,7 +328,11 @@ async fn dist_http_query_entities_supports_query_url_params() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&q=speed%3E50", "application/ld+json", Some(context_link()))
+        .query_entities(
+            &format!("type={}&q=speed%3E50", urlencoding::encode(&vtype)),
+            "application/ld+json",
+            Some(context_link()),
+        )
         .await
         .expect("filtered query");
     assert_status(&response, 200);
@@ -330,6 +353,7 @@ async fn dist_http_query_entities_supports_query_url_params() {
 #[tokio::test]
 async fn dist_http_query_type_star_implies_local_and_rejects_local_false() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:type-star");
     let reg_id = topology.id("registration:type-star");
     let mock = ContextSourceAdapter::start().await;
@@ -339,7 +363,7 @@ async fn dist_http_query_type_star_implies_local_and_rejects_local_false() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 5))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 5))
             .with_ld_json()
             .send()
             .await
@@ -351,7 +375,7 @@ async fn dist_http_query_type_star_implies_local_and_rejects_local_false() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -388,6 +412,7 @@ async fn dist_http_query_type_star_implies_local_and_rejects_local_false() {
 #[tokio::test]
 async fn dist_http_query_split_entities_param_forwards_and_reapplies_filters() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:split");
     let first_reg = topology.id("registration:split-1");
     let second_reg = topology.id("registration:split-2");
@@ -399,7 +424,7 @@ async fn dist_http_query_split_entities_param_forwards_and_reapplies_filters() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&first_reg, &first.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&first_reg, &first.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register first"),
         201,
@@ -409,23 +434,27 @@ async fn dist_http_query_split_entities_param_forwards_and_reapplies_filters() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&second_reg, &second.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&second_reg, &second.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register second"),
         201,
     );
     first
-        .set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([vehicle(&entity_id, 40)]))
+        .set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([typed_vehicle(&entity_id, &vtype, 40)]))
         .await;
     second
-        .set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([vehicle(&entity_id, 40)]))
+        .set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([typed_vehicle(&entity_id, &vtype, 40)]))
         .await;
 
     let response = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&splitEntities=true", "application/ld+json", Some(context_link()))
+        .query_entities(
+            &format!("type={}&splitEntities=true", urlencoding::encode(&vtype)),
+            "application/ld+json",
+            Some(context_link()),
+        )
         .await
         .expect("split query");
     assert_status(&response, 200);
@@ -442,6 +471,7 @@ async fn dist_http_query_split_entities_param_forwards_and_reapplies_filters() {
 #[tokio::test]
 async fn dist_http_query_csf_param_forwarded_unchanged() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:csf");
     let reg_id = topology.id("registration:csf");
     let mock = ContextSourceAdapter::start().await;
@@ -451,7 +481,7 @@ async fn dist_http_query_csf_param_forwarded_unchanged() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -462,7 +492,11 @@ async fn dist_http_query_csf_param_forwarded_unchanged() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&csf=mode%3D%3Dinclusive", "application/ld+json", Some(context_link()))
+        .query_entities(
+            &format!("type={}&csf=mode%3D%3Dinclusive", urlencoding::encode(&vtype)),
+            "application/ld+json",
+            Some(context_link()),
+        )
         .await
         .expect("csf query");
     assert_status(&response, 200);
@@ -482,13 +516,14 @@ async fn dist_http_query_csf_param_forwarded_unchanged() {
 #[tokio::test]
 async fn dist_http_query_contained_by_param_honoured() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:contained");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 5))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 5))
             .with_ld_json()
             .send()
             .await
@@ -496,7 +531,7 @@ async fn dist_http_query_contained_by_param_honoured() {
         201,
     );
 
-    let query = format!("type=Vehicle&containedBy={}", urlencoding::encode(&entity_id));
+    let query = format!("type={}&containedBy={}", urlencoding::encode(&vtype), urlencoding::encode(&entity_id));
     let response = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
@@ -516,6 +551,7 @@ async fn dist_http_query_contained_by_param_honoured() {
 #[tokio::test]
 async fn dist_http_query_entity_map_lifetime_param_sets_expiry() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:map-lifetime");
     let reg_id = topology.id("registration:map-lifetime");
     let mock = ContextSourceAdapter::start().await;
@@ -525,7 +561,7 @@ async fn dist_http_query_entity_map_lifetime_param_sets_expiry() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -537,7 +573,7 @@ async fn dist_http_query_entity_map_lifetime_param_sets_expiry() {
         .expect("topology broker A")
         .client()
         .query_entities(
-            "type=Vehicle&entityMap=true&entityMapLifetime=PT5M",
+            &format!("type={}&entityMap=true&entityMapLifetime=PT5M", urlencoding::encode(&vtype)),
             "application/ld+json",
             Some(context_link()),
         )
@@ -558,16 +594,19 @@ async fn dist_http_query_entity_map_lifetime_param_sets_expiry() {
 #[tokio::test]
 async fn dist_http_purge_entities_supports_table_params_and_type_star_local() {
     let topology = topology::single().await.expect("single-broker topology");
+    // `type=*` selects every type, so the purge is inherently tenant-wide and
+    // cannot be scoped by a per-test type or idPattern. A private tenant, used by
+    // this test alone, keeps the purge from deleting concurrent tests' entities.
+    let tenant = TenantName::parse("distopPurgeStarLocal").expect("valid tenant name");
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").tenant_client(tenant);
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:purge-star");
     let reg_id = topology.id("registration:purge-star");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
-        &topology
-            .broker(BrokerRole::A)
-            .expect("topology broker A")
-            .client()
-            .post_entity(&vehicle(&entity_id, 5))
+        &client
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 5))
             .with_ld_json()
             .send()
             .await
@@ -575,23 +614,14 @@ async fn dist_http_purge_entities_supports_table_params_and_type_star_local() {
         201,
     );
     assert_status(
-        &topology
-            .broker(BrokerRole::A)
-            .expect("topology broker A")
-            .client()
-            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["purgeEntity"]))
+        &client
+            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive", &["purgeEntity"]))
             .await
             .expect("register source"),
         201,
     );
 
-    let response = topology
-        .broker(BrokerRole::A)
-        .expect("topology broker A")
-        .client()
-        .delete_entities_by_query("type=*", Some(context_link()))
-        .await
-        .expect("type-star purge");
+    let response = client.delete_entities_by_query("type=*", Some(context_link())).await.expect("type-star purge");
     assert_status(&response, 204);
     assert_eq!(mock.get_total_count(), 0, "type=* purge implies local, so no source is contacted");
 
@@ -604,13 +634,14 @@ async fn dist_http_purge_entities_supports_table_params_and_type_star_local() {
 #[tokio::test]
 async fn dist_http_retrieve_entity_supports_table_params() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:retrieve-params");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 42))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 42))
             .with_ld_json()
             .send()
             .await
@@ -642,13 +673,14 @@ async fn dist_http_retrieve_entity_supports_table_params() {
 #[tokio::test]
 async fn dist_http_merge_entity_supports_format_lang_observedat_options_type_params() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:merge-params");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 5))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 5))
             .with_ld_json()
             .send()
             .await
@@ -663,8 +695,9 @@ async fn dist_http_merge_entity_supports_format_lang_observedat_options_type_par
         .raw(
             Method::PATCH,
             &format!(
-                "/ngsi-ld/v1/entities/{}?options=keyValues&lang=en&type=Vehicle",
-                urlencoding::encode(&entity_id)
+                "/ngsi-ld/v1/entities/{}?options=keyValues&lang=en&type={}",
+                urlencoding::encode(&entity_id),
+                urlencoding::encode(&vtype)
             ),
         )
         .header("content-type", "application/ld+json")
@@ -699,6 +732,7 @@ async fn dist_http_merge_entity_supports_format_lang_observedat_options_type_par
 #[tokio::test]
 async fn dist_http_query_csource_registrations_supports_table_params() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:reg-params");
     let reg_id = topology.id("registration:reg-params");
     let mock = ContextSourceAdapter::start().await;
@@ -707,7 +741,7 @@ async fn dist_http_query_csource_registrations_supports_table_params() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -717,7 +751,7 @@ async fn dist_http_query_csource_registrations_supports_table_params() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_registrations("type=Vehicle&limit=5", None)
+        .query_registrations(&format!("type={}&limit=5", urlencoding::encode(&vtype)), None)
         .await
         .expect("parametrised registration query");
     assert_status(&response, 200);
@@ -732,6 +766,7 @@ async fn dist_http_query_csource_registrations_supports_table_params() {
 #[tokio::test]
 async fn dist_http_get_entity_maps_supports_query_url_params() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:maps-params");
     let reg_id = topology.id("registration:maps-params");
     let mock = ContextSourceAdapter::start().await;
@@ -740,7 +775,7 @@ async fn dist_http_get_entity_maps_supports_query_url_params() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -751,7 +786,7 @@ async fn dist_http_get_entity_maps_supports_query_url_params() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/entityMaps?type=Vehicle&limit=5")
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entityMaps?type={}&limit=5", urlencoding::encode(&vtype)))
         .header("accept", "application/ld+json")
         .header("link", context_link_header())
         .send()

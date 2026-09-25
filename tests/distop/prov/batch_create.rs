@@ -29,21 +29,25 @@ async fn batch_create_per_csr_filters_input_copy() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:prov-batch-create-filter-v1");
     let d1 = topology.id("Device:prov-batch-create-filter-d1");
+    let dtype = topology.id("Device");
     let reg_speed = topology.id("registration:prov-batch-create-filter-speed");
     let reg_location = topology.id("registration:prov-batch-create-filter-location");
 
     let speed_csr = CsrBuilder::new(&reg_speed, &mock.url("/s1"))
         .mode("redirect")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .property_names(&["speed"])
         .operations(&["createBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&speed_csr).await.expect("create speed registration"), 201);
     let location_csr = CsrBuilder::new(&reg_location, &mock.url("/s2"))
         .mode("redirect")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .property_names(&["location"])
         .operations(&["createBatch", "retrieveEntity"])
         .build();
@@ -54,14 +58,14 @@ async fn batch_create_per_csr_filters_input_copy() {
     let batch = json!([
         entity(
             &v1,
-            "Vehicle",
+            &vtype,
             &[
                 ("brandName", property(json!("Mercedes"))),
                 ("speed", property(json!(42))),
                 ("location", property(json!("here")))
             ]
         ),
-        entity(&d1, "Device", &[("brandName", property(json!("sensor")))])
+        entity(&d1, &dtype, &[("brandName", property(json!("sensor")))])
     ]);
     client.batch_create(&batch).await.expect("batch create");
 
@@ -101,20 +105,23 @@ async fn batch_create_strips_redirect_owned_attrs_for_other_csr() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:prov-batch-create-redir-v1");
     let reg_speed = topology.id("registration:prov-batch-create-redir-speed");
     let reg_brand = topology.id("registration:prov-batch-create-redir-brand");
 
     let speed_csr = CsrBuilder::new(&reg_speed, &mock.url("/s1"))
         .mode("redirect")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .property_names(&["speed"])
         .operations(&["createBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&speed_csr).await.expect("create speed registration"), 201);
     let brand_csr = CsrBuilder::new(&reg_brand, &mock.url("/s2"))
         .mode("redirect")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .property_names(&["brandName"])
         .operations(&["createBatch", "retrieveEntity"])
         .build();
@@ -124,7 +131,7 @@ async fn batch_create_strips_redirect_owned_attrs_for_other_csr() {
 
     let batch = json!([entity(
         &v1,
-        "Vehicle",
+        &vtype,
         &[("brandName", property(json!("Mercedes"))), ("speed", property(json!(42)))]
     )]);
     client.batch_create(&batch).await.expect("batch create");
@@ -155,20 +162,23 @@ async fn batch_create_empty_in_skips_csr() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:prov-batch-create-skip-v1");
     let reg_colour = topology.id("registration:prov-batch-create-skip-colour");
     let reg_speed = topology.id("registration:prov-batch-create-skip-speed");
 
     let colour_csr = CsrBuilder::new(&reg_colour, &mock.url("/s1"))
         .mode("redirect")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .property_names(&["colour"])
         .operations(&["createBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&colour_csr).await.expect("create colour registration"), 201);
     let speed_csr = CsrBuilder::new(&reg_speed, &mock.url("/s2"))
         .mode("redirect")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .property_names(&["speed"])
         .operations(&["createBatch", "retrieveEntity"])
         .build();
@@ -176,7 +186,7 @@ async fn batch_create_empty_in_skips_csr() {
     mock.set_stub(Method::POST, "/s1/ngsi-ld/v1/entityOperations/create", 201).await;
     mock.set_stub(Method::POST, "/s2/ngsi-ld/v1/entityOperations/create", 201).await;
 
-    let batch = json!([entity(&v1, "Vehicle", &[("speed", property(json!(42)))])]);
+    let batch = json!([entity(&v1, &vtype, &[("speed", property(json!(42)))])]);
     client.batch_create(&batch).await.expect("batch create");
 
     assert_eq!(
@@ -201,13 +211,15 @@ async fn batch_create_supported_forwards_and_merges_results() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:prov-batch-create-merge-v1");
     let v2 = topology.id("Vehicle:prov-batch-create-merge-v2");
     let reg_id = topology.id("registration:prov-batch-create-merge");
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .operations(&["createBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
@@ -219,8 +231,8 @@ async fn batch_create_supported_forwards_and_merges_results() {
         .await;
 
     let batch = json!([
-        entity(&v1, "Vehicle", &[("speed", property(json!(1)))]),
-        entity(&v2, "Vehicle", &[("speed", property(json!(2)))])
+        entity(&v1, &vtype, &[("speed", property(json!(1)))]),
+        entity(&v2, &vtype, &[("speed", property(json!(2)))])
     ]);
     let response = client.batch_create(&batch).await.expect("batch create");
     assert_status(&response, 207);
@@ -242,21 +254,23 @@ async fn batch_create_fallback_per_entity_create() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:prov-batch-create-fallback-v1");
     let v2 = topology.id("Vehicle:prov-batch-create-fallback-v2");
     let reg_id = topology.id("registration:prov-batch-create-fallback");
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .operations(&["createEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     mock.set_stub(Method::POST, "/ngsi-ld/v1/entities", 201).await;
 
     let batch = json!([
-        entity(&v1, "Vehicle", &[("speed", property(json!(1)))]),
-        entity(&v2, "Vehicle", &[("speed", property(json!(2)))])
+        entity(&v1, &vtype, &[("speed", property(json!(1)))]),
+        entity(&v2, &vtype, &[("speed", property(json!(2)))])
     ]);
     client.batch_create(&batch).await.expect("batch create");
 
@@ -278,21 +292,23 @@ async fn batch_create_redirect_neither_op_conflict_per_entity() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:prov-batch-create-neither-v1");
     let v2 = topology.id("Vehicle:prov-batch-create-neither-v2");
     let reg_id = topology.id("registration:prov-batch-create-neither");
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .property_names(&["speed"])
         .operations(&["retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let batch = json!([
-        entity(&v1, "Vehicle", &[("speed", property(json!(1)))]),
-        entity(&v2, "Vehicle", &[("speed", property(json!(2)))])
+        entity(&v1, &vtype, &[("speed", property(json!(1)))]),
+        entity(&v2, &vtype, &[("speed", property(json!(2)))])
     ]);
     let response = client.batch_create(&batch).await.expect("batch create");
     assert_status(&response, 207);
@@ -317,6 +333,7 @@ async fn batch_create_local_phase_populates_success_and_errors() {
     let topology = topology::single().await.expect("single-broker topology");
     let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let v1 = topology.id("Vehicle:prov-batch-create-local-v1");
     let v2 = topology.id("Vehicle:prov-batch-create-local-v2");
     let reg_id = topology.id("registration:prov-batch-create-local");
@@ -324,7 +341,7 @@ async fn batch_create_local_phase_populates_success_and_errors() {
     let seeded = client
         .raw(Method::POST, "/ngsi-ld/v1/entities?local=true")
         .header("content-type", "application/ld+json")
-        .json(&entity(&v2, "Vehicle", &[("speed", property(json!(9)))]))
+        .json(&entity(&v2, &vtype, &[("speed", property(json!(9)))]))
         .send()
         .await
         .expect("seed local entity");
@@ -332,14 +349,14 @@ async fn batch_create_local_phase_populates_success_and_errors() {
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("auxiliary")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let batch = json!([
-        entity(&v1, "Vehicle", &[("speed", property(json!(1)))]),
-        entity(&v2, "Vehicle", &[("speed", property(json!(2)))])
+        entity(&v1, &vtype, &[("speed", property(json!(1)))]),
+        entity(&v2, &vtype, &[("speed", property(json!(2)))])
     ]);
     let response = client.batch_create(&batch).await.expect("batch create");
     assert_status(&response, 207);

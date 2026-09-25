@@ -6,7 +6,7 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::{entity, property, vehicle},
+    entity::{entity, property, typed_vehicle},
     oracle::{assert_problem_details, assert_status, json_body},
     registration::CsrBuilder,
     topology::{self, BrokerRole},
@@ -32,9 +32,11 @@ async fn distop_query_entities_too_wide_returns_400() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
+    let vtype = topology.id("Vehicle");
     let registration_id = topology.id("registration:cons19");
     let registration = CsrBuilder::new(&registration_id, &mock.url(""))
         .mode("inclusive")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
@@ -59,16 +61,18 @@ async fn distop_query_entities_orderby_with_a_participating_source_returns_400()
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
+    let vtype = topology.id("Vehicle");
     let registration_id = topology.id("registration:cons20");
     let registration = CsrBuilder::new(&registration_id, &mock.url(""))
         .mode("inclusive")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
 
     let rejected = front
         .client()
-        .query_entities("type=Vehicle&orderBy=speed", "application/ld+json", None)
+        .query_entities(&format!("type={}&orderBy=speed", urlencoding::encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&rejected, 400);
@@ -77,7 +81,11 @@ async fn distop_query_entities_orderby_with_a_participating_source_returns_400()
 
     let accepted = front
         .client()
-        .query_entities("type=Vehicle&orderBy=speed&local=true", "application/ld+json", None)
+        .query_entities(
+            &format!("type={}&orderBy=speed&local=true", urlencoding::encode(&vtype)),
+            "application/ld+json",
+            None,
+        )
         .await
         .expect("query");
     assert_status(&accepted, 200);
@@ -94,10 +102,12 @@ async fn distop_query_entities_forwards_matching_queryentity_csrs_local_none() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
+    let vtype = topology.id("Vehicle");
     for (source, operations) in [("/s1", &["queryEntity"][..]), ("/s2", &["retrieveEntity"][..])] {
         let registration_id = topology.id(&format!("registration:cons25-{}", source.trim_start_matches('/')));
         let registration = CsrBuilder::new(&registration_id, &mock.url(source))
             .mode("inclusive")
+            .entity_type(&vtype)
             .operations(operations)
             .build();
         assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
@@ -106,7 +116,11 @@ async fn distop_query_entities_forwards_matching_queryentity_csrs_local_none() {
     }
 
     assert_status(
-        &front.client().query_entities("type=Vehicle", "application/ld+json", None).await.expect("query"),
+        &front
+            .client()
+            .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/ld+json", None)
+            .await
+            .expect("query"),
         200,
     );
     assert!(mock.get_count(Method::GET, "/s1/ngsi-ld/v1/entities") > 0, "queryEntity source is forwarded");
@@ -120,7 +134,7 @@ async fn distop_query_entities_forwards_matching_queryentity_csrs_local_none() {
     assert_status(
         &front
             .client()
-            .query_entities("type=Vehicle&local=true", "application/ld+json", None)
+            .query_entities(&format!("type={}&local=true", urlencoding::encode(&vtype)), "application/ld+json", None)
             .await
             .expect("query"),
         200,
@@ -143,24 +157,37 @@ async fn distop_query_entities_forwards_all_modes_returns_entity_arrays() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
+    let vtype = topology.id("Vehicle");
     let mut expected = Vec::new();
     for mode in ["exclusive", "redirect", "inclusive"] {
         let source = format!("/{mode}");
         let entity_id = topology.id(&format!("Vehicle:cons29-{mode}"));
         let registration_id = topology.id(&format!("registration:cons29-{mode}"));
-        let builder = CsrBuilder::new(&registration_id, &mock.url(&source)).mode(mode).operations(&["queryEntity"]);
+        let builder = CsrBuilder::new(&registration_id, &mock.url(&source))
+            .mode(mode)
+            .entity_type(&vtype)
+            .operations(&["queryEntity"]);
         let registration = match mode {
             "exclusive" => builder.entity_id(&entity_id).property_names(&["speed"]).build(),
             "redirect" | "inclusive" => builder.build(),
             other => panic!("the mode loop names only the three proxying modes, got {other}"),
         };
         assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
-        mock.set_stub_with_body(Method::GET, &format!("{source}/ngsi-ld/v1/entities"), 200, &json!([vehicle(&entity_id, 50)]))
-            .await;
+        mock.set_stub_with_body(
+            Method::GET,
+            &format!("{source}/ngsi-ld/v1/entities"),
+            200,
+            &json!([typed_vehicle(&entity_id, &vtype, 50)]),
+        )
+        .await;
         expected.push(entity_id);
     }
 
-    let response = front.client().query_entities("type=Vehicle", "application/ld+json", None).await.expect("query");
+    let response = front
+        .client()
+        .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/ld+json", None)
+        .await
+        .expect("query");
     assert_status(&response, 200);
     let returned = ids(&json_body(&response));
     for entity_id in &expected {
@@ -179,24 +206,30 @@ async fn distop_query_entities_discards_expired_entities_in_remote_array() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
+    let vtype = topology.id("Vehicle");
     let expired_id = topology.id("Vehicle:cons30-expired");
     let valid_id = topology.id("Vehicle:cons30-valid");
     let registration_id = topology.id("registration:cons30");
     let registration = CsrBuilder::new(&registration_id, &mock.url(""))
         .mode("inclusive")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
 
     let expired = entity(
         &expired_id,
-        "Vehicle",
+        &vtype,
         &[("speed", json!({ "type": "Property", "value": 90, "expiresAt": "2000-01-01T00:00:00Z" }))],
     );
-    let array = json!([expired, vehicle(&valid_id, 50)]);
+    let array = json!([expired, typed_vehicle(&valid_id, &vtype, 50)]);
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &array).await;
 
-    let response = front.client().query_entities("type=Vehicle", "application/ld+json", None).await.expect("query");
+    let response = front
+        .client()
+        .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/ld+json", None)
+        .await
+        .expect("query");
     assert_status(&response, 200);
     let returned = ids(&json_body(&response));
     assert!(returned.contains(&valid_id), "the non-expired entity is returned: {returned:?}");
@@ -211,6 +244,7 @@ async fn distop_query_entities_discards_expired_entities_in_remote_array() {
 #[tokio::test]
 async fn distop_query_entities_merges_arrays_per_4_5_5() {
     let topology = topology::chain().await.expect("three-broker topology");
+    let vtype = topology.id("Vehicle");
     let shared_id = topology.id("Vehicle:cons31-shared");
     let extra_id = topology.id("Vehicle:cons31-extra");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
@@ -220,7 +254,7 @@ async fn distop_query_entities_merges_arrays_per_4_5_5() {
     assert_status(
         &front
             .client()
-            .post_entity(&entity(&shared_id, "Vehicle", &[("fuelLevel", property(json!(70)))]))
+            .post_entity(&entity(&shared_id, &vtype, &[("fuelLevel", property(json!(70)))]))
             .with_ld_json()
             .send()
             .await
@@ -230,7 +264,7 @@ async fn distop_query_entities_merges_arrays_per_4_5_5() {
     assert_status(
         &holder_b
             .client()
-            .post_entity(&entity(&shared_id, "Vehicle", &[("speed", property(json!(50)))]))
+            .post_entity(&entity(&shared_id, &vtype, &[("speed", property(json!(50)))]))
             .with_ld_json()
             .send()
             .await
@@ -242,7 +276,7 @@ async fn distop_query_entities_merges_arrays_per_4_5_5() {
             .client()
             .post_entity(&entity(
                 &shared_id,
-                "Vehicle",
+                &vtype,
                 &[(
                     "location",
                     json!({ "type": "GeoProperty", "value": { "type": "Point", "coordinates": [1.0, 2.0] } }),
@@ -257,7 +291,7 @@ async fn distop_query_entities_merges_arrays_per_4_5_5() {
     assert_status(
         &holder_c
             .client()
-            .post_entity(&vehicle(&extra_id, 40))
+            .post_entity(&typed_vehicle(&extra_id, &vtype, 40))
             .with_ld_json()
             .send()
             .await
@@ -270,12 +304,17 @@ async fn distop_query_entities_merges_arrays_per_4_5_5() {
         let registration_id = topology.id(&format!("registration:cons31-{role:?}"));
         let registration = CsrBuilder::new(&registration_id, peer.peer_url())
             .mode("inclusive")
+            .entity_type(&vtype)
             .operations(&["queryEntity"])
             .build();
         assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
     }
 
-    let response = front.client().query_entities("type=Vehicle", "application/ld+json", None).await.expect("query");
+    let response = front
+        .client()
+        .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/ld+json", None)
+        .await
+        .expect("query");
     assert_status(&response, 200);
     let body = json_body(&response);
     assert!(ids(&body).contains(&extra_id), "the distinct-id entity is present: {body}");

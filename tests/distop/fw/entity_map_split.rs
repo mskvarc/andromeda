@@ -5,7 +5,7 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::{entity, property, vehicle},
+    entity::{entity, property, typed_vehicle},
     oracle::{assert_status, entity_map_header, json_body},
     registration::CsrBuilder,
     topology::{self, BrokerRole},
@@ -14,6 +14,7 @@ use axum::http::Method;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::time::Duration;
+use urlencoding::encode;
 
 /// Budget for a forwarded request to reach the mock context source.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -35,10 +36,11 @@ async fn distop_entity_map_no_split_param_forwards_filters_remotely() {
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:map-nosplit"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(
@@ -56,7 +58,11 @@ async fn distop_entity_map_no_split_param_forwards_filters_remotely() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&q=speed%3E50&splitEntities=false", "application/ld+json", None)
+        .query_entities(
+            &format!("type={}&q=speed%3E50&splitEntities=false", encode(&vtype)),
+            "application/ld+json",
+            None,
+        )
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -84,6 +90,7 @@ async fn distop_entity_map_no_split_param_forwards_filters_remotely() {
 #[tokio::test]
 async fn distop_entity_map_split_entities_assembled_before_filtering() {
     let topology = topology::chain().await.expect("three-broker topology");
+    let vtype = topology.id("Vehicle");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let speed_source = topology.broker(BrokerRole::B).expect("topology broker B");
     let fuel_source = topology.broker(BrokerRole::C).expect("topology broker C");
@@ -92,7 +99,7 @@ async fn distop_entity_map_split_entities_assembled_before_filtering() {
     assert_status(
         &speed_source
             .client()
-            .post_entity(&entity(&entity_id, "Vehicle", &[("speed", property(json!(60)))]))
+            .post_entity(&entity(&entity_id, &vtype, &[("speed", property(json!(60)))]))
             .with_ld_json()
             .send()
             .await
@@ -102,7 +109,7 @@ async fn distop_entity_map_split_entities_assembled_before_filtering() {
     assert_status(
         &fuel_source
             .client()
-            .post_entity(&entity(&entity_id, "Vehicle", &[("fuel", property(json!(30)))]))
+            .post_entity(&entity(&entity_id, &vtype, &[("fuel", property(json!(30)))]))
             .with_ld_json()
             .send()
             .await
@@ -112,6 +119,7 @@ async fn distop_entity_map_split_entities_assembled_before_filtering() {
 
     let speed_registration = CsrBuilder::new(&topology.id("registration:split-speed"), speed_source.peer_url())
         .mode("inclusive")
+        .entity_type(&vtype)
         .entity_id(&entity_id)
         .property_names(&["speed"])
         .operations(&["queryEntity"])
@@ -119,6 +127,7 @@ async fn distop_entity_map_split_entities_assembled_before_filtering() {
     assert_status(&front.client().create_registration(&speed_registration).await.expect("speed registration"), 201);
     let fuel_registration = CsrBuilder::new(&topology.id("registration:split-fuel"), fuel_source.peer_url())
         .mode("inclusive")
+        .entity_type(&vtype)
         .entity_id(&entity_id)
         .property_names(&["fuel"])
         .operations(&["queryEntity"])
@@ -128,7 +137,7 @@ async fn distop_entity_map_split_entities_assembled_before_filtering() {
     let response = front
         .client()
         .query_entities(
-            &format!("type=Vehicle&id={entity_id}&q=speed%3E50&splitEntities=true"),
+            &format!("type={}&id={entity_id}&q=speed%3E50&splitEntities=true", encode(&vtype)),
             "application/ld+json",
             None,
         )
@@ -148,13 +157,14 @@ async fn distop_entity_map_split_entities_assembled_before_filtering() {
 #[tokio::test]
 async fn distop_entity_map_unitary_sequence_creates_and_caches_map() {
     let topology = topology::chain().await.expect("three-broker topology");
+    let vtype = topology.id("Vehicle");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let source = topology.broker(BrokerRole::B).expect("topology broker B");
     let entity_id = topology.id("Vehicle:unitary-map");
     assert_status(
         &source
             .client()
-            .post_entity(&vehicle(&entity_id, 45))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 45))
             .with_ld_json()
             .send()
             .await
@@ -164,14 +174,14 @@ async fn distop_entity_map_unitary_sequence_creates_and_caches_map() {
 
     let registration = CsrBuilder::new(&topology.id("registration:unitary-map"), source.peer_url())
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(&front.client().create_registration(&registration).await.expect("create registration"), 201);
 
     let created = front
         .client()
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
+        .query_entities(&format!("type={}&entityMap=true", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("map query");
     assert_status(&created, 201);
@@ -186,13 +196,14 @@ async fn distop_entity_map_unitary_sequence_creates_and_caches_map() {
 #[tokio::test]
 async fn distop_entity_map_suggested_expiry_honoured() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:map-expiry");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 15))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 15))
             .with_ld_json()
             .send()
             .await
@@ -204,7 +215,11 @@ async fn distop_entity_map_suggested_expiry_honoured() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&entityMap=true&entityMapLifetime=PT1H", "application/ld+json", None)
+        .query_entities(
+            &format!("type={}&entityMap=true&entityMapLifetime=PT1H", encode(&vtype)),
+            "application/ld+json",
+            None,
+        )
         .await
         .expect("map query");
     assert_status(&created, 201);
@@ -231,15 +246,16 @@ async fn distop_entity_map_suggested_expiry_honoured() {
 #[tokio::test]
 async fn distop_entity_map_source_may_decline_location() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:map-decline");
-    mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([vehicle(&entity_id, 25)]))
+    mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([typed_vehicle(&entity_id, &vtype, 25)]))
         .await;
 
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:map-decline"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(
@@ -257,7 +273,7 @@ async fn distop_entity_map_source_may_decline_location() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
+        .query_entities(&format!("type={}&entityMap=true", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("map query");
     assert_status(&created, 201);

@@ -17,9 +17,11 @@ mod serve;
 
 use andromeda_test_client::broker_endpoint::BrokerEndpoint;
 use andromeda_test_fixtures::{context::CORE_CONTEXT, problem_detail as error};
-use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use andromeda_test_mocks::{callback_path::CallbackPath, jsonld_context_server::JsonLdContextServer, server_config::MockServerConfig};
-use axum::{body::Bytes, http::HeaderMap};
+use axum::{
+    body::Bytes,
+    http::{HeaderMap, HeaderValue},
+};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use std::{collections::HashMap, time::Duration};
@@ -31,22 +33,50 @@ const BAD_REQUEST_DATA_TYPE: &iri_rs::Iri<&str> = error::BAD_REQUEST_DATA;
 const RESOURCE_NOT_FOUND_TYPE: &iri_rs::Iri<&str> = error::RESOURCE_NOT_FOUND;
 const LD_CONTEXT_NOT_AVAILABLE_TYPE: &iri_rs::Iri<&str> = error::LD_CONTEXT_NOT_AVAILABLE;
 
-fn client() -> Client {
-    Client::new()
-}
-
 fn unique_id(prefix: &str) -> String {
     format!("{prefix}:{}", Uuid::new_v4())
 }
 
 // ---------------------------------------------------------------------------
-// Database cleanup
+// Private-tenant isolation
 // ---------------------------------------------------------------------------
 
-async fn clean_database() -> SerializedEnvironment {
-    SerializedEnvironment::from_environment_reset()
+/// A reqwest client that carries `NGSILD-Tenant` on every request, so a test's
+/// stored, implicit, and cached `@context` documents live in its own private
+/// tenant and its whole-collection `/jsonldContexts` assertions see only what it
+/// created. The existing request helpers take a `&Client` unchanged; binding
+/// this client is the only per-test change.
+fn tenant_client(tenant: &str) -> Client {
+    let mut headers = HeaderMap::new();
+    headers.insert("ngsild-tenant", HeaderValue::from_str(tenant).expect("tenant name is a valid header value"));
+    Client::builder().default_headers(headers).build().expect("tenant client builds")
+}
+
+/// Provision the private tenant with a throwaway registration (create then
+/// delete) so a read-first test finds an empty but existing tenant rather than
+/// `NonexistentTenant`. The registration carries no `@context`, so it creates no
+/// implicit context and leaves `/jsonldContexts` empty.
+async fn provision_tenant(client: &Client) {
+    let registration_id = unique_id("urn:ngsi-ld:ContextSourceRegistration:jsonld-provision");
+    let body = json!({
+        "id": registration_id,
+        "type": "ContextSourceRegistration",
+        "endpoint": "http://127.0.0.1:1",
+        "information": [{ "entities": [{ "type": "ProvisioningSentinel" }] }]
+    });
+    let created = client
+        .post(broker_url("csourceRegistrations"))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
         .await
-        .expect("serialized test database environment")
+        .expect("provisioning registration request failed");
+    assert_eq!(
+        created.status(),
+        StatusCode::CREATED,
+        "provisioning registration must be created to bring up the tenant"
+    );
+    let _ = client.delete(broker_url(&format!("csourceRegistrations/{registration_id}"))).send().await;
 }
 
 // ---------------------------------------------------------------------------

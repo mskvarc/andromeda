@@ -18,9 +18,10 @@ pub const FORWARD_TIMEOUT: Duration = Duration::from_secs(10);
 /// Register an inclusive `Vehicle` registration on the front broker pointing at
 /// the mock, declaring `federationOps` so a matching local subscription drives a
 /// CSR-subscription forward to it.
-pub async fn register_subscription_source(topology: &MultiBrokerTopology<BrokerRole>, endpoint: &str, registration_id: &str) {
+pub async fn register_subscription_source(topology: &MultiBrokerTopology<BrokerRole>, endpoint: &str, entity_type: &str, registration_id: &str) {
     let registration = CsrBuilder::new(registration_id, endpoint)
         .mode("inclusive")
+        .entity_type(entity_type)
         .operations(&["federationOps"])
         .build();
     let created = topology
@@ -35,10 +36,10 @@ pub async fn register_subscription_source(topology: &MultiBrokerTopology<BrokerR
 
 /// Bring up a mock Context Source, stub its subscription endpoints, and register
 /// an inclusive `Vehicle` source on the front broker pointing at it.
-pub async fn subscription_source(topology: &MultiBrokerTopology<BrokerRole>, registration_local: &str) -> ContextSourceAdapter {
+pub async fn subscription_source(topology: &MultiBrokerTopology<BrokerRole>, entity_type: &str, registration_local: &str) -> ContextSourceAdapter {
     let mock = ContextSourceAdapter::start().await;
     stub_subscription_endpoints(&mock).await;
-    register_subscription_source(topology, &mock.url(""), &topology.id(registration_local)).await;
+    register_subscription_source(topology, &mock.url(""), entity_type, &topology.id(registration_local)).await;
     mock
 }
 

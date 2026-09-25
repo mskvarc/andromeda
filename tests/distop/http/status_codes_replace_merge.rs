@@ -67,7 +67,14 @@ async fn dist_http_replace_entity_partial_failure_returns_207_batch_result() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["replaceEntity"]))
+            .create_registration(&provision_source(
+                &reg_id,
+                &mock.url(""),
+                &entity_id,
+                "Vehicle",
+                "inclusive",
+                &["replaceEntity"],
+            ))
             .await
             .expect("register source"),
         201,
@@ -242,7 +249,7 @@ async fn dist_http_merge_entity_partial_failure_returns_207_batch_result() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["mergeEntity"]))
+            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "Vehicle", "inclusive", &["mergeEntity"]))
             .await
             .expect("register source"),
         201,

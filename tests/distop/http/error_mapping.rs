@@ -158,7 +158,7 @@ async fn dist_http_single_source_resource_absent_returns_404() {
     let reg_id = topology.id("registration:absent");
     let mock = ContextSourceAdapter::start().await;
 
-    let registration = provision_source(&reg_id, &mock.url(""), &entity_id, "exclusive", &["createEntity"]);
+    let registration = provision_source(&reg_id, &mock.url(""), &entity_id, "Vehicle", "exclusive", &["createEntity"]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -195,7 +195,7 @@ async fn dist_http_single_source_other_failure_returns_502() {
     let reg_id = topology.id("registration:badgateway");
     let mock = ContextSourceAdapter::start().await;
 
-    let registration = provision_source(&reg_id, &mock.url(""), &entity_id, "exclusive", &["createEntity"]);
+    let registration = provision_source(&reg_id, &mock.url(""), &entity_id, "Vehicle", "exclusive", &["createEntity"]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -319,7 +319,7 @@ async fn dist_http_multi_endpoint_source_error_returns_207() {
     let ok_source = ContextSourceAdapter::start().await;
     let fail_source = ContextSourceAdapter::start().await;
 
-    let ok = provision_source(&ok_reg, &ok_source.url(""), &entity_id, "inclusive", &["createEntity"]);
+    let ok = provision_source(&ok_reg, &ok_source.url(""), &entity_id, "Vehicle", "inclusive", &["createEntity"]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -330,7 +330,7 @@ async fn dist_http_multi_endpoint_source_error_returns_207() {
             .expect("register ok source"),
         201,
     );
-    let fail = provision_source(&fail_reg, &fail_source.url(""), &entity_id, "inclusive", &["createEntity"]);
+    let fail = provision_source(&fail_reg, &fail_source.url(""), &entity_id, "Vehicle", "inclusive", &["createEntity"]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -369,7 +369,7 @@ async fn dist_http_auxiliary_registration_rejects_unsafe_method() {
     let reg_id = topology.id("registration:aux-unsafe");
     let mock = ContextSourceAdapter::start().await;
 
-    let registration = provision_source(&reg_id, &mock.url(""), &entity_id, "auxiliary", &["retrieveEntity", "queryEntity"]);
+    let registration = provision_source(&reg_id, &mock.url(""), &entity_id, "Vehicle", "auxiliary", &["retrieveEntity", "queryEntity"]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -411,7 +411,7 @@ async fn dist_http_unsafe_method_source_error_is_informative() {
     let reg_id = topology.id("registration:unsafe-error");
     let mock = ContextSourceAdapter::start().await;
 
-    let registration = provision_source(&reg_id, &mock.url(""), &entity_id, "exclusive", &["createEntity"]);
+    let registration = provision_source(&reg_id, &mock.url(""), &entity_id, "Vehicle", "exclusive", &["createEntity"]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -456,7 +456,7 @@ async fn dist_http_failed_endpoint_skipped_until_cooldown() {
     let reg_id = topology.id("registration:cooldown");
     let mock = ContextSourceAdapter::start().await;
 
-    let mut registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
+    let mut registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "Vehicle", "inclusive");
     registration["management"] = json!({"cooldown": 60_000});
     assert_status(
         &topology

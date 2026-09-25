@@ -13,7 +13,6 @@
 
 use crate::{
     clean_tenant,
-    client,
     comparison::{ContextMember, EntityOrder, assert_matches_example, corpus},
     context_link,
     create_entity_batch,
@@ -21,20 +20,19 @@ use crate::{
     get_json,
 };
 use pretty_assertions::assert_eq;
-use reqwest::StatusCode;
+use reqwest::{Client, StatusCode};
 use serde_json::Value;
-use serial_test::serial;
 
 /// Seed the discovery fixtures and answer the wrapper `@context` link.
-async fn seed_discovery() -> String {
+async fn seed_discovery(http: &Client) -> String {
     let link = context_link(hosted_contexts().url("aggregatedContext.jsonld").as_str());
-    create_entity_batch(&client(), &corpus(include_str!("corpus/c-5-7-discovery-seed.json")), Some(&link)).await;
+    create_entity_batch(http, &corpus(include_str!("corpus/c-5-7-discovery-seed.json")), Some(&link)).await;
     link
 }
 
 /// Run one discovery request and return its answer.
-async fn discover(link: &str, path: &str) -> Value {
-    let (status, body) = get_json(&client(), path, "application/json", Some(link)).await;
+async fn discover(http: &Client, link: &str, path: &str) -> Value {
+    let (status, body) = get_json(http, path, "application/json", Some(link)).await;
     assert_eq!(status, StatusCode::OK, "discovery request {path} failed: {body}");
     body
 }
@@ -51,12 +49,11 @@ fn sorted_strings(value: &Value) -> Vec<String> {
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_5_7_retrieve_available_entity_types() {
     let environment = clean_tenant().await;
-    let link = seed_discovery().await;
+    let link = seed_discovery(&environment.client()).await;
 
-    let actual = discover(&link, "/types").await;
+    let actual = discover(&environment.client(), &link, "/types").await;
     assert_eq!(actual["type"], Value::String("EntityTypeList".to_owned()));
     assert!(
         actual["id"].as_str().is_some_and(|id| id.starts_with("urn:ngsi-ld:EntityTypeList:")),
@@ -73,16 +70,15 @@ async fn annex_c_5_7_retrieve_available_entity_types() {
         "clause C.5.7.3 renders the types the supplied @context knows as short names and the rest as FQNs"
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_5_8_retrieve_details_of_available_entity_types() {
     let environment = clean_tenant().await;
-    let link = seed_discovery().await;
+    let link = seed_discovery(&environment.client()).await;
 
-    let actual = discover(&link, "/types?details=true").await;
+    let actual = discover(&environment.client(), &link, "/types?details=true").await;
     let expected = corpus(include_str!("corpus/c-5-8-entity-type-details.json"));
     assert_matches_example(
         "C.5.8",
@@ -92,16 +88,15 @@ async fn annex_c_5_8_retrieve_details_of_available_entity_types() {
         EntityOrder::Unordered,
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_5_9_retrieve_available_entity_type_information() {
     let environment = clean_tenant().await;
-    let link = seed_discovery().await;
+    let link = seed_discovery(&environment.client()).await;
 
-    let actual = discover(&link, "/types/Vehicle").await;
+    let actual = discover(&environment.client(), &link, "/types/Vehicle").await;
     let expected = corpus(include_str!("corpus/c-5-9-entity-type-information.json"));
     assert_matches_example(
         "C.5.9",
@@ -111,16 +106,15 @@ async fn annex_c_5_9_retrieve_available_entity_type_information() {
         EntityOrder::AsPrinted,
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_5_10_retrieve_available_attributes() {
     let environment = clean_tenant().await;
-    let link = seed_discovery().await;
+    let link = seed_discovery(&environment.client()).await;
 
-    let actual = discover(&link, "/attributes").await;
+    let actual = discover(&environment.client(), &link, "/attributes").await;
     assert_eq!(actual["type"], Value::String("AttributeList".to_owned()));
     assert!(
         actual["id"].as_str().is_some_and(|id| id.starts_with("urn:ngsi-ld:AttributeList:")),
@@ -142,16 +136,15 @@ async fn annex_c_5_10_retrieve_available_attributes() {
         "clause C.5.10.3 renders the attributes the supplied @context knows as short names and the rest as FQNs"
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_5_11_retrieve_details_of_available_attributes() {
     let environment = clean_tenant().await;
-    let link = seed_discovery().await;
+    let link = seed_discovery(&environment.client()).await;
 
-    let actual = discover(&link, "/attributes?details=true").await;
+    let actual = discover(&environment.client(), &link, "/attributes?details=true").await;
     let expected = corpus(include_str!("corpus/c-5-11-attribute-details.json"));
     assert_matches_example(
         "C.5.11",
@@ -161,20 +154,19 @@ async fn annex_c_5_11_retrieve_details_of_available_attributes() {
         EntityOrder::Unordered,
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_5_12_retrieve_available_attribute_information() {
     let environment = clean_tenant().await;
-    let link = seed_discovery().await;
+    let link = seed_discovery(&environment.client()).await;
 
-    let actual = discover(&link, "/attributes/brandName").await;
+    let actual = discover(&environment.client(), &link, "/attributes/brandName").await;
     let expected = corpus(include_str!("corpus/c-5-12-attribute-information.json"));
     assert_matches_example("C.5.12", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 /// Order every `attributeNames` list alphabetically.

@@ -7,7 +7,6 @@ use crate::{
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use pretty_assertions::assert_eq;
 use serde_json::json;
-use serial_test::serial;
 use std::time::Duration;
 use tokio::{task::yield_now, time::timeout};
 
@@ -22,10 +21,15 @@ fn subscription(id: &str, endpoint: &str, entity_type: &str) -> serde_json::Valu
     })
 }
 
+// Cross-domain notification delivery competes with heavy broker load, so these
+// subscription tests share the stress serial key: they never run alongside a
+// stress test (or each other), keeping their notification waits within budget,
+// while the lighter query/count tests run in parallel around them.
+#[serial_test::serial(fed_stress)]
 #[tokio::test]
-#[serial(fed)]
 async fn fed_subscription_two_domain_lifecycle_delivers_original_id() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let receiver = NotificationAdapter::start().await;
     let hub = broker(&topology, FedRole::Hub);
     let madrid = broker(&topology, FedRole::Madrid);
@@ -37,7 +41,7 @@ async fn fed_subscription_two_domain_lifecycle_delivers_original_id() {
                 .create_registration(&registration(
                     &topology.id(&format!("registration:subscription:{name}")),
                     domain.peer_url(),
-                    "Building",
+                    &btype,
                     None,
                     "inclusive",
                     Some(&["queryEntity", "createSubscription", "updateSubscription", "deleteSubscription"]),
@@ -50,7 +54,7 @@ async fn fed_subscription_two_domain_lifecycle_delivers_original_id() {
     let subscription_id = topology.id("subscription:two-domain");
     assert_status(
         &hub.client()
-            .create_subscription(&subscription(&subscription_id, &receiver.endpoint_url(), "Building"))
+            .create_subscription(&subscription(&subscription_id, &receiver.endpoint_url(), &btype))
             .await
             .expect("subscription create"),
         201,
@@ -59,7 +63,7 @@ async fn fed_subscription_two_domain_lifecycle_delivers_original_id() {
     assert_status(
         &madrid
             .client()
-            .post_entity(&entity(&id, "Building", 30))
+            .post_entity(&entity(&id, &btype, 30))
             .with_ld_json()
             .send()
             .await
@@ -71,7 +75,7 @@ async fn fed_subscription_two_domain_lifecycle_delivers_original_id() {
     assert!(notification.headers.contains_key("content-type"));
     assert_status(
         &hub.client()
-            .update_subscription(&subscription_id, &json!({"entities": [{"type": "Building", "idPattern": "^never$"}]}), None)
+            .update_subscription(&subscription_id, &json!({"entities": [{"type": btype, "idPattern": "^never$"}]}), None)
             .await
             .expect("subscription update"),
         204,
@@ -84,17 +88,18 @@ async fn fed_subscription_two_domain_lifecycle_delivers_original_id() {
     topology.finish().await.expect("topology cleanup");
 }
 
+#[serial_test::serial(fed_stress)]
 #[tokio::test]
-#[serial(fed)]
 async fn fed_subscription_discovers_domain_registered_after_creation() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let receiver = NotificationAdapter::start().await;
     let hub = broker(&topology, FedRole::Hub);
     let madrid = broker(&topology, FedRole::Madrid);
     let subscription_id = topology.id("subscription:late-registration");
     assert_status(
         &hub.client()
-            .create_subscription(&subscription(&subscription_id, &receiver.endpoint_url(), "Building"))
+            .create_subscription(&subscription(&subscription_id, &receiver.endpoint_url(), &btype))
             .await
             .expect("early subscription"),
         201,
@@ -105,7 +110,7 @@ async fn fed_subscription_discovers_domain_registered_after_creation() {
             .create_registration(&registration(
                 &topology.id("registration:late-madrid"),
                 madrid.peer_url(),
-                "Building",
+                &btype,
                 None,
                 "inclusive",
                 Some(&["queryEntity", "createSubscription", "updateSubscription", "deleteSubscription"]),
@@ -129,7 +134,7 @@ async fn fed_subscription_discovers_domain_registered_after_creation() {
     assert_status(
         &madrid
             .client()
-            .post_entity(&entity(&id, "Building", 31))
+            .post_entity(&entity(&id, &btype, 31))
             .with_ld_json()
             .send()
             .await
@@ -144,10 +149,11 @@ async fn fed_subscription_discovers_domain_registered_after_creation() {
     topology.finish().await.expect("topology cleanup");
 }
 
+#[serial_test::serial(fed_stress)]
 #[tokio::test]
-#[serial(fed)]
 async fn fed_nested_subscription_delivers_from_subdomain_and_cleans_up() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let receiver = NotificationAdapter::start().await;
     let hub = broker(&topology, FedRole::Hub);
     let nordic = broker(&topology, FedRole::Nordic);
@@ -158,7 +164,7 @@ async fn fed_nested_subscription_delivers_from_subdomain_and_cleans_up() {
             .create_registration(&registration(
                 &topology.id("registration:sub-north"),
                 north.peer_url(),
-                "Building",
+                &btype,
                 None,
                 "inclusive",
                 Some(&["queryEntity", "createSubscription", "updateSubscription", "deleteSubscription"]),
@@ -172,7 +178,7 @@ async fn fed_nested_subscription_delivers_from_subdomain_and_cleans_up() {
             .create_registration(&registration(
                 &topology.id("registration:sub-nordic"),
                 nordic.peer_url(),
-                "Building",
+                &btype,
                 None,
                 "inclusive",
                 Some(&["queryEntity", "createSubscription", "updateSubscription", "deleteSubscription"]),
@@ -184,7 +190,7 @@ async fn fed_nested_subscription_delivers_from_subdomain_and_cleans_up() {
     let subscription_id = topology.id("subscription:nested");
     assert_status(
         &hub.client()
-            .create_subscription(&subscription(&subscription_id, &receiver.endpoint_url(), "Building"))
+            .create_subscription(&subscription(&subscription_id, &receiver.endpoint_url(), &btype))
             .await
             .expect("nested subscription"),
         201,
@@ -193,7 +199,7 @@ async fn fed_nested_subscription_delivers_from_subdomain_and_cleans_up() {
     assert_status(
         &north
             .client()
-            .post_entity(&entity(&id, "Building", 32))
+            .post_entity(&entity(&id, &btype, 32))
             .with_ld_json()
             .send()
             .await

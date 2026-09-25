@@ -5,10 +5,9 @@
 //! oracle — the value the fixture actually holds — and the shapes that cannot be
 //! pushed down have to fall back to the payload without changing the answer.
 
-use crate::seeded_corpus::SEED_PREFIX;
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
-use andromeda_test_harness::serialized_environment::SerializedEnvironment;
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
@@ -71,9 +70,9 @@ async fn kinds_of(pool: &PgPool, id: &str, local_name: &str) -> (i16, i16) {
 
 #[tokio::test]
 async fn typed_q_predicates_agree_with_the_residual_oracle_for_every_scalar_shape() {
-    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+    let scope = TestEnvironment::from_suite("query_access_paths").await.expect("isolated test environment");
     let client = scope.client();
-    let id = format!("{SEED_PREFIX}:Building:typed-q-scalars");
+    let id = scope.id("Building:typed-q-scalars");
     let created = client.post_entity(&typed_fixture(&id)).send().await.expect("create entity failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
@@ -113,9 +112,9 @@ async fn typed_q_predicates_agree_with_the_residual_oracle_for_every_scalar_shap
 
 #[tokio::test]
 async fn typed_q_predicates_beyond_double_precision_fall_back_without_changing_semantics() {
-    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+    let scope = TestEnvironment::from_suite("query_access_paths").await.expect("isolated test environment");
     let client = scope.client();
-    let id = format!("{SEED_PREFIX}:Building:typed-q-precision");
+    let id = scope.id("Building:typed-q-precision");
     let created = client.post_entity(&typed_fixture(&id)).send().await.expect("create entity failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
@@ -140,9 +139,9 @@ async fn typed_q_predicates_beyond_double_precision_fall_back_without_changing_s
 
 #[tokio::test]
 async fn typed_q_predicates_read_compound_values_from_the_payload() {
-    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+    let scope = TestEnvironment::from_suite("query_access_paths").await.expect("isolated test environment");
     let client = scope.client();
-    let id = format!("{SEED_PREFIX}:Building:typed-q-compound");
+    let id = scope.id("Building:typed-q-compound");
     let created = client.post_entity(&typed_fixture(&id)).send().await.expect("create entity failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
@@ -157,10 +156,10 @@ async fn typed_q_predicates_read_compound_values_from_the_payload() {
 
 #[tokio::test]
 async fn typed_q_fixtures_are_projected_under_their_declared_kinds() {
-    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+    let scope = TestEnvironment::from_suite("query_access_paths").await.expect("isolated test environment");
     let client = scope.client();
     let pool = scope.database_pool();
-    let id = format!("{SEED_PREFIX}:Building:typed-q-kinds");
+    let id = scope.id("Building:typed-q-kinds");
     let created = client.post_entity(&typed_fixture(&id)).send().await.expect("create entity failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
@@ -196,9 +195,9 @@ async fn typed_q_fixtures_are_projected_under_their_declared_kinds() {
 
 #[tokio::test]
 async fn typed_q_list_relationship_projects_the_related_entity_identifiers() {
-    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+    let scope = TestEnvironment::from_suite("query_access_paths").await.expect("isolated test environment");
     let client = scope.client();
-    let id = format!("{SEED_PREFIX}:Building:typed-q-list-relationship");
+    let id = scope.id("Building:typed-q-list-relationship");
     let created = client.post_entity(&typed_fixture(&id)).send().await.expect("create entity failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 

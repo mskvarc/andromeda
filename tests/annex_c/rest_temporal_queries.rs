@@ -7,30 +7,28 @@
 use crate::{
     BASE_URL,
     clean_tenant,
-    client,
     comparison::{ContextMember, EntityOrder, assert_matches_example, corpus},
     context_link,
     example_context::hosted_contexts,
     get_json,
 };
 use pretty_assertions::assert_eq;
-use reqwest::StatusCode;
+use reqwest::{Client, StatusCode};
 use serde_json::Value;
-use serial_test::serial;
 
 /// The window every temporal example in clause C.5 asks for.
 const WINDOW: &str = "timerel=between&timeAt=2018-08-01T12:00:00Z&endTimeAt=2018-08-01T13:00:00Z";
 
 /// Seed the speed evolution and answer the wrapper `@context` link.
-async fn seed_speed_evolution() -> String {
+async fn seed_speed_evolution(http: &Client) -> String {
     let link = context_link(hosted_contexts().url("aggregatedContext.jsonld").as_str());
-    create_temporal_entity(&corpus(include_str!("corpus/c-5-5-temporal-seed.json")), &link).await;
+    create_temporal_entity(http, &corpus(include_str!("corpus/c-5-5-temporal-seed.json")), &link).await;
     link
 }
 
 /// Create a Temporal Representation through clause 5.6.11.
-async fn create_temporal_entity(entity: &Value, link: &str) {
-    let response = client()
+async fn create_temporal_entity(http: &Client, entity: &Value, link: &str) {
+    let response = http
         .post(format!("{BASE_URL}/temporal/entities"))
         .header("Content-Type", "application/json")
         .header("Link", link)
@@ -47,72 +45,82 @@ async fn create_temporal_entity(entity: &Value, link: &str) {
 }
 
 /// Run one temporal query and return its answer.
-async fn temporal_query(link: &str, query: &str) -> Value {
-    let (status, body) = get_json(&client(), &format!("/temporal/entities/?{query}"), "application/ld+json", Some(link)).await;
+async fn temporal_query(http: &Client, link: &str, query: &str) -> Value {
+    let (status, body) = get_json(http, &format!("/temporal/entities/?{query}"), "application/ld+json", Some(link)).await;
     assert_eq!(status, StatusCode::OK, "temporal query failed: {body}");
     body
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_5_5_temporal_query_of_the_speed_evolution() {
     let environment = clean_tenant().await;
-    let link = seed_speed_evolution().await;
+    let link = seed_speed_evolution(&environment.client()).await;
 
-    let actual = temporal_query(&link, &format!("type=Vehicle&q=brandName!=Mercedes&attrs=speed&{WINDOW}")).await;
+    let actual = temporal_query(
+        &environment.client(),
+        &link,
+        &format!("type=Vehicle&q=brandName!=Mercedes&attrs=speed&{WINDOW}"),
+    )
+    .await;
     let expected = corpus(include_str!("corpus/c-5-5-temporal-answer.json"));
     assert_matches_example("C.5.5 EXAMPLE 1", &expected, &actual, ContextMember::Ignored, EntityOrder::Unordered);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_5_5_temporal_query_of_the_speed_and_brand_name_evolution() {
     let environment = clean_tenant().await;
-    let link = seed_speed_evolution().await;
+    let link = seed_speed_evolution(&environment.client()).await;
 
     // Clause C.5.5.1 EXAMPLE 2 asks for both Attributes and prints only
     // `speed`, on the stated grounds that "brandName attribute does not have
     // any temporal evolution". The seeded brandName observation lies outside
     // the requested window, which is the only way that premise holds for a
     // broker that historises every Attribute.
-    let actual = temporal_query(&link, &format!("type=Vehicle&q=brandName!=Mercedes&attrs=speed,brandName&{WINDOW}")).await;
+    let actual = temporal_query(
+        &environment.client(),
+        &link,
+        &format!("type=Vehicle&q=brandName!=Mercedes&attrs=speed,brandName&{WINDOW}"),
+    )
+    .await;
     let expected = corpus(include_str!("corpus/c-5-5-temporal-answer.json"));
     assert_matches_example("C.5.5 EXAMPLE 2", &expected, &actual, ContextMember::Ignored, EntityOrder::Unordered);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_5_6_temporal_query_in_the_simplified_representation() {
     let environment = clean_tenant().await;
-    let link = seed_speed_evolution().await;
+    let link = seed_speed_evolution(&environment.client()).await;
 
-    let actual = temporal_query(&link, &format!("type=Vehicle&q=brandName!=Mercedes&attrs=speed&{WINDOW}&format=temporalValues")).await;
+    let actual = temporal_query(
+        &environment.client(),
+        &link,
+        &format!("type=Vehicle&q=brandName!=Mercedes&attrs=speed&{WINDOW}&format=temporalValues"),
+    )
+    .await;
     let expected = corpus(include_str!("corpus/c-5-6-temporal-values-answer.json"));
     assert_matches_example("C.5.6", &expected, &actual, ContextMember::Ignored, EntityOrder::Unordered);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_5_14_temporal_query_in_the_aggregated_representation() {
     let environment = clean_tenant().await;
-    let link = seed_speed_evolution().await;
+    let link = seed_speed_evolution(&environment.client()).await;
 
     let query = format!("type=Vehicle&q=brandName!=Mercedes&attrs=speed&{WINDOW}&aggrMethods=max,avg&aggrPeriodDuration=PT4M&format=aggregatedValues");
-    let actual = temporal_query(&link, &query).await;
+    let actual = temporal_query(&environment.client(), &link, &query).await;
     let expected = corpus(include_str!("corpus/c-5-14-aggregated-answer.json"));
     assert_matches_example("C.5.14", &expected, &actual, ContextMember::Ignored, EntityOrder::Unordered);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_5_16_temporal_scope_queries_example() {
     let environment = clean_tenant().await;
     let link = context_link(hosted_contexts().url("aggregatedContext.jsonld").as_str());
@@ -120,6 +128,7 @@ async fn annex_c_5_16_temporal_scope_queries_example() {
     // B9211 was already in /Madrid/Centro before the window opens; A8311 only
     // enters it inside the window, so only its later observations are in scope.
     create_temporal_entity(
+        &environment.client(),
         &scoped_vehicle(
             "B9211",
             "2018-08-01T11:00:00Z",
@@ -130,6 +139,7 @@ async fn annex_c_5_16_temporal_scope_queries_example() {
     )
     .await;
     create_temporal_entity(
+        &environment.client(),
         &scoped_vehicle_with_scopes(
             "A8311",
             "2018-08-01T12:10:00Z",
@@ -149,11 +159,11 @@ async fn annex_c_5_16_temporal_scope_queries_example() {
     let expected = corpus(include_str!("corpus/c-5-16-temporal-answer.json"));
     for selection in ["attrs=speed,scope", "pick=id,type,speed,scope"] {
         let query = format!("type=Vehicle&{selection}&{WINDOW}&scopeQ=%2FMadrid%2FCentro&format=temporalValues");
-        let actual = temporal_query(&link, &query).await;
+        let actual = temporal_query(&environment.client(), &link, &query).await;
         assert_matches_example("C.5.16", &expected, &actual, ContextMember::Ignored, EntityOrder::Unordered);
     }
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 /// A temporal Vehicle payload carrying one scope value and a speed evolution.

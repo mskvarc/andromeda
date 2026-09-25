@@ -19,13 +19,17 @@ use reqwest::Method;
 use serde_json::{Value, json};
 use urlencoding::encode;
 
-/// Create the baseline registration under the given id.
+/// Create the baseline registration under the given id, covering a per-test
+/// entity type so this inclusive registration cannot match another concurrent
+/// test's `Vehicle` writes on the shared broker.
 async fn create_baseline(topology: &MultiBrokerTopology<BrokerRole>, id: &str) {
+    let mut body = csr_basic(id, PEER_ENDPOINT);
+    body["information"][0]["entities"][0]["type"] = json!(topology.id("Vehicle"));
     let created = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .create_registration(&csr_basic(id, PEER_ENDPOINT))
+        .create_registration(&body)
         .await
         .expect("create registration");
     assert_status(&created, 201);
@@ -223,7 +227,12 @@ async fn update_shorthand_names_expanded() {
     let id = topology.id("registration:update-shorthand");
     create_baseline(&topology, &id).await;
 
-    let fragment = json!({ "information": [ { "entities": [ { "type": "Vehicle" } ], "propertyNames": ["speed"] } ] });
+    // The shorthand `Vehicle` term is the point of this test (it must expand
+    // under the request context), so it stays literal; a prefix `idPattern`
+    // scopes the patched registration to this test's own entities so it cannot
+    // match another concurrent test's `Vehicle` writes.
+    let fragment =
+        json!({ "information": [ { "entities": [ { "type": "Vehicle", "idPattern": format!("{}.*", topology.id_prefix()) } ], "propertyNames": ["speed"] } ] });
     let updated = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")

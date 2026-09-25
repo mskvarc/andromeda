@@ -8,7 +8,6 @@
 
 use crate::{
     attribute_iri,
-    clean_database,
     client,
     create_entity,
     create_entity_batch,
@@ -17,14 +16,13 @@ use crate::{
     get_temporal_entity,
     rendered_instances,
     stored_history::{stored_attribute_history, stored_history},
-    unique_id,
     update_entity_attributes,
     upsert_entity_batch,
 };
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::{assert_eq, assert_ne};
 use reqwest::StatusCode;
 use serde_json::json;
-use serial_test::serial;
 use std::collections::BTreeSet;
 
 /// The instant the first write declares as its observation.
@@ -36,12 +34,11 @@ const EARLIER_OBSERVATION: &str = "2021-01-01T00:00:00Z";
 /// A backdated update still wins current state, because current state follows
 /// commit order while the observed-time axis follows what was declared.
 #[tokio::test]
-#[serial]
 async fn temporal_semantics_operational_ordering_separates_commit_order_from_observed_order() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_semantics").await.expect("isolated test environment");
     let http = client();
     let pool = database().await;
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:operational_ordering");
+    let entity_id = scope.id("Vehicle:operational_ordering");
 
     let created = create_entity(
         &http,
@@ -96,18 +93,18 @@ async fn temporal_semantics_operational_ordering_separates_commit_order_from_obs
             "the {start} window returns the value declared at that instant"
         );
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Every consequence of one batch shares its ingestion instant and its write
 /// identity, and the batch numbers all of them uniquely and densely from zero.
 #[tokio::test]
-#[serial]
 async fn temporal_semantics_same_batch_ordering_is_unique_and_deterministic() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_semantics").await.expect("isolated test environment");
     let http = client();
     let pool = database().await;
-    let first_id = unique_id("urn:ngsi-ld:Vehicle:batch_ordering_first");
-    let second_id = unique_id("urn:ngsi-ld:Vehicle:batch_ordering_second");
+    let first_id = scope.id("Vehicle:batch_ordering_first");
+    let second_id = scope.id("Vehicle:batch_ordering_second");
 
     let created = create_entity_batch(
         &http,
@@ -161,17 +158,17 @@ async fn temporal_semantics_same_batch_ordering_is_unique_and_deterministic() {
         assert_eq!(entity["speed"]["value"], json!(speed));
         assert_eq!(entity["fuel"]["value"], json!(fuel));
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// A later change inside the same batch is the one that survives, and the
 /// choice does not depend on the order rows happen to be stored in.
 #[tokio::test]
-#[serial]
 async fn temporal_semantics_same_batch_reconstruction_takes_the_specified_final_change() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_semantics").await.expect("isolated test environment");
     let http = client();
     let pool = database().await;
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:batch_final_change");
+    let entity_id = scope.id("Vehicle:batch_final_change");
 
     // The same Entity appears twice in one batch; the later member is the
     // change the batch specifies, and the choice must not depend on the order
@@ -204,4 +201,5 @@ async fn temporal_semantics_same_batch_reconstruction_takes_the_specified_final_
         vec![Some("2"), Some("3")],
         "history records both instances in the order the array specified"
     );
+    scope.finish().await.expect("cleanup failed");
 }

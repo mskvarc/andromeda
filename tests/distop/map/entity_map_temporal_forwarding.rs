@@ -11,7 +11,7 @@ use crate::{
     map::{
         csr_subscription::FORWARD_TIMEOUT,
         entity_map_request::create_temporal_entity_map,
-        temporal_vehicle::{BEFORE_2022, temporal_vehicle},
+        temporal_vehicle::{BEFORE_2022, temporal_vehicle_typed},
     },
     oracle::{assert_status, entity_map_header, json_body},
     registration::CsrBuilder,
@@ -24,10 +24,10 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 /// Create a temporal `Vehicle` on the front broker.
-async fn seed_temporal(client: &TestClient, id: &str, speed: i64) {
+async fn seed_temporal(client: &TestClient, entity_type: &str, id: &str, speed: i64) {
     assert_status(
         &client
-            .create_temporal_entity(&temporal_vehicle(id, speed))
+            .create_temporal_entity(&temporal_vehicle_typed(id, entity_type, speed))
             .await
             .expect("create temporal entity"),
         201,
@@ -36,7 +36,12 @@ async fn seed_temporal(client: &TestClient, id: &str, speed: i64) {
 
 /// Register an inclusive `Vehicle` source on the front broker and stub the
 /// temporal map and entity endpoints the forwarded query may hit.
-async fn temporal_source(topology: &MultiBrokerTopology<BrokerRole>, registration_local: &str, remote_entity_id: &str) -> ContextSourceAdapter {
+async fn temporal_source(
+    topology: &MultiBrokerTopology<BrokerRole>,
+    entity_type: &str,
+    registration_local: &str,
+    remote_entity_id: &str,
+) -> ContextSourceAdapter {
     let mock = ContextSourceAdapter::start().await;
     let remote_map = json!({
         "id": "urn:ngsi-ld:EntityMap:remote-temporal",
@@ -49,7 +54,7 @@ async fn temporal_source(topology: &MultiBrokerTopology<BrokerRole>, registratio
     mock.set_stub_with_body(Method::GET, "/temporal/entities", 200, &json!([])).await;
     let registration = CsrBuilder::new(&topology.id(registration_local), &mock.url(""))
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(entity_type)
         .operations(&["createEntityMapQueryTemporal", "queryTemporal"])
         .build();
     assert_status(
@@ -70,17 +75,19 @@ async fn temporal_source(topology: &MultiBrokerTopology<BrokerRole>, registratio
 #[tokio::test]
 async fn emt_split_non_local_candidate_set_by_id_pattern_type_temporal() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let remote_entity = topology.id("Vehicle:temporal-split-remote");
-    let mock = temporal_source(&topology, "registration:temporal-split", &remote_entity).await;
+    let mock = temporal_source(&topology, &vtype, "registration:temporal-split", &remote_entity).await;
     seed_temporal(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &vtype,
         &topology.id("Vehicle:temporal-split-local"),
         20,
     )
     .await;
     let created = create_temporal_entity_map(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &format!("type=Vehicle&{BEFORE_2022}"),
+        &format!("type={}&{BEFORE_2022}", urlencoding::encode(&vtype)),
     )
     .await;
     assert_status(&created, 201);
@@ -95,17 +102,19 @@ async fn emt_split_non_local_candidate_set_by_id_pattern_type_temporal() {
 #[tokio::test]
 async fn emt_non_local_forwards_to_supporting_temporal_csrs() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let remote_entity = topology.id("Vehicle:temporal-forward-remote");
-    let mock = temporal_source(&topology, "registration:temporal-forward", &remote_entity).await;
+    let mock = temporal_source(&topology, &vtype, "registration:temporal-forward", &remote_entity).await;
     seed_temporal(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &vtype,
         &topology.id("Vehicle:temporal-forward-local"),
         20,
     )
     .await;
     let created = create_temporal_entity_map(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &format!("type=Vehicle&{BEFORE_2022}"),
+        &format!("type={}&{BEFORE_2022}", urlencoding::encode(&vtype)),
     )
     .await;
     assert_status(&created, 201);
@@ -127,17 +136,19 @@ async fn emt_non_local_forwards_to_supporting_temporal_csrs() {
 #[tokio::test]
 async fn emt_split_forward_strips_filters() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let remote_entity = topology.id("Vehicle:temporal-strip-remote");
-    let mock = temporal_source(&topology, "registration:temporal-strip", &remote_entity).await;
+    let mock = temporal_source(&topology, &vtype, "registration:temporal-strip", &remote_entity).await;
     seed_temporal(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &vtype,
         &topology.id("Vehicle:temporal-strip-local"),
         20,
     )
     .await;
     let created = create_temporal_entity_map(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &format!("type=Vehicle&q=speed%3E10&splitEntities=true&{BEFORE_2022}"),
+        &format!("type={}&q=speed%3E10&splitEntities=true&{BEFORE_2022}", urlencoding::encode(&vtype)),
     )
     .await;
     assert_status(&created, 201);
@@ -156,17 +167,19 @@ async fn emt_split_forward_strips_filters() {
 #[tokio::test]
 async fn emt_forwarded_query_returns_entity_map() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let remote_entity = topology.id("Vehicle:temporal-returns-remote");
-    let mock = temporal_source(&topology, "registration:temporal-returns", &remote_entity).await;
+    let mock = temporal_source(&topology, &vtype, "registration:temporal-returns", &remote_entity).await;
     seed_temporal(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &vtype,
         &topology.id("Vehicle:temporal-returns-local"),
         20,
     )
     .await;
     let created = create_temporal_entity_map(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &format!("type=Vehicle&{BEFORE_2022}"),
+        &format!("type={}&{BEFORE_2022}", urlencoding::encode(&vtype)),
     )
     .await;
     assert_status(&created, 201);
@@ -184,17 +197,19 @@ async fn emt_forwarded_query_returns_entity_map() {
 #[tokio::test]
 async fn emt_remote_map_updates_linked_maps() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let remote_entity = topology.id("Vehicle:temporal-linked-remote");
-    let mock = temporal_source(&topology, "registration:temporal-linked", &remote_entity).await;
+    let mock = temporal_source(&topology, &vtype, "registration:temporal-linked", &remote_entity).await;
     seed_temporal(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &vtype,
         &topology.id("Vehicle:temporal-linked-local"),
         20,
     )
     .await;
     let created = create_temporal_entity_map(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &format!("type=Vehicle&{BEFORE_2022}"),
+        &format!("type={}&{BEFORE_2022}", urlencoding::encode(&vtype)),
     )
     .await;
     assert_status(&created, 201);
@@ -209,17 +224,19 @@ async fn emt_remote_map_updates_linked_maps() {
 #[tokio::test]
 async fn emt_remote_map_updates_entity_map_element() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let remote_entity = topology.id("Vehicle:temporal-element-remote");
-    let mock = temporal_source(&topology, "registration:temporal-element", &remote_entity).await;
+    let mock = temporal_source(&topology, &vtype, "registration:temporal-element", &remote_entity).await;
     seed_temporal(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &vtype,
         &topology.id("Vehicle:temporal-element-local"),
         20,
     )
     .await;
     let created = create_temporal_entity_map(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &format!("type=Vehicle&{BEFORE_2022}"),
+        &format!("type={}&{BEFORE_2022}", urlencoding::encode(&vtype)),
     )
     .await;
     assert_status(&created, 201);
@@ -234,15 +251,17 @@ async fn emt_remote_map_updates_entity_map_element() {
 #[tokio::test]
 async fn emt_local_map_stored_and_retrievable() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     seed_temporal(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &vtype,
         &topology.id("Vehicle:temporal-stored"),
         20,
     )
     .await;
     let created = create_temporal_entity_map(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &format!("type=Vehicle&{BEFORE_2022}"),
+        &format!("type={}&{BEFORE_2022}", urlencoding::encode(&vtype)),
     )
     .await;
     assert_status(&created, 201);
@@ -263,15 +282,17 @@ async fn emt_local_map_stored_and_retrievable() {
 #[tokio::test]
 async fn emt_success_returns_201_location_and_body() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     seed_temporal(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &vtype,
         &topology.id("Vehicle:temporal-success"),
         20,
     )
     .await;
     let created = create_temporal_entity_map(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &format!("type=Vehicle&{BEFORE_2022}"),
+        &format!("type={}&{BEFORE_2022}", urlencoding::encode(&vtype)),
     )
     .await;
     assert_status(&created, 201);

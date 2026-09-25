@@ -12,7 +12,6 @@
 
 use crate::{
     clean_tenant,
-    client,
     comparison::{ContextMember, EntityOrder, assert_matches_example, corpus},
     context_link,
     create_entity,
@@ -20,51 +19,48 @@ use crate::{
     get_json,
 };
 use pretty_assertions::assert_eq;
-use reqwest::StatusCode;
+use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
-use serial_test::serial;
 
 /// The signed Store exactly as clause C.11 prints it, with the comma restored.
 const STORE: &str = include_str!("corpus/c-11-signed-store.json");
 
 /// Seed the signed Store and answer the `@context` link it is written with.
-async fn seed_signed_store() -> String {
+async fn seed_signed_store(http: &Client) -> String {
     let link = context_link(hosted_contexts().url("store-context.jsonld").as_str());
     let mut store = corpus(STORE);
     if let Some(members) = store.as_object_mut() {
         members.remove("@context");
     }
-    create_entity(&client(), &store, Some(&link)).await;
+    create_entity(http, &store, Some(&link)).await;
     link
 }
 
 /// Retrieve the signed Store.
-async fn retrieve_store(link: &str) -> Value {
-    let (status, body) = get_json(&client(), "/entities/urn:ngsi-ld:Store:002", "application/ld+json", Some(link)).await;
+async fn retrieve_store(http: &Client, link: &str) -> Value {
+    let (status, body) = get_json(http, "/entities/urn:ngsi-ld:Store:002", "application/ld+json", Some(link)).await;
     assert_eq!(status, StatusCode::OK, "Store retrieval failed: {body}");
     body
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_11_a_signed_attribute_round_trips_with_its_proof_intact() {
     let environment = clean_tenant().await;
-    let link = seed_signed_store().await;
+    let link = seed_signed_store(&environment.client()).await;
 
-    let actual = retrieve_store(&link).await;
+    let actual = retrieve_store(&environment.client(), &link).await;
     let expected = corpus(STORE);
     assert_matches_example("C.11", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_11_the_proof_carries_the_eddsa_rdfc_2022_crypto_suite() {
     let environment = clean_tenant().await;
-    let link = seed_signed_store().await;
+    let link = seed_signed_store(&environment.client()).await;
 
-    let actual = retrieve_store(&link).await;
+    let actual = retrieve_store(&environment.client(), &link).await;
     let proof = &actual["address"]["ngsildproof"];
     assert_eq!(proof["type"], json!("Property"), "clause 5.2.5 types ngsildproof as a Property");
     assert_eq!(proof["entityIdSealed"], json!("urn:ngsi-ld:Store:002"));
@@ -83,27 +79,27 @@ async fn annex_c_11_the_proof_carries_the_eddsa_rdfc_2022_crypto_suite() {
         json!("https://example.edu/issuers/565049#z6MkwXG2WjeQnN....Hc6SaVWoT")
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_11_the_atomic_unit_of_signing_is_a_single_attribute() {
     let environment = clean_tenant().await;
-    let link = seed_signed_store().await;
+    let link = seed_signed_store(&environment.client()).await;
 
     // "the atomic piece of information that creators can digitally sign in an
     // NGSI-LD ecosystem is each single Attribute of an Entity": the proof rides
     // on `address` and nowhere else, and an Attribute update that leaves
     // `address` alone leaves its proof alone too.
-    let unsigned = retrieve_store(&link).await;
+    let unsigned = retrieve_store(&environment.client(), &link).await;
     assert!(
         unsigned["location"].get("ngsildproof").is_none(),
         "only the signed Attribute carries a proof, got {}",
         unsigned["location"]
     );
 
-    let patched = client()
+    let patched = environment
+        .client()
         .patch(format!("{}/entities/urn:ngsi-ld:Store:002/attrs", crate::BASE_URL))
         .header("Content-Type", "application/json")
         .header("Link", &link)
@@ -113,11 +109,11 @@ async fn annex_c_11_the_atomic_unit_of_signing_is_a_single_attribute() {
         .expect("attribute update request");
     assert_eq!(patched.status(), StatusCode::NO_CONTENT, "updating an unsigned Attribute has to succeed");
 
-    let after = retrieve_store(&link).await;
+    let after = retrieve_store(&environment.client(), &link).await;
     assert_eq!(
         after["address"], unsigned["address"],
         "a change to another Attribute must not disturb the signed one"
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }

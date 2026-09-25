@@ -16,6 +16,9 @@ use serde_json::json;
 /// Provision an entity map by running a distributed `entityMap=true` query
 /// against a registered mock source, returning the created map id.
 async fn provision_map(topology: &MultiBrokerTopology<BrokerRole>, mock: &ContextSourceAdapter, tag: &str) -> String {
+    // A per-tag type keeps this entityMap query from discovering another
+    // concurrent test's Vehicle registrations and forwarding to their sources.
+    let vtype = topology.id(&format!("{tag}:type"));
     let entity_id = topology.id(&format!("Vehicle:{tag}"));
     let reg_id = topology.id(&format!("registration:{tag}"));
     assert_status(
@@ -23,7 +26,7 @@ async fn provision_map(topology: &MultiBrokerTopology<BrokerRole>, mock: &Contex
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -33,7 +36,11 @@ async fn provision_map(topology: &MultiBrokerTopology<BrokerRole>, mock: &Contex
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", Some(context_link()))
+        .query_entities(
+            &format!("type={}&entityMap=true", urlencoding::encode(&vtype)),
+            "application/ld+json",
+            Some(context_link()),
+        )
         .await
         .expect("entity-map query");
     entity_map_header(&response).expect("an entityMap query yields a map id")
@@ -217,6 +224,7 @@ async fn dist_http_delete_entity_map_unknown_returns_404() {
 async fn dist_http_get_entity_maps_create_returns_201_and_map_header() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:maps-get-create");
+    let vtype = topology.id("Vehicle");
     let reg_id = topology.id("registration:maps-get-create");
     let mock = ContextSourceAdapter::start().await;
     assert_status(
@@ -224,7 +232,7 @@ async fn dist_http_get_entity_maps_create_returns_201_and_map_header() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -235,7 +243,7 @@ async fn dist_http_get_entity_maps_create_returns_201_and_map_header() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/entityMaps?type=Vehicle")
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entityMaps?type={}", urlencoding::encode(&vtype)))
         .header("accept", "application/ld+json")
         .header("link", context_link_header())
         .send()
@@ -277,6 +285,7 @@ async fn dist_http_get_entity_maps_invalid_returns_400() {
 async fn dist_http_post_entity_maps_query_body_returns_201_and_map_header() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:maps-post");
+    let vtype = topology.id("Vehicle");
     let reg_id = topology.id("registration:maps-post");
     let mock = ContextSourceAdapter::start().await;
     assert_status(
@@ -284,7 +293,7 @@ async fn dist_http_post_entity_maps_query_body_returns_201_and_map_header() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -298,7 +307,7 @@ async fn dist_http_post_entity_maps_query_body_returns_201_and_map_header() {
         .raw(Method::POST, "/ngsi-ld/v1/entityMaps")
         .header("content-type", "application/ld+json")
         .header("accept", "application/ld+json")
-        .json(&json!({ "type": "Query", "entities": [ { "type": "Vehicle" } ], "@context": context_link() }))
+        .json(&json!({ "type": "Query", "entities": [ { "type": vtype.as_str() } ], "@context": context_link() }))
         .send()
         .await
         .expect("entityMaps collection post");
@@ -321,6 +330,7 @@ async fn dist_http_post_entity_maps_query_body_returns_201_and_map_header() {
 async fn dist_http_get_temporal_entity_maps_create_returns_201_and_map_header() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:tmaps-get");
+    let vtype = topology.id("Vehicle");
     let reg_id = topology.id("registration:tmaps-get");
     let mock = ContextSourceAdapter::start().await;
     assert_status(
@@ -328,7 +338,7 @@ async fn dist_http_get_temporal_entity_maps_create_returns_201_and_map_header() 
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -341,7 +351,10 @@ async fn dist_http_get_temporal_entity_maps_create_returns_201_and_map_header() 
         .client()
         .raw(
             Method::GET,
-            "/ngsi-ld/v1/temporal/entityMaps?type=Vehicle&timerel=before&timeAt=2022-01-01T00:00:00Z",
+            &format!(
+                "/ngsi-ld/v1/temporal/entityMaps?type={}&timerel=before&timeAt=2022-01-01T00:00:00Z",
+                urlencoding::encode(&vtype)
+            ),
         )
         .header("accept", "application/ld+json")
         .header("link", context_link_header())
@@ -367,6 +380,7 @@ async fn dist_http_get_temporal_entity_maps_create_returns_201_and_map_header() 
 async fn dist_http_post_temporal_entity_maps_query_body_returns_201_and_map_header() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:tmaps-post");
+    let vtype = topology.id("Vehicle");
     let reg_id = topology.id("registration:tmaps-post");
     let mock = ContextSourceAdapter::start().await;
     assert_status(
@@ -374,7 +388,7 @@ async fn dist_http_post_temporal_entity_maps_query_body_returns_201_and_map_head
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -390,7 +404,7 @@ async fn dist_http_post_temporal_entity_maps_query_body_returns_201_and_map_head
         .header("accept", "application/ld+json")
         .json(&json!({
             "type": "Query",
-            "entities": [ { "type": "Vehicle" } ],
+            "entities": [ { "type": vtype.as_str() } ],
             "temporalQ": { "timerel": "before", "timeAt": "2022-01-01T00:00:00Z" },
             "@context": context_link()
         }))

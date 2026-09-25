@@ -5,7 +5,7 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::{entity, property_with_dataset, vehicle},
+    entity::{entity, property_with_dataset, typed_vehicle, vehicle},
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
     topology::{self, BrokerRole},
@@ -14,6 +14,7 @@ use axum::http::Method;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::time::Duration;
+use urlencoding::encode;
 
 /// Budget for a forwarded request to reach the mock context source.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -36,10 +37,11 @@ async fn forward_scopes_request_to_registered_type_only() {
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:scope-type"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(
@@ -57,7 +59,7 @@ async fn forward_scopes_request_to_registered_type_only() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle,Device", "application/ld+json", None)
+        .query_entities(&format!("type={},Device", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&query, 200);
@@ -89,11 +91,13 @@ async fn forward_narrows_to_registered_ids_attrs_geofence() {
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let covered = topology.id("Vehicle:narrow-A1");
     let other = topology.id("Vehicle:narrow-A2");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:narrow"), &endpoint)
         .mode("inclusive")
+        .entity_type(&vtype)
         .entity_id(&covered)
         .property_names(&["speed"])
         .operations(&["queryEntity"])
@@ -109,7 +113,7 @@ async fn forward_narrows_to_registered_ids_attrs_geofence() {
         201,
     );
 
-    let query = format!("type=Vehicle&id={covered},{other}&attrs=speed,fuel");
+    let query = format!("type={}&id={covered},{other}&attrs=speed,fuel", encode(&vtype));
     let response = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
@@ -142,10 +146,12 @@ async fn forward_narrows_to_registered_relationship_names() {
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let covered = topology.id("Vehicle:narrow-rel");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:narrow-rel"), &endpoint)
         .mode("inclusive")
+        .entity_type(&vtype)
         .entity_id(&covered)
         .relationship_names(&["isParked"])
         .operations(&["queryEntity"])
@@ -161,7 +167,7 @@ async fn forward_narrows_to_registered_relationship_names() {
         201,
     );
 
-    let query = format!("type=Vehicle&id={covered}&attrs=isParked,speed");
+    let query = format!("type={}&id={covered}&attrs=isParked,speed", encode(&vtype));
     let response = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
@@ -194,10 +200,12 @@ async fn forward_exclusive_block_names_its_id_and_attribute_for_a_type_only_quer
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let covered = topology.id("Vehicle:exclusive-block");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:exclusive-block"), &endpoint)
         .mode("exclusive")
+        .entity_type(&vtype)
         .entity_id(&covered)
         .property_names(&["speed"])
         .operations(&["queryEntity"])
@@ -217,7 +225,7 @@ async fn forward_exclusive_block_names_its_id_and_attribute_for_a_type_only_quer
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -251,10 +259,11 @@ async fn forward_constraint_enforced_at_broker_not_source() {
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:broker-enforced"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(
@@ -272,7 +281,7 @@ async fn forward_constraint_enforced_at_broker_not_source() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle,Device", "application/ld+json", None)
+        .query_entities(&format!("type={},Device", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -400,15 +409,16 @@ async fn forward_same_attribute_two_sources_distinguished_by_dataset_id() {
     let first_mock = ContextSourceAdapter::start().await;
     let second_mock = ContextSourceAdapter::start().await;
 
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:dataset-A1");
     let first_body = json!([entity(
         &entity_id,
-        "Vehicle",
+        &vtype,
         &[("speed", property_with_dataset(json!(50), "urn:ngsi-ld:dataset:first"))]
     )]);
     let second_body = json!([entity(
         &entity_id,
-        "Vehicle",
+        &vtype,
         &[("speed", property_with_dataset(json!(70), "urn:ngsi-ld:dataset:second"))]
     )]);
     first_mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &first_body).await;
@@ -419,6 +429,7 @@ async fn forward_same_attribute_two_sources_distinguished_by_dataset_id() {
     for (suffix, endpoint) in [("first", &first_endpoint), ("second", &second_endpoint)] {
         let registration = CsrBuilder::new(&topology.id(&format!("registration:dataset-{suffix}")), endpoint)
             .mode("inclusive")
+            .entity_type(&vtype)
             .entity_id(&entity_id)
             .property_names(&["speed"])
             .operations(&["queryEntity"])
@@ -439,7 +450,7 @@ async fn forward_same_attribute_two_sources_distinguished_by_dataset_id() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
+        .query_entities(&format!("type={}&id={entity_id}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -460,10 +471,11 @@ async fn forward_omits_operation_not_supported_by_source() {
     let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
 
+    let vtype = topology.id("Vehicle");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:retrieve-only"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["retrieveEntity"])
         .build();
     assert_status(
@@ -481,7 +493,7 @@ async fn forward_omits_operation_not_supported_by_source() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -504,10 +516,11 @@ async fn forward_default_representation_is_normalized() {
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:default-format"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(
@@ -525,7 +538,7 @@ async fn forward_default_representation_is_normalized() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -558,10 +571,11 @@ async fn forward_non_normalized_format_optional_no_failure() {
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub(Method::GET, FORWARDED_ENTITIES, 501).await;
 
+    let vtype = topology.id("Vehicle");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:keyvalues-optional"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(
@@ -579,7 +593,7 @@ async fn forward_non_normalized_format_optional_no_failure() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&options=keyValues", "application/ld+json", None)
+        .query_entities(&format!("type={}&options=keyValues", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert!(
@@ -599,14 +613,15 @@ async fn forward_non_normalized_format_optional_no_failure() {
 async fn forward_system_attrs_absent_without_error() {
     let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:sysattrs");
-    mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([vehicle(&entity_id, 55)]))
+    mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([typed_vehicle(&entity_id, &vtype, 55)]))
         .await;
 
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:sysattrs"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(
@@ -624,7 +639,7 @@ async fn forward_system_attrs_absent_without_error() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&options=sysAttrs", "application/ld+json", None)
+        .query_entities(&format!("type={}&options=sysAttrs", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);

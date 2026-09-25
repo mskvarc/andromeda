@@ -6,22 +6,12 @@
 //! the ingestion chunk the broker is currently writing, while remaining exactly
 //! selectable on its own semantic axis.
 
-use crate::{
-    attribute_iri,
-    clean_database,
-    client,
-    create_temporal_entity,
-    database,
-    get_temporal_entity,
-    rendered_instances,
-    stored_history::stored_attribute_history,
-    unique_id,
-};
+use crate::{attribute_iri, client, create_temporal_entity, database, get_temporal_entity, rendered_instances, stored_history::stored_attribute_history};
+use andromeda_test_harness::environment::TestEnvironment;
 use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
-use serial_test::serial;
 use sqlx::{PgPool, Row};
 
 /// The lateness of each replayed observation, in days behind the write instant.
@@ -57,12 +47,11 @@ async fn attribute_history_chunk_interval(pool: &PgPool) -> i64 {
 /// Late arrivals are written into the current ingestion chunk and stay exactly
 /// selectable on the semantic axis they declare.
 #[tokio::test]
-#[serial]
 async fn temporal_semantics_late_observations_stay_in_the_ingestion_chunk_and_remain_exact() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_semantics").await.expect("isolated test environment");
     let http = client();
     let pool = database().await;
-    let entity_id = unique_id("urn:ngsi-ld:Sensor:late_observations");
+    let entity_id = scope.id("Sensor:late_observations");
     let now = Utc::now();
 
     let instances = LATENESS_DAYS
@@ -125,6 +114,7 @@ async fn temporal_semantics_late_observations_stay_in_the_ingestion_chunk_and_re
         assert_eq!(matched.len(), 1, "the {days}-day-late window matches exactly its own observation");
         assert_eq!(matched[0]["value"], json!(days), "the {days}-day-late window returns its own value");
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 const OCCUPIED_CHUNKS_SQL: &str = r"

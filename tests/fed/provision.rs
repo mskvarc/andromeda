@@ -4,19 +4,19 @@ use crate::fixtures::{FedRole, assert_status, body, broker, entity, registration
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use pretty_assertions::assert_eq;
 use serde_json::json;
-use serial_test::serial;
+use urlencoding::encode;
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_redirected_entity_crud_lifecycle_reaches_domain() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let hub = broker(&topology, FedRole::Hub);
     let madrid = broker(&topology, FedRole::Madrid);
     let id = topology.id("Building:redirect-crud");
-    let csr = registration(
+    let mut csr = registration(
         &topology.id("registration:redirect-crud"),
         madrid.peer_url(),
-        "Building",
+        &btype,
         None,
         "redirect",
         Some(&[
@@ -28,10 +28,14 @@ async fn fed_redirected_entity_crud_lifecycle_reaches_domain() {
             "deleteEntity",
         ]),
     );
+    // A prefix idPattern confines this redirect registration's ownership to this
+    // test's own entities, so it cannot intercept a concurrent test's writes or
+    // its operations on absent entities of an unknown type.
+    csr["information"][0]["entities"][0]["idPattern"] = json!(format!("^{}", topology.id_prefix()));
     assert_status(&hub.client().create_registration(&csr).await.expect("redirect registration"), 201);
     assert_status(
         &hub.client()
-            .post_entity(&entity(&id, "Building", 21))
+            .post_entity(&entity(&id, &btype, 21))
             .with_ld_json()
             .send()
             .await
@@ -80,26 +84,34 @@ async fn fed_redirected_entity_crud_lifecycle_reaches_domain() {
 }
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_batch_provision_routes_entities_to_three_domains() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let hub = broker(&topology, FedRole::Hub);
     let domains = [(FedRole::Madrid, "MAD"), (FedRole::Berlin, "BER"), (FedRole::Nordic, "NOR")];
+    // The routing idPattern is anchored to this test's own prefix so a concurrent
+    // batch test's MAD/BER/NOR entities are neither routed here nor counted below.
     for (role, prefix) in domains {
         let domain = broker(&topology, role);
-        let pattern = format!(".*:{prefix}-.*");
-        let csr = json!({"id": topology.id(&format!("registration:batch:{prefix}")), "type": "ContextSourceRegistration", "endpoint": domain.peer_url(), "information": [{"entities": [{"type": "Building", "idPattern": pattern}]}], "mode": "redirect", "operations": ["redirectionOps", "createBatch", "updateBatch", "deleteBatch"], "@context": COMPOUND_CONTEXT.as_str()});
+        let pattern = format!("^{}:{prefix}-.*", topology.id_prefix());
+        let csr = json!({"id": topology.id(&format!("registration:batch:{prefix}")), "type": "ContextSourceRegistration", "endpoint": domain.peer_url(), "information": [{"entities": [{"type": btype, "idPattern": pattern}]}], "mode": "redirect", "operations": ["redirectionOps", "createBatch", "updateBatch", "deleteBatch"], "@context": COMPOUND_CONTEXT.as_str()});
         assert_status(&hub.client().create_registration(&csr).await.expect("batch registration"), 201);
     }
-    let entities: Vec<_> = ["MAD", "BER", "NOR"]
-        .into_iter()
-        .flat_map(|prefix| (0..100).map(move |value| entity(&format!("urn:ngsi-ld:test:{prefix}-{value}"), "Building", value)))
-        .collect();
+    let mut entities = Vec::new();
+    for prefix in ["MAD", "BER", "NOR"] {
+        for value in 0..100 {
+            entities.push(entity(&topology.id(&format!("{prefix}-{value}")), &btype, value));
+        }
+    }
     let created = hub.client().batch_create(&json!(entities)).await.expect("batch create");
     assert!(created.status.as_u16() < 500, "batch create must not be a server failure: {}", created.status);
     for (role, prefix) in domains {
         let domain = broker(&topology, role);
-        let query = format!("type=Building&idPattern=.*%3A{prefix}-.*");
+        let query = format!(
+            "type={}&idPattern={}",
+            encode(&btype),
+            encode(&format!("^{}:{prefix}-.*", topology.id_prefix()))
+        );
         let response = domain
             .client()
             .query_entities(&query, "application/ld+json", None)
@@ -116,33 +128,30 @@ async fn fed_batch_provision_routes_entities_to_three_domains() {
 }
 
 #[tokio::test]
-#[serial(fed)]
 async fn fed_batch_write_reports_partial_domain_failure() {
     let topology = topology().await;
+    let btype = topology.id("Building");
     let hub = broker(&topology, FedRole::Hub);
     let madrid = broker(&topology, FedRole::Madrid);
-    assert_status(
-        &hub.client()
-            .create_registration(&registration(
-                &topology.id("registration:batch-success"),
-                madrid.peer_url(),
-                "Building",
-                None,
-                "redirect",
-                Some(&["redirectionOps", "createBatch"]),
-            ))
-            .await
-            .expect("success registration"),
-        201,
+    let mad_success = topology.id("MAD-success");
+    let fail_error = topology.id("FAIL-error");
+    // Both registrations' idPatterns are anchored to this test's prefix so they
+    // route and fail only this test's own MAD/FAIL entities.
+    let mut success = registration(
+        &topology.id("registration:batch-success"),
+        madrid.peer_url(),
+        &btype,
+        None,
+        "redirect",
+        Some(&["redirectionOps", "createBatch"]),
     );
-    let failing = json!({"id": topology.id("registration:batch-failure"), "type": "ContextSourceRegistration", "endpoint": "http://127.0.0.1:1", "information": [{"entities": [{"type": "Building", "idPattern": ".*:FAIL-.*"}]}], "mode": "redirect", "operations": ["redirectionOps", "createBatch"], "@context": COMPOUND_CONTEXT.as_str()});
+    success["information"][0]["entities"][0]["idPattern"] = json!(format!("^{}:MAD-.*", topology.id_prefix()));
+    assert_status(&hub.client().create_registration(&success).await.expect("success registration"), 201);
+    let failing = json!({"id": topology.id("registration:batch-failure"), "type": "ContextSourceRegistration", "endpoint": "http://127.0.0.1:1", "information": [{"entities": [{"type": btype, "idPattern": format!("^{}:FAIL-.*", topology.id_prefix())}]}], "mode": "redirect", "operations": ["redirectionOps", "createBatch"], "@context": COMPOUND_CONTEXT.as_str()});
     assert_status(&hub.client().create_registration(&failing).await.expect("failure registration"), 201);
     let response = hub
         .client()
-        .batch_create(&json!([
-            entity("urn:ngsi-ld:test:MAD-success", "Building", 1),
-            entity("urn:ngsi-ld:test:FAIL-error", "Building", 2)
-        ]))
+        .batch_create(&json!([entity(&mad_success, &btype, 1), entity(&fail_error, &btype, 2)]))
         .await
         .expect("partial batch");
     assert_eq!(response.status.as_u16(), 207);
@@ -154,7 +163,7 @@ async fn fed_batch_write_reports_partial_domain_failure() {
     assert_status(
         &madrid
             .client()
-            .get_entity("urn:ngsi-ld:test:MAD-success", "", "application/ld+json", None)
+            .get_entity(&mad_success, "", "application/ld+json", None)
             .await
             .expect("successful domain write"),
         200,

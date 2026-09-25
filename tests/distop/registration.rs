@@ -23,6 +23,16 @@ pub fn csr_basic(id: &str, endpoint: &str) -> Value {
     })
 }
 
+/// A minimal valid Context Source Registration whose single `RegistrationInfo`
+/// covers one explicit entity `type`, for suites that derive a per-test type
+/// from the topology prefix so a bare type-only registration cannot intercept
+/// another concurrent test's writes of the shared literal `Vehicle` type.
+pub fn csr_basic_typed(id: &str, endpoint: &str, entity_type: &str) -> Value {
+    let mut body = csr_basic(id, endpoint);
+    body["information"][0]["entities"][0]["type"] = json!(entity_type);
+    body
+}
+
 /// Fluent builder for a Context Source Registration covering one entity/attribute
 /// footprint under a chosen mode and operation set.
 pub struct CsrBuilder {

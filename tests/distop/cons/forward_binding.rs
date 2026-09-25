@@ -37,12 +37,14 @@ const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
 /// The forwarded path of a Batch Entity Query (clause 6.23.3.1).
 const FORWARDED_BATCH_QUERY: &str = "/ngsi-ld/v1/entityOperations/query";
 
-/// A minimal NGSI-LD `Query` (clause 5.2.23) naming one entity type, carrying the
-/// compound context inline for `application/ld+json` submission.
-fn type_query(entity_type: &str) -> Value {
+/// A minimal NGSI-LD `Query` (clause 5.2.23) naming one entity type scoped to a
+/// per-test id prefix, carrying the compound context inline for
+/// `application/ld+json` submission. The `idPattern` keeps a bare-type query from
+/// matching another concurrent test's registrations covering the same type.
+fn type_query(entity_type: &str, id_pattern: &str) -> Value {
     json!({
         "type": "Query",
-        "entities": [{ "type": entity_type }],
+        "entities": [{ "type": entity_type, "idPattern": id_pattern }],
         "@context": COMPOUND_CONTEXT.as_str()
     })
 }
@@ -50,6 +52,10 @@ fn type_query(entity_type: &str) -> Value {
 /// Clause 4.3.6.1 / 6.23.1: a retrieve-by-id sent to a registration advertising
 /// only `queryEntity` is downgraded to a GET query naming the entity's id and its
 /// compacted registered type, not a retrieve-by-id the source never registered.
+// The forwarded-request compaction assertions require the literal shared type
+// `Vehicle`, so this test cannot derive a per-test type; it is serialised with
+// the other literal-type tests instead of run concurrently with them.
+#[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn forward_retrieve_downgrades_to_query_naming_id_and_type() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -102,6 +108,7 @@ async fn forward_retrieve_downgrades_to_query_naming_id_and_type() {
 /// Clause 4.3.6.1 / 6.23: a retrieve-by-id sent to a registration advertising
 /// only `queryBatch` is downgraded to a POST `entityOperations/query` whose
 /// clause-5.2.23 `Query` body names the entity by its compacted type and id.
+#[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn forward_retrieve_downgrades_to_batch_query_body() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -136,6 +143,7 @@ async fn forward_retrieve_downgrades_to_batch_query_body() {
 /// Clause 4.3.6.1 / 6.23: a GET query sent to a registration advertising only
 /// `queryBatch` is forwarded as a POST `entityOperations/query` whose `Query`
 /// body carries one selector per queried id.
+#[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn forward_get_query_downgrades_to_batch_query_body() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -147,6 +155,7 @@ async fn forward_get_query_downgrades_to_batch_query_body() {
     let registration = CsrBuilder::new(&topology.id("registration:bind-get-batch"), &mock.url(""))
         .mode("inclusive")
         .entity_type("Vehicle")
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .operations(&["queryBatch"])
         .build();
     assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
@@ -172,6 +181,7 @@ async fn forward_get_query_downgrades_to_batch_query_body() {
 /// registration advertising only `queryEntity` is downgraded to a GET query, the
 /// operation the registration actually allows, and never reaches the batch-query
 /// endpoint.
+#[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn forward_post_query_downgrades_to_get_query() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -182,13 +192,14 @@ async fn forward_post_query_downgrades_to_get_query() {
     let registration = CsrBuilder::new(&topology.id("registration:bind-post-get"), &mock.url(""))
         .mode("inclusive")
         .entity_type("Vehicle")
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .operations(&["queryEntity"])
         .build();
     assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
 
     let response = front
         .client()
-        .batch_query(&type_query("Vehicle"), "application/ld+json", None)
+        .batch_query(&type_query("Vehicle", &format!("^{}", topology.id_prefix())), "application/ld+json", None)
         .await
         .expect("batch query");
     assert_status(&response, 200);
@@ -218,6 +229,7 @@ async fn forward_post_query_downgrades_to_get_query() {
 /// advertising `queryBatch` is forwarded as a POST batch query with a valid
 /// clause-6.23 `Query` body -- the operation the client used and the source
 /// registered.
+#[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn forward_post_query_prefers_batch_when_advertised() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -228,13 +240,14 @@ async fn forward_post_query_prefers_batch_when_advertised() {
     let registration = CsrBuilder::new(&topology.id("registration:bind-post-batch"), &mock.url(""))
         .mode("inclusive")
         .entity_type("Vehicle")
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .operations(&["queryBatch"])
         .build();
     assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
 
     let response = front
         .client()
-        .batch_query(&type_query("Vehicle"), "application/ld+json", None)
+        .batch_query(&type_query("Vehicle", &format!("^{}", topology.id_prefix())), "application/ld+json", None)
         .await
         .expect("batch query");
     assert_status(&response, 200);
@@ -267,6 +280,7 @@ async fn forward_multi_id_exclusive_block_names_each_id() {
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::POST, FORWARDED_BATCH_QUERY, 200, &json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let covered_a = topology.id("Vehicle:bind-multi-A");
     let covered_b = topology.id("Vehicle:bind-multi-B");
     // Clause 4.3.6.3 reads per-EntityInfo: one exclusive registration may name
@@ -279,8 +293,8 @@ async fn forward_multi_id_exclusive_block_names_each_id() {
         "operations": ["queryBatch"],
         "information": [{
             "entities": [
-                { "type": "Vehicle", "id": covered_a },
-                { "type": "Vehicle", "id": covered_b }
+                { "type": vtype, "id": covered_a },
+                { "type": vtype, "id": covered_b }
             ],
             "propertyNames": ["speed"]
         }],
@@ -288,7 +302,11 @@ async fn forward_multi_id_exclusive_block_names_each_id() {
     });
     assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
 
-    let response = front.client().query_entities("type=Vehicle", "application/ld+json", None).await.expect("query");
+    let response = front
+        .client()
+        .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/ld+json", None)
+        .await
+        .expect("query");
     assert_status(&response, 200);
 
     let forwarded = mock.next_request(CAPTURE_TIMEOUT).await;

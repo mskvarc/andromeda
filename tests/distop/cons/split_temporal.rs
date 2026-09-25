@@ -43,10 +43,11 @@ fn location_history() -> Value {
 
 const BEFORE_2030: &str = "timerel=before&timeAt=2030-01-01T00:00:00Z";
 
-/// A rich value/geo/scope temporal filter set over `type=Vehicle`.
-fn rich_temporal_filters() -> String {
+/// A rich value/geo/scope temporal filter set over a per-test entity type.
+fn rich_temporal_filters(vtype: &str) -> String {
     format!(
-        "type=Vehicle&{BEFORE_2030}&q={}&georel={}&geometry=Point&coordinates={}&scopeQ={}",
+        "type={}&{BEFORE_2030}&q={}&georel={}&geometry=Point&coordinates={}&scopeQ={}",
+        encode(vtype),
         encode("speed>50"),
         encode("near;maxDistance==1000"),
         encode("[8.0,44.0]"),
@@ -61,6 +62,7 @@ fn rich_temporal_filters() -> String {
 async fn distop_split_temporal_query_split_nonlocal_local_stage_id_type_temporal_only() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons56");
+    let vtype = topology.id("Vehicle");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let holder_b = topology.broker(BrokerRole::B).expect("topology broker B");
     let holder_c = topology.broker(BrokerRole::C).expect("topology broker C");
@@ -68,7 +70,7 @@ async fn distop_split_temporal_query_split_nonlocal_local_stage_id_type_temporal
     assert_status(
         &front
             .client()
-            .create_temporal_entity(&entity(&entity_id, "Vehicle", &[("fuelLevel", json!([observed(70, "2020-08-01T12:00:00Z")]))]))
+            .create_temporal_entity(&entity(&entity_id, &vtype, &[("fuelLevel", json!([observed(70, "2020-08-01T12:00:00Z")]))]))
             .await
             .expect("local"),
         201,
@@ -76,7 +78,7 @@ async fn distop_split_temporal_query_split_nonlocal_local_stage_id_type_temporal
     assert_status(
         &holder_b
             .client()
-            .create_temporal_entity(&entity(&entity_id, "Vehicle", &[("speed", json!([observed(60, "2020-08-01T12:00:00Z")]))]))
+            .create_temporal_entity(&entity(&entity_id, &vtype, &[("speed", json!([observed(60, "2020-08-01T12:00:00Z")]))]))
             .await
             .expect("b"),
         201,
@@ -84,7 +86,7 @@ async fn distop_split_temporal_query_split_nonlocal_local_stage_id_type_temporal
     assert_status(
         &holder_c
             .client()
-            .create_temporal_entity(&entity(&entity_id, "Vehicle", &[("location", location_history())]))
+            .create_temporal_entity(&entity(&entity_id, &vtype, &[("location", location_history())]))
             .await
             .expect("c"),
         201,
@@ -99,6 +101,7 @@ async fn distop_split_temporal_query_split_nonlocal_local_stage_id_type_temporal
                 .create_registration(
                     &CsrBuilder::new(&registration_id, peer.peer_url())
                         .mode("inclusive")
+                        .entity_type(&vtype)
                         .operations(&["queryTemporal"])
                         .build(),
                 )
@@ -110,7 +113,7 @@ async fn distop_split_temporal_query_split_nonlocal_local_stage_id_type_temporal
 
     let response = front
         .client()
-        .query_temporal_entities(&format!("type=Vehicle&{BEFORE_2030}&splitEntities=true&q=speed>50"), None)
+        .query_temporal_entities(&format!("type={}&{BEFORE_2030}&splitEntities=true&q=speed>50", encode(&vtype)), None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -129,12 +132,13 @@ async fn distop_split_temporal_query_split_nonlocal_local_stage_id_type_temporal
 async fn distop_split_temporal_query_non_split_staged_local_filtering() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons57");
+    let vtype = topology.id("Vehicle");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
 
     assert_status(
         &front
             .client()
-            .create_temporal_entity(&entity(&entity_id, "Vehicle", &[("fuelLevel", json!([observed(70, "2020-08-01T12:00:00Z")]))]))
+            .create_temporal_entity(&entity(&entity_id, &vtype, &[("fuelLevel", json!([observed(70, "2020-08-01T12:00:00Z")]))]))
             .await
             .expect("local"),
         201,
@@ -142,7 +146,10 @@ async fn distop_split_temporal_query_non_split_staged_local_filtering() {
 
     let response = front
         .client()
-        .query_temporal_entities(&format!("type=Vehicle&{BEFORE_2030}&local=true&splitEntities=false&q=speed>50"), None)
+        .query_temporal_entities(
+            &format!("type={}&{BEFORE_2030}&local=true&splitEntities=false&q=speed>50", encode(&vtype)),
+            None,
+        )
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -162,6 +169,7 @@ async fn distop_split_temporal_query_split_strips_then_reapplies() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
+    let vtype = topology.id("Vehicle");
     for source in ["/sb", "/sc"] {
         let registration_id = topology.id(&format!("registration:cons62-{}", source.trim_start_matches('/')));
         assert_status(
@@ -170,6 +178,7 @@ async fn distop_split_temporal_query_split_strips_then_reapplies() {
                 .create_registration(
                     &CsrBuilder::new(&registration_id, &mock.url(source))
                         .mode("inclusive")
+                        .entity_type(&vtype)
                         .operations(&["queryTemporal"])
                         .build(),
                 )
@@ -184,7 +193,7 @@ async fn distop_split_temporal_query_split_strips_then_reapplies() {
     assert_status(
         &front
             .client()
-            .query_temporal_entities(&format!("{}&splitEntities=true", rich_temporal_filters()), None)
+            .query_temporal_entities(&format!("{}&splitEntities=true", rich_temporal_filters(&vtype)), None)
             .await
             .expect("query"),
         200,
@@ -215,6 +224,7 @@ async fn distop_split_temporal_query_split_strips_then_reapplies() {
 async fn distop_split_temporal_query_split_nonlocal_reapplies_values_geo_scope() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons65");
+    let vtype = topology.id("Vehicle");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let holder_b = topology.broker(BrokerRole::B).expect("topology broker B");
     let holder_c = topology.broker(BrokerRole::C).expect("topology broker C");
@@ -222,7 +232,7 @@ async fn distop_split_temporal_query_split_nonlocal_reapplies_values_geo_scope()
     assert_status(
         &holder_b
             .client()
-            .create_temporal_entity(&entity(&entity_id, "Vehicle", &[("speed", json!([observed(40, "2020-08-01T12:00:00Z")]))]))
+            .create_temporal_entity(&entity(&entity_id, &vtype, &[("speed", json!([observed(40, "2020-08-01T12:00:00Z")]))]))
             .await
             .expect("b"),
         201,
@@ -230,7 +240,7 @@ async fn distop_split_temporal_query_split_nonlocal_reapplies_values_geo_scope()
     assert_status(
         &holder_c
             .client()
-            .create_temporal_entity(&entity(&entity_id, "Vehicle", &[("location", location_history())]))
+            .create_temporal_entity(&entity(&entity_id, &vtype, &[("location", location_history())]))
             .await
             .expect("c"),
         201,
@@ -245,6 +255,7 @@ async fn distop_split_temporal_query_split_nonlocal_reapplies_values_geo_scope()
                 .create_registration(
                     &CsrBuilder::new(&registration_id, peer.peer_url())
                         .mode("inclusive")
+                        .entity_type(&vtype)
                         .operations(&["queryTemporal"])
                         .build(),
                 )
@@ -256,7 +267,7 @@ async fn distop_split_temporal_query_split_nonlocal_reapplies_values_geo_scope()
 
     let response = front
         .client()
-        .query_temporal_entities(&format!("type=Vehicle&{BEFORE_2030}&splitEntities=true&q=speed>50"), None)
+        .query_temporal_entities(&format!("type={}&{BEFORE_2030}&splitEntities=true&q=speed>50", encode(&vtype)), None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -274,6 +285,7 @@ async fn distop_split_temporal_query_split_nonlocal_reapplies_values_geo_scope()
 async fn distop_split_temporal_query_no_reapply_s7_equals_s4() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons66");
+    let vtype = topology.id("Vehicle");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let holder_b = topology.broker(BrokerRole::B).expect("topology broker B");
     let holder_c = topology.broker(BrokerRole::C).expect("topology broker C");
@@ -281,7 +293,7 @@ async fn distop_split_temporal_query_no_reapply_s7_equals_s4() {
     assert_status(
         &holder_b
             .client()
-            .create_temporal_entity(&entity(&entity_id, "Vehicle", &[("speed", json!([observed(60, "2020-08-01T12:00:00Z")]))]))
+            .create_temporal_entity(&entity(&entity_id, &vtype, &[("speed", json!([observed(60, "2020-08-01T12:00:00Z")]))]))
             .await
             .expect("b"),
         201,
@@ -289,7 +301,7 @@ async fn distop_split_temporal_query_no_reapply_s7_equals_s4() {
     assert_status(
         &holder_c
             .client()
-            .create_temporal_entity(&entity(&entity_id, "Vehicle", &[("location", location_history())]))
+            .create_temporal_entity(&entity(&entity_id, &vtype, &[("location", location_history())]))
             .await
             .expect("c"),
         201,
@@ -304,6 +316,7 @@ async fn distop_split_temporal_query_no_reapply_s7_equals_s4() {
                 .create_registration(
                     &CsrBuilder::new(&registration_id, peer.peer_url())
                         .mode("inclusive")
+                        .entity_type(&vtype)
                         .operations(&["queryTemporal"])
                         .build(),
                 )
@@ -315,7 +328,7 @@ async fn distop_split_temporal_query_no_reapply_s7_equals_s4() {
 
     let response = front
         .client()
-        .query_temporal_entities(&format!("type=Vehicle&{BEFORE_2030}"), None)
+        .query_temporal_entities(&format!("type={}&{BEFORE_2030}", encode(&vtype)), None)
         .await
         .expect("query");
     assert_status(&response, 200);

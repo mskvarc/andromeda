@@ -6,7 +6,6 @@
 use crate::{
     BASE_URL,
     clean_tenant,
-    client,
     comparison::{ContextMember, EntityOrder, assert_matches_example, corpus},
     context_link,
     example_context::hosted_contexts,
@@ -15,7 +14,6 @@ use crate::{
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::Value;
-use serial_test::serial;
 
 /// The subscription exactly as clause C.4 prints it.
 const SUBSCRIPTION: &str = include_str!("corpus/c-4-subscription.json");
@@ -23,12 +21,11 @@ const SUBSCRIPTION: &str = include_str!("corpus/c-4-subscription.json");
 const SUBSCRIPTION_ID: &str = "urn:ngsi-ld:Subscription:mySubscription";
 
 #[tokio::test]
-#[serial]
 async fn annex_c_4_context_subscription_example() {
     let environment = clean_tenant().await;
     let link = context_link(hosted_contexts().url("aggregatedContext.jsonld").as_str());
     let expected = corpus(SUBSCRIPTION);
-    let http = client();
+    let http = environment.client();
 
     let response = http
         .post(format!("{BASE_URL}/subscriptions/"))
@@ -61,7 +58,7 @@ async fn annex_c_4_context_subscription_example() {
         EntityOrder::AsPrinted,
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 /// Drop the members clause 5.2.12 marks output-only or defaulted.

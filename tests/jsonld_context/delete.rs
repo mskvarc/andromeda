@@ -2,7 +2,6 @@
 //! Provision: Delete @context tests (NGSI-LD 6.25.3.2)
 
 use reqwest::StatusCode;
-use serial_test::serial;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -11,37 +10,42 @@ use crate::{
     CORE_CONTEXT,
     LD_CONTEXT_NOT_AVAILABLE_TYPE,
     RESOURCE_NOT_FOUND_TYPE,
-    clean_database,
-    client,
     create_hosted_context,
     create_implicit_context,
     delete_context,
     delete_context_raw,
     find_cached_context_id,
     get_context,
+    provision_tenant,
     setup_cached_context,
+    tenant_client,
 };
+use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 
 /// `051_01_01`: Delete hosted @context without reload param -> 204.
 #[tokio::test]
-#[serial]
 async fn delete_hosted_context_returns_204() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let ctx_id = create_hosted_context(&c).await;
 
     let (status, bytes) = delete_context_raw(&c, &ctx_id, "").await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
     assert!(bytes.is_empty(), "response body should be empty");
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `051_02_01`: Delete @context with unknown identifier -> 404.
 #[tokio::test]
 async fn delete_unknown_context_returns_404() {
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (status, body) = delete_context(&c, "urn:ngsi-ld:unknown:context:12345", "").await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
     pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `051_04_01`: Delete wrong ID + reload=true -> 404.
@@ -55,34 +59,46 @@ async fn delete_unknown_context_returns_404() {
 /// Context that was never there.
 #[tokio::test]
 async fn delete_unknown_with_reload_true_returns_404() {
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (status, body) = delete_context(&c, "urn:ngsi-ld:unknown:ctx", "reload=true").await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
     pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `051_04_02`: Delete wrong ID + reload=false -> 404.
 #[tokio::test]
 async fn delete_unknown_with_reload_false_returns_404() {
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (status, _) = delete_context(&c, "urn:ngsi-ld:unknown:ctx", "reload=false").await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `051_04_03`: Delete wrong ID + no reload -> 404.
 #[tokio::test]
 async fn delete_unknown_no_reload_returns_404() {
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (status, _) = delete_context(&c, "urn:ngsi-ld:unknown:ctx", "").await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `051_04_04`: Delete wrong ID + reload=xxx (invalid) -> 400.
 #[tokio::test]
 async fn delete_unknown_with_reload_invalid_returns_400() {
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (status, _) = delete_context(&c, "urn:ngsi-ld:unknown:ctx", "reload=xxx").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `051_04_05`: Delete hosted + reload=true -> 400.
@@ -92,23 +108,24 @@ async fn delete_unknown_with_reload_invalid_returns_400() {
 /// @context is not Cached, so the refusal is `BadRequestData`, not merely any
 /// 400.
 #[tokio::test]
-#[serial]
 async fn delete_hosted_with_reload_true_returns_400() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let ctx_id = create_hosted_context(&c).await;
 
     let (status, body) = delete_context(&c, &ctx_id, "reload=true").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str(), "a non-Cached reload is BadRequestData");
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `051_06_01`: Delete `ImplicitlyCreated` @context without reload -> 204.
 #[tokio::test]
-#[serial]
 async fn delete_implicitly_created_context_returns_204() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (sub_id, ctx_id) = create_implicit_context(&c).await;
 
     let (status, bytes) = delete_context_raw(&c, &ctx_id, "").await;
@@ -116,6 +133,7 @@ async fn delete_implicitly_created_context_returns_204() {
 
     crate::delete_subscription(&c, &sub_id).await;
     let _ = bytes;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `051_07_01`: Delete `ImplicitlyCreated` @context with reload=true -> 400.
@@ -123,10 +141,10 @@ async fn delete_implicitly_created_context_returns_204() {
 /// Clause 5.13.5.4: reload is refused with `BadRequestData` for any @context
 /// whose kind is not 'Cached'; an `ImplicitlyCreated` @context is not Cached.
 #[tokio::test]
-#[serial]
 async fn delete_implicitly_created_with_reload_returns_400() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (sub_id, ctx_id) = create_implicit_context(&c).await;
 
     let (status, body) = delete_context(&c, &ctx_id, "reload=true").await;
@@ -134,23 +152,30 @@ async fn delete_implicitly_created_with_reload_returns_400() {
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str(), "a non-Cached reload is BadRequestData");
 
     crate::delete_subscription(&c, &sub_id).await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `051_08_01`: Delete core context without reload -> 400.
 #[tokio::test]
 async fn delete_core_context_no_reload_returns_400() {
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (status, body) = delete_context(&c, CORE_CONTEXT, "").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `051_08_02`: Delete core context with reload=false -> 400.
 #[tokio::test]
 async fn delete_core_context_reload_false_returns_400() {
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (status, _) = delete_context(&c, CORE_CONTEXT, "reload=false").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `051_09_01`: Delete core context with reload=true -> 400, and it stays served.
@@ -163,7 +188,9 @@ async fn delete_core_context_reload_false_returns_400() {
 /// expected `204`, claiming a re-download that never happened.
 #[tokio::test]
 async fn delete_and_reload_core_context_returns_400() {
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
 
     // Verify it exists first
     let (status, _) = get_context(&c, CORE_CONTEXT, "").await;
@@ -176,14 +203,15 @@ async fn delete_and_reload_core_context_returns_400() {
     // The refusal leaves the embedded core @context exactly where it was.
     let (status, _) = get_context(&c, CORE_CONTEXT, "").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `051_03_01`: Delete cached @context without reload -> 204.
 #[tokio::test]
-#[serial]
 async fn delete_cached_context_returns_204() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (_server, ctx_url) = setup_cached_context(&c).await;
 
     let cached_id = find_cached_context_id(&c, &ctx_url).await;
@@ -191,14 +219,15 @@ async fn delete_cached_context_returns_204() {
     let (status, bytes) = delete_context_raw(&c, &cached_id, "").await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
     assert_eq!(bytes, [] as [u8; 0]);
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `051_05_01`: Delete cached @context with reload=true when server is unavailable -> 504.
 #[tokio::test]
-#[serial]
 async fn delete_cached_reload_server_unavailable_returns_504() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (server, ctx_url) = setup_cached_context(&c).await;
 
     let cached_id = find_cached_context_id(&c, &ctx_url).await;
@@ -211,4 +240,5 @@ async fn delete_cached_reload_server_unavailable_returns_504() {
     let (status, body) = delete_context(&c, &cached_id, "reload=true").await;
     pretty_assertions::assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
     pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE.as_str());
+    env.finish().await.expect("cleanup failed");
 }

@@ -6,7 +6,7 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::{entity, property, vehicle},
+    entity::{entity, property, typed_vehicle},
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
     topology::{self, BrokerRole},
@@ -23,10 +23,11 @@ fn ids(body: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// A rich value/geo/scope/attr filter set over `type=Vehicle`.
-fn rich_filters() -> String {
+/// A rich value/geo/scope/attr filter set over a per-test entity type.
+fn rich_filters(vtype: &str) -> String {
     format!(
-        "type=Vehicle&q={}&georel={}&geometry=Point&coordinates={}&scopeQ={}&attrs=speed",
+        "type={}&q={}&georel={}&geometry=Point&coordinates={}&scopeQ={}&attrs=speed",
+        encode(vtype),
         encode("speed>50"),
         encode("near;maxDistance==1000"),
         encode("[8.0,44.0]"),
@@ -46,6 +47,7 @@ fn location_node() -> Value {
 async fn distop_split_entity_query_split_local_applies_id_type_pattern_only() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons21");
+    let vtype = topology.id("Vehicle");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let holder_b = topology.broker(BrokerRole::B).expect("topology broker B");
     let holder_c = topology.broker(BrokerRole::C).expect("topology broker C");
@@ -53,7 +55,7 @@ async fn distop_split_entity_query_split_local_applies_id_type_pattern_only() {
     assert_status(
         &front
             .client()
-            .post_entity(&entity(&entity_id, "Vehicle", &[("fuelLevel", property(json!(70)))]))
+            .post_entity(&entity(&entity_id, &vtype, &[("fuelLevel", property(json!(70)))]))
             .with_ld_json()
             .send()
             .await
@@ -61,13 +63,19 @@ async fn distop_split_entity_query_split_local_applies_id_type_pattern_only() {
         201,
     );
     assert_status(
-        &holder_b.client().post_entity(&vehicle(&entity_id, 60)).with_ld_json().send().await.expect("b"),
+        &holder_b
+            .client()
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 60))
+            .with_ld_json()
+            .send()
+            .await
+            .expect("b"),
         201,
     );
     assert_status(
         &holder_c
             .client()
-            .post_entity(&entity(&entity_id, "Vehicle", &[("location", location_node())]))
+            .post_entity(&entity(&entity_id, &vtype, &[("location", location_node())]))
             .with_ld_json()
             .send()
             .await
@@ -84,6 +92,7 @@ async fn distop_split_entity_query_split_local_applies_id_type_pattern_only() {
                 .create_registration(
                     &CsrBuilder::new(&registration_id, peer.peer_url())
                         .mode("inclusive")
+                        .entity_type(&vtype)
                         .operations(&["queryEntity"])
                         .build(),
                 )
@@ -95,7 +104,7 @@ async fn distop_split_entity_query_split_local_applies_id_type_pattern_only() {
 
     let response = front
         .client()
-        .query_entities("type=Vehicle&splitEntities=true&q=speed>50", "application/ld+json", None)
+        .query_entities(&format!("type={}&splitEntities=true&q=speed>50", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -114,12 +123,13 @@ async fn distop_split_entity_query_split_local_applies_id_type_pattern_only() {
 async fn distop_split_entity_query_non_split_applies_full_local_filter() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons22");
+    let vtype = topology.id("Vehicle");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
 
     assert_status(
         &front
             .client()
-            .post_entity(&entity(&entity_id, "Vehicle", &[("fuelLevel", property(json!(70)))]))
+            .post_entity(&entity(&entity_id, &vtype, &[("fuelLevel", property(json!(70)))]))
             .with_ld_json()
             .send()
             .await
@@ -129,7 +139,11 @@ async fn distop_split_entity_query_non_split_applies_full_local_filter() {
 
     let response = front
         .client()
-        .query_entities("type=Vehicle&local=true&splitEntities=false&q=speed>50", "application/ld+json", None)
+        .query_entities(
+            &format!("type={}&local=true&splitEntities=false&q=speed>50", encode(&vtype)),
+            "application/ld+json",
+            None,
+        )
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -149,6 +163,7 @@ async fn distop_split_entity_query_split_strips_filters_before_forward() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
+    let vtype = topology.id("Vehicle");
     for source in ["/sb", "/sc"] {
         let registration_id = topology.id(&format!("registration:cons27-{}", source.trim_start_matches('/')));
         assert_status(
@@ -157,6 +172,7 @@ async fn distop_split_entity_query_split_strips_filters_before_forward() {
                 .create_registration(
                     &CsrBuilder::new(&registration_id, &mock.url(source))
                         .mode("inclusive")
+                        .entity_type(&vtype)
                         .operations(&["queryEntity"])
                         .build(),
                 )
@@ -171,7 +187,7 @@ async fn distop_split_entity_query_split_strips_filters_before_forward() {
     assert_status(
         &front
             .client()
-            .query_entities(&format!("{}&splitEntities=true", rich_filters()), "application/ld+json", None)
+            .query_entities(&format!("{}&splitEntities=true", rich_filters(&vtype)), "application/ld+json", None)
             .await
             .expect("query"),
         200,
@@ -200,6 +216,7 @@ async fn distop_split_entity_query_split_reapplies_filters_post_aggregation() {
     let topology = topology::chain().await.expect("three-broker topology");
     let matching_id = topology.id("Vehicle:cons28-match");
     let below_id = topology.id("Vehicle:cons28-below");
+    let vtype = topology.id("Vehicle");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let holder_b = topology.broker(BrokerRole::B).expect("topology broker B");
     let holder_c = topology.broker(BrokerRole::C).expect("topology broker C");
@@ -207,7 +224,7 @@ async fn distop_split_entity_query_split_reapplies_filters_post_aggregation() {
     assert_status(
         &holder_b
             .client()
-            .post_entity(&vehicle(&matching_id, 60))
+            .post_entity(&typed_vehicle(&matching_id, &vtype, 60))
             .with_ld_json()
             .send()
             .await
@@ -217,7 +234,7 @@ async fn distop_split_entity_query_split_reapplies_filters_post_aggregation() {
     assert_status(
         &holder_b
             .client()
-            .post_entity(&vehicle(&below_id, 40))
+            .post_entity(&typed_vehicle(&below_id, &vtype, 40))
             .with_ld_json()
             .send()
             .await
@@ -227,7 +244,7 @@ async fn distop_split_entity_query_split_reapplies_filters_post_aggregation() {
     assert_status(
         &holder_c
             .client()
-            .post_entity(&entity(&matching_id, "Vehicle", &[("location", location_node())]))
+            .post_entity(&entity(&matching_id, &vtype, &[("location", location_node())]))
             .with_ld_json()
             .send()
             .await
@@ -244,6 +261,7 @@ async fn distop_split_entity_query_split_reapplies_filters_post_aggregation() {
                 .create_registration(
                     &CsrBuilder::new(&registration_id, peer.peer_url())
                         .mode("inclusive")
+                        .entity_type(&vtype)
                         .operations(&["queryEntity"])
                         .build(),
                 )
@@ -255,7 +273,7 @@ async fn distop_split_entity_query_split_reapplies_filters_post_aggregation() {
 
     let response = front
         .client()
-        .query_entities("type=Vehicle&splitEntities=true&q=speed>50", "application/ld+json", None)
+        .query_entities(&format!("type={}&splitEntities=true&q=speed>50", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -276,6 +294,7 @@ async fn distop_split_entity_query_split_reapplies_filters_post_aggregation() {
 async fn distop_split_entity_query_split_nonlocal_removes_non_matching_after_recheck() {
     let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons33");
+    let vtype = topology.id("Vehicle");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let holder_b = topology.broker(BrokerRole::B).expect("topology broker B");
     let holder_c = topology.broker(BrokerRole::C).expect("topology broker C");
@@ -283,7 +302,7 @@ async fn distop_split_entity_query_split_nonlocal_removes_non_matching_after_rec
     assert_status(
         &front
             .client()
-            .post_entity(&entity(&entity_id, "Vehicle", &[("fuelLevel", property(json!(70)))]))
+            .post_entity(&entity(&entity_id, &vtype, &[("fuelLevel", property(json!(70)))]))
             .with_ld_json()
             .send()
             .await
@@ -291,13 +310,19 @@ async fn distop_split_entity_query_split_nonlocal_removes_non_matching_after_rec
         201,
     );
     assert_status(
-        &holder_b.client().post_entity(&vehicle(&entity_id, 40)).with_ld_json().send().await.expect("b"),
+        &holder_b
+            .client()
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 40))
+            .with_ld_json()
+            .send()
+            .await
+            .expect("b"),
         201,
     );
     assert_status(
         &holder_c
             .client()
-            .post_entity(&entity(&entity_id, "Vehicle", &[("location", location_node())]))
+            .post_entity(&entity(&entity_id, &vtype, &[("location", location_node())]))
             .with_ld_json()
             .send()
             .await
@@ -314,6 +339,7 @@ async fn distop_split_entity_query_split_nonlocal_removes_non_matching_after_rec
                 .create_registration(
                     &CsrBuilder::new(&registration_id, peer.peer_url())
                         .mode("inclusive")
+                        .entity_type(&vtype)
                         .operations(&["queryEntity"])
                         .build(),
                 )
@@ -325,7 +351,7 @@ async fn distop_split_entity_query_split_nonlocal_removes_non_matching_after_rec
 
     let response = front
         .client()
-        .query_entities("type=Vehicle&splitEntities=true&q=speed>50", "application/ld+json", None)
+        .query_entities(&format!("type={}&splitEntities=true&q=speed>50", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -346,6 +372,7 @@ async fn distop_split_entity_query_non_split_forwards_filters_remotely() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
+    let vtype = topology.id("Vehicle");
     for source in ["/sb", "/sc"] {
         let registration_id = topology.id(&format!("registration:cons22r-{}", source.trim_start_matches('/')));
         assert_status(
@@ -354,6 +381,7 @@ async fn distop_split_entity_query_non_split_forwards_filters_remotely() {
                 .create_registration(
                     &CsrBuilder::new(&registration_id, &mock.url(source))
                         .mode("inclusive")
+                        .entity_type(&vtype)
                         .operations(&["queryEntity"])
                         .build(),
                 )
@@ -368,7 +396,7 @@ async fn distop_split_entity_query_non_split_forwards_filters_remotely() {
     assert_status(
         &front
             .client()
-            .query_entities(&format!("{}&splitEntities=false", rich_filters()), "application/ld+json", None)
+            .query_entities(&format!("{}&splitEntities=false", rich_filters(&vtype)), "application/ld+json", None)
             .await
             .expect("query"),
         200,

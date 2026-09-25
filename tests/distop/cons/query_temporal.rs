@@ -49,6 +49,7 @@ const BEFORE_2030: &str = "timerel=before&timeAt=2030-01-01T00:00:00Z";
 #[tokio::test]
 async fn distop_query_temporal_forwards_matching_querytemporal_local_none() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
@@ -56,6 +57,7 @@ async fn distop_query_temporal_forwards_matching_querytemporal_local_none() {
         let registration_id = topology.id(&format!("registration:cons60-{}", source.trim_start_matches('/')));
         let registration = CsrBuilder::new(&registration_id, &mock.url(source))
             .mode("inclusive")
+            .entity_type(&vtype)
             .operations(operations)
             .build();
         assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
@@ -66,7 +68,7 @@ async fn distop_query_temporal_forwards_matching_querytemporal_local_none() {
     assert_status(
         &front
             .client()
-            .query_temporal_entities(&format!("type=Vehicle&{BEFORE_2030}"), None)
+            .query_temporal_entities(&format!("type={}&{BEFORE_2030}", urlencoding::encode(&vtype)), None)
             .await
             .expect("query"),
         200,
@@ -85,7 +87,7 @@ async fn distop_query_temporal_forwards_matching_querytemporal_local_none() {
     assert_status(
         &front
             .client()
-            .query_temporal_entities(&format!("type=Vehicle&{BEFORE_2030}&local=true"), None)
+            .query_temporal_entities(&format!("type={}&{BEFORE_2030}&local=true", urlencoding::encode(&vtype)), None)
             .await
             .expect("query"),
         200,
@@ -102,6 +104,7 @@ async fn distop_query_temporal_forwards_matching_querytemporal_local_none() {
 #[tokio::test]
 async fn distop_query_temporal_merges_modes_into_s4() {
     let topology = topology::chain().await.expect("three-broker topology");
+    let vtype = topology.id("Vehicle");
     let shared_id = topology.id("Vehicle:cons63-shared");
     let extra_id = topology.id("Vehicle:cons63-extra");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
@@ -111,7 +114,7 @@ async fn distop_query_temporal_merges_modes_into_s4() {
     assert_status(
         &holder_b
             .client()
-            .create_temporal_entity(&entity(&shared_id, "Vehicle", &[("speed", json!([observed(50, "2020-08-01T12:00:00Z")]))]))
+            .create_temporal_entity(&entity(&shared_id, &vtype, &[("speed", json!([observed(50, "2020-08-01T12:00:00Z")]))]))
             .await
             .expect("b shared"),
         201,
@@ -121,7 +124,7 @@ async fn distop_query_temporal_merges_modes_into_s4() {
             .client()
             .create_temporal_entity(&entity(
                 &shared_id,
-                "Vehicle",
+                &vtype,
                 &[(
                     "location",
                     json!([{ "type": "GeoProperty", "value": { "type": "Point", "coordinates": [1.0, 2.0] }, "observedAt": "2020-08-01T12:00:00Z" }]),
@@ -134,7 +137,7 @@ async fn distop_query_temporal_merges_modes_into_s4() {
     assert_status(
         &holder_c
             .client()
-            .create_temporal_entity(&entity(&extra_id, "Vehicle", &[("speed", json!([observed(40, "2020-08-01T12:00:00Z")]))]))
+            .create_temporal_entity(&entity(&extra_id, &vtype, &[("speed", json!([observed(40, "2020-08-01T12:00:00Z")]))]))
             .await
             .expect("c extra"),
         201,
@@ -145,6 +148,7 @@ async fn distop_query_temporal_merges_modes_into_s4() {
         let registration_id = topology.id(&format!("registration:cons63-{role:?}"));
         let registration = CsrBuilder::new(&registration_id, peer.peer_url())
             .mode("inclusive")
+            .entity_type(&vtype)
             .operations(&["queryTemporal"])
             .build();
         assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
@@ -152,7 +156,7 @@ async fn distop_query_temporal_merges_modes_into_s4() {
 
     let response = front
         .client()
-        .query_temporal_entities(&format!("type=Vehicle&{BEFORE_2030}"), None)
+        .query_temporal_entities(&format!("type={}&{BEFORE_2030}", urlencoding::encode(&vtype)), None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -177,6 +181,7 @@ async fn distop_query_temporal_merges_modes_into_s4() {
 #[ignore = "SPEC-CONFLICT: clause 5.9.2.4 limits auxiliary registrations to retrieveOps, retrieveEntity and queryEntity, so an auxiliary temporal source cannot be registered"]
 async fn distop_query_temporal_auxiliary_merged_into_s4_only_if_absent() {
     let topology = topology::pair().await.expect("two-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:cons64");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let peer = topology.broker(BrokerRole::B).expect("topology broker B");
@@ -184,14 +189,14 @@ async fn distop_query_temporal_auxiliary_merged_into_s4_only_if_absent() {
     assert_status(
         &front
             .client()
-            .create_temporal_entity(&entity(&entity_id, "Vehicle", &[("speed", json!([observed(50, "2020-08-01T12:00:00Z")]))]))
+            .create_temporal_entity(&entity(&entity_id, &vtype, &[("speed", json!([observed(50, "2020-08-01T12:00:00Z")]))]))
             .await
             .expect("local"),
         201,
     );
     let auxiliary = entity(
         &entity_id,
-        "Vehicle",
+        &vtype,
         &[
             ("speed", json!([observed(99, "2020-08-01T12:00:00Z"), observed(70, "2020-08-01T12:30:00Z")])),
             ("fuelLevel", json!([observed(40, "2020-08-01T12:30:00Z")])),
@@ -202,13 +207,14 @@ async fn distop_query_temporal_auxiliary_merged_into_s4_only_if_absent() {
     let registration_id = topology.id("registration:cons64");
     let registration = CsrBuilder::new(&registration_id, peer.peer_url())
         .mode("auxiliary")
+        .entity_type(&vtype)
         .operations(&["queryTemporal"])
         .build();
     assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
 
     let response = front
         .client()
-        .query_temporal_entities(&format!("type=Vehicle&{BEFORE_2030}"), None)
+        .query_temporal_entities(&format!("type={}&{BEFORE_2030}", urlencoding::encode(&vtype)), None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -238,6 +244,7 @@ async fn distop_query_temporal_auxiliary_merged_into_s4_only_if_absent() {
 #[tokio::test]
 async fn distop_query_temporal_lastn_limits_projected_post_aggregation() {
     let topology = topology::chain().await.expect("three-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:cons69");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let holder_b = topology.broker(BrokerRole::B).expect("topology broker B");
@@ -248,7 +255,7 @@ async fn distop_query_temporal_lastn_limits_projected_post_aggregation() {
             .client()
             .create_temporal_entity(&entity(
                 &entity_id,
-                "Vehicle",
+                &vtype,
                 &[("speed", json!([observed(10, "2020-08-01T12:00:00Z"), observed(20, "2020-08-01T12:01:00Z")]))],
             ))
             .await
@@ -260,7 +267,7 @@ async fn distop_query_temporal_lastn_limits_projected_post_aggregation() {
             .client()
             .create_temporal_entity(&entity(
                 &entity_id,
-                "Vehicle",
+                &vtype,
                 &[("speed", json!([observed(30, "2020-08-01T12:02:00Z"), observed(40, "2020-08-01T12:03:00Z")]))],
             ))
             .await
@@ -270,7 +277,7 @@ async fn distop_query_temporal_lastn_limits_projected_post_aggregation() {
     assert_status(
         &holder_c
             .client()
-            .create_temporal_entity(&entity(&entity_id, "Vehicle", &[("speed", json!([observed(50, "2020-08-01T12:04:00Z")]))]))
+            .create_temporal_entity(&entity(&entity_id, &vtype, &[("speed", json!([observed(50, "2020-08-01T12:04:00Z")]))]))
             .await
             .expect("c"),
         201,
@@ -281,6 +288,7 @@ async fn distop_query_temporal_lastn_limits_projected_post_aggregation() {
         let registration_id = topology.id(&format!("registration:cons69-{role:?}"));
         let registration = CsrBuilder::new(&registration_id, peer.peer_url())
             .mode("inclusive")
+            .entity_type(&vtype)
             .operations(&["queryTemporal"])
             .build();
         assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
@@ -288,7 +296,7 @@ async fn distop_query_temporal_lastn_limits_projected_post_aggregation() {
 
     let response = front
         .client()
-        .query_temporal_entities(&format!("type=Vehicle&{BEFORE_2030}&attrs=speed&lastN=2"), None)
+        .query_temporal_entities(&format!("type={}&{BEFORE_2030}&attrs=speed&lastN=2", urlencoding::encode(&vtype)), None)
         .await
         .expect("query");
     assert_status(&response, 200);

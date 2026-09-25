@@ -8,10 +8,14 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
-use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
-use reqwest::{Client, Method, StatusCode, header::HeaderMap};
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, tenant_scoped_environment::TenantScopedEnvironment};
+use reqwest::{
+    Client,
+    Method,
+    StatusCode,
+    header::{HeaderMap, HeaderValue},
+};
 use serde_json::{Value, json};
-use serial_test::serial;
 use urlencoding::encode;
 use uuid::Uuid;
 
@@ -23,8 +27,13 @@ use context_source_adapter::ContextSourceAdapter as MockServer;
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn client() -> Client {
-    Client::new()
+/// A reqwest client that carries `NGSILD-Tenant` on every request, so a test's
+/// temporal entities and forwarding registry live in its own private tenant and
+/// stay isolated from concurrent tests.
+fn tenant_client(tenant: &str) -> Client {
+    let mut headers = HeaderMap::new();
+    headers.insert("NGSILD-Tenant", HeaderValue::from_str(tenant).expect("tenant is a valid header value"));
+    Client::builder().default_headers(headers).build().expect("tenant-scoped client builds")
 }
 
 fn unique_id(prefix: &str) -> String {
@@ -33,12 +42,6 @@ fn unique_id(prefix: &str) -> String {
 
 fn jsonld_link_value() -> String {
     format!("<{TEST_SUITE_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
-}
-
-async fn clean_database() -> SerializedEnvironment {
-    SerializedEnvironment::from_environment_reset()
-        .await
-        .expect("serialized test database environment")
 }
 
 fn temporal_vehicle_entity(id: &str) -> Value {
@@ -189,10 +192,11 @@ async fn get_entity_map(client: &Client, id: &str, link: &str) -> (StatusCode, V
 
 /// Temporal `EntityMap` includes both local and forwarded entity IDs.
 #[tokio::test]
-#[serial]
 async fn distop_temporal_entity_map_includes_forwarded_ids() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_temporal_entity_map")
+        .await
+        .expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let local_id = unique_id("urn:ngsi-ld:Vehicle:tmap-local");
@@ -255,14 +259,16 @@ async fn distop_temporal_entity_map_includes_forwarded_ids() {
     delete_temporal_entity(&c, &local_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// Temporal `EntityMap` with local=true only contains local IDs.
 #[tokio::test]
-#[serial]
 async fn distop_temporal_entity_map_local_only_when_local_true() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_temporal_entity_map")
+        .await
+        .expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let local_id = unique_id("urn:ngsi-ld:Vehicle:tmap-local-only");
@@ -307,14 +313,16 @@ async fn distop_temporal_entity_map_local_only_when_local_true() {
     delete_temporal_entity(&c, &local_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// Temporal `EntityMap` scopes subsequent query to map members.
 #[tokio::test]
-#[serial]
 async fn distop_temporal_entity_map_scopes_subsequent_query() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_temporal_entity_map")
+        .await
+        .expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let local_id = unique_id("urn:ngsi-ld:Vehicle:tmap-scope-local");
@@ -376,15 +384,17 @@ async fn distop_temporal_entity_map_scopes_subsequent_query() {
     delete_temporal_entity(&c, &extra_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// Temporal query with entityMap=true creates `EntityMap` and returns 201.
 /// Spec ref: 5.7.4.4 - entityMap=true creates new `EntityMap`, returns 201 Created.
 #[tokio::test]
-#[serial]
 async fn distop_temporal_entity_map_creates_map_returns_201() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_temporal_entity_map")
+        .await
+        .expect("private tenant environment");
+    let c = tenant_client(env.tenant());
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:tmap-create");
 
@@ -406,15 +416,17 @@ async fn distop_temporal_entity_map_creates_map_returns_201() {
 
     delete_temporal_entity(&c, &entity_id).await;
     delete_entity_map(&c, map_id).await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// NGSILD-EntityMap header is echoed in query response when using entity map.
 /// Spec ref: 5.7.4 - the `EntityMap` used in operation shall be returned in response header.
 #[tokio::test]
-#[serial]
 async fn distop_temporal_entity_map_echoed_in_response() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_temporal_entity_map")
+        .await
+        .expect("private tenant environment");
+    let c = tenant_client(env.tenant());
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:tmap-echo");
 
@@ -452,6 +464,7 @@ async fn distop_temporal_entity_map_echoed_in_response() {
 
     delete_temporal_entity(&c, &entity_id).await;
     delete_entity_map(&c, &map_id).await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// Retrieve of a locally held Entity absent from the supplied `EntityMap` still
@@ -468,10 +481,11 @@ async fn distop_temporal_entity_map_echoed_in_response() {
 /// the Entities listed" governs the query operations of clauses 5.7.2 and
 /// 5.7.4, not this single-Entity retrieval.
 #[tokio::test]
-#[serial]
 async fn distop_temporal_entity_map_retrieve_not_in_map_returns_local_entity() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_temporal_entity_map")
+        .await
+        .expect("private tenant environment");
+    let c = tenant_client(env.tenant());
 
     let entity_a = unique_id("urn:ngsi-ld:Vehicle:tmap-scope-a");
     let entity_b = unique_id("urn:ngsi-ld:Vehicle:tmap-scope-b");
@@ -506,15 +520,17 @@ async fn distop_temporal_entity_map_retrieve_not_in_map_returns_local_entity() {
     delete_temporal_entity(&c, &entity_a).await;
     delete_temporal_entity(&c, &entity_b).await;
     delete_entity_map(&c, &map_id).await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// Retrieve succeeds and echoes `EntityMap` header when entity is in map.
 /// Spec ref: 5.7.3.4 - entity in map returns 200 with NGSILD-EntityMap echoed.
 #[tokio::test]
-#[serial]
 async fn distop_temporal_entity_map_retrieve_in_map_succeeds() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_temporal_entity_map")
+        .await
+        .expect("private tenant environment");
+    let c = tenant_client(env.tenant());
 
     let entity_a = unique_id("urn:ngsi-ld:Vehicle:tmap-retrieve-pass");
 
@@ -546,15 +562,17 @@ async fn distop_temporal_entity_map_retrieve_in_map_succeeds() {
 
     delete_temporal_entity(&c, &entity_a).await;
     delete_entity_map(&c, &map_id).await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// entityMapLifetime parameter sets `EntityMap` expiry.
 /// Spec ref: 5.5.14 - entityMapLifetime suggests an expiry duration.
 #[tokio::test]
-#[serial]
 async fn distop_temporal_entity_map_with_lifetime_sets_expiry() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_temporal_entity_map")
+        .await
+        .expect("private tenant environment");
+    let c = tenant_client(env.tenant());
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:tmap-lifetime");
 
@@ -587,15 +605,17 @@ async fn distop_temporal_entity_map_with_lifetime_sets_expiry() {
 
     delete_temporal_entity(&c, &entity_id).await;
     delete_entity_map(&c, &map_id).await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// Query scoped by `EntityMap` only returns entities in the map.
 /// Spec ref: 5.5.14 - requests with NGSILD-EntityMap header filtered to map members.
 #[tokio::test]
-#[serial]
 async fn distop_temporal_entity_map_query_scoped_to_members() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_temporal_entity_map")
+        .await
+        .expect("private tenant environment");
+    let c = tenant_client(env.tenant());
 
     let entity_a = unique_id("urn:ngsi-ld:Vehicle:tmap-query-scope-a");
     let entity_b = unique_id("urn:ngsi-ld:Vehicle:tmap-query-scope-b");
@@ -643,4 +663,5 @@ async fn distop_temporal_entity_map_query_scoped_to_members() {
     delete_temporal_entity(&c, &entity_b).await;
     delete_temporal_entity(&c, &entity_c).await;
     delete_entity_map(&c, &map_id).await;
+    env.finish().await.expect("cleanup failed");
 }

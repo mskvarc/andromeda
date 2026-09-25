@@ -2,23 +2,23 @@
 //! Consumption: List @contexts tests (NGSI-LD 6.25.3.3)
 
 use reqwest::StatusCode;
-use serial_test::serial;
 use std::{collections::HashMap, time::Duration};
 use tokio::time::sleep;
 
 use crate::{
     BAD_REQUEST_DATA_TYPE,
     ContextServer,
-    clean_database,
-    client,
     create_context,
     create_entity,
     create_subscription,
     delete_subscription,
     extract_id,
     list_contexts,
+    provision_tenant,
+    tenant_client,
     unique_id,
 };
+use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use serde_json::{Value, json};
 
 /// Assert listing contains no non-core context URIs.
@@ -91,202 +91,226 @@ async fn create_implicit_context_for_list(c: &reqwest::Client) -> String {
 // ── 052_01: List @contexts with no previous creation ──────────────
 
 #[tokio::test]
-#[serial]
 async fn list_no_contexts_no_params() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (status, contexts) = list_contexts(&c, "").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_no_non_core(&contexts);
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_no_contexts_kind_hosted() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (status, contexts) = list_contexts(&c, "kind=Hosted").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_no_non_core(&contexts);
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_no_contexts_kind_cached() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (status, contexts) = list_contexts(&c, "kind=Cached").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_no_non_core(&contexts);
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_no_contexts_kind_implicitly_created() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (status, contexts) = list_contexts(&c, "kind=ImplicitlyCreated").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_no_non_core(&contexts);
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_no_contexts_details_false() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (status, contexts) = list_contexts(&c, "details=false").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_no_non_core(&contexts);
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_no_contexts_details_false_kind_hosted() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (status, contexts) = list_contexts(&c, "details=false&kind=Hosted").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_no_non_core(&contexts);
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_no_contexts_details_false_kind_cached() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (status, contexts) = list_contexts(&c, "details=false&kind=Cached").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_no_non_core(&contexts);
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_no_contexts_details_false_kind_implicitly_created() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let (status, contexts) = list_contexts(&c, "details=false&kind=ImplicitlyCreated").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_no_non_core(&contexts);
+    env.finish().await.expect("cleanup failed");
 }
 
 // ── 052_02: List with one created context ────────────────────────��
 
 #[tokio::test]
-#[serial]
 async fn list_one_context_no_params() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let uri = create_one_context(&c).await;
     let (status, contexts) = list_contexts(&c, "").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_contains(&contexts, &uri);
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_one_context_kind_hosted() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let uri = create_one_context(&c).await;
     let (status, contexts) = list_contexts(&c, "kind=Hosted").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_contains(&contexts, &uri);
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_one_context_details_false() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let uri = create_one_context(&c).await;
     let (status, contexts) = list_contexts(&c, "details=false").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_contains(&contexts, &uri);
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_one_context_details_false_kind_hosted() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let uri = create_one_context(&c).await;
     let (status, contexts) = list_contexts(&c, "details=false&kind=Hosted").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_contains(&contexts, &uri);
+    env.finish().await.expect("cleanup failed");
 }
 
 // ── 052_03: List with multiple created contexts ───────────────────
 
 #[tokio::test]
-#[serial]
 async fn list_multiple_contexts_no_params() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let uris = create_three_contexts(&c).await;
     let (status, contexts) = list_contexts(&c, "").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_contains_all(&contexts, &uris);
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_multiple_contexts_kind_hosted() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let uris = create_three_contexts(&c).await;
     let (status, contexts) = list_contexts(&c, "kind=Hosted").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_contains_all(&contexts, &uris);
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_multiple_contexts_details_false() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let uris = create_three_contexts(&c).await;
     let (status, contexts) = list_contexts(&c, "details=false").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_contains_all(&contexts, &uris);
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_multiple_contexts_details_false_kind_hosted() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let uris = create_three_contexts(&c).await;
     let (status, contexts) = list_contexts(&c, "details=false&kind=Hosted").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_contains_all(&contexts, &uris);
+    env.finish().await.expect("cleanup failed");
 }
 
 // ── 052_04: Invalid params -> 400 ────────────────────────────────
 
 #[tokio::test]
 async fn list_invalid_kind_returns_400() {
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let resp = c.get(crate::broker_url("jsonldContexts?kind=other")).send().await.expect("request failed");
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
 async fn list_invalid_details_returns_400() {
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let resp = c.get(crate::broker_url("jsonldContexts?details=other")).send().await.expect("request failed");
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
 async fn list_invalid_kind_with_details_true_returns_400() {
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let resp = c
         .get(crate::broker_url("jsonldContexts?details=true&kind=other"))
         .send()
@@ -296,11 +320,14 @@ async fn list_invalid_kind_with_details_true_returns_400() {
     let body: Value = resp.json().await.unwrap_or_default();
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
 async fn list_invalid_details_with_kind_hosted_returns_400() {
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let resp = c
         .get(crate::broker_url("jsonldContexts?details=other&kind=Hosted"))
         .send()
@@ -310,11 +337,14 @@ async fn list_invalid_details_with_kind_hosted_returns_400() {
     let body: Value = resp.json().await.unwrap_or_default();
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
 async fn list_invalid_details_and_kind_returns_400() {
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let resp = c
         .get(crate::broker_url("jsonldContexts?details=other&kind=other"))
         .send()
@@ -324,15 +354,16 @@ async fn list_invalid_details_and_kind_returns_400() {
     let body: Value = resp.json().await.unwrap_or_default();
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    env.finish().await.expect("cleanup failed");
 }
 
 // ── 052_05: details=true ──────────────────────────────────────────
 
 #[tokio::test]
-#[serial]
 async fn list_details_true_no_kind() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
 
     let body = json!({
         "@context": {
@@ -354,13 +385,14 @@ async fn list_details_true_no_kind() {
     assert!(entry.get("URL").is_some(), "should have URL");
     assert!(entry.get("kind").is_some(), "should have kind");
     assert!(entry.get("createdAt").is_some(), "should have createdAt");
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_details_true_kind_hosted() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
 
     let body = json!({
         "@context": {
@@ -382,15 +414,16 @@ async fn list_details_true_kind_hosted() {
     assert!(entry.get("URL").is_some());
     assert!(entry.get("kind").is_some());
     assert!(entry.get("createdAt").is_some());
+    env.finish().await.expect("cleanup failed");
 }
 
 // ── 052_06: ImplicitlyCreated contexts ────────────────────────────
 
 #[tokio::test]
-#[serial]
 async fn list_implicit_no_params() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let sub_id = create_implicit_context_for_list(&c).await;
 
     let (status, contexts) = list_contexts(&c, "").await;
@@ -401,13 +434,14 @@ async fn list_implicit_no_params() {
     );
 
     delete_subscription(&c, &sub_id).await;
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_implicit_kind_hosted_is_empty() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let sub_id = create_implicit_context_for_list(&c).await;
 
     let (status, contexts) = list_contexts(&c, "kind=Hosted").await;
@@ -415,13 +449,14 @@ async fn list_implicit_kind_hosted_is_empty() {
     assert!(contexts.is_empty(), "Hosted filter should not include implicit contexts");
 
     delete_subscription(&c, &sub_id).await;
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_implicit_kind_cached() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let sub_id = create_implicit_context_for_list(&c).await;
 
     let (status, _contexts) = list_contexts(&c, "kind=Cached").await;
@@ -429,13 +464,14 @@ async fn list_implicit_kind_cached() {
     // External @context URIs may get cached -- just verify valid response
 
     delete_subscription(&c, &sub_id).await;
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_implicit_kind_implicitly_created() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let sub_id = create_implicit_context_for_list(&c).await;
 
     let (status, contexts) = list_contexts(&c, "kind=ImplicitlyCreated").await;
@@ -443,13 +479,14 @@ async fn list_implicit_kind_implicitly_created() {
     assert!(!contexts.is_empty(), "should have ImplicitlyCreated contexts");
 
     delete_subscription(&c, &sub_id).await;
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_implicit_details_false() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let sub_id = create_implicit_context_for_list(&c).await;
 
     let (status, contexts) = list_contexts(&c, "details=false").await;
@@ -460,13 +497,14 @@ async fn list_implicit_details_false() {
     );
 
     delete_subscription(&c, &sub_id).await;
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_implicit_details_false_kind_hosted_is_empty() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let sub_id = create_implicit_context_for_list(&c).await;
 
     let (status, contexts) = list_contexts(&c, "details=false&kind=Hosted").await;
@@ -474,13 +512,14 @@ async fn list_implicit_details_false_kind_hosted_is_empty() {
     assert!(contexts.is_empty(), "Hosted filter should not include implicit contexts");
 
     delete_subscription(&c, &sub_id).await;
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_implicit_details_false_kind_cached() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let sub_id = create_implicit_context_for_list(&c).await;
 
     let (status, _contexts) = list_contexts(&c, "details=false&kind=Cached").await;
@@ -488,13 +527,14 @@ async fn list_implicit_details_false_kind_cached() {
     // External @context URIs may get cached -- just verify valid response
 
     delete_subscription(&c, &sub_id).await;
+    env.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
-#[serial]
 async fn list_implicit_details_false_kind_implicitly_created() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
     let sub_id = create_implicit_context_for_list(&c).await;
 
     let (status, contexts) = list_contexts(&c, "details=false&kind=ImplicitlyCreated").await;
@@ -502,15 +542,16 @@ async fn list_implicit_details_false_kind_implicitly_created() {
     assert!(!contexts.is_empty(), "should have ImplicitlyCreated contexts");
 
     delete_subscription(&c, &sub_id).await;
+    env.finish().await.expect("cleanup failed");
 }
 
 // ── 052_07: List cached contexts with details=true ────────────────
 
 #[tokio::test]
-#[serial]
 async fn list_cached_contexts_with_details() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
 
     let ctx_content = r#"{"@context":{"X1":"urn:ngsi-ld:attributes:X1"}}"#;
     let server = ContextServer::start(HashMap::from([("/context.jsonld".to_string(), ctx_content.to_string())])).await;
@@ -543,4 +584,5 @@ async fn list_cached_contexts_with_details() {
 
     crate::delete_entity(&c, &entity_id).await;
     let _ = server;
+    env.finish().await.expect("cleanup failed");
 }

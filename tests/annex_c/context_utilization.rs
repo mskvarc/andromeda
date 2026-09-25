@@ -13,7 +13,6 @@
 
 use crate::{
     clean_tenant,
-    client,
     comparison::{ContextMember, EntityOrder, assert_matches_example, corpus},
     context_link,
     create_entity,
@@ -21,12 +20,11 @@ use crate::{
     get_json,
 };
 use pretty_assertions::assert_eq;
-use reqwest::StatusCode;
+use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
-use serial_test::serial;
 
 /// Create the `OffStreetParking` under the vocabulary clause C.7 writes it with.
-async fn create_under_the_parking_vocabulary() {
+async fn create_under_the_parking_vocabulary(http: &Client) {
     let link = context_link(hosted_contexts().url("parking-c7.jsonld").as_str());
     let mut entity = corpus(include_str!("corpus/c-7-created-entity.json"));
     // The Entity is written with the vocabulary in the Link header rather than
@@ -34,38 +32,36 @@ async fn create_under_the_parking_vocabulary() {
     if let Some(members) = entity.as_object_mut() {
         members.remove("@context");
     }
-    create_entity(&client(), &entity, Some(&link)).await;
+    create_entity(http, &entity, Some(&link)).await;
 }
 
 /// Retrieve the created Entity under whatever `@context` the caller names.
-async fn retrieve(link: Option<&str>) -> Value {
-    let (status, body) = get_json(&client(), "/entities/urn:ngsi-ld:OffStreetParking:Downtown1", "application/ld+json", link).await;
+async fn retrieve(http: &Client, link: Option<&str>) -> Value {
+    let (status, body) = get_json(http, "/entities/urn:ngsi-ld:OffStreetParking:Downtown1", "application/ld+json", link).await;
     assert_eq!(status, StatusCode::OK, "retrieval failed: {body}");
     body
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_7_retrieval_renders_terms_from_the_retrieval_time_context() {
     let environment = clean_tenant().await;
-    create_under_the_parking_vocabulary().await;
+    create_under_the_parking_vocabulary(&environment.client()).await;
 
     let abbreviated = context_link(hosted_contexts().url("parking-abbreviated.jsonld").as_str());
-    let actual = retrieve(Some(&abbreviated)).await;
+    let actual = retrieve(&environment.client(), Some(&abbreviated)).await;
     let expected = corpus(include_str!("corpus/c-7-abbreviated-answer.json"));
     assert_matches_example("C.7 abbreviated retrieval", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_7_the_response_context_array_reflects_the_header_supplied_context() {
     let environment = clean_tenant().await;
-    create_under_the_parking_vocabulary().await;
+    create_under_the_parking_vocabulary(&environment.client()).await;
 
     let abbreviated_url = hosted_contexts().url("parking-abbreviated.jsonld").to_string();
-    let actual = retrieve(Some(&context_link(&abbreviated_url))).await;
+    let actual = retrieve(&environment.client(), Some(&context_link(&abbreviated_url))).await;
 
     let rendered = flattened_context(&actual);
     assert!(
@@ -74,16 +70,15 @@ async fn annex_c_7_the_response_context_array_reflects_the_header_supplied_conte
         actual["@context"]
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_7_an_unmatched_context_renders_user_names_as_fully_qualified_names() {
     let environment = clean_tenant().await;
-    create_under_the_parking_vocabulary().await;
+    create_under_the_parking_vocabulary(&environment.client()).await;
 
-    let actual = retrieve(None).await;
+    let actual = retrieve(&environment.client(), None).await;
     let expected = corpus(include_str!("corpus/c-7-unmatched-answer.json"));
     assert_matches_example("C.7 no supplied @context", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
@@ -105,7 +100,7 @@ async fn annex_c_7_an_unmatched_context_renders_user_names_as_fully_qualified_na
         "clause C.7 renders the Core @context in the answer even when none was supplied"
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 /// The rendered `@context` as a flat list of entries.

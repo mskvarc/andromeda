@@ -7,7 +7,7 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::{entity, property, vehicle},
+    entity::{entity, property, typed_vehicle},
     http::forwarding::{FORWARDED_ENTITIES_PATH, context_link, context_link_header, forwarded_entity_path, retrieval_source},
     oracle::{assert_status, json_body},
     topology::{self, BrokerRole},
@@ -25,12 +25,13 @@ const PREFER_PREVIOUS_VERSION: &str = "ngsi-ld=1.8";
 /// `<https://uri.etsi.org/ngsi-ld/profile/version>` form of clause 6.3.21.
 const PROFILE_LINK_PREVIOUS_VERSION: &str = "<https://uri.etsi.org/ngsi-ld/profile/1.8>; rel=\"profile\"";
 
-/// A location `GeoProperty` node for a `Vehicle`, so `GeoJSON` rendering has a
-/// geometry to project.
-fn located_vehicle(id: &str) -> serde_json::Value {
+/// A located entity of `entity_type` holding a `GeoProperty`, so `GeoJSON`
+/// rendering has a geometry to project. The type is derived per test so a bare
+/// `type=` selector stays within the test.
+fn located_vehicle(id: &str, entity_type: &str) -> serde_json::Value {
     entity(
         id,
-        "Vehicle",
+        entity_type,
         &[
             ("speed", property(json!(42))),
             (
@@ -46,13 +47,14 @@ fn located_vehicle(id: &str) -> serde_json::Value {
 #[tokio::test]
 async fn dist_http_query_format_key_values_returns_simplified_representation() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:kv");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 42))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 42))
             .with_ld_json()
             .send()
             .await
@@ -64,7 +66,11 @@ async fn dist_http_query_format_key_values_returns_simplified_representation() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle&options=keyValues", "application/ld+json", Some(context_link()))
+        .query_entities(
+            &format!("type={}&options=keyValues", urlencoding::encode(&vtype)),
+            "application/ld+json",
+            Some(context_link()),
+        )
         .await
         .expect("keyValues query");
     assert_status(&response, 200);
@@ -86,6 +92,7 @@ async fn dist_http_query_format_key_values_returns_simplified_representation() {
 #[tokio::test]
 async fn dist_http_forwarded_query_defaults_to_normalized_representation() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:fwd-normalized");
     let reg_id = topology.id("registration:fwd-normalized");
     let mock = ContextSourceAdapter::start().await;
@@ -95,7 +102,7 @@ async fn dist_http_forwarded_query_defaults_to_normalized_representation() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -107,7 +114,11 @@ async fn dist_http_forwarded_query_defaults_to_normalized_representation() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .query_entities("type=Vehicle&options=keyValues", "application/ld+json", Some(context_link()))
+            .query_entities(
+                &format!("type={}&options=keyValues", urlencoding::encode(&vtype)),
+                "application/ld+json",
+                Some(context_link()),
+            )
             .await
             .expect("forwarded query"),
         200,
@@ -128,6 +139,7 @@ async fn dist_http_forwarded_query_defaults_to_normalized_representation() {
 #[tokio::test]
 async fn dist_http_forwarded_query_unsupported_representation_returns_501() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:fwd-501");
     let reg_id = topology.id("registration:fwd-501");
     let mock = ContextSourceAdapter::start().await;
@@ -137,7 +149,7 @@ async fn dist_http_forwarded_query_unsupported_representation_returns_501() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "exclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "exclusive"))
             .await
             .expect("register source"),
         201,
@@ -148,7 +160,7 @@ async fn dist_http_forwarded_query_unsupported_representation_returns_501() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
+        .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/ld+json", Some(context_link()))
         .await
         .expect("forwarded query");
     assert_status(&response, 501);
@@ -162,13 +174,14 @@ async fn dist_http_forwarded_query_unsupported_representation_returns_501() {
 #[tokio::test]
 async fn dist_http_query_geojson_accept_returns_feature_collection() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:geo-collection");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&located_vehicle(&entity_id))
+            .post_entity(&located_vehicle(&entity_id, &vtype))
             .with_ld_json()
             .send()
             .await
@@ -180,7 +193,7 @@ async fn dist_http_query_geojson_accept_returns_feature_collection() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/geo+json", Some(context_link()))
+        .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/geo+json", Some(context_link()))
         .await
         .expect("geojson query");
     assert_status(&response, 200);
@@ -198,13 +211,14 @@ async fn dist_http_query_geojson_accept_returns_feature_collection() {
 #[tokio::test]
 async fn dist_http_retrieve_geojson_accept_returns_feature() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:geo-feature");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&located_vehicle(&entity_id))
+            .post_entity(&located_vehicle(&entity_id, &vtype))
             .with_ld_json()
             .send()
             .await
@@ -236,6 +250,7 @@ async fn dist_http_retrieve_geojson_accept_returns_feature() {
 #[tokio::test]
 async fn dist_http_query_version_amended_returns_203_preference_applied() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:amend-query");
     let reg_id = topology.id("registration:amend-query");
     let mock = ContextSourceAdapter::start().await;
@@ -244,7 +259,7 @@ async fn dist_http_query_version_amended_returns_203_preference_applied() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive"))
             .await
             .expect("register source"),
         201,
@@ -255,7 +270,7 @@ async fn dist_http_query_version_amended_returns_203_preference_applied() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type={}", urlencoding::encode(&vtype)))
         .header("accept", "application/ld+json")
         .header("link", context_link_header())
         .header("prefer", PREFER_PREVIOUS_VERSION)
@@ -282,6 +297,7 @@ async fn dist_http_query_version_amended_returns_203_preference_applied() {
 #[tokio::test]
 async fn dist_http_retrieve_version_amended_returns_203_preference_applied() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:amend-retrieve");
     let reg_id = topology.id("registration:amend-retrieve");
     let mock = ContextSourceAdapter::start().await;
@@ -290,12 +306,12 @@ async fn dist_http_retrieve_version_amended_returns_203_preference_applied() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "exclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "exclusive"))
             .await
             .expect("register source"),
         201,
     );
-    mock.set_stub_with_body(Method::GET, &forwarded_entity_path(&entity_id), 200, &vehicle(&entity_id, 5))
+    mock.set_stub_with_body(Method::GET, &forwarded_entity_path(&entity_id), 200, &typed_vehicle(&entity_id, &vtype, 5))
         .await;
 
     let response = topology
@@ -327,11 +343,12 @@ async fn dist_http_retrieve_version_amended_returns_203_preference_applied() {
 #[tokio::test]
 async fn dist_http_entity_maps_version_amended_returns_203_preference_applied() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let response = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/entityMaps?type=Vehicle")
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entityMaps?type={}", urlencoding::encode(&vtype)))
         .header("accept", "application/ld+json")
         .header("link", context_link_header())
         .header("prefer", PREFER_PREVIOUS_VERSION)
@@ -359,13 +376,14 @@ async fn dist_http_entity_maps_version_amended_returns_203_preference_applied() 
 #[tokio::test]
 async fn dist_http_profile_link_header_version_accepted_with_fallbacks() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:profile");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 5))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 5))
             .with_ld_json()
             .send()
             .await
@@ -377,7 +395,7 @@ async fn dist_http_profile_link_header_version_accepted_with_fallbacks() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type={}", urlencoding::encode(&vtype)))
         .header("accept", "application/ld+json")
         .header("link", context_link_header())
         .header("link", PROFILE_LINK_PREVIOUS_VERSION)

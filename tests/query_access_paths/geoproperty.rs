@@ -8,7 +8,7 @@
 use crate::seeded_corpus::{SEED_PREFIX, explain, seed};
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
-use andromeda_test_harness::serialized_environment::SerializedEnvironment;
+use andromeda_test_harness::{environment::TestEnvironment, serialized_environment::SerializedEnvironment};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
@@ -62,10 +62,10 @@ async fn selected(client: &TestClient, id_filter: &str, filter: &str) -> Vec<Str
 
 #[tokio::test]
 async fn arbitrary_geoproperty_queries_apply_to_the_named_attribute_alone() {
-    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+    let scope = TestEnvironment::from_suite("query_access_paths").await.expect("isolated test environment");
     let client = scope.client();
-    let with_entrance = format!("{SEED_PREFIX}:Building:geo-two-properties");
-    let dock_only = format!("{SEED_PREFIX}:Building:geo-dock-only");
+    let with_entrance = scope.id("Building:geo-two-properties");
+    let dock_only = scope.id("Building:geo-dock-only");
     for entity in [two_geoproperty_building(&with_entrance), dock_only_building(&dock_only)] {
         let created = client.post_entity(&entity).send().await.expect("create entity failed");
         assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
@@ -105,10 +105,10 @@ async fn arbitrary_geoproperty_queries_apply_to_the_named_attribute_alone() {
 
 #[tokio::test]
 async fn arbitrary_geoproperty_matches_on_any_dataset_instance_and_orders_by_distance() {
-    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+    let scope = TestEnvironment::from_suite("query_access_paths").await.expect("isolated test environment");
     let client = scope.client();
-    let id = format!("{SEED_PREFIX}:Building:geo-instances");
-    let near = format!("{SEED_PREFIX}:Building:geo-instances-near");
+    let id = scope.id("Building:geo-instances");
+    let near = scope.id("Building:geo-instances-near");
     let created = client.post_entity(&two_geoproperty_building(&id)).send().await.expect("create entity failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
     let neighbour = json!({

@@ -16,6 +16,7 @@ use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
 use serde_json::{Value, json};
+use urlencoding::encode;
 
 /// A JSON-LD Link header value carrying the compound test context.
 fn link_value() -> String {
@@ -58,6 +59,7 @@ async fn distop_available_types_reflects_registrations_system_wide() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
+    let atype = topology.id("Aircraft");
     let registration_id = topology.id("registration:cons74");
     assert_status(
         &front
@@ -65,7 +67,7 @@ async fn distop_available_types_reflects_registrations_system_wide() {
             .create_registration(
                 &CsrBuilder::new(&registration_id, peer.peer_url())
                     .mode("inclusive")
-                    .entity_type("Aircraft")
+                    .entity_type(&atype)
                     .operations(&["retrieveEntity", "queryEntity"])
                     .build(),
             )
@@ -77,7 +79,7 @@ async fn distop_available_types_reflects_registrations_system_wide() {
     let response = front.client().list_types("", Some(COMPOUND_CONTEXT.as_str())).await.expect("types");
     assert_status(&response, 200);
     assert!(
-        contains_named(&json_body(&response)["typeList"], "Aircraft"),
+        contains_named(&json_body(&response)["typeList"], &atype),
         "the registered type appears system-wide: {}",
         json_body(&response)
     );
@@ -94,6 +96,7 @@ async fn distop_entity_type_details_system_wide_attribute_details_may_be_empty()
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
+    let atype = topology.id("Aircraft");
     let registration_id = topology.id("registration:cons75");
     assert_status(
         &front
@@ -101,7 +104,7 @@ async fn distop_entity_type_details_system_wide_attribute_details_may_be_empty()
             .create_registration(
                 &CsrBuilder::new(&registration_id, peer.peer_url())
                     .mode("inclusive")
-                    .entity_type("Aircraft")
+                    .entity_type(&atype)
                     .operations(&["retrieveEntity"])
                     .build(),
             )
@@ -110,7 +113,7 @@ async fn distop_entity_type_details_system_wide_attribute_details_may_be_empty()
         201,
     );
 
-    let response = get_detail(&topology, "/ngsi-ld/v1/types/Aircraft").await;
+    let response = get_detail(&topology, &format!("/ngsi-ld/v1/types/{}", encode(&atype))).await;
     assert_status(&response, 200);
     let body = json_body(&response);
     assert!(body.get("typeName").is_some(), "type details are returned system-wide: {body}");
@@ -130,12 +133,9 @@ async fn distop_entity_type_info_count_may_be_estimate() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
+    let atype = topology.id("Aircraft");
     for index in 0..2 {
-        let aircraft = entity(
-            &topology.id(&format!("Aircraft:cons76-{index}")),
-            "Aircraft",
-            &[("thrust", property(json!(1000)))],
-        );
+        let aircraft = entity(&topology.id(&format!("Aircraft:cons76-{index}")), &atype, &[("thrust", property(json!(1000)))]);
         assert_status(&peer.client().post_entity(&aircraft).with_ld_json().send().await.expect("peer aircraft"), 201);
     }
     let registration_id = topology.id("registration:cons76");
@@ -145,7 +145,7 @@ async fn distop_entity_type_info_count_may_be_estimate() {
             .create_registration(
                 &CsrBuilder::new(&registration_id, peer.peer_url())
                     .mode("inclusive")
-                    .entity_type("Aircraft")
+                    .entity_type(&atype)
                     .operations(&["retrieveEntity", "queryEntity"])
                     .build(),
             )
@@ -154,7 +154,7 @@ async fn distop_entity_type_info_count_may_be_estimate() {
         201,
     );
 
-    let response = get_detail(&topology, "/ngsi-ld/v1/types/Aircraft").await;
+    let response = get_detail(&topology, &format!("/ngsi-ld/v1/types/{}", encode(&atype))).await;
     assert_status(&response, 200);
     assert!(
         json_body(&response)["entityCount"].as_i64().is_none_or(|count| count >= 0),
@@ -174,6 +174,8 @@ async fn distop_available_attributes_system_wide() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
+    let atype = topology.id("Aircraft");
+    let attr = topology.id("thrust");
     let registration_id = topology.id("registration:cons77");
     assert_status(
         &front
@@ -181,8 +183,8 @@ async fn distop_available_attributes_system_wide() {
             .create_registration(
                 &CsrBuilder::new(&registration_id, peer.peer_url())
                     .mode("inclusive")
-                    .entity_type("Aircraft")
-                    .property_names(&["thrust"])
+                    .entity_type(&atype)
+                    .property_names(&[attr.as_str()])
                     .operations(&["retrieveEntity"])
                     .build(),
             )
@@ -194,7 +196,7 @@ async fn distop_available_attributes_system_wide() {
     let response = front.client().list_attributes("", Some(COMPOUND_CONTEXT.as_str())).await.expect("attributes");
     assert_status(&response, 200);
     assert!(
-        contains_named(&json_body(&response)["attributeList"], "thrust"),
+        contains_named(&json_body(&response)["attributeList"], &attr),
         "the registered attribute appears system-wide: {}",
         json_body(&response)
     );
@@ -211,6 +213,7 @@ async fn distop_attribute_details_system_wide_may_be_empty() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
+    let attr = topology.id("thrust");
     let registration_id = topology.id("registration:cons78");
     assert_status(
         &front
@@ -219,7 +222,7 @@ async fn distop_attribute_details_system_wide_may_be_empty() {
                 &CsrBuilder::new(&registration_id, peer.peer_url())
                     .mode("inclusive")
                     .without_entity()
-                    .property_names(&["thrust"])
+                    .property_names(&[attr.as_str()])
                     .operations(&["retrieveEntity"])
                     .build(),
             )
@@ -228,7 +231,7 @@ async fn distop_attribute_details_system_wide_may_be_empty() {
         201,
     );
 
-    let response = get_detail(&topology, "/ngsi-ld/v1/attributes/thrust").await;
+    let response = get_detail(&topology, &format!("/ngsi-ld/v1/attributes/{}", encode(&attr))).await;
     assert_status(&response, 200);
     let body = json_body(&response);
     assert!(body.get("attributeName").is_some(), "attribute details are returned system-wide: {body}");
@@ -248,7 +251,9 @@ async fn distop_attribute_info_count_may_be_estimate() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
-    let aircraft = entity(&topology.id("Aircraft:cons79"), "Aircraft", &[("thrust", property(json!(1000)))]);
+    let atype = topology.id("Aircraft");
+    let attr = topology.id("thrust");
+    let aircraft = entity(&topology.id("Aircraft:cons79"), &atype, &[(attr.as_str(), property(json!(1000)))]);
     assert_status(&peer.client().post_entity(&aircraft).with_ld_json().send().await.expect("peer aircraft"), 201);
     let registration_id = topology.id("registration:cons79");
     assert_status(
@@ -257,8 +262,8 @@ async fn distop_attribute_info_count_may_be_estimate() {
             .create_registration(
                 &CsrBuilder::new(&registration_id, peer.peer_url())
                     .mode("inclusive")
-                    .entity_type("Aircraft")
-                    .property_names(&["thrust"])
+                    .entity_type(&atype)
+                    .property_names(&[attr.as_str()])
                     .operations(&["retrieveEntity", "queryEntity"])
                     .build(),
             )
@@ -267,7 +272,7 @@ async fn distop_attribute_info_count_may_be_estimate() {
         201,
     );
 
-    let response = get_detail(&topology, "/ngsi-ld/v1/attributes/thrust").await;
+    let response = get_detail(&topology, &format!("/ngsi-ld/v1/attributes/{}", encode(&attr))).await;
     assert_status(&response, 200);
     let body = json_body(&response);
     assert!(
@@ -291,6 +296,7 @@ async fn distop_available_types_answered_from_local_and_registry_without_contact
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
+    let atype = topology.id("Aircraft");
     let registration_id = topology.id("registration:cons80");
     assert_status(
         &front
@@ -298,7 +304,7 @@ async fn distop_available_types_answered_from_local_and_registry_without_contact
             .create_registration(
                 &CsrBuilder::new(&registration_id, &mock.url(""))
                     .mode("inclusive")
-                    .entity_type("Aircraft")
+                    .entity_type(&atype)
                     .operations(&["retrieveEntity", "queryEntity"])
                     .build(),
             )
@@ -310,14 +316,14 @@ async fn distop_available_types_answered_from_local_and_registry_without_contact
         Method::GET,
         "/ngsi-ld/v1/types",
         200,
-        &json!({ "id": "urn:ngsi-ld:EntityTypeList:mock", "type": "EntityTypeList", "typeList": ["Aircraft"] }),
+        &json!({ "id": "urn:ngsi-ld:EntityTypeList:mock", "type": "EntityTypeList", "typeList": [atype.as_str()] }),
     )
     .await;
 
     let response = front.client().list_types("", Some(COMPOUND_CONTEXT.as_str())).await.expect("types");
     assert_status(&response, 200);
     assert!(
-        contains_named(&json_body(&response)["typeList"], "Aircraft"),
+        contains_named(&json_body(&response)["typeList"], &atype),
         "the registered type is present regardless of whether sources are contacted: {}",
         json_body(&response)
     );
@@ -335,6 +341,7 @@ async fn distop_available_types_possibly_available_semantics() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
+    let atype = topology.id("Aircraft");
     let registration_id = topology.id("registration:cons81");
     assert_status(
         &front
@@ -342,7 +349,7 @@ async fn distop_available_types_possibly_available_semantics() {
             .create_registration(
                 &CsrBuilder::new(&registration_id, peer.peer_url())
                     .mode("inclusive")
-                    .entity_type("Aircraft")
+                    .entity_type(&atype)
                     .operations(&["retrieveEntity", "queryEntity"])
                     .build(),
             )
@@ -354,7 +361,7 @@ async fn distop_available_types_possibly_available_semantics() {
     let response = front.client().list_types("", Some(COMPOUND_CONTEXT.as_str())).await.expect("types");
     assert_status(&response, 200);
     assert!(
-        contains_named(&json_body(&response)["typeList"], "Aircraft"),
+        contains_named(&json_body(&response)["typeList"], &atype),
         "a type promised only by registration is possibly-available and listed: {}",
         json_body(&response)
     );
@@ -371,6 +378,7 @@ async fn distop_available_types_empty_arrays_permitted_when_registration_lacks_d
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
+    let atype = topology.id("Aircraft");
     let registration_id = topology.id("registration:cons82");
     assert_status(
         &front
@@ -378,7 +386,7 @@ async fn distop_available_types_empty_arrays_permitted_when_registration_lacks_d
             .create_registration(
                 &CsrBuilder::new(&registration_id, peer.peer_url())
                     .mode("inclusive")
-                    .entity_type("Aircraft")
+                    .entity_type(&atype)
                     .operations(&["retrieveEntity"])
                     .build(),
             )
@@ -387,7 +395,7 @@ async fn distop_available_types_empty_arrays_permitted_when_registration_lacks_d
         201,
     );
 
-    let response = get_detail(&topology, "/ngsi-ld/v1/types/Aircraft").await;
+    let response = get_detail(&topology, &format!("/ngsi-ld/v1/types/{}", encode(&atype))).await;
     assert_status(&response, 200);
     let body = json_body(&response);
     assert!(
@@ -407,6 +415,7 @@ async fn distop_available_counts_estimate_permitted() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
+    let atype = topology.id("Aircraft");
     for (source, count) in [("/s1", 3), ("/s2", 4)] {
         let registration_id = topology.id(&format!("registration:cons83-{}", source.trim_start_matches('/')));
         assert_status(
@@ -415,7 +424,7 @@ async fn distop_available_counts_estimate_permitted() {
                 .create_registration(
                     &CsrBuilder::new(&registration_id, &mock.url(source))
                         .mode("inclusive")
-                        .entity_type("Aircraft")
+                        .entity_type(&atype)
                         .operations(&["retrieveEntity", "queryEntity"])
                         .build(),
                 )
@@ -425,14 +434,14 @@ async fn distop_available_counts_estimate_permitted() {
         );
         mock.set_stub_with_body(
             Method::GET,
-            &format!("{source}/ngsi-ld/v1/types/Aircraft"),
+            &format!("{source}/ngsi-ld/v1/types/{}", encode(&atype)),
             200,
-            &json!({ "id": "Aircraft", "type": "EntityTypeInfo", "typeName": "Aircraft", "entityCount": count }),
+            &json!({ "id": atype.as_str(), "type": "EntityTypeInfo", "typeName": atype.as_str(), "entityCount": count }),
         )
         .await;
     }
 
-    let response = get_detail(&topology, "/ngsi-ld/v1/types/Aircraft").await;
+    let response = get_detail(&topology, &format!("/ngsi-ld/v1/types/{}", encode(&atype))).await;
     assert_status(&response, 200);
     assert!(
         json_body(&response)["entityCount"].as_i64().is_none_or(|count| count >= 0),

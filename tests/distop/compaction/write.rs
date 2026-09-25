@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 
 /// A forwarded create carries the covered aliased attribute `spd` intact, in the
 /// registration context's compact spelling, never the IRI's last segment.
+#[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_compaction_forwards_a_created_aliased_attribute_intact() {
     let topology = topology::single().await.expect("single-broker topology");

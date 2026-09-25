@@ -4,8 +4,11 @@
 //! row uses a live receiver and asserts the delivered body.
 
 use crate::{
-    entity::{entity, property, relationship, vehicle},
-    map::{notification_inspection::notified_entities, subscription_document::subscription},
+    entity::{entity, property, relationship, typed_vehicle},
+    map::{
+        notification_inspection::notified_entities,
+        subscription_document::{set_entity_type, subscription},
+    },
     notification_adapter::{CapturedNotification, NotificationAdapter},
     oracle::assert_status,
     topology::{self, BrokerRole},
@@ -40,10 +43,12 @@ async fn notify_with_format(
     receiver: &NotificationAdapter,
     local: &str,
     format: &str,
+    entity_type: &str,
     attributes: &[(&str, Value)],
 ) -> Value {
     let id = topology.id(&format!("Subscription:{local}"));
     let mut body = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut body, entity_type);
     body["notification"]["format"] = json!(format);
     assert_status(
         &topology
@@ -61,7 +66,7 @@ async fn notify_with_format(
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&entity(&entity_id, "Vehicle", attributes))
+            .post_entity(&entity(&entity_id, entity_type, attributes))
             .with_ld_json()
             .send()
             .await
@@ -86,11 +91,12 @@ async fn notify_with_format(
 async fn notif_format_concise_produces_concise_body() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let watched = [(
         "speed",
         json!({ "type": "Property", "value": 20, "accuracy": { "type": "Property", "value": 0.5 } }),
     )];
-    let notified = notify_with_format(&topology, &receiver, "concise", "concise", &watched).await;
+    let notified = notify_with_format(&topology, &receiver, "concise", "concise", &vtype, &watched).await;
     assert_eq!(
         notified["speed"]["value"].as_i64(),
         Some(20),
@@ -115,8 +121,9 @@ async fn notif_format_concise_produces_concise_body() {
 async fn notif_format_simplified_produces_key_values_body() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let watched = [("speed", property(json!(20)))];
-    let notified = notify_with_format(&topology, &receiver, "simplified", "simplified", &watched).await;
+    let notified = notify_with_format(&topology, &receiver, "simplified", "simplified", &vtype, &watched).await;
     assert_eq!(notified["speed"].as_i64(), Some(20), "the key-values body renders the bare value: {notified}");
     receiver.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -127,8 +134,10 @@ async fn notif_format_simplified_produces_key_values_body() {
 async fn notif_default_format_normalized() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let id = topology.id("Subscription:normalized-default");
     let mut body = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut body, &vtype);
     body["notification"]
         .as_object_mut()
         .unwrap_or_else(|| panic!("notification object"))
@@ -149,7 +158,7 @@ async fn notif_default_format_normalized() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 20))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 20))
             .with_ld_json()
             .send()
             .await
@@ -173,8 +182,10 @@ async fn notif_default_format_normalized() {
 async fn notif_pick_reduces_entities_to_picked_members() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let id = topology.id("Subscription:pick");
     let mut body = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut body, &vtype);
     body["notification"]["pick"] = json!(["speed"]);
     assert_status(
         &topology
@@ -187,7 +198,7 @@ async fn notif_pick_reduces_entities_to_picked_members() {
         201,
     );
     let entity_id = topology.id("Vehicle:pick");
-    let with_two = entity(&entity_id, "Vehicle", &[("speed", property(json!(20))), ("colour", property(json!("red")))]);
+    let with_two = entity(&entity_id, &vtype, &[("speed", property(json!(20))), ("colour", property(json!("red")))]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -213,8 +224,10 @@ async fn notif_pick_reduces_entities_to_picked_members() {
 async fn notif_omit_removes_listed_members() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let id = topology.id("Subscription:omit");
     let mut body = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut body, &vtype);
     body["notification"]["omit"] = json!(["colour"]);
     assert_status(
         &topology
@@ -227,7 +240,7 @@ async fn notif_omit_removes_listed_members() {
         201,
     );
     let entity_id = topology.id("Vehicle:omit");
-    let with_two = entity(&entity_id, "Vehicle", &[("speed", property(json!(20))), ("colour", property(json!("red")))]);
+    let with_two = entity(&entity_id, &vtype, &[("speed", property(json!(20))), ("colour", property(json!("red")))]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -253,13 +266,14 @@ async fn notif_omit_removes_listed_members() {
 async fn notif_join_includes_linked_entities() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let target_id = topology.id("Vehicle:join-target");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&target_id, 5))
+            .post_entity(&typed_vehicle(&target_id, &vtype, 5))
             .with_ld_json()
             .send()
             .await
@@ -268,6 +282,7 @@ async fn notif_join_includes_linked_entities() {
     );
     let id = topology.id("Subscription:join");
     let mut body = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut body, &vtype);
     body["notification"]["join"] = json!("flat");
     body["notification"]["joinLevel"] = json!(1);
     assert_status(
@@ -281,7 +296,7 @@ async fn notif_join_includes_linked_entities() {
         201,
     );
     let source_id = topology.id("Vehicle:join-source");
-    let source = entity(&source_id, "Vehicle", &[("linkedTo", relationship(&target_id))]);
+    let source = entity(&source_id, &vtype, &[("linkedTo", relationship(&target_id))]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -311,8 +326,10 @@ async fn notif_join_includes_linked_entities() {
 async fn notif_ngsild_conformance_amends_body_to_version() {
     let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let id = topology.id("Subscription:conformance");
     let mut body = subscription(&id, &receiver.endpoint_url());
+    set_entity_type(&mut body, &vtype);
     body["ngsildConformance"] = json!("1.0");
     assert_status(
         &topology
@@ -327,7 +344,7 @@ async fn notif_ngsild_conformance_amends_body_to_version() {
     let entity_id = topology.id("Vehicle:conformance");
     let watched = entity(
         &entity_id,
-        "Vehicle",
+        &vtype,
         &[
             // Table 4.3.6.8-2: `observedAt` was introduced in 1.3.
             ("speed", json!({ "type": "Property", "value": 20, "observedAt": "2025-01-01T00:00:00Z" })),

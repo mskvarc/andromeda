@@ -4,12 +4,10 @@
 
 use reqwest::StatusCode;
 use serde_json::Value;
-use serial_test::serial;
 
 use crate::{
     COMPOUND_CONTEXT_URL,
     building_simple_attributes,
-    clean_database,
     client,
     create_entity,
     delete_entity,
@@ -19,6 +17,7 @@ use crate::{
     unique_id,
     vehicle_simple_attributes,
 };
+use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 
 fn sorted_strings(val: &Value) -> Vec<String> {
     let mut v: Vec<String> = val.as_array().unwrap().iter().map(|s| s.as_str().unwrap().to_string()).collect();
@@ -45,9 +44,8 @@ fn sort_entity_types(val: &Value) -> Vec<Value> {
 
 /// List entity type details without Link header -- attribute names returned as expanded IRIs (5.5.9).
 #[tokio::test]
-#[serial]
 async fn list_entity_type_details_without_context_returns_expanded_uris() {
-    let _serialized_environment = clean_database().await;
+    let env = TenantScopedEnvironment::from_suite("discovery").await.expect("private tenant environment");
     let c = client();
     let building_id = unique_id("urn:ngsi-ld:Building:type-details-no-ctx");
     let vehicle_id = unique_id("urn:ngsi-ld:Vehicle:type-details-no-ctx");
@@ -55,19 +53,20 @@ async fn list_entity_type_details_without_context_returns_expanded_uris() {
     let building = building_simple_attributes(&building_id);
     let vehicle = vehicle_simple_attributes(&vehicle_id);
 
-    let (s, _) = create_entity(&c, &building, Some(COMPOUND_CONTEXT_URL)).await;
+    let (s, _) = create_entity(&c, env.tenant(), &building, Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);
-    let (s, _) = create_entity(&c, &vehicle, Some(COMPOUND_CONTEXT_URL)).await;
+    let (s, _) = create_entity(&c, env.tenant(), &vehicle, Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);
 
-    let (status, body) = list_entity_types(&c, "details=true", None).await;
+    let (status, body) = list_entity_types(&c, env.tenant(), "details=true", None).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let expected = expected_entity_type_details_expanded();
     pretty_assertions::assert_eq!(sort_entity_types(&body), sort_entity_types(&expected));
 
-    delete_entity(&c, &building_id).await;
-    delete_entity(&c, &vehicle_id).await;
+    delete_entity(&c, env.tenant(), &building_id).await;
+    delete_entity(&c, env.tenant(), &vehicle_id).await;
+    env.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -76,9 +75,8 @@ async fn list_entity_type_details_without_context_returns_expanded_uris() {
 
 /// List entity type details with compound context Link header -- attribute names compacted (5.5.9).
 #[tokio::test]
-#[serial]
 async fn list_entity_type_details_with_context_returns_compacted_names() {
-    let _serialized_environment = clean_database().await;
+    let env = TenantScopedEnvironment::from_suite("discovery").await.expect("private tenant environment");
     let c = client();
     let building_id = unique_id("urn:ngsi-ld:Building:type-details-with-ctx");
     let vehicle_id = unique_id("urn:ngsi-ld:Vehicle:type-details-with-ctx");
@@ -86,17 +84,18 @@ async fn list_entity_type_details_with_context_returns_compacted_names() {
     let building = building_simple_attributes(&building_id);
     let vehicle = vehicle_simple_attributes(&vehicle_id);
 
-    let (s, _) = create_entity(&c, &building, Some(COMPOUND_CONTEXT_URL)).await;
+    let (s, _) = create_entity(&c, env.tenant(), &building, Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);
-    let (s, _) = create_entity(&c, &vehicle, Some(COMPOUND_CONTEXT_URL)).await;
+    let (s, _) = create_entity(&c, env.tenant(), &vehicle, Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);
 
-    let (status, body) = list_entity_types(&c, "details=true", Some(COMPOUND_CONTEXT_URL)).await;
+    let (status, body) = list_entity_types(&c, env.tenant(), "details=true", Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let expected = expected_entity_type_details_compacted();
     pretty_assertions::assert_eq!(sort_entity_types(&body), sort_entity_types(&expected));
 
-    delete_entity(&c, &building_id).await;
-    delete_entity(&c, &vehicle_id).await;
+    delete_entity(&c, env.tenant(), &building_id).await;
+    delete_entity(&c, env.tenant(), &vehicle_id).await;
+    env.finish().await.expect("cleanup failed");
 }

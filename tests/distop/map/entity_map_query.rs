@@ -2,7 +2,7 @@
 //! and the candidate-id shape of the result (clause 5.14.4). All `T-LOCAL`.
 
 use crate::{
-    entity::vehicle,
+    entity::typed_vehicle,
     map::entity_map_request::{create_entity_map, jsonld_link},
     oracle::{assert_problem_details, assert_status, json_body},
     topology::{self, BrokerRole},
@@ -12,15 +12,15 @@ use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
 use pretty_assertions::assert_eq;
 
-/// Create a `Vehicle` on the front broker.
-async fn seed_vehicle(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -> String {
+/// Create an entity of the given type on the front broker.
+async fn seed_vehicle(topology: &MultiBrokerTopology<BrokerRole>, entity_type: &str, local: &str) -> String {
     let entity_id = topology.id(local);
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 20))
+            .post_entity(&typed_vehicle(&entity_id, entity_type, 20))
             .with_ld_json()
             .send()
             .await
@@ -35,8 +35,13 @@ async fn seed_vehicle(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -
 #[tokio::test]
 async fn emq_returns_candidate_ids_not_entities() {
     let topology = topology::single().await.expect("single-broker topology");
-    let entity_id = seed_vehicle(&topology, "Vehicle:candidate-ids").await;
-    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
+    let vtype = topology.id("Vehicle");
+    let entity_id = seed_vehicle(&topology, &vtype, "Vehicle:candidate-ids").await;
+    let created = create_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type={}", urlencoding::encode(&vtype)),
+    )
+    .await;
     assert_status(&created, 201);
     let map = json_body(&created)["entityMap"].clone();
     let entry = map.get(&entity_id).unwrap_or_else(|| panic!("the created entity is a candidate"));
@@ -55,8 +60,13 @@ async fn emq_returns_candidate_ids_not_entities() {
 #[tokio::test]
 async fn emq_ignores_irrelevant_query_params() {
     let topology = topology::single().await.expect("single-broker topology");
-    let entity_id = seed_vehicle(&topology, "Vehicle:irrelevant-params").await;
-    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle&lang=en").await;
+    let vtype = topology.id("Vehicle");
+    let entity_id = seed_vehicle(&topology, &vtype, "Vehicle:irrelevant-params").await;
+    let created = create_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type={}&lang=en", urlencoding::encode(&vtype)),
+    )
+    .await;
     assert_status(&created, 201);
     let map = json_body(&created)["entityMap"].clone();
     assert!(
@@ -70,8 +80,13 @@ async fn emq_ignores_irrelevant_query_params() {
 #[tokio::test]
 async fn emq_at_least_one_filter_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
-    seed_vehicle(&topology, "Vehicle:one-filter").await;
-    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
+    let vtype = topology.id("Vehicle");
+    seed_vehicle(&topology, &vtype, "Vehicle:one-filter").await;
+    let created = create_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type={}", urlencoding::encode(&vtype)),
+    )
+    .await;
     assert_status(&created, 201);
     topology.finish().await.expect("topology cleanup");
 }
@@ -179,7 +194,10 @@ async fn emq_geometry_property_non_geojson_accept_returns_400() {
 #[tokio::test]
 async fn emq_expands_type_and_attribute_terms() {
     let topology = topology::single().await.expect("single-broker topology");
-    let entity_id = seed_vehicle(&topology, "Vehicle:expand-terms").await;
+    // The compact term is the subject under test (it must expand via the compound
+    // context), so the type stays literal; the assertion only checks that this
+    // test's own entity is a candidate, which tolerates other tests' entities.
+    let entity_id = seed_vehicle(&topology, "Vehicle", "Vehicle:expand-terms").await;
     let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle&attrs=speed").await;
     assert_status(&created, 201);
     assert!(
@@ -194,7 +212,9 @@ async fn emq_expands_type_and_attribute_terms() {
 #[tokio::test]
 async fn emq_applies_jsonld_type_coercion_for_expand_list() {
     let topology = topology::single().await.expect("single-broker topology");
-    seed_vehicle(&topology, "Vehicle:type-coercion").await;
+    // Type coercion of the compact term is the subject under test, so the type
+    // stays literal; the assertion checks only the response envelope shape.
+    seed_vehicle(&topology, "Vehicle", "Vehicle:type-coercion").await;
     let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
     assert_status(&created, 201);
     assert_eq!(json_body(&created)["type"].as_str(), Some("EntityMap"), "the coerced query yields an EntityMap");

@@ -17,6 +17,7 @@ use axum::http::Method;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::time::Duration;
+use urlencoding::encode;
 
 /// Budget for a forwarded request to reach the mock context source.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -134,9 +135,13 @@ async fn distop_entity_redirect_registration_by_id_pattern_accepted() {
 #[tokio::test]
 async fn distop_entity_redirect_registration_type_only_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
+    // A per-test type keeps this stored type-only redirect from hijacking another
+    // concurrent test's `Vehicle` writes.
+    let vtype = topology.id("Vehicle");
     let registration = CsrBuilder::new(&topology.id("registration:redirect-type-only"), PEER_ENDPOINT)
         .mode("redirect")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
+        .id_pattern(&format!("^{}", topology.id_prefix()))
         .build();
     assert_redirect_accepted(&topology, &registration).await;
     topology.finish().await.expect("topology cleanup");
@@ -147,10 +152,14 @@ async fn distop_entity_redirect_registration_type_only_accepted() {
 #[tokio::test]
 async fn distop_entity_redirect_registration_attributes_only_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
+    // A per-test property name keeps this stored attributes-only redirect (no
+    // entity clause) from hijacking another concurrent test's writes to a shared
+    // attribute such as `speed`.
+    let attr = topology.id("attr:redirect-attrs-only");
     let registration = CsrBuilder::new(&topology.id("registration:redirect-attrs-only"), PEER_ENDPOINT)
         .mode("redirect")
         .without_entity()
-        .property_names(&["speed"])
+        .property_names(&[attr.as_str()])
         .build();
     assert_redirect_accepted(&topology, &registration).await;
     topology.finish().await.expect("topology cleanup");
@@ -214,6 +223,7 @@ async fn distop_entity_redirect_whole_entity_by_id_forwards_all_attributes() {
 #[tokio::test]
 async fn distop_entity_redirect_multiple_overlapping_fan_out_to_all_sources() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let first_mock = ContextSourceAdapter::start().await;
     let second_mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:redirect-fanout");
@@ -222,7 +232,7 @@ async fn distop_entity_redirect_multiple_overlapping_fan_out_to_all_sources() {
             Method::GET,
             FORWARDED_ENTITIES,
             200,
-            &json!([entity(&entity_id, "Vehicle", &[("speed", property(json!(50)))])]),
+            &json!([entity(&entity_id, &vtype, &[("speed", property(json!(50)))])]),
         )
         .await;
     second_mock
@@ -230,7 +240,7 @@ async fn distop_entity_redirect_multiple_overlapping_fan_out_to_all_sources() {
             Method::GET,
             FORWARDED_ENTITIES,
             200,
-            &json!([entity(&entity_id, "Vehicle", &[("fuel", property(json!(35)))])]),
+            &json!([entity(&entity_id, &vtype, &[("fuel", property(json!(35)))])]),
         )
         .await;
 
@@ -239,6 +249,7 @@ async fn distop_entity_redirect_multiple_overlapping_fan_out_to_all_sources() {
     for (suffix, endpoint, attribute) in [("speed", &first_endpoint, "speed"), ("fuel", &second_endpoint, "fuel")] {
         let registration = CsrBuilder::new(&topology.id(&format!("registration:redirect-fanout-{suffix}")), endpoint)
             .mode("redirect")
+            .entity_type(&vtype)
             .entity_id(&entity_id)
             .property_names(&[attribute])
             .operations(&["queryEntity"])
@@ -259,7 +270,7 @@ async fn distop_entity_redirect_multiple_overlapping_fan_out_to_all_sources() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
+        .query_entities(&format!("type={}&id={entity_id}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);

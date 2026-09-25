@@ -40,13 +40,13 @@ async fn retrieve_temporal_reusing_map(topology: &MultiBrokerTopology<BrokerRole
         .expect("reuse temporal retrieve")
 }
 
-/// Query temporal entities reusing a supplied map.
-async fn query_temporal_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, map: &str) -> TestResponse {
+/// Query temporal entities of a per-test type reusing a supplied map.
+async fn query_temporal_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, vtype: &str, map: &str) -> TestResponse {
     topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, &format!("/ngsi-ld/v1/temporal/entities?type=Vehicle&{BEFORE_2030}"))
+        .raw(Method::GET, &format!("/ngsi-ld/v1/temporal/entities?type={}&{BEFORE_2030}", encode(vtype)))
         .header("accept", "application/ld+json")
         .header("NGSILD-EntityMap", map)
         .send()
@@ -295,6 +295,7 @@ async fn distop_query_temporal_map_reused_or_recreated() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
+    let vtype = topology.id("Vehicle");
     let first_id = topology.id("registration:cons58-s1");
     assert_status(
         &front
@@ -302,6 +303,7 @@ async fn distop_query_temporal_map_reused_or_recreated() {
             .create_registration(
                 &CsrBuilder::new(&first_id, &mock.url("/s1"))
                     .mode("inclusive")
+                    .entity_type(&vtype)
                     .operations(&["queryTemporal"])
                     .build(),
             )
@@ -315,7 +317,7 @@ async fn distop_query_temporal_map_reused_or_recreated() {
         200,
         &json!([entity(
             &topology.id("Vehicle:cons58"),
-            "Vehicle",
+            &vtype,
             &[("speed", json!([observed(50, "2020-08-01T12:00:00Z")]))]
         )]),
     )
@@ -324,7 +326,7 @@ async fn distop_query_temporal_map_reused_or_recreated() {
     let map = entity_map_header(
         &front
             .client()
-            .query_temporal_entities(&format!("type=Vehicle&{BEFORE_2030}&entityMap=true"), None)
+            .query_temporal_entities(&format!("type={}&{BEFORE_2030}&entityMap=true", encode(&vtype)), None)
             .await
             .expect("mint"),
     )
@@ -337,6 +339,7 @@ async fn distop_query_temporal_map_reused_or_recreated() {
             .create_registration(
                 &CsrBuilder::new(&second_id, &mock.url("/s2"))
                     .mode("inclusive")
+                    .entity_type(&vtype)
                     .operations(&["queryTemporal"])
                     .build(),
             )
@@ -346,7 +349,7 @@ async fn distop_query_temporal_map_reused_or_recreated() {
     );
     mock.set_stub_with_body(Method::GET, "/s2/ngsi-ld/v1/temporal/entities", 200, &json!([])).await;
 
-    assert_status(&query_temporal_reusing_map(&topology, &map).await, 200);
+    assert_status(&query_temporal_reusing_map(&topology, &vtype, &map).await, 200);
     assert_eq!(
         mock.get_count(Method::GET, "/s2/ngsi-ld/v1/temporal/entities"),
         0,
@@ -354,7 +357,7 @@ async fn distop_query_temporal_map_reused_or_recreated() {
     );
 
     let bogus = topology.id("EntityMap:bogus");
-    assert_status(&query_temporal_reusing_map(&topology, &bogus).await, 201);
+    assert_status(&query_temporal_reusing_map(&topology, &vtype, &bogus).await, 201);
     assert!(
         mock.get_count(Method::GET, "/s2/ngsi-ld/v1/temporal/entities") > 0,
         "a bogus temporal map is recreated by fresh discovery"
@@ -370,11 +373,12 @@ async fn distop_query_temporal_map_reused_or_recreated() {
 async fn distop_query_temporal_return_flag_creates_new_map() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons59");
+    let vtype = topology.id("Vehicle");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     assert_status(
         &front
             .client()
-            .create_temporal_entity(&entity(&entity_id, "Vehicle", &[("speed", json!([observed(50, "2020-08-01T12:00:00Z")]))]))
+            .create_temporal_entity(&entity(&entity_id, &vtype, &[("speed", json!([observed(50, "2020-08-01T12:00:00Z")]))]))
             .await
             .expect("local"),
         201,
@@ -382,7 +386,7 @@ async fn distop_query_temporal_return_flag_creates_new_map() {
 
     let mint = front
         .client()
-        .query_temporal_entities(&format!("type=Vehicle&{BEFORE_2030}&entityMap=true"), None)
+        .query_temporal_entities(&format!("type={}&{BEFORE_2030}&entityMap=true", encode(&vtype)), None)
         .await
         .expect("mint");
     assert_status(&mint, 201);
@@ -399,6 +403,7 @@ async fn distop_query_temporal_map_linked_entry_forwards_linked_location() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
+    let vtype = topology.id("Vehicle");
     let registration_id = topology.id("registration:cons61");
     assert_status(
         &front
@@ -406,6 +411,7 @@ async fn distop_query_temporal_map_linked_entry_forwards_linked_location() {
             .create_registration(
                 &CsrBuilder::new(&registration_id, &mock.url(""))
                     .mode("inclusive")
+                    .entity_type(&vtype)
                     .operations(&["queryTemporal"])
                     .build(),
             )
@@ -419,7 +425,7 @@ async fn distop_query_temporal_map_linked_entry_forwards_linked_location() {
         200,
         &json!([entity(
             &topology.id("Vehicle:cons61"),
-            "Vehicle",
+            &vtype,
             &[("speed", json!([observed(50, "2020-08-01T12:00:00Z")]))]
         )]),
     )
@@ -428,12 +434,12 @@ async fn distop_query_temporal_map_linked_entry_forwards_linked_location() {
     let map = entity_map_header(
         &front
             .client()
-            .query_temporal_entities(&format!("type=Vehicle&{BEFORE_2030}&entityMap=true"), None)
+            .query_temporal_entities(&format!("type={}&{BEFORE_2030}&entityMap=true", encode(&vtype)), None)
             .await
             .expect("mint"),
     )
     .expect("minted entity map header");
-    assert_status(&query_temporal_reusing_map(&topology, &map).await, 200);
+    assert_status(&query_temporal_reusing_map(&topology, &vtype, &map).await, 200);
     let forwarded = mock.next_request(Duration::from_secs(2)).await;
     assert!(
         forwarded_header(&forwarded, "ngsild-entitymap").is_some(),

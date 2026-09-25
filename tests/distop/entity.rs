@@ -33,6 +33,13 @@ pub fn vehicle(id: &str, speed: i64) -> Value {
     entity(id, "Vehicle", &[("speed", property(json!(speed)))])
 }
 
+/// A minimal single-`speed` entity of an explicit type, for suites that derive a
+/// per-test type from the topology prefix so a bare `type=` selector cannot see
+/// another concurrent test's entities.
+pub fn typed_vehicle(id: &str, entity_type: &str, speed: i64) -> Value {
+    entity(id, entity_type, &[("speed", property(json!(speed)))])
+}
+
 /// An entity of the given type holding the named attributes, context inline.
 pub fn entity(id: &str, entity_type: &str, attributes: &[(&str, Value)]) -> Value {
     let mut body = Map::new();

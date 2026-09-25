@@ -51,24 +51,28 @@ pub fn context_link_header() -> HeaderValue {
     jsonld_link_header(context_link()).expect("compound context is a valid Link header")
 }
 
-/// A registration covering one `Vehicle` id under `mode`, advertising the
-/// retrieval operation group so a query or retrieve issued to the front broker
-/// is forwarded to `endpoint`.
-pub fn retrieval_source(reg_id: &str, endpoint: &str, entity_id: &str, mode: &str) -> Value {
+/// A registration covering one entity id of `entity_type` under `mode`,
+/// advertising the retrieval operation group so a query or retrieve issued to
+/// the front broker is forwarded to `endpoint`. The type is passed explicitly so
+/// a test can derive it per run and keep a bare `type=` selector from crossing
+/// into another concurrent test.
+pub fn retrieval_source(reg_id: &str, endpoint: &str, entity_id: &str, entity_type: &str, mode: &str) -> Value {
     CsrBuilder::new(reg_id, endpoint)
         .mode(mode)
+        .entity_type(entity_type)
         .property_names(&["speed"])
         .entity_id(entity_id)
         .operations(&["retrieveEntity", "queryEntity", "queryBatch"])
         .build()
 }
 
-/// A registration covering one `Vehicle` id under `mode`, advertising the given
-/// provision operations so a matching write issued to the front broker is
-/// forwarded to `endpoint`.
-pub fn provision_source(reg_id: &str, endpoint: &str, entity_id: &str, mode: &str, operations: &[&str]) -> Value {
+/// A registration covering one entity id of `entity_type` under `mode`,
+/// advertising the given provision operations so a matching write issued to the
+/// front broker is forwarded to `endpoint`.
+pub fn provision_source(reg_id: &str, endpoint: &str, entity_id: &str, entity_type: &str, mode: &str, operations: &[&str]) -> Value {
     CsrBuilder::new(reg_id, endpoint)
         .mode(mode)
+        .entity_type(entity_type)
         .entity_id(entity_id)
         .property_names(&["speed"])
         .operations(operations)

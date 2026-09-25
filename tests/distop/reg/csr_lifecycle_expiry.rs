@@ -29,11 +29,13 @@ const EXPIRY_WAIT: Duration = Duration::from_secs(10);
 async fn reg_without_expiresat_persists_indefinitely() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:no-expiry");
+    let mut body = csr_basic(&id, PEER_ENDPOINT);
+    body["information"][0]["entities"][0]["type"] = json!(topology.id("Vehicle"));
     let created = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .create_registration(&csr_basic(&id, PEER_ENDPOINT))
+        .create_registration(&body)
         .await
         .expect("create registration");
     assert_status(&created, 201);
@@ -61,6 +63,7 @@ async fn reg_past_expiresat_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:past-expiry");
     let mut body = csr_basic(&id, PEER_ENDPOINT);
+    body["information"][0]["entities"][0]["type"] = json!(topology.id("Vehicle"));
     body["expiresAt"] = json!("2000-01-01T00:00:00Z");
     let rejected = topology
         .broker(BrokerRole::A)
@@ -85,6 +88,7 @@ async fn reg_future_expiresat_auto_deleted_when_reached() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:future-expiry");
     let mut body = csr_basic(&id, PEER_ENDPOINT);
+    body["information"][0]["entities"][0]["type"] = json!(topology.id("Vehicle"));
     body["expiresAt"] = json!((Utc::now() + ChronoDuration::seconds(EXPIRY_LEAD_SECONDS)).to_rfc3339());
     let created = topology
         .broker(BrokerRole::A)
@@ -124,7 +128,9 @@ async fn reg_future_expiresat_auto_deleted_when_reached() {
 async fn reg_duplicate_id_returns_409_alreadyexists() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:duplicate");
-    let body = csr_basic(&id, PEER_ENDPOINT);
+    let mut body = csr_basic(&id, PEER_ENDPOINT);
+    body["information"][0]["entities"][0]["type"] = json!(topology.id("Vehicle"));
+    let body = body;
     let created = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")

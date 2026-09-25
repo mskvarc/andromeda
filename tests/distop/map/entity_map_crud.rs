@@ -4,7 +4,7 @@
 //! isolation on a peer with its own store (test plan §6.3).
 
 use crate::{
-    entity::vehicle,
+    entity::typed_vehicle,
     map::entity_map_request::{create_entity_map, update_entity_map},
     oracle::{assert_problem_details, assert_status, json_body},
     topology::{self, BrokerRole},
@@ -23,19 +23,26 @@ async fn create_map(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -> 
 /// Create the named `Vehicle` on broker A and an `EntityMap` over every
 /// `Vehicle`, returning the map id.
 async fn create_map_over(topology: &MultiBrokerTopology<BrokerRole>, entity_id: &str) -> String {
+    // A per-test entity type keeps the bare `type=` map query from spanning
+    // another concurrent test's Vehicles; the topology prefix makes it unique.
+    let entity_type = topology.id("Vehicle");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(entity_id, 20))
+            .post_entity(&typed_vehicle(entity_id, &entity_type, 20))
             .with_ld_json()
             .send()
             .await
             .expect("create entity"),
         201,
     );
-    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
+    let created = create_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type={}", urlencoding::encode(&entity_type)),
+    )
+    .await;
     assert_status(&created, 201);
     json_body(&created)["id"].as_str().expect("created entity map carries an id").to_owned()
 }

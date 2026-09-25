@@ -3,14 +3,13 @@
 //!
 //! Tests retrieving single entities across context sources with different registration modes.
 
+use andromeda_test_harness::environment::TestEnvironment;
 use reqwest::{Method, StatusCode};
 use serde_json::Value;
-use serial_test::serial;
 
 use crate::{
     context_source_adapter::ContextSourceAdapter as MockServer,
     helpers::{
-        clean_database,
         client,
         create_entity_local,
         create_registration,
@@ -18,7 +17,6 @@ use crate::{
         delete_registration,
         get_entity,
         jsonld_link_value,
-        unique_id,
         vehicle_entity,
         vehicle_entity_second,
         vehicle_entity_speed_only,
@@ -34,14 +32,13 @@ use crate::{
 
 /// Retrieve entity merges local and remote attributes in auxiliary mode.
 #[tokio::test]
-#[serial]
 async fn distop_entity_retrieve_auxiliary_merges_local_and_remote_attributes() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-aux");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-aux");
+    let entity_id = scope.id("Vehicle:retrieve-aux");
+    let reg_id = scope.id("Registration:retrieve-aux");
 
     // Create local entity (brandName=Mercedes, isParked)
     let local_entity = vehicle_entity(&entity_id);
@@ -71,6 +68,7 @@ async fn distop_entity_retrieve_auxiliary_merges_local_and_remote_attributes() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -79,14 +77,13 @@ async fn distop_entity_retrieve_auxiliary_merges_local_and_remote_attributes() {
 
 /// Retrieve entity from exclusive registration returns remote attributes.
 #[tokio::test]
-#[serial]
 async fn distop_entity_retrieve_exclusive_returns_remote_attributes() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-exc");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-exc");
+    let entity_id = scope.id("Vehicle:retrieve-exc");
+    let reg_id = scope.id("Registration:retrieve-exc");
 
     // Create local entity (no speed attribute)
     let local_entity = vehicle_entity(&entity_id);
@@ -120,18 +117,18 @@ async fn distop_entity_retrieve_exclusive_returns_remote_attributes() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Retrieve entity with exclusive registration and local=true excludes remote attributes.
 #[tokio::test]
-#[serial]
 async fn distop_entity_retrieve_exclusive_local_true_excludes_remote() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-exc-local");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-exc-local");
+    let entity_id = scope.id("Vehicle:retrieve-exc-local");
+    let reg_id = scope.id("Registration:retrieve-exc-local");
 
     // Create local entity
     let local_entity = vehicle_entity(&entity_id);
@@ -160,6 +157,7 @@ async fn distop_entity_retrieve_exclusive_local_true_excludes_remote() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -168,14 +166,13 @@ async fn distop_entity_retrieve_exclusive_local_true_excludes_remote() {
 
 /// Retrieve entity from inclusive registration returns entity from remote.
 #[tokio::test]
-#[serial]
 async fn distop_entity_retrieve_inclusive_returns_remote_entity() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-inc");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-inc");
+    let entity_id = scope.id("Vehicle:retrieve-inc");
+    let reg_id = scope.id("Registration:retrieve-inc");
 
     // Create inclusive registration (no mode = inclusive default)
     let reg = vehicle_registration(&reg_id, Some(&entity_id), &mock.url(""), None);
@@ -193,18 +190,18 @@ async fn distop_entity_retrieve_inclusive_returns_remote_entity() {
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Retrieve with local=true and inclusive registration returns 404 when entity is only remote.
 #[tokio::test]
-#[serial]
 async fn distop_entity_retrieve_inclusive_local_true_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-inc-local");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-inc-local");
+    let entity_id = scope.id("Vehicle:retrieve-inc-local");
+    let reg_id = scope.id("Registration:retrieve-inc-local");
 
     // Create inclusive registration (entity only on remote)
     let reg = vehicle_registration(&reg_id, Some(&entity_id), &mock.url(""), None);
@@ -225,18 +222,18 @@ async fn distop_entity_retrieve_inclusive_local_true_returns_404() {
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Inclusive registration with retrieveEntity operation forwards correctly.
 #[tokio::test]
-#[serial]
 async fn distop_entity_retrieve_inclusive_with_retrieve_entity_op() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-inc-op1");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-inc-op1");
+    let entity_id = scope.id("Vehicle:retrieve-inc-op1");
+    let reg_id = scope.id("Registration:retrieve-inc-op1");
 
     // Create inclusive registration with retrieveEntity operation
     let reg = vehicle_registration_with_ops(&reg_id, Some(&entity_id), &mock.url(""), None, &["retrieveEntity"]);
@@ -254,6 +251,7 @@ async fn distop_entity_retrieve_inclusive_with_retrieve_entity_op() {
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// A retrieve-by-id reaches a source that advertises only `queryEntity` through a
@@ -261,14 +259,13 @@ async fn distop_entity_retrieve_inclusive_with_retrieve_entity_op() {
 /// Brokers shall respect" the operation subset a source advertises; ETSI conformance
 /// `D010_03_inc_02`). The source is queried at `/entities` and its data is returned.
 #[tokio::test]
-#[serial]
 async fn distop_entity_retrieve_with_only_query_entity_forwards_as_query() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-inc-op2");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-inc-op2");
+    let entity_id = scope.id("Vehicle:retrieve-inc-op2");
+    let reg_id = scope.id("Registration:retrieve-inc-op2");
 
     // A registration advertising only queryEntity: the retrieve is downgraded to a
     // GET query so the source is still reached (clause 4.3.6.1).
@@ -294,6 +291,7 @@ async fn distop_entity_retrieve_with_only_query_entity_forwards_as_query() {
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// A retrieve-by-id reaches a source that advertises only `queryBatch` through a
@@ -301,14 +299,13 @@ async fn distop_entity_retrieve_with_only_query_entity_forwards_as_query() {
 /// ETSI conformance `D010_03_inc_03`). The source is queried at
 /// `/entityOperations/query` and its data is returned.
 #[tokio::test]
-#[serial]
 async fn distop_entity_retrieve_with_only_query_batch_forwards_as_batch() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-inc-op3");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-inc-op3");
+    let entity_id = scope.id("Vehicle:retrieve-inc-op3");
+    let reg_id = scope.id("Registration:retrieve-inc-op3");
 
     // A registration advertising only queryBatch: the retrieve is downgraded to a
     // POST batch query so the source is still reached (clause 4.3.6.1).
@@ -335,6 +332,7 @@ async fn distop_entity_retrieve_with_only_query_batch_forwards_as_batch() {
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -343,15 +341,14 @@ async fn distop_entity_retrieve_with_only_query_batch_forwards_as_batch() {
 
 /// Retrieve entity with two redirect registrations merges attributes from both.
 #[tokio::test]
-#[serial]
 async fn distop_entity_retrieve_redirect_merges_two_brokers() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-red");
-    let reg_id1 = unique_id("urn:ngsi-ld:Registration:retrieve-red-1");
-    let reg_id2 = unique_id("urn:ngsi-ld:Registration:retrieve-red-2");
+    let entity_id = scope.id("Vehicle:retrieve-red");
+    let reg_id1 = scope.id("Registration:retrieve-red-1");
+    let reg_id2 = scope.id("Registration:retrieve-red-2");
 
     // Create two redirect registrations
     let reg1 = vehicle_registration_with_ops(&reg_id1, Some(&entity_id), &mock.url("/broker1"), Some("redirect"), &["redirectionOps"]);
@@ -384,19 +381,19 @@ async fn distop_entity_retrieve_redirect_merges_two_brokers() {
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Retrieve with redirect registration and local=true returns 404.
 #[tokio::test]
-#[serial]
 async fn distop_entity_retrieve_redirect_local_true_returns_404() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-red-local");
-    let reg_id1 = unique_id("urn:ngsi-ld:Registration:retrieve-red-local-1");
-    let reg_id2 = unique_id("urn:ngsi-ld:Registration:retrieve-red-local-2");
+    let entity_id = scope.id("Vehicle:retrieve-red-local");
+    let reg_id1 = scope.id("Registration:retrieve-red-local-1");
+    let reg_id2 = scope.id("Registration:retrieve-red-local-2");
 
     // Create two redirect registrations
     let reg1 = vehicle_registration_with_ops(&reg_id1, Some(&entity_id), &mock.url("/broker1"), Some("redirect"), &["redirectionOps"]);
@@ -422,4 +419,5 @@ async fn distop_entity_retrieve_redirect_local_true_returns_404() {
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }

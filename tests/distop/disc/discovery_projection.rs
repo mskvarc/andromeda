@@ -19,17 +19,19 @@ use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use pretty_assertions::assert_eq;
 use reqwest::Method;
 use serde_json::json;
+use urlencoding::encode;
 
 /// `pick` narrows the returned registration to the named members, always
 /// keeping `id` and `type` (clause 4.21). Confirms REQ-DISC pick projection.
 #[tokio::test]
 async fn query_csr_pick_reduces_registration_members() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let reg_id = topology.id("registration:pick-projection");
-    let body = CsrBuilder::new(&reg_id, PEER_ENDPOINT).entity_type("Vehicle").build();
+    let body = CsrBuilder::new(&reg_id, PEER_ENDPOINT).entity_type(&vtype).build();
     register(&topology, &body).await;
 
-    let result = query(&topology, "type=Vehicle&pick=endpoint").await;
+    let result = query(&topology, &format!("type={}&pick=endpoint", encode(&vtype))).await;
     let registration = find(&result, &reg_id).expect("the created registration is returned");
     assert_eq!(registration["id"].as_str(), Some(reg_id.as_str()), "id survives pick");
     assert_eq!(registration["type"].as_str(), Some("ContextSourceRegistration"), "type survives pick");
@@ -44,11 +46,12 @@ async fn query_csr_pick_reduces_registration_members() {
 #[tokio::test]
 async fn query_csr_omit_removes_registration_members() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let reg_id = topology.id("registration:omit-projection");
-    let body = CsrBuilder::new(&reg_id, PEER_ENDPOINT).entity_type("Vehicle").build();
+    let body = CsrBuilder::new(&reg_id, PEER_ENDPOINT).entity_type(&vtype).build();
     register(&topology, &body).await;
 
-    let result = query(&topology, "type=Vehicle&omit=endpoint").await;
+    let result = query(&topology, &format!("type={}&omit=endpoint", encode(&vtype))).await;
     let registration = find(&result, &reg_id).expect("the created registration is returned");
     assert_eq!(registration["id"].as_str(), Some(reg_id.as_str()), "id survives omit");
     assert_eq!(registration["type"].as_str(), Some("ContextSourceRegistration"), "type survives omit");
@@ -62,15 +65,16 @@ async fn query_csr_omit_removes_registration_members() {
 #[tokio::test]
 async fn query_csr_lang_reduces_languagemap() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let reg_id = topology.id("registration:lang-projection");
-    let mut body = CsrBuilder::new(&reg_id, PEER_ENDPOINT).entity_type("Vehicle").build();
+    let mut body = CsrBuilder::new(&reg_id, PEER_ENDPOINT).entity_type(&vtype).build();
     // A non-standard member so it lands in the registration's free-form
     // catch-all rather than a typed field; it round-trips as itself under the
     // NGSI-LD default-vocabulary context.
     body["fleetLabel"] = json!({"type": "LanguageProperty", "languageMap": {"en": "Fleet", "fr": "Flotte"}});
     register(&topology, &body).await;
 
-    let result = query(&topology, "type=Vehicle&lang=fr").await;
+    let result = query(&topology, &format!("type={}&lang=fr", encode(&vtype))).await;
     let registration = find(&result, &reg_id).expect("the created registration is returned");
     assert_eq!(
         registration["fleetLabel"]["type"].as_str(),
@@ -106,8 +110,9 @@ async fn query_csr_lang_reduces_languagemap() {
 #[tokio::test]
 async fn query_csr_geojson_is_not_acceptable() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let reg_id = topology.id("registration:geometry-projection");
-    let mut body = CsrBuilder::new(&reg_id, PEER_ENDPOINT).entity_type("Vehicle").build();
+    let mut body = CsrBuilder::new(&reg_id, PEER_ENDPOINT).entity_type(&vtype).build();
     body["location"] = json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [13.4, 52.5]}});
     register(&topology, &body).await;
 
@@ -116,7 +121,10 @@ async fn query_csr_geojson_is_not_acceptable() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/csourceRegistrations?type=Vehicle&geometryProperty=location")
+        .raw(
+            Method::GET,
+            &format!("/ngsi-ld/v1/csourceRegistrations?type={}&geometryProperty=location", encode(&vtype)),
+        )
         .header("accept", "application/geo+json")
         .header("link", link.to_str().expect("ascii link header"))
         .send()

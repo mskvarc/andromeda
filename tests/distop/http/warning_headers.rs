@@ -29,12 +29,14 @@ use serde_json::json;
 #[tokio::test]
 async fn dist_http_query_cached_result_returns_warning_110() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:warn-110");
     let reg_id = topology.id("registration:warn-110");
     let mock = ContextSourceAdapter::start().await;
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("inclusive")
+        .entity_type(&vtype)
         .entity_id(&entity_id)
         .property_names(&["speed"])
         .operations(&["retrieveEntity", "queryEntity", "queryBatch"])
@@ -56,7 +58,7 @@ async fn dist_http_query_cached_result_returns_warning_110() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
+        .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/ld+json", Some(context_link()))
         .await
         .expect("first forwarded query");
     assert_status(&first, 200);
@@ -70,7 +72,7 @@ async fn dist_http_query_cached_result_returns_warning_110() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
+        .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/ld+json", Some(context_link()))
         .await
         .expect("second forwarded query");
     assert_status(&response, 200);
@@ -90,11 +92,12 @@ async fn dist_http_query_cached_result_returns_warning_110() {
 #[tokio::test]
 async fn dist_http_query_abnormal_source_sets_warning_header() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:warn-abnormal");
     let reg_id = topology.id("registration:warn-abnormal");
     let mock = ContextSourceAdapter::start().await;
 
-    let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
+    let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive");
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -111,7 +114,7 @@ async fn dist_http_query_abnormal_source_sets_warning_header() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
+        .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/ld+json", Some(context_link()))
         .await
         .expect("forwarded query");
     assert_status(&response, 200);
@@ -126,11 +129,12 @@ async fn dist_http_query_abnormal_source_sets_warning_header() {
 #[tokio::test]
 async fn dist_http_query_invalid_payload_within_timeout_returns_warning_111() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:warn-111");
     let reg_id = topology.id("registration:warn-111");
     let mock = ContextSourceAdapter::start().await;
 
-    let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
+    let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive");
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -148,7 +152,7 @@ async fn dist_http_query_invalid_payload_within_timeout_returns_warning_111() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
+        .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/ld+json", Some(context_link()))
         .await
         .expect("forwarded query");
     assert_status(&response, 200);
@@ -167,6 +171,7 @@ async fn dist_http_query_invalid_payload_within_timeout_returns_warning_111() {
 #[tokio::test]
 async fn dist_http_query_source_timeout_returns_warning_199() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:warn-199");
     let reg_id = topology.id("registration:warn-199");
     let mock = ContextSourceAdapter::start().await;
@@ -175,7 +180,7 @@ async fn dist_http_query_source_timeout_returns_warning_199() {
     // the broker classifies as a timeout rather than a definite error response.
     mock.shutdown().await;
 
-    let registration = retrieval_source(&reg_id, &endpoint, &entity_id, "inclusive");
+    let registration = retrieval_source(&reg_id, &endpoint, &entity_id, &vtype, "inclusive");
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -191,7 +196,7 @@ async fn dist_http_query_source_timeout_returns_warning_199() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
+        .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/ld+json", Some(context_link()))
         .await
         .expect("forwarded query");
     assert_status(&response, 200);
@@ -209,11 +214,12 @@ async fn dist_http_query_source_timeout_returns_warning_199() {
 #[tokio::test]
 async fn dist_http_query_source_error_within_timeout_returns_warning_299() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:warn-299");
     let reg_id = topology.id("registration:warn-299");
     let mock = ContextSourceAdapter::start().await;
 
-    let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
+    let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive");
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -230,7 +236,7 @@ async fn dist_http_query_source_error_within_timeout_returns_warning_299() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
+        .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/ld+json", Some(context_link()))
         .await
         .expect("forwarded query");
     assert_status(&response, 200);
@@ -249,11 +255,12 @@ async fn dist_http_query_source_error_within_timeout_returns_warning_299() {
 #[tokio::test]
 async fn dist_http_query_non_ngsi_payload_rejected_and_excluded() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:warn-excluded");
     let reg_id = topology.id("registration:warn-excluded");
     let mock = ContextSourceAdapter::start().await;
 
-    let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
+    let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive");
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -271,7 +278,7 @@ async fn dist_http_query_non_ngsi_payload_rejected_and_excluded() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
+        .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/ld+json", Some(context_link()))
         .await
         .expect("forwarded query");
     assert_status(&response, 200);
@@ -293,11 +300,12 @@ async fn dist_http_query_non_ngsi_payload_rejected_and_excluded() {
 #[tokio::test]
 async fn dist_http_query_source_404_no_data_not_flagged() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:warn-404");
     let reg_id = topology.id("registration:warn-404");
     let mock = ContextSourceAdapter::start().await;
 
-    let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
+    let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive");
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -314,7 +322,7 @@ async fn dist_http_query_source_404_no_data_not_flagged() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
+        .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/ld+json", Some(context_link()))
         .await
         .expect("forwarded query");
     assert_status(&response, 200);

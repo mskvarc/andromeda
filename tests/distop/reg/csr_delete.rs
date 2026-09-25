@@ -71,11 +71,15 @@ async fn delete_unknown_registration_returns_404() {
 async fn delete_known_registration_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:delete-known");
+    // A per-test entity type keeps this inclusive registration from matching a
+    // concurrent test's Vehicle writes in the window before it is deleted.
+    let mut body = csr_basic(&id, PEER_ENDPOINT);
+    body["information"][0]["entities"][0]["type"] = serde_json::json!(topology.id("Vehicle"));
     let created = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .create_registration(&csr_basic(&id, PEER_ENDPOINT))
+        .create_registration(&body)
         .await
         .expect("create registration");
     assert_status(&created, 201);

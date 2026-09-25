@@ -15,6 +15,7 @@ use andromeda_test_fixtures::{context::COMPOUND_CONTEXT, problem_detail::BAD_REQ
 use axum::http::Method;
 use serde_json::{Value, json};
 use std::time::Duration;
+use urlencoding::encode;
 
 /// Budget for a forwarded request to reach the mock context source.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -87,10 +88,11 @@ async fn distop_entity_csi_context_provided_per_mime_requirement() {
 #[tokio::test]
 async fn distop_entity_csi_jsonld_context_must_be_url_validated() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
 
     let malformed = CsrBuilder::new(&topology.id("registration:csi-context-malformed"), PEER_ENDPOINT)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .context_source_info("jsonldContext", "### not a url ###")
         .build();
     let rejected = topology
@@ -105,7 +107,7 @@ async fn distop_entity_csi_jsonld_context_must_be_url_validated() {
 
     let valid = CsrBuilder::new(&topology.id("registration:csi-context-valid"), PEER_ENDPOINT)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .context_source_info("jsonldContext", COMPOUND_CONTEXT.as_str())
         .build();
     assert_status(
@@ -131,10 +133,11 @@ async fn distop_entity_csi_jsonld_context_compacts_payload_and_params() {
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:csi-context-compact"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .context_source_info("jsonldContext", COMPOUND_CONTEXT.as_str())
         .build();
@@ -153,7 +156,7 @@ async fn distop_entity_csi_jsonld_context_compacts_payload_and_params() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -230,9 +233,10 @@ async fn distop_entity_csi_jsonld_context_with_payload_sets_json_and_strips_cont
 #[tokio::test]
 async fn distop_entity_csi_ngsild_conformance_value_form_major_minor() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let accepted = CsrBuilder::new(&topology.id("registration:csi-conformance-ok"), PEER_ENDPOINT)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .context_source_info("ngsildConformance", "1.5")
         .build();
     assert_status(
@@ -249,7 +253,7 @@ async fn distop_entity_csi_ngsild_conformance_value_form_major_minor() {
     for bad in ["1", "1.5.0"] {
         let registration = CsrBuilder::new(&topology.id(&format!("registration:csi-conformance-{bad}")), PEER_ENDPOINT)
             .mode("inclusive")
-            .entity_type("Vehicle")
+            .entity_type(&vtype)
             .context_source_info("ngsildConformance", bad)
             .build();
         let rejected = topology

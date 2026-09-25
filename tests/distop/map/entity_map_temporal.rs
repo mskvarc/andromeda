@@ -5,7 +5,7 @@
 use crate::{
     map::{
         entity_map_request::create_temporal_entity_map,
-        temporal_vehicle::{BEFORE_2022, temporal_vehicle},
+        temporal_vehicle::{BEFORE_2022, temporal_vehicle_typed},
     },
     oracle::{assert_problem_details, assert_status, json_body},
     topology::{self, BrokerRole},
@@ -14,11 +14,11 @@ use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::problem_detail::BAD_REQUEST_DATA;
 use pretty_assertions::assert_eq;
 
-/// Create a temporal `Vehicle` on the front broker.
-async fn seed_temporal(client: &TestClient, id: &str, speed: i64) {
+/// Create a temporal entity of the given type on the front broker.
+async fn seed_temporal(client: &TestClient, entity_type: &str, id: &str, speed: i64) {
     assert_status(
         &client
-            .create_temporal_entity(&temporal_vehicle(id, speed))
+            .create_temporal_entity(&temporal_vehicle_typed(id, entity_type, speed))
             .await
             .expect("create temporal entity"),
         201,
@@ -41,15 +41,17 @@ async fn emt_no_temporal_query_returns_400() {
 #[tokio::test]
 async fn emt_at_least_one_filter_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     seed_temporal(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &vtype,
         &topology.id("Vehicle:temporal-filter"),
         20,
     )
     .await;
     let response = create_temporal_entity_map(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &format!("type=Vehicle&{BEFORE_2022}"),
+        &format!("type={}&{BEFORE_2022}", urlencoding::encode(&vtype)),
     )
     .await;
     assert_status(&response, 201);
@@ -102,8 +104,10 @@ async fn emt_invalid_id_q_geoq_csf_returns_400() {
 #[tokio::test]
 async fn emt_expands_type_and_attribute_terms() {
     let topology = topology::single().await.expect("single-broker topology");
+    // Term expansion of the compact type is the subject under test, so it stays
+    // literal; the assertion only checks this test's own entity is present.
     let entity_id = topology.id("Vehicle:temporal-expand");
-    seed_temporal(topology.broker(BrokerRole::A).expect("topology broker A").client(), &entity_id, 20).await;
+    seed_temporal(topology.broker(BrokerRole::A).expect("topology broker A").client(), "Vehicle", &entity_id, 20).await;
     let created = create_temporal_entity_map(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
         &format!("type=Vehicle&attrs=speed&{BEFORE_2022}"),
@@ -122,8 +126,11 @@ async fn emt_expands_type_and_attribute_terms() {
 #[tokio::test]
 async fn emt_applies_jsonld_type_coercion() {
     let topology = topology::single().await.expect("single-broker topology");
+    // Type coercion of the compact term is the subject under test, so it stays
+    // literal; the assertion checks only the response envelope shape.
     seed_temporal(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        "Vehicle",
         &topology.id("Vehicle:temporal-coercion"),
         20,
     )
@@ -146,11 +153,12 @@ async fn emt_applies_jsonld_type_coercion() {
 #[tokio::test]
 async fn emt_last_n_selects_last_n_instances() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:temporal-lastn");
-    seed_temporal(topology.broker(BrokerRole::A).expect("topology broker A").client(), &entity_id, 20).await;
+    seed_temporal(topology.broker(BrokerRole::A).expect("topology broker A").client(), &vtype, &entity_id, 20).await;
     let created = create_temporal_entity_map(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        &format!("type=Vehicle&lastN=2&{BEFORE_2022}"),
+        &format!("type={}&lastN=2&{BEFORE_2022}", urlencoding::encode(&vtype)),
     )
     .await;
     assert_status(&created, 201);
@@ -166,11 +174,12 @@ async fn emt_last_n_selects_last_n_instances() {
 #[tokio::test]
 async fn emt_temporal_filtering_removes_out_of_interval_entities() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:temporal-out-of-interval");
-    seed_temporal(topology.broker(BrokerRole::A).expect("topology broker A").client(), &entity_id, 20).await;
+    seed_temporal(topology.broker(BrokerRole::A).expect("topology broker A").client(), &vtype, &entity_id, 20).await;
     let created = create_temporal_entity_map(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        "type=Vehicle&timerel=before&timeAt=2020-01-01T00:00:00Z",
+        &format!("type={}&timerel=before&timeAt=2020-01-01T00:00:00Z", urlencoding::encode(&vtype)),
     )
     .await;
     assert_status(&created, 201);

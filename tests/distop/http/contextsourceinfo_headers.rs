@@ -6,7 +6,7 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::vehicle,
+    entity::typed_vehicle,
     http::forwarding::{FORWARDED_ENTITIES_PATH, context_link, context_link_header},
     oracle::{assert_status, forwarded_header},
     registration::CsrBuilder,
@@ -23,6 +23,7 @@ use std::time::Duration;
 #[tokio::test]
 async fn dist_http_forwarded_jsonld_context_sets_link_and_json_content_type() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:csi-jsonld");
     let reg_id = topology.id("registration:csi-jsonld");
     let mock = ContextSourceAdapter::start().await;
@@ -30,6 +31,7 @@ async fn dist_http_forwarded_jsonld_context_sets_link_and_json_content_type() {
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("exclusive")
         .entity_id(&entity_id)
+        .entity_type(&vtype)
         .property_names(&["speed"])
         .operations(&["createEntity"])
         .context_source_info("jsonldContext", context_link())
@@ -51,7 +53,7 @@ async fn dist_http_forwarded_jsonld_context_sets_link_and_json_content_type() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 9))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 9))
             .with_ld_json()
             .send()
             .await
@@ -78,6 +80,7 @@ async fn dist_http_forwarded_jsonld_context_sets_link_and_json_content_type() {
 #[tokio::test]
 async fn dist_http_forwarded_context_source_info_keys_become_custom_headers() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:csi-custom");
     let reg_id = topology.id("registration:csi-custom");
     let mock = ContextSourceAdapter::start().await;
@@ -85,6 +88,7 @@ async fn dist_http_forwarded_context_source_info_keys_become_custom_headers() {
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("inclusive")
         .entity_id(&entity_id)
+        .entity_type(&vtype)
         .operations(&["retrieveEntity", "queryEntity", "queryBatch"])
         .context_source_info("X-Custom-Header", "custom-value")
         .build();
@@ -105,7 +109,7 @@ async fn dist_http_forwarded_context_source_info_keys_become_custom_headers() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
+            .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/ld+json", Some(context_link()))
             .await
             .expect("forwarded query"),
         200,
@@ -127,6 +131,7 @@ async fn dist_http_forwarded_context_source_info_keys_become_custom_headers() {
 #[tokio::test]
 async fn dist_http_forwarded_context_source_info_request_value_copied_from_request() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:csi-request");
     let reg_id = topology.id("registration:csi-request");
     let mock = ContextSourceAdapter::start().await;
@@ -134,6 +139,7 @@ async fn dist_http_forwarded_context_source_info_request_value_copied_from_reque
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("inclusive")
         .entity_id(&entity_id)
+        .entity_type(&vtype)
         .operations(&["retrieveEntity", "queryEntity", "queryBatch"])
         .context_source_info("X-User", "urn:ngsi-ld:request")
         .build();
@@ -153,7 +159,7 @@ async fn dist_http_forwarded_context_source_info_request_value_copied_from_reque
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type={}", urlencoding::encode(&vtype)))
         .header("accept", "application/ld+json")
         .header("link", context_link_header())
         .header("X-User", "abcd")
@@ -177,6 +183,7 @@ async fn dist_http_forwarded_context_source_info_request_value_copied_from_reque
 #[tokio::test]
 async fn dist_http_forwarded_context_source_info_cannot_override_tenant_or_content_length() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:csi-protected");
     let reg_id = topology.id("registration:csi-protected");
     let mock = ContextSourceAdapter::start().await;
@@ -184,6 +191,7 @@ async fn dist_http_forwarded_context_source_info_cannot_override_tenant_or_conte
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("inclusive")
         .entity_id(&entity_id)
+        .entity_type(&vtype)
         .operations(&["retrieveEntity", "queryEntity", "queryBatch"])
         .context_source_info("NGSILD-Tenant", "evil-tenant")
         .context_source_info("Content-Length", "999999")
@@ -205,7 +213,7 @@ async fn dist_http_forwarded_context_source_info_cannot_override_tenant_or_conte
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
+            .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/ld+json", Some(context_link()))
             .await
             .expect("forwarded query"),
         200,

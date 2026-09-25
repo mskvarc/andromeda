@@ -13,7 +13,6 @@
 
 use crate::{
     clean_tenant,
-    client,
     comparison::{ContextMember, EntityOrder, assert_matches_example, corpus},
     context_link,
     create_entity,
@@ -22,9 +21,8 @@ use crate::{
     get_json,
 };
 use pretty_assertions::assert_eq;
-use reqwest::StatusCode;
+use reqwest::{Client, StatusCode};
 use serde_json::Value;
-use serial_test::serial;
 
 /// The Vehicle exactly as clause C.2.2 prints it, `unitCode` included.
 const VEHICLE_AS_PRINTED: &str = include_str!("corpus/c-2-2-normalized.json");
@@ -34,33 +32,32 @@ const VEHICLE: &str = include_str!("corpus/c-2-2-normalized-unitless.json");
 const LINKED: &str = include_str!("corpus/c-2-1-linked-entities.json");
 
 /// Seed the reference property graph and answer the wrapper `@context` link.
-async fn seed_property_graph() -> String {
+async fn seed_property_graph(http: &Client) -> String {
     let hosted = hosted_contexts();
     let link = context_link(hosted.url("aggregatedContext.jsonld").as_str());
-    let http = client();
-    create_entity_batch(&http, &corpus(LINKED), Some(&link)).await;
-    create_entity(&http, &corpus(VEHICLE), Some(&link)).await;
+    create_entity_batch(http, &corpus(LINKED), Some(&link)).await;
+    create_entity(http, &corpus(VEHICLE), Some(&link)).await;
     link
 }
 
 /// Retrieve the seeded Vehicle with the query string an example implies.
-async fn retrieve_vehicle(link: Option<&str>, query: &str) -> Value {
-    let (status, body) = get_json(&client(), &format!("/entities/urn:ngsi-ld:Vehicle:A4567{query}"), "application/ld+json", link).await;
+async fn retrieve_vehicle(http: &Client, link: Option<&str>, query: &str) -> Value {
+    let (status, body) = get_json(http, &format!("/entities/urn:ngsi-ld:Vehicle:A4567{query}"), "application/ld+json", link).await;
     assert_eq!(status, StatusCode::OK, "Vehicle retrieval failed: {body}");
     body
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_1_property_graph_reference_example_round_trips() {
     let environment = clean_tenant().await;
-    let link = seed_property_graph().await;
+    let http = environment.client();
+    let link = seed_property_graph(&http).await;
 
     // Figure C.2.1-1 is the graph the rest of clause C.2 draws from: a Vehicle
     // whose isParked Relationship reaches an OffStreetParking and whose
     // providedBy sub-Relationship reaches a Person. Retrieving each node and
     // the edge between them is what "the graph is representable" means.
-    let vehicle = retrieve_vehicle(Some(&link), "").await;
+    let vehicle = retrieve_vehicle(&http, Some(&link), "").await;
     assert_eq!(
         vehicle["isParked"]["object"],
         Value::String("urn:ngsi-ld:OffStreetParking:Downtown1".to_owned())
@@ -68,28 +65,22 @@ async fn annex_c_2_1_property_graph_reference_example_round_trips() {
     assert_eq!(vehicle["isParked"]["providedBy"]["object"], Value::String("urn:ngsi-ld:Person:Bob".to_owned()));
     assert_eq!(vehicle["isParked"]["observedAt"], Value::String("2017-07-29T12:00:04Z".to_owned()));
 
-    let (status, parking) = get_json(
-        &client(),
-        "/entities/urn:ngsi-ld:OffStreetParking:Downtown1",
-        "application/ld+json",
-        Some(&link),
-    )
-    .await;
+    let (status, parking) = get_json(&http, "/entities/urn:ngsi-ld:OffStreetParking:Downtown1", "application/ld+json", Some(&link)).await;
     assert_eq!(status, StatusCode::OK, "linked OffStreetParking retrieval failed: {parking}");
     assert_eq!(parking["type"], Value::String("OffStreetParking".to_owned()));
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_2_vehicle_normalized_representation() {
     let environment = clean_tenant().await;
+    let http = environment.client();
     let hosted = hosted_contexts();
     let link = context_link(hosted.url("aggregatedContext.jsonld").as_str());
     let expected = corpus(VEHICLE_AS_PRINTED);
 
-    let response = client()
+    let response = http
         .post(format!("{}/entities/", crate::BASE_URL))
         .header("Content-Type", "application/json")
         .header("Link", &link)
@@ -101,19 +92,19 @@ async fn annex_c_2_2_vehicle_normalized_representation() {
     let refusal = response.text().await.unwrap_or_default();
     assert_eq!(status, StatusCode::CREATED, "the C.2.2 normalized example was refused: {refusal}");
 
-    let actual = retrieve_vehicle(Some(&link), "").await;
+    let actual = retrieve_vehicle(&http, Some(&link), "").await;
     assert_matches_example("C.2.2 normalized", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_2_vehicle_normalized_representation_with_inline_linked_entities() {
     let environment = clean_tenant().await;
-    let link = seed_property_graph().await;
+    let http = environment.client();
+    let link = seed_property_graph(&http).await;
 
-    let actual = retrieve_vehicle(Some(&link), "?join=inline").await;
+    let actual = retrieve_vehicle(&http, Some(&link), "?join=inline").await;
     let expected = corpus(include_str!("corpus/c-2-2-normalized-inline.json"));
     assert_matches_example(
         "C.2.2 normalized inline join",
@@ -123,107 +114,107 @@ async fn annex_c_2_2_vehicle_normalized_representation_with_inline_linked_entiti
         EntityOrder::AsPrinted,
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_2_vehicle_normalized_representation_with_flattened_linked_entities() {
     let environment = clean_tenant().await;
-    let link = seed_property_graph().await;
+    let http = environment.client();
+    let link = seed_property_graph(&http).await;
 
-    let actual = retrieve_vehicle(Some(&link), "?join=flat").await;
+    let actual = retrieve_vehicle(&http, Some(&link), "?join=flat").await;
     let expected = corpus(include_str!("corpus/c-2-2-normalized-flattened.json"));
     assert_matches_example("C.2.2 normalized flat join", &expected, &actual, ContextMember::Ignored, EntityOrder::Unordered);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_2_vehicle_normalized_representation_with_language_filter() {
     let environment = clean_tenant().await;
-    let link = seed_property_graph().await;
+    let http = environment.client();
+    let link = seed_property_graph(&http).await;
 
-    let actual = retrieve_vehicle(Some(&link), "?lang=fr").await;
+    let actual = retrieve_vehicle(&http, Some(&link), "?lang=fr").await;
     let expected = corpus(include_str!("corpus/c-2-2-normalized-language-filter.json"));
     assert_matches_example("C.2.2 normalized lang=fr", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_2_vehicle_concise_representation() {
     let environment = clean_tenant().await;
-    let link = seed_property_graph().await;
+    let http = environment.client();
+    let link = seed_property_graph(&http).await;
 
-    let actual = retrieve_vehicle(Some(&link), "?format=concise").await;
+    let actual = retrieve_vehicle(&http, Some(&link), "?format=concise").await;
     let expected = corpus(include_str!("corpus/c-2-2-concise.json"));
     assert_matches_example("C.2.2 concise", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_2_vehicle_concise_representation_with_inline_linked_entities() {
     let environment = clean_tenant().await;
-    let link = seed_property_graph().await;
+    let http = environment.client();
+    let link = seed_property_graph(&http).await;
 
-    let actual = retrieve_vehicle(Some(&link), "?format=concise&join=inline").await;
+    let actual = retrieve_vehicle(&http, Some(&link), "?format=concise&join=inline").await;
     let expected = corpus(include_str!("corpus/c-2-2-concise-inline.json"));
     assert_matches_example("C.2.2 concise inline join", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_2_vehicle_concise_representation_with_flattened_linked_entities() {
     let environment = clean_tenant().await;
-    let link = seed_property_graph().await;
+    let http = environment.client();
+    let link = seed_property_graph(&http).await;
 
-    let actual = retrieve_vehicle(Some(&link), "?format=concise&join=flat").await;
+    let actual = retrieve_vehicle(&http, Some(&link), "?format=concise&join=flat").await;
     let expected = corpus(include_str!("corpus/c-2-2-concise-flattened.json"));
     assert_matches_example("C.2.2 concise flat join", &expected, &actual, ContextMember::Ignored, EntityOrder::Unordered);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_2_vehicle_concise_representation_with_language_filter() {
     let environment = clean_tenant().await;
-    let link = seed_property_graph().await;
+    let http = environment.client();
+    let link = seed_property_graph(&http).await;
 
-    let actual = retrieve_vehicle(Some(&link), "?format=concise&lang=fr").await;
+    let actual = retrieve_vehicle(&http, Some(&link), "?format=concise&lang=fr").await;
     let expected = corpus(include_str!("corpus/c-2-2-concise-language-filter.json"));
     assert_matches_example("C.2.2 concise lang=fr", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_2_vehicle_simplified_representation() {
     let environment = clean_tenant().await;
-    let link = seed_property_graph().await;
+    let http = environment.client();
+    let link = seed_property_graph(&http).await;
 
-    let actual = retrieve_vehicle(Some(&link), "?format=simplified").await;
+    let actual = retrieve_vehicle(&http, Some(&link), "?format=simplified").await;
     let expected = corpus(include_str!("corpus/c-2-2-simplified.json"));
     assert_matches_example("C.2.2 simplified", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_2_vehicle_simplified_representation_with_inline_linked_entities() {
     let environment = clean_tenant().await;
-    let link = seed_property_graph().await;
+    let http = environment.client();
+    let link = seed_property_graph(&http).await;
 
-    let actual = retrieve_vehicle(Some(&link), "?format=simplified&join=inline").await;
+    let actual = retrieve_vehicle(&http, Some(&link), "?format=simplified&join=inline").await;
     let expected = corpus(include_str!("corpus/c-2-2-simplified-inline.json"));
     assert_matches_example(
         "C.2.2 simplified inline join",
@@ -233,57 +224,57 @@ async fn annex_c_2_2_vehicle_simplified_representation_with_inline_linked_entiti
         EntityOrder::AsPrinted,
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_2_vehicle_simplified_representation_with_flattened_linked_entities() {
     let environment = clean_tenant().await;
-    let link = seed_property_graph().await;
+    let http = environment.client();
+    let link = seed_property_graph(&http).await;
 
-    let actual = retrieve_vehicle(Some(&link), "?format=simplified&join=flat").await;
+    let actual = retrieve_vehicle(&http, Some(&link), "?format=simplified&join=flat").await;
     let expected = corpus(include_str!("corpus/c-2-2-simplified-flattened.json"));
     assert_matches_example("C.2.2 simplified flat join", &expected, &actual, ContextMember::Ignored, EntityOrder::Unordered);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_2_vehicle_simplified_representation_of_natural_language_attributes() {
     let environment = clean_tenant().await;
-    let link = seed_property_graph().await;
+    let http = environment.client();
+    let link = seed_property_graph(&http).await;
 
-    let actual = retrieve_vehicle(Some(&link), "?format=simplified&lang=fr").await;
+    let actual = retrieve_vehicle(&http, Some(&link), "?format=simplified&lang=fr").await;
     let expected = corpus(include_str!("corpus/c-2-2-simplified-language-filter.json"));
     assert_matches_example("C.2.2 simplified lang=fr", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_2_vehicle_multiple_attribute_instances_of_speed() {
     let environment = clean_tenant().await;
+    let http = environment.client();
     let expected = corpus(include_str!("corpus/c-2-2-multi-attribute.json"));
-    create_entity(&client(), &expected, None).await;
+    create_entity(&http, &expected, None).await;
     let multi_link = context_link(hosted_contexts().url("multiAttribute.jsonld").as_str());
 
-    let actual = retrieve_vehicle(Some(&multi_link), "").await;
+    let actual = retrieve_vehicle(&http, Some(&multi_link), "").await;
     assert_matches_example("C.2.2 multi-attribute", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_2_vehicle_simplified_representation_of_a_multiple_attribute() {
     let environment = clean_tenant().await;
-    create_entity(&client(), &corpus(include_str!("corpus/c-2-2-multi-attribute.json")), None).await;
+    let http = environment.client();
+    create_entity(&http, &corpus(include_str!("corpus/c-2-2-multi-attribute.json")), None).await;
     let multi_link = context_link(hosted_contexts().url("multiAttribute.jsonld").as_str());
 
-    let actual = retrieve_vehicle(Some(&multi_link), "?format=simplified").await;
+    let actual = retrieve_vehicle(&http, Some(&multi_link), "?format=simplified").await;
     let expected = corpus(include_str!("corpus/c-2-2-simplified-multi-attribute.json"));
     assert_matches_example(
         "C.2.2 simplified multi-attribute",
@@ -293,5 +284,5 @@ async fn annex_c_2_2_vehicle_simplified_representation_of_a_multiple_attribute()
         EntityOrder::AsPrinted,
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }

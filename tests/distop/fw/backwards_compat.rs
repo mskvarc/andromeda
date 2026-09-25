@@ -6,7 +6,7 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::vehicle,
+    entity::typed_vehicle,
     oracle::{assert_status, forwarded_header, has_warning, json_body},
     registration::CsrBuilder,
     topology::{self, BrokerRole},
@@ -16,6 +16,7 @@ use axum::http::Method;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::time::Duration;
+use urlencoding::encode;
 
 /// Budget for a forwarded request to reach the mock context source.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -33,10 +34,10 @@ fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
 }
 
 /// Register an inclusive query CSR at the mock and assert acceptance.
-async fn register_inclusive(topology: &MultiBrokerTopology<BrokerRole>, endpoint: &str, name: &str, conformance: Option<&str>) {
+async fn register_inclusive(topology: &MultiBrokerTopology<BrokerRole>, endpoint: &str, name: &str, vtype: &str, conformance: Option<&str>) {
     let mut builder = CsrBuilder::new(&topology.id(name), endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(vtype)
         .operations(&["queryEntity"]);
     if let Some(version) = conformance {
         builder = builder.context_source_info(CONFORMANCE_KEY, version);
@@ -59,18 +60,19 @@ async fn register_inclusive(topology: &MultiBrokerTopology<BrokerRole>, endpoint
 #[tokio::test]
 async fn distop_entity_bc_broker_rejects_malformed_source_payload() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_raw_body(Method::GET, FORWARDED_ENTITIES, 200, "{ this is not valid json", "application/json")
         .await;
 
     let endpoint = mock.url("");
-    register_inclusive(&topology, &endpoint, "registration:bc-malformed", None).await;
+    register_inclusive(&topology, &endpoint, "registration:bc-malformed", &vtype, None).await;
 
     let response = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -85,17 +87,18 @@ async fn distop_entity_bc_broker_rejects_malformed_source_payload() {
 #[tokio::test]
 async fn distop_entity_bc_broker_requests_target_version_source_amends() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
     let endpoint = mock.url("");
-    register_inclusive(&topology, &endpoint, "registration:bc-target-version", None).await;
+    register_inclusive(&topology, &endpoint, "registration:bc-target-version", &vtype, None).await;
 
     let response = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -116,17 +119,18 @@ async fn distop_entity_bc_broker_requests_target_version_source_amends() {
 #[tokio::test]
 async fn distop_entity_bc_version_values_are_major_minor() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
     let endpoint = mock.url("");
-    register_inclusive(&topology, &endpoint, "registration:bc-version-form", None).await;
+    register_inclusive(&topology, &endpoint, "registration:bc-version-form", &vtype, None).await;
 
     let response = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -147,20 +151,21 @@ async fn distop_entity_bc_version_values_are_major_minor() {
 #[tokio::test]
 async fn distop_entity_bc_source_indicates_returned_version() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:bc-returned-version");
-    let source_body = json!([vehicle(&entity_id, 42)]).to_string();
+    let source_body = json!([typed_vehicle(&entity_id, &vtype, 42)]).to_string();
     mock.set_stub_with_raw_body(Method::GET, FORWARDED_ENTITIES, 200, &source_body, "application/ld+json;version=1.3")
         .await;
 
     let endpoint = mock.url("");
-    register_inclusive(&topology, &endpoint, "registration:bc-returned-version", Some("1.3")).await;
+    register_inclusive(&topology, &endpoint, "registration:bc-returned-version", &vtype, Some("1.3")).await;
 
     let response = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
+        .query_entities(&format!("type={}&id={entity_id}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -180,27 +185,28 @@ async fn distop_entity_bc_source_indicates_returned_version() {
 #[tokio::test]
 async fn distop_entity_bc_broker_uses_version_info_when_collating() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let modern_mock = ContextSourceAdapter::start().await;
     let legacy_mock = ContextSourceAdapter::start().await;
     let modern_id = topology.id("Vehicle:bc-modern");
     let legacy_id = topology.id("Vehicle:bc-legacy");
     modern_mock
-        .set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([vehicle(&modern_id, 60)]))
+        .set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([typed_vehicle(&modern_id, &vtype, 60)]))
         .await;
     // A sparse 1.3 entity omitting newer members must still be integrated.
-    let legacy_entity = json!([{ "id": legacy_id, "type": "Vehicle", "speed": { "type": "Property", "value": 20 } }]);
+    let legacy_entity = json!([{ "id": legacy_id, "type": vtype, "speed": { "type": "Property", "value": 20 } }]);
     legacy_mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &legacy_entity).await;
 
     let modern_endpoint = modern_mock.url("");
     let legacy_endpoint = legacy_mock.url("");
-    register_inclusive(&topology, &modern_endpoint, "registration:bc-modern", None).await;
-    register_inclusive(&topology, &legacy_endpoint, "registration:bc-legacy", Some("1.3")).await;
+    register_inclusive(&topology, &modern_endpoint, "registration:bc-modern", &vtype, None).await;
+    register_inclusive(&topology, &legacy_endpoint, "registration:bc-legacy", &vtype, Some("1.3")).await;
 
     let response = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);

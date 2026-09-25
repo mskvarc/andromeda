@@ -58,9 +58,10 @@ async fn distop_query_temporal_too_wide_returns_400() {
 #[tokio::test]
 async fn distop_query_temporal_orderby_with_a_participating_source_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
-    let ordered = format!("type=Vehicle&{BEFORE_2030}&orderBy=id");
+    let ordered = format!("type={}&{BEFORE_2030}&orderBy=id", urlencoding::encode(&vtype));
 
     // With nothing registered the answer is this broker's alone, which clause
     // 5.5.13 makes a local execution however the request was written.
@@ -70,6 +71,7 @@ async fn distop_query_temporal_orderby_with_a_participating_source_returns_400()
     let registration_id = topology.id("registration:cons54");
     let registration = CsrBuilder::new(&registration_id, &mock.url(""))
         .mode("inclusive")
+        .entity_type(&vtype)
         .operations(&["queryTemporal"])
         .build();
     assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);

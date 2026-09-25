@@ -71,7 +71,7 @@ async fn dist_http_append_attrs_partial_failure_returns_207_update_result() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["appendAttrs"]))
+            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "Vehicle", "inclusive", &["appendAttrs"]))
             .await
             .expect("register source"),
         201,
@@ -200,7 +200,7 @@ async fn dist_http_update_attrs_partial_failure_returns_207_update_result() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["updateEntity"]))
+            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "Vehicle", "inclusive", &["updateEntity"]))
             .await
             .expect("register source"),
         201,
@@ -327,7 +327,7 @@ async fn dist_http_partial_update_attr_partial_failure_returns_207_update_result
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["updateAttrs"]))
+            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "Vehicle", "inclusive", &["updateAttrs"]))
             .await
             .expect("register source"),
         201,

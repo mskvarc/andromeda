@@ -67,10 +67,14 @@ async fn retrieve_under_tenant(client: &Client, tenant: &str, id: &str) -> Statu
         .map_or(StatusCode::SERVICE_UNAVAILABLE, |response| response.status())
 }
 
-/// Suspend every named tenant so the broker closes its per-tenant pools before
-/// the tenant databases are dropped, ignoring the outcome (a best-effort cleanup
-/// step; the force drop closes any backend a suspend did not, or that a broker
-/// without the tenant-management extension left open).
+/// The shared name prefix of every tenant this suite provisions, so its cleanup
+/// touches only its own tenants and never a concurrent suite's.
+const TENANT_PREFIX: &str = "tenantschema";
+
+/// Suspend the tenants this suite created so the broker closes their per-tenant
+/// pools before the databases are dropped, ignoring the outcome (a best-effort
+/// cleanup step; the force drop closes any backend a suspend did not, or that a
+/// broker without the tenant-management extension left open).
 async fn suspend_tenants(client: &Client) {
     let Ok(response) = client.get(format!("{BASE_URL}/tenants")).send().await else {
         return;
@@ -83,6 +87,7 @@ async fn suspend_tenants(client: &Client) {
         .into_iter()
         .flatten()
         .filter_map(|tenant| tenant.get("tenantName").and_then(serde_json::Value::as_str))
+        .filter(|name| name.starts_with(TENANT_PREFIX))
         .map(str::to_owned)
         .collect();
     for name in names {
@@ -95,11 +100,15 @@ async fn suspend_tenants(client: &Client) {
     }
 }
 
-/// Drop every `andromeda_tenant_%` database, forcing off the permanent
-/// background-worker backends a broker pool close cannot remove.
+/// Drop only this suite's own tenant databases (named `andromeda_tenant_<TENANT_PREFIX>...`),
+/// forcing off the permanent background-worker backends a broker pool close
+/// cannot remove. Scoping to the suite's own prefix keeps this cleanup from
+/// dropping a concurrent suite's tenant databases.
 async fn drop_tenant_databases(pool: &PgPool) {
     let current: String = sqlx::query_scalar("SELECT current_database()").fetch_one(pool).await.unwrap_or_default();
-    let databases: Vec<String> = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_%' AND datname <> $1")
+    let like = format!("andromeda_tenant_{TENANT_PREFIX}%");
+    let databases: Vec<String> = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE $1 AND datname <> $2")
+        .bind(&like)
         .bind(&current)
         .fetch_all(pool)
         .await

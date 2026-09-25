@@ -5,13 +5,22 @@
 use crate::{
     oracle::{assert_status, json_body, location},
     reg::PEER_ENDPOINT,
-    registration::csr_basic,
+    registration::csr_basic_typed,
     topology::{self, BrokerRole},
 };
 use andromeda_test_client::tenant_name::TenantName;
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
+
+/// A baseline registration whose covered entity type is derived from the
+/// per-test topology prefix. The default mode is `inclusive` over `federationOps`,
+/// so a bare `Vehicle` type would let this registration match another concurrent
+/// test's `Vehicle` writes and discovery on the shared broker; the derived type
+/// confines it to this test.
+fn typed_basic(topology: &MultiBrokerTopology<BrokerRole>, id: &str) -> Value {
+    csr_basic_typed(id, PEER_ENDPOINT, &topology.id("Vehicle"))
+}
 
 /// Create the registration and return its retrieved representation.
 async fn create_and_retrieve(topology: &MultiBrokerTopology<BrokerRole>, id: &str, body: &Value) -> Value {
@@ -48,7 +57,7 @@ fn contains_token(value: &Value, token: &str) -> bool {
 async fn reg_mode_omitted_defaults_inclusive() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:mode-default");
-    let body = csr_basic(&id, PEER_ENDPOINT);
+    let body = typed_basic(&topology, &id);
     let stored = create_and_retrieve(&topology, &id, &body).await;
     assert_eq!(stored["mode"].as_str(), Some("inclusive"), "an omitted mode defaults to inclusive");
     topology.finish().await.expect("topology cleanup");
@@ -60,7 +69,7 @@ async fn reg_mode_omitted_defaults_inclusive() {
 async fn reg_operations_omitted_defaults_federationops() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:ops-default");
-    let body = csr_basic(&id, PEER_ENDPOINT);
+    let body = typed_basic(&topology, &id);
     let stored = create_and_retrieve(&topology, &id, &body).await;
     assert!(
         contains_token(&stored["operations"], "federationOps"),
@@ -76,7 +85,7 @@ async fn reg_operations_omitted_defaults_federationops() {
 async fn reg_refreshrate_valid_duration_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:refreshrate");
-    let mut body = csr_basic(&id, PEER_ENDPOINT);
+    let mut body = typed_basic(&topology, &id);
     body["refreshRate"] = json!("PT5M");
     let stored = create_and_retrieve(&topology, &id, &body).await;
     assert_eq!(stored["refreshRate"].as_str(), Some("PT5M"), "refreshRate stored verbatim");
@@ -88,7 +97,7 @@ async fn reg_refreshrate_valid_duration_accepted() {
 async fn reg_management_cacheduration_valid_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:cacheduration");
-    let mut body = csr_basic(&id, PEER_ENDPOINT);
+    let mut body = typed_basic(&topology, &id);
     body["management"] = json!({ "cacheDuration": "PT10S" });
     let stored = create_and_retrieve(&topology, &id, &body).await;
     assert_eq!(stored["management"]["cacheDuration"].as_str(), Some("PT10S"), "cacheDuration stored");
@@ -100,7 +109,7 @@ async fn reg_management_cacheduration_valid_accepted() {
 async fn reg_datasetid_valid_uris_and_none_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:datasetid");
-    let mut body = csr_basic(&id, PEER_ENDPOINT);
+    let mut body = typed_basic(&topology, &id);
     body["datasetId"] = json!(["urn:ngsi-ld:ds:1", "@none"]);
     let stored = create_and_retrieve(&topology, &id, &body).await;
     assert!(contains_token(&stored["datasetId"], "urn:ngsi-ld:ds:1"), "explicit datasetId stored");
@@ -113,7 +122,7 @@ async fn reg_datasetid_valid_uris_and_none_accepted() {
 async fn reg_contextsourceinfo_stored() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:csi");
-    let mut body = csr_basic(&id, PEER_ENDPOINT);
+    let mut body = typed_basic(&topology, &id);
     body["contextSourceInfo"] = json!([ { "key": "accept", "value": "application/ld+json" } ]);
     let stored = create_and_retrieve(&topology, &id, &body).await;
     let info = stored["contextSourceInfo"]
@@ -132,7 +141,7 @@ async fn reg_contextsourceinfo_stored() {
 async fn reg_contextsourcealias_nonempty_stored() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:alias");
-    let mut body = csr_basic(&id, PEER_ENDPOINT);
+    let mut body = typed_basic(&topology, &id);
     body["contextSourceAlias"] = json!("broker-alias-x");
     let stored = create_and_retrieve(&topology, &id, &body).await;
     assert_eq!(stored["contextSourceAlias"].as_str(), Some("broker-alias-x"), "alias stored");
@@ -144,7 +153,7 @@ async fn reg_contextsourcealias_nonempty_stored() {
 async fn reg_management_object_stored() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:management");
-    let mut body = csr_basic(&id, PEER_ENDPOINT);
+    let mut body = typed_basic(&topology, &id);
     body["management"] = json!({ "localOnly": true, "timeout": 3000, "cooldown": 500 });
     let stored = create_and_retrieve(&topology, &id, &body).await;
     assert_eq!(stored["management"]["localOnly"], json!(true), "localOnly stored");
@@ -158,7 +167,7 @@ async fn reg_management_object_stored() {
 async fn reg_scope_stored() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:scope");
-    let mut body = csr_basic(&id, PEER_ENDPOINT);
+    let mut body = typed_basic(&topology, &id);
     body["scope"] = json!(["/Madrid/Gardens", "/Madrid/Parks"]);
     let stored = create_and_retrieve(&topology, &id, &body).await;
     assert!(contains_token(&stored["scope"], "/Madrid/Gardens"), "first scope stored");
@@ -172,7 +181,7 @@ async fn reg_scope_stored() {
 async fn reg_timeinterval_startat_only_open_ended_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:startat-only");
-    let mut body = csr_basic(&id, PEER_ENDPOINT);
+    let mut body = typed_basic(&topology, &id);
     body["managementInterval"] = json!({ "startAt": "2020-01-01T00:00:00Z" });
     let created = topology
         .broker(BrokerRole::A)
@@ -191,7 +200,7 @@ async fn reg_timeinterval_startat_only_open_ended_accepted() {
 async fn reg_missing_id_generates_uri() {
     let topology = topology::single().await.expect("single-broker topology");
     let placeholder = topology.id("registration:generated");
-    let mut body = csr_basic(&placeholder, PEER_ENDPOINT);
+    let mut body = typed_basic(&topology, &placeholder);
     body.as_object_mut().unwrap_or_else(|| panic!("baseline object")).remove("id");
 
     let created = topology
@@ -225,7 +234,7 @@ async fn reg_missing_id_generates_uri() {
 async fn reg_valid_registration_returns_201_with_id() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:explicit-id");
-    let body = csr_basic(&id, PEER_ENDPOINT);
+    let body = typed_basic(&topology, &id);
     let stored = create_and_retrieve(&topology, &id, &body).await;
     assert_eq!(stored["id"].as_str(), Some(id.as_str()), "explicit id carried");
     topology.finish().await.expect("topology cleanup");
@@ -236,7 +245,7 @@ async fn reg_valid_registration_returns_201_with_id() {
 async fn reg_success_returns_location_with_csr_uri() {
     let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:location");
-    let body = csr_basic(&id, PEER_ENDPOINT);
+    let body = typed_basic(&topology, &id);
     let created = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
@@ -264,7 +273,7 @@ async fn reg_tenant_scopes_registration() {
     let tenant = TenantName::parse("distopTenantA").expect("valid tenant name");
     let tenant_client = topology.broker(BrokerRole::A).expect("topology broker A").tenant_client(tenant);
     let id = topology.id("registration:tenant-scoped");
-    let body = csr_basic(&id, PEER_ENDPOINT);
+    let body = typed_basic(&topology, &id);
 
     let created = tenant_client.create_registration(&body).await.expect("tenant create");
     assert_status(&created, 201);

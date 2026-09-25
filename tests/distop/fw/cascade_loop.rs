@@ -5,7 +5,7 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::vehicle,
+    entity::typed_vehicle,
     oracle::{assert_status, forwarded_header, has_warning, via_pseudonyms},
     registration::CsrBuilder,
     topology::{self, BrokerRole},
@@ -14,6 +14,7 @@ use andromeda_test_client::tenant_name::TenantName;
 use axum::http::Method;
 use pretty_assertions::assert_eq;
 use std::time::Duration;
+use urlencoding::encode;
 
 /// Budget for a forwarded request to reach the mock context source.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -30,10 +31,11 @@ async fn distop_entity_via_local_scope_signaled_to_registered_endpoint() {
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &serde_json::json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:via-signal"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(
@@ -51,7 +53,7 @@ async fn distop_entity_via_local_scope_signaled_to_registered_endpoint() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -78,10 +80,11 @@ async fn distop_entity_via_header_carries_encountered_source_aliases() {
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &serde_json::json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:via-carries"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .alias("cs-broker-A")
         .build();
@@ -100,7 +103,7 @@ async fn distop_entity_via_header_carries_encountered_source_aliases() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -127,10 +130,11 @@ async fn distop_entity_via_csr_alias_in_header_skips_csr() {
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &serde_json::json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:via-skip"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .alias("cs-broker-A")
         .build();
@@ -149,7 +153,7 @@ async fn distop_entity_via_csr_alias_in_header_skips_csr() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type={}", encode(&vtype)))
         .header("Via", "1.1 cs-broker-A")
         .send()
         .await
@@ -167,6 +171,7 @@ async fn distop_entity_via_csr_alias_in_header_skips_csr() {
 #[tokio::test]
 async fn distop_entity_via_chain_appends_alias_and_excludes_loop() {
     let topology = topology::pair().await.expect("two-broker topology");
+    let vtype = topology.id("Vehicle");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let middle = topology.broker(BrokerRole::B).expect("topology broker B");
     let mock = ContextSourceAdapter::start().await;
@@ -175,7 +180,7 @@ async fn distop_entity_via_chain_appends_alias_and_excludes_loop() {
     let endpoint = mock.url("");
     let middle_registration = CsrBuilder::new(&topology.id("registration:chain-middle"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(
@@ -185,12 +190,16 @@ async fn distop_entity_via_chain_appends_alias_and_excludes_loop() {
 
     let front_registration = CsrBuilder::new(&topology.id("registration:chain-front"), middle.peer_url())
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(&front.client().create_registration(&front_registration).await.expect("front registration"), 201);
 
-    let response = front.client().query_entities("type=Vehicle", "application/ld+json", None).await.expect("query");
+    let response = front
+        .client()
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
+        .await
+        .expect("query");
     assert_status(&response, 200);
 
     let forwarded = mock.next_request(CAPTURE_TIMEOUT).await;
@@ -251,13 +260,14 @@ async fn distop_entity_loop_single_exclusive_returns_199_warning() {
 #[tokio::test]
 async fn distop_entity_loop_multi_source_returns_199_warning() {
     let topology = topology::pair().await.expect("two-broker topology");
+    let vtype = topology.id("Vehicle");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let peer = topology.broker(BrokerRole::B).expect("topology broker B");
 
     assert_status(
         &front
             .client()
-            .post_entity(&vehicle(&topology.id("Vehicle:loop-local-a"), 10))
+            .post_entity(&typed_vehicle(&topology.id("Vehicle:loop-local-a"), &vtype, 10))
             .with_ld_json()
             .send()
             .await
@@ -267,7 +277,7 @@ async fn distop_entity_loop_multi_source_returns_199_warning() {
     assert_status(
         &peer
             .client()
-            .post_entity(&vehicle(&topology.id("Vehicle:loop-local-b"), 20))
+            .post_entity(&typed_vehicle(&topology.id("Vehicle:loop-local-b"), &vtype, 20))
             .with_ld_json()
             .send()
             .await
@@ -277,19 +287,23 @@ async fn distop_entity_loop_multi_source_returns_199_warning() {
 
     let front_registration = CsrBuilder::new(&topology.id("registration:loop-multi-front"), peer.peer_url())
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(&front.client().create_registration(&front_registration).await.expect("front registration"), 201);
 
     let peer_registration = CsrBuilder::new(&topology.id("registration:loop-multi-peer"), front.peer_url())
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(&peer.client().create_registration(&peer_registration).await.expect("peer registration"), 201);
 
-    let response = front.client().query_entities("type=Vehicle", "application/ld+json", None).await.expect("query");
+    let response = front
+        .client()
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
+        .await
+        .expect("query");
     assert_status(&response, 200);
     assert!(has_warning(&response, 199), "a multi-source loop yields a 199 warning, not a 508");
 
@@ -306,10 +320,11 @@ async fn distop_entity_via_multi_tenant_each_tenant_considered_separately() {
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &serde_json::json!([])).await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &serde_json::json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:tenant-federation"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
 
@@ -325,7 +340,7 @@ async fn distop_entity_via_multi_tenant_each_tenant_considered_separately() {
     );
 
     let first_query = first_client
-        .query_entities("type=Vehicle", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("first tenant query");
     assert_status(&first_query, 200);
@@ -337,7 +352,7 @@ async fn distop_entity_via_multi_tenant_each_tenant_considered_separately() {
     );
 
     let second_query = second_client
-        .query_entities("type=Vehicle", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("second tenant query");
     assert_status(&second_query, 200);

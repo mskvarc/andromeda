@@ -20,7 +20,7 @@ mod entity_types;
 mod geo_json_accept;
 
 use andromeda_test_fixtures::{context::COMPOUND_CONTEXT, problem_detail as error};
-use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
+use andromeda_test_harness::configuration::RUNTIME_BROKER_BASE as BASE_URL;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
 use uuid::Uuid;
@@ -37,13 +37,43 @@ fn unique_id(prefix: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Database cleanup
+// Private-tenant isolation
 // ---------------------------------------------------------------------------
 
-async fn clean_database() -> SerializedEnvironment {
-    SerializedEnvironment::from_environment_reset()
+/// Every discovery test runs against a private tenant (`TenantScopedEnvironment`)
+/// so its `/types` and `/attributes` assertions -- which cover collections the
+/// API cannot filter -- see only the entities it created. Requests are raw, so
+/// the tenant name is carried on the `NGSILD-Tenant` header via `env.tenant()`.
+///
+/// Provision the private tenant with a throwaway registration (create then
+/// delete) so a read-first test (e.g. the empty-collection cases) finds an empty
+/// but existing tenant rather than `NonexistentTenant`.
+async fn provision_tenant(client: &Client, tenant: &str) {
+    let registration_id = unique_id("urn:ngsi-ld:ContextSourceRegistration:discovery-provision");
+    let body = json!({
+        "id": registration_id,
+        "type": "ContextSourceRegistration",
+        "endpoint": "http://127.0.0.1:1",
+        "information": [{ "entities": [{ "type": "ProvisioningSentinel" }] }]
+    });
+    let created = client
+        .post(format!("{BASE_URL}/csourceRegistrations"))
+        .header("Content-Type", "application/json")
+        .header("NGSILD-Tenant", tenant)
+        .json(&body)
+        .send()
         .await
-        .expect("serialized test database environment")
+        .expect("provisioning registration request failed");
+    assert_eq!(
+        created.status(),
+        StatusCode::CREATED,
+        "provisioning registration must be created to bring up the tenant"
+    );
+    let _ = client
+        .delete(format!("{BASE_URL}/csourceRegistrations/{registration_id}"))
+        .header("NGSILD-Tenant", tenant)
+        .send()
+        .await;
 }
 
 // ---------------------------------------------------------------------------
@@ -304,10 +334,11 @@ fn link_header(ctx_url: &str) -> String {
 }
 
 /// POST /entities with `application/json` body and optional Link context. Returns (status, location).
-async fn create_entity(client: &Client, body: &Value, link_ctx: Option<&str>) -> (StatusCode, Option<String>) {
+async fn create_entity(client: &Client, tenant: &str, body: &Value, link_ctx: Option<&str>) -> (StatusCode, Option<String>) {
     let mut req = client
         .post(format!("{BASE_URL}/entities"))
         .header("Content-Type", "application/json")
+        .header("NGSILD-Tenant", tenant)
         .json(body);
     if let Some(ctx_url) = link_ctx {
         req = req.header("Link", link_header(ctx_url));
@@ -319,14 +350,14 @@ async fn create_entity(client: &Client, body: &Value, link_ctx: Option<&str>) ->
 }
 
 /// DELETE /entities/{id}.
-async fn delete_entity(client: &Client, id: &str) {
-    let _ = client.delete(format!("{BASE_URL}/entities/{id}")).send().await;
+async fn delete_entity(client: &Client, tenant: &str, id: &str) {
+    let _ = client.delete(format!("{BASE_URL}/entities/{id}")).header("NGSILD-Tenant", tenant).send().await;
 }
 
 /// GET /types with optional query string and Link context. Returns (status, body).
-async fn list_entity_types(client: &Client, query: &str, link_ctx: Option<&str>) -> (StatusCode, Value) {
+async fn list_entity_types(client: &Client, tenant: &str, query: &str, link_ctx: Option<&str>) -> (StatusCode, Value) {
     let sep = if query.is_empty() { "" } else { "?" };
-    let mut req = client.get(format!("{BASE_URL}/types{sep}{query}"));
+    let mut req = client.get(format!("{BASE_URL}/types{sep}{query}")).header("NGSILD-Tenant", tenant);
     if let Some(ctx_url) = link_ctx {
         req = req.header("Link", link_header(ctx_url));
     }
@@ -337,8 +368,8 @@ async fn list_entity_types(client: &Client, query: &str, link_ctx: Option<&str>)
 }
 
 /// GET /`types/{type_name`} with optional Link context. Returns (status, body).
-async fn retrieve_entity_type(client: &Client, type_name: &str, link_ctx: Option<&str>) -> (StatusCode, Value) {
-    let mut req = client.get(format!("{BASE_URL}/types/{type_name}"));
+async fn retrieve_entity_type(client: &Client, tenant: &str, type_name: &str, link_ctx: Option<&str>) -> (StatusCode, Value) {
+    let mut req = client.get(format!("{BASE_URL}/types/{type_name}")).header("NGSILD-Tenant", tenant);
     if let Some(ctx_url) = link_ctx {
         req = req.header("Link", link_header(ctx_url));
     }
@@ -349,9 +380,9 @@ async fn retrieve_entity_type(client: &Client, type_name: &str, link_ctx: Option
 }
 
 /// GET /attributes with optional query string and Link context. Returns (status, body).
-async fn list_attributes(client: &Client, query: &str, link_ctx: Option<&str>) -> (StatusCode, Value) {
+async fn list_attributes(client: &Client, tenant: &str, query: &str, link_ctx: Option<&str>) -> (StatusCode, Value) {
     let sep = if query.is_empty() { "" } else { "?" };
-    let mut req = client.get(format!("{BASE_URL}/attributes{sep}{query}"));
+    let mut req = client.get(format!("{BASE_URL}/attributes{sep}{query}")).header("NGSILD-Tenant", tenant);
     if let Some(ctx_url) = link_ctx {
         req = req.header("Link", link_header(ctx_url));
     }
@@ -362,8 +393,8 @@ async fn list_attributes(client: &Client, query: &str, link_ctx: Option<&str>) -
 }
 
 /// GET /`attributes/{attr_name`} with optional Link context. Returns (status, body).
-async fn retrieve_attribute(client: &Client, attr_name: &str, link_ctx: Option<&str>) -> (StatusCode, Value) {
-    let mut req = client.get(format!("{BASE_URL}/attributes/{attr_name}"));
+async fn retrieve_attribute(client: &Client, tenant: &str, attr_name: &str, link_ctx: Option<&str>) -> (StatusCode, Value) {
+    let mut req = client.get(format!("{BASE_URL}/attributes/{attr_name}")).header("NGSILD-Tenant", tenant);
     if let Some(ctx_url) = link_ctx {
         req = req.header("Link", link_header(ctx_url));
     }

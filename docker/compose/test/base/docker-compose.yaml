@@ -74,6 +74,16 @@ services:
     build:
       context: ../../../images/postgresql
     image: andromeda-base-postgres:latest
+    # The parallelized base tier provisions a private tenant per test across
+    # several suites (annex_c, jsonld_context, discovery, csr, pagination, the
+    # discovery-collection distop_* suites) at four threads, so more tenant
+    # runtimes and harness pools are open at once than the default 100 was sized
+    # for. Actual usage peaks well under this; the headroom keeps the tier off the
+    # ceiling. (The tenant force-drops themselves are kept clean by suspending
+    # each tenant through the tenant-management extension before its database is
+    # dropped -- see the harness `release_tenant` -- so a dropped database is
+    # never left behind a cached runtime, which would otherwise 503.)
+    command: ["postgres", "-c", "max_connections=400"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres

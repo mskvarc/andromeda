@@ -8,8 +8,8 @@
 //! cases pin what leaves the broker on that forwarded retrieval, and what a
 //! client is told when it cannot be answered.
 
+use andromeda_test_harness::environment::TestEnvironment;
 use reqwest::{Method, StatusCode};
-use serial_test::serial;
 use std::time::Duration;
 
 use crate::{
@@ -17,7 +17,6 @@ use crate::{
     helpers::{
         building_linking_to,
         building_registration,
-        clean_database,
         client,
         create_entity_local,
         create_registration,
@@ -26,7 +25,6 @@ use crate::{
         get_entity,
         jsonld_link_value,
         minimal_building,
-        unique_id,
         warning_header_values,
     },
 };
@@ -74,11 +72,11 @@ struct LinkedFixture {
 
 /// Provision the root, the registration, and — unless the caller stubs it
 /// otherwise — the context source's answer for the Linked Entity.
-async fn provision(mock: &MockServer, label: &str, object_type: Option<&str>) -> LinkedFixture {
+async fn provision(scope: &TestEnvironment, mock: &MockServer, label: &str, object_type: Option<&str>) -> LinkedFixture {
     let c = client();
-    let root = unique_id(&format!("urn:ngsi-ld:Building:{label}-A"));
-    let linked = unique_id(&format!("urn:ngsi-ld:Building:{label}-R"));
-    let registration = unique_id(&format!("urn:ngsi-ld:Registration:{label}"));
+    let root = scope.id(&format!("Building:{label}-A"));
+    let linked = scope.id(&format!("Building:{label}-R"));
+    let registration = scope.id(&format!("Registration:{label}"));
 
     let (status, _) = create_entity_local(&c, &building_linking_to(&root, &linked, object_type)).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -102,13 +100,12 @@ async fn discard(fixture: &LinkedFixture) {
 /// already holds. Two requested levels leave one beyond `R`, so `R`'s own level
 /// is spent locally and only `joinLevel=1` travels.
 #[tokio::test]
-#[serial]
 async fn distop_join_fetches_object_type_annotated_remote_link() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let fixture = provision(&mock, "join-two", Some("Building")).await;
+    let fixture = provision(&scope, &mock, "join-two", Some("Building")).await;
     mock.set_stub_with_body(
         Method::GET,
         &format!("/ngsi-ld/v1/entities/{}", fixture.linked),
@@ -139,6 +136,7 @@ async fn distop_join_fetches_object_type_annotated_remote_link() {
 
     discard(&fixture).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Clause 4.5.23 admits only a positive `joinLevel`, so a single requested
@@ -146,13 +144,12 @@ async fn distop_join_fetches_object_type_annotated_remote_link() {
 /// is a plain one: no `join`, no `joinLevel`, and only the ids the requester
 /// already holds.
 #[tokio::test]
-#[serial]
 async fn distop_join_single_level_forwards_a_plain_retrieval() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let fixture = provision(&mock, "join-one", Some("Building")).await;
+    let fixture = provision(&scope, &mock, "join-one", Some("Building")).await;
     mock.set_stub_with_body(
         Method::GET,
         &format!("/ngsi-ld/v1/entities/{}", fixture.linked),
@@ -181,19 +178,19 @@ async fn distop_join_single_level_forwards_a_plain_retrieval() {
 
     discard(&fixture).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Clause 4.5.23.1: without an `objectType` the object is not declared an
 /// Internal Linked Entity, so an object the local store does not hold stays a
 /// plain URI and nothing is forwarded.
 #[tokio::test]
-#[serial]
 async fn distop_join_skips_unannotated_missing_link() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let fixture = provision(&mock, "join-bare", None).await;
+    let fixture = provision(&scope, &mock, "join-bare", None).await;
     mock.set_stub_with_body(
         Method::GET,
         &format!("/ngsi-ld/v1/entities/{}", fixture.linked),
@@ -212,19 +209,19 @@ async fn distop_join_skips_unannotated_missing_link() {
 
     discard(&fixture).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Clause 4.5.23 leaves an unresolvable Relationship as a plain URI rather than
 /// failing the retrieval, and clause 6.3.17 makes `NGSILD-Warning` the only way
 /// the client learns the body is incomplete.
 #[tokio::test]
-#[serial]
 async fn distop_join_remote_failure_degrades_to_warning() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let fixture = provision(&mock, "join-fail", Some("Building")).await;
+    let fixture = provision(&scope, &mock, "join-fail", Some("Building")).await;
     mock.set_stub(Method::GET, &format!("/ngsi-ld/v1/entities/{}", fixture.linked), 500).await;
 
     let (status, headers, body) = get_entity(&c, &fixture.root, "join=flat&joinLevel=1", &jsonld_link_value()).await;
@@ -243,18 +240,18 @@ async fn distop_join_remote_failure_degrades_to_warning() {
 
     discard(&fixture).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Clause 4.5.23: `containedBy` names the entities the requester already holds.
 /// One of them is never fetched again, locally or from a context source.
 #[tokio::test]
-#[serial]
 async fn distop_join_contained_by_prevents_refetch() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("distop_entity").await.expect("isolated test environment");
     let c = client();
     let mock = MockServer::start().await;
 
-    let fixture = provision(&mock, "join-held", Some("Building")).await;
+    let fixture = provision(&scope, &mock, "join-held", Some("Building")).await;
     mock.set_stub_with_body(
         Method::GET,
         &format!("/ngsi-ld/v1/entities/{}", fixture.linked),
@@ -274,4 +271,5 @@ async fn distop_join_contained_by_prevents_refetch() {
 
     discard(&fixture).await;
     mock.shutdown().await;
+    scope.finish().await.expect("cleanup failed");
 }

@@ -15,10 +15,14 @@ use crate::{
     readiness::{ReadinessError, ReadinessPolicy, wait_until_ready_once},
     scope::Scope,
 };
-use andromeda_test_client::{tenant_name::TenantName, test_client::TestClient, transport_error::TenantNameError};
+use andromeda_test_client::{broker_endpoint::BrokerEndpoint, tenant_name::TenantName, test_client::TestClient, transport_error::TenantNameError};
 use sqlx::PgPool;
 use thiserror::Error;
+use tokio::sync::OnceCell;
 use uuid::Uuid;
+
+/// Runs the leftover-tenant sweep exactly once per test process.
+static TENANT_SWEEP: OnceCell<()> = OnceCell::const_new();
 
 /// Test environment bound to a freshly named private tenant.
 pub struct TenantScopedEnvironment {
@@ -52,12 +56,20 @@ impl TenantScopedEnvironment {
         let client = TestClient::new(configuration.broker().clone(), Some(tenant)); // clone: the environment owns its client endpoint while configuration remains reusable.
         wait_until_ready_once(&client, ReadinessPolicy::default()).await?;
         let pool = connect_pool(configuration.database()).await?;
+        sweep_stale_tenant_databases_once(&pool).await;
         Ok(TenantScopedEnvironment { client, scope, label, pool })
     }
 
     /// Borrow the tenant-bound HTTP client.
     pub const fn client(&self) -> &TestClient {
         &self.client
+    }
+
+    /// Borrow the private tenant's name, for suites that issue raw requests and
+    /// must set the `NGSILD-Tenant` header themselves rather than go through
+    /// [`TenantScopedEnvironment::client`].
+    pub fn tenant(&self) -> &str {
+        &self.label
     }
 
     /// Borrow this environment's isolation scope for identifier allocation.
@@ -86,10 +98,35 @@ impl TenantScopedEnvironment {
     /// Never returns an error; the signature mirrors the other environments so a
     /// test can `.await.expect(...)` uniformly.
     pub async fn finish(self) -> Result<(), TenantScopedEnvironmentError> {
+        release_tenant(self.client.endpoint(), &self.label).await;
         drop_tenant_databases(&self.pool, &self.label).await;
         self.pool.close().await;
         Ok(())
     }
+}
+
+/// Ask the broker to suspend the tenant before its database is dropped, so the
+/// database is never dropped out from under a cached tenant runtime.
+///
+/// The runtime cache keeps a pool per recently used tenant. Dropping a tenant's
+/// database externally while the broker still holds its runtime leaves a stale
+/// cache entry that makes the next tenant provisioned answer `503` until the
+/// janitor evicts it -- which surfaces, under the base tier's cross-suite tenant
+/// churn, as intermittent provisioning failures. Suspending through the
+/// tenant-management extension (clause-4.14 lifecycle) closes the broker's pool
+/// for this tenant first, so the following drop is clean. Best-effort: a broker
+/// without the extension, or an unreachable endpoint, simply leaves the drop to
+/// force the connections closed, so a failure here is never a test failure.
+async fn release_tenant(endpoint: &BrokerEndpoint, label: &str) {
+    let Ok(url) = endpoint.url().join(&format!("tenants/{label}")) else {
+        return;
+    };
+    let _ = reqwest::Client::new()
+        .patch(url)
+        .header("content-type", "application/json")
+        .body("{\"isActive\":false}")
+        .send()
+        .await;
 }
 
 /// Force-drop every database backing the labelled tenant, ignoring failures.
@@ -106,6 +143,37 @@ async fn drop_tenant_databases(pool: &PgPool, label: &str) {
     for database in databases {
         // The name comes from `pg_database`, so it is a real identifier; `WITH
         // (FORCE)` evicts the tenant's background workers that hold it open.
+        let statement = format!("DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)");
+        let _ = sqlx::query(sqlx::AssertSqlSafe(statement)).execute(pool).await;
+    }
+}
+
+/// Reclaim leftover tenant databases from earlier suites, once per test process.
+///
+/// Each base-tier suite is its own process and the runner executes them one at a
+/// time, so when the first private tenant of a suite is allocated no other
+/// suite's tenants are live. A private-tenant test only force-drops its own
+/// database on `finish`, and a drop that races the broker's per-tenant
+/// background worker can be silently skipped; across a whole tier those misses
+/// pile up and each undropped database keeps a connection slot, eventually
+/// starving new tenant provisioning (a 503). Sweeping every `andromeda_tenant_%`
+/// database here, before this suite creates any of its own, bounds the
+/// accumulation to a single suite's worth. It is guarded by [`TENANT_SWEEP`] so
+/// the concurrent first allocations of a suite trigger it exactly once.
+pub async fn sweep_stale_tenant_databases_once(pool: &PgPool) {
+    TENANT_SWEEP.get_or_init(|| sweep_stale_tenant_databases(pool)).await;
+}
+
+/// Force-drop every `andromeda_tenant_%` database except the one in use, ignoring
+/// failures.
+async fn sweep_stale_tenant_databases(pool: &PgPool) {
+    let current: String = sqlx::query_scalar("SELECT current_database()").fetch_one(pool).await.unwrap_or_default();
+    let databases: Vec<String> = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_%' AND datname <> $1")
+        .bind(&current)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+    for database in databases {
         let statement = format!("DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)");
         let _ = sqlx::query(sqlx::AssertSqlSafe(statement)).execute(pool).await;
     }

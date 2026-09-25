@@ -6,7 +6,7 @@
 use crate::{
     http::forwarding::{PLACEHOLDER_ENDPOINT, context_link},
     oracle::{assert_problem_details, assert_status, json_body, location},
-    registration::{CsrBuilder, csr_basic},
+    registration::{CsrBuilder, csr_basic_typed},
     topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::{ALREADY_EXISTS, BAD_REQUEST_DATA};
@@ -18,11 +18,12 @@ use serde_json::json;
 async fn dist_http_create_csource_registration_returns_201_location() {
     let topology = topology::single().await.expect("single-broker topology");
     let reg_id = topology.id("registration:reg-201");
+    let vtype = topology.id("Vehicle");
     let response = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
+        .create_registration(&csr_basic_typed(&reg_id, PLACEHOLDER_ENDPOINT, &vtype))
         .await
         .expect("create registration");
     assert_status(&response, 201);
@@ -53,12 +54,13 @@ async fn dist_http_create_csource_registration_invalid_returns_400() {
 async fn dist_http_create_csource_registration_duplicate_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
     let reg_id = topology.id("registration:reg-409");
+    let vtype = topology.id("Vehicle");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
+            .create_registration(&csr_basic_typed(&reg_id, PLACEHOLDER_ENDPOINT, &vtype))
             .await
             .expect("first create"),
         201,
@@ -68,7 +70,7 @@ async fn dist_http_create_csource_registration_duplicate_returns_409() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
+        .create_registration(&csr_basic_typed(&reg_id, PLACEHOLDER_ENDPOINT, &vtype))
         .await
         .expect("duplicate create");
     assert_status(&response, 409);
@@ -107,12 +109,13 @@ async fn dist_http_create_csource_registration_auxiliary_write_operations_return
 async fn dist_http_query_csource_registrations_returns_200_array() {
     let topology = topology::single().await.expect("single-broker topology");
     let reg_id = topology.id("registration:reg-array");
+    let vtype = topology.id("Vehicle");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
+            .create_registration(&csr_basic_typed(&reg_id, PLACEHOLDER_ENDPOINT, &vtype))
             .await
             .expect("create registration"),
         201,
@@ -122,7 +125,7 @@ async fn dist_http_query_csource_registrations_returns_200_array() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_registrations("type=Vehicle", None)
+        .query_registrations(&format!("type={}", urlencoding::encode(&vtype)), None)
         .await
         .expect("registration query");
     assert_status(&response, 200);
@@ -136,12 +139,13 @@ async fn dist_http_query_csource_registrations_returns_200_array() {
 async fn dist_http_retrieve_csource_registration_returns_200_400_404() {
     let topology = topology::single().await.expect("single-broker topology");
     let reg_id = topology.id("registration:reg-retrieve");
+    let vtype = topology.id("Vehicle");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
+            .create_registration(&csr_basic_typed(&reg_id, PLACEHOLDER_ENDPOINT, &vtype))
             .await
             .expect("create registration"),
         201,
@@ -186,12 +190,13 @@ async fn dist_http_retrieve_csource_registration_returns_200_400_404() {
 async fn dist_http_update_csource_registration_returns_204_400_404() {
     let topology = topology::single().await.expect("single-broker topology");
     let reg_id = topology.id("registration:reg-update");
+    let vtype = topology.id("Vehicle");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
+            .create_registration(&csr_basic_typed(&reg_id, PLACEHOLDER_ENDPOINT, &vtype))
             .await
             .expect("create registration"),
         201,
@@ -240,12 +245,13 @@ async fn dist_http_update_csource_registration_returns_204_400_404() {
 async fn dist_http_delete_csource_registration_returns_204_400_404() {
     let topology = topology::single().await.expect("single-broker topology");
     let reg_id = topology.id("registration:reg-delete");
+    let vtype = topology.id("Vehicle");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
+            .create_registration(&csr_basic_typed(&reg_id, PLACEHOLDER_ENDPOINT, &vtype))
             .await
             .expect("create registration"),
         201,

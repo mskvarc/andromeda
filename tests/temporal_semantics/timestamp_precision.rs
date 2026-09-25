@@ -21,23 +21,13 @@
 //! rounded or truncated somewhere, which is exactly what the policy exists to
 //! prevent.
 
-use crate::{
-    attribute_iri,
-    clean_database,
-    client,
-    create_entity,
-    database,
-    get_temporal_entity,
-    rendered_instances,
-    stored_history::stored_attribute_history,
-    unique_id,
-};
+use crate::{attribute_iri, client, create_entity, database, get_temporal_entity, rendered_instances, stored_history::stored_attribute_history};
 use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
+use andromeda_test_harness::environment::TestEnvironment;
 use chrono::{DateTime, Utc};
 use pretty_assertions::{assert_eq, assert_ne};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
-use serial_test::serial;
 
 /// Fractional digits below the microsecond the broker resolves to.
 ///
@@ -79,9 +69,8 @@ fn stored_instant(instant: Option<DateTime<Utc>>) -> String {
 /// ceiling exists precisely to remove that ambiguity. Nothing about the refused
 /// write reaches storage, on either axis that carries a client instant.
 #[tokio::test]
-#[serial]
 async fn temporal_semantics_sub_microsecond_instants_are_refused_rather_than_truncated() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_semantics").await.expect("isolated test environment");
     let http = client();
     let pool = database().await;
 
@@ -89,7 +78,7 @@ async fn temporal_semantics_sub_microsecond_instants_are_refused_rather_than_tru
     // refusal for both: the `observedAt` of clause 5.2.5 and a DateTime-typed
     // Property value are held to the same policy.
     for (observed_at, value) in [(SUB_MICROSECOND, EXACT_MICROSECOND), (EXACT_MICROSECOND, SUB_MICROSECOND)] {
-        let entity_id = unique_id("urn:ngsi-ld:Vehicle:timestamp_precision");
+        let entity_id = scope.id("Vehicle:timestamp_precision");
         let created = create_entity(&http, &entity_with_instants(&entity_id, observed_at, value)).await;
         assert_eq!(
             created,
@@ -101,18 +90,18 @@ async fn temporal_semantics_sub_microsecond_instants_are_refused_rather_than_tru
             "a refused write must leave no history row behind"
         );
     }
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// A value already at the broker's resolution is stored and rendered unchanged,
 /// which is what makes the truncation above a decision rather than a loss of
 /// every fractional digit.
 #[tokio::test]
-#[serial]
 async fn temporal_semantics_a_microsecond_instant_round_trips_exactly() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_semantics").await.expect("isolated test environment");
     let http = client();
     let pool = database().await;
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:timestamp_exact");
+    let entity_id = scope.id("Vehicle:timestamp_exact");
 
     let created = create_entity(&http, &entity_with_instants(&entity_id, EXACT_MICROSECOND, EXACT_MICROSECOND)).await;
     assert_eq!(created, StatusCode::CREATED, "the microsecond fixture must be accepted");
@@ -135,19 +124,19 @@ async fn temporal_semantics_a_microsecond_instant_round_trips_exactly() {
         sub_second(expected),
         "a microsecond instant renders through the sub-second outbound form: {body}"
     );
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// An instant outside the representable range is invalid input (clause 5.5.9),
 /// so the write is refused and nothing about it reaches storage.
 #[tokio::test]
-#[serial]
 async fn temporal_semantics_an_out_of_range_instant_is_refused_rather_than_stored() {
-    let _serialized_environment = clean_database().await;
+    let scope = TestEnvironment::from_suite("temporal_semantics").await.expect("isolated test environment");
     let http = client();
     let pool = database().await;
 
     for out_of_range in OUT_OF_RANGE {
-        let entity_id = unique_id("urn:ngsi-ld:Vehicle:timestamp_range");
+        let entity_id = scope.id("Vehicle:timestamp_range");
         let created = create_entity(&http, &entity_with_instants(&entity_id, out_of_range, EXACT_MICROSECOND)).await;
         assert_ne!(created, StatusCode::CREATED, "{out_of_range} is not a representable instant");
         assert!(
@@ -155,4 +144,5 @@ async fn temporal_semantics_an_out_of_range_instant_is_refused_rather_than_store
             "a refused {out_of_range} write must leave no history row behind"
         );
     }
+    scope.finish().await.expect("cleanup failed");
 }

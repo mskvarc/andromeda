@@ -8,7 +8,6 @@
 
 use crate::{
     clean_tenant,
-    client,
     comparison::{ContextMember, EntityOrder, assert_matches_example, corpus},
     context_link,
     create_entity,
@@ -16,9 +15,8 @@ use crate::{
     get_json,
 };
 use pretty_assertions::assert_eq;
-use reqwest::StatusCode;
+use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
-use serial_test::serial;
 
 /// Both `Place` Entities exactly as clause C.10 prints them.
 const PLACES: &str = include_str!("corpus/c-10-places.json");
@@ -30,29 +28,27 @@ const PLACES: &str = include_str!("corpus/c-10-places.json");
 /// definitions are written with, which would store them under a different set
 /// of IRIs than clause 5.6.1's path does. That divergence has its own test in
 /// `tests/regression/batch_context_expansion.rs`.
-async fn seed_places() -> String {
+async fn seed_places(http: &Client) -> String {
     let link = context_link(hosted_contexts().url("place-context.jsonld").as_str());
-    let http = client();
     for place in corpus(PLACES).as_array().expect("the printed C.10 payload is an array") {
-        create_entity(&http, place, Some(&link)).await;
+        create_entity(http, place, Some(&link)).await;
     }
     link
 }
 
 /// Retrieve one Place under the ontology it was written with.
-async fn retrieve_place(link: &str, identifier: &str) -> Value {
-    let (status, body) = get_json(&client(), &format!("/entities/{identifier}"), "application/ld+json", Some(link)).await;
+async fn retrieve_place(http: &Client, link: &str, identifier: &str) -> Value {
+    let (status, body) = get_json(http, &format!("/entities/{identifier}"), "application/ld+json", Some(link)).await;
     assert_eq!(status, StatusCode::OK, "Place retrieval failed: {body}");
     body
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_10_a_value_type_holds_untyped_datatype_metadata_for_a_value() {
     let environment = clean_tenant().await;
-    let link = seed_places().await;
+    let link = seed_places(&environment.client()).await;
 
-    let actual = retrieve_place(&link, "urn:ngsi-ld:Place:27182").await;
+    let actual = retrieve_place(&environment.client(), &link, "urn:ngsi-ld:Place:27182").await;
     let expected = corpus(PLACES)[0].clone(); // clone: the expected payload is one member of the printed array.
     assert_matches_example("C.10 String address", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
     assert_eq!(
@@ -61,17 +57,16 @@ async fn annex_c_10_a_value_type_holds_untyped_datatype_metadata_for_a_value() {
         "clause C.10 keeps the value untyped and puts the datatype beside it"
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_10_two_value_shapes_of_one_property_stay_distinguishable() {
     let environment = clean_tenant().await;
-    let link = seed_places().await;
+    let link = seed_places(&environment.client()).await;
 
-    let unstructured = retrieve_place(&link, "urn:ngsi-ld:Place:27182").await;
-    let structured = retrieve_place(&link, "urn:ngsi-ld:Place:31415").await;
+    let unstructured = retrieve_place(&environment.client(), &link, "urn:ngsi-ld:Place:27182").await;
+    let structured = retrieve_place(&environment.client(), &link, "urn:ngsi-ld:Place:31415").await;
 
     assert_eq!(unstructured["address"]["valueType"], json!("String"));
     assert_eq!(structured["address"]["valueType"], json!("PostalAddress"));
@@ -90,5 +85,5 @@ async fn annex_c_10_two_value_shapes_of_one_property_stay_distinguishable() {
         EntityOrder::AsPrinted,
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }

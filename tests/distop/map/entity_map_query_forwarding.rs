@@ -6,7 +6,7 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::{entity, property, vehicle},
+    entity::{entity, property, typed_vehicle},
     map::{csr_subscription::FORWARD_TIMEOUT, entity_map_request::create_entity_map},
     oracle::{assert_status, entity_map_header, json_body},
     registration::CsrBuilder,
@@ -19,17 +19,22 @@ use axum::http::Method;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
-/// Create a `Vehicle` with the given speed on the front broker.
-async fn seed_vehicle(client: &TestClient, id: &str, speed: i64) {
+/// Create an entity of the given type with the given speed on the front broker.
+async fn seed_vehicle(client: &TestClient, entity_type: &str, id: &str, speed: i64) {
     assert_status(
-        &client.post_entity(&vehicle(id, speed)).with_ld_json().send().await.expect("create vehicle"),
+        &client
+            .post_entity(&typed_vehicle(id, entity_type, speed))
+            .with_ld_json()
+            .send()
+            .await
+            .expect("create vehicle"),
         201,
     );
 }
 
-/// Register an inclusive `Vehicle` source on the front broker and stub the map
-/// and entity endpoints the forwarded query may hit.
-async fn query_source(topology: &MultiBrokerTopology<BrokerRole>, registration_local: &str, remote_entity_id: &str) -> ContextSourceAdapter {
+/// Register an inclusive source for the given entity type on the front broker and
+/// stub the map and entity endpoints the forwarded query may hit.
+async fn query_source(topology: &MultiBrokerTopology<BrokerRole>, entity_type: &str, registration_local: &str, remote_entity_id: &str) -> ContextSourceAdapter {
     let mock = ContextSourceAdapter::start().await;
     let remote_map = json!({
         "id": "urn:ngsi-ld:EntityMap:remote",
@@ -42,7 +47,7 @@ async fn query_source(topology: &MultiBrokerTopology<BrokerRole>, registration_l
     mock.set_stub_with_body(Method::GET, "/entities", 200, &json!([])).await;
     let registration = CsrBuilder::new(&topology.id(registration_local), &mock.url(""))
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(entity_type)
         .operations(&["federationOps"])
         .build();
     assert_status(
@@ -63,15 +68,21 @@ async fn query_source(topology: &MultiBrokerTopology<BrokerRole>, registration_l
 #[tokio::test]
 async fn emq_split_non_local_builds_local_map_by_id_type_pattern() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let remote_entity = topology.id("Vehicle:split-remote");
-    let mock = query_source(&topology, "registration:split-local-map", &remote_entity).await;
+    let mock = query_source(&topology, &vtype, "registration:split-local-map", &remote_entity).await;
     seed_vehicle(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &vtype,
         &topology.id("Vehicle:split-local"),
         20,
     )
     .await;
-    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle&q=speed%3E10").await;
+    let created = create_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type={}&q=speed%3E10", urlencoding::encode(&vtype)),
+    )
+    .await;
     assert_status(&created, 201);
     assert!(json_body(&created)["entityMap"].is_object(), "the local map is built for the split query");
     let _forwarded = mock.next_request(FORWARD_TIMEOUT).await;
@@ -84,11 +95,16 @@ async fn emq_split_non_local_builds_local_map_by_id_type_pattern() {
 #[tokio::test]
 async fn emq_non_split_local_builds_fully_filtered_map() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let fast = topology.id("Vehicle:filtered-fast");
     let slow = topology.id("Vehicle:filtered-slow");
-    seed_vehicle(topology.broker(BrokerRole::A).expect("topology broker A").client(), &fast, 100).await;
-    seed_vehicle(topology.broker(BrokerRole::A).expect("topology broker A").client(), &slow, 20).await;
-    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle&q=speed%3E50").await;
+    seed_vehicle(topology.broker(BrokerRole::A).expect("topology broker A").client(), &vtype, &fast, 100).await;
+    seed_vehicle(topology.broker(BrokerRole::A).expect("topology broker A").client(), &vtype, &slow, 20).await;
+    let created = create_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type={}&q=speed%3E50", urlencoding::encode(&vtype)),
+    )
+    .await;
     assert_status(&created, 201);
     let map = json_body(&created)["entityMap"].clone();
     assert!(map.get(&fast).is_some(), "the matching entity is in the map");
@@ -101,10 +117,11 @@ async fn emq_non_split_local_builds_fully_filtered_map() {
 #[tokio::test]
 async fn emq_multi_instance_geoproperty_any_match_keeps_entity() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:geo-any-match");
     let body = json!({
         "id": entity_id,
-        "type": "Vehicle",
+        "type": vtype,
         "location": [
             { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [0, 0] }, "datasetId": "urn:ngsi-ld:ds:here" },
             { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [80, 80] }, "datasetId": "urn:ngsi-ld:ds:far" }
@@ -125,7 +142,10 @@ async fn emq_multi_instance_geoproperty_any_match_keeps_entity() {
     );
     let created = create_entity_map(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        "type=Vehicle&georel=near%3BmaxDistance%3D%3D2000&geometry=Point&coordinates=%5B0%2C0%5D",
+        &format!(
+            "type={}&georel=near%3BmaxDistance%3D%3D2000&geometry=Point&coordinates=%5B0%2C0%5D",
+            urlencoding::encode(&vtype)
+        ),
     )
     .await;
     assert_status(&created, 201);
@@ -141,10 +161,11 @@ async fn emq_multi_instance_geoproperty_any_match_keeps_entity() {
 #[tokio::test]
 async fn emq_attribute_list_keeps_only_holders() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let holder = topology.id("Vehicle:attr-holder");
-    seed_vehicle(topology.broker(BrokerRole::A).expect("topology broker A").client(), &holder, 20).await;
+    seed_vehicle(topology.broker(BrokerRole::A).expect("topology broker A").client(), &vtype, &holder, 20).await;
     let other = topology.id("Vehicle:attr-non-holder");
-    let non_holder = entity(&other, "Vehicle", &[("colour", property(json!("red")))]);
+    let non_holder = entity(&other, &vtype, &[("colour", property(json!("red")))]);
     assert_status(
         &topology
             .broker(BrokerRole::A)
@@ -157,7 +178,11 @@ async fn emq_attribute_list_keeps_only_holders() {
             .expect("create non-holder"),
         201,
     );
-    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle&attrs=speed").await;
+    let created = create_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type={}&attrs=speed", urlencoding::encode(&vtype)),
+    )
+    .await;
     assert_status(&created, 201);
     let map = json_body(&created)["entityMap"].clone();
     assert!(map.get(&holder).is_some(), "the attribute holder is kept");
@@ -170,15 +195,21 @@ async fn emq_attribute_list_keeps_only_holders() {
 #[tokio::test]
 async fn emq_non_local_forwards_to_supporting_csrs() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let remote_entity = topology.id("Vehicle:forward-remote");
-    let mock = query_source(&topology, "registration:forward-supporting", &remote_entity).await;
+    let mock = query_source(&topology, &vtype, "registration:forward-supporting", &remote_entity).await;
     seed_vehicle(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &vtype,
         &topology.id("Vehicle:forward-local"),
         20,
     )
     .await;
-    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
+    let created = create_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type={}", urlencoding::encode(&vtype)),
+    )
+    .await;
     assert_status(&created, 201);
     let forwarded = mock.next_request(FORWARD_TIMEOUT).await;
     assert!(
@@ -198,17 +229,19 @@ async fn emq_non_local_forwards_to_supporting_csrs() {
 #[tokio::test]
 async fn emq_split_forward_strips_filters() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let remote_entity = topology.id("Vehicle:strip-remote");
-    let mock = query_source(&topology, "registration:strip-filters", &remote_entity).await;
+    let mock = query_source(&topology, &vtype, "registration:strip-filters", &remote_entity).await;
     seed_vehicle(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &vtype,
         &topology.id("Vehicle:strip-local"),
         20,
     )
     .await;
     let created = create_entity_map(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        "type=Vehicle&q=speed%3E10&splitEntities=true",
+        &format!("type={}&q=speed%3E10&splitEntities=true", urlencoding::encode(&vtype)),
     )
     .await;
     assert_status(&created, 201);
@@ -227,15 +260,21 @@ async fn emq_split_forward_strips_filters() {
 #[tokio::test]
 async fn emq_forwarded_query_returns_entity_map() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let remote_entity = topology.id("Vehicle:returns-remote");
-    let mock = query_source(&topology, "registration:returns-map", &remote_entity).await;
+    let mock = query_source(&topology, &vtype, "registration:returns-map", &remote_entity).await;
     seed_vehicle(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &vtype,
         &topology.id("Vehicle:returns-local"),
         20,
     )
     .await;
-    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
+    let created = create_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type={}", urlencoding::encode(&vtype)),
+    )
+    .await;
     assert_status(&created, 201);
     assert_eq!(json_body(&created)["type"].as_str(), Some("EntityMap"), "the folded result is an EntityMap");
     let _forwarded = mock.next_request(FORWARD_TIMEOUT).await;
@@ -248,15 +287,21 @@ async fn emq_forwarded_query_returns_entity_map() {
 #[tokio::test]
 async fn emq_remote_map_updates_linked_maps() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let remote_entity = topology.id("Vehicle:linked-remote");
-    let mock = query_source(&topology, "registration:linked-maps", &remote_entity).await;
+    let mock = query_source(&topology, &vtype, "registration:linked-maps", &remote_entity).await;
     seed_vehicle(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &vtype,
         &topology.id("Vehicle:linked-local"),
         20,
     )
     .await;
-    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
+    let created = create_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type={}", urlencoding::encode(&vtype)),
+    )
+    .await;
     assert_status(&created, 201);
     assert!(json_body(&created)["linkedMaps"].is_object(), "the folded map exposes linkedMaps");
     let _forwarded = mock.next_request(FORWARD_TIMEOUT).await;
@@ -269,15 +314,21 @@ async fn emq_remote_map_updates_linked_maps() {
 #[tokio::test]
 async fn emq_remote_map_updates_entity_map_element() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let remote_entity = topology.id("Vehicle:element-remote");
-    let mock = query_source(&topology, "registration:element-update", &remote_entity).await;
+    let mock = query_source(&topology, &vtype, "registration:element-update", &remote_entity).await;
     seed_vehicle(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &vtype,
         &topology.id("Vehicle:element-local"),
         20,
     )
     .await;
-    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
+    let created = create_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type={}", urlencoding::encode(&vtype)),
+    )
+    .await;
     assert_status(&created, 201);
     let entries: Vec<Value> = json_body(&created)["entityMap"]
         .as_object()
@@ -293,13 +344,19 @@ async fn emq_remote_map_updates_entity_map_element() {
 #[tokio::test]
 async fn emq_local_map_stored_and_retrievable() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     seed_vehicle(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &vtype,
         &topology.id("Vehicle:stored"),
         20,
     )
     .await;
-    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
+    let created = create_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type={}", urlencoding::encode(&vtype)),
+    )
+    .await;
     assert_status(&created, 201);
     let map_id = json_body(&created)["id"].as_str().unwrap_or_else(|| panic!("created map has an id")).to_owned();
     let retrieved = topology
@@ -318,13 +375,19 @@ async fn emq_local_map_stored_and_retrievable() {
 #[tokio::test]
 async fn emq_success_returns_201_location_and_body() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     seed_vehicle(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &vtype,
         &topology.id("Vehicle:success-201"),
         20,
     )
     .await;
-    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
+    let created = create_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type={}", urlencoding::encode(&vtype)),
+    )
+    .await;
     assert_status(&created, 201);
     assert!(entity_map_header(&created).is_some(), "the response carries the NGSILD-EntityMap header");
     assert_eq!(json_body(&created)["type"].as_str(), Some("EntityMap"), "the response body is an EntityMap");

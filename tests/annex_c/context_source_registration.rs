@@ -8,7 +8,6 @@
 use crate::{
     BASE_URL,
     clean_tenant,
-    client,
     comparison::{ContextMember, EntityOrder, assert_matches_example, corpus},
     context_link,
     example_context::hosted_contexts,
@@ -17,7 +16,6 @@ use crate::{
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::Value;
-use serial_test::serial;
 
 /// The registration exactly as clause C.3 prints it.
 const REGISTRATION: &str = include_str!("corpus/c-3-registration.json");
@@ -25,12 +23,11 @@ const REGISTRATION: &str = include_str!("corpus/c-3-registration.json");
 const REGISTRATION_ID: &str = "urn:ngsi-ld:ContextSourceRegistration:csr1a3456";
 
 #[tokio::test]
-#[serial]
 async fn annex_c_3_context_source_registration_example() {
     let environment = clean_tenant().await;
     let link = context_link(hosted_contexts().url("aggregatedContext.jsonld").as_str());
     let expected = corpus(REGISTRATION);
-    let http = client();
+    let http = environment.client();
 
     let response = http
         .post(format!("{BASE_URL}/csourceRegistrations/"))
@@ -59,7 +56,7 @@ async fn annex_c_3_context_source_registration_example() {
     assert_eq!(status, StatusCode::OK, "registration retrieval failed: {actual}");
     assert_matches_example("C.3", &expected, &without_defaults(actual), ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 /// Drop the members clause 5.2.9 marks output-only or gives a default.

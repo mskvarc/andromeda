@@ -6,7 +6,7 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::vehicle,
+    entity::{typed_vehicle, vehicle},
     http::forwarding::{FORWARDED_ENTITIES_PATH, context_link, provision_source, retrieval_source},
     oracle::{assert_problem_details, assert_status, json_body, location},
     topology::{self, BrokerRole},
@@ -57,7 +57,7 @@ async fn dist_http_create_entity_forwarded_partial_failure_returns_207_batch_res
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["createEntity"]))
+            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "Vehicle", "inclusive", &["createEntity"]))
             .await
             .expect("register source"),
         201,
@@ -155,7 +155,7 @@ async fn dist_http_create_entity_exclusive_registration_owns_id_returns_409() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "exclusive", &["createEntity"]))
+            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "Vehicle", "exclusive", &["createEntity"]))
             .await
             .expect("register exclusive source"),
         201,
@@ -194,7 +194,14 @@ async fn dist_http_create_entity_operation_unavailable_returns_409_conflict() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "exclusive", &["retrieveEntity"]))
+            .create_registration(&provision_source(
+                &reg_id,
+                &mock.url(""),
+                &entity_id,
+                "Vehicle",
+                "exclusive",
+                &["retrieveEntity"],
+            ))
             .await
             .expect("register read-only source"),
         201,
@@ -239,6 +246,7 @@ async fn dist_http_query_entities_invalid_returns_400_problem_details() {
 async fn dist_http_query_entities_source_unsupported_format_returns_501() {
     let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:query-501");
+    let vtype = topology.id("Vehicle");
     let reg_id = topology.id("registration:query-501");
     let mock = ContextSourceAdapter::start().await;
 
@@ -247,7 +255,7 @@ async fn dist_http_query_entities_source_unsupported_format_returns_501() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "exclusive"))
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, &vtype, "exclusive"))
             .await
             .expect("register source"),
         201,
@@ -258,7 +266,7 @@ async fn dist_http_query_entities_source_unsupported_format_returns_501() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
+        .query_entities(&format!("type={}", urlencoding::encode(&vtype)), "application/ld+json", Some(context_link()))
         .await
         .expect("forwarded query");
     assert_status(&response, 501);
@@ -271,13 +279,14 @@ async fn dist_http_query_entities_source_unsupported_format_returns_501() {
 #[tokio::test]
 async fn dist_http_purge_entities_local_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:purge-204");
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 5))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 5))
             .with_ld_json()
             .send()
             .await
@@ -285,7 +294,11 @@ async fn dist_http_purge_entities_local_returns_204() {
         201,
     );
 
-    let query = format!("type=Vehicle&idPattern={}", urlencoding::encode(topology.id_prefix()));
+    // A per-test type, not an idPattern: the broker forwards a purge to every
+    // registration whose covered type matches, and the idPattern does not narrow
+    // that forwarding, so a concurrent test's Vehicle registration would turn
+    // this local purge into a 207. A unique type matches no other registration.
+    let query = format!("type={}", urlencoding::encode(&vtype));
     let response = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")
@@ -303,6 +316,7 @@ async fn dist_http_purge_entities_local_returns_204() {
 #[tokio::test]
 async fn dist_http_purge_entities_partial_failure_returns_207_batch_result() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:purge-207");
     let reg_id = topology.id("registration:purge-207");
     let mock = ContextSourceAdapter::start().await;
@@ -312,7 +326,7 @@ async fn dist_http_purge_entities_partial_failure_returns_207_batch_result() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 5))
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 5))
             .with_ld_json()
             .send()
             .await
@@ -324,14 +338,17 @@ async fn dist_http_purge_entities_partial_failure_returns_207_batch_result() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["purgeEntity"]))
+            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, &vtype, "inclusive", &["purgeEntity"]))
             .await
             .expect("register source"),
         201,
     );
     mock.set_stub(Method::DELETE, FORWARDED_ENTITIES_PATH, 500).await;
 
-    let query = format!("type=Vehicle&idPattern={}&local=false", urlencoding::encode(topology.id_prefix()));
+    // A per-test type isolates the forwarded purge to this test's own
+    // registration; an idPattern does not, since the broker selects registrations
+    // to forward to by covered type.
+    let query = format!("type={}&local=false", urlencoding::encode(&vtype));
     let response = topology
         .broker(BrokerRole::A)
         .expect("topology broker A")

@@ -5,7 +5,7 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::vehicle,
+    entity::typed_vehicle,
     oracle::{assert_status, entity_map_header, forwarded_header},
     registration::CsrBuilder,
     topology::{self, BrokerRole},
@@ -16,6 +16,7 @@ use axum::http::Method;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::time::Duration;
+use urlencoding::encode;
 
 /// Query the front broker reusing a supplied entity map.
 async fn query_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, query: &str, map: &str) -> TestResponse {
@@ -42,6 +43,7 @@ async fn distop_query_entities_map_location_reused_or_recreated() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
+    let vtype = topology.id("Vehicle");
     let first_id = topology.id("registration:cons23-s1");
     assert_status(
         &front
@@ -49,6 +51,7 @@ async fn distop_query_entities_map_location_reused_or_recreated() {
             .create_registration(
                 &CsrBuilder::new(&first_id, &mock.url("/s1"))
                     .mode("inclusive")
+                    .entity_type(&vtype)
                     .operations(&["queryEntity"])
                     .build(),
             )
@@ -60,13 +63,13 @@ async fn distop_query_entities_map_location_reused_or_recreated() {
         Method::GET,
         "/s1/ngsi-ld/v1/entities",
         200,
-        &json!([vehicle(&topology.id("Vehicle:cons23"), 10)]),
+        &json!([typed_vehicle(&topology.id("Vehicle:cons23"), &vtype, 10)]),
     )
     .await;
 
     let mint = front
         .client()
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
+        .query_entities(&format!("type={}&entityMap=true", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("mint");
     assert_status(&mint, 201);
@@ -79,6 +82,7 @@ async fn distop_query_entities_map_location_reused_or_recreated() {
             .create_registration(
                 &CsrBuilder::new(&second_id, &mock.url("/s2"))
                     .mode("inclusive")
+                    .entity_type(&vtype)
                     .operations(&["queryEntity"])
                     .build(),
             )
@@ -88,7 +92,7 @@ async fn distop_query_entities_map_location_reused_or_recreated() {
     );
     mock.set_stub_with_body(Method::GET, "/s2/ngsi-ld/v1/entities", 200, &json!([])).await;
 
-    assert_status(&query_reusing_map(&topology, "type=Vehicle", &map).await, 200);
+    assert_status(&query_reusing_map(&topology, &format!("type={}", encode(&vtype)), &map).await, 200);
     assert_eq!(
         mock.get_count(Method::GET, "/s2/ngsi-ld/v1/entities"),
         0,
@@ -96,7 +100,7 @@ async fn distop_query_entities_map_location_reused_or_recreated() {
     );
 
     let bogus = topology.id("EntityMap:bogus");
-    assert_status(&query_reusing_map(&topology, "type=Vehicle", &bogus).await, 201);
+    assert_status(&query_reusing_map(&topology, &format!("type={}", encode(&vtype)), &bogus).await, 201);
     assert!(
         mock.get_count(Method::GET, "/s2/ngsi-ld/v1/entities") > 0,
         "a bogus map is recreated by fresh discovery, now consulting the new source"
@@ -112,15 +116,22 @@ async fn distop_query_entities_map_location_reused_or_recreated() {
 async fn distop_query_entities_return_flag_creates_map_and_header() {
     let topology = topology::single().await.expect("single-broker topology");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:cons24");
     assert_status(
-        &front.client().post_entity(&vehicle(&entity_id, 10)).with_ld_json().send().await.expect("local"),
+        &front
+            .client()
+            .post_entity(&typed_vehicle(&entity_id, &vtype, 10))
+            .with_ld_json()
+            .send()
+            .await
+            .expect("local"),
         201,
     );
 
     let response = front
         .client()
-        .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
+        .query_entities(&format!("type={}&entityMap=true", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 201);
@@ -137,6 +148,7 @@ async fn distop_query_entities_map_linked_entry_forwards_linked_location() {
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
     let mock = ContextSourceAdapter::start().await;
 
+    let vtype = topology.id("Vehicle");
     let registration_id = topology.id("registration:cons26");
     assert_status(
         &front
@@ -144,6 +156,7 @@ async fn distop_query_entities_map_linked_entry_forwards_linked_location() {
             .create_registration(
                 &CsrBuilder::new(&registration_id, &mock.url(""))
                     .mode("inclusive")
+                    .entity_type(&vtype)
                     .operations(&["queryEntity"])
                     .build(),
             )
@@ -151,18 +164,23 @@ async fn distop_query_entities_map_linked_entry_forwards_linked_location() {
             .expect("register"),
         201,
     );
-    mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &json!([vehicle(&topology.id("Vehicle:cons26"), 10)]))
-        .await;
+    mock.set_stub_with_body(
+        Method::GET,
+        "/ngsi-ld/v1/entities",
+        200,
+        &json!([typed_vehicle(&topology.id("Vehicle:cons26"), &vtype, 10)]),
+    )
+    .await;
 
     let map = entity_map_header(
         &front
             .client()
-            .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
+            .query_entities(&format!("type={}&entityMap=true", encode(&vtype)), "application/ld+json", None)
             .await
             .expect("mint"),
     )
     .expect("minted entity map header");
-    assert_status(&query_reusing_map(&topology, "type=Vehicle", &map).await, 200);
+    assert_status(&query_reusing_map(&topology, &format!("type={}", encode(&vtype)), &map).await, 200);
     let forwarded = mock.next_request(Duration::from_secs(2)).await;
     assert!(
         forwarded_header(&forwarded, "ngsild-entitymap").is_some(),

@@ -125,11 +125,14 @@ async fn reg_entityinfo_type_as_array_accepted() {
 #[tokio::test]
 async fn reg_entityinfo_id_and_idpattern_prefers_id() {
     let topology = topology::single().await.expect("single-broker topology");
+    // A per-test entity type keeps this bare-type discovery query from matching
+    // Vehicle registrations left by other tests sharing the broker's registry.
+    let vtype = topology.id("Vehicle");
     let exact = topology.id("Vehicle:EXACT");
     let other = topology.id("Vehicle:OTHER1");
     let id = topology.id("registration:id-wins");
     let mut body = csr_basic(&id, PEER_ENDPOINT);
-    body["information"][0]["entities"][0] = json!({ "type": "Vehicle", "id": exact, "idPattern": format!("{}.*", topology.id("Vehicle:OTHER")) });
+    body["information"][0]["entities"][0] = json!({ "type": vtype, "id": exact, "idPattern": format!("{}.*", topology.id("Vehicle:OTHER")) });
 
     let created = topology
         .broker(BrokerRole::A)
@@ -144,7 +147,7 @@ async fn reg_entityinfo_id_and_idpattern_prefers_id() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_registrations(&format!("type=Vehicle&id={}", urlencoding::encode(&exact)), None)
+        .query_registrations(&format!("type={}&id={}", urlencoding::encode(&vtype), urlencoding::encode(&exact)), None)
         .await
         .expect("discovery by exact id");
     assert_status(&by_exact, 200);
@@ -158,7 +161,7 @@ async fn reg_entityinfo_id_and_idpattern_prefers_id() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_registrations(&format!("type=Vehicle&id={}", urlencoding::encode(&other)), None)
+        .query_registrations(&format!("type={}&id={}", urlencoding::encode(&vtype), urlencoding::encode(&other)), None)
         .await
         .expect("discovery by pattern-covered id");
     assert_status(&by_other, 200);

@@ -9,10 +9,14 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
-use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
-use reqwest::{Client, Method, StatusCode, header::HeaderMap};
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, tenant_scoped_environment::TenantScopedEnvironment};
+use reqwest::{
+    Client,
+    Method,
+    StatusCode,
+    header::{HeaderMap, HeaderValue},
+};
 use serde_json::{Value, json};
-use serial_test::serial;
 use std::collections::HashSet;
 use urlencoding::encode;
 use uuid::Uuid;
@@ -25,18 +29,17 @@ use context_source_adapter::ContextSourceAdapter as MockServer;
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn client() -> Client {
-    Client::new()
+/// A reqwest client that carries `NGSILD-Tenant` on every request, so a test's
+/// entire forwarding registry and `/attributes` collection live in its own
+/// private tenant and stay isolated from concurrent tests.
+fn tenant_client(tenant: &str) -> Client {
+    let mut headers = HeaderMap::new();
+    headers.insert("NGSILD-Tenant", HeaderValue::from_str(tenant).expect("tenant is a valid header value"));
+    Client::builder().default_headers(headers).build().expect("tenant-scoped client builds")
 }
 
 fn unique_id(prefix: &str) -> String {
     format!("{prefix}:{}", Uuid::new_v4())
-}
-
-async fn clean_database() -> SerializedEnvironment {
-    SerializedEnvironment::from_environment_reset()
-        .await
-        .expect("serialized test database environment")
 }
 
 fn vehicle_entity(id: &str) -> Value {
@@ -141,10 +144,11 @@ fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
 
 /// `list_attributes` with local=true does not forward to CSR endpoints.
 #[tokio::test]
-#[serial]
 async fn distop_attributes_local_skips_forwarding() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_attributes")
+        .await
+        .expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let reg_id = unique_id("urn:ngsi-ld:Registration:attrs-local-skip");
@@ -170,14 +174,16 @@ async fn distop_attributes_local_skips_forwarding() {
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `list_attributes` without local=true forwards to CSR and merges remote attributes.
 #[tokio::test]
-#[serial]
 async fn distop_attributes_merges_remote_attributes() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_attributes")
+        .await
+        .expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:attrs-merge");
@@ -212,14 +218,16 @@ async fn distop_attributes_merges_remote_attributes() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `list_attributes` deduplicates attributes that appear in both local and remote results.
 #[tokio::test]
-#[serial]
 async fn distop_attributes_deduplicates_attribute_list() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_attributes")
+        .await
+        .expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:attrs-dedup");
@@ -253,14 +261,16 @@ async fn distop_attributes_deduplicates_attribute_list() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `list_attributes` with details=true merges detailed attribute objects from local and remote.
 #[tokio::test]
-#[serial]
 async fn distop_attributes_details_merges_remote_attribute_objects() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_attributes")
+        .await
+        .expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:attrs-details");
@@ -293,14 +303,16 @@ async fn distop_attributes_details_merges_remote_attribute_objects() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `list_attributes` emits NGSILD-Warning 299 header when a CSR returns an error response.
 #[tokio::test]
-#[serial]
 async fn distop_attributes_warning_on_csr_error_response() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_attributes")
+        .await
+        .expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let reg_id = unique_id("urn:ngsi-ld:Registration:attrs-warn");
@@ -322,14 +334,16 @@ async fn distop_attributes_warning_on_csr_error_response() {
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `get_attribute` forwards to CSR and merges type name information from remote.
 #[tokio::test]
-#[serial]
 async fn distop_attributes_attribute_info_merges_remote_type_names() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_attributes")
+        .await
+        .expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:attrs-info-merge");
@@ -361,14 +375,16 @@ async fn distop_attributes_attribute_info_merges_remote_type_names() {
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `list_attributes` emits NGSILD-Warning 199 header when a CSR is unreachable.
 #[tokio::test]
-#[serial]
 async fn distop_attributes_warning_on_csr_unreachable() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_attributes")
+        .await
+        .expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let reg_id = unique_id("urn:ngsi-ld:Registration:attrs-timeout");
@@ -391,4 +407,5 @@ async fn distop_attributes_warning_on_csr_unreachable() {
     );
 
     delete_registration(&c, &reg_id).await;
+    env.finish().await.expect("cleanup failed");
 }

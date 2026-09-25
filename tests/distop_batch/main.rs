@@ -9,10 +9,14 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
-use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
-use reqwest::{Client, Method, StatusCode};
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, tenant_scoped_environment::TenantScopedEnvironment};
+use reqwest::{
+    Client,
+    Method,
+    StatusCode,
+    header::{HeaderMap, HeaderValue},
+};
 use serde_json::{Value, json};
-use serial_test::serial;
 use urlencoding::encode;
 use uuid::Uuid;
 
@@ -24,18 +28,17 @@ use context_source_adapter::ContextSourceAdapter as MockServer;
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn client() -> Client {
-    Client::new()
+/// A reqwest client that carries `NGSILD-Tenant` on every request, so a test's
+/// batch entities and forwarding registry live in its own private tenant and
+/// stay isolated from concurrent tests.
+fn tenant_client(tenant: &str) -> Client {
+    let mut headers = HeaderMap::new();
+    headers.insert("NGSILD-Tenant", HeaderValue::from_str(tenant).expect("tenant is a valid header value"));
+    Client::builder().default_headers(headers).build().expect("tenant-scoped client builds")
 }
 
 fn unique_id(prefix: &str) -> String {
     format!("{prefix}:{}", Uuid::new_v4())
-}
-
-async fn clean_database() -> SerializedEnvironment {
-    SerializedEnvironment::from_environment_reset()
-        .await
-        .expect("serialized test database environment")
 }
 
 fn link_header() -> String {
@@ -261,10 +264,9 @@ async fn delete_registration(client: &Client, id: &str) {
 
 /// Batch create with an exclusive CSR forwards the operation to the CSR endpoint.
 #[tokio::test]
-#[serial]
 async fn distop_batch_create_exclusive_forwards_to_csr() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_batch").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let entity_id1 = unique_id("urn:ngsi-ld:Vehicle:batch-create-exc-1");
@@ -296,14 +298,14 @@ async fn distop_batch_create_exclusive_forwards_to_csr() {
     delete_entity(&c, &entity_id2).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// Batch create with an inclusive CSR stores entities locally and forwards to the CSR.
 #[tokio::test]
-#[serial]
 async fn distop_batch_create_inclusive_stores_locally_and_forwards() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_batch").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let entity_id1 = unique_id("urn:ngsi-ld:Vehicle:batch-create-inc-1");
@@ -338,14 +340,14 @@ async fn distop_batch_create_inclusive_stores_locally_and_forwards() {
     delete_entity(&c, &entity_id2).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// Batch create with two redirect CSRs forwards the operation to both CSR endpoints.
 #[tokio::test]
-#[serial]
 async fn distop_batch_create_redirect_forwards_to_both_csrs() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_batch").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let entity_id1 = unique_id("urn:ngsi-ld:Vehicle:batch-create-red-1");
@@ -379,6 +381,7 @@ async fn distop_batch_create_redirect_forwards_to_both_csrs() {
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -387,10 +390,9 @@ async fn distop_batch_create_redirect_forwards_to_both_csrs() {
 
 /// Batch upsert replace with an exclusive CSR forwards the operation to the CSR endpoint.
 #[tokio::test]
-#[serial]
 async fn distop_batch_upsert_replace_exclusive_forwards_to_csr() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_batch").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let entity_id1 = unique_id("urn:ngsi-ld:Vehicle:batch-upsert-rep-exc-1");
@@ -419,14 +421,14 @@ async fn distop_batch_upsert_replace_exclusive_forwards_to_csr() {
     delete_entity(&c, &entity_id2).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// Batch upsert replace with an inclusive CSR updates entities locally and forwards to the CSR.
 #[tokio::test]
-#[serial]
 async fn distop_batch_upsert_replace_inclusive_updates_locally_and_forwards() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_batch").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let entity_id1 = unique_id("urn:ngsi-ld:Vehicle:batch-upsert-rep-inc-1");
@@ -458,14 +460,14 @@ async fn distop_batch_upsert_replace_inclusive_updates_locally_and_forwards() {
     delete_entity(&c, &entity_id2).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// Batch upsert replace with two redirect CSRs forwards the operation to both CSR endpoints.
 #[tokio::test]
-#[serial]
 async fn distop_batch_upsert_replace_redirect_forwards_to_both_csrs() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_batch").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let entity_id1 = unique_id("urn:ngsi-ld:Vehicle:batch-upsert-rep-red-1");
@@ -499,6 +501,7 @@ async fn distop_batch_upsert_replace_redirect_forwards_to_both_csrs() {
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -507,10 +510,9 @@ async fn distop_batch_upsert_replace_redirect_forwards_to_both_csrs() {
 
 /// Batch upsert update with an exclusive CSR forwards the operation to the CSR endpoint.
 #[tokio::test]
-#[serial]
 async fn distop_batch_upsert_update_exclusive_forwards_to_csr() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_batch").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let entity_id1 = unique_id("urn:ngsi-ld:Vehicle:batch-upsert-upd-exc-1");
@@ -538,14 +540,14 @@ async fn distop_batch_upsert_update_exclusive_forwards_to_csr() {
     delete_entity(&c, &entity_id2).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// Batch upsert update with an inclusive CSR merges attribute changes locally and forwards to the CSR.
 #[tokio::test]
-#[serial]
 async fn distop_batch_upsert_update_inclusive_merges_locally_and_forwards() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_batch").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let entity_id1 = unique_id("urn:ngsi-ld:Vehicle:batch-upsert-upd-inc-1");
@@ -577,14 +579,14 @@ async fn distop_batch_upsert_update_inclusive_merges_locally_and_forwards() {
     delete_entity(&c, &entity_id2).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// Batch upsert update with two redirect CSRs forwards the operation to both CSR endpoints.
 #[tokio::test]
-#[serial]
 async fn distop_batch_upsert_update_redirect_forwards_to_both_csrs() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_batch").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let entity_id1 = unique_id("urn:ngsi-ld:Vehicle:batch-upsert-upd-red-1");
@@ -618,6 +620,7 @@ async fn distop_batch_upsert_update_redirect_forwards_to_both_csrs() {
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -626,10 +629,9 @@ async fn distop_batch_upsert_update_redirect_forwards_to_both_csrs() {
 
 /// Batch delete with an inclusive CSR deletes entities locally and forwards to the CSR.
 #[tokio::test]
-#[serial]
 async fn distop_batch_delete_inclusive_deletes_locally_and_forwards() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_batch").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let entity_id1 = unique_id("urn:ngsi-ld:Vehicle:batch-delete-inc-1");
@@ -659,14 +661,14 @@ async fn distop_batch_delete_inclusive_deletes_locally_and_forwards() {
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// Batch delete with an exclusive CSR forwards the operation to the CSR and removes local entities.
 #[tokio::test]
-#[serial]
 async fn distop_batch_delete_exclusive_forwards_to_csr_and_deletes_locally() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_batch").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let entity_id1 = unique_id("urn:ngsi-ld:Vehicle:batch-delete-exc-1");
@@ -696,14 +698,14 @@ async fn distop_batch_delete_exclusive_forwards_to_csr_and_deletes_locally() {
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// Batch delete with two redirect CSRs forwards the operation to both CSR endpoints.
 #[tokio::test]
-#[serial]
 async fn distop_batch_delete_redirect_forwards_to_both_csrs() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("distop_batch").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
 
     let entity_id1 = unique_id("urn:ngsi-ld:Vehicle:batch-delete-red-1");
@@ -737,4 +739,5 @@ async fn distop_batch_delete_redirect_forwards_to_both_csrs() {
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
     mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }

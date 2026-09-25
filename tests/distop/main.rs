@@ -26,15 +26,18 @@
 //! cargo test --test distop -- --ignored --test-threads=1  # tracked gap tests (ratchet)
 //! ```
 //!
-//! Run single-threaded. A broker's Context Source Registration namespace is
-//! global per (broker, tenant): an exclusive or redirect CSR registered by
-//! entity type applies to every concurrent request, so a type-scoped exclusive
-//! `Vehicle` CSR in one test would make another test's local `Vehicle` create
-//! fail with 409 Conflict. Prefix isolation namespaces entity ids, not the
-//! shared registration surface, so these tests are serialised rather than run in
-//! parallel against the shared stack. The suite carries no `#[serial]` marks
-//! because it is never run multi-threaded: the `--test-threads=1` contract above
-//! is the single-source guarantee, enforced by the xtask runner.
+//! Runs in parallel. Each test derives a per-test entity type from its topology
+//! prefix (`topology.id("Vehicle")`) and scopes every entity id, registration,
+//! subscription selector, and `type=` query to it, so no test can see, hijack,
+//! or purge another's data on the shared (broker, tenant) registration surface;
+//! the broker database is reset once per process rather than per test (see
+//! `andromeda_test_harness::multi_broker`). The few tests that must use the
+//! literal compact type `Vehicle` -- short-hand context expansion and the
+//! forwarded-request compaction assertions -- carry
+//! `#[serial_test::serial(distop_shared_type)]`, which serialises just those
+//! among themselves while every other test runs concurrently. The xtask stack
+//! definition sets the suite's `--test-threads`; the manual commands above pin
+//! `--test-threads=1`, which is always safe to run.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

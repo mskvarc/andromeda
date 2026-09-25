@@ -12,7 +12,6 @@
 
 use crate::{
     clean_tenant,
-    client,
     comparison::{ContextMember, EntityOrder, assert_matches_example, corpus},
     context_link,
     create_entity_batch,
@@ -20,125 +19,111 @@ use crate::{
     get_json,
 };
 use pretty_assertions::assert_eq;
-use reqwest::StatusCode;
+use reqwest::{Client, StatusCode};
 use serde_json::Value;
-use serial_test::serial;
 
 /// Both parking Entities the clause draws, as one batch payload.
 const PARKING: &str = include_str!("corpus/c-2-3-parking-seed.json");
 
 /// Seed both parking Entities and answer the wrapper `@context` link.
-async fn seed_parking() -> String {
+async fn seed_parking(http: &Client) -> String {
     let link = context_link(hosted_contexts().url("aggregatedContext.jsonld").as_str());
-    create_entity_batch(&client(), &corpus(PARKING), Some(&link)).await;
+    create_entity_batch(http, &corpus(PARKING), Some(&link)).await;
     link
 }
 
 /// Retrieve Downtown1 with the query string and media type an example implies.
-async fn retrieve_downtown_one(link: &str, query: &str, accept: &str) -> Value {
-    let (status, body) = get_json(
-        &client(),
-        &format!("/entities/urn:ngsi-ld:OffStreetParking:Downtown1{query}"),
-        accept,
-        Some(link),
-    )
-    .await;
+async fn retrieve_downtown_one(http: &Client, link: &str, query: &str, accept: &str) -> Value {
+    let (status, body) = get_json(http, &format!("/entities/urn:ngsi-ld:OffStreetParking:Downtown1{query}"), accept, Some(link)).await;
     assert_eq!(status, StatusCode::OK, "OffStreetParking retrieval failed: {body}");
     body
 }
 
 /// Query both parking Entities with the query string an example implies.
-async fn query_parking(link: &str, query: &str, accept: &str) -> Value {
-    let (status, body) = get_json(&client(), &format!("/entities/?type=OffStreetParking{query}"), accept, Some(link)).await;
+async fn query_parking(http: &Client, link: &str, query: &str, accept: &str) -> Value {
+    let (status, body) = get_json(http, &format!("/entities/?type=OffStreetParking{query}"), accept, Some(link)).await;
     assert_eq!(status, StatusCode::OK, "OffStreetParking query failed: {body}");
     body
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_3_parking_normalized_representation() {
     let environment = clean_tenant().await;
-    let link = seed_parking().await;
+    let link = seed_parking(&environment.client()).await;
 
-    let actual = retrieve_downtown_one(&link, "", "application/ld+json").await;
+    let actual = retrieve_downtown_one(&environment.client(), &link, "", "application/ld+json").await;
     let expected = corpus(include_str!("corpus/c-2-3-normalized.json"));
     assert_matches_example("C.2.3 normalized", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_3_parking_concise_representation() {
     let environment = clean_tenant().await;
-    let link = seed_parking().await;
+    let link = seed_parking(&environment.client()).await;
 
-    let actual = retrieve_downtown_one(&link, "?format=concise", "application/ld+json").await;
+    let actual = retrieve_downtown_one(&environment.client(), &link, "?format=concise", "application/ld+json").await;
     let expected = corpus(include_str!("corpus/c-2-3-concise.json"));
     assert_matches_example("C.2.3 concise", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_3_parking_simplified_representation() {
     let environment = clean_tenant().await;
-    let link = seed_parking().await;
+    let link = seed_parking(&environment.client()).await;
 
-    let actual = retrieve_downtown_one(&link, "?format=simplified", "application/ld+json").await;
+    let actual = retrieve_downtown_one(&environment.client(), &link, "?format=simplified", "application/ld+json").await;
     let expected = corpus(include_str!("corpus/c-2-3-simplified.json"));
     assert_matches_example("C.2.3 simplified", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_3_parking_normalized_geojson_representation_of_a_single_entity() {
     let environment = clean_tenant().await;
-    let link = seed_parking().await;
+    let link = seed_parking(&environment.client()).await;
 
-    let actual = retrieve_downtown_one(&link, "", "application/geo+json").await;
+    let actual = retrieve_downtown_one(&environment.client(), &link, "", "application/geo+json").await;
     let expected = corpus(include_str!("corpus/c-2-3-geojson-normalized.json"));
     assert_matches_example("C.2.3 normalized GeoJSON", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_3_parking_concise_geojson_representation_of_a_single_entity() {
     let environment = clean_tenant().await;
-    let link = seed_parking().await;
+    let link = seed_parking(&environment.client()).await;
 
-    let actual = retrieve_downtown_one(&link, "?format=concise", "application/geo+json").await;
+    let actual = retrieve_downtown_one(&environment.client(), &link, "?format=concise", "application/geo+json").await;
     let expected = corpus(include_str!("corpus/c-2-3-geojson-concise.json"));
     assert_matches_example("C.2.3 concise GeoJSON", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_3_parking_simplified_geojson_representation_of_a_single_entity() {
     let environment = clean_tenant().await;
-    let link = seed_parking().await;
+    let link = seed_parking(&environment.client()).await;
 
-    let actual = retrieve_downtown_one(&link, "?format=simplified", "application/geo+json").await;
+    let actual = retrieve_downtown_one(&environment.client(), &link, "?format=simplified", "application/geo+json").await;
     let expected = corpus(include_str!("corpus/c-2-3-geojson-simplified.json"));
     assert_matches_example("C.2.3 simplified GeoJSON", &expected, &actual, ContextMember::Ignored, EntityOrder::AsPrinted);
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_3_parking_normalized_geojson_representation_of_multiple_entities() {
     let environment = clean_tenant().await;
-    let link = seed_parking().await;
+    let link = seed_parking(&environment.client()).await;
 
-    let actual = query_parking(&link, "", "application/geo+json").await;
+    let actual = query_parking(&environment.client(), &link, "", "application/geo+json").await;
     let expected = corpus(include_str!("corpus/c-2-3-geojson-normalized-collection.json"));
     assert_matches_example(
         "C.2.3 normalized GeoJSON FeatureCollection",
@@ -148,16 +133,15 @@ async fn annex_c_2_3_parking_normalized_geojson_representation_of_multiple_entit
         EntityOrder::AsPrinted,
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_3_parking_concise_geojson_representation_of_multiple_entities() {
     let environment = clean_tenant().await;
-    let link = seed_parking().await;
+    let link = seed_parking(&environment.client()).await;
 
-    let actual = query_parking(&link, "&format=concise", "application/geo+json").await;
+    let actual = query_parking(&environment.client(), &link, "&format=concise", "application/geo+json").await;
     let expected = corpus(include_str!("corpus/c-2-3-geojson-concise-collection.json"));
     assert_matches_example(
         "C.2.3 concise GeoJSON FeatureCollection",
@@ -167,16 +151,15 @@ async fn annex_c_2_3_parking_concise_geojson_representation_of_multiple_entities
         EntityOrder::AsPrinted,
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 #[tokio::test]
-#[serial]
 async fn annex_c_2_3_parking_simplified_geojson_representation_of_multiple_entities() {
     let environment = clean_tenant().await;
-    let link = seed_parking().await;
+    let link = seed_parking(&environment.client()).await;
 
-    let actual = query_parking(&link, "&format=simplified", "application/geo+json").await;
+    let actual = query_parking(&environment.client(), &link, "&format=simplified", "application/geo+json").await;
     let expected = corpus(include_str!("corpus/c-2-3-geojson-simplified-collection.json"));
     assert_matches_example(
         "C.2.3 simplified GeoJSON FeatureCollection",
@@ -186,7 +169,7 @@ async fn annex_c_2_3_parking_simplified_geojson_representation_of_multiple_entit
         EntityOrder::AsPrinted,
     );
 
-    environment.reset_and_finish().await.expect("tenant reset");
+    environment.finish().await;
 }
 
 /// Order a `FeatureCollection`'s features by `id`.

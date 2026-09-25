@@ -2,14 +2,11 @@
 //! Provision: Add @context tests (NGSI-LD 6.25.3.1)
 
 use reqwest::StatusCode;
-use serial_test::serial;
 use std::collections::HashMap;
 
 use crate::{
     ContextServer,
     INVALID_REQUEST_TYPE,
-    clean_database,
-    client,
     create_context,
     create_entity,
     create_subscription,
@@ -18,16 +15,19 @@ use crate::{
     extract_id,
     get_context,
     list_contexts,
+    provision_tenant,
+    tenant_client,
     unique_id,
 };
+use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use serde_json::json;
 
 /// `050_01_01`: Add valid hosted @context from key-value dictionary -> 201.
 #[tokio::test]
-#[serial]
 async fn add_valid_context_dictionary_returns_201() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
 
     let body = json!({
         "@context": {
@@ -47,14 +47,15 @@ async fn add_valid_context_dictionary_returns_201() {
     pretty_assertions::assert_eq!(detail["kind"], "Hosted");
 
     let _ = resp_body;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `050_01_02`: Add valid hosted @context from URI list -> 201.
 #[tokio::test]
-#[serial]
 async fn add_valid_context_uri_list_returns_201() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
 
     let body = json!({
         "@context": [
@@ -65,12 +66,15 @@ async fn add_valid_context_uri_list_returns_201() {
     let (status, location, _) = create_context(&c, &body).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     assert!(location.is_some(), "should have Location header");
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `050_02_01`: Add @context with incorrect payload (missing @context key) -> 400.
 #[tokio::test]
 async fn add_invalid_context_missing_key_returns_400() {
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
 
     // No @context key -- just bare attributes
     let body = json!({
@@ -81,24 +85,28 @@ async fn add_invalid_context_missing_key_returns_400() {
     let (status, _, body) = create_context(&c, &body).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `050_02_02`: Add @context with malformed JSON (empty object) -> 400.
 #[tokio::test]
 async fn add_invalid_context_empty_object_returns_400() {
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
 
     let body = json!({});
     let (status, _, _) = create_context(&c, &body).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `050_03_01`: `ImplicitlyCreated` @context via subscription creation.
 #[tokio::test]
-#[serial]
 async fn add_implicitly_created_context_via_subscription() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
 
     let sub = json!({
         "type": "Subscription",
@@ -122,14 +130,15 @@ async fn add_implicitly_created_context_via_subscription() {
     assert!(!contexts.is_empty(), "should have at least one ImplicitlyCreated context");
 
     delete_subscription(&c, &sub_id).await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// `050_04_01`: Add hosted @context with URI references, verify URIs become cached.
 #[tokio::test]
-#[serial]
 async fn add_hosted_context_with_cached_uri_refs() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
 
     let ctx_content = r#"{"@context":{"X1":"urn:ngsi-ld:attributes:X1"}}"#;
     let server = ContextServer::start(HashMap::from([("/context.jsonld".to_string(), ctx_content.to_string())])).await;
@@ -170,14 +179,15 @@ async fn add_hosted_context_with_cached_uri_refs() {
 
     delete_entity(&c, &entity_id).await;
     server.shutdown().await;
+    env.finish().await.expect("cleanup failed");
 }
 
 /// Additional: Add @context with a single string URI -> 201.
 #[tokio::test]
-#[serial]
 async fn add_context_single_string_uri_returns_201() {
-    let _serialized_environment = clean_database().await;
-    let c = client();
+    let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    provision_tenant(&c).await;
 
     let body = json!({
         "@context": "http://smartdatamodels.org/context.jsonld"
@@ -185,4 +195,5 @@ async fn add_context_single_string_uri_returns_201() {
     let (status, location, _) = create_context(&c, &body).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     assert!(location.is_some(), "should have Location header");
+    env.finish().await.expect("cleanup failed");
 }

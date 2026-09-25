@@ -6,7 +6,7 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::{entity, property, vehicle},
+    entity::{entity, property, typed_vehicle, vehicle},
     oracle::{assert_problem_details, assert_status, entity_map_header, json_body},
     reg::PEER_ENDPOINT,
     registration::CsrBuilder,
@@ -17,6 +17,7 @@ use axum::http::Method;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::time::Duration;
+use urlencoding::encode;
 
 /// Budget for a forwarded request to reach the mock context source.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -278,9 +279,10 @@ async fn distop_entity_exclusive_registration_with_id_pattern_rejected() {
 #[tokio::test]
 async fn distop_entity_exclusive_registration_type_only_rejected() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let registration = CsrBuilder::new(&topology.id("registration:exclusive-typeonly"), PEER_ENDPOINT)
         .mode("exclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .property_names(&["speed"])
         .build();
     let rejected = topology
@@ -323,14 +325,16 @@ async fn distop_entity_exclusive_registration_without_attributes_rejected() {
 #[tokio::test]
 async fn distop_entity_exclusive_relevance_inferred_without_entity_map() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:exclusive-relevance");
-    mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([vehicle(&entity_id, 33)]))
+    mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([typed_vehicle(&entity_id, &vtype, 33)]))
         .await;
 
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:exclusive-relevance"), &endpoint)
         .mode("exclusive")
+        .entity_type(&vtype)
         .entity_id(&entity_id)
         .property_names(&["speed"])
         .operations(&["queryEntity"])
@@ -350,7 +354,7 @@ async fn distop_entity_exclusive_relevance_inferred_without_entity_map() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
+        .query_entities(&format!("type={}&id={entity_id}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);

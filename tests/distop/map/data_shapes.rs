@@ -6,7 +6,7 @@
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
-    entity::vehicle,
+    entity::typed_vehicle,
     map::entity_map_request::{create_entity_map, update_entity_map},
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
@@ -21,21 +21,25 @@ use std::collections::BTreeSet;
 
 /// Create a `Vehicle` and an `EntityMap` over it, returning the entity id and the
 /// created map body.
-async fn map_over_vehicle(topology: &MultiBrokerTopology<BrokerRole>, local: &str) -> (String, Value) {
+async fn map_over_vehicle(topology: &MultiBrokerTopology<BrokerRole>, entity_type: &str, local: &str) -> (String, Value) {
     let entity_id = topology.id(local);
     assert_status(
         &topology
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&entity_id, 20))
+            .post_entity(&typed_vehicle(&entity_id, entity_type, 20))
             .with_ld_json()
             .send()
             .await
             .expect("create entity"),
         201,
     );
-    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
+    let created = create_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type={}", urlencoding::encode(entity_type)),
+    )
+    .await;
     assert_status(&created, 201);
     (entity_id, json_body(&created))
 }
@@ -57,7 +61,8 @@ async fn identity(topology: &MultiBrokerTopology<BrokerRole>) -> Value {
 #[tokio::test]
 async fn entity_map_id_is_valid_uri() {
     let topology = topology::single().await.expect("single-broker topology");
-    let (_, map) = map_over_vehicle(&topology, "Vehicle:shape-id").await;
+    let vtype = topology.id("Vehicle");
+    let (_, map) = map_over_vehicle(&topology, &vtype, "Vehicle:shape-id").await;
     let id = map["id"].as_str().unwrap_or_default();
     assert!(id.starts_with("urn:") || id.starts_with("http"), "the map id is a URI: {id}");
     topology.finish().await.expect("topology cleanup");
@@ -67,7 +72,8 @@ async fn entity_map_id_is_valid_uri() {
 #[tokio::test]
 async fn entity_map_type_is_entity_map() {
     let topology = topology::single().await.expect("single-broker topology");
-    let (_, map) = map_over_vehicle(&topology, "Vehicle:shape-type").await;
+    let vtype = topology.id("Vehicle");
+    let (_, map) = map_over_vehicle(&topology, &vtype, "Vehicle:shape-type").await;
     assert_eq!(map["type"].as_str(), Some("EntityMap"), "the map type is EntityMap");
     topology.finish().await.expect("topology cleanup");
 }
@@ -76,7 +82,8 @@ async fn entity_map_type_is_entity_map() {
 #[tokio::test]
 async fn entity_map_expires_at_is_datetime() {
     let topology = topology::single().await.expect("single-broker topology");
-    let (_, map) = map_over_vehicle(&topology, "Vehicle:shape-expires").await;
+    let vtype = topology.id("Vehicle");
+    let (_, map) = map_over_vehicle(&topology, &vtype, "Vehicle:shape-expires").await;
     let expires_at = map["expiresAt"].as_str().unwrap_or_default();
     assert!(
         DateTime::parse_from_rfc3339(expires_at).is_ok(),
@@ -89,7 +96,8 @@ async fn entity_map_expires_at_is_datetime() {
 #[tokio::test]
 async fn entity_map_output_only_fields_ignored_on_input() {
     let topology = topology::single().await.expect("single-broker topology");
-    let (_, map) = map_over_vehicle(&topology, "Vehicle:shape-output-only").await;
+    let vtype = topology.id("Vehicle");
+    let (_, map) = map_over_vehicle(&topology, &vtype, "Vehicle:shape-output-only").await;
     let map_id = map["id"].as_str().unwrap_or_else(|| panic!("map has an id")).to_owned();
     let before = map["entityMap"].clone();
     let patch = json!({ "expiresAt": "2999-01-01T00:00:00Z", "entityMap": { "urn:fake": ["@none"] } });
@@ -115,7 +123,8 @@ async fn entity_map_output_only_fields_ignored_on_input() {
 #[tokio::test]
 async fn entity_map_element_shape_entity_to_csr_list() {
     let topology = topology::single().await.expect("single-broker topology");
-    let (entity_id, map) = map_over_vehicle(&topology, "Vehicle:shape-element").await;
+    let vtype = topology.id("Vehicle");
+    let (entity_id, map) = map_over_vehicle(&topology, &vtype, "Vehicle:shape-element").await;
     let holders = map["entityMap"].get(&entity_id).unwrap_or_else(|| panic!("the entity is mapped"));
     assert!(holders.is_array(), "the element maps an id to a list of holders: {holders}");
     topology.finish().await.expect("topology cleanup");
@@ -126,7 +135,8 @@ async fn entity_map_element_shape_entity_to_csr_list() {
 #[tokio::test]
 async fn entity_map_none_key_marks_locally_held() {
     let topology = topology::single().await.expect("single-broker topology");
-    let (entity_id, map) = map_over_vehicle(&topology, "Vehicle:shape-none").await;
+    let vtype = topology.id("Vehicle");
+    let (entity_id, map) = map_over_vehicle(&topology, &vtype, "Vehicle:shape-none").await;
     let holders = map["entityMap"].get(&entity_id).and_then(Value::as_array).cloned().unwrap_or_default();
     assert!(
         holders.iter().any(|holder| holder.as_str() == Some("@none")),
@@ -140,6 +150,7 @@ async fn entity_map_none_key_marks_locally_held() {
 #[tokio::test]
 async fn entity_map_linked_maps_shape_csr_to_map_id() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let mock = ContextSourceAdapter::start().await;
     let remote_map = json!({ "id": "urn:ngsi-ld:EntityMap:remote", "type": "EntityMap", "entityMap": {}, "linkedMaps": {} });
     mock.set_stub_with_body(Method::GET, "/entityMaps", 201, &remote_map).await;
@@ -147,7 +158,7 @@ async fn entity_map_linked_maps_shape_csr_to_map_id() {
     mock.set_stub_with_body(Method::GET, "/entities", 200, &json!([])).await;
     let registration = CsrBuilder::new(&topology.id("registration:linked-shape"), &mock.url(""))
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["federationOps"])
         .build();
     assert_status(
@@ -165,14 +176,18 @@ async fn entity_map_linked_maps_shape_csr_to_map_id() {
             .broker(BrokerRole::A)
             .expect("topology broker A")
             .client()
-            .post_entity(&vehicle(&topology.id("Vehicle:linked-shape"), 20))
+            .post_entity(&typed_vehicle(&topology.id("Vehicle:linked-shape"), &vtype, 20))
             .with_ld_json()
             .send()
             .await
             .expect("create entity"),
         201,
     );
-    let created = create_entity_map(topology.broker(BrokerRole::A).expect("topology broker A").client(), "type=Vehicle").await;
+    let created = create_entity_map(
+        topology.broker(BrokerRole::A).expect("topology broker A").client(),
+        &format!("type={}", urlencoding::encode(&vtype)),
+    )
+    .await;
     assert_status(&created, 201);
     assert!(json_body(&created)["linkedMaps"].is_object(), "linkedMaps maps CSR ids to map ids");
     mock.shutdown().await;

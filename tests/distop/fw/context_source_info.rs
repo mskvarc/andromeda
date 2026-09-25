@@ -17,6 +17,7 @@ use axum::http::Method;
 use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::json;
 use std::time::Duration;
+use urlencoding::encode;
 
 /// Budget for a forwarded request to reach the mock context source.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -33,10 +34,11 @@ async fn distop_entity_csi_static_header_conveyed_on_forward() {
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:csi-static"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .context_source_info("X-Auth", "abcd")
         .build();
@@ -55,7 +57,7 @@ async fn distop_entity_csi_static_header_conveyed_on_forward() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -80,10 +82,11 @@ async fn distop_entity_csi_urn_request_copies_from_triggering_request() {
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:csi-urn"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .context_source_info("user", "urn:ngsi-ld:request")
         .build();
@@ -102,7 +105,7 @@ async fn distop_entity_csi_urn_request_copies_from_triggering_request() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type={}", encode(&vtype)))
         .header("user", "abcd")
         .header("accept", "application/ld+json")
         .send()
@@ -129,17 +132,21 @@ async fn distop_entity_csi_tenant_never_placed_inside_context_source_info() {
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let tenant = TenantName::parse("distopTenantCsi").expect("valid tenant name");
     let tenant_client = topology.broker(BrokerRole::A).expect("topology broker A").tenant_client(tenant);
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:csi-tenant"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(&tenant_client.create_registration(&registration).await.expect("create registration"), 201);
 
-    let response = tenant_client.query_entities("type=Vehicle", "application/ld+json", None).await.expect("query");
+    let response = tenant_client
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
+        .await
+        .expect("query");
     assert_status(&response, 200);
 
     let forwarded = mock.next_request(CAPTURE_TIMEOUT).await;
@@ -213,10 +220,11 @@ async fn distop_entity_csi_accept_ld_json_sets_forwarded_accept() {
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:csi-accept-ld"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .context_source_info("accept", "application/ld+json")
         .build();
@@ -235,7 +243,7 @@ async fn distop_entity_csi_accept_ld_json_sets_forwarded_accept() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -256,10 +264,11 @@ async fn distop_entity_csi_accept_plain_json_sets_forwarded_accept() {
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
+    let vtype = topology.id("Vehicle");
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:csi-accept-json"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .context_source_info("accept", "application/json")
         .build();
@@ -278,7 +287,7 @@ async fn distop_entity_csi_accept_plain_json_sets_forwarded_accept() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", None)
+        .query_entities(&format!("type={}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);
@@ -296,9 +305,10 @@ async fn distop_entity_csi_accept_plain_json_sets_forwarded_accept() {
 #[tokio::test]
 async fn distop_entity_csi_accept_invalid_rejected_at_registration() {
     let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
     let registration = CsrBuilder::new(&topology.id("registration:csi-accept-invalid"), PEER_ENDPOINT)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .context_source_info("accept", "text/plain")
         .build();
     let rejected = topology
@@ -320,15 +330,16 @@ async fn distop_entity_csi_accept_invalid_rejected_at_registration() {
 async fn distop_entity_csi_source_response_converted_to_client_type() {
     let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:csi-convert");
-    let source_body = json!([{ "id": entity_id, "type": "Vehicle", "speed": { "type": "Property", "value": 42 } }]).to_string();
+    let source_body = json!([{ "id": entity_id, "type": vtype, "speed": { "type": "Property", "value": 42 } }]).to_string();
     mock.set_stub_with_raw_body(Method::GET, FORWARDED_ENTITIES, 200, &source_body, "application/json")
         .await;
 
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:csi-convert"), &endpoint)
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(&vtype)
         .operations(&["queryEntity"])
         .build();
     assert_status(
@@ -346,7 +357,7 @@ async fn distop_entity_csi_source_response_converted_to_client_type() {
         .broker(BrokerRole::A)
         .expect("topology broker A")
         .client()
-        .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
+        .query_entities(&format!("type={}&id={entity_id}", encode(&vtype)), "application/ld+json", None)
         .await
         .expect("query");
     assert_status(&response, 200);

@@ -9,7 +9,7 @@ use crate::{
     entity::{entity, property},
     map::{
         notification_inspection::{notified_entities, notifies_entity},
-        subscription_document::subscription,
+        subscription_document::{set_entity_type, subscription},
     },
     notification_adapter::NotificationAdapter,
     oracle::assert_status,
@@ -26,11 +26,11 @@ use std::time::Duration;
 const DELIVER: Duration = Duration::from_secs(12);
 
 /// Register an inclusive `Vehicle` source on the front broker pointing at `role`.
-async fn register_source(topology: &MultiBrokerTopology<BrokerRole>, role: BrokerRole, registration_local: &str) {
+async fn register_source(topology: &MultiBrokerTopology<BrokerRole>, role: BrokerRole, entity_type: &str, registration_local: &str) {
     let peer = topology.broker(role).expect("topology broker for role");
     let registration = CsrBuilder::new(&topology.id(registration_local), peer.peer_url())
         .mode("inclusive")
-        .entity_type("Vehicle")
+        .entity_type(entity_type)
         .operations(&["federationOps"])
         .build();
     assert_status(
@@ -53,10 +53,10 @@ async fn register_source(topology: &MultiBrokerTopology<BrokerRole>, role: Broke
 /// default setting of the deployment allows split entities", and the
 /// deployment default is complete. Returns nothing; the caller triggers a
 /// change and asserts.
-async fn setup_split(topology: &MultiBrokerTopology<BrokerRole>, receiver: &NotificationAdapter, entity_id: &str, subscription_id: &str) {
-    register_source(topology, BrokerRole::B, "registration:split-b").await;
-    register_source(topology, BrokerRole::C, "registration:split-c").await;
-    let on_b = entity(entity_id, "Vehicle", &[("speed", property(json!(40)))]);
+async fn setup_split(topology: &MultiBrokerTopology<BrokerRole>, receiver: &NotificationAdapter, entity_type: &str, entity_id: &str, subscription_id: &str) {
+    register_source(topology, BrokerRole::B, entity_type, "registration:split-b").await;
+    register_source(topology, BrokerRole::C, entity_type, "registration:split-c").await;
+    let on_b = entity(entity_id, entity_type, &[("speed", property(json!(40)))]);
     assert_status(
         &topology
             .broker(BrokerRole::B)
@@ -69,7 +69,7 @@ async fn setup_split(topology: &MultiBrokerTopology<BrokerRole>, receiver: &Noti
             .expect("create B part"),
         201,
     );
-    let on_c = entity(entity_id, "Vehicle", &[("colour", property(json!("red")))]);
+    let on_c = entity(entity_id, entity_type, &[("colour", property(json!("red")))]);
     assert_status(
         &topology
             .broker(BrokerRole::C)
@@ -83,6 +83,7 @@ async fn setup_split(topology: &MultiBrokerTopology<BrokerRole>, receiver: &Noti
         201,
     );
     let mut split_subscription = subscription(subscription_id, &receiver.endpoint_url());
+    set_entity_type(&mut split_subscription, entity_type);
     split_subscription["splitEntities"] = json!(true);
     assert_status(
         &topology
@@ -117,9 +118,10 @@ async fn trigger_on_b(topology: &MultiBrokerTopology<BrokerRole>, entity_id: &st
 async fn notif_csf_limits_to_matching_origin_entities() {
     let topology = topology::chain().await.expect("three-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:csf-origin");
     let subscription_id = topology.id("Subscription:csf-origin");
-    setup_split(&topology, &receiver, &entity_id, &subscription_id).await;
+    setup_split(&topology, &receiver, &vtype, &entity_id, &subscription_id).await;
     trigger_on_b(&topology, &entity_id).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, DELIVER).await;
     assert!(
@@ -136,9 +138,10 @@ async fn notif_csf_limits_to_matching_origin_entities() {
 async fn reassembly_inbound_mapped_subscription_id_creates_copy() {
     let topology = topology::chain().await.expect("three-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:mapped-copy");
     let subscription_id = topology.id("Subscription:mapped-copy");
-    setup_split(&topology, &receiver, &entity_id, &subscription_id).await;
+    setup_split(&topology, &receiver, &vtype, &entity_id, &subscription_id).await;
     trigger_on_b(&topology, &entity_id).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, DELIVER).await;
     assert_eq!(
@@ -156,9 +159,10 @@ async fn reassembly_inbound_mapped_subscription_id_creates_copy() {
 async fn reassembly_split_retrieves_local_and_all_holders_except_sender() {
     let topology = topology::chain().await.expect("three-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:holders-except-sender");
     let subscription_id = topology.id("Subscription:holders-except-sender");
-    setup_split(&topology, &receiver, &entity_id, &subscription_id).await;
+    setup_split(&topology, &receiver, &vtype, &entity_id, &subscription_id).await;
     trigger_on_b(&topology, &entity_id).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, DELIVER).await;
     let entities: Vec<Value> = notified_entities(&notification);
@@ -181,9 +185,10 @@ async fn reassembly_split_retrieves_local_and_all_holders_except_sender() {
 async fn reassembly_merges_retrieved_with_data_member() {
     let topology = topology::chain().await.expect("three-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:merge-data");
     let subscription_id = topology.id("Subscription:merge-data");
-    setup_split(&topology, &receiver, &entity_id, &subscription_id).await;
+    setup_split(&topology, &receiver, &vtype, &entity_id, &subscription_id).await;
     trigger_on_b(&topology, &entity_id).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, DELIVER).await;
     let entities: Vec<Value> = notified_entities(&notification);
@@ -206,10 +211,11 @@ async fn reassembly_merges_retrieved_with_data_member() {
 async fn reassembly_removes_non_matching_after_merge() {
     let topology = topology::chain().await.expect("three-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:remove-nonmatching");
     let subscription_id = topology.id("Subscription:remove-nonmatching");
-    register_source(&topology, BrokerRole::B, "registration:remove-b").await;
-    let on_b = entity(&entity_id, "Vehicle", &[("speed", property(json!(90)))]);
+    register_source(&topology, BrokerRole::B, &vtype, "registration:remove-b").await;
+    let on_b = entity(&entity_id, &vtype, &[("speed", property(json!(90)))]);
     assert_status(
         &topology
             .broker(BrokerRole::B)
@@ -223,6 +229,7 @@ async fn reassembly_removes_non_matching_after_merge() {
         201,
     );
     let mut body = subscription(&subscription_id, &receiver.endpoint_url());
+    set_entity_type(&mut body, &vtype);
     body["q"] = json!("speed>50");
     assert_status(
         &topology
@@ -250,9 +257,10 @@ async fn reassembly_removes_non_matching_after_merge() {
 async fn reassembly_non_empty_copy_forwarded_to_local_endpoint_with_local_id() {
     let topology = topology::chain().await.expect("three-broker topology");
     let receiver = NotificationAdapter::start().await;
+    let vtype = topology.id("Vehicle");
     let entity_id = topology.id("Vehicle:local-endpoint-copy");
     let subscription_id = topology.id("Subscription:local-endpoint-copy");
-    setup_split(&topology, &receiver, &entity_id, &subscription_id).await;
+    setup_split(&topology, &receiver, &vtype, &entity_id, &subscription_id).await;
     trigger_on_b(&topology, &entity_id).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, DELIVER).await;
     assert_eq!(
