@@ -1,39 +1,14 @@
-//! An engine bound to one `@context`, as a query-term compactor.
+//! A [`NameCompactor`], as a query-term compactor.
 //!
 //! The mirror of [`crate::term_expansion`]: `andromeda-ngsi-ld-query` states
 //! what it needs to spell a stored filter in a reader's terms and names
-//! nothing here; binding an engine and a context to that trait happens on
-//! this side of the boundary.
+//! nothing here; binding the compactor one rendering already holds to that
+//! trait happens on this side of the boundary.
 
-use crate::{
-    compaction::{compact_attr_iri, compact_type_iri},
-    context_spec::ContextSpec,
-    engine::processor::JsonLdEngine,
-};
+use crate::compaction::NameCompactor;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::term_compactor::TermCompactor;
 use std::future::Future;
-
-/// A [`JsonLdEngine`] paired with the `@context` one response is rendered
-/// under.
-///
-/// Borrowed rather than owned: it lives for one rendering and both halves
-/// outlive it.
-#[derive(Debug, Clone)]
-pub struct ContextualCompactor<'a> {
-    /// The processor that performs the compaction.
-    engine: &'a JsonLdEngine,
-    /// The context every IRI is compacted against.
-    context: &'a ContextSpec,
-}
-
-impl<'a> ContextualCompactor<'a> {
-    /// Bind an engine to a context for one rendering.
-    #[must_use]
-    pub const fn new(engine: &'a JsonLdEngine, context: &'a ContextSpec) -> ContextualCompactor<'a> {
-        ContextualCompactor { engine, context }
-    }
-}
 
 /// The name a compacted spelling becomes, or the original when the spelling
 /// is not one the clause 4.6.2 name grammar accepts.
@@ -49,19 +24,19 @@ fn compacted_or_original(compacted: &str, original: &AttributeName) -> Attribute
 // Spelled with the trait's own `impl Future` return rather than as `async fn`
 // bodies, for the same rustdoc reason `ContextualExpander` gives
 // (rust-lang/rust#100013).
-impl TermCompactor for ContextualCompactor<'_> {
+impl TermCompactor for NameCompactor<'_> {
     fn compact_term(&self, name: &AttributeName) -> impl Future<Output = AttributeName> + Send {
-        let (engine, context) = (self.engine, self.context);
+        let names: &NameCompactor<'_> = self;
         async move {
-            let compacted = compact_attr_iri(engine, name.as_str(), context).await;
+            let compacted = names.compact_attr_iri(name.as_str()).await;
             compacted_or_original(&compacted, name)
         }
     }
 
     fn compact_type(&self, name: &AttributeName) -> impl Future<Output = AttributeName> + Send {
-        let (engine, context) = (self.engine, self.context);
+        let names: &NameCompactor<'_> = self;
         async move {
-            let compacted = compact_type_iri(engine, name.as_str(), context).await;
+            let compacted = names.compact_type_iri(name.as_str()).await;
             compacted_or_original(&compacted, name)
         }
     }
@@ -69,7 +44,7 @@ impl TermCompactor for ContextualCompactor<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_compaction::ContextualCompactor};
+    use crate::{compaction::NameCompactor, context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
         filter::{compaction::compact_q_expr, parser, serialize::serialize},
@@ -90,7 +65,7 @@ mod tests {
     async fn a_core_context_iri_compacts_back_to_its_term() {
         let engine = offline_engine();
         let context = ContextSpec::none();
-        let compactor = ContextualCompactor::new(&engine, &context);
+        let compactor = NameCompactor::new(&engine, &context);
 
         let compacted = compactor.compact_type(&name(classes::PROPERTY.as_str())).await;
 
@@ -101,7 +76,7 @@ mod tests {
     async fn an_iri_no_context_abbreviates_is_answered_as_given() {
         let engine = offline_engine();
         let context = ContextSpec::core_only();
-        let compactor = ContextualCompactor::new(&engine, &context);
+        let compactor = NameCompactor::new(&engine, &context);
         let iri = name("https://example.com/vocab#unknownTerm");
 
         pretty_assertions::assert_eq!(compactor.compact_term(&iri).await, iri);
@@ -114,7 +89,7 @@ mod tests {
     async fn a_default_context_filter_reads_back_in_its_terms() {
         let engine = offline_engine();
         let context = ContextSpec::none();
-        let compactor = ContextualCompactor::new(&engine, &context);
+        let compactor = NameCompactor::new(&engine, &context);
         let stored = parser::parse("\"https://uri.etsi.org/ngsi-ld/default-context/speed\">10").expect("parses");
 
         let compacted = compact_q_expr(stored, &compactor).await;

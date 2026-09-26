@@ -3,7 +3,7 @@
 
 use crate::{
     error::EntityError,
-    query::{EntityQueryService, projection_remainder::projection_remainder},
+    query::{EntityQueryService, attribute_expansion::AttributeExpansions, projection_remainder::projection_remainder},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::entity::Entity;
@@ -15,18 +15,23 @@ use iri_rs::IriBuf;
 
 impl EntityQueryService {
     /// Apply `attrs`, `pick` and `omit` to every entity in a result set.
+    ///
+    /// The context is prepared once for the whole set, and each distinct
+    /// member name is expanded once however many entities carry it.
     pub(super) async fn apply_projection(&self, entities: Vec<Entity>, query: &CompiledEntityQuery, context: &ContextSpec) -> Result<Vec<Entity>, EntityError> {
         if query.projection.pick.is_empty() && query.projection.omit.is_empty() && query.selection.attrs.is_empty() {
             return Ok(entities);
         }
 
+        let prepared = self.engine().prepare_term_context(context);
+        let mut expansions = AttributeExpansions::new(self.engine(), &prepared);
         let mut projected = Vec::with_capacity(entities.len());
         for mut entity in entities {
             if !query.selection.attrs.is_empty() {
-                self.filter_entity_attrs(&mut entity, &query.selection.attrs, context).await?;
+                filter_entity_attrs(&mut entity, &query.selection.attrs, &mut expansions).await?;
             }
 
-            self.project_entity(&mut entity, &query.projection, context).await?;
+            project_entity(&mut entity, &query.projection, &mut expansions).await?;
             // Clause 5.7.2.5 reduces "every Entity within the payload body" to
             // the members the projection defines. An Entity reduced to none of
             // them is not in the payload, so it is dropped from the result
@@ -40,99 +45,70 @@ impl EntityQueryService {
 
         Ok(projected)
     }
-
-    /// Apply one compiled `pick`/`omit` projection to a single entity.
-    ///
-    /// The attribute members the projection excludes are removed, and the
-    /// clause 4.21 structural rule is applied to `scope`. `id` and `type`
-    /// are members of the *rendered* representation, not of the typed
-    /// [`Entity`], so their half of the rule belongs to the renderer.
-    ///
-    /// Public because a subscription's `notification.pick`/`omit` (clause
-    /// 5.8.6) is the same clause 4.21 projection applied to an entity on its
-    /// way to a subscriber rather than to a client.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EntityError`] when an attribute key cannot be expanded
-    /// through the context.
-    pub async fn project_entity(&self, entity: &mut Entity, projection: &Projection, context: &ContextSpec) -> Result<(), EntityError> {
-        if !projection.pick.is_empty() {
-            let names = member_names(entity);
-            let mut names_to_remove = Vec::new();
-            for name in &names {
-                let iri = self.expanded_key(name, context).await?;
-                if !projection.pick.iter().any(|term| term.matches_attribute(name, &iri)) {
-                    names_to_remove.push(name);
-                }
-            }
-            for name in names_to_remove {
-                entity.remove_attribute_member(name);
-            }
-        }
-
-        if !projection.omit.is_empty() {
-            let names = member_names(entity);
-            let mut names_to_remove = Vec::new();
-            for name in &names {
-                let iri = self.expanded_key(name, context).await?;
-                // Clause 4.21: `omit=rel{a}` omits `a` inside the entity `rel`
-                // links to, not `rel` itself. Only a bare `omit` term -- one
-                // carrying no linked sub-projection -- removes the attribute
-                // from the entity being projected here.
-                let removed = projection
-                    .omit
-                    .iter()
-                    .filter(|term| term.matches_attribute(name, &iri))
-                    .any(|term| term.linked_terms().is_empty());
-                if removed {
-                    names_to_remove.push(name);
-                }
-            }
-            for name in names_to_remove {
-                entity.remove_attribute_member(name);
-            }
-        }
-
-        apply_structural_scope_projection(entity, projection);
-        Ok(())
-    }
-
-    /// Retain only the attributes whose expanded IRI appears in `wanted_iris`.
-    ///
-    /// Public for the same reason as [`EntityQueryService::project_entity`]:
-    /// a subscription's `notification.attributes` (clause 5.8.6) is this
-    /// narrowing applied on the way to a subscriber.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EntityError`] when an attribute key cannot be expanded
-    /// through the context.
-    pub async fn filter_entity_attrs(&self, entity: &mut Entity, wanted_iris: &[IriBuf], context: &ContextSpec) -> Result<(), EntityError> {
-        let names = member_names(entity);
-        let mut names_to_remove = Vec::new();
-        for name in &names {
-            let iri = self.expanded_key(name, context).await?;
-            if !wanted_iris.contains(&iri) {
-                names_to_remove.push(name);
-            }
-        }
-        for name in names_to_remove {
-            entity.remove_attribute_member(name);
-        }
-        Ok(())
-    }
 }
 
-/// The entity's Attribute member names, owned, so the entity can be edited
-/// while the walk over them is still in progress.
+/// Apply one compiled `pick`/`omit` projection to a single entity.
 ///
-/// Clause 5.2.4 keeps `location`, `observationSpace` and `operationSpace` in
-/// their own Entity members, and [`Entity::attribute_member_names`] is what
-/// puts them back alongside the rest: a narrowing that read `attrs` alone
-/// would leave all three standing whatever the request selected.
-fn member_names(entity: &Entity) -> Vec<String> {
-    entity.attribute_member_names().map(ToOwned::to_owned).collect()
+/// The attribute members the projection excludes are removed, and the
+/// clause 4.21 structural rule is applied to `scope`. `id` and `type`
+/// are members of the *rendered* representation, not of the typed
+/// [`Entity`], so their half of the rule belongs to the renderer.
+///
+/// Public because a subscription's `notification.pick`/`omit` (clause
+/// 5.8.6) is the same clause 4.21 projection applied to an entity on its
+/// way to a subscriber rather than to a client.
+///
+/// # Errors
+///
+/// Returns [`EntityError`] when an attribute member name cannot be expanded
+/// through the context.
+pub async fn project_entity(entity: &mut Entity, projection: &Projection, expansions: &mut AttributeExpansions<'_>) -> Result<(), EntityError> {
+    if !projection.pick.is_empty() || !projection.omit.is_empty() {
+        expansions.cover(entity).await?;
+    }
+
+    if !projection.pick.is_empty() {
+        entity.retain_attribute_members(|name| {
+            expansions
+                .expanded(name)
+                .is_some_and(|iri| projection.pick.iter().any(|term| term.matches_attribute(name, iri)))
+        });
+    }
+
+    if !projection.omit.is_empty() {
+        // Clause 4.21: `omit=rel{a}` omits `a` inside the entity `rel` links
+        // to, not `rel` itself. Only a bare `omit` term -- one carrying no
+        // linked sub-projection -- removes the attribute from the entity being
+        // projected here.
+        entity.retain_attribute_members(|name| {
+            !expansions.expanded(name).is_some_and(|iri| {
+                projection
+                    .omit
+                    .iter()
+                    .filter(|term| term.matches_attribute(name, iri))
+                    .any(|term| term.linked_terms().is_empty())
+            })
+        });
+    }
+
+    apply_structural_scope_projection(entity, projection);
+    Ok(())
+}
+
+/// Retain only the attributes whose expanded IRI appears in `wanted_iris`.
+///
+/// Public for the same reason as [`project_entity`]: a subscription's
+/// `notification.attributes` (clause 5.8.6) is this narrowing applied on the
+/// way to a subscriber.
+///
+/// # Errors
+///
+/// Returns [`EntityError`] when an attribute member name cannot be expanded
+/// through the context.
+pub async fn filter_entity_attrs(entity: &mut Entity, wanted_iris: &[IriBuf], expansions: &mut AttributeExpansions<'_>) -> Result<(), EntityError> {
+    expansions.cover(entity).await?;
+    entity.retain_attribute_members(|name| expansions.expanded(name).is_some_and(|iri| wanted_iris.contains(iri)));
+    Ok(())
 }
 
 /// Apply the clause 4.21 structural-member rule to `scope`: with a

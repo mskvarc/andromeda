@@ -6,6 +6,8 @@ use crate::{
     expanded_member::unwrap_expanded_ref,
     query::{
         EntityQueryService,
+        attribute_expansion::AttributeExpansions,
+        attribute_projection::{filter_entity_attrs, project_entity},
         dataset_filter::filter_entity_by_dataset_id,
         projection_remainder::projection_remainder,
         pushdown_refusal::refuse_unnarrowable,
@@ -14,7 +16,7 @@ use crate::{
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::{
@@ -23,6 +25,7 @@ use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     pagination::CountPolicy,
     projection::compiled::Projection,
+    term_expander::TermExpander,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::{pagination_cursor::decode_cursor, query::entity::parameters::EntityQueryParameters};
@@ -75,36 +78,8 @@ impl EntityQueryService {
                 entity = entity.with_sys_attrs(&snapshot);
             }
 
-            if !narrowing.attrs.is_empty() {
-                let mut wanted_iris = Vec::with_capacity(narrowing.attrs.len());
-                for attr in narrowing.attrs {
-                    wanted_iris.push(self.expanded_key(attr.as_str(), context).await?);
-                }
-                self.filter_entity_attrs(&mut entity, &wanted_iris, context).await?;
-
-                // Clause 5.7.1.4: "If the optional Attribute list is present and
-                // the NGSI-LD endpoint does know about a matching Entity for the
-                // Entity ID, but this Entity does not have any of the Attributes in
-                // the Attribute list, then an error of type ResourceNotFound shall
-                // be raised."
-                if !entity.has_attribute_members() {
-                    return Err(EntityError::not_found(id));
-                }
-            }
-
-            // Clause 4.21 is applied before the clause 4.5.23 traversal reads the
-            // entity's Relationships, matching the query path, where the projection
-            // runs inside the query and the join follows it.
-            if let Some(projection) = narrowing.projection {
-                self.project_entity(&mut entity, projection, context).await?;
-                // Tables 6.4.3.2-1 and 5.2.14.1-1 make `attrs` "a synonym for
-                // pick", so the clause 5.7.1.4 rule above is the same rule here,
-                // and clause 5.7.1.5 reduces the Entity "down to only contain the
-                // defined Entity members" -- an Entity left with none of them is an
-                // Entity the retrieval cannot answer with.
-                if projection_remainder(&entity, projection).is_nothing() {
-                    return Err(EntityError::not_found(id));
-                }
+            if !narrowing.attrs.is_empty() || narrowing.projection.is_some() {
+                self.narrow_to_selection(&mut entity, id, narrowing, context).await?;
             }
 
             if !narrowing.dataset_ids.is_empty() {
@@ -116,6 +91,55 @@ impl EntityQueryService {
         .await;
         timer.finish_result(&result);
         result
+    }
+
+    /// Narrow a retrieved entity to the `attrs` list (clause 5.7.2) and the
+    /// clause 4.21 projection the request selected.
+    ///
+    /// The context is prepared once for both, and each member name expanded
+    /// once for both.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityError::not_found`] when the selection leaves the entity
+    /// with nothing to answer with, and whatever the context expansion failed
+    /// with otherwise.
+    async fn narrow_to_selection(&self, entity: &mut Entity, id: &Uri, narrowing: &RetrievalNarrowing<'_>, context: &ContextSpec) -> Result<(), EntityError> {
+        let prepared = self.engine().prepare_term_context(context);
+        let mut expansions = AttributeExpansions::new(self.engine(), &prepared);
+        if !narrowing.attrs.is_empty() {
+            let expander = ContextualExpander::new(self.engine(), &prepared);
+            let mut wanted_iris = Vec::with_capacity(narrowing.attrs.len());
+            for attr in narrowing.attrs {
+                wanted_iris.push(expander.expand_term(attr.as_str()).await?);
+            }
+            filter_entity_attrs(entity, &wanted_iris, &mut expansions).await?;
+
+            // Clause 5.7.1.4: "If the optional Attribute list is present and
+            // the NGSI-LD endpoint does know about a matching Entity for the
+            // Entity ID, but this Entity does not have any of the Attributes in
+            // the Attribute list, then an error of type ResourceNotFound shall
+            // be raised."
+            if !entity.has_attribute_members() {
+                return Err(EntityError::not_found(id));
+            }
+        }
+
+        // Clause 4.21 is applied before the clause 4.5.23 traversal reads the
+        // entity's Relationships, matching the query path, where the projection
+        // runs inside the query and the join follows it.
+        if let Some(projection) = narrowing.projection {
+            project_entity(entity, projection, &mut expansions).await?;
+            // Tables 6.4.3.2-1 and 5.2.14.1-1 make `attrs` "a synonym for
+            // pick", so the clause 5.7.1.4 rule above is the same rule here,
+            // and clause 5.7.1.5 reduces the Entity "down to only contain the
+            // defined Entity members" -- an Entity left with none of them is an
+            // Entity the retrieval cannot answer with.
+            if projection_remainder(entity, projection).is_nothing() {
+                return Err(EntityError::not_found(id));
+            }
+        }
+        Ok(())
     }
 
     /// Execute a parameterized entity query (clause 5.7.2), returning matching

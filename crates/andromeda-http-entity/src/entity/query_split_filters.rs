@@ -42,28 +42,27 @@ pub(crate) async fn retain_matching(
     context: &ContextSpec,
     instance: &HttpUri,
 ) -> Result<Vec<Entity>, ProblemResponse> {
+    // One preparation serves the deferred `q` and the geoquery alike.
+    let prepared_context = service.engine().prepare_term_context(context);
+    let term_expander = ContextualExpander::new(service.engine(), &prepared_context);
     let compiled_q = match deferred.q {
         Some(q_expr) => {
-            let prepared_context = service.engine().prepare_term_context(context);
-            let expander = ContextualExpander::new(service.engine(), &prepared_context);
             // Clause 4.9 EXAMPLE 11: the deferred filter is expanded under the
             // same `jsonKeys` declaration the local query used, so one request
             // has one expansion of one filter.
             let json_keys: JsonKeyAttributes = match deferred.json_keys {
-                Some(ref declared) => expand_attribute_names(declared, &expander)
+                Some(ref declared) => expand_attribute_names(declared, &term_expander)
                     .await
                     .with_entity_instance(instance)?
                     .into_iter()
                     .collect(),
                 None => JsonKeyAttributes::default(),
             };
-            Some(expand_q_expr(q_expr, &json_keys, &expander).await.with_entity_instance(instance)?)
+            Some(expand_q_expr(q_expr, &json_keys, &term_expander).await.with_entity_instance(instance)?)
         }
         None => None,
     };
-    let prepared_geo_context = service.engine().prepare_term_context(context);
-    let geo_expander = ContextualExpander::new(service.engine(), &prepared_geo_context);
-    let compiled_geo = compile_geo_query(deferred.geo.as_ref(), &geo_expander).await.with_entity_instance(instance)?;
+    let compiled_geo = compile_geo_query(deferred.geo.as_ref(), &term_expander).await.with_entity_instance(instance)?;
     let compiled_scope = deferred.scope_q;
 
     let mut matching = Vec::with_capacity(entities.len());

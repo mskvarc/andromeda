@@ -16,7 +16,7 @@ use andromeda_delivery::{
     endpoint::transport::{EndpointTransport, parse_endpoint_transport},
     request::NotificationDelivery,
 };
-use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::{
     notification::{CsourceNotification, CsourceNotificationType, CsrTriggerReason},
@@ -90,9 +90,10 @@ impl CsourceNotificationDelivery {
         subscription: &CompiledCsrSubscription,
     ) -> Result<Vec<Value>, NotificationError> {
         let context = ContextSpec::for_subscription_context(subscription.jsonld_context.as_ref());
+        let names = NameCompactor::new(&self.engine, &context);
         let mut notified = Vec::with_capacity(registrations.len());
         for registration in registrations {
-            notified.push(notified_registration(&self.engine, registration, subscription, &context).await?);
+            notified.push(notified_registration(&names, registration, subscription).await?);
         }
         Ok(notified)
     }
@@ -190,12 +191,11 @@ fn compiled_transport(subscription: &CompiledCsrSubscription) -> Option<Endpoint
 
 /// One registration as a notification carries it: trimmed to the
 /// `RegistrationInfo` elements `subscription` matches (clause 5.11.7) and
-/// compacted under `context`.
+/// compacted under the context `names` compacts against.
 async fn notified_registration(
-    engine: &JsonLdEngine,
+    names: &NameCompactor<'_>,
     registration: &ContextSourceRegistration,
     subscription: &CompiledCsrSubscription,
-    context: &ContextSpec,
 ) -> Result<Value, NotificationError> {
     let mut value = serde_json::to_value(registration).map_err(|error| NotificationError::representation(error.to_string()))?;
     let matching = matching_information(subscription, registration)
@@ -207,7 +207,7 @@ async fn notified_registration(
         object.insert("information".to_string(), Value::Array(matching));
     }
     if let Some(information) = value.get_mut("information") {
-        compact_information(engine, information, context).await;
+        compact_information(names, information).await;
     }
     Ok(value)
 }
@@ -215,7 +215,7 @@ async fn notified_registration(
 #[cfg(test)]
 mod tests {
     use crate::csource_delivery::notified_registration;
-    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription::SubscriptionStatus};
     use andromeda_subscription::compiled::CompiledCsrSubscription;
     use serde_json::json;
@@ -268,9 +268,13 @@ mod tests {
     /// `RegistrationInfo` elements.
     #[tokio::test]
     async fn the_notified_registration_keeps_only_the_matching_information() {
-        let value = notified_registration(&engine(), &registration(), &subscription("https://example.com/Vehicle"), &ContextSpec::none())
-            .await
-            .expect("serialises");
+        let value = notified_registration(
+            &NameCompactor::new(&engine(), &ContextSpec::none()),
+            &registration(),
+            &subscription("https://example.com/Vehicle"),
+        )
+        .await
+        .expect("serialises");
 
         pretty_assertions::assert_eq!(value["information"], json!([{"entities": [{"type": "https://example.com/Vehicle"}]}]));
         pretty_assertions::assert_eq!(value["id"], json!("urn:ngsi-ld:ContextSourceRegistration:1"));
@@ -292,7 +296,7 @@ mod tests {
         }))
         .expect("registration parses");
 
-        let value = notified_registration(&engine(), &registration, &subscription(vocabulary), &ContextSpec::none())
+        let value = notified_registration(&NameCompactor::new(&engine(), &ContextSpec::none()), &registration, &subscription(vocabulary))
             .await
             .expect("serialises");
 

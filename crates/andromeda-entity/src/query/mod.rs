@@ -1,7 +1,7 @@
 //! Reading entities: clause 5.7.2 query, clause 5.6.3 retrieval, and the
 //! compilation that turns request parameters into a query a store can run.
 
-/// Resolving the expanded IRI of every attribute key a response carries.
+/// Expanding, once per request, the attribute member names a response carries.
 pub mod attribute_expansion;
 /// Filtering an entity's attributes down to what the client asked for.
 pub mod attribute_projection;

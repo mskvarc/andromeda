@@ -22,6 +22,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{
+    compaction::NameCompactor,
     context_spec::ContextSpec,
     context_validation::{validate_context_spec, validate_jsonld_context_value},
     engine::processor::JsonLdEngine,
@@ -216,7 +217,9 @@ where
     /// cannot be resolved or the resource cannot be compacted against it.
     pub async fn get_for_response(&self, target: &ContextTarget, id: &Uri, context: &ContextSpec) -> Result<Value, SubscriptionError> {
         let subscription = self.get(target, id).await?;
-        self.variant.serialize_for_response(&subscription, context).await
+        self.variant
+            .serialize_for_response(&subscription, &NameCompactor::new(&self.engine, context))
+            .await
     }
 
     /// List subscriptions with pagination and serialize them for an HTTP response.
@@ -234,9 +237,10 @@ where
         context: &ContextSpec,
     ) -> Result<(Vec<Value>, i64), SubscriptionError> {
         let (subscriptions, total) = self.repo.list(target, limit, offset).await?;
+        let names = NameCompactor::new(&self.engine, context);
         let mut compacted = Vec::with_capacity(subscriptions.len());
         for subscription in subscriptions {
-            compacted.push(self.variant.serialize_for_response(&subscription, context).await?);
+            compacted.push(self.variant.serialize_for_response(&subscription, &names).await?);
         }
         Ok((compacted, total))
     }
@@ -271,9 +275,10 @@ where
             .first()
             .map(|subscription| subscription.id.clone())
             .zip(subscriptions.last().map(|subscription| subscription.id.clone()));
+        let names = NameCompactor::new(&self.engine, context);
         let mut compacted = Vec::with_capacity(subscriptions.len());
         for subscription in subscriptions {
-            compacted.push(self.variant.serialize_for_response(&subscription, context).await?);
+            compacted.push(self.variant.serialize_for_response(&subscription, &names).await?);
         }
         Ok(KeysetListing {
             subscriptions: compacted,

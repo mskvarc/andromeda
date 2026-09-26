@@ -13,7 +13,7 @@ use crate::{
     error::JsonLdError,
 };
 use iri_rs::IriBuf;
-use moka::future::Cache;
+use moka::{Equivalent, future::Cache};
 use serde_json::Value;
 use std::{
     sync::{
@@ -48,7 +48,7 @@ impl TermCache {
     }
 
     /// The cached expansion of a key, recording the outcome either way.
-    async fn get(&self, key: &TermCacheKey) -> Option<IriBuf> {
+    async fn get(&self, key: &TermCacheKeyRef<'_>) -> Option<IriBuf> {
         let cached = self.expansions.get(key).await;
         let counter = if cached.is_some() { &self.hits } else { &self.misses };
         let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
@@ -167,6 +167,50 @@ struct TermCacheKey {
     context_identity: Option<Arc<str>>,
 }
 
+/// A [`TermCacheKey`] borrowed from the lookup that probes for it.
+///
+/// A hit allocates nothing: the owned key is built only when a miss records
+/// its expansion. The fields mirror [`TermCacheKey`] in the same order and
+/// derive the same hash, because a `Box<str>` and an `Arc<str>` hash exactly
+/// as the `str` they hold.
+#[derive(Debug, Clone, Copy, Hash)]
+struct TermCacheKeyRef<'a> {
+    /// Whether an entity type or an attribute name is being expanded.
+    role: TermRole,
+    /// The raw term as written, before expansion.
+    term: &'a str,
+    /// The complete canonical resolved `@context` the term is expanded against.
+    context_identity: Option<&'a str>,
+}
+
+impl<'a> TermCacheKeyRef<'a> {
+    /// The key one term takes under one prepared context.
+    fn new(role: TermRole, term: &'a str, context: &'a PreparedTermContext) -> TermCacheKeyRef<'a> {
+        TermCacheKeyRef {
+            role,
+            term,
+            context_identity: context.identity.as_deref(),
+        }
+    }
+
+    /// The owned key a miss records its expansion under.
+    fn to_owned_key(self, context: &PreparedTermContext) -> TermCacheKey {
+        TermCacheKey {
+            role: self.role,
+            term: Box::from(self.term),
+            context_identity: context.identity.clone(), // clone: cache keys retain the shared canonical identity
+        }
+    }
+}
+
+// Not derivable: equivalence between a borrowed and an owned key is a
+// relation across two types, which no derive expresses.
+impl Equivalent<TermCacheKey> for TermCacheKeyRef<'_> {
+    fn equivalent(&self, key: &TermCacheKey) -> bool {
+        self.role == key.role && self.term == &*key.term && self.context_identity == key.context_identity.as_deref()
+    }
+}
+
 impl JsonLdEngine {
     /// Resolve a context once before expanding all terms for one operation.
     #[must_use]
@@ -184,7 +228,7 @@ impl JsonLdEngine {
         if is_full_iri(type_term) {
             return iri_of(type_term);
         }
-        let key = cache_key(TermRole::Type, type_term, context);
+        let key = TermCacheKeyRef::new(TermRole::Type, type_term, context);
         if let Some(cached) = self.term_cache().get(&key).await {
             return Ok(cached);
         }
@@ -200,7 +244,7 @@ impl JsonLdEngine {
             .and_then(iri_of)?;
 
         tracing::trace!("Expanded type '{}' to '{}'", type_term, iri);
-        self.term_cache().insert(key, iri.clone()).await; // clone: the cache keeps a copy, the caller gets one
+        self.term_cache().insert(key.to_owned_key(context), iri.clone()).await; // clone: the cache keeps a copy, the caller gets one
         Ok(iri)
     }
 
@@ -214,7 +258,7 @@ impl JsonLdEngine {
         if is_full_iri(term) {
             return iri_of(term);
         }
-        let key = cache_key(TermRole::Attribute, term, context);
+        let key = TermCacheKeyRef::new(TermRole::Attribute, term, context);
         if let Some(cached) = self.term_cache().get(&key).await {
             return Ok(cached);
         }
@@ -228,17 +272,8 @@ impl JsonLdEngine {
             .ok_or_else(|| JsonLdError::invalid_iri(format!("Failed to expand term: {term}")))?;
         let iri = iri_of(&expanded_key)?;
 
-        self.term_cache().insert(key, iri.clone()).await; // clone: the cache keeps a copy, the caller gets one
+        self.term_cache().insert(key.to_owned_key(context), iri.clone()).await; // clone: the cache keeps a copy, the caller gets one
         Ok(iri)
-    }
-}
-
-/// The cache key for one term under one context.
-fn cache_key(role: TermRole, term: &str, context: &PreparedTermContext) -> TermCacheKey {
-    TermCacheKey {
-        role,
-        term: Box::from(term),
-        context_identity: context.identity.clone(), // clone: cache keys retain the shared canonical identity
     }
 }
 
@@ -253,8 +288,16 @@ fn iri_of(candidate: &str) -> Result<IriBuf, JsonLdError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use crate::{
+        context_spec::ContextSpec,
+        engine::{
+            processor::JsonLdEngine,
+            term_lookup::{TermCacheKeyRef, TermRole},
+        },
+    };
+    use moka::Equivalent;
     use serde_json::json;
+    use std::hash::{BuildHasher, RandomState};
 
     #[tokio::test]
     async fn repeated_lookups_reuse_one_prepared_context() {
@@ -282,5 +325,32 @@ mod tests {
         assert_ne!(first, second);
         assert_eq!(first.as_str(), "https://example.com/first/custom");
         assert_eq!(second.as_str(), "https://example.com/second/custom");
+    }
+
+    /// The cache is probed with a borrowed key and filled with an owned one,
+    /// so the two must hash alike and compare equal, or every probe misses.
+    #[test]
+    fn a_borrowed_key_hashes_and_compares_like_the_owned_key_it_stands_for() {
+        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
+        let context = engine.prepare_term_context(&ContextSpec::none());
+        let borrowed = TermCacheKeyRef::new(TermRole::Attribute, "speed", &context);
+        let owned = borrowed.to_owned_key(&context);
+        let state = RandomState::new();
+
+        pretty_assertions::assert_eq!(state.hash_one(borrowed), state.hash_one(&owned));
+        assert!(borrowed.equivalent(&owned));
+    }
+
+    /// Equality, not the hash, decides a hit: a borrowed key under another
+    /// context or for the other role is never equivalent.
+    #[test]
+    fn a_borrowed_key_under_another_context_or_role_is_not_equivalent() {
+        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
+        let first = engine.prepare_term_context(&ContextSpec::none().with_body_context(Some(json!({ "custom": "https://example.com/first/custom" }))));
+        let second = engine.prepare_term_context(&ContextSpec::none().with_body_context(Some(json!({ "custom": "https://example.com/second/custom" }))));
+        let owned = TermCacheKeyRef::new(TermRole::Attribute, "custom", &first).to_owned_key(&first);
+
+        assert!(!TermCacheKeyRef::new(TermRole::Attribute, "custom", &second).equivalent(&owned));
+        assert!(!TermCacheKeyRef::new(TermRole::Type, "custom", &first).equivalent(&owned));
     }
 }

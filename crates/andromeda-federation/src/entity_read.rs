@@ -18,7 +18,6 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_jsonld::{compaction::compact_type_iri, context_spec::ContextSpec};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_telemetry::federation_ops::{self, FederationOperation};
@@ -289,7 +288,7 @@ impl FederationService {
                 // same for every block, so it is compacted once (clause 4.3.6.1).
                 let compact_type = match binding {
                     ReadBinding::Retrieve => None,
-                    ReadBinding::Query | ReadBinding::BatchQuery => self.registration_compact_type(&registration, entity_id, context).await,
+                    ReadBinding::Query | ReadBinding::BatchQuery => registration_compact_type(&registration, entity_id, &resolver).await,
                 };
                 let reads = queries
                     .iter()
@@ -319,15 +318,15 @@ impl FederationService {
         timer.finish_result(&result);
         result
     }
+}
 
-    /// The compact type a registration covers `entity_id` under, for a forwarded
-    /// query or batch query that names the entity by id (clause 4.3.6.1). Stored
-    /// registration types are expanded IRIs, so the covered type is compacted
-    /// against the request context to the term a source recognises.
-    async fn registration_compact_type(&self, registration: &ContextSourceRegistration, entity_id: &Uri, context: &ContextSpec) -> Option<String> {
-        let registered = registered_type_of(from_ref(registration), entity_id)?;
-        Some(compact_type_iri(&self.engine, registered.as_ref(), context).await)
-    }
+/// The compact type a registration covers `entity_id` under, for a forwarded
+/// query or batch query that names the entity by id (clause 4.3.6.1). Stored
+/// registration types are expanded IRIs, so the covered type is compacted
+/// against the request context to the term a source recognises.
+async fn registration_compact_type(registration: &ContextSourceRegistration, entity_id: &Uri, resolver: &TermResolver<'_>) -> Option<String> {
+    let registered = registered_type_of(from_ref(registration), entity_id)?;
+    Some(resolver.compact_type(registered.as_ref()).await)
 }
 
 /// The forwarded read one registration receives for a retrieve-by-id, from the

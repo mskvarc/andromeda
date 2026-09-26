@@ -10,7 +10,14 @@
 
 use crate::{error::SubscriptionForwardingError, service::SubscriptionForwardingService};
 use andromeda_delivery::{endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
-use andromeda_entity::{error::EntityError, query::retrieval::RetrievalNarrowing};
+use andromeda_entity::{
+    error::EntityError,
+    query::{
+        attribute_expansion::AttributeExpansions,
+        attribute_projection::{filter_entity_attrs, project_entity},
+        retrieval::RetrievalNarrowing,
+    },
+};
 use andromeda_federation::{
     config::SplitEntities,
     entity_result::merge_retrieve_results,
@@ -125,21 +132,6 @@ impl SubscriptionForwardingService {
         Ok(serde_json::from_value(compacted)?)
     }
 
-    /// Narrow one re-assembled entity to what the local subscription delivers
-    /// (clause 5.8.6 `notification.attributes`, `pick` and `omit`) -- the same
-    /// clause 4.21 projection a query applies, so a subscriber sees the entity
-    /// a query under the same selection would show.
-    async fn narrow_entity(&self, entity: &mut Entity, compiled: &CompiledSubscription, context: &ContextSpec) -> Result<(), SubscriptionForwardingError> {
-        if let Some(attributes) = compiled.notification_attributes.as_deref() {
-            // Every stored name is an absolute IRI because creation expanded
-            // it (clause 5.5.7); one that is not names no attribute.
-            let wanted: Vec<IriBuf> = attributes.iter().filter_map(|name| IriBuf::new(name.as_str().to_owned()).ok()).collect();
-            self.entity_query.filter_entity_attrs(entity, &wanted, context).await?;
-        }
-        self.entity_query.project_entity(entity, &compiled.notification_projection, context).await?;
-        Ok(())
-    }
-
     /// Handle a notification arriving under a forwarded copy's identifier.
     ///
     /// # Errors
@@ -191,6 +183,9 @@ impl SubscriptionForwardingService {
 
         let format = subscription.notification.format.unwrap_or_default();
         let local_compactor = self.engine.compactor(&local_context);
+        let local_terms = self.engine.prepare_term_context(&local_context);
+        let mut local_expansions = AttributeExpansions::new(&self.engine, &local_terms);
+        let wanted = notification_attribute_iris(&compiled);
         let mut data = Vec::with_capacity(notification.data.len());
         for value in &notification.data {
             let received = match self.received_under(value, context, &local_compactor).await {
@@ -211,7 +206,7 @@ impl SubscriptionForwardingService {
             }
             // `id` and `type` stay whatever the projection lists: Table 5.2.4-1
             // makes both mandatory, so the copy's `data` carries Entities.
-            self.narrow_entity(&mut entity, &compiled, &local_context).await?;
+            narrow_entity(&mut entity, &compiled, wanted.as_deref(), &mut local_expansions).await?;
             let rendered = EntityRenderer::new(&entity)
                 .with_mode(format)
                 .render()
@@ -259,4 +254,33 @@ impl SubscriptionForwardingService {
         }
         Ok(())
     }
+}
+
+/// The attributes the local subscription's `notification.attributes` names,
+/// as the IRIs a narrowing compares against.
+///
+/// Every stored name is an absolute IRI because creation expanded it
+/// (clause 5.5.7); one that is not names no attribute.
+fn notification_attribute_iris(compiled: &CompiledSubscription) -> Option<Vec<IriBuf>> {
+    compiled
+        .notification_attributes
+        .as_deref()
+        .map(|attributes| attributes.iter().filter_map(|name| IriBuf::new(name.as_str().to_owned()).ok()).collect())
+}
+
+/// Narrow one re-assembled entity to what the local subscription delivers
+/// (clause 5.8.6 `notification.attributes`, `pick` and `omit`) -- the same
+/// clause 4.21 projection a query applies, so a subscriber sees the entity a
+/// query under the same selection would show.
+async fn narrow_entity(
+    entity: &mut Entity,
+    compiled: &CompiledSubscription,
+    wanted: Option<&[IriBuf]>,
+    expansions: &mut AttributeExpansions<'_>,
+) -> Result<(), SubscriptionForwardingError> {
+    if let Some(wanted) = wanted {
+        filter_entity_attrs(entity, wanted, expansions).await?;
+    }
+    project_entity(entity, &compiled.notification_projection, expansions).await?;
+    Ok(())
 }

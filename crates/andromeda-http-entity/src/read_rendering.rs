@@ -8,10 +8,10 @@
 //! here.
 
 use crate::{error::EntityResultExt, join::ResolvedJoin};
-use andromeda_entity::query::EntityQueryService;
+use andromeda_entity::query::{EntityQueryService, simplified_names::apply_simplified_names};
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_http_response::problem_response::ProblemResponse;
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::compiled::Projection;
 use andromeda_ngsi_ld_render::{
@@ -75,9 +75,10 @@ pub(crate) async fn apply_representation_names(
     if !representation.mode.is_simplified() {
         return Ok(());
     }
+    let names = NameCompactor::new(service.engine(), context);
     let linked = resolved.into_iter().flat_map(|resolved| resolved.linked.values_mut());
     for entity in entities.iter_mut().chain(linked) {
-        service.apply_simplified_names(entity, context).await.with_entity_instance(instance)?;
+        apply_simplified_names(entity, &names).await.with_entity_instance(instance)?;
     }
     Ok(())
 }

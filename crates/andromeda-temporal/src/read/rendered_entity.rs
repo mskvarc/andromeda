@@ -17,7 +17,7 @@ use crate::{
     service::TemporalService,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::engine::{context_compactor::ContextCompactor, options::CompactOptions};
+use andromeda_jsonld::{compaction::NameCompactor, engine::options::CompactOptions};
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, temporal_format::TemporalFormat, uri::Uri};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_ngsi_ld_render::{
@@ -107,7 +107,7 @@ impl TemporalService {
         entity_id: &Uri,
         entity_types: &[EntityTypeName],
         compiled: &CompiledTemporalQuery,
-        compactor: &ContextCompactor<'_>,
+        names: &NameCompactor<'_>,
     ) -> Result<RenderedTemporalEntity, TemporalError> {
         if compiled.representation.format.is_aggregated() {
             let rows = self.reader.query_entity_aggregation(target, entity_id, compiled).await?;
@@ -123,7 +123,7 @@ impl TemporalService {
                 }
             }
             let presence = presence_of(rows.is_empty());
-            let value = self.build_aggregated_compacted(entity_id, entity_types, &rows, compiled, compactor).await?;
+            let value = self.build_aggregated_compacted(entity_id, entity_types, &rows, compiled, names).await?;
             return Ok(RenderedTemporalEntity {
                 value,
                 presence,
@@ -148,7 +148,7 @@ impl TemporalService {
         // full IRI; it is not truncated to a bare fragment, since a fragment is
         // not a term the client could expand back (clause 5.7.6 renders type
         // and attribute discovery the same way).
-        let compacted = compactor.compact(built.entity, CompactOptions::default()).await?;
+        let compacted = names.compactor().compact(built.entity, CompactOptions::default()).await?;
         let mut compacted = TemporalArrayNormalizer::new(compacted).render();
         // Clause 4.21, `id` / `type` half: the attribute half of the
         // projection already ran inside `TemporalEntityRenderer` on the

@@ -32,6 +32,7 @@ use andromeda_ngsi_ld_query::{
 use futures::{StreamExt, stream};
 use http::StatusCode;
 use serde_json::{Map, Value};
+use std::cell::OnceCell;
 use tracing::warn;
 use url::Url;
 
@@ -141,10 +142,14 @@ impl FederationService {
     ) -> Result<Vec<ContextSourceRegistration>, FederationError> {
         // Registrations store expanded type IRIs, so the compact selector is
         // expanded before matching.
+        //
+        // The context is prepared at most once for the whole selection, and
+        // only when the type selector or the context source filter needs it.
+        let prepared_context = OnceCell::new();
         let expanded_type = match selection.entity_type.and_then(TypeExprRaw::as_single_type) {
             Some(name) => {
-                let prepared_context = self.engine.prepare_term_context(context);
-                Some(self.engine.expand_type(name.as_str(), &prepared_context).await?)
+                let prepared = prepared_context.get_or_init(|| self.engine.prepare_term_context(context));
+                Some(self.engine.expand_type(name.as_str(), prepared).await?)
             }
             None => None,
         };
@@ -163,8 +168,8 @@ impl FederationService {
                 continue;
             }
             if let Some(filter) = selection.csf {
-                let prepared_context = self.engine.prepare_term_context(context);
-                if !self.passes_source_filter(&registration, filter, &prepared_context).await {
+                let prepared = prepared_context.get_or_init(|| self.engine.prepare_term_context(context));
+                if !self.passes_source_filter(&registration, filter, prepared).await {
                     continue;
                 }
             }

@@ -4,12 +4,13 @@ use crate::{
     discovery::{
         DiscoveryScope,
         EntityDiscoveryService,
+        rendered_names::{compacted_attribute_name, compacted_type_name},
         stored_names::{extract_attribute_types, parse_discovery_iri, parse_type_name},
     },
     error::EntityError,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::{
     attribute_list::{AttributeDetail, AttributeResourceType},
@@ -46,6 +47,7 @@ impl EntityDiscoveryService {
     ) -> Result<Value, EntityError> {
         // Expand the type name first — DB stores expanded IRIs
         let prepared_context = self.engine.prepare_term_context(context);
+        let names = NameCompactor::new(&self.engine, context);
         let type_iri = self.engine.expand_type(type_name.as_str(), &prepared_context).await?;
         let type_key = parse_type_name(type_iri.as_str())?;
 
@@ -99,7 +101,7 @@ impl EntityDiscoveryService {
             attribute_details.push(AttributeDetail {
                 id: parse_discovery_iri(name.to_string())?,
                 type_: AttributeResourceType,
-                attribute_name: self.compacted_attribute_name(name, context).await?,
+                attribute_name: compacted_attribute_name(&names, name).await?,
                 attribute_types: types.iter().copied().collect(),
             });
         }
@@ -111,7 +113,7 @@ impl EntityDiscoveryService {
         let type_info = EntityTypeInfo::builder()
             .id(type_iri)
             .type_(EntityTypeInfoType)
-            .type_name(self.compacted_type_name(&type_key, context).await?)
+            .type_name(compacted_type_name(&names, &type_key).await?)
             .entity_count(count)
             .attribute_details(attribute_details)
             .build();

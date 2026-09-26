@@ -33,10 +33,10 @@ pub enum ProjectionRemainder {
 /// What `projection` left of `entity`.
 ///
 /// `entity` must already have been narrowed by
-/// [`EntityQueryService::project_entity`]: this reads the members that
-/// survived rather than reapplying the projection to find out.
+/// [`project_entity`]: this reads the members that survived rather than
+/// reapplying the projection to find out.
 ///
-/// [`EntityQueryService::project_entity`]: crate::query::EntityQueryService::project_entity
+/// [`project_entity`]: crate::query::attribute_projection::project_entity
 #[must_use]
 pub fn projection_remainder(entity: &Entity, projection: &Projection) -> ProjectionRemainder {
     if projection.pick.is_empty() && projection.omit.is_empty() {

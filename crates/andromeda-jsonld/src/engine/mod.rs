@@ -17,8 +17,8 @@
 
 pub mod batch_context;
 pub mod builder;
-pub mod compaction_context;
-pub mod compaction_context_cache;
+pub(crate) mod compaction_context;
+pub(crate) mod compaction_context_cache;
 pub mod context_compactor;
 pub mod context_url;
 pub mod core_term_semantics;

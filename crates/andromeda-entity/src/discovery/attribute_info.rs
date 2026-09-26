@@ -1,11 +1,17 @@
 //! Retrieve Available Attribute Information (clause 5.7.10).
 
 use crate::{
-    discovery::{DiscoveryScope, EntityDiscoveryService, registry_union::extend_without_repetition, stored_names::parse_attribute_name},
+    discovery::{
+        DiscoveryScope,
+        EntityDiscoveryService,
+        registry_union::extend_without_repetition,
+        rendered_names::{compacted_attribute_name, compacted_type_names},
+        stored_names::parse_attribute_name,
+    },
     error::EntityError,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::attribute_list::AttributeInfo;
 use serde_json::Value;
@@ -45,6 +51,7 @@ impl EntityDiscoveryService {
         context: &ContextSpec,
     ) -> Result<Value, EntityError> {
         let prepared_context = self.engine.prepare_term_context(context);
+        let names = NameCompactor::new(&self.engine, context);
         let attr_iri_buf = self.engine.expand_term(attr_id.as_str(), &prepared_context).await?;
         let attr_iri = parse_attribute_name(attr_iri_buf.as_str())?;
 
@@ -80,11 +87,11 @@ impl EntityDiscoveryService {
         // Clause 5.2.28 fixes `attributeTypes` to the attribute family names; the
         // store already mapped the payload's expanded `@type` IRIs to them.
         let attr = AttributeInfo::builder()
-            .attribute_name(self.compacted_attribute_name(&attr_iri, context).await?)
+            .attribute_name(compacted_attribute_name(&names, &attr_iri).await?)
             .id(attr_iri_buf)
             .attribute_types(facts.attribute_types)
             .attribute_count(Some(facts.entity_count))
-            .type_names(self.compacted_type_names(facts.entity_types, context).await?)
+            .type_names(compacted_type_names(&names, facts.entity_types).await?)
             .build();
 
         Ok(serde_json::to_value(attr)?)

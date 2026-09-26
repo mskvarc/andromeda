@@ -7,12 +7,13 @@ use crate::{
         DiscoveryScope,
         EntityDiscoveryService,
         registry_union::extend_without_repetition,
+        rendered_names::{compacted_attribute_name, compacted_attribute_names, compacted_type_names},
         stored_names::parse_discovery_iri,
     },
     error::EntityError,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, ngsi_ld_urn::AttributeListId, uri::NGSI_LD_URN_NID};
 use andromeda_ngsi_ld_model::attribute_list::{AttributeInfo, AttributeList, AttributeListType, AttributeResourceType};
 use serde_json::Value;
@@ -79,53 +80,54 @@ impl EntityDiscoveryService {
             extend_without_repetition(&mut metadata.entity_types, registered.entity_types);
         }
 
+        let names = NameCompactor::new(&self.engine, context);
         match representation {
-            AttributeCollectionRepresentation::Detailed => self.detailed_attributes(attr_data, context).await,
-            AttributeCollectionRepresentation::List => self.attribute_name_list(attr_data.into_keys(), context).await,
+            AttributeCollectionRepresentation::Detailed => detailed_attributes(attr_data, &names).await,
+            AttributeCollectionRepresentation::List => attribute_name_list(attr_data.into_keys(), &names).await,
         }
     }
+}
 
-    /// The clause 4.5.14 detailed attribute list: one record per attribute,
-    /// carrying the full URI of the name, the short name the request's
-    /// `@context` gives it, and the entity types it appears on.
-    ///
-    /// Table 5.2.28-1 restricts `attributeCount` and `attributeTypes` to
-    /// cardinality 0..1 and clause 5.7.9.5 asks only for the names, so neither
-    /// is reported here; clause 5.7.10 is where an attribute's families and
-    /// count are answered.
-    async fn detailed_attributes(&self, attr_data: HashMap<AttributeName, AttributeMetadata>, context: &ContextSpec) -> Result<Value, EntityError> {
-        let mut attributes = Vec::with_capacity(attr_data.len());
-        for (iri, meta) in attr_data {
-            attributes.push(
-                AttributeInfo::builder()
-                    .attribute_name(self.compacted_attribute_name(&iri, context).await?)
-                    .id(parse_discovery_iri(iri.to_string())?)
-                    .type_(AttributeResourceType)
-                    .type_names(self.compacted_type_names(meta.entity_types, context).await?)
-                    .build(),
-            );
-        }
-        attributes.sort_by(|left, right| left.id.cmp(&right.id));
-
-        Ok(serde_json::to_value(attributes)?)
+/// The clause 4.5.14 detailed attribute list: one record per attribute,
+/// carrying the full URI of the name, the short name the request's
+/// `@context` gives it, and the entity types it appears on.
+///
+/// Table 5.2.28-1 restricts `attributeCount` and `attributeTypes` to
+/// cardinality 0..1 and clause 5.7.9.5 asks only for the names, so neither
+/// is reported here; clause 5.7.10 is where an attribute's families and
+/// count are answered.
+async fn detailed_attributes(attr_data: HashMap<AttributeName, AttributeMetadata>, names: &NameCompactor<'_>) -> Result<Value, EntityError> {
+    let mut attributes = Vec::with_capacity(attr_data.len());
+    for (iri, meta) in attr_data {
+        attributes.push(
+            AttributeInfo::builder()
+                .attribute_name(compacted_attribute_name(names, &iri).await?)
+                .id(parse_discovery_iri(iri.to_string())?)
+                .type_(AttributeResourceType)
+                .type_names(compacted_type_names(names, meta.entity_types).await?)
+                .build(),
+        );
     }
+    attributes.sort_by(|left, right| left.id.cmp(&right.id));
 
-    /// The clause 5.2.27 `AttributeList` of the attribute names, each
-    /// compacted under `context`.
-    async fn attribute_name_list(&self, attr_iris: impl IntoIterator<Item = AttributeName>, context: &ContextSpec) -> Result<Value, EntityError> {
-        let mut compacted_names = self.compacted_attribute_names(attr_iris, context).await?;
-        compacted_names.sort_by(|left, right| left.as_str().cmp(right.as_str()));
-        let compacted_names = compacted_names;
+    Ok(serde_json::to_value(attributes)?)
+}
 
-        let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("AttributeList:{}", Uuid::new_v4())).build()?;
-        let id = AttributeListId::try_from(id)?;
+/// The clause 5.2.27 `AttributeList` of the attribute names, each
+/// compacted under the context `names` compacts against.
+async fn attribute_name_list(attr_iris: impl IntoIterator<Item = AttributeName>, names: &NameCompactor<'_>) -> Result<Value, EntityError> {
+    let mut compacted_names = compacted_attribute_names(names, attr_iris).await?;
+    compacted_names.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    let compacted_names = compacted_names;
 
-        let list = AttributeList {
-            id,
-            type_: AttributeListType,
-            attribute_list: compacted_names,
-        };
+    let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("AttributeList:{}", Uuid::new_v4())).build()?;
+    let id = AttributeListId::try_from(id)?;
 
-        Ok(serde_json::to_value(list)?)
-    }
+    let list = AttributeList {
+        id,
+        type_: AttributeListType,
+        attribute_list: compacted_names,
+    };
+
+    Ok(serde_json::to_value(list)?)
 }

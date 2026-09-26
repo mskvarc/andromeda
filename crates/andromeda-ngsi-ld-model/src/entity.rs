@@ -206,21 +206,21 @@ impl Entity {
         )
     }
 
-    /// Remove the Attribute member `name` names, from wherever this type keeps
-    /// it.
+    /// Keep only the Attribute members whose name `keep` accepts, from wherever
+    /// this type keeps them.
     ///
-    /// A name that is no member of the entity removes nothing.
-    pub fn remove_attribute_member(&mut self, name: &str) {
-        if self.attrs.shift_remove(name).is_some() {
-            return;
-        }
-        match name {
-            compact_properties::LOCATION => self.location = None,
-            compact_properties::OBSERVATION_SPACE => self.observation_space = None,
-            compact_properties::OPERATION_SPACE => self.operation_space = None,
-            // Any other name was an ordinary attribute, removed above, or no
-            // member of this entity at all.
-            _other => {}
+    /// `keep` sees exactly the names [`Entity::attribute_member_names`] yields,
+    /// and the surviving members of [`Entity::attrs`] keep their order.
+    pub fn retain_attribute_members(&mut self, mut keep: impl FnMut(&str) -> bool) {
+        self.attrs.retain(|name, _| keep(name.as_str()));
+        for (name, member) in [
+            (compact_properties::LOCATION, &mut self.location),
+            (compact_properties::OBSERVATION_SPACE, &mut self.observation_space),
+            (compact_properties::OPERATION_SPACE, &mut self.operation_space),
+        ] {
+            if member.is_some() && !keep(name) {
+                *member = None;
+            }
         }
     }
 
@@ -802,5 +802,63 @@ mod tests {
         let exclusive: Vec<AttributeName> = Vec::new();
         assert!(patch.strip_attributes(&exclusive));
         pretty_assertions::assert_eq!(patch.attrs.len(), 1);
+    }
+
+    fn entity_with_location() -> Entity {
+        serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:Vehicle:retain",
+            "type": "Vehicle",
+            "speed": {"type": "Property", "value": 1},
+            "brandName": {"type": "Property", "value": "Mercedes"},
+            "isParked": {"type": "Relationship", "object": "urn:ngsi-ld:Parking:1"},
+            "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}}
+        }))
+        .expect("entity with a location")
+    }
+
+    #[test]
+    fn retaining_attribute_members_offers_exactly_the_member_names() {
+        let mut entity = entity_with_location();
+        let expected: Vec<String> = entity.attribute_member_names().map(str::to_owned).collect();
+        let mut seen = Vec::new();
+
+        entity.retain_attribute_members(|name| {
+            seen.push(name.to_owned());
+            true
+        });
+
+        pretty_assertions::assert_eq!(seen, expected);
+        pretty_assertions::assert_eq!(entity.attribute_member_names().collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
+    fn retaining_attribute_members_drops_rejected_attributes_and_keeps_the_order_of_the_rest() {
+        let mut entity = entity_with_location();
+        let expected: Vec<String> = entity
+            .attrs
+            .keys()
+            .map(AttributeName::as_str)
+            .filter(|name| *name != "brandName")
+            .map(str::to_owned)
+            .collect();
+
+        entity.retain_attribute_members(|name| name != "brandName");
+
+        let names: Vec<String> = entity.attrs.keys().map(AttributeName::as_str).map(str::to_owned).collect();
+        pretty_assertions::assert_eq!(names, expected);
+        pretty_assertions::assert_eq!(names.len(), 2);
+        assert!(entity.location.is_some());
+    }
+
+    /// Clause 5.2.4 keeps `location` in its own member, and a narrowing that
+    /// rejects it must reach it there.
+    #[test]
+    fn retaining_attribute_members_drops_a_rejected_geo_property() {
+        let mut entity = entity_with_location();
+
+        entity.retain_attribute_members(|name| name != "location");
+
+        assert!(entity.location.is_none());
+        pretty_assertions::assert_eq!(entity.attrs.len(), 3);
     }
 }

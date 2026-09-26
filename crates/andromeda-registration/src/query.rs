@@ -7,7 +7,7 @@ use crate::{
     information_compaction::compact_information,
     registration_validation_reason::RegistrationValidationReason,
 };
-use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     registration::ContextSourceRegistration,
@@ -89,6 +89,7 @@ impl RegistrationService {
             .zip(page.registrations.last().map(|registration| registration.id.clone()));
         let page_full = page.registrations.len() >= compiled.pagination.limit as usize;
         let total = page.total;
+        let names = NameCompactor::new(&self.engine, context);
         let mut values = Vec::with_capacity(page.registrations.len());
         for registration in page.registrations {
             let Some(mut registration) = registration_matching_the_query(registration, &compiled)? else {
@@ -97,10 +98,10 @@ impl RegistrationService {
             let additional_properties = registration.additional_properties.take();
             let mut value = serde_json::to_value(registration).map_err(|error| RegistrationError::internal(format!("Failed to serialize CSR: {error}")))?;
             if let Some(information) = value.get_mut("information") {
-                compact_information(&self.engine, information, context).await;
+                compact_information(&names, information).await;
             }
             if let Some(properties) = additional_properties
-                && let Some(compacted) = compact_context_source_properties(&self.engine, properties, context).await?
+                && let Some(compacted) = compact_context_source_properties(&names, properties).await?
                 && let (Some(target), Some(source)) = (value.as_object_mut(), compacted.as_object())
             {
                 target.extend(source.iter().map(|(key, member)| (key.clone(), member.clone()))); // clone: the response object owns compacted members after the temporary document is dropped.

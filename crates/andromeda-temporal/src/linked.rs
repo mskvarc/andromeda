@@ -58,7 +58,7 @@ use crate::{
     service::TemporalService,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::entity_member::extract_types;
 use andromeda_ngsi_ld_query::{projection::compiled::Projection, temporal::compiled::CompiledTemporalQuery};
@@ -332,7 +332,7 @@ impl TemporalService {
             .map(|(id, payload)| Ok((id, extract_types(payload).map_err(TemporalError::internal)?)))
             .collect::<Result<_, TemporalError>>()?;
 
-        let compactor = self.engine.compactor(context);
+        let name_compactor = NameCompactor::new(&self.engine, context);
         let mut level = IndexMap::with_capacity(candidates.len());
         let mut named: Vec<TemporalLinkedCandidate> = Vec::new();
         for candidate in candidates {
@@ -341,7 +341,10 @@ impl TemporalService {
             let Some(entity_types) = types.get(&candidate.id) else {
                 continue;
             };
-            match self.render_one_temporal_entity(target, &candidate.id, entity_types, compiled, &compactor).await {
+            match self
+                .render_one_temporal_entity(target, &candidate.id, entity_types, compiled, &name_compactor)
+                .await
+            {
                 Ok(rendered) => {
                     if rendered.presence == HistoryPresence::Present {
                         level.insert(candidate.id.clone(), rendered.value); // clone: the result map owns its keys

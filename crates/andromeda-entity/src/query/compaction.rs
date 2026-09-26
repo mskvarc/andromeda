@@ -3,16 +3,10 @@
 //! [`Entity`]: andromeda_ngsi_ld_model::entity::Entity
 
 use crate::{entity_validation_reason::EntityValidationReason, error::EntityError, query::EntityQueryService};
-use andromeda_jsonld::{
-    context_spec::ContextSpec,
-    engine::{context_compactor::ContextCompactor, options::CompactOptions},
-    term_expansion::ContextualExpander,
-};
+use andromeda_jsonld::engine::{context_compactor::ContextCompactor, options::CompactOptions};
 use andromeda_ngsi_ld_model::{entity::Entity, expanded::attribute_system_time::strip_attribute_instants};
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
-use andromeda_ngsi_ld_query::term_expander::TermExpander;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use iri_rs::IriBuf;
 use serde_json::Value;
 
 impl EntityQueryService {
@@ -71,14 +65,5 @@ impl EntityQueryService {
         entity.remove_expired_attributes(chrono::Utc::now());
 
         Ok(entity)
-    }
-
-    /// Expand an attribute key of a compacted entity to the IRI it names.
-    pub(super) async fn expanded_key(&self, key: &str, context: &ContextSpec) -> Result<IriBuf, EntityError> {
-        let prepared_context = self.engine().prepare_term_context(context);
-        ContextualExpander::new(self.engine(), &prepared_context)
-            .expand_term(key)
-            .await
-            .map_err(EntityError::from)
     }
 }

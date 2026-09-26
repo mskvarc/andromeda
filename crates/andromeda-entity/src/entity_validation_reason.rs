@@ -25,6 +25,16 @@ use thiserror::Error;
 /// Why an entity payload or operation is invalid.
 #[derive(Debug, Error)]
 pub enum EntityValidationReason {
+    /// An Attribute member name of a compacted entity does not satisfy the
+    /// attribute-name grammar.
+    #[error("invalid attribute member name '{name}': {source}")]
+    AttributeMemberName {
+        /// The rejected member name.
+        name: String,
+        /// The grammar violation.
+        #[source]
+        source: NgsiLdReferenceError,
+    },
     /// An expanded JSON-LD member key does not satisfy the attribute-name grammar.
     #[error("invalid expanded attribute name '{name}': {source}")]
     ExpandedAttributeName {

@@ -1,11 +1,17 @@
 //! Retrieve Details of Available Entity Types (clause 5.7.6).
 
 use crate::{
-    discovery::{DiscoveryScope, EntityDiscoveryService, registry_union::union_type_summaries, stored_names::parse_discovery_iri},
+    discovery::{
+        DiscoveryScope,
+        EntityDiscoveryService,
+        registry_union::union_type_summaries,
+        rendered_names::{compacted_attribute_names, compacted_type_name},
+        stored_names::parse_discovery_iri,
+    },
     error::EntityError,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::entity_type_list::{EntityType, EntityTypeType};
 use serde_json::Value;
@@ -41,13 +47,14 @@ impl EntityDiscoveryService {
         }
         union_type_summaries(&mut summaries, self.registered_types(scope).await?);
 
+        let names = NameCompactor::new(&self.engine, context);
         let mut entity_types: Vec<EntityType> = Vec::with_capacity(summaries.len());
         for (type_iri, attrs) in summaries {
             entity_types.push(EntityType {
                 id: parse_discovery_iri(type_iri.to_string())?,
-                type_name: self.compacted_type_name(&type_iri, context).await?,
+                type_name: compacted_type_name(&names, &type_iri).await?,
                 type_: EntityTypeType,
-                attribute_names: self.compacted_attribute_names(attrs, context).await?,
+                attribute_names: compacted_attribute_names(&names, attrs).await?,
             });
         }
 

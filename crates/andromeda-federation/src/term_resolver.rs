@@ -16,7 +16,7 @@
 
 use crate::error::FederationError;
 use andromeda_jsonld::{
-    compaction::{compact_attr_iri, compact_type_iri},
+    compaction::NameCompactor,
     context_spec::ContextSpec,
     engine::{processor::JsonLdEngine, term_lookup::PreparedTermContext},
 };
@@ -24,19 +24,22 @@ use iri_rs::IriBuf;
 
 /// The engine work forwarding narrowing needs, prepared once per operation.
 pub(crate) struct TermResolver<'a> {
-    /// The engine that expands and compacts.
+    /// The engine that expands.
     engine: &'a JsonLdEngine,
-    /// The request context every name is expanded against and compacted with.
-    context: &'a ContextSpec,
     /// The request context resolved once, so each lookup is a cache probe.
     prepared: PreparedTermContext,
+    /// Compacts every name against the request context, processed once.
+    names: NameCompactor<'a>,
 }
 
 impl<'a> TermResolver<'a> {
     /// Prepare the resolver for one operation, resolving `context` once.
     pub(crate) fn new(engine: &'a JsonLdEngine, context: &'a ContextSpec) -> TermResolver<'a> {
-        let prepared = engine.prepare_term_context(context);
-        TermResolver { engine, context, prepared }
+        TermResolver {
+            engine,
+            prepared: engine.prepare_term_context(context),
+            names: NameCompactor::new(engine, context),
+        }
     }
 
     /// Expand an entity type term to its IRI.
@@ -62,12 +65,12 @@ impl<'a> TermResolver<'a> {
     /// Compact an entity type IRI to the term the request context spells it
     /// with, or the IRI itself when the context abbreviates none (clause 4.5.1).
     pub(crate) async fn compact_type(&self, iri: &str) -> String {
-        compact_type_iri(self.engine, iri, self.context).await
+        self.names.compact_type_iri(iri).await
     }
 
     /// Compact an attribute IRI to the term the request context spells it with,
     /// or the IRI itself when the context abbreviates none (clause 4.5.1).
     pub(crate) async fn compact_attr(&self, iri: &str) -> String {
-        compact_attr_iri(self.engine, iri, self.context).await
+        self.names.compact_attr_iri(iri).await
     }
 }

@@ -1,11 +1,6 @@
 //! Subscription persistence normalization.
 
-use andromeda_jsonld::{
-    compaction::{compact_attr_iri, compact_type_iri},
-    context_spec::ContextSpec,
-    engine::processor::JsonLdEngine,
-    term_compaction::ContextualCompactor,
-};
+use andromeda_jsonld::compaction::NameCompactor;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{
     notification::DEFAULT_NOTIFICATION_TRIGGERS,
@@ -115,7 +110,7 @@ enum StructuralKeywords {
 }
 
 /// Compact every string of one attribute-name list in place.
-async fn compact_name_list(engine: &JsonLdEngine, names: &mut [Value], context: &ContextSpec, keywords: StructuralKeywords) {
+async fn compact_name_list(compactor: &NameCompactor<'_>, names: &mut [Value], keywords: StructuralKeywords) {
     for name in names.iter_mut() {
         let Some(iri) = name.as_str().map(String::from) else {
             continue;
@@ -128,19 +123,19 @@ async fn compact_name_list(engine: &JsonLdEngine, names: &mut [Value], context: 
         {
             continue;
         }
-        *name = Value::String(compact_attr_iri(engine, &iri, context).await);
+        *name = Value::String(compactor.compact_attr_iri(&iri).await);
     }
 }
 
 /// Compact IRI-bearing fields in a serialized Subscription for HTTP response.
-pub async fn compact_subscription_iris(engine: &JsonLdEngine, value: &mut Value, context: &ContextSpec) {
+pub async fn compact_subscription_iris(compactor: &NameCompactor<'_>, value: &mut Value) {
     // Compact entities[].type IRIs
     if let Some(entities) = value.get_mut("entities")
         && let Some(arr) = entities.as_array_mut()
     {
         for entity_sel in arr.iter_mut() {
             if let Some(type_iri) = entity_sel.get("type").and_then(|v| v.as_str()).map(String::from) {
-                let compacted = compact_type_iri(engine, &type_iri, context).await;
+                let compacted = compactor.compact_type_iri(&type_iri).await;
                 if let Some(obj) = entity_sel.as_object_mut() {
                     obj.insert("type".to_string(), Value::String(compacted));
                 }
@@ -149,7 +144,7 @@ pub async fn compact_subscription_iris(engine: &JsonLdEngine, value: &mut Value,
     }
 
     if let Some(watched) = value.get_mut("watchedAttributes").and_then(Value::as_array_mut) {
-        compact_name_list(engine, watched, context, StructuralKeywords::Compact).await;
+        compact_name_list(compactor, watched, StructuralKeywords::Compact).await;
     }
 
     // Clause 5.2.14: `attributes` names attributes only; `pick` and `omit`
@@ -161,7 +156,7 @@ pub async fn compact_subscription_iris(engine: &JsonLdEngine, value: &mut Value,
             ("omit", StructuralKeywords::Keep),
         ] {
             if let Some(names) = notification.get_mut(member).and_then(Value::as_array_mut) {
-                compact_name_list(engine, names, context, keywords).await;
+                compact_name_list(compactor, names, keywords).await;
             }
         }
     }
@@ -182,23 +177,22 @@ pub async fn compact_subscription_iris(engine: &JsonLdEngine, value: &mut Value,
 /// back the filter it wrote. `csf` is exempt because `expandValues` names
 /// Entity attributes, while `csf` addresses a registration's Context Source
 /// Properties.
-pub async fn compact_subscription_filters(engine: &JsonLdEngine, value: &mut Value, filters: &SubscriptionFilters, context: &ContextSpec) {
-    let compactor = ContextualCompactor::new(engine, context);
+pub async fn compact_subscription_filters(compactor: &NameCompactor<'_>, value: &mut Value, filters: &SubscriptionFilters) {
     if let Some(expr) = filters.q.as_ref() {
         let opted_in: HashSet<AttributeName> = filters.expand_values.iter().flatten().cloned().collect(); // clone: the opt-in list stays on the stored resource
         // clone: the stored filter stays in the resource while the compacted copy is rendered
-        let reverted = revert_expand_values(expr.clone(), &opted_in, &compactor).await;
-        insert_compacted(value, "q", &compact_q_expr(reverted, &compactor).await);
+        let reverted = revert_expand_values(expr.clone(), &opted_in, compactor).await;
+        insert_compacted(value, "q", &compact_q_expr(reverted, compactor).await);
     }
     if let Some(expr) = filters.csf.as_ref() {
         // clone: the stored filter stays in the resource while the compacted copy is rendered
-        insert_compacted(value, "csf", &compact_q_expr(expr.clone(), &compactor).await);
+        insert_compacted(value, "csf", &compact_q_expr(expr.clone(), compactor).await);
     }
     for (member, names) in [("expandValues", filters.expand_values.as_deref()), ("jsonKeys", filters.json_keys.as_deref())] {
         let Some(names) = names else {
             continue;
         };
-        let compacted = compact_opt_in_names(engine, names, context).await;
+        let compacted = compact_opt_in_names(compactor, names).await;
         if let Some(obj) = value.as_object_mut() {
             obj.insert(member.to_string(), Value::String(compacted));
         }
@@ -214,10 +208,10 @@ fn insert_compacted(value: &mut Value, member: &str, expr: &Expr) {
 
 /// Spell one stored `expandValues` / `jsonKeys` list in the reader's terms,
 /// in the comma-separated form Table 5.2.12-1 defines.
-async fn compact_opt_in_names(engine: &JsonLdEngine, names: &[AttributeName], context: &ContextSpec) -> String {
+async fn compact_opt_in_names(compactor: &NameCompactor<'_>, names: &[AttributeName]) -> String {
     let mut compacted = Vec::with_capacity(names.len());
     for name in names {
-        compacted.push(compact_attr_iri(engine, name.as_str(), context).await);
+        compacted.push(compactor.compact_attr_iri(name.as_str()).await);
     }
     compacted.join(",")
 }
@@ -231,7 +225,7 @@ mod tests {
         fixup_expired_status,
         fixup_integer_fields,
     };
-    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_model::subscription::SubscriptionFilters;
     use chrono::{Duration, Utc};
     use serde_json::json;
@@ -287,7 +281,7 @@ mod tests {
         .expect("valid filters");
         let mut value = serde_json::to_value(&filters).expect("serialises");
 
-        compact_subscription_filters(&engine, &mut value, &filters, &ContextSpec::none()).await;
+        compact_subscription_filters(&NameCompactor::new(&engine, &ContextSpec::none()), &mut value, &filters).await;
 
         pretty_assertions::assert_eq!(value["q"], json!("speed>10"));
         pretty_assertions::assert_eq!(value["csf"], json!("tier==\"gold\""));
@@ -305,7 +299,7 @@ mod tests {
         .expect("valid filters");
         let mut value = serde_json::to_value(&filters).expect("serialises");
 
-        compact_subscription_filters(&engine, &mut value, &filters, &ContextSpec::none()).await;
+        compact_subscription_filters(&NameCompactor::new(&engine, &ContextSpec::none()), &mut value, &filters).await;
 
         pretty_assertions::assert_eq!(value["expandValues"], json!("speed,colour"));
         pretty_assertions::assert_eq!(value["jsonKeys"], json!("payload"));
@@ -323,7 +317,7 @@ mod tests {
             }
         });
 
-        compact_subscription_iris(&engine, &mut value, &ContextSpec::none()).await;
+        compact_subscription_iris(&NameCompactor::new(&engine, &ContextSpec::none()), &mut value).await;
 
         pretty_assertions::assert_eq!(value["notification"]["pick"], json!(["id", "speed"]));
         pretty_assertions::assert_eq!(value["notification"]["omit"], json!(["scope", "colour"]));

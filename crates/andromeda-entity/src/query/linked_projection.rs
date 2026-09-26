@@ -6,6 +6,8 @@ use crate::{
     error::EntityError,
     query::{
         EntityQueryService,
+        attribute_expansion::AttributeExpansions,
+        attribute_projection::project_entity,
         linked_reachability::{relationship_targets, retain_reachable},
     },
 };
@@ -88,7 +90,9 @@ impl EntityQueryService {
         projection: &Projection,
         context: &ContextSpec,
     ) -> Result<HashMap<Uri, Projection>, EntityError> {
-        let nested = self.linked_projections(roots, linked, projection, context).await?;
+        let prepared = self.engine().prepare_term_context(context);
+        let mut expansions = AttributeExpansions::new(self.engine(), &prepared);
+        let nested = linked_projections(roots, linked, projection, &mut expansions).await?;
         let mut applied = HashMap::with_capacity(nested.len());
         for (id, nested) in nested {
             // An absent entry and an explicit `None` both mean "render in
@@ -97,157 +101,159 @@ impl EntityQueryService {
                 continue;
             };
             if let Some(entity) = linked.get_mut(&id) {
-                self.project_entity(entity, &nested, context).await?;
+                project_entity(entity, &nested, &mut expansions).await?;
                 applied.insert(id, nested);
             }
         }
         retain_reachable(roots, linked);
         Ok(applied)
     }
+}
 
-    /// Union of the nested projections that apply to each linked entity,
-    /// keyed by id.
-    ///
-    /// An id absent from the map carries the same meaning as an explicit
-    /// `None` entry: no referencing Relationship, at any traversal level,
-    /// attached a nested projection to it, so it renders in full. `Some`
-    /// carries the union of every nested `pick`/`omit` sub-projection
-    /// (clause 4.21 `{...}`) attached to that id by any Relationship or
-    /// `ListRelationship`, at any traversal level, that named it with a nested
-    /// projection.
-    ///
-    /// Attribute keys are matched through the request's `@context`, the same
-    /// way [`crate::query::attribute_projection::apply_projection`] matches
-    /// the root entities' own attributes -- `roots` and `linked` hold
-    /// compacted entities, keyed by short term or compact IRI, while a
-    /// [`ProjectionTerm::Attribute`] always carries the fully expanded IRI.
-    ///
-    /// # Accepted approximation
-    ///
-    /// The walk visits each id once. When a second, differently nested path
-    /// reaches an id already visited, its terms are unioned into that id's own
-    /// entry but are not carried further down into the id's targets — the
-    /// deeper half of that second path contributes nothing. Making it exact
-    /// would mean keying the walk by path rather than by id, which is
-    /// unbounded on a cyclic graph, and the flat representation renders each
-    /// linked entity once regardless, so the union already collapses those
-    /// paths at the level below. The exact per-path semantics exist where they
-    /// are observable: `join=inline`, where the renderer walks each
-    /// Relationship separately.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EntityError`] when an attribute key cannot be expanded
-    /// through the context.
-    pub(crate) async fn linked_projections(
-        &self,
-        roots: &[Entity],
-        linked: &IndexMap<Uri, Entity>,
-        projection: &Projection,
-        context: &ContextSpec,
-    ) -> Result<HashMap<Uri, Option<Projection>>, EntityError> {
-        if projection.pick.is_empty() && projection.omit.is_empty() {
-            return Ok(HashMap::new());
-        }
+/// Union of the nested projections that apply to each linked entity,
+/// keyed by id.
+///
+/// An id absent from the map carries the same meaning as an explicit
+/// `None` entry: no referencing Relationship, at any traversal level,
+/// attached a nested projection to it, so it renders in full. `Some`
+/// carries the union of every nested `pick`/`omit` sub-projection
+/// (clause 4.21 `{...}`) attached to that id by any Relationship or
+/// `ListRelationship`, at any traversal level, that named it with a nested
+/// projection.
+///
+/// Attribute keys are matched through the request's `@context`, the same
+/// way [`crate::query::attribute_projection::project_entity`] matches
+/// the root entities' own attributes -- `roots` and `linked` hold
+/// compacted entities, keyed by short term or compact IRI, while a
+/// [`ProjectionTerm::Attribute`] always carries the fully expanded IRI.
+///
+/// # Accepted approximation
+///
+/// The walk visits each id once. When a second, differently nested path
+/// reaches an id already visited, its terms are unioned into that id's own
+/// entry but are not carried further down into the id's targets — the
+/// deeper half of that second path contributes nothing. Making it exact
+/// would mean keying the walk by path rather than by id, which is
+/// unbounded on a cyclic graph, and the flat representation renders each
+/// linked entity once regardless, so the union already collapses those
+/// paths at the level below. The exact per-path semantics exist where they
+/// are observable: `join=inline`, where the renderer walks each
+/// Relationship separately.
+///
+/// # Errors
+///
+/// Returns [`EntityError`] when an attribute key cannot be expanded
+/// through the context.
+pub(crate) async fn linked_projections(
+    roots: &[Entity],
+    linked: &IndexMap<Uri, Entity>,
+    projection: &Projection,
+    expansions: &mut AttributeExpansions<'_>,
+) -> Result<HashMap<Uri, Option<Projection>>, EntityError> {
+    if projection.pick.is_empty() && projection.omit.is_empty() {
+        return Ok(HashMap::new());
+    }
 
-        let mut result: HashMap<Uri, Accumulator> = HashMap::new();
-        let mut visited: HashSet<Uri> = HashSet::new();
-        let mut queue: VecDeque<Level> = VecDeque::new();
-        queue.push_back(Level {
-            entities: roots.iter().collect(),
-            pick: projection.pick.clone(), // clone: owned terms carried through the level queue
-            omit: projection.omit.clone(), // clone: owned terms carried through the level queue
-        });
+    let mut result: HashMap<Uri, Accumulator> = HashMap::new();
+    let mut visited: HashSet<Uri> = HashSet::new();
+    let mut queue: VecDeque<Level> = VecDeque::new();
+    queue.push_back(Level {
+        entities: roots.iter().collect(),
+        pick: projection.pick.clone(), // clone: owned terms carried through the level queue
+        omit: projection.omit.clone(), // clone: owned terms carried through the level queue
+    });
 
-        while let Some(Level {
-            entities,
-            pick: active_pick,
-            omit: active_omit,
-        }) = queue.pop_front()
-        {
-            // The nested pick/omit terms this level attached to each id, so
-            // the next level knows which entity to descend into and under
-            // which projection.
-            let mut next_level: HashMap<Uri, (Vec<ProjectionTerm>, Vec<ProjectionTerm>)> = HashMap::new();
+    while let Some(Level {
+        entities,
+        pick: active_pick,
+        omit: active_omit,
+    }) = queue.pop_front()
+    {
+        // The nested pick/omit terms this level attached to each id, so
+        // the next level knows which entity to descend into and under
+        // which projection.
+        let mut next_level: HashMap<Uri, (Vec<ProjectionTerm>, Vec<ProjectionTerm>)> = HashMap::new();
 
-            for entity in &entities {
-                for (name, value) in &entity.attrs {
-                    for attr in value.instances() {
-                        let Some(target_ids) = relationship_targets(attr) else {
-                            continue;
-                        };
-                        let expanded = self.expanded_key(name.as_str(), context).await?;
+        for entity in &entities {
+            for (name, value) in &entity.attrs {
+                for attr in value.instances() {
+                    let Some(target_ids) = relationship_targets(attr) else {
+                        continue;
+                    };
+                    expansions.ensure(name).await?;
+                    let Some(expanded) = expansions.expanded(name.as_str()) else {
+                        continue;
+                    };
 
-                        if !active_pick.is_empty() {
-                            match term_for_attribute(name.as_str(), &expanded, &active_pick) {
-                                Some(term) if !term.linked_terms().is_empty() => {
-                                    for id in &target_ids {
-                                        merge_pick(&mut result, id, term.linked_terms());
-                                        next_level.entry(id.clone()).or_default().0.extend(term.linked_terms().iter().cloned()); // clone: owned terms carried into the next level
-                                    }
+                    if !active_pick.is_empty() {
+                        match term_for_attribute(name.as_str(), expanded, &active_pick) {
+                            Some(term) if !term.linked_terms().is_empty() => {
+                                for id in &target_ids {
+                                    merge_pick(&mut result, id, term.linked_terms());
+                                    next_level.entry(id.clone()).or_default().0.extend(term.linked_terms().iter().cloned()); // clone: owned terms carried into the next level
                                 }
-                                Some(_) => {
-                                    for id in &target_ids {
-                                        merge_full(&mut result, id);
-                                        next_level.remove(id);
-                                    }
-                                }
-                                None => {}
                             }
+                            Some(_) => {
+                                for id in &target_ids {
+                                    merge_full(&mut result, id);
+                                    next_level.remove(id);
+                                }
+                            }
+                            None => {}
                         }
+                    }
 
-                        // Clause 4.21: a bare `omit` term (no nested
-                        // `{...}`) only drops this attribute from the entity
-                        // being rendered here -- it says nothing about how
-                        // the linked entity itself renders. It therefore
-                        // contributes no entry: that target's rendering is
-                        // governed by whichever other Relationship reaches
-                        // it, or renders in full if none does.
-                        if !active_omit.is_empty()
-                            && let Some(term) = term_for_attribute(name.as_str(), &expanded, &active_omit)
-                            && !term.linked_terms().is_empty()
-                        {
-                            for id in &target_ids {
-                                merge_omit(&mut result, id, term.linked_terms());
-                                next_level.entry(id.clone()).or_default().1.extend(term.linked_terms().iter().cloned()); // clone: owned terms carried into the next level
-                            }
+                    // Clause 4.21: a bare `omit` term (no nested
+                    // `{...}`) only drops this attribute from the entity
+                    // being rendered here -- it says nothing about how
+                    // the linked entity itself renders. It therefore
+                    // contributes no entry: that target's rendering is
+                    // governed by whichever other Relationship reaches
+                    // it, or renders in full if none does.
+                    if !active_omit.is_empty()
+                        && let Some(term) = term_for_attribute(name.as_str(), expanded, &active_omit)
+                        && !term.linked_terms().is_empty()
+                    {
+                        for id in &target_ids {
+                            merge_omit(&mut result, id, term.linked_terms());
+                            next_level.entry(id.clone()).or_default().1.extend(term.linked_terms().iter().cloned()); // clone: owned terms carried into the next level
                         }
                     }
                 }
             }
-
-            for (id, (pick, omit)) in next_level {
-                if visited.contains(&id) {
-                    continue;
-                }
-                // A later attribute in this same level may have widened the
-                // id to `Full` after the nested contribution was recorded; a
-                // `Full` target renders unrestricted and is not descended into.
-                if matches!(result.get(&id), Some(Accumulator::Full)) {
-                    continue;
-                }
-                if let Some(entity) = linked.get(&id) {
-                    visited.insert(id.clone()); // clone: the visited set outlives this borrow of next_level
-                    queue.push_back(Level {
-                        entities: vec![entity],
-                        pick,
-                        omit,
-                    });
-                }
-            }
         }
 
-        Ok(result
-            .into_iter()
-            .map(|(id, accumulator)| {
-                let projection = match accumulator {
-                    Accumulator::Full => None,
-                    Accumulator::Terms { pick, omit } => Some(Projection { pick, omit }),
-                };
-                (id, projection)
-            })
-            .collect())
+        for (id, (pick, omit)) in next_level {
+            if visited.contains(&id) {
+                continue;
+            }
+            // A later attribute in this same level may have widened the
+            // id to `Full` after the nested contribution was recorded; a
+            // `Full` target renders unrestricted and is not descended into.
+            if matches!(result.get(&id), Some(Accumulator::Full)) {
+                continue;
+            }
+            if let Some(entity) = linked.get(&id) {
+                visited.insert(id.clone()); // clone: the visited set outlives this borrow of next_level
+                queue.push_back(Level {
+                    entities: vec![entity],
+                    pick,
+                    omit,
+                });
+            }
+        }
     }
+
+    Ok(result
+        .into_iter()
+        .map(|(id, accumulator)| {
+            let projection = match accumulator {
+                Accumulator::Full => None,
+                Accumulator::Terms { pick, omit } => Some(Projection { pick, omit }),
+            };
+            (id, projection)
+        })
+        .collect())
 }
 
 /// Merge a nested `pick` sub-projection into `id`'s accumulated entry,
@@ -285,7 +291,7 @@ fn merge_full(result: &mut HashMap<Uri, Accumulator>, id: &Uri) {
 ///
 /// Delegates to [`ProjectionTerm::matches_attribute`], which accepts either
 /// the compact key or the expanded IRI -- the same match
-/// [`crate::query::attribute_projection::apply_projection`] performs on the
+/// [`crate::query::attribute_projection::project_entity`] performs on the
 /// root entities' own attributes.
 fn term_for_attribute<'p>(key: &str, expanded: &IriBuf, terms: &'p [ProjectionTerm]) -> Option<&'p ProjectionTerm> {
     terms.iter().find(|term| term.matches_attribute(key, expanded))
@@ -318,6 +324,28 @@ mod tests {
             iri: iri(name),
             linked: Vec::new(),
         }
+    }
+
+    /// The nested projections under [`context`], prepared as one request
+    /// prepares it.
+    async fn nested_projections(
+        roots: &[Entity],
+        linked: &IndexMap<Uri, Entity>,
+        projection: &Projection,
+    ) -> Result<HashMap<Uri, Option<Projection>>, EntityError> {
+        let service = service();
+        let prepared = service.engine().prepare_term_context(&context());
+        let mut expansions = AttributeExpansions::new(service.engine(), &prepared);
+        linked_projections(roots, linked, projection, &mut expansions).await
+    }
+
+    /// Project a root entity under [`context`], prepared as one request
+    /// prepares it.
+    async fn project_root(root: &mut Entity, projection: &Projection) -> Result<(), EntityError> {
+        let service = service();
+        let prepared = service.engine().prepare_term_context(&context());
+        let mut expansions = AttributeExpansions::new(service.engine(), &prepared);
+        project_entity(root, projection, &mut expansions).await
     }
 
     /// A context mapping every compact term this module's tests use to a
@@ -355,7 +383,7 @@ mod tests {
             omit: Vec::new(),
         };
 
-        let result = service().linked_projections(&[root], &linked, &projection, &context()).await.expect("computes");
+        let result = nested_projections(&[root], &linked, &projection).await.expect("computes");
 
         let nested = result
             .get(&uri("urn:ngsi-ld:Target:1"))
@@ -387,7 +415,7 @@ mod tests {
             omit: Vec::new(),
         };
 
-        let result = service().linked_projections(&[root], &linked, &projection, &context()).await.expect("computes");
+        let result = nested_projections(&[root], &linked, &projection).await.expect("computes");
 
         let nested = result
             .get(&uri("urn:ngsi-ld:Target:1b"))
@@ -425,7 +453,7 @@ mod tests {
             omit: Vec::new(),
         };
 
-        let result = service().linked_projections(&[root], &linked, &projection, &context()).await.expect("computes");
+        let result = nested_projections(&[root], &linked, &projection).await.expect("computes");
 
         assert_eq!(result.get(&uri("urn:ngsi-ld:Target:2")), Some(&None));
     }
@@ -450,7 +478,7 @@ mod tests {
             omit: Vec::new(),
         };
 
-        let result = service().linked_projections(&[root], &linked, &projection, &context()).await.expect("computes");
+        let result = nested_projections(&[root], &linked, &projection).await.expect("computes");
 
         for id in ["urn:ngsi-ld:Target:3a", "urn:ngsi-ld:Target:3b"] {
             let nested = result.get(&uri(id)).expect("target has an entry").as_ref().expect("nested projection");
@@ -478,7 +506,7 @@ mod tests {
             }],
         };
 
-        let result = service().linked_projections(&[root], &linked, &projection, &context()).await.expect("computes");
+        let result = nested_projections(&[root], &linked, &projection).await.expect("computes");
 
         let nested = result
             .get(&uri("urn:ngsi-ld:Target:4"))
@@ -512,7 +540,7 @@ mod tests {
             }],
         };
 
-        let result = service().linked_projections(&[root], &linked, &projection, &context()).await.expect("computes");
+        let result = nested_projections(&[root], &linked, &projection).await.expect("computes");
 
         assert!(!result.contains_key(&uri("urn:ngsi-ld:Target:4b")));
     }
@@ -547,7 +575,7 @@ mod tests {
             omit: Vec::new(),
         };
 
-        let result = service().linked_projections(&[root], &linked, &projection, &context()).await.expect("computes");
+        let result = nested_projections(&[root], &linked, &projection).await.expect("computes");
 
         let level1_projection = result
             .get(&uri("urn:ngsi-ld:Target:5a"))
@@ -678,7 +706,7 @@ mod tests {
             "hasA": {"type": "Relationship", "object": "urn:ngsi-ld:Target:9"},
             "temperature": {"type": "Property", "value": 5}
         }));
-        service.project_entity(&mut root, &projection, &context).await.expect("projects the root");
+        project_root(&mut root, &projection).await.expect("projects the root");
         assert!(root.attrs.contains_key("hasA"), "a nested omit term must not remove the relationship itself");
         assert!(root.attrs.contains_key("temperature"), "a nested omit term names no member of the root");
 
@@ -708,7 +736,6 @@ mod tests {
     /// sub-projection defers to the linked entity.
     #[tokio::test]
     async fn a_bare_omit_term_removes_the_attribute_from_the_projected_entity() {
-        let service = service();
         let projection = Projection {
             pick: Vec::new(),
             omit: vec![leaf("hasA")],
@@ -720,7 +747,7 @@ mod tests {
             "temperature": {"type": "Property", "value": 5}
         }));
 
-        service.project_entity(&mut root, &projection, &context()).await.expect("projects the root");
+        project_root(&mut root, &projection).await.expect("projects the root");
 
         assert!(!root.attrs.contains_key("hasA"));
         assert!(root.attrs.contains_key("temperature"));
@@ -805,10 +832,7 @@ mod tests {
             "hasA": {"type": "Relationship", "object": "urn:ngsi-ld:Target:6"}
         }));
         let linked = IndexMap::new();
-        let result = service()
-            .linked_projections(&[root], &linked, &Projection::default(), &context())
-            .await
-            .expect("computes");
+        let result = nested_projections(&[root], &linked, &Projection::default()).await.expect("computes");
         assert!(result.is_empty());
     }
 }

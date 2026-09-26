@@ -2,10 +2,11 @@
 //! with.
 //!
 //! An Entity Type name and an Attribute name share the clause 4.6.2 grammar and
-//! both sit in vocabulary position, so [`compact_type_iri`] and
-//! [`compact_attr_iri`] are two names for one operation. They stay separate
-//! entry points because the domains are: a caller knows which of the two it
-//! holds, and a future divergence between them would have somewhere to land.
+//! both sit in vocabulary position, so [`NameCompactor::compact_type_iri`] and
+//! [`NameCompactor::compact_attr_iri`] are two names for one operation. They
+//! stay separate entry points because the domains are: a caller knows which of
+//! the two it holds, and a future divergence between them would have somewhere
+//! to land.
 //!
 //! Compaction is defined over documents, not over names, so the first step
 //! builds the smallest document that puts the IRI where compaction acts on it
@@ -26,14 +27,20 @@ use crate::{
     context_spec::ContextSpec,
     core_context::is_ngsi_ld_core_context_url,
     engine::{
+        context_compactor::ContextCompactor,
         context_url::is_full_iri,
         options::{CompactOptions, ContextStripping},
         processor::JsonLdEngine,
+        term_lookup::PreparedTermContext,
     },
 };
 use iri_rs::{Iri, iri};
 use serde_json::Value;
-use std::collections::{BTreeSet, HashSet};
+use std::{
+    collections::{BTreeSet, HashSet},
+    sync::OnceLock,
+};
+use tokio::sync::OnceCell;
 
 /// The options every compaction here uses: the caller wants a term, not a
 /// document, so the `@context` is never kept.
@@ -59,87 +66,129 @@ static NAME_CARRIER: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/attr
 /// closes cycles, and this bounds the breadth of a legitimately deep chain.
 const MAX_CONTEXT_DOCUMENTS: usize = 64;
 
-/// Compact an entity type IRI to the term a context spells it with.
+/// Compacts expanded NGSI-LD names against one request `@context`.
 ///
-/// Answers the IRI verbatim when it does not compact, or when it is not one
-/// of the schemes an NGSI-LD type can use.
-pub async fn compact_type_iri(engine: &JsonLdEngine, iri: &str, context: &ContextSpec) -> String {
-    compact_name(engine, iri, context).await
+/// Built once per operation: the compactor processes the context once for
+/// every name, and the declared-term fallback prepares its term context and
+/// walks the request's context documents at most once, the first time a name
+/// needs it.
+#[derive(Debug)]
+pub struct NameCompactor<'a> {
+    /// Compacts the probe documents against the request context.
+    compactor: ContextCompactor<'a>,
+    /// The term context the declared-term fallback expands candidates in.
+    terms: OnceLock<PreparedTermContext>,
+    /// The term names the request's own contexts declare.
+    declared: OnceCell<BTreeSet<Box<str>>>,
 }
 
-/// Compact an attribute IRI to the term a context spells it with.
-///
-/// Answers the IRI verbatim when it does not compact, or when it is not one
-/// of the schemes an NGSI-LD attribute name can use.
-pub async fn compact_attr_iri(engine: &JsonLdEngine, iri: &str, context: &ContextSpec) -> String {
-    compact_name(engine, iri, context).await
-}
-
-/// The short name `context` gives an expanded NGSI-LD name, or the name itself.
-async fn compact_name(engine: &JsonLdEngine, iri: &str, context: &ContextSpec) -> String {
-    if !is_full_iri(iri) {
-        return iri.to_string();
-    }
-    if let Some(term) = vocabulary_position_term(engine, iri, context).await {
-        return term;
-    }
-    match declared_term(engine, iri, context).await {
-        Some(term) => term,
-        None => iri.to_string(),
-    }
-}
-
-/// The term JSON-LD's own compaction selects for the IRI in vocabulary
-/// position, or `None` when it selects none.
-async fn vocabulary_position_term(engine: &JsonLdEngine, iri: &str, context: &ContextSpec) -> Option<String> {
-    let document = serde_json::json!([{ "@id": PROBE_ID.as_str(), NAME_CARRIER.as_str(): [{ "@id": iri }] }]);
-
-    let compacted = match engine.compactor(context).compact(document, TERM_ONLY).await {
-        Ok(compacted) => compacted,
-        Err(error) => {
-            tracing::debug!(error = %error, iri, "name did not compact; answering it verbatim");
-            return None;
-        }
-    };
-    // The compacted document holds the probe identifier and the carrier; the
-    // carrier's value is the name, collapsed to a bare string by compaction.
-    let carried = compacted
-        .as_object()
-        .and_then(|object| object.iter().find(|(key, _)| *key != "id" && !key.starts_with('@')))
-        .map(|(_, value)| value)?;
-    let name = match carried {
-        Value::String(name) => name.as_str(),
-        Value::Array(items) => items.first().and_then(Value::as_str)?,
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => return None,
-    };
-    (name != iri).then(|| name.to_string())
-}
-
-/// The term the request's own contexts declare for the IRI.
-///
-/// Table 5.2.28-1 makes membership of the `@context` the whole condition for a
-/// short name, and clause C.6 names the case that reaches here: a term
-/// definition that coerces a datatype cannot be selected for a value JSON-LD
-/// would then have to re-type, yet the term is what the context calls the
-/// Attribute. Only the contexts the request supplied are searched — a name the
-/// core context declares is never hidden by a coercion, so it has already been
-/// answered above.
-///
-/// Two terms declaring the same IRI are ordered as JSON-LD orders compaction
-/// candidates: the shortest first, then the lexicographically least.
-async fn declared_term(engine: &JsonLdEngine, iri: &str, context: &ContextSpec) -> Option<String> {
-    let prepared_context = engine.prepare_term_context(context);
-    let mut best: Option<Box<str>> = None;
-    for name in declared_names(engine, context).await {
-        let expands_to_iri = engine
-            .expand_term(&name, &prepared_context)
-            .await
-            .is_ok_and(|expanded| expanded.as_str() == iri);
-        if expands_to_iri && best.as_ref().is_none_or(|current| preferred(&name, current)) {
-            best = Some(name);
+impl<'a> NameCompactor<'a> {
+    /// A compactor for every name one operation compacts against `context`.
+    #[must_use]
+    pub fn new(engine: &'a JsonLdEngine, context: &'a ContextSpec) -> NameCompactor<'a> {
+        NameCompactor {
+            compactor: engine.compactor(context),
+            terms: OnceLock::new(),
+            declared: OnceCell::new(),
         }
     }
-    best.map(String::from)
+
+    /// The document compactor for the same context, so a caller that also
+    /// compacts documents processes the context once for both.
+    #[must_use]
+    pub const fn compactor(&self) -> &ContextCompactor<'a> {
+        &self.compactor
+    }
+
+    /// The context names are compacted against.
+    #[must_use]
+    pub const fn context(&self) -> &'a ContextSpec {
+        self.compactor.context()
+    }
+
+    /// Compact an entity type IRI to the term the context spells it with.
+    ///
+    /// Answers the IRI verbatim when it does not compact, or when it is not one
+    /// of the schemes an NGSI-LD type can use.
+    pub async fn compact_type_iri(&self, iri: &str) -> String {
+        self.compact_name(iri).await
+    }
+
+    /// Compact an attribute IRI to the term the context spells it with.
+    ///
+    /// Answers the IRI verbatim when it does not compact, or when it is not one
+    /// of the schemes an NGSI-LD attribute name can use.
+    pub async fn compact_attr_iri(&self, iri: &str) -> String {
+        self.compact_name(iri).await
+    }
+
+    /// The short name the context gives an expanded NGSI-LD name, or the name
+    /// itself.
+    async fn compact_name(&self, iri: &str) -> String {
+        if !is_full_iri(iri) {
+            return iri.to_string();
+        }
+        if let Some(term) = self.vocabulary_position_term(iri).await {
+            return term;
+        }
+        match self.declared_term(iri).await {
+            Some(term) => term.to_string(),
+            None => iri.to_string(),
+        }
+    }
+
+    /// The term JSON-LD's own compaction selects for the IRI in vocabulary
+    /// position, or `None` when it selects none.
+    async fn vocabulary_position_term(&self, iri: &str) -> Option<String> {
+        let document = serde_json::json!([{ "@id": PROBE_ID.as_str(), NAME_CARRIER.as_str(): [{ "@id": iri }] }]);
+
+        let compacted = match self.compactor.compact(document, TERM_ONLY).await {
+            Ok(compacted) => compacted,
+            Err(error) => {
+                tracing::debug!(error = %error, iri, "name did not compact; answering it verbatim");
+                return None;
+            }
+        };
+        // The compacted document holds the probe identifier and the carrier; the
+        // carrier's value is the name, collapsed to a bare string by compaction.
+        let carried = compacted
+            .as_object()
+            .and_then(|object| object.iter().find(|(key, _)| *key != "id" && !key.starts_with('@')))
+            .map(|(_, value)| value)?;
+        let name = match carried {
+            Value::String(name) => name.as_str(),
+            Value::Array(items) => items.first().and_then(Value::as_str)?,
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => return None,
+        };
+        (name != iri).then(|| name.to_string())
+    }
+
+    /// The term the request's own contexts declare for the IRI.
+    ///
+    /// Table 5.2.28-1 makes membership of the `@context` the whole condition for
+    /// a short name, and clause C.6 names the case that reaches here: a term
+    /// definition that coerces a datatype cannot be selected for a value JSON-LD
+    /// would then have to re-type, yet the term is what the context calls the
+    /// Attribute. Only the contexts the request supplied are searched -- a name
+    /// the core context declares is never hidden by a coercion, so it has
+    /// already been answered above.
+    ///
+    /// Two terms declaring the same IRI are ordered as JSON-LD orders compaction
+    /// candidates: the shortest first, then the lexicographically least.
+    async fn declared_term(&self, iri: &str) -> Option<&str> {
+        let engine = self.compactor.engine();
+        let context = self.compactor.context();
+        let prepared_context = self.terms.get_or_init(|| engine.prepare_term_context(context));
+        let names = self.declared.get_or_init(|| declared_names(engine, context)).await;
+        let mut best: Option<&str> = None;
+        for name in names {
+            let expands_to_iri = engine.expand_term(name, prepared_context).await.is_ok_and(|expanded| expanded.as_str() == iri);
+            if expands_to_iri && best.is_none_or(|current| preferred(name, current)) {
+                best = Some(name);
+            }
+        }
+        best
+    }
 }
 
 /// Whether `candidate` is the term JSON-LD would prefer over `current`.
@@ -149,8 +198,8 @@ fn preferred(candidate: &str, current: &str) -> bool {
 
 /// The term names the contexts a request supplied declare.
 ///
-/// Over-collecting is harmless — a name that is not a term expands through the
-/// active `@vocab` and matches only the IRI it would really name — so the walk
+/// Over-collecting is harmless -- a name that is not a term expands through the
+/// active `@vocab` and matches only the IRI it would really name -- so the walk
 /// reads a context document for its declarations without repeating the
 /// processor's own context processing. The core context is not walked: its
 /// declarations are the ones vocabulary-position compaction already answers.
@@ -204,7 +253,7 @@ async fn declared_names(engine: &JsonLdEngine, context: &ContextSpec) -> BTreeSe
 #[cfg(test)]
 mod tests {
     use crate::{
-        compaction::{compact_attr_iri, compact_type_iri, preferred},
+        compaction::{NameCompactor, preferred},
         context_spec::ContextSpec,
         engine::processor::JsonLdEngine,
     };
@@ -232,13 +281,15 @@ mod tests {
         let engine = offline_engine();
         let context = ContextSpec::none();
 
-        pretty_assertions::assert_eq!(compact_type_iri(&engine, "Vehicle", &context).await, "Vehicle");
-        pretty_assertions::assert_eq!(compact_attr_iri(&engine, "speed", &context).await, "speed");
+        pretty_assertions::assert_eq!(NameCompactor::new(&engine, &context).compact_type_iri("Vehicle").await, "Vehicle");
+        pretty_assertions::assert_eq!(NameCompactor::new(&engine, &context).compact_attr_iri("speed").await, "speed");
     }
 
     #[tokio::test]
     async fn a_core_context_type_iri_compacts_back_to_its_term() {
-        let compacted = compact_type_iri(&offline_engine(), classes::PROPERTY.as_str(), &ContextSpec::none()).await;
+        let compacted = NameCompactor::new(&offline_engine(), &ContextSpec::none())
+            .compact_type_iri(classes::PROPERTY.as_str())
+            .await;
         pretty_assertions::assert_eq!(compacted, "Property");
     }
 
@@ -248,8 +299,8 @@ mod tests {
         let context = ContextSpec::core_only();
         let iri = "https://example.com/vocab#unknownTerm";
 
-        pretty_assertions::assert_eq!(compact_type_iri(&engine, iri, &context).await, iri);
-        pretty_assertions::assert_eq!(compact_attr_iri(&engine, iri, &context).await, iri);
+        pretty_assertions::assert_eq!(NameCompactor::new(&engine, &context).compact_type_iri(iri).await, iri);
+        pretty_assertions::assert_eq!(NameCompactor::new(&engine, &context).compact_attr_iri(iri).await, iri);
     }
 
     /// Table 5.2.28-1 conditions the short name on membership of the
@@ -260,8 +311,18 @@ mod tests {
         let engine = offline_engine();
         let context = example_context();
 
-        pretty_assertions::assert_eq!(compact_attr_iri(&engine, "http://example.org/common/isParked", &context).await, "isParked");
-        pretty_assertions::assert_eq!(compact_attr_iri(&engine, "http://example.org/vehicle/brandName", &context).await, "brandName");
+        pretty_assertions::assert_eq!(
+            NameCompactor::new(&engine, &context)
+                .compact_attr_iri("http://example.org/common/isParked")
+                .await,
+            "isParked"
+        );
+        pretty_assertions::assert_eq!(
+            NameCompactor::new(&engine, &context)
+                .compact_attr_iri("http://example.org/vehicle/brandName")
+                .await,
+            "brandName"
+        );
     }
 
     /// Clause C.6: a term coercing a datatype is not a candidate for a reified
@@ -271,7 +332,9 @@ mod tests {
         let engine = offline_engine();
 
         pretty_assertions::assert_eq!(
-            compact_attr_iri(&engine, "http://example.org/test/testedAt", &example_context()).await,
+            NameCompactor::new(&engine, &example_context())
+                .compact_attr_iri("http://example.org/test/testedAt")
+                .await,
             "testedAt"
         );
     }
@@ -284,7 +347,7 @@ mod tests {
         let engine = offline_engine();
         let iri = "http://example.org/parking/status";
 
-        pretty_assertions::assert_eq!(compact_attr_iri(&engine, iri, &example_context()).await, iri);
+        pretty_assertions::assert_eq!(NameCompactor::new(&engine, &example_context()).compact_attr_iri(iri).await, iri);
     }
 
     /// An entity type name takes the same route as an attribute name, so the
@@ -294,7 +357,9 @@ mod tests {
         let engine = offline_engine();
 
         pretty_assertions::assert_eq!(
-            compact_type_iri(&engine, "http://example.org/vehicle/Vehicle", &example_context()).await,
+            NameCompactor::new(&engine, &example_context())
+                .compact_type_iri("http://example.org/vehicle/Vehicle")
+                .await,
             "Vehicle"
         );
     }
@@ -309,7 +374,10 @@ mod tests {
             "aaa": {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@id": "http://example.org/test/testedAt"}
         })));
 
-        pretty_assertions::assert_eq!(compact_attr_iri(&engine, "http://example.org/test/testedAt", &context).await, "zz");
+        pretty_assertions::assert_eq!(
+            NameCompactor::new(&engine, &context).compact_attr_iri("http://example.org/test/testedAt").await,
+            "zz"
+        );
     }
 
     #[test]
@@ -318,5 +386,29 @@ mod tests {
         assert!(!preferred("abc", "ab"));
         assert!(preferred("ab", "ba"));
         assert!(!preferred("ba", "ab"));
+    }
+
+    /// One compactor serves every name of an operation: a name answered by
+    /// vocabulary position and names answered by the declared-term fallback
+    /// all come out as they do from a compactor built for each alone.
+    #[tokio::test]
+    async fn one_compactor_answers_every_name_as_a_fresh_one_would() {
+        let engine = offline_engine();
+        let context = example_context();
+        let shared = NameCompactor::new(&engine, &context);
+        let iris = [
+            "http://example.org/vehicle/brandName",
+            "http://example.org/test/testedAt",
+            "http://example.org/common/isParked",
+            "http://example.org/parking/status",
+        ];
+
+        for iri in iris {
+            pretty_assertions::assert_eq!(
+                shared.compact_attr_iri(iri).await,
+                NameCompactor::new(&engine, &context).compact_attr_iri(iri).await,
+                "{iri}"
+            );
+        }
     }
 }

@@ -1,7 +1,7 @@
 //! JSON-LD normalization of Context Source properties used by `csf`.
 
 use crate::{error::RegistrationError, payload::extract_additional_properties};
-use andromeda_jsonld::{compaction::compact_attr_iri, context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_jsonld::{compaction::NameCompactor, context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use serde_json::{Map, Value};
 
 /// Expand the non-standard Context Source properties from a registration payload.
@@ -28,17 +28,13 @@ pub(super) async fn expand_context_source_properties(
 }
 
 /// Compact stored Context Source properties for a registration response.
-pub(super) async fn compact_context_source_properties(
-    engine: &JsonLdEngine,
-    properties: Value,
-    context: &ContextSpec,
-) -> Result<Option<Value>, RegistrationError> {
+pub(super) async fn compact_context_source_properties(names: &NameCompactor<'_>, properties: Value) -> Result<Option<Value>, RegistrationError> {
     let Value::Object(properties) = properties else {
         return Ok(None);
     };
     let mut compacted = Map::new();
     for (key, value) in properties {
-        compacted.insert(compact_attr_iri(engine, &key, context).await, value);
+        compacted.insert(names.compact_attr_iri(&key).await, value);
     }
     Ok((!compacted.is_empty()).then_some(Value::Object(compacted)))
 }

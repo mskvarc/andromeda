@@ -11,54 +11,44 @@
 //! a JSON-LD document, which would shorten the identifiers too.
 
 use crate::{
-    discovery::{
-        EntityDiscoveryService,
-        stored_names::{parse_attribute_name, parse_type_name},
-    },
+    discovery::stored_names::{parse_attribute_name, parse_type_name},
     error::EntityError,
 };
-use andromeda_jsonld::{
-    compaction::{compact_attr_iri, compact_type_iri},
-    context_spec::ContextSpec,
-};
+use andromeda_jsonld::compaction::NameCompactor;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 
-impl EntityDiscoveryService {
-    /// The short name `context` gives a stored attribute name, or the name
-    /// itself when the context declares no term for it.
-    pub(super) async fn compacted_attribute_name(&self, iri: &AttributeName, context: &ContextSpec) -> Result<AttributeName, EntityError> {
-        parse_attribute_name(&compact_attr_iri(&self.engine, iri.as_str(), context).await)
-    }
+/// The short name the context gives a stored attribute name, or the name
+/// itself when the context declares no term for it.
+pub(super) async fn compacted_attribute_name(names: &NameCompactor<'_>, iri: &AttributeName) -> Result<AttributeName, EntityError> {
+    parse_attribute_name(&names.compact_attr_iri(iri.as_str()).await)
+}
 
-    /// The short name `context` gives a stored entity type name, or the name
-    /// itself when the context declares no term for it.
-    pub(super) async fn compacted_type_name(&self, iri: &EntityTypeName, context: &ContextSpec) -> Result<EntityTypeName, EntityError> {
-        parse_type_name(&compact_type_iri(&self.engine, iri.as_str(), context).await)
-    }
+/// The short name the context gives a stored entity type name, or the name
+/// itself when the context declares no term for it.
+pub(super) async fn compacted_type_name(names: &NameCompactor<'_>, iri: &EntityTypeName) -> Result<EntityTypeName, EntityError> {
+    parse_type_name(&names.compact_type_iri(iri.as_str()).await)
+}
 
-    /// The short names `context` gives a list of stored attribute names.
-    pub(super) async fn compacted_attribute_names(
-        &self,
-        iris: impl IntoIterator<Item = AttributeName>,
-        context: &ContextSpec,
-    ) -> Result<Vec<AttributeName>, EntityError> {
-        let mut names = Vec::new();
-        for iri in iris {
-            names.push(self.compacted_attribute_name(&iri, context).await?);
-        }
-        Ok(names)
+/// The short names the context gives a list of stored attribute names.
+pub(super) async fn compacted_attribute_names(
+    names: &NameCompactor<'_>,
+    iris: impl IntoIterator<Item = AttributeName>,
+) -> Result<Vec<AttributeName>, EntityError> {
+    let mut compacted = Vec::new();
+    for iri in iris {
+        compacted.push(compacted_attribute_name(names, &iri).await?);
     }
+    Ok(compacted)
+}
 
-    /// The short names `context` gives a list of stored entity type names.
-    pub(super) async fn compacted_type_names(
-        &self,
-        iris: impl IntoIterator<Item = EntityTypeName>,
-        context: &ContextSpec,
-    ) -> Result<Vec<EntityTypeName>, EntityError> {
-        let mut names = Vec::new();
-        for iri in iris {
-            names.push(self.compacted_type_name(&iri, context).await?);
-        }
-        Ok(names)
+/// The short names the context gives a list of stored entity type names.
+pub(super) async fn compacted_type_names(
+    names: &NameCompactor<'_>,
+    iris: impl IntoIterator<Item = EntityTypeName>,
+) -> Result<Vec<EntityTypeName>, EntityError> {
+    let mut compacted = Vec::new();
+    for iri in iris {
+        compacted.push(compacted_type_name(names, &iri).await?);
     }
+    Ok(compacted)
 }
