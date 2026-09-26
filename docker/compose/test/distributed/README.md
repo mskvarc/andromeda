@@ -21,7 +21,7 @@ The two URL families matter: the test client on the host reaches brokers via pub
 
 ## Connection budget
 
-Each Postgres server keeps the image default `max_connections = 100`. The brokers run with `ANDROMEDA__DATABASE__MAX_CONNECTIONS=16` and `ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS=8`, idle connections are reclaimed after 30 s, and the harness opens at most two connections per broker. The busiest server (`postgres-a`, two instances) therefore peaks well under half of its limit even with several tenants provisioned at once.
+Each Postgres server runs with `max_connections = 400`. The brokers run with `ANDROMEDA__DATABASE__MAX_CONNECTIONS=16` and `ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS=8`, and idle connections are reclaimed after 30 s. The busiest server (`postgres-a`, broker-a and its replica broker-a2) holds 2 x (16 + tenants x 8) for the tenants live at once: the default tenant, the four tenants the harness leases to concurrent topologies (one per test thread), and the tenants the tenant-specific suites name, plus the harness's own lazily opened pools. With a dozen tenants live that approaches 250, which the image default of 100 cannot hold.
 
 ## Bring up / tear down
 

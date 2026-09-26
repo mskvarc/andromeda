@@ -4,6 +4,10 @@ x-postgres-base: &postgres-base
   build:
     context: ../../../images/postgresql
   image: andromeda-distributed-postgres:latest
+  # postgres-a serves broker-a and its replica broker-a2: 2 x (16 platform +
+  # tenants x 8) with the default tenant, the four leased test tenants and the
+  # tenant-specific suites' tenants live at once, plus the harness pools.
+  command: ["postgres", "-c", "max_connections=400"]
   environment:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
