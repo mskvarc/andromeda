@@ -7,10 +7,12 @@
 //! sub-Property, which a Fragment-shaped record would lose.
 
 use crate::{
+    admission_fixture::admitted_batch,
     batch::UpsertPolicy,
     history_recording_assertions::{assert_observes_stored_instances, observed_default_instance, recorded_observation},
     notification_recording_harness::{ACCURACY_IRI, CATEGORY_IRI, ENTITY_ID, NAME_IRI, live_target, recording_service, single_recorded_write},
     side_effect::BatchSideEffectMode,
+    write_kind::{BatchMerge, BatchUpdate, BatchUpsert},
 };
 use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -33,13 +35,15 @@ fn building(attributes: &Value) -> Entity {
 #[tokio::test]
 async fn batch_merge_records_the_merged_instance_keeping_its_untouched_sub_property() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_batch(
+        &service,
+        BatchMerge,
+        vec![building(&json!({"category": {"type": "Property", "value": "retail"}}))],
+        &ContextSpec::core_only(),
+    )
+    .await;
     service
-        .batch_merge(
-            &live_target(),
-            &[building(&json!({"category": {"type": "Property", "value": "retail"}}))],
-            &ContextSpec::core_only(),
-            BatchSideEffectMode::Inline,
-        )
+        .batch_merge(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
         .await
         .expect("the batch merge lands");
 
@@ -54,13 +58,15 @@ async fn batch_merge_records_the_merged_instance_keeping_its_untouched_sub_prope
 #[tokio::test]
 async fn batch_merge_defers_the_merged_instance_when_enqueued() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_batch(
+        &service,
+        BatchMerge,
+        vec![building(&json!({"category": {"type": "Property", "value": "retail"}}))],
+        &ContextSpec::core_only(),
+    )
+    .await;
     service
-        .batch_merge(
-            &live_target(),
-            &[building(&json!({"category": {"type": "Property", "value": "retail"}}))],
-            &ContextSpec::core_only(),
-            BatchSideEffectMode::Enqueue,
-        )
+        .batch_merge(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Enqueue)
         .await
         .expect("the batch merge lands");
 
@@ -78,13 +84,20 @@ async fn batch_merge_defers_the_merged_instance_when_enqueued() {
 #[tokio::test]
 async fn batch_update_without_overwrite_records_only_the_attributes_it_appended() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_batch(
+        &service,
+        BatchUpdate,
+        vec![building(&json!({
+            "category": {"type": "Property", "value": "retail"},
+            "name": {"type": "Property", "value": "lobby"}
+        }))],
+        &ContextSpec::core_only(),
+    )
+    .await;
     service
         .batch_update(
             &live_target(),
-            &[building(&json!({
-                "category": {"type": "Property", "value": "retail"},
-                "name": {"type": "Property", "value": "lobby"}
-            }))],
+            admitted,
             &ContextSpec::core_only(),
             OverwritePolicy::Preserve,
             BatchSideEffectMode::Inline,
@@ -101,10 +114,17 @@ async fn batch_update_without_overwrite_records_only_the_attributes_it_appended(
 #[tokio::test]
 async fn batch_update_without_overwrite_that_appended_nothing_records_no_observation() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_batch(
+        &service,
+        BatchUpdate,
+        vec![building(&json!({"category": {"type": "Property", "value": "retail"}}))],
+        &ContextSpec::core_only(),
+    )
+    .await;
     service
         .batch_update(
             &live_target(),
-            &[building(&json!({"category": {"type": "Property", "value": "retail"}}))],
+            admitted,
             &ContextSpec::core_only(),
             OverwritePolicy::Preserve,
             BatchSideEffectMode::Inline,
@@ -120,10 +140,17 @@ async fn batch_update_without_overwrite_that_appended_nothing_records_no_observa
 #[tokio::test]
 async fn batch_update_with_overwrite_records_the_stored_instance() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_batch(
+        &service,
+        BatchUpdate,
+        vec![building(&json!({"category": {"type": "Property", "value": "retail"}}))],
+        &ContextSpec::core_only(),
+    )
+    .await;
     service
         .batch_update(
             &live_target(),
-            &[building(&json!({"category": {"type": "Property", "value": "retail"}}))],
+            admitted,
             &ContextSpec::core_only(),
             OverwritePolicy::Overwrite,
             BatchSideEffectMode::Inline,
@@ -139,14 +166,15 @@ async fn batch_update_with_overwrite_records_the_stored_instance() {
 #[tokio::test]
 async fn batch_upsert_update_records_the_stored_instance() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_batch(
+        &service,
+        BatchUpsert(UpsertPolicy::Update),
+        vec![building(&json!({"category": {"type": "Property", "value": "retail"}}))],
+        &ContextSpec::core_only(),
+    )
+    .await;
     service
-        .batch_upsert(
-            &live_target(),
-            &[building(&json!({"category": {"type": "Property", "value": "retail"}}))],
-            &ContextSpec::core_only(),
-            UpsertPolicy::Update,
-            BatchSideEffectMode::Inline,
-        )
+        .batch_upsert(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
         .await
         .expect("the batch upsert lands");
 
@@ -159,17 +187,18 @@ async fn batch_upsert_update_records_the_stored_instance() {
 #[tokio::test]
 async fn batch_upsert_replace_records_every_stored_attribute_of_the_replacement() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_batch(
+        &service,
+        BatchUpsert(UpsertPolicy::Replace),
+        vec![building(&json!({
+            "category": {"type": "Property", "value": "retail"},
+            "name": {"type": "Property", "value": "lobby"}
+        }))],
+        &ContextSpec::core_only(),
+    )
+    .await;
     service
-        .batch_upsert(
-            &live_target(),
-            &[building(&json!({
-                "category": {"type": "Property", "value": "retail"},
-                "name": {"type": "Property", "value": "lobby"}
-            }))],
-            &ContextSpec::core_only(),
-            UpsertPolicy::Replace,
-            BatchSideEffectMode::Inline,
-        )
+        .batch_upsert(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
         .await
         .expect("the batch upsert lands");
 

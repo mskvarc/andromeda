@@ -15,6 +15,8 @@
 //! the entries of a single round are chunked and committed concurrently. An
 //! array without repeats is one round, so the ordinary batch is unaffected.
 
+/// The entities of a batch write the admission let through.
+pub mod admitted_batch;
 /// Committing one chunk and settling what each entity in it did.
 mod chunk;
 /// Batch entity creation.
@@ -42,17 +44,23 @@ mod upsert;
 
 use crate::{
     EntityService,
-    batch::{delete::DeleteChunkOutcome, same_id_rounds::SameIdRounds, upsert::UpsertChunkOutcome},
+    batch::{
+        admitted_batch::{AdmittedBatch, AdmittedBatchEntity},
+        delete::DeleteChunkOutcome,
+        same_id_rounds::SameIdRounds,
+        upsert::UpsertChunkOutcome,
+    },
     error::EntityError,
     side_effect::BatchSideEffectMode,
+    write_kind::{BatchCreate, BatchMerge, BatchUpdate, BatchUpsert},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::{entity::Entity, expanded::mutation::selection::OverwritePolicy};
+use andromeda_ngsi_ld_model::expanded::mutation::selection::OverwritePolicy;
 use andromeda_telemetry::entity::{self, EntityOperation};
 use futures::{StreamExt, stream};
-use std::{collections::HashSet, slice::Chunks};
+use std::collections::HashSet;
 
 /// How an upsert treats attributes already held by an existing entity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -103,22 +111,32 @@ impl EntityService {
         }
     }
 
-    /// The chunks one round is committed in.
+    /// The chunks one round is committed in, in round order.
     ///
     /// Committing these concurrently is safe exactly because they come from a
     /// round: a round holds each identifier at most once, so no two chunks can
     /// carry two instances of the same entity and land them out of array order
     /// (clause 5.5.11.0).
-    fn round_chunks<'round, 'entities>(&self, round: &'round [&'entities Entity]) -> Chunks<'round, &'entities Entity> {
-        round.chunks(self.batch_chunk_len(round.len()))
+    fn round_chunks(&self, round: Vec<AdmittedBatchEntity>) -> Vec<Vec<AdmittedBatchEntity>> {
+        let chunk_len = self.batch_chunk_len(round.len());
+        let mut entries = round.into_iter();
+        let mut chunks = Vec::new();
+        loop {
+            let chunk: Vec<AdmittedBatchEntity> = entries.by_ref().take(chunk_len).collect();
+            if chunk.is_empty() {
+                return chunks;
+            }
+            chunks.push(chunk);
+        }
     }
 
-    /// Create multiple entities in a single batch operation (NGSI-LD 5.6.7).
+    /// Create the admitted entities in a single batch operation (NGSI-LD 5.6.7).
     ///
     /// # Errors
     ///
-    /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when a
-    /// submitted entity cannot be expanded against `context`, and
+    /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when an
+    /// entity the forwarding phase narrowed cannot be expanded against
+    /// `context`, and
     /// [`EntityError::Persistence`] when the store could not commit a chunk. A
     /// failure that concerns one entity only is carried in
     /// [`BatchResult::errors`] instead, because clause 5.6.7 reports batch
@@ -126,13 +144,14 @@ impl EntityService {
     pub async fn batch_create(
         &self,
         target: &ContextTarget,
-        entities: &[Entity],
+        admitted: AdmittedBatch<BatchCreate>,
         context: &ContextSpec,
         mode: BatchSideEffectMode,
     ) -> Result<BatchResult, EntityError> {
         let timer = entity::start(EntityOperation::BatchCreate);
         let result: Result<BatchResult, EntityError> = async {
             self.batch_activity.record_activity();
+            let (_, entities) = admitted.into_parts();
             // Clause 5.5.11.1: only the first instance of an identifier creates, so
             // there is nothing left to order and no second round to run.
             let (deduped, errors) = Self::dedupe_create_entities(entities);
@@ -141,7 +160,7 @@ impl EntityService {
                 return Ok(batch);
             }
 
-            let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(&deduped))
+            let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(deduped))
                 .map(|chunk| async move { self.batch_create_chunk(target, chunk, context, mode).await })
                 .buffered(self.batch_execution.chunk_write_concurrency)
                 .collect()
@@ -201,7 +220,8 @@ impl EntityService {
         result
     }
 
-    /// Update attributes of multiple entities in a single batch operation (NGSI-LD 5.6.9).
+    /// Update attributes of the admitted entities in a single batch operation
+    /// (NGSI-LD 5.6.9).
     ///
     /// An identifier the array repeats is updated once per instance, in array
     /// order, each instance against the state its predecessor left: clause
@@ -210,8 +230,9 @@ impl EntityService {
     ///
     /// # Errors
     ///
-    /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when a
-    /// submitted entity cannot be expanded against `context`, and
+    /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when an
+    /// entity the forwarding phase narrowed cannot be expanded against
+    /// `context`, and
     /// [`EntityError::Persistence`] when the store could not read or commit a
     /// chunk. A failure that concerns one entity only is carried in
     /// [`BatchResult::errors`] instead, because clause 5.6.9 reports batch
@@ -219,7 +240,7 @@ impl EntityService {
     pub async fn batch_update(
         &self,
         target: &ContextTarget,
-        entities: &[Entity],
+        admitted: AdmittedBatch<BatchUpdate>,
         context: &ContextSpec,
         overwrite: OverwritePolicy,
         mode: BatchSideEffectMode,
@@ -227,9 +248,10 @@ impl EntityService {
         let timer = entity::start(EntityOperation::BatchUpdate);
         let result: Result<BatchResult, EntityError> = async {
             self.batch_activity.record_activity();
-            let rounds = SameIdRounds::from_entities(entities);
+            let (_, entities) = admitted.into_parts();
+            let rounds = SameIdRounds::from_entries(entities, AdmittedBatchEntity::id);
             let mut batch = BatchResult::empty();
-            for round in rounds.rounds() {
+            for round in rounds.into_rounds() {
                 let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(round))
                     .map(|chunk| async move { self.batch_update_chunk(target, chunk, context, overwrite, mode).await })
                     .buffered(self.batch_execution.chunk_write_concurrency)
@@ -244,7 +266,8 @@ impl EntityService {
         result
     }
 
-    /// Merge partial updates into multiple entities in a single batch operation.
+    /// Merge the admitted partial updates into their entities in a single batch
+    /// operation.
     ///
     /// An identifier the array repeats is merged once per instance, in array
     /// order, each merge applied to what the previous one produced: clause
@@ -254,24 +277,26 @@ impl EntityService {
     ///
     /// # Errors
     ///
-    /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when a
-    /// submitted entity cannot be expanded against `context`, and
+    /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when an
+    /// entity the forwarding phase narrowed cannot be expanded against
+    /// `context`, and
     /// [`EntityError::Persistence`] when the store could not read or commit a
     /// chunk. A failure that concerns one entity only is carried in
     /// [`BatchResult::errors`] instead.
     pub async fn batch_merge(
         &self,
         target: &ContextTarget,
-        entities: &[Entity],
+        admitted: AdmittedBatch<BatchMerge>,
         context: &ContextSpec,
         mode: BatchSideEffectMode,
     ) -> Result<BatchResult, EntityError> {
         let timer = entity::start(EntityOperation::BatchMerge);
         let result: Result<BatchResult, EntityError> = async {
             self.batch_activity.record_activity();
-            let rounds = SameIdRounds::from_entities(entities);
+            let (_, entities) = admitted.into_parts();
+            let rounds = SameIdRounds::from_entries(entities, AdmittedBatchEntity::id);
             let mut batch = BatchResult::empty();
-            for round in rounds.rounds() {
+            for round in rounds.into_rounds() {
                 let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(round))
                     .map(|chunk| async move { self.batch_merge_chunk(target, chunk, context, mode).await })
                     .buffered(self.batch_execution.chunk_write_concurrency)
@@ -286,7 +311,8 @@ impl EntityService {
         result
     }
 
-    /// Create or update multiple entities in a single batch operation (NGSI-LD 5.6.8).
+    /// Create or update the admitted entities in a single batch operation
+    /// (NGSI-LD 5.6.8), in the mode they were admitted for.
     ///
     /// An identifier the array repeats is created by its first instance and
     /// replaced or updated by each later one, in array order, so the stored
@@ -296,8 +322,9 @@ impl EntityService {
     ///
     /// # Errors
     ///
-    /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when a
-    /// submitted entity cannot be expanded against `context`,
+    /// Reports the first chunk-level failure: [`EntityError::JsonLd`] when an
+    /// entity the forwarding phase narrowed cannot be expanded against
+    /// `context`,
     /// [`EntityError::Contention`] when a replacement lost its precondition on
     /// every attempt, and [`EntityError::Persistence`] when the store could not
     /// read or commit a chunk. A failure that concerns one entity only is
@@ -306,19 +333,19 @@ impl EntityService {
     pub async fn batch_upsert(
         &self,
         target: &ContextTarget,
-        entities: &[Entity],
+        admitted: AdmittedBatch<BatchUpsert>,
         context: &ContextSpec,
-        policy: UpsertPolicy,
         mode: BatchSideEffectMode,
     ) -> Result<(BatchResult, Vec<Uri>), EntityError> {
         let timer = entity::start(EntityOperation::BatchUpsert);
         let result: Result<(BatchResult, Vec<Uri>), EntityError> = async {
             self.batch_activity.record_activity();
-            let rounds = SameIdRounds::from_entities(entities);
+            let (BatchUpsert(policy), entities) = admitted.into_parts();
+            let rounds = SameIdRounds::from_entries(entities, AdmittedBatchEntity::id);
             let mut batch = BatchResult::empty();
             let mut created = Vec::new();
 
-            for round in rounds.rounds() {
+            for round in rounds.into_rounds() {
                 let chunk_results: Vec<Result<UpsertChunkOutcome, EntityError>> = stream::iter(self.round_chunks(round))
                     .map(|chunk| async move {
                         let mut chunk_errors = Vec::new();

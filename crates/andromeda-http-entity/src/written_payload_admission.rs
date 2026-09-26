@@ -52,12 +52,18 @@
 //! `BatchEntityError` containing the failed Entity ID and the related
 //! `ProblemDetails`" for each one that fails, leaving the rest of the batch
 //! intact. The screening is therefore run once here and projected twice.
+//!
+//! What the screening expanded is what the local write stores: each admission
+//! hands back the admitted payload `andromeda_entity` defines, and the write
+//! path consumes it rather than expanding the payload again.
 
 use crate::error::EntityHttpClassify;
 use andromeda_entity::{
     EntityService,
+    admitted_write::{AdmittedAttribute, AdmittedEntity},
+    batch::admitted_batch::{AdmittedBatch, RenderedEntity},
     error::EntityError,
-    write_admission::{AttributeWrite, BatchWrite, EntityWrite},
+    write_kind::{AttributeWriteKind, BatchWriteKind, EntityWriteKind},
 };
 use andromeda_http_response::{batch_projection::batch_entity_error, classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -108,41 +114,37 @@ impl EntityHttpClassify for WrittenPayloadRefusal {
 }
 
 /// Screen one entity-shaped payload -- a whole Entity or an entity-shaped
-/// Fragment -- before it is forwarded or stored.
+/// Fragment -- for the write `W` before it is forwarded or stored.
 ///
 /// # Errors
 ///
 /// Returns the first attribute node clauses 5.2.4 and 4.5.2.2 do not admit, and
-/// the first placement clause 5.5.4 refuses for `write`.
-pub(crate) async fn admit_written_entity(
+/// the first placement clause 5.5.4 refuses for `W`.
+pub(crate) async fn admit_written_entity<W: EntityWriteKind>(
     service: &EntityService,
-    write: EntityWrite,
-    payload: &Value,
+    payload: Value,
     context: &ContextSpec,
-) -> Result<(), WrittenPayloadRefusal> {
-    validate_fragment_attribute_types(payload)?;
-    reject_embedded_contexts_in_fragment(payload)?;
-    service.admit_entity_write(write, payload, context).await?;
-    Ok(())
+) -> Result<AdmittedEntity<W>, WrittenPayloadRefusal> {
+    validate_fragment_attribute_types(&payload)?;
+    reject_embedded_contexts_in_fragment(&payload)?;
+    Ok(service.admit_entity_write(payload, context).await?)
 }
 
-/// Screen the bare Attribute Fragment of clauses 5.6.4 and 5.6.19 before it is
-/// forwarded or stored.
+/// Screen the bare Attribute Fragment of clauses 5.6.4 and 5.6.19 written to
+/// `attribute` for the write `W` before it is forwarded or stored.
 ///
 /// # Errors
 ///
 /// Returns the first refusal on the same terms as [`admit_written_entity`].
-pub(crate) async fn admit_written_attribute(
+pub(crate) async fn admit_written_attribute<'a, W: AttributeWriteKind>(
     service: &EntityService,
-    write: AttributeWrite,
-    attribute: &AttributeName,
-    payload: &Value,
+    attribute: &'a AttributeName,
+    payload: Value,
     context: &ContextSpec,
-) -> Result<(), WrittenPayloadRefusal> {
-    validate_attribute_node(attribute.as_str(), payload)?;
-    reject_embedded_contexts_in_attribute(attribute.as_str(), payload)?;
-    service.admit_attribute_write(write, attribute, payload, context).await?;
-    Ok(())
+) -> Result<AdmittedAttribute<'a, W>, WrittenPayloadRefusal> {
+    validate_attribute_node(attribute.as_str(), &payload)?;
+    reject_embedded_contexts_in_attribute(attribute.as_str(), &payload)?;
+    Ok(service.admit_attribute_write(attribute, payload, context).await?)
 }
 
 /// Keep the batch entities the write rules admit, reporting each refused one
@@ -164,13 +166,13 @@ pub(crate) async fn admit_written_attribute(
 /// 5.6.7.5 requires the batch to answer 207 with a per-entity `BatchEntityError`
 /// for it, so the one refusal is projected onto every submitted entity and an
 /// empty admitted set is returned.
-pub(crate) async fn admitted_batch_entities(
+pub(crate) async fn admitted_batch_entities<W: BatchWriteKind>(
     service: &EntityService,
-    write: BatchWrite,
+    kind: W,
     entities: Vec<Entity>,
     context: &ContextSpec,
     refused: &mut Vec<BatchEntityError>,
-) -> Result<Vec<Entity>, WrittenPayloadRefusal> {
+) -> Result<AdmittedBatch<W>, WrittenPayloadRefusal> {
     if let Err(error) = service.admit_write_context(context).await {
         let refusal = WrittenPayloadRefusal::Placement(error);
         // Clause 5.5.6 makes an unretrievable user `@context` an
@@ -184,23 +186,19 @@ pub(crate) async fn admitted_batch_entities(
             for entity in entities {
                 refused.push(batch_entity_error(entity.id, &refusal, EntityHttpClassify::classify_for_entity_http));
             }
-            return Ok(Vec::new());
+            return Ok(AdmittedBatch::empty(kind));
         }
         return Err(refusal);
     }
-    let mut admitted = Vec::with_capacity(entities.len());
+    let mut rendered = Vec::with_capacity(entities.len());
     for entity in entities {
         match render_and_validate(&entity) {
-            Ok(()) => admitted.push(entity),
+            Ok(representation) => rendered.push(RenderedEntity { entity, representation }),
             Err(refusal) => refused.push(batch_entity_error(entity.id, &refusal, EntityHttpClassify::classify_for_entity_http)),
         }
     }
-    let placements = service.admit_batch_write(write, &admitted, context).await;
-    if placements.is_empty() {
-        return Ok(admitted);
-    }
+    let (admitted, placements) = service.admit_batch_write(kind, rendered, context).await;
     for (id, error) in placements {
-        admitted.retain(|entity| entity.id != id);
         refused.push(batch_entity_error(
             id,
             &WrittenPayloadRefusal::Placement(error),
@@ -210,18 +208,19 @@ pub(crate) async fn admitted_batch_entities(
     Ok(admitted)
 }
 
-/// The compact half of the admission for one decoded entity.
+/// The compact half of the admission for one decoded entity, answering the
+/// compact JSON the expanded half then prepares.
 ///
 /// An entity-shaped payload is decoded into an [`Entity`] before any handler
 /// runs, so the compact JSON the pre-expansion rules are stated over is
 /// recovered by rendering that entity back. A member the model does not name
 /// survives the decode verbatim, which is exactly what a forged seal is, and
 /// comes back unchanged.
-fn render_and_validate(entity: &Entity) -> Result<(), WrittenPayloadRefusal> {
+fn render_and_validate(entity: &Entity) -> Result<Value, WrittenPayloadRefusal> {
     let representation: Value = serde_json::to_value(entity)?;
     validate_fragment_attribute_types(&representation)?;
     reject_embedded_contexts_in_fragment(&representation)?;
-    Ok(())
+    Ok(representation)
 }
 
 #[cfg(test)]

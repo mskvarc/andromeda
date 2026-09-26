@@ -16,12 +16,13 @@
 //!
 //! One admission runs every rule, so a rule added later cannot be added to
 //! half of the write paths. [`admit_expanded_entity`] and
-//! [`admit_expanded_attribute`] hold the rules that read the expanded payload,
-//! and every write path in this crate reaches them; the transport layer runs
-//! the same screening ahead of its forwarding phase through
+//! [`admit_expanded_attribute`] hold the rules that read the expanded payload.
+//! The transport layer runs them ahead of its forwarding phase through
 //! [`EntityService::admit_entity_write`], [`EntityService::admit_attribute_write`]
 //! and `EntityService::admit_batch_write`, which expand the payload the way the
-//! write path would. What a client wrote before expansion
+//! write path stores it and hand back what they expanded; the write paths
+//! accept only such an admitted payload (see `crate::admitted_write`), so no
+//! write stores a payload the screening did not read. What a client wrote before expansion
 //! -- the attribute types of clause 5.2.4, the seals of clause 4.5.2.2 and the
 //! `@context` clause 5.5.7 admits only at the document's top level -- is decided
 //! on the compact payload, which is the transport layer's own half of the same
@@ -34,6 +35,7 @@
 
 use crate::{
     EntityService,
+    admitted_write::{AdmittedAttribute, AdmittedEntity, WritePayload},
     attribute_envelope::{validate_attribute_envelopes, validate_instance_identities},
     batch::UpsertPolicy,
     entity_identity_admission::validate_entity_identity,
@@ -41,10 +43,11 @@ use crate::{
     geo_property_geometry::validate_geo_property_geometries,
     null_sentinel_admission::{NullSentinelAdmission, reject_null_placements_in_attribute, reject_null_placements_in_entity},
     scope_admission::validate_scope_member,
+    write_kind::{AttributeWriteKind, EntityWriteKind},
 };
 use andromeda_jsonld::{attribute_fragment::expand_attribute_fragment, context_spec::ContextSpec, scoped_context_admission::reject_scoped_user_contexts};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::expanded::node::expanded_nodes;
+use andromeda_ngsi_ld_model::{attribute_strip::AttributeStrip, expanded::node::expanded_nodes};
 use andromeda_ngsi_ld_representation::normalization::{normalize_attribute_node, normalize_entity_attributes, normalize_merge_fragment};
 use serde_json::Value;
 
@@ -213,60 +216,124 @@ impl EntityService {
         Ok(())
     }
 
-    /// Run the clause 5.5.4 screening of `write` over the entity-shaped payload
-    /// a client sent, before the operation forwards any of it.
+    /// Run the clause 5.5.4 screening of `W` over the entity-shaped payload a
+    /// client sent, before the operation forwards any of it, and keep what it
+    /// expanded for the local write.
     ///
-    /// The payload is expanded here the way `write`'s own path expands it, so
-    /// the screening reads the shape the write would store. A merge fragment is
-    /// the one payload not screened in its final shape: Table 6.5.3.4-1's
-    /// `format` and `lang` are applied against the stored entity later, and that
-    /// rewrite neither introduces an NGSI-LD Null nor removes one.
+    /// The payload is expanded here the way `W`'s own path expands it, so the
+    /// screening reads the shape the write stores. A merge fragment is the one
+    /// payload not screened in its final shape: Table 6.5.3.4-1's `format` and
+    /// `lang` are applied against the stored entity later, and that rewrite
+    /// neither introduces an NGSI-LD Null nor removes one.
     ///
     /// # Errors
     ///
-    /// Reports [`EntityError::JsonLd`] when the payload cannot be expanded
-    /// against `context`, and the [`EntityError::Validation`] of
-    /// [`admit_expanded_entity`].
-    pub async fn admit_entity_write(&self, write: EntityWrite, payload: &Value, context: &ContextSpec) -> Result<(), EntityError> {
+    /// Reports the refusal of [`EntityService::admit_write_context`], and those
+    /// of [`EntityService::admit_remaining_entity`].
+    pub async fn admit_entity_write<W: EntityWriteKind>(&self, payload: impl WritePayload, context: &ContextSpec) -> Result<AdmittedEntity<W>, EntityError> {
         self.admit_write_context(context).await?;
-        let mut payload = payload.clone(); // clone: expansion consumes the document, which the caller still has to forward and to write
-        write.normalize(&mut payload);
-        let expanded = self.engine.expand(payload, context).await?;
-        admit_expanded_entity(&expanded, write.null_sentinel_admission())
+        self.admit_remaining_entity(payload, context).await
     }
 
-    /// Run the clause 5.5.4 screening of `write` over the bare Attribute
-    /// Fragment of clauses 5.6.4 and 5.6.19, before the operation forwards it.
+    /// Run the clause 5.5.4 screening of `W` over what remains of a payload
+    /// once the forwarding phase took the attributes proxied registrations own
+    /// out of it.
+    ///
+    /// The request `@context` was admitted with the whole payload, so only the
+    /// payload rules run again, over the document the local write now stores.
     ///
     /// # Errors
     ///
-    /// Reports [`EntityError::JsonLd`] when the fragment cannot be expanded
-    /// against `context`, and the [`EntityError::Validation`] of
-    /// [`admit_expanded_attribute`].
-    pub async fn admit_attribute_write(
+    /// Reports [`EntityError::Validation`] when a decoded payload cannot be
+    /// rendered back to JSON, [`EntityError::JsonLd`] when the payload cannot
+    /// be expanded against `context`, and the [`EntityError::Validation`] of
+    /// [`admit_expanded_entity`].
+    pub async fn admit_remaining_entity<W: EntityWriteKind>(
         &self,
-        write: AttributeWrite,
-        attribute: &AttributeName,
-        payload: &Value,
+        payload: impl WritePayload,
         context: &ContextSpec,
-    ) -> Result<(), EntityError> {
+    ) -> Result<AdmittedEntity<W>, EntityError> {
+        let mut payload = payload.into_payload()?;
+        W::WRITE.normalize(&mut payload);
+        let expanded = self.engine.expand(payload, context).await?;
+        admit_expanded_entity(&expanded, W::WRITE.null_sentinel_admission())?;
+        Ok(AdmittedEntity::new(expanded))
+    }
+
+    /// The payload the local phase of a distributed write stores, given what
+    /// stripping the proxied attributes left of the payload `admitted` was
+    /// expanded from (clauses 5.6.1.4 and following: "any remaining input
+    /// data").
+    ///
+    /// An untouched payload is the admitted one; a narrowed one is `remainder`,
+    /// admitted anew; an emptied one leaves the local phase nothing to write,
+    /// which is `None`.
+    ///
+    /// # Errors
+    ///
+    /// The inner result reports the refusals of
+    /// [`EntityService::admit_remaining_entity`] for a narrowed payload.
+    pub async fn admit_local_remainder<W: EntityWriteKind>(
+        &self,
+        admitted: AdmittedEntity<W>,
+        strip: AttributeStrip,
+        remainder: impl WritePayload,
+        context: &ContextSpec,
+    ) -> Option<Result<AdmittedEntity<W>, EntityError>> {
+        match strip {
+            AttributeStrip::Untouched => Some(Ok(admitted)),
+            AttributeStrip::Narrowed => Some(self.admit_remaining_entity(remainder, context).await),
+            AttributeStrip::Emptied => None,
+        }
+    }
+
+    /// Run the clause 5.5.4 screening of `W` over the bare Attribute Fragment
+    /// of clauses 5.6.4 and 5.6.19 written to `attribute`, before the
+    /// operation forwards it, and keep what it expanded for the local write.
+    ///
+    /// # Errors
+    ///
+    /// Reports the refusal of [`EntityService::admit_write_context`],
+    /// [`EntityError::JsonLd`] when the fragment cannot be expanded against
+    /// `context`, and the [`EntityError::Validation`] of
+    /// [`admit_expanded_attribute`].
+    pub async fn admit_attribute_write<'a, W: AttributeWriteKind>(
+        &self,
+        attribute: &'a AttributeName,
+        payload: Value,
+        context: &ContextSpec,
+    ) -> Result<AdmittedAttribute<'a, W>, EntityError> {
         self.admit_write_context(context).await?;
-        let mut payload = payload.clone(); // clone: expansion consumes the document, which the caller still has to forward and to write
+        // Clauses 5.6.4 and 5.6.19 take a bare Attribute Fragment, so the
+        // entity-level normalization does not reach it. Normalizing here is what
+        // applies the concise form and discards the output-only `previous...`
+        // member clauses 5.2.5 to 5.2.38 require an implementation to ignore
+        // when a Context Producer supplies one. The expansion puts the Fragment
+        // back under the name the request URI carries, because a term's own
+        // definition decides what the members below it mean -- see
+        // `andromeda_jsonld::attribute_fragment`.
+        let mut payload = payload;
         normalize_attribute_node(attribute.as_str(), &mut payload);
         let expanded = expand_attribute_fragment(&self.engine, attribute.as_str(), payload, context).await?;
-        admit_expanded_attribute(&expanded, attribute, write.null_sentinel_admission())
+        admit_expanded_attribute(&expanded, attribute, W::WRITE.null_sentinel_admission())?;
+        Ok(AdmittedAttribute::new(attribute, expanded))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
+        admission_fixture::admitted_entity,
         batch::UpsertPolicy,
         error::EntityError,
+        notification_recording_harness::recording_service,
         null_sentinel_admission::NullSentinelAdmission,
         write_admission::{AttributeWrite, BatchWrite, EntityWrite, admit_expanded_attribute, admit_expanded_entity},
+        write_kind::CreateEntity,
     };
+    use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier_length::IDENTIFIER_BYTE_LIMIT};
+    use andromeda_ngsi_ld_model::attribute_strip::AttributeStrip;
     use serde_json::{Value, json};
 
     /// An identifier one octet past the identifier bound.
@@ -433,5 +500,82 @@ mod tests {
             &attribute(),
             AttributeWrite::PartialUpdate.null_sentinel_admission(),
         ));
+    }
+
+    /// A Vehicle carrying `speed` and `brandName`, as a client writes it.
+    fn written_vehicle() -> Value {
+        json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "speed": {"type": "Property", "value": 1},
+            "brandName": {"type": "Property", "value": "x"}
+        })
+    }
+
+    /// What the forwarding phase left of `written_vehicle` once `speed` was
+    /// claimed by a proxied registration.
+    fn remaining_vehicle(brand: &Value) -> Value {
+        json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "brandName": {"type": "Property", "value": brand}})
+    }
+
+    /// Clause 5.6.1.4 and following: a payload the forwarding phase left alone
+    /// is written exactly as the admission expanded it, without expanding it
+    /// again.
+    #[tokio::test]
+    async fn an_untouched_payload_is_the_admitted_one() {
+        let (service, _recorded) = recording_service().await;
+        let context = ContextSpec::core_only();
+        let expected = admitted_entity::<CreateEntity>(&service, written_vehicle(), &context).await.into_expanded();
+        let admitted = admitted_entity::<CreateEntity>(&service, written_vehicle(), &context).await;
+        let remainder = service
+            .admit_local_remainder(admitted, AttributeStrip::Untouched, remaining_vehicle(&json!("ignored")), &context)
+            .await
+            .expect("something remains")
+            .expect("the admitted payload is kept");
+        pretty_assertions::assert_eq!(remainder.into_expanded(), expected);
+    }
+
+    /// A narrowed payload is a different document: what remains is admitted
+    /// anew, and the attribute the proxied registration took is gone from it.
+    #[tokio::test]
+    async fn a_narrowed_payload_is_admitted_anew_from_what_remains() {
+        let (service, _recorded) = recording_service().await;
+        let context = ContextSpec::core_only();
+        let admitted = admitted_entity::<CreateEntity>(&service, written_vehicle(), &context).await;
+        let remainder = service
+            .admit_local_remainder(admitted, AttributeStrip::Narrowed, remaining_vehicle(&json!("x")), &context)
+            .await
+            .expect("something remains")
+            .expect("the remainder is admitted");
+        let expanded = remainder.into_expanded().to_string();
+        assert!(!expanded.contains("/speed") && expanded.contains("/brandName"), "{expanded}");
+    }
+
+    /// The remainder is screened in its own right, so a remainder clause 5.5.4
+    /// refuses is refused rather than written.
+    #[tokio::test]
+    async fn a_narrowed_payload_is_screened_again() {
+        let (service, _recorded) = recording_service().await;
+        let context = ContextSpec::core_only();
+        let admitted = admitted_entity::<CreateEntity>(&service, written_vehicle(), &context).await;
+        let refusal = service
+            .admit_local_remainder(admitted, AttributeStrip::Narrowed, remaining_vehicle(&json!("urn:ngsi-ld:null")), &context)
+            .await
+            .expect("something remains")
+            .expect_err("a creation admits no NGSI-LD Null");
+        assert!(matches!(refusal, EntityError::Validation(_)), "{refusal}");
+    }
+
+    /// Clause 5.6.1.4 and following: a payload left with no attribute leaves
+    /// the local phase nothing to write.
+    #[tokio::test]
+    async fn an_emptied_payload_leaves_the_local_phase_nothing_to_write() {
+        let (service, _recorded) = recording_service().await;
+        let context = ContextSpec::core_only();
+        let admitted = admitted_entity::<CreateEntity>(&service, written_vehicle(), &context).await;
+        let remainder = service
+            .admit_local_remainder(admitted, AttributeStrip::Emptied, remaining_vehicle(&json!("x")), &context)
+            .await;
+        assert!(remainder.is_none());
     }
 }

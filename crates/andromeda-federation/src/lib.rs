@@ -12,6 +12,9 @@ pub mod cache;
 pub mod config;
 /// Per-registration cooldown after failures (clause 5.2.34).
 pub mod cooldown;
+/// A write payload counting its serializations, for the forwarding tests.
+#[cfg(test)]
+mod counted_body;
 /// Context-source discovery request execution.
 pub mod discovery;
 /// Discovery response merging.
@@ -30,6 +33,11 @@ pub mod federation_conflict_reason;
 pub mod federation_diagnostic;
 /// The concrete reasons a single registered source cannot serve an operation.
 pub mod federation_operation_unsupported;
+/// A fixed in-memory registration store for the forwarding tests.
+#[cfg(test)]
+mod fixed_registration_store;
+/// The payload a forwarded write is built from, serialised on demand.
+pub mod forwarded_body;
 /// The parameter vocabulary of a forwarded read request.
 pub mod forwarded_parameter;
 /// The representation a forwarded request carries.

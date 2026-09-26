@@ -36,7 +36,7 @@ use crate::{
     },
     written_payload_admission::admitted_batch_entities,
 };
-use andromeda_entity::write_admission::BatchWrite;
+use andromeda_entity::write_kind::BatchUpsert;
 use andromeda_http_extraction::context_target;
 
 pub(crate) async fn batch_upsert(
@@ -68,11 +68,11 @@ pub(crate) async fn batch_upsert(
     };
     // Which NGSI-LD Nulls the payload may carry is the requested mode's answer
     // (clause 5.6.8.4), so the mode is read before the screening.
-    let entities = admitted_batch_entities(service, BatchWrite::Upsert(upsert_policy), entities, &context, &mut entity_errors)
+    let mut admitted = admitted_batch_entities(service, BatchUpsert(upsert_policy), entities, &context, &mut entity_errors)
         .await
         .with_entity_instance(&uri)?;
 
-    if entities.is_empty() && entity_errors.is_empty() {
+    if admitted.is_empty() && entity_errors.is_empty() {
         return Err(public_error(
             NgsiLdErrorType::BadRequestData,
             "request body must contain a non-empty array of entities",
@@ -93,7 +93,7 @@ pub(crate) async fn batch_upsert(
             query_string: query_string.as_deref(),
             triggering,
         },
-        &entities,
+        &admitted,
         &context,
         &uri,
     )
@@ -101,12 +101,9 @@ pub(crate) async fn batch_upsert(
 
     // Clause 5.6.8.4: the local phase creates or updates what proxied
     // registrations left.
-    let remainder = local_remainder(entities, &forwarded);
-    let mode = service.effective_side_effect_mode(async_preference(prefer), remainder.len());
-    let (batch, mut created) = service
-        .batch_upsert(&target, &remainder, &context, upsert_policy, mode)
-        .await
-        .with_entity_instance(&uri)?;
+    local_remainder(&mut admitted, &forwarded);
+    let mode = service.effective_side_effect_mode(async_preference(prefer), admitted.len());
+    let (batch, mut created) = service.batch_upsert(&target, admitted, &context, mode).await.with_entity_instance(&uri)?;
     let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, classify_entity_error);
     result.errors.append(&mut entity_errors);
     merge_forwarded(&mut result, &forwarded);

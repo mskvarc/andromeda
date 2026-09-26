@@ -2,11 +2,11 @@
 
 use crate::{
     EntityService,
-    entity_validation_reason::EntityValidationReason,
+    admitted_write::AdmittedEntity,
     error::EntityError,
     expanded_member::{written_attribute_names, written_entity_types},
     notification_plan::{NotificationGroup, attribute_change_groups},
-    write_admission::{EntityWrite, admit_expanded_entity},
+    write_kind::CreateEntity,
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
@@ -17,53 +17,42 @@ use andromeda_context_commit::{
     write_outcome::single,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
-    entity::Entity,
     expanded::{attribute_system_time::stamp_attribute_instants, mutation::error::ExpandedEntityError},
     notification::NotificationTrigger,
 };
-use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use andromeda_telemetry::entity::{self, EntityOperation};
 use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
 
 impl EntityService {
-    /// Create a new NGSI-LD entity, returning its URI on success (clause 5.6.1).
+    /// Create the new NGSI-LD entity `id` from its admitted payload, returning
+    /// its URI on success (clause 5.6.1).
+    ///
+    /// Clause 5.6.1.4 opens with the clause 5.5.4 validation, which produced
+    /// `admitted` before the operation forwarded anything.
     ///
     /// # Errors
     ///
-    /// Reports [`EntityError::Validation`] when the entity cannot be serialised
-    /// or carries a malformed attribute instance, a null value or an invalid
-    /// `GeoProperty` geometry, [`EntityError::JsonLd`] when it cannot be
-    /// expanded against `context`, [`EntityError::AlreadyExists`] when another
-    /// entity already holds the identifier (clause 6.4.3.1), and
-    /// [`EntityError::Persistence`] when the store could not commit the insert.
-    pub async fn create(&self, target: &ContextTarget, entity: &Entity, context: &ContextSpec) -> Result<Uri, EntityError> {
+    /// Reports [`EntityError::Validation`] when the payload's members cannot be
+    /// read, [`EntityError::AlreadyExists`] when another entity already holds
+    /// the identifier (clause 6.4.3.1), and [`EntityError::Persistence`] when
+    /// the store could not commit the insert.
+    pub async fn create(&self, target: &ContextTarget, id: &Uri, admitted: AdmittedEntity<CreateEntity>) -> Result<Uri, EntityError> {
         let timer = entity::start(EntityOperation::Create);
         let result: Result<Uri, EntityError> = async {
-            let id = &entity.id;
-
-            let mut entity_json = serde_json::to_value(entity).map_err(|err| EntityError::Validation(EntityValidationReason::EntityPayload(err)))?;
-            normalize_entity_attributes(&mut entity_json);
-            let expanded = self.engine.expand(entity_json, context).await?;
-            // Clause 5.6.1.4 opens with the clause 5.5.4 validation. The transport
-            // layer runs the same screening before it forwards anything, and runs
-            // it again here on whatever the forwarding phase left behind.
-            admit_expanded_entity(&expanded, EntityWrite::Create.null_sentinel_admission())?;
-
             // Clause 4.8: a created entity's attribute instances carry the write
             // instant as both createdAt and modifiedAt.
-            let mut expanded = expanded;
+            let mut expanded = admitted.into_expanded();
             stamp_attribute_instants(&mut expanded, &Value::Null, Utc::now()).map_err(ExpandedEntityError::from)?;
             let payload = Arc::new(expanded);
             let types = written_entity_types(&payload)?;
             let changed_attrs = written_attribute_names(&payload)?;
             let mut groups = vec![NotificationGroup::entity(NotificationTrigger::EntityCreated, changed_attrs)];
             groups.extend(attribute_change_groups(&Value::Null, &payload)?);
-            let plan = self.plan_notifications(target, &entity.id, &types, &groups, Some(&payload), None);
+            let plan = self.plan_notifications(target, id, &types, &groups, Some(&payload), None);
 
             let write = AtomicWrite::builder()
                 .entity_id(Arc::new(id.clone())) // clone: the write owns a shared validated identifier.

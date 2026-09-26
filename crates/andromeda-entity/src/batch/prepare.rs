@@ -13,7 +13,7 @@ use crate::{
     error::EntityError,
     null_sentinel_admission::NullSentinelAdmission,
     port::blocking_executor::BlockingTask,
-    write_admission::{BatchWrite, admit_expanded_entity},
+    write_admission::admit_expanded_entity,
 };
 use andromeda_context_commit::entity_record::SearchProjection;
 use andromeda_jsonld::{
@@ -68,6 +68,15 @@ pub(super) struct ClassifiedEntry {
 pub(super) struct ClassifiedBatch {
     pub(super) fast: Vec<ClassifiedEntry>,
     pub(super) slow: Vec<ClassifiedEntry>,
+}
+
+/// What preparing a batch produced: one slot per input position, filled
+/// where preparation succeeded, and the failures against their identifiers.
+pub(super) struct PreparedBatch {
+    /// The prepared entity at each input position.
+    pub(super) slots: Vec<Option<PreparedEntity>>,
+    /// The per-entity failures, in position order.
+    pub(super) errors: Vec<(Uri, EntityError)>,
 }
 
 /// `(input_index, prepared_entity_or_error)` tuple emitted by either pool.
@@ -305,59 +314,34 @@ impl EntityService {
         results
     }
 
-    /// Run the clause 5.5.4 screening of `write` over a batch's entities,
-    /// before the operation forwards any of them.
+    /// Expand and screen rendered batch entities, answering one slot per
+    /// position below `slot_count`.
     ///
-    /// Clauses 5.6.7.4 to 5.6.9.4 and 5.6.20.4 each open with "execute the
-    /// behaviour defined in clause 5.5.4 on JSON-LD validation" and only then
-    /// forward to matching registrations, so an entity this broker refuses is
-    /// never handed to a Context Source, and one whose attributes a proxied
-    /// registration claims in full -- an entity the local phase never sees --
-    /// has still been validated.
-    ///
-    /// Returns one error per entity that fails, against that entity's own
-    /// identifier: clause 5.6.7.4 adds "a new `BatchEntityError` [...] containing
-    /// the failed Entity ID and the related `ProblemDetails`" rather than failing
-    /// the request. The expanded payloads are dropped, because the local phase
-    /// runs over what the forwarding phase leaves and prepares that instead.
-    pub async fn admit_batch_write(&self, write: BatchWrite, entities: &[Entity], context: &ContextSpec) -> Vec<(Uri, EntityError)> {
-        let refs: Vec<&Entity> = entities.iter().collect();
-        let (_prepared, errors) = self.prepare_entity_refs(&refs, context, write.null_sentinel_admission()).await;
-        errors
-    }
-
-    pub(super) async fn prepare_entity_refs(
+    /// Each entry's `idx` is its position; a position no entry fills -- an
+    /// entity that could not be rendered -- stays empty, as does one whose
+    /// preparation failed. The failures come back against their entity's own
+    /// identifier, in position order.
+    pub(super) async fn prepare_payloads(
         &self,
-        entities: &[&Entity],
+        slot_count: usize,
+        entries: Vec<ClassifiedEntry>,
         context: &ContextSpec,
         admission: NullSentinelAdmission,
-    ) -> (Vec<PreparedEntity>, Vec<(Uri, EntityError)>) {
-        let len = entities.len();
+    ) -> PreparedBatch {
         let handle = self.engine.batch_context_handle(context).await;
-
-        // Serialize all entities to JSON upfront so per-entity serialization
-        // failures are reported and the rest of the batch can proceed.
-        let mut entries: Vec<ClassifiedEntry> = Vec::with_capacity(len);
         let mut errors: Vec<(Uri, EntityError)> = Vec::new();
-        for (idx, entity) in entities.iter().enumerate() {
-            let id = entity.id.clone(); // clone: owned identifier for the classified entry
-            match serde_json::to_value(*entity) {
-                Ok(value) => entries.push(ClassifiedEntry { idx, id, value }),
-                Err(error) => errors.push((id, EntityError::Validation(EntityValidationReason::EntityPayload(error)))),
-            }
-        }
 
         let classified = classify_batch(entries, &handle, &self.engine);
-        let execution = self.batch_execution(len, classified.fast.len(), classified.slow.len());
+        let execution = self.batch_execution(slot_count, classified.fast.len(), classified.slow.len());
 
         // Process the fast bucket; collect demotions for the slow pool.
         let fast_outputs = self.run_fast_pool(classified.fast, &handle, execution, admission).await;
-        let mut indexed_results: Vec<Option<PreparedSlot>> = (0..len).map(|_| None).collect();
+        let mut indexed_results: Vec<Option<PreparedSlot>> = (0..slot_count).map(|_| None).collect();
         let mut demoted: Vec<ClassifiedEntry> = Vec::new();
         for output in fast_outputs {
             match output {
                 FastPoolOutput::Done { idx, result } => {
-                    if idx < len {
+                    if idx < slot_count {
                         indexed_results[idx] = Some(*result);
                     } else {
                         // Pool-level error (e.g. JoinError) — record it
@@ -377,16 +361,37 @@ impl EntityService {
             indexed_results[idx] = Some(result);
         }
 
-        let mut prepared = Vec::with_capacity(len);
-        for slot in indexed_results {
-            match slot {
-                Some(Ok(entity)) => prepared.push(entity),
-                Some(Err(error)) => errors.push(*error),
-                None => {}
-            }
-        }
-        (prepared, errors)
+        let slots = indexed_results
+            .into_iter()
+            .map(|slot| match slot {
+                Some(Ok(entity)) => Some(entity),
+                Some(Err(error)) => {
+                    errors.push(*error);
+                    None
+                }
+                None => None,
+            })
+            .collect();
+        PreparedBatch { slots, errors }
     }
+}
+
+/// Render decoded batch entities to the compact JSON their preparation
+/// expands, one entry per entity at its position.
+///
+/// An entity that cannot be rendered is reported against its identifier and
+/// leaves its position without an entry, so the rest of the batch proceeds.
+pub(super) fn render_entries<'entities>(entities: impl IntoIterator<Item = &'entities Entity>) -> (Vec<ClassifiedEntry>, Vec<(Uri, EntityError)>) {
+    let mut entries = Vec::new();
+    let mut errors = Vec::new();
+    for (idx, entity) in entities.into_iter().enumerate() {
+        let id = entity.id.clone(); // clone: owned identifier for the classified entry
+        match serde_json::to_value(entity) {
+            Ok(value) => entries.push(ClassifiedEntry { idx, id, value }),
+            Err(error) => errors.push((id, EntityError::Validation(EntityValidationReason::EntityPayload(error)))),
+        }
+    }
+    (entries, errors)
 }
 
 #[cfg(test)]

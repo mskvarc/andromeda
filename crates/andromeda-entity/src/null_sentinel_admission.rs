@@ -260,11 +260,13 @@ fn subtree_carries_sentinel(node: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::{
+        admission_fixture::{admitted_batch, admitted_entity, rendered},
         error::EntityError,
         merge_options::MergeOptions,
         notification_recording_harness::{ENTITY_ID, entity_uri, live_target, recording_service},
         null_sentinel_admission::{NullSentinelAdmission, reject_null_placements_in_attribute, reject_null_placements_in_entity},
         side_effect::BatchSideEffectMode,
+        write_kind::{BatchCreate, BatchMerge, CreateEntity, MergeEntity},
     };
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -466,7 +468,7 @@ mod tests {
         let (service, _recorded) = recording_service().await;
         let entity = written_entity("address", &json!({"type": "Property", "value": {"country": "urn:ngsi-ld:null"}}));
         let error = service
-            .create(&live_target(), &entity, &ContextSpec::core_only())
+            .admit_entity_write::<CreateEntity>(&entity, &ContextSpec::core_only())
             .await
             .expect_err("a creation may not nest the sentinel in a value object");
         assert!(matches!(error, EntityError::Validation(_)), "{error}");
@@ -478,8 +480,16 @@ mod tests {
     async fn merging_a_fragment_whose_property_value_object_nests_a_null_is_accepted() {
         let (service, _recorded) = recording_service().await;
         let patch = written_patch("address", &json!({"type": "Property", "value": {"country": "urn:ngsi-ld:null"}}));
+        let admitted = admitted_entity::<MergeEntity>(&service, &patch, &ContextSpec::core_only()).await;
         service
-            .merge(&live_target(), &entity_uri(), &patch, &ContextSpec::core_only(), MergeOptions::default())
+            .merge(
+                &live_target(),
+                &entity_uri(),
+                &patch,
+                admitted,
+                &ContextSpec::core_only(),
+                MergeOptions::default(),
+            )
             .await
             .expect("clause 5.5.12 deletes a value-object key with the sentinel");
     }
@@ -491,7 +501,7 @@ mod tests {
         let (service, _recorded) = recording_service().await;
         let patch = written_patch("category", &json!({"type": "Property", "value": 9, "datasetId": "urn:ngsi-ld:null"}));
         let error = service
-            .merge(&live_target(), &entity_uri(), &patch, &ContextSpec::core_only(), MergeOptions::default())
+            .admit_entity_write::<MergeEntity>(&patch, &ContextSpec::core_only())
             .await
             .expect_err("a datasetId cannot be deleted by the sentinel");
         assert!(matches!(error, EntityError::Validation(_)), "{error}");
@@ -503,14 +513,11 @@ mod tests {
     async fn a_batch_creation_refuses_the_sentinel_against_the_entity_that_carried_it() {
         let (service, _recorded) = recording_service().await;
         let entities = vec![written_entity("category", &json!({"type": "Property", "value": "urn:ngsi-ld:null"}))];
-        let batch = service
-            .batch_create(&live_target(), &entities, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
-            .await
-            .expect("the batch itself completes");
-        assert!(batch.success.is_empty(), "nothing may be created");
-        pretty_assertions::assert_eq!(batch.errors.len(), 1);
-        pretty_assertions::assert_eq!(batch.errors[0].0.as_str(), ENTITY_ID);
-        assert!(matches!(batch.errors[0].1, EntityError::Validation(_)), "{}", batch.errors[0].1);
+        let (admitted, refused) = service.admit_batch_write(BatchCreate, rendered(entities), &ContextSpec::core_only()).await;
+        assert!(admitted.is_empty(), "nothing may be created");
+        pretty_assertions::assert_eq!(refused.len(), 1);
+        pretty_assertions::assert_eq!(refused[0].0.as_str(), ENTITY_ID);
+        assert!(matches!(refused[0].1, EntityError::Validation(_)), "{}", refused[0].1);
     }
 
     /// Clause 5.6.20 is a merge, so the batch admits what clause 5.5.12 gives
@@ -519,8 +526,9 @@ mod tests {
     async fn a_batch_merge_admits_the_deletion_sentinel() {
         let (service, _recorded) = recording_service().await;
         let entities = vec![written_entity("category", &json!({"type": "Property", "value": "urn:ngsi-ld:null"}))];
+        let admitted = admitted_batch(&service, BatchMerge, entities, &ContextSpec::core_only()).await;
         let batch = service
-            .batch_merge(&live_target(), &entities, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
+            .batch_merge(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
             .await
             .expect("the batch itself completes");
         assert!(
@@ -547,10 +555,10 @@ mod tests {
         for (attribute, node) in cases {
             let (service, _recorded) = recording_service().await;
             let outcome = service
-                .create(&live_target(), &written_entity(attribute, &node), &ContextSpec::core_only())
+                .admit_entity_write::<CreateEntity>(&written_entity(attribute, &node), &ContextSpec::core_only())
                 .await;
             match outcome {
-                Ok(created) => panic!("{attribute}: a creation admits no NGSI-LD Null, yet {created} was stored"),
+                Ok(admitted) => panic!("{attribute}: a creation admits no NGSI-LD Null, yet {admitted:?} was admitted"),
                 Err(error) => assert!(matches!(error, EntityError::Validation(_)), "{attribute}: {error}"),
             }
         }

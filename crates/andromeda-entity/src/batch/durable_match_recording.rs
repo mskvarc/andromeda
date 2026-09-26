@@ -9,6 +9,7 @@
 //! match at all, and one that collapsed every trigger to `entityUpdated`.
 
 use crate::{
+    admission_fixture::admitted_batch,
     batch::UpsertPolicy,
     notification_recording_harness::{
         ACCURACY_IRI,
@@ -22,6 +23,7 @@ use crate::{
         subscription_key,
     },
     side_effect::BatchSideEffectMode,
+    write_kind::{BatchCreate, BatchMerge, BatchUpdate, BatchUpsert},
 };
 use andromeda_context_commit::atomic_write::AtomicWrite;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -64,13 +66,9 @@ fn assert_match(write: &AtomicWrite, trigger: NotificationTrigger, changed: &str
 #[tokio::test]
 async fn batch_create_records_an_entity_created_match_inline() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_batch(&service, BatchCreate, vec![building_entity("office")], &ContextSpec::core_only()).await;
     service
-        .batch_create(
-            &live_target(),
-            &[building_entity("office")],
-            &ContextSpec::core_only(),
-            BatchSideEffectMode::Inline,
-        )
+        .batch_create(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
         .await
         .expect("the batch create lands");
 
@@ -91,13 +89,9 @@ async fn batch_create_records_an_entity_created_match_inline() {
 #[tokio::test]
 async fn batch_create_records_the_match_and_defers_the_event_when_enqueued() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_batch(&service, BatchCreate, vec![building_entity("office")], &ContextSpec::core_only()).await;
     service
-        .batch_create(
-            &live_target(),
-            &[building_entity("office")],
-            &ContextSpec::core_only(),
-            BatchSideEffectMode::Enqueue,
-        )
+        .batch_create(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Enqueue)
         .await
         .expect("the batch create lands");
 
@@ -121,10 +115,11 @@ async fn batch_create_records_the_match_and_defers_the_event_when_enqueued() {
 #[tokio::test]
 async fn batch_update_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_batch(&service, BatchUpdate, vec![building_entity("retail")], &ContextSpec::core_only()).await;
     service
         .batch_update(
             &live_target(),
-            &[building_entity("retail")],
+            admitted,
             &ContextSpec::core_only(),
             OverwritePolicy::Overwrite,
             BatchSideEffectMode::Inline,
@@ -141,13 +136,9 @@ async fn batch_update_records_an_attribute_updated_match() {
 #[tokio::test]
 async fn batch_merge_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_batch(&service, BatchMerge, vec![building_entity("retail")], &ContextSpec::core_only()).await;
     service
-        .batch_merge(
-            &live_target(),
-            &[building_entity("retail")],
-            &ContextSpec::core_only(),
-            BatchSideEffectMode::Inline,
-        )
+        .batch_merge(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
         .await
         .expect("the batch merge lands");
 
@@ -158,14 +149,15 @@ async fn batch_merge_records_an_attribute_updated_match() {
 #[tokio::test]
 async fn batch_upsert_replace_of_an_existing_entity_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_batch(
+        &service,
+        BatchUpsert(UpsertPolicy::Replace),
+        vec![building_entity("retail")],
+        &ContextSpec::core_only(),
+    )
+    .await;
     service
-        .batch_upsert(
-            &live_target(),
-            &[building_entity("retail")],
-            &ContextSpec::core_only(),
-            UpsertPolicy::Replace,
-            BatchSideEffectMode::Inline,
-        )
+        .batch_upsert(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
         .await
         .expect("the batch upsert lands");
 
@@ -176,14 +168,15 @@ async fn batch_upsert_replace_of_an_existing_entity_records_an_attribute_updated
 #[tokio::test]
 async fn batch_upsert_update_of_an_existing_entity_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_batch(
+        &service,
+        BatchUpsert(UpsertPolicy::Update),
+        vec![building_entity("retail")],
+        &ContextSpec::core_only(),
+    )
+    .await;
     service
-        .batch_upsert(
-            &live_target(),
-            &[building_entity("retail")],
-            &ContextSpec::core_only(),
-            UpsertPolicy::Update,
-            BatchSideEffectMode::Inline,
-        )
+        .batch_upsert(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
         .await
         .expect("the batch upsert lands");
 
@@ -197,14 +190,15 @@ async fn batch_upsert_update_replaces_the_whole_instance_dropping_a_subattribute
     // it overwrites the whole `category` instance and drops the stored `accuracy`
     // sub-attribute the request omits, matching the single Update Attributes path.
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_batch(
+        &service,
+        BatchUpsert(UpsertPolicy::Update),
+        vec![building_entity("retail")],
+        &ContextSpec::core_only(),
+    )
+    .await;
     service
-        .batch_upsert(
-            &live_target(),
-            &[building_entity("retail")],
-            &ContextSpec::core_only(),
-            UpsertPolicy::Update,
-            BatchSideEffectMode::Inline,
-        )
+        .batch_upsert(&live_target(), admitted, &ContextSpec::core_only(), BatchSideEffectMode::Inline)
         .await
         .expect("the batch upsert lands");
 

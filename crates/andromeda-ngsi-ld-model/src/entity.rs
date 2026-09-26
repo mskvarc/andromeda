@@ -2,6 +2,7 @@
 
 use crate::{
     attribute::instance::{Attribute, AttributeValue},
+    attribute_strip::AttributeStrip,
     entity_type::EntityTypeValue,
     notification::SysAttrsSnapshot,
 };
@@ -181,12 +182,13 @@ impl Entity {
         self
     }
 
-    /// Remove the named attributes, returning whether any attribute remains.
-    pub fn strip_attributes(&mut self, attributes: &[AttributeName]) -> bool {
+    /// Remove the named attributes, reporting what the removal left.
+    pub fn strip_attributes(&mut self, attributes: &[AttributeName]) -> AttributeStrip {
+        let before = self.attrs.len();
         for attribute in attributes {
             self.attrs.shift_remove(attribute.as_str());
         }
-        !self.attrs.is_empty()
+        AttributeStrip::from_counts(before, self.attrs.len())
     }
 
     /// The name of every Attribute member the entity carries, the three
@@ -324,15 +326,13 @@ pub struct EntityPatch {
 
 impl EntityPatch {
     /// Remove the named attributes (those a proxied registration owns per
-    /// clause 4.3.6.3), returning whether any attribute remains.
-    ///
-    /// Removes attributes whose names appear in `attributes` from this
-    /// patch. Returns `true` if any attributes remain after stripping.
-    pub fn strip_attributes(&mut self, attributes: &[AttributeName]) -> bool {
+    /// clause 4.3.6.3), reporting what the removal left.
+    pub fn strip_attributes(&mut self, attributes: &[AttributeName]) -> AttributeStrip {
+        let before = self.attrs.len();
         for attr in attributes {
             self.attrs.shift_remove(attr.as_str());
         }
-        !self.attrs.is_empty()
+        AttributeStrip::from_counts(before, self.attrs.len())
     }
 }
 
@@ -340,6 +340,7 @@ impl EntityPatch {
 mod tests {
     use crate::{
         attribute::instance::AttributeValue,
+        attribute_strip::AttributeStrip,
         entity::{Entity, EntityPatch},
         notification::SysAttrsSnapshot,
     };
@@ -765,7 +766,7 @@ mod tests {
         }))
         .unwrap();
         let exclusive = vec!["temperature".parse::<AttributeName>().expect("name")];
-        assert!(patch.strip_attributes(&exclusive));
+        pretty_assertions::assert_eq!(patch.strip_attributes(&exclusive), AttributeStrip::Untouched);
         pretty_assertions::assert_eq!(patch.attrs.len(), 2);
     }
 
@@ -777,19 +778,19 @@ mod tests {
         }))
         .unwrap();
         let exclusive = vec!["speed".parse::<AttributeName>().expect("name")];
-        assert!(patch.strip_attributes(&exclusive));
+        pretty_assertions::assert_eq!(patch.strip_attributes(&exclusive), AttributeStrip::Narrowed);
         pretty_assertions::assert_eq!(patch.attrs.len(), 1);
         assert!(patch.attrs.contains_key("fuel"));
     }
 
     #[test]
-    fn strip_attributes_full_overlap_returns_false() {
+    fn strip_attributes_full_overlap_empties_the_patch() {
         let mut patch: EntityPatch = serde_json::from_value(json!({
             "speed": { "type": "Property", "value": 100 }
         }))
         .unwrap();
         let exclusive = vec!["speed".parse::<AttributeName>().expect("name")];
-        assert!(!patch.strip_attributes(&exclusive));
+        pretty_assertions::assert_eq!(patch.strip_attributes(&exclusive), AttributeStrip::Emptied);
         assert!(patch.attrs.is_empty());
     }
 
@@ -800,7 +801,7 @@ mod tests {
         }))
         .unwrap();
         let exclusive: Vec<AttributeName> = Vec::new();
-        assert!(patch.strip_attributes(&exclusive));
+        pretty_assertions::assert_eq!(patch.strip_attributes(&exclusive), AttributeStrip::Untouched);
         pretty_assertions::assert_eq!(patch.attrs.len(), 1);
     }
 

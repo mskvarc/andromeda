@@ -8,6 +8,7 @@
 //! sub-Property from history even where the stored Entity kept it.
 
 use crate::{
+    admission_fixture::{admitted_attribute, admitted_entity},
     history_recording_assertions::{assert_observes_stored_instances, observed_attributes, observed_default_instance, recorded_observation},
     notification_recording_harness::{
         ACCURACY_IRI,
@@ -20,6 +21,7 @@ use crate::{
         recording_service,
         single_recorded_write,
     },
+    write_kind::{AppendAttributes, PartialUpdateAttribute, ReplaceAttribute, UpdateAttributes},
 };
 use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_ngsi_ld_model::expanded::mutation::selection::OverwritePolicy;
@@ -32,15 +34,10 @@ use serde_json::json;
 #[tokio::test]
 async fn partial_update_attr_records_the_patched_instance_keeping_its_untouched_sub_property() {
     let (service, recorded) = recording_service().await;
+    let attribute = attribute_name("category");
+    let admitted = admitted_attribute::<PartialUpdateAttribute>(&service, &attribute, json!({"type": "Property", "value": "retail"}), &core_context()).await;
     service
-        .partial_update_attr(
-            &live_target(),
-            &entity_uri(),
-            &attribute_name("category"),
-            None,
-            json!({"type": "Property", "value": "retail"}),
-            &core_context(),
-        )
+        .partial_update_attr(&live_target(), &entity_uri(), None, admitted, &core_context())
         .await
         .expect("the partial update lands");
 
@@ -60,15 +57,16 @@ async fn partial_update_attr_records_the_patched_instance_keeping_its_untouched_
 #[tokio::test]
 async fn partial_update_attr_does_not_record_a_fragment_sub_property_as_an_entity_attribute() {
     let (service, recorded) = recording_service().await;
+    let attribute = attribute_name("category");
+    let admitted = admitted_attribute::<PartialUpdateAttribute>(
+        &service,
+        &attribute,
+        json!({"type": "Property", "value": "retail", "name": {"type": "Property", "value": "annotated"}}),
+        &core_context(),
+    )
+    .await;
     service
-        .partial_update_attr(
-            &live_target(),
-            &entity_uri(),
-            &attribute_name("category"),
-            None,
-            json!({"type": "Property", "value": "retail", "name": {"type": "Property", "value": "annotated"}}),
-            &core_context(),
-        )
+        .partial_update_attr(&live_target(), &entity_uri(), None, admitted, &core_context())
         .await
         .expect("the partial update lands");
 
@@ -86,15 +84,11 @@ async fn partial_update_attr_does_not_record_a_fragment_sub_property_as_an_entit
 #[tokio::test]
 async fn partial_update_attr_to_the_null_sentinel_records_only_the_tombstone() {
     let (service, recorded) = recording_service().await;
+    let attribute = attribute_name("category");
+    let admitted =
+        admitted_attribute::<PartialUpdateAttribute>(&service, &attribute, json!({"type": "Property", "value": "urn:ngsi-ld:null"}), &core_context()).await;
     service
-        .partial_update_attr(
-            &live_target(),
-            &entity_uri(),
-            &attribute_name("category"),
-            None,
-            json!({"type": "Property", "value": "urn:ngsi-ld:null"}),
-            &core_context(),
-        )
+        .partial_update_attr(&live_target(), &entity_uri(), None, admitted, &core_context())
         .await
         .expect("the deleting partial update lands");
 
@@ -112,15 +106,10 @@ async fn partial_update_attr_to_the_null_sentinel_records_only_the_tombstone() {
 #[tokio::test]
 async fn replace_attr_records_the_stored_replacement() {
     let (service, recorded) = recording_service().await;
+    let attribute = attribute_name("category");
+    let admitted = admitted_attribute::<ReplaceAttribute>(&service, &attribute, json!({"type": "Property", "value": "retail"}), &core_context()).await;
     service
-        .replace_attr(
-            &live_target(),
-            &entity_uri(),
-            &attribute_name("category"),
-            None,
-            json!({"type": "Property", "value": "retail"}),
-            &core_context(),
-        )
+        .replace_attr(&live_target(), &entity_uri(), None, admitted, &core_context())
         .await
         .expect("the replace lands");
 
@@ -139,15 +128,8 @@ async fn replace_attr_records_the_stored_replacement() {
 #[tokio::test]
 async fn update_attrs_records_the_whole_instance_it_wrote() {
     let (service, recorded) = recording_service().await;
-    service
-        .update_attrs(
-            &live_target(),
-            &entity_uri(),
-            json!({"category": {"type": "Property", "value": "retail"}}),
-            &core_context(),
-        )
-        .await
-        .expect("the update lands");
+    let admitted = admitted_entity::<UpdateAttributes>(&service, json!({"category": {"type": "Property", "value": "retail"}}), &core_context()).await;
+    service.update_attrs(&live_target(), &entity_uri(), admitted).await.expect("the update lands");
 
     let write = single_recorded_write(&recorded);
     assert_observes_stored_instances(&write, &[CATEGORY_IRI]);
@@ -160,15 +142,13 @@ async fn update_attrs_records_the_whole_instance_it_wrote() {
 #[tokio::test]
 async fn update_attrs_records_no_scope_it_ignored() {
     let (service, recorded) = recording_service().await;
-    service
-        .update_attrs(
-            &live_target(),
-            &entity_uri(),
-            json!({"scope": "/Madrid", "category": {"type": "Property", "value": "retail"}}),
-            &core_context(),
-        )
-        .await
-        .expect("the update lands");
+    let admitted = admitted_entity::<UpdateAttributes>(
+        &service,
+        json!({"scope": "/Madrid", "category": {"type": "Property", "value": "retail"}}),
+        &core_context(),
+    )
+    .await;
+    service.update_attrs(&live_target(), &entity_uri(), admitted).await.expect("the update lands");
 
     let write = single_recorded_write(&recorded);
     let observation = recorded_observation(&write).expect("an observation");
@@ -184,17 +164,17 @@ async fn update_attrs_records_no_scope_it_ignored() {
 #[tokio::test]
 async fn append_attrs_without_overwrite_records_only_the_attributes_it_appended() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_entity::<AppendAttributes>(
+        &service,
+        json!({
+            "category": {"type": "Property", "value": "retail"},
+            "name": {"type": "Property", "value": "lobby"}
+        }),
+        &core_context(),
+    )
+    .await;
     service
-        .append_attrs(
-            &live_target(),
-            &entity_uri(),
-            json!({
-                "category": {"type": "Property", "value": "retail"},
-                "name": {"type": "Property", "value": "lobby"}
-            }),
-            OverwritePolicy::Preserve,
-            &core_context(),
-        )
+        .append_attrs(&live_target(), &entity_uri(), admitted, OverwritePolicy::Preserve)
         .await
         .expect("the append lands");
 
@@ -207,14 +187,9 @@ async fn append_attrs_without_overwrite_records_only_the_attributes_it_appended(
 #[tokio::test]
 async fn append_attrs_without_overwrite_that_appended_nothing_records_no_observation() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_entity::<AppendAttributes>(&service, json!({"category": {"type": "Property", "value": "retail"}}), &core_context()).await;
     service
-        .append_attrs(
-            &live_target(),
-            &entity_uri(),
-            json!({"category": {"type": "Property", "value": "retail"}}),
-            OverwritePolicy::Preserve,
-            &core_context(),
-        )
+        .append_attrs(&live_target(), &entity_uri(), admitted, OverwritePolicy::Preserve)
         .await
         .expect("the append lands");
 
@@ -226,17 +201,17 @@ async fn append_attrs_without_overwrite_that_appended_nothing_records_no_observa
 #[tokio::test]
 async fn append_attrs_with_overwrite_records_the_stored_instances() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_entity::<AppendAttributes>(
+        &service,
+        json!({
+            "category": {"type": "Property", "value": "retail"},
+            "name": {"type": "Property", "value": "lobby"}
+        }),
+        &core_context(),
+    )
+    .await;
     service
-        .append_attrs(
-            &live_target(),
-            &entity_uri(),
-            json!({
-                "category": {"type": "Property", "value": "retail"},
-                "name": {"type": "Property", "value": "lobby"}
-            }),
-            OverwritePolicy::Overwrite,
-            &core_context(),
-        )
+        .append_attrs(&live_target(), &entity_uri(), admitted, OverwritePolicy::Overwrite)
         .await
         .expect("the append lands");
 

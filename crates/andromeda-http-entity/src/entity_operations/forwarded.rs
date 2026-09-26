@@ -4,7 +4,7 @@
 
 use crate::{error::EntityResultExt, state::EntityRouteServices};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::error::EntityError;
+use andromeda_entity::{batch::admitted_batch::AdmittedBatch, error::EntityError, write_kind::BatchWriteKind};
 use andromeda_federation::{
     outcome::ForwardedWriteOutcome,
     provision_batch::{BatchEntity, BatchForwardedResult, BatchProvisionOperation, ForwardBatchRequest},
@@ -16,7 +16,6 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_ngsi_ld_model::{entity::Entity, entity_type::EntityTypeValue, registration::forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
 use axum::http::{StatusCode, Uri as HttpUri};
-use serde_json::Value;
 
 /// The type a registration is matched against for an entity: its single
 /// type, or the first of several.
@@ -43,12 +42,15 @@ pub(crate) struct ForwardedBatch<'a> {
     pub(crate) triggering: TriggeringRequest<'a>,
 }
 
-/// Forward a batch of entities to every matching registration.
-pub(crate) async fn forward_entities(
+/// Forward the admitted entities of a batch to every matching registration.
+///
+/// Each entity is serialised only for a registration it matches, so a batch
+/// no registration covers serialises nothing.
+pub(crate) async fn forward_entities<W: BatchWriteKind>(
     services: &EntityRouteServices,
     target: &ContextTarget,
     request: ForwardedBatch<'_>,
-    entities: &[Entity],
+    admitted: &AdmittedBatch<W>,
     context: &ContextSpec,
     instance: &HttpUri,
 ) -> Result<Vec<BatchForwardedResult>, ProblemResponse> {
@@ -57,18 +59,12 @@ pub(crate) async fn forward_entities(
         query_string,
         triggering,
     } = request;
-    let bodies = entities
-        .iter()
-        .map(serde_json::to_value)
-        .collect::<Result<Vec<Value>, _>>()
-        .with_entity_instance(instance)?;
-    let batch = entities
-        .iter()
-        .zip(&bodies)
-        .map(|(entity, body)| BatchEntity {
+    let batch = admitted
+        .entities()
+        .map(|entity| BatchEntity {
             id: &entity.id,
             entity_type: matching_type(entity),
-            body: Some(body),
+            body: Some(entity),
         })
         .collect::<Vec<_>>();
     services
@@ -123,28 +119,21 @@ pub(crate) async fn forward_identifiers(
 
 /// The attributes proxied registrations claim from `entity_id`, whether or
 /// not their forward succeeded (clause 4.3.6.3).
-fn proxied_attributes<'a>(forwarded: &'a [BatchForwardedResult], entity_id: &'a Uri) -> impl Iterator<Item = &'a AttributeName> + 'a {
+fn proxied_attributes(forwarded: &[BatchForwardedResult], entity_id: &Uri) -> Vec<AttributeName> {
     forwarded
         .iter()
-        .filter(move |result| result.entity_id == *entity_id)
+        .filter(|result| result.entity_id == *entity_id)
         .flat_map(|result| result.proxied_attrs.iter())
+        .cloned() // clone: the strip reads the names while the admitted entity is mutated
+        .collect()
 }
 
-/// The entities the local phase processes: each without the attributes
-/// proxied registrations took (clauses 5.6.7.4 and following: "any remaining
-/// input data"), and without the ones left with no attribute at all.
-pub(crate) fn local_remainder(entities: Vec<Entity>, forwarded: &[BatchForwardedResult]) -> Vec<Entity> {
-    entities
-        .into_iter()
-        .filter_map(|mut entity| {
-            let proxied = proxied_attributes(forwarded, &entity.id).cloned().collect::<Vec<_>>(); // clone: the strip borrows the names while the entity is mutated
-            if proxied.is_empty() || entity.strip_attributes(&proxied) {
-                Some(entity)
-            } else {
-                None
-            }
-        })
-        .collect()
+/// Narrow the admitted entities to what the local phase processes: each
+/// without the attributes proxied registrations took (clauses 5.6.7.4 and
+/// following: "any remaining input data"), and without the ones left with no
+/// attribute at all.
+pub(crate) fn local_remainder<W: BatchWriteKind>(admitted: &mut AdmittedBatch<W>, forwarded: &[BatchForwardedResult]) {
+    admitted.retain_local(|entity_id| proxied_attributes(forwarded, entity_id));
 }
 
 /// Drop the local not-found of an entity a proxied registration holds: its
@@ -192,13 +181,12 @@ pub(crate) fn created_remotely(forwarded: &[BatchForwardedResult]) -> impl Itera
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_operations::forwarded::{created_remotely, drop_absent_proxied, local_remainder, merge_forwarded};
+    use crate::entity_operations::forwarded::{created_remotely, drop_absent_proxied, merge_forwarded, proxied_attributes};
     use andromeda_entity::error::EntityError;
     use andromeda_federation::{outcome::ForwardedWriteOutcome, provision_batch::BatchForwardedResult};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-    use andromeda_ngsi_ld_model::{entity::Entity, registration::forwarding_mode::ForwardingMode};
+    use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
     use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
-    use serde_json::json;
 
     fn uri(raw: &str) -> Uri {
         raw.parse().expect("valid URI")
@@ -214,13 +202,14 @@ mod tests {
         }
     }
 
-    fn entity(id: &str) -> Entity {
-        serde_json::from_value(json!({"id": id, "type": "Vehicle", "speed": {"type": "Property", "value": 1}, "brandName": {"type": "Property", "value": "x"}}))
-            .expect("valid entity")
+    fn names(raw: &[&str]) -> Vec<AttributeName> {
+        raw.iter().map(|name| name.parse::<AttributeName>().expect("valid name")).collect()
     }
 
+    /// Clause 4.3.6.3: a proxied registration owns its attributes whether or
+    /// not its forward succeeded, and an inclusive one claims none.
     #[test]
-    fn the_local_remainder_loses_proxied_attributes_and_entities_left_empty() {
+    fn an_entity_loses_every_attribute_its_proxied_registrations_claim_and_nothing_else() {
         let forwarded = [
             result(
                 "urn:ngsi-ld:Vehicle:1",
@@ -241,20 +230,10 @@ mod tests {
                 &[],
             ),
         ];
-        let remainder = local_remainder(
-            vec![
-                entity("urn:ngsi-ld:Vehicle:1"),
-                entity("urn:ngsi-ld:Vehicle:2"),
-                entity("urn:ngsi-ld:Vehicle:3"),
-            ],
-            &forwarded,
-        );
-        pretty_assertions::assert_eq!(
-            remainder.iter().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
-            vec!["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:3"]
-        );
-        assert!(remainder[0].attrs.get("speed").is_none() && remainder[0].attrs.get("brandName").is_some());
-        pretty_assertions::assert_eq!(remainder[1].attrs.len(), 2);
+        pretty_assertions::assert_eq!(proxied_attributes(&forwarded, &uri("urn:ngsi-ld:Vehicle:1")), names(&["speed"]));
+        pretty_assertions::assert_eq!(proxied_attributes(&forwarded, &uri("urn:ngsi-ld:Vehicle:2")), names(&["speed", "brandName"]));
+        pretty_assertions::assert_eq!(proxied_attributes(&forwarded, &uri("urn:ngsi-ld:Vehicle:3")), names(&[]));
+        pretty_assertions::assert_eq!(proxied_attributes(&forwarded, &uri("urn:ngsi-ld:Vehicle:4")), names(&[]));
     }
 
     #[test]

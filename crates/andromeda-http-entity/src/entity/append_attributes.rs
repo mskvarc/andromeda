@@ -30,7 +30,7 @@ use crate::{
     },
     written_payload_admission::admit_written_entity,
 };
-use andromeda_entity::write_admission::EntityWrite;
+use andromeda_entity::write_kind::AppendAttributes;
 use andromeda_federation::{
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
     request::TriggeringRequest,
@@ -62,7 +62,9 @@ pub(crate) async fn append_attrs(
     // Clause 5.6.3.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and an
     // append left with nothing local is still validated.
-    admit_written_entity(service, EntityWrite::AppendAttributes, &fragment, &context)
+    // clone: the admission expands its own copy, while the forwarding phase and
+    // the narrowing after it still read the compact fragment
+    let admitted = admit_written_entity::<AppendAttributes>(service, fragment.clone(), &context)
         .await
         .with_entity_instance(&uri)?;
     let no_overwrite = params.overwrite_policy().with_entity_instance(&uri)? == RequestOverwritePolicy::NoOverwrite;
@@ -73,7 +75,6 @@ pub(crate) async fn append_attrs(
     };
 
     // Forward to matching context sources
-    let fragment_body = serde_json::to_vec(&fragment).with_entity_instance(&uri)?;
     let qs = if no_overwrite { "options=noOverwrite" } else { "" };
 
     let forwarded = state
@@ -86,7 +87,7 @@ pub(crate) async fn append_attrs(
                 entity_type_compact: None,
                 attribute_name: None,
                 method: Method::POST,
-                body: Some(&fragment_body),
+                body: Some(&fragment),
                 context: &context,
                 operation: ForwardingOperation::AppendEntityAttributes,
                 path_suffix: Some("/attrs"),
@@ -102,10 +103,7 @@ pub(crate) async fn append_attrs(
 
     if forwarded.is_empty() {
         // No matching CSRs — append locally
-        let (all_attrs, not_appended) = service
-            .append_attrs(&target, &id, fragment, overwrite, &context)
-            .await
-            .with_entity_instance(&uri)?;
+        let (all_attrs, not_appended) = service.append_attrs(&target, &id, admitted, overwrite).await.with_entity_instance(&uri)?;
 
         return Ok(append_outcome_response(&all_attrs, &not_appended, Vec::new(), ForwardedCompleteness::Complete));
     }
@@ -114,11 +112,10 @@ pub(crate) async fn append_attrs(
     // fragment; whatever remains is appended here.
     let proxied = collect_proxied_attrs(&forwarded);
     let mut local_fragment = fragment;
-    strip_attributes_from_value(&mut local_fragment, &proxied);
-    let local_append = if local_fragment.as_object().is_some_and(serde_json::Map::is_empty) {
-        None
-    } else {
-        Some(service.append_attrs(&target, &id, local_fragment, overwrite, &context).await)
+    let strip = strip_attributes_from_value(&mut local_fragment, &proxied);
+    let local_append = match service.admit_local_remainder(admitted, strip, local_fragment, &context).await {
+        Some(remainder) => Some(async { service.append_attrs(&target, &id, remainder?, overwrite).await }.await),
+        None => None,
     };
     // Clause 5.6.3.5: the status says "whether all the new Attributes were
     // appended or only some of them", and Table 6.6.3.1-2 reserves 204 for

@@ -26,3 +26,38 @@ pub struct MergeOptions<'a> {
     /// target outside it is not the entity the request names.
     pub type_selector: Option<&'a TypeExprRaw>,
 }
+
+impl MergeOptions<'_> {
+    /// Whether the fragment has to be rewritten against the stored entity
+    /// before it is merged: a simplified fragment takes the attribute types the
+    /// target fixes, and `lang` keys a string into a `LanguageProperty`
+    /// (Table 6.5.3.4-1). A normalized fragment without `lang` is merged as
+    /// written.
+    #[must_use]
+    pub const fn rewrites_fragment(&self) -> bool {
+        !matches!(self.representation, MergeRepresentation::Normalized) || self.lang.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::merge_options::MergeOptions;
+    use andromeda_ngsi_ld_representation::merge_representation::MergeRepresentation;
+    use langtag::LangTagBuf;
+
+    #[test]
+    fn only_a_normalized_fragment_without_lang_is_merged_as_written() {
+        assert!(!MergeOptions::default().rewrites_fragment());
+        let lang: LangTagBuf = "en".parse().expect("a valid language tag");
+        let keyed = MergeOptions {
+            lang: Some(&lang),
+            ..MergeOptions::default()
+        };
+        assert!(keyed.rewrites_fragment());
+        let simplified = MergeOptions {
+            representation: MergeRepresentation::Simplified,
+            ..MergeOptions::default()
+        };
+        assert!(simplified.rewrites_fragment());
+    }
+}

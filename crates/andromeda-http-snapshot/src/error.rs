@@ -90,6 +90,7 @@ fn classify_federation_error(error: &FederationError) -> ClassifiedReport {
         FederationError::Registration(_) | FederationError::Representation(_) | FederationError::Internal(_) => {
             ClassifiedReport::internal(error, InternalFailureSummary::CONTEXT_FEDERATION)
         }
+        FederationError::ForwardedBody(_) => ClassifiedReport::internal(error, InternalFailureSummary::RESPONSE_ENCODING),
     }
 }
 

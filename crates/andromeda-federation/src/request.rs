@@ -2,6 +2,7 @@
 
 use crate::{
     config::SplitEntities,
+    forwarded_body::ForwardedBody,
     forwarded_query::client_query::ClientQuery,
     operation::{ForwardingOperation, ProvisionResource},
 };
@@ -99,8 +100,9 @@ pub struct ForwardProvisionRequest<'a> {
     pub attribute_name: Option<&'a AttributeName>,
     /// HTTP method for the forwarded request.
     pub method: reqwest::Method,
-    /// Optional request body bytes, without an inline `@context`.
-    pub body: Option<&'a [u8]>,
+    /// The write payload, without an inline `@context`; serialised only once a
+    /// registration matches the request.
+    pub body: Option<&'a dyn ForwardedBody>,
     /// The JSON-LD context the triggering request resolved to.
     pub context: &'a ContextSpec,
     /// NGSI-LD operation being forwarded.

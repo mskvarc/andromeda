@@ -26,6 +26,7 @@ use crate::{
     batch::{
         BatchResult,
         UpsertPolicy,
+        admitted_batch::AdmittedBatchEntity,
         chunk::{ChunkWrite, UpdatedPayloads},
         prepare::PreparedEntity,
     },
@@ -39,16 +40,13 @@ use andromeda_context_commit::{precondition::Precondition, write_retry::WRITE_AT
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::{
-    entity::Entity,
-    expanded::{
-        mutation::{
-            deletion_sentinel::{DroppedSentinels, drop_deletion_sentinels},
-            entity::update_entity_attrs,
-            selection::OverwritePolicy,
-        },
-        written_observation::AddressedInstances,
+use andromeda_ngsi_ld_model::expanded::{
+    mutation::{
+        deletion_sentinel::{DroppedSentinels, drop_deletion_sentinels},
+        entity::update_entity_attrs,
+        selection::OverwritePolicy,
     },
+    written_observation::AddressedInstances,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -65,7 +63,7 @@ impl EntityService {
     pub(super) async fn batch_upsert_replace_chunk(
         &self,
         target: &ContextTarget,
-        entities: &[&Entity],
+        chunk: Vec<AdmittedBatchEntity>,
         context: &ContextSpec,
         errors: &mut Vec<(Uri, EntityError)>,
         mode: BatchSideEffectMode,
@@ -78,7 +76,7 @@ impl EntityService {
         // NGSI-LD Nulls are not supported. Clause 5.5.4 excepts only partial
         // update and merge fragments, and a replacement is neither.
         let (prepared, mut chunk_errors) = self
-            .prepare_entity_refs(entities, context, BatchWrite::Upsert(UpsertPolicy::Replace).null_sentinel_admission())
+            .prepare_admitted_chunk(chunk, context, BatchWrite::Upsert(UpsertPolicy::Replace).null_sentinel_admission())
             .await;
         errors.append(&mut chunk_errors);
         if prepared.is_empty() {
@@ -173,7 +171,7 @@ impl EntityService {
     pub(super) async fn batch_upsert_update_chunk(
         &self,
         target: &ContextTarget,
-        entities: &[&Entity],
+        chunk: Vec<AdmittedBatchEntity>,
         context: &ContextSpec,
         errors: &mut Vec<(Uri, EntityError)>,
         mode: BatchSideEffectMode,
@@ -193,7 +191,7 @@ impl EntityService {
         // contained by the target", and a target that does not exist contains
         // none of them.
         let (prepared, mut chunk_errors) = self
-            .prepare_entity_refs(entities, context, BatchWrite::Upsert(UpsertPolicy::Update).null_sentinel_admission())
+            .prepare_admitted_chunk(chunk, context, BatchWrite::Upsert(UpsertPolicy::Update).null_sentinel_admission())
             .await;
         errors.append(&mut chunk_errors);
         if prepared.is_empty() {

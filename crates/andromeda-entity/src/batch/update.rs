@@ -13,7 +13,7 @@
 
 use crate::{
     EntityService,
-    batch::{BatchResult, chunk::UpdatedPayloads},
+    batch::{BatchResult, admitted_batch::AdmittedBatchEntity, chunk::UpdatedPayloads},
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
     expanded_member::unwrap_expanded_ref,
@@ -25,15 +25,12 @@ use andromeda_context_commit::precondition::Precondition;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::{
-    entity::Entity,
-    expanded::{
-        mutation::{
-            entity::{append_entity_attrs, update_entity_attrs},
-            selection::OverwritePolicy,
-        },
-        written_observation::AddressedInstances,
+use andromeda_ngsi_ld_model::expanded::{
+    mutation::{
+        entity::{append_entity_attrs, update_entity_attrs},
+        selection::OverwritePolicy,
     },
+    written_observation::AddressedInstances,
 };
 use chrono::Utc;
 use serde_json::Value;
@@ -64,7 +61,7 @@ impl EntityService {
     pub(super) async fn batch_update_chunk(
         &self,
         target: &ContextTarget,
-        entities: &[&Entity],
+        chunk: Vec<AdmittedBatchEntity>,
         context: &ContextSpec,
         overwrite: OverwritePolicy,
         mode: BatchSideEffectMode,
@@ -88,7 +85,7 @@ impl EntityService {
         // because clause 5.6.2's NGSI-LD Null support is a statement about the
         // Update Attributes operation and its Entity Fragment, not about a
         // whole Entity submitted to a batch.
-        let (prepared, mut errors) = self.prepare_entity_refs(entities, context, BatchWrite::Update.null_sentinel_admission()).await;
+        let (prepared, mut errors) = self.prepare_admitted_chunk(chunk, context, BatchWrite::Update.null_sentinel_admission()).await;
         if prepared.is_empty() {
             return Ok(BatchResult { success: Vec::new(), errors });
         }

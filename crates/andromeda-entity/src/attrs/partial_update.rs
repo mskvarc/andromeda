@@ -2,30 +2,37 @@
 
 use crate::{
     EntityService,
+    admitted_write::AdmittedAttribute,
     attrs::attribute_write::{MutatedEntity, payload_write},
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
     expanded_member::{unwrap_expanded_ref, written_entity_types},
     notification_plan::attribute_change_groups,
-    write_admission::{AttributeWrite, admit_expanded_attribute},
+    write_kind::PartialUpdateAttribute,
 };
 use andromeda_context_commit::history_record::mutation_history;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{attribute_fragment::expand_attribute_fragment, context_spec::ContextSpec};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::expanded::{
     attribute_system_time::stamp_attribute_instants,
     mutation::{attribute::partial_update_attr, error::ExpandedEntityError},
     written_observation::AddressedInstances,
 };
-use andromeda_ngsi_ld_representation::normalization::normalize_attribute_node;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::Utc;
-use serde_json::Value;
 use std::sync::Arc;
 
 impl EntityService {
-    /// Apply a partial update to one attribute instance (clause 5.6.4).
+    /// Apply the admitted Attribute Fragment as a partial update of one
+    /// attribute instance (clause 5.6.4).
+    ///
+    /// Clauses 5.6.4 and 5.6.19 take a bare Attribute Fragment, which the
+    /// admission normalized and expanded under the name the request URI
+    /// carries, because a term's own definition decides what the members below
+    /// it mean -- see `andromeda_jsonld::attribute_fragment`. Clause 5.5.8 makes
+    /// its NGSI-LD Nulls deletions, with one exception it states outright: "A
+    /// datasetId cannot be deleted by setting it to the value urn:ngsi-ld:null".
     ///
     /// The update is computed from a payload read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
@@ -33,11 +40,10 @@ impl EntityService {
     ///
     /// # Errors
     ///
-    /// Reports [`EntityError::JsonLd`] when `attr_name` or `fragment` cannot be
-    /// expanded against `context`, [`EntityError::Validation`] when `attr_name`
-    /// names `scope` (clause 5.6.4.4), the fragment carries a malformed
-    /// attribute instance or it sets a `datasetId` to the NGSI-LD Null (clause
-    /// 5.5.8), [`EntityError::NotFound`] when no entity carries
+    /// Reports [`EntityError::JsonLd`] when the attribute name cannot be
+    /// expanded against `context`, [`EntityError::Validation`] when it names
+    /// `scope` (clause 5.6.4.4) or the fragment cannot be merged into the
+    /// stored instance, [`EntityError::NotFound`] when no entity carries
     /// `id`, [`EntityError::MemberNotFound`] when the entity carries neither
     /// the attribute nor the selected instance, [`EntityError::Contention`]
     /// when concurrent writers superseded the computed write on every attempt,
@@ -46,12 +52,12 @@ impl EntityService {
         &self,
         target: &ContextTarget,
         id: &Uri,
-        attr_name: &AttributeName,
         dataset_id: Option<&Uri>,
-        mut fragment: Value,
+        admitted: AdmittedAttribute<'_, PartialUpdateAttribute>,
         context: &ContextSpec,
     ) -> Result<(), EntityError> {
         let entity_uri = id.clone(); // clone: notification and computed write own the identifier
+        let attr_name = admitted.attribute();
 
         let prepared_context = self.engine.prepare_term_context(context);
         let attr_iri = self.engine.expand_term(attr_name.as_str(), &prepared_context).await?;
@@ -62,20 +68,7 @@ impl EntityService {
             return Err(EntityError::Validation(EntityValidationReason::ScopeNotPartiallyUpdatable));
         }
 
-        // Clauses 5.6.4 and 5.6.19 take a bare Attribute Fragment, so the
-        // entity-level normalization other write paths run does not reach it.
-        // Normalizing here is what applies the concise form and discards the
-        // output-only `previous...` member clauses 5.2.5 to 5.2.38 require an
-        // implementation to ignore when a Context Producer supplies one. The
-        // expansion puts the Fragment back under the name the request URI
-        // carries, because a term's own definition decides what the members
-        // below it mean -- see `andromeda_jsonld::attribute_fragment`.
-        normalize_attribute_node(attr_name.as_str(), &mut fragment);
-        let expanded = Arc::new(expand_attribute_fragment(&self.engine, attr_name.as_str(), fragment, context).await?);
-        // Clause 5.5.8 makes this fragment's NGSI-LD Nulls deletions, with one
-        // exception it states outright: "A datasetId cannot be deleted by
-        // setting it to the value urn:ngsi-ld:null".
-        admit_expanded_attribute(&expanded, attr_name, AttributeWrite::PartialUpdate.null_sentinel_admission())?;
+        let expanded = Arc::new(admitted.into_expanded());
 
         let MutatedEntity { events } = self
             .commit_computed_write(target, &entity_uri, |previous| {
@@ -116,8 +109,10 @@ impl EntityService {
 #[cfg(test)]
 mod tests {
     use crate::{
+        admission_fixture::admitted_attribute,
         error::EntityError,
         notification_recording_harness::{entity_uri, live_target, recording_service},
+        write_kind::PartialUpdateAttribute,
     };
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -129,15 +124,10 @@ mod tests {
         // target and must be refused as BadRequestData, as Replace Attribute is.
         let (service, _recorded) = recording_service().await;
         let scope: AttributeName = "scope".parse().expect("scope is a valid attribute name");
+        let admitted =
+            admitted_attribute::<PartialUpdateAttribute>(&service, &scope, json!({"type": "Property", "value": "/Madrid"}), &ContextSpec::core_only()).await;
         let error = service
-            .partial_update_attr(
-                &live_target(),
-                &entity_uri(),
-                &scope,
-                None,
-                json!({"type": "Property", "value": "/Madrid"}),
-                &ContextSpec::core_only(),
-            )
+            .partial_update_attr(&live_target(), &entity_uri(), None, admitted, &ContextSpec::core_only())
             .await
             .expect_err("scope cannot be partially updated");
         assert!(matches!(error, EntityError::Validation(_)), "{error}");

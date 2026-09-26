@@ -8,6 +8,7 @@ use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, received_protocol::R
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
 use andromeda_ngsi_ld_model::{
     attribute::instance::AttributeValue,
+    attribute_strip::AttributeStrip,
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
 };
 use url::Url;
@@ -407,7 +408,10 @@ fn strip_attributes_from_value_removes_matching_keys() {
         "fuel": { "type": "Property", "value": 50 },
         "name": { "type": "Property", "value": "Car" }
     });
-    strip_attributes_from_value(&mut value, &[attribute_name("speed"), attribute_name("fuel")]);
+    pretty_assertions::assert_eq!(
+        strip_attributes_from_value(&mut value, &[attribute_name("speed"), attribute_name("fuel")]),
+        AttributeStrip::Narrowed
+    );
     let obj = value.as_object().expect("is object");
     pretty_assertions::assert_eq!(obj.len(), 1);
     assert!(obj.contains_key("name"));
@@ -418,15 +422,24 @@ fn strip_attributes_from_value_no_matching_keys() {
     let mut value = serde_json::json!({
         "name": { "type": "Property", "value": "Car" }
     });
-    strip_attributes_from_value(&mut value, &[attribute_name("speed")]);
+    pretty_assertions::assert_eq!(strip_attributes_from_value(&mut value, &[attribute_name("speed")]), AttributeStrip::Untouched);
     let obj = value.as_object().expect("is object");
     pretty_assertions::assert_eq!(obj.len(), 1);
 }
 
 #[test]
+fn strip_attributes_from_value_that_removes_every_member_empties_the_fragment() {
+    let mut value = serde_json::json!({
+        "speed": { "type": "Property", "value": 100 }
+    });
+    pretty_assertions::assert_eq!(strip_attributes_from_value(&mut value, &[attribute_name("speed")]), AttributeStrip::Emptied);
+    assert!(value.as_object().is_some_and(serde_json::Map::is_empty));
+}
+
+#[test]
 fn strip_attributes_from_value_non_object_noop() {
     let mut value = serde_json::json!([1, 2, 3]);
-    strip_attributes_from_value(&mut value, &[attribute_name("speed")]);
+    pretty_assertions::assert_eq!(strip_attributes_from_value(&mut value, &[attribute_name("speed")]), AttributeStrip::Untouched);
     assert!(value.is_array());
 }
 

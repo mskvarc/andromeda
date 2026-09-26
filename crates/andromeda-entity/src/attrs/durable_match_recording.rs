@@ -8,16 +8,20 @@
 //! it produced, so a matching subscription is owed exactly the trigger,
 //! `changedAttributes` and snapshot the operation's live emit would carry.
 
-use crate::notification_recording_harness::{
-    CATEGORY_IRI,
-    NAME_IRI,
-    assert_single_match,
-    attribute_name,
-    core_context,
-    entity_uri,
-    live_target,
-    recording_service,
-    single_recorded_write,
+use crate::{
+    admission_fixture::{admitted_attribute, admitted_entity},
+    notification_recording_harness::{
+        CATEGORY_IRI,
+        NAME_IRI,
+        assert_single_match,
+        attribute_name,
+        core_context,
+        entity_uri,
+        live_target,
+        recording_service,
+        single_recorded_write,
+    },
+    write_kind::{AppendAttributes, PartialUpdateAttribute, ReplaceAttribute, UpdateAttributes},
 };
 use andromeda_ngsi_ld_model::{
     expanded::mutation::selection::{DatasetSelection, OverwritePolicy},
@@ -28,14 +32,9 @@ use serde_json::json;
 #[tokio::test]
 async fn append_attrs_records_an_attribute_created_match() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_entity::<AppendAttributes>(&service, json!({"name": {"type": "Property", "value": "lobby"}}), &core_context()).await;
     service
-        .append_attrs(
-            &live_target(),
-            &entity_uri(),
-            json!({"name": {"type": "Property", "value": "lobby"}}),
-            OverwritePolicy::Overwrite,
-            &core_context(),
-        )
+        .append_attrs(&live_target(), &entity_uri(), admitted, OverwritePolicy::Overwrite)
         .await
         .expect("the append lands");
 
@@ -46,15 +45,8 @@ async fn append_attrs_records_an_attribute_created_match() {
 #[tokio::test]
 async fn update_attrs_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
-    service
-        .update_attrs(
-            &live_target(),
-            &entity_uri(),
-            json!({"category": {"type": "Property", "value": "retail"}}),
-            &core_context(),
-        )
-        .await
-        .expect("the update lands");
+    let admitted = admitted_entity::<UpdateAttributes>(&service, json!({"category": {"type": "Property", "value": "retail"}}), &core_context()).await;
+    service.update_attrs(&live_target(), &entity_uri(), admitted).await.expect("the update lands");
 
     let write = single_recorded_write(&recorded);
     assert_single_match(&write, NotificationTrigger::AttributeUpdated, CATEGORY_IRI);
@@ -63,15 +55,10 @@ async fn update_attrs_records_an_attribute_updated_match() {
 #[tokio::test]
 async fn partial_update_attr_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
+    let category = attribute_name("category");
+    let admitted = admitted_attribute::<PartialUpdateAttribute>(&service, &category, json!({"type": "Property", "value": "retail"}), &core_context()).await;
     service
-        .partial_update_attr(
-            &live_target(),
-            &entity_uri(),
-            &attribute_name("category"),
-            None,
-            json!({"type": "Property", "value": "retail"}),
-            &core_context(),
-        )
+        .partial_update_attr(&live_target(), &entity_uri(), None, admitted, &core_context())
         .await
         .expect("the partial update lands");
 
@@ -100,15 +87,10 @@ async fn delete_attr_records_an_attribute_deleted_match() {
 #[tokio::test]
 async fn replace_attr_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
+    let category = attribute_name("category");
+    let admitted = admitted_attribute::<ReplaceAttribute>(&service, &category, json!({"type": "Property", "value": "retail"}), &core_context()).await;
     service
-        .replace_attr(
-            &live_target(),
-            &entity_uri(),
-            &attribute_name("category"),
-            None,
-            json!({"type": "Property", "value": "retail"}),
-            &core_context(),
-        )
+        .replace_attr(&live_target(), &entity_uri(), None, admitted, &core_context())
         .await
         .expect("the replace lands");
 

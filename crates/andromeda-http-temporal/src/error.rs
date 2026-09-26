@@ -86,6 +86,7 @@ impl TemporalHttpClassify for FederationError {
             | FederationError::BadGateway { .. }
             | FederationError::Registration(_)
             | FederationError::Representation(_)
+            | FederationError::ForwardedBody(_)
             | FederationError::Internal(_) => classify_forwarding_error(self),
         }
     }

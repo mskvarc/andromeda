@@ -60,6 +60,7 @@ impl EntityHttpClassify for FederationError {
             | FederationError::BadGateway { .. }
             | FederationError::Registration(_)
             | FederationError::Representation(_)
+            | FederationError::ForwardedBody(_)
             | FederationError::Internal { .. } => classify_forwarding_error(self),
         }
     }

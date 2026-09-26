@@ -26,7 +26,7 @@ use crate::{
     },
     written_payload_admission::admit_written_attribute,
 };
-use andromeda_entity::write_admission::AttributeWrite;
+use andromeda_entity::write_kind::PartialUpdateAttribute;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
 use axum::http::Method;
@@ -56,12 +56,13 @@ pub(crate) async fn partial_update_attr(
     // Clause 5.6.4.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and an
     // attribute a proxied registration claims is still validated.
-    admit_written_attribute(service, AttributeWrite::PartialUpdate, &attr_id, &fragment, &context)
+    // clone: the admission expands its own copy, while the forwarding phase
+    // still sends the compact fragment
+    let admitted = admit_written_attribute::<PartialUpdateAttribute>(service, &attr_id, fragment.clone(), &context)
         .await
         .with_entity_instance(&uri)?;
 
     // Forward to matching context sources
-    let fragment_body = serde_json::to_vec(&fragment).with_entity_instance(&uri)?;
     let path_suffix = format!("/attrs/{attr_id}");
     let qs = params.dataset_id.as_ref().map(|dataset_id| format!("datasetId={dataset_id}"));
 
@@ -75,7 +76,7 @@ pub(crate) async fn partial_update_attr(
                 entity_type_compact: None,
                 attribute_name: Some(&attr_id),
                 method: Method::PATCH,
-                body: Some(&fragment_body),
+                body: Some(&fragment),
                 context: &context,
                 operation: ForwardingOperation::PartialUpdateAttribute,
                 path_suffix: Some(&path_suffix),
@@ -92,7 +93,7 @@ pub(crate) async fn partial_update_attr(
     if forwarded.is_empty() {
         // No matching CSRs — update locally
         service
-            .partial_update_attr(&target, &id, &attr_id, dataset_id, fragment, &context)
+            .partial_update_attr(&target, &id, dataset_id, admitted, &context)
             .await
             .with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
@@ -104,7 +105,7 @@ pub(crate) async fn partial_update_attr(
         LocalOutcome::NothingRemained
     } else {
         LocalOutcome::processed(
-            service.partial_update_attr(&target, &id, &attr_id, dataset_id, fragment, &context).await,
+            service.partial_update_attr(&target, &id, dataset_id, admitted, &context).await,
             classify_entity_error,
         )
     };

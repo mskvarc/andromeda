@@ -34,7 +34,7 @@ use crate::{
     },
     written_payload_admission::admitted_batch_entities,
 };
-use andromeda_entity::write_admission::BatchWrite;
+use andromeda_entity::write_kind::BatchUpdate;
 use andromeda_http_extraction::context_target;
 
 pub(crate) async fn batch_update(
@@ -59,11 +59,11 @@ pub(crate) async fn batch_update(
     // new BatchEntityError shall be added to E containing the failed Entity ID
     // and the ProblemDetails associated": the clause 5.5.4 validation an entity
     // fails is that entity's failure, not the request's.
-    let entities = admitted_batch_entities(service, BatchWrite::Update, entities, &context, &mut entity_errors)
+    let mut admitted = admitted_batch_entities(service, BatchUpdate, entities, &context, &mut entity_errors)
         .await
         .with_entity_instance(&uri)?;
 
-    if entities.is_empty() && entity_errors.is_empty() {
+    if admitted.is_empty() && entity_errors.is_empty() {
         return Err(public_error(
             NgsiLdErrorType::BadRequestData,
             "request body must contain a non-empty array of entities",
@@ -94,17 +94,17 @@ pub(crate) async fn batch_update(
             query_string: query_string.as_deref(),
             triggering,
         },
-        &entities,
+        &admitted,
         &context,
         &uri,
     )
     .await?;
 
     // Clause 5.6.9.4: the local phase updates what proxied registrations left.
-    let remainder = local_remainder(entities, &forwarded);
-    let mode = service.effective_side_effect_mode(async_preference(prefer), remainder.len());
+    local_remainder(&mut admitted, &forwarded);
+    let mode = service.effective_side_effect_mode(async_preference(prefer), admitted.len());
     let batch = service
-        .batch_update(&target, &remainder, &context, overwrite, mode)
+        .batch_update(&target, admitted, &context, overwrite, mode)
         .await
         .with_entity_instance(&uri)?;
     let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, classify_entity_error);

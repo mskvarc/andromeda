@@ -2,31 +2,26 @@
 
 use crate::{
     EntityService,
-    entity_validation_reason::EntityValidationReason,
+    admitted_write::AdmittedEntity,
     error::EntityError,
     expanded_member::written_entity_types,
     notification_plan::attribute_change_groups,
-    write_admission::{EntityWrite, admit_expanded_entity},
+    write_kind::ReplaceEntity,
 };
 use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, history_record::mutation_history};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::{
-    entity::EntityPatch,
-    expanded::{
-        attribute_system_time::stamp_attribute_instants,
-        mutation::{error::ExpandedEntityError, selection::OverwritePolicy},
-        written_observation::AddressedInstances,
-    },
+use andromeda_ngsi_ld_model::expanded::{
+    attribute_system_time::stamp_attribute_instants,
+    mutation::{error::ExpandedEntityError, selection::OverwritePolicy},
+    written_observation::AddressedInstances,
 };
-use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use andromeda_telemetry::entity::{self, EntityOperation};
 use chrono::Utc;
 use std::sync::Arc;
 
 impl EntityService {
-    /// Replace an entire entity with the given payload (NGSI-LD 5.6.18).
+    /// Replace an entire entity with its admitted payload (NGSI-LD 5.6.18).
     ///
     /// The replacement drops every attribute it omits, so each dropped instance
     /// needs a tombstone, and that diff is only meaningful against the payload
@@ -37,27 +32,18 @@ impl EntityService {
     /// # Errors
     ///
     /// Reports [`EntityError::NotFound`] when no entity carries `id`,
-    /// [`EntityError::Validation`] when the payload cannot be serialised or
-    /// carries a malformed attribute instance, a null value (clause 5.6.18.4)
-    /// or an invalid `GeoProperty` geometry, [`EntityError::JsonLd`] when it
-    /// cannot be expanded against `context`, [`EntityError::Contention`] when
-    /// concurrent writers superseded the computed write on every attempt, and
-    /// [`EntityError::Persistence`] when the store could not apply it.
-    pub async fn replace_entity(&self, target: &ContextTarget, id: &Uri, patch: &EntityPatch, context: &ContextSpec) -> Result<(), EntityError> {
+    /// [`EntityError::Validation`] when the payload's members cannot be read,
+    /// [`EntityError::Contention`] when concurrent writers superseded the
+    /// computed write on every attempt, and [`EntityError::Persistence`] when
+    /// the store could not apply it.
+    pub async fn replace_entity(&self, target: &ContextTarget, id: &Uri, admitted: AdmittedEntity<ReplaceEntity>) -> Result<(), EntityError> {
         let timer = entity::start(EntityOperation::Replace);
         let result: Result<(), EntityError> = async {
             let entity_uri = id.clone(); // clone: mutation events and computed-write closures own the identifier
-            // Read before expanding so a request against a missing entity reports
-            // 404 rather than a payload-validation error.
             if self.reader.get_snapshot(target, &entity_uri).await?.is_none() {
                 return Err(EntityError::not_found(&entity_uri));
             }
-
-            let mut patch_json = serde_json::to_value(patch).map_err(|err| EntityError::Validation(EntityValidationReason::PatchPayload(err)))?;
-            normalize_entity_attributes(&mut patch_json);
-            let expanded = self.engine.expand(patch_json, context).await?;
-            // Clause 5.6.18.4: Replace Entity does not support null values.
-            admit_expanded_entity(&expanded, EntityWrite::ReplaceEntity.null_sentinel_admission())?;
+            let expanded = admitted.into_expanded();
 
             let entity_id = Arc::new(entity_uri.clone()); // clone: repeated computed-write attempts share the validated identifier.
             let now = Utc::now();

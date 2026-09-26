@@ -145,7 +145,8 @@ pub fn multi_status_result(entity_id: &Uri, local: &LocalOutcome, forwarded: &[F
 /// The single-source variants carry their own binding status (508, 504, 404,
 /// 502) and a conflict its clause 5.5.2 category. The remaining variants
 /// describe a failure inside this broker rather than at a context source, and
-/// are sanitized as internal.
+/// are sanitized as internal; a write payload that could not be serialised for
+/// forwarding is the broker's own encoding failure.
 #[must_use]
 pub fn classify_forwarding_error(error: &FederationError) -> ClassifiedReport {
     match error {
@@ -160,6 +161,7 @@ pub fn classify_forwarding_error(error: &FederationError) -> ClassifiedReport {
         | FederationError::Query(_)
         | FederationError::Representation(_)
         | FederationError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::CONTEXT_FEDERATION),
+        FederationError::ForwardedBody(_) => ClassifiedReport::internal(error, InternalFailureSummary::RESPONSE_ENCODING),
     }
 }
 
@@ -167,6 +169,7 @@ pub fn classify_forwarding_error(error: &FederationError) -> ClassifiedReport {
 mod tests {
     use crate::{
         classified_report::ClassifiedReport,
+        internal_failure_summary::InternalFailureSummary,
         problem_response::ProblemResponse,
         provision::{LocalOutcome, classify_forwarding_error, multi_status_result, provision_response},
     };
@@ -183,7 +186,7 @@ mod tests {
         http::{StatusCode, Uri as HttpUri},
         response::{IntoResponse, Response},
     };
-    use serde_json::json;
+    use serde_json::{Value, json};
     use std::time::Duration;
 
     fn uri(raw: &str) -> Uri {
@@ -449,5 +452,17 @@ mod tests {
         ] {
             pretty_assertions::assert_eq!(classify_forwarding_error(&error).classification(), expected, "{error}");
         }
+    }
+
+    /// A write payload serialised only once a registration matched fails, when
+    /// it cannot be serialised, the way the handler's own serialisation of it
+    /// failed before it was deferred: as the broker's encoding failure.
+    #[test]
+    fn a_forwarded_payload_that_cannot_be_serialised_is_the_encoding_failure_it_always_was() {
+        let unserialisable = || serde_json::from_str::<Value>("{").expect_err("an unterminated object is malformed");
+        let forwarded = classify_forwarding_error(&FederationError::ForwardedBody(unserialisable()));
+        let encoded = ClassifiedReport::internal(&unserialisable(), InternalFailureSummary::RESPONSE_ENCODING);
+        pretty_assertions::assert_eq!(forwarded.classification(), encoded.classification());
+        pretty_assertions::assert_eq!(forwarded.detail(), encoded.detail());
     }
 }

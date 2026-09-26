@@ -13,6 +13,7 @@
 pub mod attribute;
 pub mod attribute_list;
 pub mod attribute_name_csv;
+pub mod attribute_strip;
 pub mod context_source_identity;
 pub mod context_source_info;
 pub mod entity;

@@ -30,7 +30,6 @@ use crate::{
     written_evolution_admission::admit_written_instance,
 };
 use andromeda_http_extraction::context_target;
-use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 
 pub async fn update_attr_instance(
     context_target::ExistingTargetedTenantState {
@@ -71,8 +70,6 @@ pub async fn update_attr_instance(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    let body = serde_json::to_vec(&payload)
-        .map_err(|error| ClassifiedReport::internal(&error, InternalFailureSummary::RESPONSE_ENCODING).with_instance(uri.clone()))?;
     let forwarded = state
         .forwarding
         .forward_provision(
@@ -83,7 +80,7 @@ pub async fn update_attr_instance(
                 entity_type_compact: None,
                 attribute_name: Some(&attr_id),
                 method: Method::PATCH,
-                body: Some(&body),
+                body: Some(&payload),
                 context: &context,
                 operation: ForwardingOperation::UpdateTemporalAttributeInstance,
                 path_suffix: Some(&path_suffix),

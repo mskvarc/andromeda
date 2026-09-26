@@ -2,28 +2,34 @@
 
 use crate::{
     EntityService,
+    admitted_write::AdmittedEntity,
     attrs::attribute_write::payload_write,
     error::EntityError,
     expanded_member::{unwrap_expanded_ref, written_attribute_names, written_entity_types},
     notification_plan::attribute_change_groups,
-    write_admission::{EntityWrite, admit_expanded_entity},
+    write_kind::UpdateAttributes,
 };
 use andromeda_context_commit::{change_event::ChangeEvent, history_record::mutation_history};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
     attribute_system_time::stamp_attribute_instants,
     mutation::{entity::update_entity_attrs, error::ExpandedEntityError, selection::OverwritePolicy},
     written_observation::AddressedInstances,
 };
-use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use chrono::Utc;
-use serde_json::Value;
 use std::sync::Arc;
 
 impl EntityService {
-    /// Update the attributes an entity already carries (clause 5.6.2).
+    /// Update the attributes an entity already carries (clause 5.6.2) with
+    /// the admitted Entity Fragment.
+    ///
+    /// Clause 5.5.8 EXAMPLE 3 deletes an Attribute by setting its value to the
+    /// NGSI-LD Null, so an Update Attributes fragment was admitted carrying the
+    /// sentinel at the first level and in the value position; clause 5.5.4
+    /// excepts merge operations alone from nesting it inside a value object.
+    /// Clause 5.5.8 reads the same sentinel on `scope` as the deleted scope of
+    /// clause 4.18.
     ///
     /// Returns the attribute IRIs the fragment asked to update, and those that
     /// were NOT updated because the entity did not already carry them. Clause
@@ -40,12 +46,9 @@ impl EntityService {
     ///
     /// # Errors
     ///
-    /// Reports [`EntityError::JsonLd`] when `fragment` cannot be expanded
-    /// against `context`, [`EntityError::Validation`] when an attribute
-    /// instance omits the member its family requires, carries a `unitCode` the
-    /// family does not define, places the NGSI-LD Null where clause 5.5.4 does
-    /// not admit it or holds a malformed `GeoProperty` geometry,
-    /// [`EntityError::NotFound`] when no entity carries `id`,
+    /// Reports [`EntityError::Validation`] when an attribute instance cannot be
+    /// merged into the stored one, [`EntityError::NotFound`] when no entity
+    /// carries `id`,
     /// [`EntityError::Contention`] when concurrent writers superseded the
     /// computed write on every attempt, and [`EntityError::Persistence`] when
     /// the store could not apply it.
@@ -53,20 +56,10 @@ impl EntityService {
         &self,
         target: &ContextTarget,
         id: &Uri,
-        mut fragment: Value,
-        context: &ContextSpec,
+        admitted: AdmittedEntity<UpdateAttributes>,
     ) -> Result<(Vec<AttributeName>, Vec<AttributeName>), EntityError> {
         let entity_uri = id.clone(); // clone: notification and computed write own the identifier
-
-        normalize_entity_attributes(&mut fragment);
-        let expanded = Arc::new(self.engine.expand(fragment, context).await?);
-        // Clause 5.5.8 EXAMPLE 3 deletes an Attribute by setting its value to
-        // the NGSI-LD Null, so an Update Attributes fragment carries the
-        // sentinel at the first level and in the value position; clause 5.5.4
-        // excepts merge operations alone from nesting it inside a value object.
-        // Clause 5.5.8 reads the same sentinel on `scope` as the deleted scope
-        // of clause 4.18.
-        admit_expanded_entity(&expanded, EntityWrite::UpdateAttributes.null_sentinel_admission())?;
+        let expanded = Arc::new(admitted.into_expanded());
         // Clause 5.6.2.5 reports the attributes this request asked for, so the
         // set is read from the fragment before the write merges it away.
         let requested = written_attribute_names(unwrap_expanded_ref(&expanded))?;

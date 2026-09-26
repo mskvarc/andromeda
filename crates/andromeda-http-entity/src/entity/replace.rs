@@ -25,7 +25,7 @@ use crate::{
     },
     written_payload_admission::admit_written_entity,
 };
-use andromeda_entity::write_admission::EntityWrite;
+use andromeda_entity::write_kind::ReplaceEntity;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
 use axum::http::Method;
@@ -56,15 +56,14 @@ pub(crate) async fn update(
     // Clause 5.6.18.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a payload this broker refuses reaches no context source and a
     // replacement left with nothing local is still validated.
-    admit_written_entity(service, EntityWrite::ReplaceEntity, &patch_value, &context)
+    let admitted = admit_written_entity::<ReplaceEntity>(service, patch_value, &context)
         .await
         .with_entity_instance(&uri)?;
 
     if is_local {
-        service.replace_entity(&target, &id, &patch, &context).await.with_entity_instance(&uri)?;
+        service.replace_entity(&target, &id, admitted).await.with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let patch_body = serde_json::to_vec(&patch_value).with_entity_instance(&uri)?;
 
     let forwarded = state
         .forwarding
@@ -76,7 +75,7 @@ pub(crate) async fn update(
                 entity_type_compact: None,
                 attribute_name: None,
                 method: Method::PUT,
-                body: Some(&patch_body),
+                body: Some(&patch),
                 context: &context,
                 operation: ForwardingOperation::ReplaceEntity,
                 path_suffix: None,
@@ -91,7 +90,7 @@ pub(crate) async fn update(
         .with_entity_instance(&uri)?;
 
     if forwarded.is_empty() {
-        service.replace_entity(&target, &id, &patch, &context).await.with_entity_instance(&uri)?;
+        service.replace_entity(&target, &id, admitted).await.with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -99,10 +98,10 @@ pub(crate) async fn update(
     // fragment; whatever remains replaces the entity here.
     let proxied = collect_proxied_attrs(&forwarded);
     let mut patch = patch;
-    let local = if patch.strip_attributes(&proxied) {
-        LocalOutcome::processed(service.replace_entity(&target, &id, &patch, &context).await, classify_entity_error)
-    } else {
-        LocalOutcome::NothingRemained
+    let strip = patch.strip_attributes(&proxied);
+    let local = match service.admit_local_remainder(admitted, strip, &patch, &context).await {
+        Some(remainder) => LocalOutcome::processed(async { service.replace_entity(&target, &id, remainder?).await }.await, classify_entity_error),
+        None => LocalOutcome::NothingRemained,
     };
     provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

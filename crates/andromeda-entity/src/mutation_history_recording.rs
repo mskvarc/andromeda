@@ -4,9 +4,11 @@
 //! 4.5.8), proven without a live broker.
 
 use crate::{
+    admission_fixture::admitted_entity,
     history_recording_assertions::{assert_observes_stored_instances, observed_default_instance, recorded_observation},
     merge_options::MergeOptions,
     notification_recording_harness::{ACCURACY_IRI, CATEGORY_IRI, NAME_IRI, core_context, entity_uri, live_target, recording_service, single_recorded_write},
+    write_kind::{MergeEntity, ReplaceEntity},
 };
 use andromeda_ngsi_ld_model::entity::EntityPatch;
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
@@ -24,14 +26,10 @@ fn patch(payload: Value) -> EntityPatch {
 #[tokio::test]
 async fn merge_records_the_merged_instance_keeping_its_untouched_sub_property() {
     let (service, recorded) = recording_service().await;
+    let fragment = patch(json!({"category": {"type": "Property", "value": "retail"}}));
+    let admitted = admitted_entity::<MergeEntity>(&service, &fragment, &core_context()).await;
     service
-        .merge(
-            &live_target(),
-            &entity_uri(),
-            &patch(json!({"category": {"type": "Property", "value": "retail"}})),
-            &core_context(),
-            MergeOptions::default(),
-        )
+        .merge(&live_target(), &entity_uri(), &fragment, admitted, &core_context(), MergeOptions::default())
         .await
         .expect("the merge lands");
 
@@ -48,14 +46,10 @@ async fn merge_records_the_merged_instance_keeping_its_untouched_sub_property() 
 #[tokio::test]
 async fn merge_records_the_instance_without_the_sub_property_it_deleted_and_without_the_sentinel() {
     let (service, recorded) = recording_service().await;
+    let fragment = patch(json!({"category": {"type": "Property", "value": "retail", "accuracy": "urn:ngsi-ld:null"}}));
+    let admitted = admitted_entity::<MergeEntity>(&service, &fragment, &core_context()).await;
     service
-        .merge(
-            &live_target(),
-            &entity_uri(),
-            &patch(json!({"category": {"type": "Property", "value": "retail", "accuracy": "urn:ngsi-ld:null"}})),
-            &core_context(),
-            MergeOptions::default(),
-        )
+        .merge(&live_target(), &entity_uri(), &fragment, admitted, &core_context(), MergeOptions::default())
         .await
         .expect("the merge lands");
 
@@ -73,17 +67,18 @@ async fn merge_records_the_instance_without_the_sub_property_it_deleted_and_with
 #[tokio::test]
 async fn replace_entity_records_every_stored_attribute_of_the_replacement() {
     let (service, recorded) = recording_service().await;
+    let admitted = admitted_entity::<ReplaceEntity>(
+        &service,
+        &patch(json!({
+            "type": "Building",
+            "category": {"type": "Property", "value": "retail"},
+            "name": {"type": "Property", "value": "lobby"}
+        })),
+        &core_context(),
+    )
+    .await;
     service
-        .replace_entity(
-            &live_target(),
-            &entity_uri(),
-            &patch(json!({
-                "type": "Building",
-                "category": {"type": "Property", "value": "retail"},
-                "name": {"type": "Property", "value": "lobby"}
-            })),
-            &core_context(),
-        )
+        .replace_entity(&live_target(), &entity_uri(), admitted)
         .await
         .expect("the replace lands");
 

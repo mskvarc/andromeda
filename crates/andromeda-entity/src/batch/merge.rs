@@ -12,7 +12,7 @@
 
 use crate::{
     EntityService,
-    batch::{BatchResult, chunk::UpdatedPayloads},
+    batch::{BatchResult, admitted_batch::AdmittedBatchEntity, chunk::UpdatedPayloads},
     error::EntityError,
     notification_plan::attribute_change_groups,
     side_effect::BatchSideEffectMode,
@@ -22,12 +22,9 @@ use andromeda_context_commit::precondition::Precondition;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::{
-    entity::Entity,
-    expanded::{
-        mutation::{entity::merge_entity, selection::OverwritePolicy},
-        written_observation::AddressedInstances,
-    },
+use andromeda_ngsi_ld_model::expanded::{
+    mutation::{entity::merge_entity, selection::OverwritePolicy},
+    written_observation::AddressedInstances,
 };
 use chrono::Utc;
 use std::sync::Arc;
@@ -36,13 +33,13 @@ impl EntityService {
     pub(super) async fn batch_merge_chunk(
         &self,
         target: &ContextTarget,
-        entities: &[&Entity],
+        chunk: Vec<AdmittedBatchEntity>,
         context: &ContextSpec,
         mode: BatchSideEffectMode,
     ) -> Result<BatchResult, EntityError> {
         // Clause 5.6.20 is the batch form of Merge Entity, whose fragments carry
         // the NGSI-LD Null to arbitrary depth (clause 5.5.12).
-        let (prepared, mut errors) = self.prepare_entity_refs(entities, context, BatchWrite::Merge.null_sentinel_admission()).await;
+        let (prepared, mut errors) = self.prepare_admitted_chunk(chunk, context, BatchWrite::Merge.null_sentinel_admission()).await;
         if prepared.is_empty() {
             return Ok(BatchResult { success: Vec::new(), errors });
         }

@@ -8,7 +8,7 @@ use crate::{
 use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::{entity::Entity, registration::forwarding_mode::ForwardingMode};
+use andromeda_ngsi_ld_model::{attribute_strip::AttributeStrip, entity::Entity, registration::forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
@@ -176,15 +176,19 @@ pub fn collect_proxied_attrs(results: &[ForwardedWriteResult]) -> Vec<AttributeN
     results.iter().flat_map(|result| result.proxied_attrs.iter()).cloned().collect()
 }
 
-/// Remove the named attributes from a JSON fragment object; a no-op for
-/// non-object values. Used for the attribute fragment payloads (append,
-/// update) that are a `Value` rather than an `EntityPatch`.
-pub fn strip_attributes_from_value(fragment: &mut Value, attributes: &[AttributeName]) {
-    if let Some(object) = fragment.as_object_mut() {
-        for attribute in attributes {
-            object.remove(attribute.as_str());
-        }
+/// Remove the named attributes from a JSON fragment object, reporting what
+/// the removal left; a non-object value is left untouched. Used for the
+/// attribute fragment payloads (append, update) that are a `Value` rather than
+/// an `EntityPatch`.
+pub fn strip_attributes_from_value(fragment: &mut Value, attributes: &[AttributeName]) -> AttributeStrip {
+    let Some(object) = fragment.as_object_mut() else {
+        return AttributeStrip::Untouched;
+    };
+    let before = object.len();
+    for attribute in attributes {
+        object.remove(attribute.as_str());
     }
+    AttributeStrip::from_counts(before, object.len())
 }
 
 #[cfg(test)]

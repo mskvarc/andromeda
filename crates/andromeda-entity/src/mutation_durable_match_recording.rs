@@ -10,6 +10,7 @@
 //! than only under an HTTP-status integration test.
 
 use crate::{
+    admission_fixture::admitted_entity,
     merge_options::MergeOptions,
     notification_recording_harness::{
         CATEGORY_IRI,
@@ -22,6 +23,7 @@ use crate::{
         recording_service,
         single_recorded_write,
     },
+    write_kind::{MergeEntity, ReplaceEntity},
 };
 use andromeda_ngsi_ld_model::{entity::EntityPatch, notification::NotificationTrigger};
 use serde_json::json;
@@ -35,14 +37,10 @@ fn patch(payload: serde_json::Value) -> EntityPatch {
 #[tokio::test]
 async fn merge_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
+    let fragment = patch(json!({"category": {"type": "Property", "value": "retail"}}));
+    let admitted = admitted_entity::<MergeEntity>(&service, &fragment, &core_context()).await;
     service
-        .merge(
-            &live_target(),
-            &entity_uri(),
-            &patch(json!({"category": {"type": "Property", "value": "retail"}})),
-            &core_context(),
-            MergeOptions::default(),
-        )
+        .merge(&live_target(), &entity_uri(), &fragment, admitted, &core_context(), MergeOptions::default())
         .await
         .expect("the merge lands");
 
@@ -53,14 +51,10 @@ async fn merge_records_an_attribute_updated_match() {
 #[tokio::test]
 async fn merge_records_an_attribute_created_match() {
     let (service, recorded) = recording_service().await;
+    let fragment = patch(json!({"name": {"type": "Property", "value": "lobby"}}));
+    let admitted = admitted_entity::<MergeEntity>(&service, &fragment, &core_context()).await;
     service
-        .merge(
-            &live_target(),
-            &entity_uri(),
-            &patch(json!({"name": {"type": "Property", "value": "lobby"}})),
-            &core_context(),
-            MergeOptions::default(),
-        )
+        .merge(&live_target(), &entity_uri(), &fragment, admitted, &core_context(), MergeOptions::default())
         .await
         .expect("the merge lands");
 
@@ -73,13 +67,14 @@ async fn replace_entity_records_the_replacement_diff() {
     let (service, recorded) = recording_service().await;
     // The replacement omits `category`, so the diff against the stored Building
     // deletes it and creates `name` (clause 5.6.18): two per-attribute matches.
+    let admitted = admitted_entity::<ReplaceEntity>(
+        &service,
+        &patch(json!({"type": "Building", "name": {"type": "Property", "value": "lobby"}})),
+        &core_context(),
+    )
+    .await;
     service
-        .replace_entity(
-            &live_target(),
-            &entity_uri(),
-            &patch(json!({"type": "Building", "name": {"type": "Property", "value": "lobby"}})),
-            &core_context(),
-        )
+        .replace_entity(&live_target(), &entity_uri(), admitted)
         .await
         .expect("the replace lands");
 

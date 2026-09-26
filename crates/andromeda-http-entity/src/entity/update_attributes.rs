@@ -26,7 +26,7 @@ use crate::{
     },
     written_payload_admission::admit_written_entity,
 };
-use andromeda_entity::write_admission::EntityWrite;
+use andromeda_entity::write_kind::UpdateAttributes;
 use andromeda_federation::{outcome::ForwardedWriteResult, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use axum::http::{HeaderMap, Method};
@@ -52,13 +52,13 @@ pub(crate) async fn update_attrs(
     // Clause 5.6.2.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and an
     // update left with nothing local is still validated.
-    admit_written_entity(service, EntityWrite::UpdateAttributes, &fragment, &context)
+    // clone: the admission expands its own copy, while the forwarding phase and
+    // the narrowing after it still read the compact fragment
+    let admitted = admit_written_entity::<UpdateAttributes>(service, fragment.clone(), &context)
         .await
         .with_entity_instance(&uri)?;
 
     // Forward to matching context sources
-    let fragment_body = serde_json::to_vec(&fragment).with_entity_instance(&uri)?;
-
     let forwarded = state
         .forwarding
         .forward_provision(
@@ -69,7 +69,7 @@ pub(crate) async fn update_attrs(
                 entity_type_compact: None,
                 attribute_name: None,
                 method: Method::PATCH,
-                body: Some(&fragment_body),
+                body: Some(&fragment),
                 context: &context,
                 operation: ForwardingOperation::UpdateEntityAttributes,
                 path_suffix: Some("/attrs"),
@@ -85,7 +85,7 @@ pub(crate) async fn update_attrs(
 
     if forwarded.is_empty() {
         // No matching CSRs — update locally
-        let (requested, not_updated) = service.update_attrs(&target, &id, fragment, &context).await.with_entity_instance(&uri)?;
+        let (requested, not_updated) = service.update_attrs(&target, &id, admitted).await.with_entity_instance(&uri)?;
         if not_updated.is_empty() {
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
@@ -101,11 +101,10 @@ pub(crate) async fn update_attrs(
     // fragment; whatever remains is updated here.
     let proxied = collect_proxied_attrs(&forwarded);
     let mut local_fragment = fragment;
-    strip_attributes_from_value(&mut local_fragment, &proxied);
-    let local_update = if local_fragment.as_object().is_some_and(serde_json::Map::is_empty) {
-        None
-    } else {
-        Some(service.update_attrs(&target, &id, local_fragment, &context).await)
+    let strip = strip_attributes_from_value(&mut local_fragment, &proxied);
+    let local_update = match service.admit_local_remainder(admitted, strip, local_fragment, &context).await {
+        Some(remainder) => Some(async { service.update_attrs(&target, &id, remainder?).await }.await),
+        None => None,
     };
 
     // Clause 5.6.2.5: the status says "whether all the new Attributes were

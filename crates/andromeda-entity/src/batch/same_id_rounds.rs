@@ -29,7 +29,6 @@
 //! ordinary batch keeps the chunking and write concurrency it has always had.
 
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::entity::Entity;
 use std::collections::HashMap;
 
 /// A batch entity array arranged into the rounds clause 5.5.11.0 processes it in.
@@ -37,95 +36,106 @@ use std::collections::HashMap;
 /// Every round holds at most one instance per identifier, and rounds are ordered
 /// oldest first: an identifier's instance in round `k` precedes its instance in
 /// round `k + 1` in the submitted array.
-pub(super) struct SameIdRounds<'entities> {
+pub(super) struct SameIdRounds<T> {
     /// The rounds, oldest first; each preserves the submitted array's order.
-    rounds: Vec<Vec<&'entities Entity>>,
+    rounds: Vec<Vec<T>>,
 }
 
-impl<'entities> SameIdRounds<'entities> {
-    /// Arrange `entities` into rounds by how often each identifier has been seen.
+impl<T> SameIdRounds<T> {
+    /// Arrange `entries` into rounds by how often the identifier `id_of` reads
+    /// off each has been seen.
     ///
     /// The first instance of every identifier goes to round 0, the second to
     /// round 1, and so on, which keeps array order both within a round and
     /// between the rounds of one identifier (clause 5.5.11.0).
-    pub(super) fn from_entities(entities: &'entities [Entity]) -> SameIdRounds<'entities> {
-        let mut rounds: Vec<Vec<&'entities Entity>> = Vec::new();
-        let mut occurrences: HashMap<&'entities Uri, usize> = HashMap::with_capacity(entities.len());
+    pub(super) fn from_entries(entries: Vec<T>, id_of: impl Fn(&T) -> &Uri) -> SameIdRounds<T> {
+        let round_indexes = {
+            let mut occurrences: HashMap<&Uri, usize> = HashMap::with_capacity(entries.len());
+            entries
+                .iter()
+                .map(|entry| {
+                    let seen = occurrences.entry(id_of(entry)).or_default();
+                    let round_index = *seen;
+                    *seen += 1;
+                    round_index
+                })
+                .collect::<Vec<_>>()
+        };
 
-        for entity in entities {
-            let round_index = occurrences.entry(&entity.id).or_default();
-            match rounds.get_mut(*round_index) {
-                Some(round) => round.push(entity),
+        let mut rounds: Vec<Vec<T>> = Vec::new();
+        for (entry, round_index) in entries.into_iter().zip(round_indexes) {
+            match rounds.get_mut(round_index) {
+                Some(round) => round.push(entry),
                 // An identifier reaches index `n` only after `n` earlier
                 // instances, so a missing round is always the next one.
-                None => rounds.push(vec![entity]),
+                None => rounds.push(vec![entry]),
             }
-            *round_index += 1;
         }
 
         SameIdRounds { rounds }
     }
 
     /// The rounds, oldest first.
-    pub(super) fn rounds(&self) -> &[Vec<&'entities Entity>] {
-        &self.rounds
+    pub(super) fn into_rounds(self) -> Vec<Vec<T>> {
+        self.rounds
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::batch::same_id_rounds::SameIdRounds;
-    use andromeda_ngsi_ld_model::entity::Entity;
-    use serde_json::json;
-    use std::ptr;
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
 
-    fn entity(id: &str) -> Entity {
-        serde_json::from_value(json!({"id": id, "type": "Building"})).expect("the fixture is a valid entity")
+    /// Submitted instances, each tagged with its array position.
+    fn instances(ids: &[&str]) -> Vec<(usize, Uri)> {
+        ids.iter()
+            .enumerate()
+            .map(|(position, id)| (position, id.parse().expect("the fixture is a valid identifier")))
+            .collect()
     }
 
-    /// The submitted-array positions the instances of `round` came from.
-    fn positions(entities: &[Entity], round: &[&Entity]) -> Vec<usize> {
-        round
-            .iter()
-            .filter_map(|instance| entities.iter().position(|candidate| ptr::eq(candidate, *instance)))
+    /// The submitted-array positions of every round, oldest first.
+    fn positions(ids: &[&str]) -> Vec<Vec<usize>> {
+        SameIdRounds::from_entries(instances(ids), |(_, id)| id)
+            .into_rounds()
+            .into_iter()
+            .map(|round| round.into_iter().map(|(position, _)| position).collect())
             .collect()
     }
 
     #[test]
     fn an_array_without_repeats_is_one_round_holding_every_entry() {
-        let entities = vec![entity("urn:ngsi-ld:Building:a"), entity("urn:ngsi-ld:Building:b")];
-        let rounds = SameIdRounds::from_entities(&entities);
-        pretty_assertions::assert_eq!(rounds.rounds().len(), 1);
-        pretty_assertions::assert_eq!(positions(&entities, &rounds.rounds()[0]), vec![0, 1]);
+        pretty_assertions::assert_eq!(positions(&["urn:ngsi-ld:Building:a", "urn:ngsi-ld:Building:b"]), vec![vec![0, 1]]);
     }
 
     #[test]
     fn repeated_identifiers_are_spread_over_successive_rounds_in_array_order() {
-        let entities = vec![
-            entity("urn:ngsi-ld:Building:a"),
-            entity("urn:ngsi-ld:Building:b"),
-            entity("urn:ngsi-ld:Building:a"),
-            entity("urn:ngsi-ld:Building:a"),
-        ];
-        let rounds = SameIdRounds::from_entities(&entities);
-        pretty_assertions::assert_eq!(rounds.rounds().len(), 3);
-        pretty_assertions::assert_eq!(positions(&entities, &rounds.rounds()[0]), vec![0, 1]);
-        pretty_assertions::assert_eq!(positions(&entities, &rounds.rounds()[1]), vec![2]);
-        pretty_assertions::assert_eq!(positions(&entities, &rounds.rounds()[2]), vec![3]);
+        pretty_assertions::assert_eq!(
+            positions(&[
+                "urn:ngsi-ld:Building:a",
+                "urn:ngsi-ld:Building:b",
+                "urn:ngsi-ld:Building:a",
+                "urn:ngsi-ld:Building:a",
+            ]),
+            vec![vec![0, 1], vec![2], vec![3]]
+        );
     }
 
     #[test]
     fn every_round_holds_each_identifier_at_most_once() {
-        let entities = vec![
-            entity("urn:ngsi-ld:Building:a"),
-            entity("urn:ngsi-ld:Building:a"),
-            entity("urn:ngsi-ld:Building:b"),
-            entity("urn:ngsi-ld:Building:b"),
-        ];
-        let rounds = SameIdRounds::from_entities(&entities);
-        pretty_assertions::assert_eq!(rounds.rounds().len(), 2);
-        for round in rounds.rounds() {
-            let mut identifiers: Vec<&str> = round.iter().map(|instance| instance.id.as_str()).collect();
+        let rounds = SameIdRounds::from_entries(
+            instances(&[
+                "urn:ngsi-ld:Building:a",
+                "urn:ngsi-ld:Building:a",
+                "urn:ngsi-ld:Building:b",
+                "urn:ngsi-ld:Building:b",
+            ]),
+            |(_, id)| id,
+        )
+        .into_rounds();
+        pretty_assertions::assert_eq!(rounds.len(), 2);
+        for round in rounds {
+            let mut identifiers: Vec<&str> = round.iter().map(|(_, id)| id.as_str()).collect();
             identifiers.sort_unstable();
             let distinct = {
                 identifiers.dedup();
@@ -137,19 +147,15 @@ mod tests {
 
     #[test]
     fn every_instance_of_a_repeated_identifier_is_kept_rather_than_discarded() {
-        let entities = vec![
-            entity("urn:ngsi-ld:Building:a"),
-            entity("urn:ngsi-ld:Building:a"),
-            entity("urn:ngsi-ld:Building:a"),
-        ];
-        let rounds = SameIdRounds::from_entities(&entities);
-        let kept: usize = rounds.rounds().iter().map(Vec::len).sum();
-        pretty_assertions::assert_eq!(kept, entities.len());
+        let kept: usize = positions(&["urn:ngsi-ld:Building:a", "urn:ngsi-ld:Building:a", "urn:ngsi-ld:Building:a"])
+            .iter()
+            .map(Vec::len)
+            .sum();
+        pretty_assertions::assert_eq!(kept, 3);
     }
 
     #[test]
     fn an_empty_array_yields_no_rounds() {
-        let entities: Vec<Entity> = Vec::new();
-        assert!(SameIdRounds::from_entities(&entities).rounds().is_empty());
+        pretty_assertions::assert_eq!(positions(&[]), Vec::<Vec<usize>>::new());
     }
 }

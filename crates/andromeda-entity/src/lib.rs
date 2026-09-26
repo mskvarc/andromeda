@@ -2,6 +2,11 @@
 
 #![deny(missing_docs)]
 
+/// Admitting write payloads the way the transport layer does, for tests.
+#[cfg(test)]
+mod admission_fixture;
+/// A single-entity write payload the clause 5.5.4 admission produced.
+pub mod admitted_write;
 /// Checking attribute instance envelopes (clause 5.2.5).
 pub mod attribute_envelope;
 /// Aggregated attribute discovery values.
@@ -102,6 +107,8 @@ pub mod storage_profile;
 pub mod sys_attrs;
 /// The clause 5.5.4 screening a write payload passes before anything else.
 pub mod write_admission;
+/// The write operations an admitted payload is bound to, as types.
+pub mod write_kind;
 
 use crate::{
     batch::execution::BatchExecutionConfig,

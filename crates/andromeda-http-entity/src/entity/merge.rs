@@ -27,7 +27,7 @@ use crate::{
     },
     written_payload_admission::admit_written_entity,
 };
-use andromeda_entity::write_admission::EntityWrite;
+use andromeda_entity::write_kind::MergeEntity;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
 use axum::http::Method;
@@ -65,15 +65,17 @@ pub(crate) async fn merge(
     // Clause 5.6.17.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and a
     // merge left with nothing local is still validated.
-    admit_written_entity(service, EntityWrite::MergeEntity, &patch_value, &context)
+    let admitted = admit_written_entity::<MergeEntity>(service, patch_value, &context)
         .await
         .with_entity_instance(&uri)?;
 
     if is_local {
-        service.merge(&target, &id, &patch, &context, options).await.with_entity_instance(&uri)?;
+        service
+            .merge(&target, &id, &patch, admitted, &context, options)
+            .await
+            .with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let patch_body = serde_json::to_vec(&patch_value).with_entity_instance(&uri)?;
 
     let forwarded = state
         .forwarding
@@ -85,7 +87,7 @@ pub(crate) async fn merge(
                 entity_type_compact: None,
                 attribute_name: None,
                 method: Method::PATCH,
-                body: Some(&patch_body),
+                body: Some(&patch),
                 context: &context,
                 operation: ForwardingOperation::MergeEntity,
                 path_suffix: None,
@@ -100,7 +102,10 @@ pub(crate) async fn merge(
         .with_entity_instance(&uri)?;
 
     if forwarded.is_empty() {
-        service.merge(&target, &id, &patch, &context, options).await.with_entity_instance(&uri)?;
+        service
+            .merge(&target, &id, &patch, admitted, &context, options)
+            .await
+            .with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -108,10 +113,13 @@ pub(crate) async fn merge(
     // fragment; whatever remains is merged here.
     let proxied = collect_proxied_attrs(&forwarded);
     let mut patch = patch;
-    let local = if patch.strip_attributes(&proxied) {
-        LocalOutcome::processed(service.merge(&target, &id, &patch, &context, options).await, classify_entity_error)
-    } else {
-        LocalOutcome::NothingRemained
+    let strip = patch.strip_attributes(&proxied);
+    let local = match service.admit_local_remainder(admitted, strip, &patch, &context).await {
+        Some(remainder) => LocalOutcome::processed(
+            async { service.merge(&target, &id, &patch, remainder?, &context, options).await }.await,
+            classify_entity_error,
+        ),
+        None => LocalOutcome::NothingRemained,
     };
     provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

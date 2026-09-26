@@ -106,6 +106,7 @@ impl EntityMapHttpClassify for FederationError {
             FederationError::Registration(_) | FederationError::Representation(_) | FederationError::Internal(_) => {
                 ClassifiedReport::internal(self, InternalFailureSummary::CONTEXT_FEDERATION)
             }
+            FederationError::ForwardedBody(_) => ClassifiedReport::internal(self, InternalFailureSummary::RESPONSE_ENCODING),
         }
     }
 }

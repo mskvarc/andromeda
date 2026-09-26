@@ -26,7 +26,7 @@ use crate::{
     },
     written_payload_admission::admit_written_entity,
 };
-use andromeda_entity::write_admission::EntityWrite;
+use andromeda_entity::write_kind::CreateEntity;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
 use andromeda_http_response::headers::with_location;
@@ -59,18 +59,17 @@ pub(crate) async fn create(
     // indistinguishable from a sub-attribute (clauses 4.5.2.2, 4.5.3.2 and
     // 4.5.3.3).
     let representation = serde_json::to_value(&entity).with_entity_instance(&uri)?;
-    admit_written_entity(service, EntityWrite::Create, &representation, &context)
+    let admitted = admit_written_entity::<CreateEntity>(service, representation, &context)
         .await
         .with_entity_instance(&uri)?;
     let is_local = params.local.unwrap_or(false);
 
     if is_local {
-        let id = service.create(&target, &entity, &context).await.with_entity_instance(&uri)?;
+        let id = service.create(&target, &entity.id, admitted).await.with_entity_instance(&uri)?;
         return Ok(with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{id}")));
     }
 
     // Check for matching CSRs for distributed forwarding
-    let entity_body = serde_json::to_vec(&entity).with_entity_instance(&uri)?;
     let entity_id = entity.id.clone(); // clone: the forwarding request and local create both need the identifier
     let entity_type = match &entity.type_ {
         EntityTypeValue::Single(name) => Some(name),
@@ -87,7 +86,7 @@ pub(crate) async fn create(
                 entity_type_compact: entity_type,
                 attribute_name: None,
                 method: Method::POST,
-                body: Some(&entity_body),
+                body: Some(&entity),
                 context: &context,
                 operation: ForwardingOperation::CreateEntity,
                 path_suffix: None,
@@ -102,7 +101,7 @@ pub(crate) async fn create(
         .with_entity_instance(&uri)?;
 
     if forwarded.is_empty() {
-        let id = service.create(&target, &entity, &context).await.with_entity_instance(&uri)?;
+        let id = service.create(&target, &entity_id, admitted).await.with_entity_instance(&uri)?;
         return Ok(with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{id}")));
     }
 
@@ -110,10 +109,10 @@ pub(crate) async fn create(
     // fragment; whatever remains creates the entity here.
     let proxied = collect_proxied_attrs(&forwarded);
     let mut entity = entity;
-    let local = if entity.strip_attributes(&proxied) {
-        LocalOutcome::processed(service.create(&target, &entity, &context).await, classify_entity_error)
-    } else {
-        LocalOutcome::NothingRemained
+    let strip = entity.strip_attributes(&proxied);
+    let local = match service.admit_local_remainder(admitted, strip, &entity, &context).await {
+        Some(remainder) => LocalOutcome::processed(async { service.create(&target, &entity_id, remainder?).await }.await, classify_entity_error),
+        None => LocalOutcome::NothingRemained,
     };
     let created = with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{entity_id}"));
     provision_response(&entity_id, &forwarded, &local, created, &uri)

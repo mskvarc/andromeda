@@ -35,7 +35,7 @@ use crate::{
     written_evolution_admission::admit_written_evolution,
 };
 use andromeda_http_extraction::context_target;
-use andromeda_http_response::{classified_report::ClassifiedReport, headers::with_location, internal_failure_summary::InternalFailureSummary};
+use andromeda_http_response::{classified_report::ClassifiedReport, headers::with_location};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 
 /// The response a local create-or-update answers with: 201 with the new
@@ -86,8 +86,6 @@ pub async fn create_or_update(
             ClassifiedReport::public(NgsiLdErrorType::BadRequestData, format!("entity id must be a valid URI: {error}")).with_instance(uri.clone())
         })?;
     let entity_type = payload_entity_type(&payload);
-    let body = serde_json::to_vec(&payload)
-        .map_err(|error| ClassifiedReport::internal(&error, InternalFailureSummary::RESPONSE_ENCODING).with_instance(uri.clone()))?;
     let forwarded = state
         .forwarding
         .forward_provision(
@@ -98,7 +96,7 @@ pub async fn create_or_update(
                 entity_type_compact: entity_type.as_ref(),
                 attribute_name: None,
                 method: Method::POST,
-                body: Some(&body),
+                body: Some(&payload),
                 context: &context,
                 operation: ForwardingOperation::UpsertTemporalEntity,
                 path_suffix: None,
