@@ -5,6 +5,12 @@
 //! connection (never through the pooler) at a fixed cadence for the life of a
 //! workload, then reports the peak and median so a test can assert the fleet
 //! stayed under a connection budget.
+//!
+//! Every broker on the tier shares one `PostgreSQL`, so counts are attributed by
+//! `application_name`: each broker connects under its own (see
+//! [`endpoints`](crate::pooler_probe::endpoints)), and `PgBouncer` carries it onto
+//! the server backend it leases. A backend that renames its own session, such as
+//! the maintenance controller's, is not attributed to any broker.
 
 use sqlx::postgres::PgPoolOptions;
 use std::{
@@ -42,13 +48,13 @@ pub struct BackendSampler {
 }
 
 impl BackendSampler {
-    /// Begin sampling client-backend counts over a direct connection to
-    /// `database_url`.
+    /// Begin sampling, over a direct connection to `database_url`, the client
+    /// backends connected under any of `application_names`.
     ///
     /// # Errors
     ///
     /// Returns the [`sqlx::Error`] from opening the sampling connection.
-    pub async fn start(database_url: &str) -> Result<BackendSampler, sqlx::Error> {
+    pub async fn start(database_url: &str, application_names: &'static [&'static str]) -> Result<BackendSampler, sqlx::Error> {
         let pool = PgPoolOptions::new()
             .max_connections(1)
             .acquire_timeout(Duration::from_secs(5))
@@ -59,7 +65,7 @@ impl BackendSampler {
         let handle = tokio::spawn(async move {
             let mut samples = Vec::new();
             while !task_stop.load(Ordering::Relaxed) {
-                if let Ok(count) = client_backends(&pool).await {
+                if let Ok(count) = client_backends(&pool, application_names).await {
                     samples.push(count);
                 }
                 sleep(SAMPLE_INTERVAL).await;
@@ -81,7 +87,8 @@ impl BackendSampler {
     }
 }
 
-/// The current number of client backends `PostgreSQL` holds open, over `pool`.
+/// The number of client backends connected under any of `application_names`,
+/// over `pool`.
 ///
 /// Counts only `client backend` activity, excluding the autovacuum launcher,
 /// the background writer, and the `TimescaleDB` scheduler workers, which are not
@@ -90,25 +97,9 @@ impl BackendSampler {
 /// # Errors
 ///
 /// Returns the [`sqlx::Error`] the count query reported.
-pub async fn client_backends(pool: &sqlx::PgPool) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend'")
-        .fetch_one(pool)
-        .await
-}
-
-/// The number of client backends whose `client_addr` matches `client_addr`,
-/// over `pool`.
-///
-/// The pooler and each un-pooled broker connect from distinct container
-/// addresses, so this separates pooler-multiplexed backends from the direct
-/// provisioning, migration and maintenance budget.
-///
-/// # Errors
-///
-/// Returns the [`sqlx::Error`] the count query reported.
-pub async fn client_backends_from(pool: &sqlx::PgPool, client_addr: &str) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend' AND host(client_addr) = $1")
-        .bind(client_addr)
+pub async fn client_backends(pool: &sqlx::PgPool, application_names: &[&str]) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend' AND application_name = ANY($1)")
+        .bind(application_names)
         .fetch_one(pool)
         .await
 }

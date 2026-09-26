@@ -22,6 +22,8 @@ pub(crate) const BROKER_REPLICA_URL_ENV: &str = "ANDROMEDA_TEST_BROKER_REPLICA_U
 pub(crate) const BROKER_WIDE_URL_ENV: &str = "ANDROMEDA_TEST_BROKER_WIDE_URL";
 /// Environment variable naming the un-pooled baseline broker's API base.
 pub(crate) const BROKER_DIRECT_URL_ENV: &str = "ANDROMEDA_TEST_BROKER_DIRECT_URL";
+/// Environment variable naming the control database reached through `PgBouncer`.
+pub(crate) const POOLER_URL_ENV: &str = "ANDROMEDA_TEST_POOLER_URL";
 /// Environment variable naming the `PgBouncer` admin-console endpoint (db `pgbouncer`).
 pub(crate) const PGBOUNCER_ADMIN_URL_ENV: &str = "ANDROMEDA_TEST_PGBOUNCER_ADMIN_URL";
 
@@ -75,7 +77,8 @@ pub(crate) enum StackName {
     Http3,
     /// Two-broker extensions topology (enabled and conformance).
     Extensions,
-    /// Single broker whose request path runs through a `PgBouncer` transaction pooler.
+    /// Four brokers on one PostgreSQL: three whose request path runs through a
+    /// `PgBouncer` transaction pooler and an un-pooled baseline.
     Pgbouncer,
 }
 
@@ -256,6 +259,7 @@ pub(crate) static STACKS: [Stack; 7] = [
             // to PostgreSQL, bypassing the pooler, to read pg_stat_activity and
             // drop tenant databases.
             (DATABASE_URL_ENV, "postgres://postgres:postgres@127.0.0.1:5467/postgres"),
+            (POOLER_URL_ENV, "postgres://postgres:postgres@127.0.0.1:6467/postgres"),
             // The pooler admin console (db `pgbouncer`) for SHOW POOLS/SERVERS and
             // PAUSE/RESUME/RECONNECT/KILL.
             (PGBOUNCER_ADMIN_URL_ENV, "postgres://postgres:postgres@127.0.0.1:6467/pgbouncer"),

@@ -1,7 +1,20 @@
 //! The transaction-pooling tier's endpoint URLs, read from the environment the
-//! xtask runner sets, with defaults matching a hand-brought-up stack.
+//! xtask runner sets, with defaults matching a hand-brought-up stack, and the
+//! `application_name` each broker connects to `PostgreSQL` under.
 
 use std::env;
+
+/// The pooled broker under test's `application_name` (its compose `PGAPPNAME`).
+pub const BROKER_APPLICATION_NAME: &str = "broker";
+
+/// The second pooled replica's `application_name`.
+pub const BROKER_REPLICA_APPLICATION_NAME: &str = "broker-replica";
+
+/// The wide-cache pooled broker's `application_name`.
+pub const BROKER_WIDE_APPLICATION_NAME: &str = "broker-wide";
+
+/// The un-pooled baseline broker's `application_name`.
+pub const BROKER_DIRECT_APPLICATION_NAME: &str = "broker-direct";
 
 /// Read `key` from the environment, falling back to `default`.
 fn var_or(key: &str, default: &str) -> String {
@@ -36,6 +49,13 @@ pub fn broker_direct() -> String {
 #[must_use]
 pub fn database_url() -> String {
     var_or("ANDROMEDA_TEST_DATABASE_URL", "postgres://postgres:postgres@127.0.0.1:5467/postgres")
+}
+
+/// The `PostgreSQL` control database reached through `PgBouncer`, as a pooled
+/// broker reaches it.
+#[must_use]
+pub fn pooler_url() -> String {
+    var_or("ANDROMEDA_TEST_POOLER_URL", "postgres://postgres:postgres@127.0.0.1:6467/postgres")
 }
 
 /// The `PgBouncer` admin-console endpoint (db `pgbouncer`).

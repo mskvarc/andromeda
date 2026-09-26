@@ -16,7 +16,7 @@ use andromeda_test_mocks::{notification_server::NotificationServer, server_confi
 use futures::future::join_all;
 use reqwest::Client;
 use serde_json::{Value, json};
-use sqlx::PgPool;
+use sqlx::{Connection, PgConnection, PgPool};
 use std::{slice, time::Duration};
 use tokio::time::sleep;
 
@@ -47,6 +47,18 @@ async fn reset(client: &Client, pool: &PgPool) {
     ];
     let refs: Vec<&str> = brokers.iter().map(String::as_str).collect();
     let _ = tenant_cleanup::reset(client, &refs, pool).await;
+}
+
+/// The address PostgreSQL sees `PgBouncer` connect from, read over a pooled
+/// connection so it is the pooler's own server-side peer address.
+async fn pooler_client_addr() -> String {
+    let mut connection = PgConnection::connect(&endpoints::pooler_url()).await.expect("connect through the pooler");
+    let addr = sqlx::query_scalar("SELECT host(inet_client_addr())")
+        .fetch_one(&mut connection)
+        .await
+        .expect("read the pooler's client address");
+    let _ = connection.close().await;
+    addr
 }
 
 /// Every provisioned tenant database name.
@@ -449,19 +461,18 @@ async fn maintenance_holds_its_session_lock_on_a_direct_connection_while_request
         .await
         .map_or(0.0, |m| m.sum("andromeda_postgresql_maintenance_decisions_total"));
 
-    // Any advisory lock the maintenance controller holds is on a direct backend
-    // whose client_addr is a broker, never the pooler.
+    let pooler_addr = pooler_client_addr().await;
     let pooler_held: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid \
-         JOIN pg_stat_activity p ON p.backend_type = 'client backend' \
-         WHERE l.locktype = 'advisory' AND host(a.client_addr) IN (SELECT DISTINCT host(client_addr) FROM pg_stat_activity WHERE application_name ILIKE '%pgbouncer%')",
+         WHERE l.locktype = 'advisory' AND host(a.client_addr) = $1",
     )
+    .bind(&pooler_addr)
     .fetch_one(&pool)
     .await
-    .unwrap_or(0);
+    .expect("count advisory locks held over the pooler");
 
     println!(
-        "maintenance: decisions advanced by {}, advisory locks held via pooler {pooler_held}",
+        "maintenance: decisions advanced by {}, advisory locks held via pooler {pooler_addr} {pooler_held}",
         after - before
     );
     assert!(after >= before, "maintenance decisions counter must not regress");

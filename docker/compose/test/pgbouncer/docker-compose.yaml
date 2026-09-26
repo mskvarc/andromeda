@@ -85,6 +85,7 @@ services:
     environment:
       <<: [*broker-env, *broker-features]
       ANDROMEDA__SERVER__PORT: "1067"
+      PGAPPNAME: "broker"
       ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer:6432/postgres"
       ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "32"
     ports:
@@ -111,6 +112,7 @@ services:
     environment:
       <<: [*broker-env, *broker-features]
       ANDROMEDA__SERVER__PORT: "1068"
+      PGAPPNAME: "broker-replica"
       ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer:6432/postgres"
       ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "32"
     ports:
@@ -137,6 +139,7 @@ services:
     environment:
       <<: *broker-env
       ANDROMEDA__SERVER__PORT: "1069"
+      PGAPPNAME: "broker-wide"
       ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer:6432/postgres"
       ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "1000"
     ports:
@@ -161,6 +164,7 @@ services:
     environment:
       <<: *broker-env
       ANDROMEDA__SERVER__PORT: "1070"
+      PGAPPNAME: "broker-direct"
       ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "32"
     ports:
       - "1070:1070"

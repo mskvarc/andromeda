@@ -1,11 +1,12 @@
 //! Scale behaviour of the transaction-pooling tier: provisioning bursts, a
 //! working set larger than the runtime cache, Zipf hot-tenant residency, an
 //! idle wide cache releasing its backends, the global pooler cap never starving
-//! a new tenant, two replicas sharing one pooler, and the un-pooled baseline's
-//! backend cost.
+//! a new tenant, two replicas sharing one pooler, and the backends an un-pooled
+//! broker keeps once a burst ends.
 //!
 //! Every test drives the containerised `pgbouncer` stack (`cargo xtask itest
-//! --stack pgbouncer`) and samples PostgreSQL backends over a direct connection.
+//! --stack pgbouncer`) and samples, over a direct connection, only the
+//! PostgreSQL backends of the brokers it drives.
 //! The tenant count is `PGBOUNCER_SCALE_TENANTS` (default 300) and the per-test
 //! load duration is `PGBOUNCER_LOAD_SECS` (default 60).
 
@@ -37,6 +38,9 @@ fn tenant_count() -> usize {
 fn load_duration() -> Duration {
     Duration::from_secs(env::var("PGBOUNCER_LOAD_SECS").ok().and_then(|value| value.parse().ok()).unwrap_or(60))
 }
+
+/// The two pooled replicas that share one pooler.
+const REPLICA_PAIR: &[&str] = &[endpoints::BROKER_APPLICATION_NAME, endpoints::BROKER_REPLICA_APPLICATION_NAME];
 
 /// A client with a generous timeout so a genuinely slow request is measured, not
 /// cut off early.
@@ -96,27 +100,29 @@ async fn batch_upsert(client: &Client, broker: &str, tenant: &str) -> u16 {
         .map_or(0, |response| response.status().as_u16())
 }
 
-/// The current client-backend count over a fresh direct connection.
-async fn current_backends() -> i64 {
+/// The current client-backend count under `application_names`, over a fresh
+/// direct connection.
+async fn current_backends(application_names: &[&str]) -> i64 {
     let Ok(pool) = PgPool::connect(&endpoints::database_url()).await else {
         return -1;
     };
-    let count = backend_sampler::client_backends(&pool).await.unwrap_or(-1);
+    let count = backend_sampler::client_backends(&pool, application_names).await.unwrap_or(-1);
     pool.close().await;
     count
 }
 
-/// The lowest client-backend count seen over `window`, sampling twice a second.
+/// The lowest client-backend count under `application_names` seen over `window`,
+/// sampling twice a second.
 ///
 /// The idle backend level oscillates -- per-tenant background tasks fire in waves
 /// and the count dips to the platform-pool baseline between them -- so the trough,
 /// not any single reading, is what shows the backends were released. Samples that
 /// error (a returned `-1`) are ignored; an all-error window returns `-1`.
-async fn min_backends_over(window: Duration) -> i64 {
+async fn min_backends_over(window: Duration, application_names: &[&str]) -> i64 {
     let deadline = Instant::now() + window;
     let mut minimum = i64::MAX;
     loop {
-        let sample = current_backends().await;
+        let sample = current_backends(application_names).await;
         if sample >= 0 {
             minimum = minimum.min(sample);
         }
@@ -151,7 +157,9 @@ async fn provisioning_burst_stays_within_the_direct_connection_budget() {
     let broker = endpoints::broker();
     let tenants = tenant_load::tenant_names("pgbscale", tenant_count());
 
-    let sampler = BackendSampler::start(&endpoints::database_url()).await.expect("start sampler");
+    let sampler = BackendSampler::start(&endpoints::database_url(), &[endpoints::BROKER_APPLICATION_NAME])
+        .await
+        .expect("start sampler");
     let report = tenant_load::provision_tenants(&client, &broker, &tenants, CORE_CONTEXT, 32).await;
     let series = sampler.stop().await;
 
@@ -180,7 +188,9 @@ async fn a_working_set_three_times_the_cache_is_served_without_a_single_failure(
     let before = Metrics::scrape(&client, &broker)
         .await
         .map_or(0.0, |m| m.sum("andromeda_tenant_cold_builds_total"));
-    let sampler = BackendSampler::start(&endpoints::database_url()).await.expect("start sampler");
+    let sampler = BackendSampler::start(&endpoints::database_url(), &[endpoints::BROKER_APPLICATION_NAME])
+        .await
+        .expect("start sampler");
     let picker = UniformPicker::new(tenants.len(), 0x5EED);
     let report = tenant_load::run_bounded(48, load_duration(), |index| {
         let client = &client;
@@ -328,7 +338,7 @@ async fn an_idle_wide_cache_releases_its_backends() {
     // baseline between waves and rises while one is in flight. Releasing the
     // backends is proved by the trough reaching the baseline, not by any single
     // instantaneous reading, so sample across a window and assert on the minimum.
-    let backends = min_backends_over(Duration::from_secs(20)).await;
+    let backends = min_backends_over(Duration::from_secs(20), &[endpoints::BROKER_WIDE_APPLICATION_NAME]).await;
     println!("idle wide cache: cached runtimes gauge {cached:?}, trough client backends {backends}");
     // A wide cache evicts nothing, so every touched tenant is still resident;
     // the gauge is the touched count, plus at most the always-resident unnamed
@@ -390,7 +400,7 @@ async fn two_replicas_share_one_pooler_without_doubling_backends() {
 
     // Single-replica baseline: the working set through one broker.
     let single = {
-        let sampler = BackendSampler::start(&endpoints::database_url()).await.expect("start sampler");
+        let sampler = BackendSampler::start(&endpoints::database_url(), REPLICA_PAIR).await.expect("start sampler");
         let picker = UniformPicker::new(tenants.len(), 1);
         let report = tenant_load::run_bounded(32, load_duration(), |_| {
             let client = &client;
@@ -405,7 +415,7 @@ async fn two_replicas_share_one_pooler_without_doubling_backends() {
 
     // Dual-replica: the same working set split across both brokers.
     let dual = {
-        let sampler = BackendSampler::start(&endpoints::database_url()).await.expect("start sampler");
+        let sampler = BackendSampler::start(&endpoints::database_url(), REPLICA_PAIR).await.expect("start sampler");
         let picker = UniformPicker::new(tenants.len(), 2);
         let report = tenant_load::run_bounded(32, load_duration(), |index| {
             let client = &client;
@@ -455,36 +465,59 @@ async fn two_replicas_share_one_pooler_without_doubling_backends() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn the_unpooled_baseline_needs_several_times_the_backends() {
+async fn an_unpooled_broker_keeps_several_times_the_backends_once_a_burst_ends() {
     let client = client();
     reset(&client).await;
-    let tenants = tenant_load::tenant_names("pgbcmp", 32);
+    let tenants = tenant_load::tenant_names("pgbcmp", 24);
 
-    let pooled_max = measure_cached_workload(&client, &endpoints::broker(), &tenants).await;
+    let pooled = measure_burst_footprint(&client, &endpoints::broker(), &[endpoints::BROKER_APPLICATION_NAME], &tenants).await;
     reset(&client).await;
-    let direct_max = measure_cached_workload(&client, &endpoints::broker_direct(), &tenants).await;
+    let direct = measure_burst_footprint(&client, &endpoints::broker_direct(), &[endpoints::BROKER_DIRECT_APPLICATION_NAME], &tenants).await;
 
-    // A recorded comparison, not a hard ratio assertion. Peaks are sampled over
-    // the whole (shared) PostgreSQL, so both include the other brokers' idle
-    // footprint; and at this modest, steadily-cached, low-concurrency tenant
-    // count the un-pooled broker's pools stay lazily small while the pooler
-    // eagerly holds default_pool_size per active tenant database, so the pooled
-    // peak is not necessarily the lower of the two here. The pooler's backend
-    // win is at scale and under bursty concurrency, which the wide-cache and
-    // working-set tests exercise; the study records both peaks and interprets.
-    println!("backend comparison: pooled peak {pooled_max}, un-pooled peak {direct_max}");
+    println!(
+        "burst footprint: pooled peak {} held {}, un-pooled peak {} held {}",
+        pooled.peak, pooled.held, direct.peak, direct.held
+    );
+    // Burst peaks are bounded per tenant either way (tenant_max_connections
+    // un-pooled, default_pool_size + reserve_pool_size pooled), so the pooler's
+    // win is what a broker keeps once the burst ends: PgBouncer releases a backend
+    // server_idle_timeout after its last transaction, while an un-pooled broker
+    // holds every connection until its own idle reclaim.
+    let tenant_count = i64::try_from(tenants.len()).expect("tenant count fits i64");
     assert!(
-        pooled_max > 0 && direct_max > 0,
-        "both workloads must open backends to compare (pooled {pooled_max}, un-pooled {direct_max})"
+        direct.held >= tenant_count,
+        "the un-pooled broker must still hold a backend per burst tenant, held {} for {tenant_count} tenants",
+        direct.held
+    );
+    assert!(
+        pooled.held * 3 <= direct.held,
+        "the un-pooled broker must keep at least three times the pooled broker's backends (pooled {}, un-pooled {})",
+        pooled.held,
+        direct.held
     );
     reset(&client).await;
 }
 
-/// Provision `tenants` on `broker`, drive a uniform read/write workload, and
-/// return the peak client-backend count observed.
-async fn measure_cached_workload(client: &Client, broker: &str, tenants: &[String]) -> i64 {
+/// How long after a burst the held backends are read: past `PgBouncer`'s
+/// five-second `server_idle_timeout`, inside the broker's thirty-second pool idle
+/// reclaim.
+const HOLD_SETTLE: Duration = Duration::from_secs(12);
+
+/// The backends one broker opened during a burst and still held after it.
+struct BurstFootprint {
+    /// The peak client-backend count during the burst.
+    peak: i64,
+    /// The trough client-backend count over a window [`HOLD_SETTLE`] after it.
+    held: i64,
+}
+
+/// Provision `tenants` on `broker`, drive a uniform read/write burst, and report
+/// the backends connected under `application_names` during and after it.
+async fn measure_burst_footprint(client: &Client, broker: &str, application_names: &'static [&'static str], tenants: &[String]) -> BurstFootprint {
     tenant_load::provision_tenants(client, broker, tenants, CORE_CONTEXT, 16).await;
-    let sampler = BackendSampler::start(&endpoints::database_url()).await.expect("start sampler");
+    let sampler = BackendSampler::start(&endpoints::database_url(), application_names)
+        .await
+        .expect("start sampler");
     let picker = UniformPicker::new(tenants.len(), 7);
     let _ = tenant_load::run_bounded(32, load_duration(), |index| {
         let picker = &picker;
@@ -498,5 +531,8 @@ async fn measure_cached_workload(client: &Client, broker: &str, tenants: &[Strin
         }
     })
     .await;
-    sampler.stop().await.max
+    let peak = sampler.stop().await.max;
+    sleep(HOLD_SETTLE).await;
+    let held = min_backends_over(Duration::from_secs(5), application_names).await;
+    BurstFootprint { peak, held }
 }
